@@ -1,0 +1,30 @@
+{
+  "name": "@desigual-os/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@desigual-os/database": "workspace:*",
+    "@desigual-os/logging": "workspace:*",
+    "@desigual-os/node-protocol": "workspace:*",
+    "@desigual-os/orchestrator": "workspace:*",
+    "@desigual-os/router": "workspace:*",
+    "@desigual-os/tool-gateway": "workspace:*",
+    "@desigual-os/types": "workspace:*",
+    "bullmq": "^5.13.2",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

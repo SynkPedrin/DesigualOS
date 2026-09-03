@@ -1,0 +1,28 @@
+{
+  "name": "desigual-os",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:generate": "pnpm --filter @desigual-os/database db:generate",
+    "db:migrate": "pnpm --filter @desigual-os/database db:migrate",
+    "db:seed": "pnpm --filter @desigual-os/database db:seed"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "turbo": "^2.1.0",
+    "typescript": "^5.6.0",
+    "eslint": "^9.10.0",
+    "prettier": "^3.3.0",
+    "typescript-eslint": "^8.5.0"
+  },
+  "packageManager": "pnpm@9.9.0"
+}

@@ -1,0 +1,104 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788274214158,
+      "tag": "0000_marvelous_shocker",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788281823479,
+      "tag": "0001_careful_starjammers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788295074496,
+      "tag": "0002_clammy_starhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788296026485,
+      "tag": "0003_aspiring_iron_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788313573016,
+      "tag": "0004_cute_infant_terrible",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788316354892,
+      "tag": "0005_burly_wither",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788352507389,
+      "tag": "0006_boring_raider",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788380419969,
+      "tag": "0007_groovy_emma_frost",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788404490595,
+      "tag": "0008_sharp_enchantress",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788405771255,
+      "tag": "0009_wise_warhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788406629382,
+      "tag": "0010_violet_iron_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788409080211,
+      "tag": "0011_burly_namora",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788440619151,
+      "tag": "0012_chief_maelstrom",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788447401786,
+      "tag": "0013_old_xavin",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,265 @@
+import type { FastifyInstance } from 'fastify';
+import { desc, eq } from 'drizzle-orm';
+import { z } from 'zod';
+import { db, schema } from '@desigual-os/database';
+import { getTasksInList } from '@desigual-os/tool-gateway';
+import { createLogger } from '@desigual-os/logging';
+import { requireAuth, requirePermission } from '../auth/middleware';
+import { hasClientAccess } from '../lib/access';
+import { resolveClickUpAccess } from '../integrations/access';
+
+const logger = createLogger({ service: 'clients' });
+
+const createClientSchema = z.object({
+  name: z.string().min(1),
+  slug: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9-]+$/, 'slug deve ser kebab-case (a-z, 0-9, hífen)'),
+});
+
+const grantAccessSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(['viewer', 'editor']).default('viewer'),
+});
+
+export async function registerClientRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/clients', { preHandler: [requireAuth, requirePermission('clients', 'read')] }, async () => {
+    const rows = await db
+      .select({
+        id: schema.clients.id,
+        name: schema.clients.name,
+        slug: schema.clients.slug,
+        status: schema.clients.status,
+        clickupListId: schema.clients.clickupListId,
+      })
+      .from(schema.clients)
+      .orderBy(desc(schema.clients.createdAt));
+
+    // A listagem precisa do vínculo também: sem isso o card na tela de
+    // Clientes dizia "sem vínculo no ClickUp" pra TODO mundo, mesmo com o
+    // cliente importado de lá (só o workspace devolvia esse campo).
+    const teamId = process.env.CLICKUP_TEAM_ID;
+    return {
+      clients: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        status: row.status,
+        clickup_list_id: row.clickupListId,
+        clickup_url: row.clickupListId && teamId ? `https://app.clickup.com/${teamId}/v/li/${row.clickupListId}` : null,
+      })),
+    };
+  });
+
+  app.post(
+    '/clients',
+    { preHandler: [requireAuth, requirePermission('clients', 'write')] },
+    async (request, reply) => {
+      const body = createClientSchema.parse(request.body);
+
+      const [client] = await db.insert(schema.clients).values(body).onConflictDoNothing({ target: schema.clients.slug }).returning();
+
+      if (!client) {
+        reply.code(409);
+        return { error: `Client with slug '${body.slug}' already exists` };
+      }
+
+      await db.insert(schema.auditLogs).values({
+        userId: request.authUser?.id ?? null,
+        action: 'client.created',
+        clientId: client.id,
+        result: 'completed',
+        metadata: { name: client.name, slug: client.slug },
+      });
+
+      reply.code(201);
+      return { id: client.id, name: client.name, slug: client.slug, status: client.status };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>('/clients/:id', { preHandler: [requireAuth, requirePermission('clients', 'read')] }, async (request, reply) => {
+    const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, request.params.id));
+    if (!client) {
+      reply.code(404);
+      return { error: `Client '${request.params.id}' not found` };
+    }
+
+    return { id: client.id, name: client.name, slug: client.slug, status: client.status };
+  });
+
+  // Workspace agregado do cliente (pedido do usuário): tudo que o Bento, a
+  // Susy e o Jarbas alimentaram sobre ele, num lugar só. Projetos são
+  // compartilhados pela equipe (2026-09-03): qualquer master/colaborador
+  // autenticado acessa, ver hasClientAccess em lib/access.ts.
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/workspace',
+    { preHandler: [requireAuth, requirePermission('clients', 'read')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+      if (!client) {
+        reply.code(404);
+        return { error: `Client '${clientId}' not found` };
+      }
+
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client workspace' };
+      }
+
+      const [conversationRows, assetRows, executionRows] = await Promise.all([
+        db.select().from(schema.conversations).where(eq(schema.conversations.clientId, clientId)).orderBy(desc(schema.conversations.updatedAt)).limit(20),
+        db.select().from(schema.studioAssets).where(eq(schema.studioAssets.clientId, clientId)).orderBy(desc(schema.studioAssets.createdAt)).limit(20),
+        db.select().from(schema.executions).where(eq(schema.executions.clientId, clientId)).orderBy(desc(schema.executions.createdAt)).limit(20),
+      ]);
+
+      const totalCost = executionRows.reduce((sum, row) => sum + Number(row.actualCost ?? row.estimatedCost ?? 0), 0);
+
+      return {
+        client: {
+          id: client.id,
+          name: client.name,
+          slug: client.slug,
+          status: client.status,
+          clickup_list_id: client.clickupListId,
+          // Deep link direto pra lista do cliente no ClickUp. Embutir o
+          // ClickUp por iframe NÃO é possível: o CSP dele responde
+          // `frame-ancestors 'self' https://clickup.com` (verificado nos
+          // headers em 03/09/2026), então o browser recusa. Abrir em aba
+          // nova é o caminho suportado.
+          clickup_url:
+            client.clickupListId && process.env.CLICKUP_TEAM_ID
+              ? `https://app.clickup.com/${process.env.CLICKUP_TEAM_ID}/v/li/${client.clickupListId}`
+              : null,
+        },
+        conversations: conversationRows.map((row) => ({ id: row.id, title: row.title, status: row.status, updated_at: row.updatedAt.toISOString() })),
+        studio_assets: assetRows.map((row) => ({
+          id: row.id,
+          type: row.type,
+          filename: row.filename,
+          storage_url: row.storageUrl,
+          created_at: row.createdAt.toISOString(),
+        })),
+        executions: executionRows.map((row) => ({
+          id: row.id,
+          execution_id: row.executionId,
+          agent: row.agent,
+          status: row.status,
+          created_at: row.createdAt.toISOString(),
+        })),
+        cost_summary: { total_cost: totalCost, execution_count: executionRows.length },
+      };
+    },
+  );
+
+  // Concessão de acesso ao workspace (pedido do usuário), só master.
+  // Assume que o colaborador já tem conta no Desigual OS; convite de
+  // alguém sem conta ainda usa POST /admin/invite primeiro (não dá pra
+  // pré-criar o perfil aqui sem colidir com o provisionamento just-in-time
+  // que já existe em resolveOrProvisionUser, que casa por auth_user_id).
+  app.post<{ Params: { id: string } }>(
+    '/clients/:id/access',
+    { preHandler: [requireAuth, requirePermission('clients', 'write')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const body = grantAccessSchema.parse(request.body);
+
+      const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+      if (!client) {
+        reply.code(404);
+        return { error: `Client '${clientId}' not found` };
+      }
+
+      const [targetUser] = await db.select().from(schema.users).where(eq(schema.users.email, body.email));
+      if (!targetUser) {
+        reply.code(404);
+        return { error: `No Desigual OS account found for '${body.email}'. Use POST /admin/invite first to create one.` };
+      }
+
+      await db
+        .insert(schema.clientUsers)
+        .values({ clientId, userId: targetUser.id, role: body.role })
+        .onConflictDoUpdate({ target: [schema.clientUsers.clientId, schema.clientUsers.userId], set: { role: body.role } });
+
+      // E-mail transacional dedicado (ex: Resend/Postmark) não está
+      // configurado ainda; a notificação real que existe hoje é in-app.
+      await db.insert(schema.notifications).values({
+        userId: targetUser.id,
+        type: 'workspace_access_granted',
+        title: `Acesso liberado: ${client.name}`,
+        body: `Você agora tem acesso ao workspace do cliente ${client.name} como ${body.role}.`,
+      });
+
+      reply.code(201);
+      return { client_id: clientId, user_id: targetUser.id, role: body.role };
+    },
+  );
+  /**
+   * Tarefas REAIS do cliente, lidas direto do ClickUp na hora (não do
+   * espelho local): o ClickUp é a fonte de verdade, então a tela mostra o
+   * que está lá agora, sem risco de exibir cópia velha. Exige o mesmo
+   * acesso do workspace do cliente.
+   */
+  app.get<{ Params: { id: string }; Querystring: { include_closed?: string } }>(
+    '/clients/:id/clickup/tasks',
+    { preHandler: [requireAuth, requirePermission('clients', 'read')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+      if (!client) {
+        reply.code(404);
+        return { error: `Client '${clientId}' not found` };
+      }
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client workspace' };
+      }
+      if (!client.clickupListId) {
+        reply.code(409);
+        return { error: 'Client is not linked to a ClickUp list yet. Run the ClickUp sync first.' };
+      }
+
+      const access = await resolveClickUpAccess(request.authUser.id);
+      if (!access) {
+        reply.code(400);
+        return { error: 'No ClickUp access available for this user' };
+      }
+
+      try {
+        const tasks = await getTasksInList(access.token, client.clickupListId, request.query.include_closed === 'true');
+        return {
+          tasks: tasks.map((task) => ({
+            id: task.id,
+            name: task.name,
+            description: task.description,
+            status: task.status,
+            status_color: task.statusColor,
+            status_type: task.statusType,
+            priority: task.priority,
+            priority_color: task.priorityColor,
+            url: task.url,
+            due_date: task.dueDate,
+            start_date: task.startDate,
+            created_at: task.createdAt,
+            updated_at: task.updatedAt,
+            time_estimate_ms: task.timeEstimateMs,
+            tags: task.tags.map((tag) => ({ name: tag.name, background: tag.background, foreground: tag.foreground })),
+            // Fotos reais dos usuários do ClickUp (profilePicture): pedido
+            // explícito do Endrigo pra reconhecer quem é quem sem ler nome.
+            assignees: task.assignees.map((p) => ({ id: p.id, name: p.name, avatar_url: p.avatarUrl, initials: p.initials, color: p.color })),
+            creator: task.creator
+              ? { id: task.creator.id, name: task.creator.name, avatar_url: task.creator.avatarUrl, initials: task.creator.initials, color: task.creator.color }
+              : null,
+          })),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error({ error, clientId }, 'Falha ao buscar tarefas do ClickUp');
+        reply.code(502);
+        return { error: message };
+      }
+    },
+  );
+
+}

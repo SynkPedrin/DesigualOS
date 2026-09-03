@@ -1,0 +1,1 @@
+ALTER TYPE "node_status" ADD VALUE 'warning';
