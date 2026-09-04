@@ -8,6 +8,10 @@ import type { FastifyBaseLogger } from 'fastify';
 const currentDir = dirname(fileURLToPath(import.meta.url));
 /** packages/router/src -> packages/router -> packages -> raiz do repo. */
 const BRAIN_MARKETING_DIR = resolve(currentDir, '../../../Brain-Marketing');
+const MODUS_OPERANDI_PATH = resolve(
+  currentDir,
+  '../../../.agents/skills/carrossel-cinema-impossivel/SKILL.md',
+);
 
 interface BrainMarketingDoc {
   titulo: string;
@@ -91,10 +95,46 @@ function pickRelevantDocs(brief: string, logger?: FastifyBaseLogger, max = 3): B
   return (withMatches.length > 0 ? withMatches : scored).slice(0, max).map((entry) => entry.doc);
 }
 
+let cachedModusOperandi: string | null | undefined;
+
+/**
+ * Modus operandi canônico do carrossel do Cinema Impossível (.agents/skills/.../SKILL.md).
+ * É a fonte da verdade da copy do Studio: as leis duras (seções 3 e 10) vêm daqui.
+ * Retorna o corpo do arquivo sem o frontmatter YAML. Falha graciosamente (warn + null)
+ * se o arquivo não existir nesta máquina — mesmo padrão do loadBrainMarketingDocs.
+ */
+function loadModusOperandi(logger?: FastifyBaseLogger): string | null {
+  if (cachedModusOperandi !== undefined) return cachedModusOperandi;
+
+  if (!existsSync(MODUS_OPERANDI_PATH)) {
+    logger?.warn(
+      { path: MODUS_OPERANDI_PATH },
+      'Modus operandi do carrossel não encontrado — studio copy seguirá sem o canon',
+    );
+    cachedModusOperandi = null;
+    return cachedModusOperandi;
+  }
+
+  const raw = readFileSync(MODUS_OPERANDI_PATH, 'utf-8');
+  cachedModusOperandi = parseFrontmatter(raw).body;
+  return cachedModusOperandi;
+}
+
+const studioSlideSchema = z.object({
+  headline: z.string(),
+  subtext: z.string().optional(),
+  kicker: z.string().optional(),
+  tag: z.enum(['verso', 'segredo']).nullable().optional(),
+  tagLabel: z.string().optional(),
+  layout: z
+    .enum(['capa', 'premissa', 'item', 'follow', 'golpe', 'diptico', 'tese', 'cta'])
+    .optional(),
+});
+
 const studioCopySchema = z.object({
   caption: z.string(),
   hashtags: z.array(z.string()).default([]),
-  slides: z.array(z.object({ headline: z.string(), subtext: z.string().optional() })).min(1),
+  slides: z.array(studioSlideSchema).min(1),
 });
 
 export type StudioCopyResult = z.infer<typeof studioCopySchema>;
@@ -109,25 +149,65 @@ function normalizeSlideCount(
   return [...slides, ...Array.from({ length: numSlides - slides.length }, () => ({ ...last }))];
 }
 
-function buildSystemPrompt(numSlides: number): string {
-  return `Você é um copywriter sênior de marketing digital, especialista em posts de redes sociais (Instagram/carrossel).
-Use os frameworks de marketing fornecidos como referência para embasar a copy, mas escreva em português do Brasil, tom direto e persuasivo, sem jargão de manual.
+function buildSystemPrompt(numSlides: number, modusOperandi: string | null): string {
+  const structureBlock =
+    numSlides >= 8
+      ? `Estrutura canônica dos layouts (obrigatória com ${numSlides} slides):
+- 1º slide: "capa" (promessa numerada + headline de dois tempos)
+- 2º slide: "premissa" (verso da canção entre aspas + 2 ou 3 frases)
+- slides intermediários: "item" (um segredo ou verso por card, numeração corrida em tagLabel: "VERSO Nº 1", "SEGREDO Nº 2"...)
+- 5º slide: "follow" (o pedido de seguir vive SÓ aqui, como respiro com promessa do que vem)
+- 7º slide: "golpe" (revelação que recontextualiza e manda o leitor voltar os cards)
+- penúltimo slide: "tese"
+- último slide: "cta" (CTA emocional de rewatch)
+- use "diptico" em um item intermediário quando o conteúdo pedir imagem + texto separados`
+      : `Estrutura dos layouts (peça curta): 1º slide sempre "capa", último sempre "cta"; os intermediários usam "premissa", "item" e, se couber, "follow" e "tese" com bom senso.`;
+
+  const canonBlock = modusOperandi
+    ? `CANON INEGOCIÁVEL (modus operandi do carrossel — fonte da verdade da copy):
+
+${modusOperandi}
+
+`
+    : '';
+
+  return `Você é o copywriter oficial dos carrosséis de Instagram do Cinema Impossível (@endrigoalmada), canal do diretor Endrigo Almada que faz "clipes que nunca existiram" pra músicas brasileiras usando IA.
+
+${canonBlock}As leis duras de copy (seções 3 e 10 do modus operandi) são INEGOCIÁVEIS, mesmo quando o canon não estiver anexado acima:
+- Abrir com verso da canção entre aspas quando houver contexto de música: vale pra capa, premissa e caption. A tese vem depois, nunca antes.
+- NUNCA usar travessão (—) em nenhum texto. Nem na caption, nem nos slides, nem nas hashtags.
+- Nenhum emoji nos slides (headline, subtext, kicker, tagLabel). Na caption pode 1-2 emojis se fizer sentido.
+- CTA emocional: pedir pra SALVAR e ENVIAR ("salva pra lembrar", "manda pra quem..."). Nunca "segue agora" nem "marca 5 amigos" na caption.
+- O pedido de follow existe SÓ no slide 5 (layout "follow"), nunca na caption.
+- Prometa N, entregue N-1: a capa promete N segredos/versos, os cards entregam N-1; o item que falta vive no comentário fixado (mencione isso na caption como laço aberto, sem entregar o item).
+- Tom direto, primeira pessoa do diretor ("eu escondi", "eu joguei fora").
+- Português do Brasil com acentos sempre.
 
 Gere:
-- "caption": a legenda do post (2 a 4 frases + call to action; pode usar 1-2 emojis se fizer sentido para a marca).
-- "hashtags": 3 a 6 hashtags relevantes, sem o caractere #.
-- "slides": exatamente ${numSlides} item(ns), na ordem em que aparecem no carrossel/imagem. Cada slide tem "headline" (curta, até 8 palavras — o texto principal sobreposto na imagem) e, opcionalmente, "subtext" (complemento curto, até 12 palavras).
+- "caption": a legenda do post (2 a 4 frases + CTA emocional de salvar/enviar; abre com o verso entre aspas quando houver contexto de música; NUNCA pede follow).
+- "hashtags": 3 a 6 hashtags relevantes (nicho + série + artista), sem o caractere #.
+- "slides": exatamente ${numSlides} item(ns), na ordem do carrossel. Cada slide tem:
+  - "layout": um de capa|premissa|item|follow|golpe|diptico|tese|cta.
+  - "headline": texto principal (curta, até 8 palavras).
+  - "subtext": complemento curto (até 12 palavras), opcional.
+  - "kicker": linha pequena de topo com nome da música e artista/ano, opcional.
+  - "tag": "verso" ou "segredo" nos slides de item (null nos demais); "tagLabel": o rótulo numerado (ex: "SEGREDO Nº 3", "VERSO Nº 1").
+
+${structureBlock}
+
+As referências de Brain-Marketing na mensagem do usuário são camada ESTRATÉGICA secundária (posicionamento, funil, atribuição): use pra embasar, mas em qualquer conflito o modus operandi vence.
 
 Responda SOMENTE com o JSON abaixo, sem markdown, sem texto antes ou depois:
-{"caption": string, "hashtags": string[], "slides": [{"headline": string, "subtext": string | null}]}`;
+{"caption": string, "hashtags": string[], "slides": [{"layout": string, "headline": string, "subtext": string | null, "kicker": string | null, "tag": "verso" | "segredo" | null, "tagLabel": string | null}]}`;
 }
 
 /**
  * Passo de copywriting do Studio (image/carousel): gera legenda + texto por slide usando
- * os frameworks de Brain-Marketing como contexto. Roda na API (não no node da RTX) porque
- * é aqui que temos o checkout completo do monorepo e a única chave Anthropic configurada
- * (mesmo padrão de classifier.ts). Retorna null em qualquer falha — o job de criação nunca
- * deve travar por causa da copy.
+ * o modus operandi canônico do carrossel (.agents/skills/carrossel-cinema-impossivel) como
+ * fonte da verdade e os frameworks de Brain-Marketing como camada estratégica secundária.
+ * Roda na API (não no node da RTX) porque é aqui que temos o checkout completo do monorepo
+ * e a única chave Anthropic configurada (mesmo padrão de classifier.ts). Retorna null em
+ * qualquer falha — o job de criação nunca deve travar por causa da copy.
  */
 export async function generateStudioCopy(params: {
   objective: string;
@@ -145,22 +225,23 @@ export async function generateStudioCopy(params: {
   const brief = [objective, briefing].filter((part) => part && part.trim().length > 0).join('. ');
   if (!brief.trim()) return null;
 
+  const modusOperandi = loadModusOperandi(logger);
   const docs = pickRelevantDocs(brief, logger);
   const referenceBlock =
     docs.length > 0
       ? docs.map((doc) => `### ${doc.titulo}\n${doc.body}`).join('\n\n')
-      : '(nenhum framework de marketing específico encontrado para este briefing — use seu critério de copywriter sênior.)';
+      : '(nenhum framework de marketing específico encontrado para este briefing — siga o modus operandi.)';
 
   try {
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 1536,
-      system: buildSystemPrompt(numSlides),
+      system: buildSystemPrompt(numSlides, modusOperandi),
       messages: [
         {
           role: 'user',
-          content: `Referências de marketing:\n\n${referenceBlock}\n\n---\n\nBriefing da campanha:\n${brief}`,
+          content: `Referências estratégicas de marketing (camada secundária — em conflito, o modus operandi vence):\n\n${referenceBlock}\n\n---\n\nBriefing da campanha:\n${brief}`,
         },
       ],
     });

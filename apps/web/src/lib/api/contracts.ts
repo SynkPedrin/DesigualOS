@@ -6,10 +6,12 @@
  */
 import {
   AGENT_NAMES,
+  CONVERSATION_VISIBILITIES,
   NODE_STATUSES,
   ROLE_NAMES,
   STUDIO_JOB_TYPES,
   type AgentName,
+  type ConversationVisibility,
   type ExecutionStatus,
   type NodeStatus,
   type NodeType,
@@ -747,8 +749,11 @@ export function mapCostsByUser(wire: { by_user: CostByUserWire[] }): CostByUser[
 export interface ConversationSummaryWire {
   id: string;
   client_id: string | null;
+  project_id: string | null;
+  user_id: string;
   title: string | null;
   status: string;
+  visibility: ConversationVisibility;
   last_agent: AgentName | null;
   last_message_preview: string | null;
   created_at: ISODateString;
@@ -758,8 +763,11 @@ export interface ConversationSummaryWire {
 export interface ConversationSummary {
   id: string;
   clientId: string | null;
+  projectId: string | null;
+  userId: string;
   title: string | null;
   status: string;
+  visibility: ConversationVisibility;
   lastAgent: AgentName | null;
   lastMessagePreview: string | null;
   createdAt: ISODateString;
@@ -770,8 +778,11 @@ export function mapConversationSummary(wire: ConversationSummaryWire): Conversat
   return {
     id: wire.id,
     clientId: wire.client_id,
+    projectId: wire.project_id,
+    userId: wire.user_id,
     title: wire.title,
     status: wire.status,
+    visibility: wire.visibility,
     lastAgent: wire.last_agent,
     lastMessagePreview: wire.last_message_preview,
     createdAt: wire.created_at,
@@ -1155,4 +1166,152 @@ export function mapAutomationRun(wire: AutomationRunWire): AutomationRun {
     startedAt: wire.started_at,
     completedAt: wire.completed_at,
   };
+}
+
+/**
+ * GET /clients/:id/comments (2026-09-04) — comentários de TODAS as tarefas do
+ * ClickUp do cliente agregados numa thread só, mais novo primeiro, cada item
+ * dizendo de qual tarefa veio. O backend limita a busca às 10 tarefas mexidas
+ * mais recentemente por causa do rate limit do ClickUp.
+ */
+export interface ClickUpClientCommentWire {
+  id: string;
+  text: string;
+  user_id: number | null;
+  username: string | null;
+  /** Epoch em ms como string (formato nativo do ClickUp), não ISO. */
+  date: string;
+  task_id: string;
+  task_name: string;
+  task_url: string | null;
+}
+
+/** POST /clickup/tasks/:id/comments — post real no ClickUp, resposta 201. */
+export interface CreateClickUpTaskCommentRequestWire {
+  comment_text: string;
+}
+
+export interface CreateClickUpTaskCommentResponseWire {
+  comment: { id: string; text: string; date: string | null };
+}
+
+/**
+ * GET /clients/:id/overview (2026-09-04) — resumo sempre atualizado do cliente
+ * (aba Visão Geral do workspace). `clickup` é null quando o cliente não tem
+ * lista vinculada; os demais blocos sempre vêm, com estado vazio honesto.
+ */
+export interface ClientOverviewWire {
+  clickup: {
+    total_tasks: number;
+    open_tasks: number;
+    by_status: Array<{ status: string; color: string | null; count: number }>;
+    latest_comments: ClickUpClientCommentWire[];
+  } | null;
+  conversations: {
+    total: number;
+    latest: Array<{ id: string; title: string | null; status: string; updated_at: ISODateString }>;
+  };
+  studio: {
+    total: number;
+    latest: Array<{ id: string; type: StudioJobType; filename: string; storage_url: string; created_at: ISODateString }>;
+  };
+}
+
+export { CONVERSATION_VISIBILITIES };
+export type { ConversationVisibility };
+
+/**
+ * PATCH /conversations/:id — renomear, mover pra projeto (project_id null tira
+ * do projeto) e trocar visibilidade. Só dono ou master (403 no backend).
+ * DELETE /conversations/:id apaga a conversa e as mensagens (204).
+ */
+export interface UpdateConversationRequestWire {
+  title?: string | null | undefined;
+  project_id?: string | null | undefined;
+  visibility?: ConversationVisibility | undefined;
+}
+
+/** GET /conversations/:id e resposta do PATCH: mesmo shape do summary sem os
+ * campos derivados de mensagem. */
+export interface ConversationDetailWire {
+  id: string;
+  client_id: string | null;
+  project_id: string | null;
+  user_id: string;
+  title: string | null;
+  status: string;
+  visibility: ConversationVisibility;
+  created_at: ISODateString;
+  updated_at: ISODateString;
+}
+
+export interface ConversationDetail {
+  id: string;
+  clientId: string | null;
+  projectId: string | null;
+  userId: string;
+  title: string | null;
+  status: string;
+  visibility: ConversationVisibility;
+  createdAt: ISODateString;
+  updatedAt: ISODateString;
+}
+
+export function mapConversationDetail(wire: ConversationDetailWire): ConversationDetail {
+  return {
+    id: wire.id,
+    clientId: wire.client_id,
+    projectId: wire.project_id,
+    userId: wire.user_id,
+    title: wire.title,
+    status: wire.status,
+    visibility: wire.visibility,
+    createdAt: wire.created_at,
+    updatedAt: wire.updated_at,
+  };
+}
+
+/**
+ * GET/POST/PATCH/DELETE /projects (2026-09-04) — projetos do CHAT, a seção
+ * "Projetos" da sidebar estilo Claude. Não confundir com studio_projects
+ * (domínio do Studio). DELETE desvincula as conversas (204), não apaga.
+ * Escrita exige chat:write.
+ */
+export interface ProjectWire {
+  id: string;
+  name: string;
+  client_id: string | null;
+  created_by: string;
+  created_at: ISODateString;
+  updated_at: ISODateString;
+}
+
+export interface ChatProject {
+  id: string;
+  name: string;
+  clientId: string | null;
+  createdBy: string;
+  createdAt: ISODateString;
+  updatedAt: ISODateString;
+}
+
+export function mapProject(wire: ProjectWire): ChatProject {
+  return {
+    id: wire.id,
+    name: wire.name,
+    clientId: wire.client_id,
+    createdBy: wire.created_by,
+    createdAt: wire.created_at,
+    updatedAt: wire.updated_at,
+  };
+}
+
+export interface CreateProjectRequestWire {
+  name: string;
+  client_id?: string | null | undefined;
+}
+
+export interface UpdateProjectRequestWire {
+  name?: string | undefined;
+  client_id?: string | null | undefined;
 }

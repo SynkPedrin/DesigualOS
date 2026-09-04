@@ -1,10 +1,11 @@
 'use client';
 
+import { Suspense } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronsLeft, ChevronsRight, LogOut } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, LogOut, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui-store';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
@@ -13,6 +14,7 @@ import { useMe } from '@/hooks/use-me';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { supabase } from '@/lib/supabase/client';
 import { NAV_ITEMS } from './nav-items';
+import { SidebarChatSections } from './sidebar-chat-sections';
 
 function formatBackupTime(iso: string | null) {
   if (!iso) return 'Sem registro';
@@ -39,6 +41,12 @@ export function Sidebar() {
   async function handleSignOut() {
     await supabase.auth.signOut();
     router.replace('/login');
+  }
+
+  /** Mesmo rota não reseta o estado local do ChatThread — o nonce em ?new= é o
+   * gatilho que o chat consome pra voltar à tela vazia (ver chat-thread.tsx). */
+  function handleNewChat() {
+    router.push(`/chat?new=${Date.now()}`);
   }
 
   return (
@@ -91,7 +99,20 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3">
+      <div className={cn('px-3 pb-4', collapsed && 'px-2')}>
+        <button
+          type="button"
+          onClick={handleNewChat}
+          aria-label="Novo chat"
+          title="Novo chat"
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-roxo-eletrico py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
+        >
+          <Plus size={16} className="shrink-0" />
+          {!collapsed && <span className="truncate">Novo chat</span>}
+        </button>
+      </div>
+
+      <nav aria-label="Navegação principal" className="flex-1 space-y-1 overflow-y-auto px-3">
         {visibleNavItems.map((item) => {
           const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
           const Icon = item.icon;
@@ -128,6 +149,15 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        {/* Colapsada, a sidebar esconde tudo que não é ícone — as seções somem
+         * junto (mesmo destino do widget de saúde). Suspense: a seção usa
+         * useSearchParams pro destaque do item ativo. */}
+        {!collapsed && (
+          <Suspense fallback={null}>
+            <SidebarChatSections />
+          </Suspense>
+        )}
       </nav>
 
       {isMaster && (

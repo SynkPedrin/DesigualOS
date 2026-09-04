@@ -34,6 +34,14 @@ export interface StudioJobData {
   includeText: boolean;
   /** Texto por slide, já gerado pela API antes de enfileirar (ver studio/routes.ts). */
   copySlides: StudioCopySlide[] | null;
+  /**
+   * Só carousel HTML: URLs de frames (imagens) que entram como fundo dos
+   * cards, na ordem. Presença não-vazia liga o caminho HTML (puppeteer-core)
+   * em vez de ComfyUI+sharp (ver nodes/studio-node/src/html-carousel/).
+   */
+  referenceImages?: string[] | undefined;
+  /** Opções extras do produtor. `design: 'html'` força o carrossel HTML mesmo sem frames. */
+  metadata?: Record<string, unknown> | undefined;
 }
 
 let queue: Queue<StudioJobData> | null = null;

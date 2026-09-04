@@ -1,14 +1,69 @@
 import type { FastifyInstance } from 'fastify';
-import { desc, eq } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { getTasksInList } from '@desigual-os/tool-gateway';
+import { getTaskComments, getTasksInList } from '@desigual-os/tool-gateway';
+import type { ClickUpTaskSummary } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { hasClientAccess } from '../lib/access';
 import { resolveClickUpAccess } from '../integrations/access';
 
 const logger = createLogger({ service: 'clients' });
+
+// Agregação de comentários: buscar comentários de TODA a lista estoura o
+// rate limit do ClickUp em listas grandes, então só as 10 tarefas mexidas
+// mais recentemente (onde a conversa viva acontece), 5 chamadas por vez.
+const COMMENTS_TASK_LIMIT = 10;
+const COMMENTS_CONCURRENCY = 5;
+const COMMENTS_TOTAL_LIMIT = 50;
+
+interface ClientClickUpComment {
+  id: string;
+  text: string;
+  user_id: number | null;
+  username: string | null;
+  date: string;
+  task_id: string;
+  task_name: string;
+  task_url: string | null;
+}
+
+/** Comentários das tarefas mais recentes da lista, mesclados e ordenados do
+ * mais novo pro mais velho. Tarefa que falha individualmente é pulada (uma
+ * tarefa apagada no ClickUp no meio do caminho não derruba o painel todo). */
+async function fetchAggregatedComments(tasks: ClickUpTaskSummary[], config: { apiKey: string; teamId: string }): Promise<ClientClickUpComment[]> {
+  const recentTasks = [...tasks]
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+    .slice(0, COMMENTS_TASK_LIMIT);
+
+  const merged: ClientClickUpComment[] = [];
+  for (let i = 0; i < recentTasks.length; i += COMMENTS_CONCURRENCY) {
+    const batch = recentTasks.slice(i, i + COMMENTS_CONCURRENCY);
+    const results = await Promise.allSettled(batch.map((task) => getTaskComments(config, task.id)));
+    results.forEach((result, index) => {
+      if (result.status !== 'fulfilled') {
+        logger.warn({ taskId: batch[index]?.id }, 'Falha ao buscar comentários de uma tarefa; pulando');
+        return;
+      }
+      const task = batch[index]!;
+      for (const comment of result.value) {
+        merged.push({
+          id: comment.id,
+          text: comment.text,
+          user_id: comment.userId,
+          username: comment.username,
+          date: comment.date,
+          task_id: task.id,
+          task_name: task.name,
+          task_url: task.url,
+        });
+      }
+    });
+  }
+
+  return merged.sort((a, b) => Number(b.date) - Number(a.date)).slice(0, COMMENTS_TOTAL_LIMIT);
+}
 
 const createClientSchema = z.object({
   name: z.string().min(1),
@@ -259,6 +314,130 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         reply.code(502);
         return { error: message };
       }
+    },
+  );
+
+  /**
+   * TODOS os comentários das tarefas do cliente numa thread só (pedido do
+   * usuário): em vez de escolher uma tarefa por vez, a aba Conversas mostra
+   * a conversa inteira do cliente, cada item dizendo de qual tarefa veio.
+   * Limitado às tarefas mais recentes por causa do rate limit do ClickUp
+   * (ver constantes no topo do arquivo).
+   */
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/comments',
+    { preHandler: [requireAuth, requirePermission('clients', 'read')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+      if (!client) {
+        reply.code(404);
+        return { error: `Client '${clientId}' not found` };
+      }
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client workspace' };
+      }
+      if (!client.clickupListId) {
+        reply.code(409);
+        return { error: 'Client is not linked to a ClickUp list yet. Run the ClickUp sync first.' };
+      }
+
+      const access = await resolveClickUpAccess(request.authUser.id);
+      if (!access) {
+        reply.code(400);
+        return { error: 'No ClickUp access available for this user' };
+      }
+
+      try {
+        const tasks = await getTasksInList(access.token, client.clickupListId);
+        return { comments: await fetchAggregatedComments(tasks, { apiKey: access.token, teamId: access.teamId }) };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error({ error, clientId }, 'Falha ao agregar comentários do ClickUp');
+        reply.code(502);
+        return { error: message };
+      }
+    },
+  );
+
+  /**
+   * Resumo sempre atualizado do cliente (aba Visão Geral): totais de tarefas
+   * do ClickUp por status, últimos comentários, assets do Studio e conversas
+   * do Desigual OS. Tudo lido na hora; o que não existir (cliente sem lista
+   * vinculada, por exemplo) vem como estado vazio/null, nunca inventado.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/overview',
+    { preHandler: [requireAuth, requirePermission('clients', 'read')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+      if (!client) {
+        reply.code(404);
+        return { error: `Client '${clientId}' not found` };
+      }
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client workspace' };
+      }
+
+      const [conversationCountRow, assetCountRow, recentConversations, recentAssets] = await Promise.all([
+        db.select({ value: count() }).from(schema.conversations).where(eq(schema.conversations.clientId, clientId)),
+        db.select({ value: count() }).from(schema.studioAssets).where(eq(schema.studioAssets.clientId, clientId)),
+        db.select().from(schema.conversations).where(eq(schema.conversations.clientId, clientId)).orderBy(desc(schema.conversations.updatedAt)).limit(5),
+        db.select().from(schema.studioAssets).where(eq(schema.studioAssets.clientId, clientId)).orderBy(desc(schema.studioAssets.createdAt)).limit(4),
+      ]);
+
+      // Sem lista vinculada o ClickUp não entra no resumo (null = estado
+      // vazio honesto), mas o resto do resumo continua valendo.
+      let clickup: {
+        total_tasks: number;
+        open_tasks: number;
+        by_status: Array<{ status: string; color: string | null; count: number }>;
+        latest_comments: ClientClickUpComment[];
+      } | null = null;
+
+      if (client.clickupListId) {
+        const access = await resolveClickUpAccess(request.authUser.id);
+        if (!access) {
+          reply.code(400);
+          return { error: 'No ClickUp access available for this user' };
+        }
+        try {
+          const tasks = await getTasksInList(access.token, client.clickupListId, true);
+          const byStatus = new Map<string, { status: string; color: string | null; count: number }>();
+          for (const task of tasks) {
+            const key = task.status ?? 'sem status';
+            const entry = byStatus.get(key) ?? { status: key, color: task.statusColor, count: 0 };
+            entry.count += 1;
+            byStatus.set(key, entry);
+          }
+          clickup = {
+            total_tasks: tasks.length,
+            open_tasks: tasks.filter((task) => task.statusType !== 'closed' && task.statusType !== 'done').length,
+            by_status: [...byStatus.values()].sort((a, b) => b.count - a.count),
+            latest_comments: (await fetchAggregatedComments(tasks, { apiKey: access.token, teamId: access.teamId })).slice(0, 5),
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error({ error, clientId }, 'Falha ao montar resumo do ClickUp');
+          reply.code(502);
+          return { error: message };
+        }
+      }
+
+      return {
+        clickup,
+        conversations: {
+          total: conversationCountRow[0]?.value ?? 0,
+          latest: recentConversations.map((row) => ({ id: row.id, title: row.title, status: row.status, updated_at: row.updatedAt.toISOString() })),
+        },
+        studio: {
+          total: assetCountRow[0]?.value ?? 0,
+          latest: recentAssets.map((row) => ({ id: row.id, type: row.type, filename: row.filename, storage_url: row.storageUrl, created_at: row.createdAt.toISOString() })),
+        },
+      };
     },
   );
 

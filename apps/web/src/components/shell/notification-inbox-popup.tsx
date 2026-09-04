@@ -10,7 +10,8 @@ import { useUiStore } from '@/stores/ui-store';
 import type { Notification } from '@/lib/api/contracts';
 
 /**
- * Único popup de notificação do app: lista no canto superior esquerdo.
+ * Único popup de notificação do app: lista embaixo do sininho, no canto
+ * superior direito (antes era superior esquerdo e tapava a sidebar do chat).
  * Dispara pra QUALQUER não-lida ainda não mostrada nesta sessão — o que já
  * tinha se acumulado antes de abrir (primeira carga) e o que chega depois
  * via polling (job do Studio terminou, agente respondeu), mesmo que a aba
@@ -32,6 +33,17 @@ export function NotificationInboxPopup() {
 
   const [batch, setBatch] = useState<Notification[]>([]);
   const shownIds = useRef<Set<string>>(new Set());
+
+  // Auto-fecha depois de 10s: antes disso o popup ficava aberto pra sempre (só
+  // saía no X) e, pior, cobria a sidebar do chat no canto superior esquerdo —
+  // cliques em "Nova conversa" e nas conversas caíam no popup e pareciam não
+  // funcionar (bug relatado 2026-09-04). Agora ele também sai do canto
+  // esquerdo: fica embaixo do sininho, no canto superior direito.
+  useEffect(() => {
+    if (batch.length === 0) return;
+    const timeout = setTimeout(() => setBatch([]), 10_000);
+    return () => clearTimeout(timeout);
+  }, [batch]);
 
   useEffect(() => {
     if (!notifications) return;
@@ -62,7 +74,7 @@ export function NotificationInboxPopup() {
   }
 
   return (
-    <div className="pointer-events-none fixed left-6 top-6 z-[100] w-96">
+    <div className="pointer-events-none fixed right-6 top-20 z-[100] w-96">
       <AnimatePresence>
         {batch.length > 0 && (
           <motion.div

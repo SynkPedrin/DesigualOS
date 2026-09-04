@@ -7,6 +7,17 @@ status: living-document
 
 Notas ativas do estado atual do projeto. Atualizada conforme o trabalho avança.
 
+## Hardening agentes + chat/projetos + overlay de cliente (2026-09-04, sessão Kimi)
+
+- **Bento sem OpenAI, pra sempre**: `bento-qa` (máquina do Bento) gerava respostas com `OPENAI_API_KEY`/gpt-5, que estourou 429 sem créditos e derrubou o agente. `src/llm.js` reescrito: geração agora é Ollama `llama3.1:8b` (pull feito no PC do Studio, `100.107.198.50:11434`; Mini é Intel/8GB, não aguenta). Contrato do `/ask` e barreira de citação intactos (testado: resposta citada em ~6-8s; pergunta sem fonte → "nao-sei" honesto). Embeddings já eram Ollama (memory-api), nada mudou lá. Ressalva: qualidade do 8B é inferior; respostas podem tangenciar. Backups `.bak-20260904` na máquina.
+- **Router entende @menção**: `@jarbas`/`@suzy`/`@bento`/`@studio` no texto (com AUTO) força o agente, confidence 1 (`packages/router/src/route.ts` `detectMentionedAgent`). Testado E2E.
+- **Bug "Nova conversa"**: causa raiz era o `NotificationInboxPopup` cobrindo a sidebar (fixed, z-100, sem auto-dismiss) e engolindo os cliques. Movido pro canto superior direito + auto-dismiss 10s.
+- **Bug "conversa vazia no refresh"**: thread vivia só em estado local. Agora o histórico persistido (`messages`) é a fonte que renderiza e a conversa aberta é param de URL (`?conversation=`): refresh reabre tudo do banco.
+- **Conversas privadas vs públicas**: coluna `visibility` (default `private`; as 15 existentes migradas pra `public` pra não regredir a Fase 2). Colaborador vê públicas + próprias privadas; master vê tudo; POST /chat em privada alheia → 403. Toggle "Compartilhar com a equipe" na UI.
+- **Projetos estilo Claude**: tabela `projects` + `conversations.project_id`, CRUD `/projects`, sidebar do chat com seção Projetos (botão +) e Conversas, conversa pode ser renomeada/movida/excluída (DELETE desvincula conversas do projeto, não apaga).
+- **Overlay de cliente**: aba ClickUp só com tasks (aviso de embed removido de vez); Visão Geral vira resumo vivo (tasks por status com cor real, últimos comentários, assets, conversas; refetch 60s); Conversas agrega comentários de TODAS as tasks do cliente (10 mais recentes, limite 50) e tem composer que POSTA comentário real no ClickUp (`POST /clickup/tasks/:id/comments`, com guarda: task precisa pertencer à lista de um cliente cadastrado); aba Studio restaurada como galeria somente leitura dos assets do cliente.
+- Validado E2E: 3 agentes respondendo no chat, isolamento privado/público, CRUD projetos/conversas, persistência pós-refresh, menção @Suzy via AUTO.
+
 ## Desbloqueio Jarbas/Suzy + ClickUp + automações (2026-09-03, sessão Kimi)
 
 - **`POST /internal/ask` deployado nas máquinas do Jarbas e da Suzy** (autorizado pelo usuário nesta sessão; era o bloqueante nº 1 desde 02/set): cada agente expõe `answerQuestion()` reusando o cérebro real do WhatsApp (Suzy: bentoAsk/openclawBrain/ollamaChat; Jarbas: generateResponse). Token único novo em `API_KEYS` com permission `internal_ask` (mesmo nas duas máquinas; credenciais antigas preservadas, nada rotacionado). Backups `.bak-20260903` em cada arquivo editado.

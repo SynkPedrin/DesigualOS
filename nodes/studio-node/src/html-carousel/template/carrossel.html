@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Carrossel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink:#0A0A0E; --ink-deep:#050508; --plum-dark:#1A0F2E; --plum-mid:#241440;
+  --roxo:#8B5CF6; --roxo-deep:#6D28D9; --roxo-muted:#A78BFA;
+  --magenta:#C026D3; --lima:#B8D62E; --lima-dim:#96AF22;
+  --cream:#FAF8F4; --warm-white:#F0EDE6; --glass-border:rgba(255,255,255,.08);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { background:var(--ink-deep); }
+body { font-family:'Space Grotesk', sans-serif; color:var(--cream); }
+
+.card { position:relative; width:1080px; height:1350px; background:var(--ink); overflow:hidden; }
+.card.is-hidden { display:none; }
+
+/* REGRA DE OURO: o frame nunca recebe tint/overlay colorido. A pele vive na
+   moldura (.edge), na tipografia e nos cards de texto. O véu plum e a opacity
+   reduzida só valem pros cards de follow/cta, que são cards de texto por
+   natureza — nunca pros cards de revelação. */
+.frame { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:1; }
+.card[data-layout="follow"] .frame,
+.card[data-layout="cta"] .frame { opacity:.62; }
+.card[data-layout="diptico"] .frame { height:56%; bottom:auto; }
+
+.veu-plum { position:absolute; inset:0; z-index:2;
+  background:linear-gradient(160deg, rgba(26,15,46,.88) 0%, rgba(36,20,64,.78) 55%, rgba(5,5,8,.94) 100%); }
+.scrim-b { position:absolute; left:0; right:0; bottom:0; height:64%; z-index:2;
+  background:linear-gradient(180deg, rgba(5,5,8,0) 0%, rgba(5,5,8,.88) 78%); }
+
+.aspas { position:absolute; top:24px; left:28px; z-index:2; font-weight:700; font-size:780px;
+  line-height:.78; color:var(--roxo-deep); opacity:.28; pointer-events:none; }
+
+.edge { position:absolute; inset:26px; z-index:6; border:1px solid var(--glass-border); pointer-events:none; }
+.edge::before { content:''; position:absolute; top:-1px; left:-1px; width:56px; height:56px;
+  border-top:4px solid var(--lima); border-left:4px solid var(--lima); }
+.edge::after { content:''; position:absolute; right:-1px; bottom:-1px; width:56px; height:56px;
+  border-right:4px solid var(--roxo); border-bottom:4px solid var(--roxo); }
+
+.grain::after { content:''; position:absolute; inset:0; z-index:8; pointer-events:none; opacity:.5;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.16'/></svg>"); }
+
+.kicker { position:absolute; top:64px; left:72px; right:72px; z-index:7;
+  font-family:'Space Mono', monospace; font-size:26px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--lima); }
+
+.tag-corte { display:inline-block; margin-bottom:36px; padding:14px 22px;
+  font-family:'Space Mono', monospace; font-size:24px; font-weight:700;
+  letter-spacing:.18em; text-transform:uppercase; border:1px solid var(--glass-border); }
+.tag-corte.verso { color:var(--ink-deep); background:var(--lima); border-color:var(--lima); }
+.tag-corte.segredo { color:var(--cream); background:var(--roxo-deep); border-color:var(--roxo); }
+
+.body { position:absolute; left:72px; right:72px; bottom:150px; z-index:7; }
+.body.center { top:50%; bottom:auto; transform:translateY(-50%); }
+
+h1, h2 { font-weight:500; letter-spacing:-.03em; line-height:1.02; }
+h1 { font-size:96px; }
+h2 { font-size:100px; }
+.card[data-layout="capa"] h1 { font-size:106px; }
+.card[data-layout="item"] h1,
+.card[data-layout="diptico"] h1 { font-size:92px; }
+.card[data-layout="golpe"] h1 { font-size:100px; }
+
+.hl { color:var(--lima); }
+.subtext { margin-top:34px; max-width:880px; font-size:34px; font-weight:300;
+  line-height:1.45; color:var(--warm-white); }
+.subtext .hl { color:var(--roxo-muted); }
+
+.arrasta { margin-top:44px; font-family:'Space Mono', monospace; font-size:26px;
+  font-weight:700; letter-spacing:.22em; color:var(--lima); }
+
+.golpe-bar { width:96px; height:6px; margin-bottom:40px; background:var(--magenta); }
+
+.footer { position:absolute; left:72px; right:72px; bottom:56px; z-index:7;
+  display:flex; justify-content:space-between; align-items:baseline;
+  font-family:'Space Mono', monospace; font-size:22px; letter-spacing:.12em;
+  color:rgba(240,237,230,.72); }
+.footer .pag { color:var(--lima); }
+</style>
+</head>
+<body>
+<script>
+(function () {
+  var CARDS = Array.isArray(window.__CARDS__) ? window.__CARDS__ : [];
+  var META = window.__META__ || {};
+  var seriesName = META.seriesName || 'Cinema Impossível';
+  var footerText = META.footerText || 'O que você não percebeu';
+
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  // *destaque* vira span: lima na headline, roxo-muted dentro de parágrafo
+  // (a cor do .hl dentro de .subtext é trocada via CSS).
+  function markup(text) {
+    return esc(text).replace(/\*([^*]+)\*/g, '<span class="hl">$1</span>');
+  }
+  function el(tag, className, html) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (html != null) node.innerHTML = html;
+    return node;
+  }
+
+  var CENTERED = { follow: true, cta: true, golpe: true };
+
+  function buildCard(card, index) {
+    var layout = card.layout || 'item';
+    var section = el('section', 'card grain');
+    section.id = 'c' + (index + 1);
+    section.setAttribute('data-layout', layout);
+
+    if (card.frame) {
+      var img = el('img', 'frame');
+      img.src = card.frame;
+      img.alt = '';
+      img.onerror = function () { img.remove(); };
+      section.appendChild(img);
+      if (layout === 'follow' || layout === 'cta') {
+        section.appendChild(el('div', 'veu-plum'));
+      } else if (layout !== 'diptico') {
+        section.appendChild(el('div', 'scrim-b'));
+      }
+    } else {
+      if (layout === 'premissa' || layout === 'tese') {
+        section.appendChild(el('div', 'aspas', '&ldquo;'));
+      }
+      if (layout === 'follow' || layout === 'cta') {
+        section.appendChild(el('div', 'veu-plum'));
+      }
+    }
+
+    section.appendChild(el('div', 'edge'));
+    if (card.kicker) section.appendChild(el('div', 'kicker', esc(card.kicker)));
+
+    var body = el('div', 'body' + (CENTERED[layout] ? ' center' : ''));
+    if (layout === 'golpe') body.appendChild(el('div', 'golpe-bar'));
+    if (card.tagLabel) {
+      body.appendChild(el('div', 'tag-corte ' + (card.tag === 'verso' ? 'verso' : 'segredo'), esc(card.tagLabel)));
+    }
+    body.appendChild(el(layout === 'follow' || layout === 'cta' ? 'h2' : 'h1', null, markup(card.headline)));
+    if (card.subtext) body.appendChild(el('p', 'subtext', markup(card.subtext)));
+    if (layout === 'capa') body.appendChild(el('div', 'arrasta', 'Arrasta &gt;&gt;&gt;'));
+    section.appendChild(body);
+
+    var footer = el('footer', 'footer');
+    footer.appendChild(el('span', null, esc(seriesName + ' · ' + footerText)));
+    footer.appendChild(el('span', 'pag', esc(card.page + '/' + card.totalPages)));
+    section.appendChild(footer);
+
+    return section;
+  }
+
+  var root = document.body;
+  CARDS.forEach(function (card, index) {
+    root.appendChild(buildCard(card, index));
+  });
+
+  // ?card=N (1-based) ou ?card=cN isola um card pra export individual.
+  var only = new URLSearchParams(location.search).get('card');
+  if (only) {
+    var wanted = /^c\d+$/.test(only) ? only : 'c' + only;
+    Array.prototype.forEach.call(document.querySelectorAll('.card'), function (section) {
+      if (section.id !== wanted) section.classList.add('is-hidden');
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -4,14 +4,35 @@ import { agentNameEnum, messageRoleEnum } from './enums';
 import { clients } from './clients';
 import { users } from './identity';
 
+/**
+ * Projetos do Chat (organização da sidebar, estilo Claude): agrupam conversas
+ * soltas por frente de trabalho. NÃO confundir com studio_projects (schema
+ * studio.ts), que é do domínio do Studio/ComfyUI.
+ */
+export const projects = pgTable('projects', {
+  ...idColumn,
+  name: text('name').notNull(),
+  clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+  createdBy: uuid('created_by')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  ...timestampColumns,
+});
+
 export const conversations = pgTable('conversations', {
   ...idColumn,
   clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+  projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
   title: text('title'),
   status: text('status').notNull().default('open'),
+  // private: só o dono (e master) lê. public: toda a equipe lê. O default do
+  // banco vale pra tudo que nasce por código (POST /chat, automações); a
+  // migration 0014 marca as linhas PRÉ-existentes como public pra preservar o
+  // comportamento "chat compartilhado" que vigorava até 2026-09-04.
+  visibility: text('visibility').notNull().default('private'),
   ...timestampColumns,
   ...softDeleteColumn,
 });

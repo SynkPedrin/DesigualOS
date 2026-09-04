@@ -40,6 +40,10 @@ const createJobSchema = z.object({
   quality_preset: z.enum(QUALITY_PRESETS).optional(),
   // image/carousel: se deve gerar copy de marketing e sobrepor texto nas imagens.
   include_text: z.boolean().optional(),
+  // Só carousel: frames (URLs de imagem) pro caminho de carrossel HTML do
+  // studio-node; metadata.design='html' força esse caminho mesmo sem frames.
+  reference_images: z.array(z.string().url()).max(16).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 export async function registerStudioRoutes(app: FastifyInstance): Promise<void> {
@@ -118,6 +122,8 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
         qualityPreset: job.qualityPreset,
         includeText: job.includeText,
         copySlides: job.copySlides,
+        referenceImages: body.reference_images,
+        metadata: body.metadata,
       });
 
       reply.code(202);

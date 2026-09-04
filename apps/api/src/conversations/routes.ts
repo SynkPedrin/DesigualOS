@@ -1,13 +1,43 @@
 import type { FastifyInstance } from 'fastify';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { AGENT_NAMES, type AgentName } from '@desigual-os/types';
-import { requireAuth } from '../auth/middleware';
+import { AGENT_NAMES, CONVERSATION_VISIBILITIES, type AgentName } from '@desigual-os/types';
+import { requireAuth, type AuthenticatedUser } from '../auth/middleware';
+
+type ConversationRow = typeof schema.conversations.$inferSelect;
+
+/**
+ * Regra privado/publico (2026-09-04): colaborador lê conversas públicas + as
+ * próprias privadas; master lê tudo. Escrita (renomear, mover, excluir) é só
+ * do dono ou do master.
+ */
+export function canReadConversation(user: AuthenticatedUser, conversation: ConversationRow): boolean {
+  return conversation.visibility === 'public' || canWriteConversation(user, conversation);
+}
+
+export function canWriteConversation(user: AuthenticatedUser, conversation: ConversationRow): boolean {
+  return conversation.userId === user.id || user.roles.includes('master');
+}
+
+const updateConversationSchema = z.object({
+  title: z.string().min(1).max(200).nullable().optional(),
+  project_id: z.string().uuid().nullable().optional(),
+  visibility: z.enum(CONVERSATION_VISIBILITIES).optional(),
+});
 
 export async function registerConversationRoutes(app: FastifyInstance): Promise<void> {
-  app.get<{ Querystring: { agent?: string; client_id?: string } }>('/conversations', { preHandler: requireAuth }, async (request, reply) => {
+  app.get<{ Querystring: { agent?: string; client_id?: string; project_id?: string } }>('/conversations', { preHandler: requireAuth }, async (request, reply) => {
     const agentFilter = request.query.agent;
     const clientFilter = request.query.client_id;
+    // project_id=none lista só as conversas soltas (fora de qualquer projeto),
+    // que é a seção "Conversas" da sidebar; um uuid filtra por aquele projeto.
+    const projectFilter = request.query.project_id;
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
     if (agentFilter && !AGENT_NAMES.includes(agentFilter as AgentName)) {
       reply.code(400);
       return { error: `Unknown agent '${agentFilter}'` };
@@ -28,10 +58,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       }
     }
 
-    // Chat é compartilhado por toda a equipe (pedido do usuário, 2026-09-03):
-    // antes filtrava por `userId` do dono; agora qualquer autenticado lista
-    // todas as conversas, só os filtros de agente/projeto (acima e abaixo)
-    // restringem — é o que alimenta "ver histórico do projeto X" no chat.
+    const isMaster = user.roles.includes('master');
     const rows = await db
       .select()
       .from(schema.conversations)
@@ -39,6 +66,12 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
         and(
           conversationIds ? inArray(schema.conversations.id, conversationIds) : undefined,
           clientFilter ? eq(schema.conversations.clientId, clientFilter) : undefined,
+          projectFilter === 'none'
+            ? isNull(schema.conversations.projectId)
+            : projectFilter
+              ? eq(schema.conversations.projectId, projectFilter)
+              : undefined,
+          isMaster ? undefined : or(eq(schema.conversations.visibility, 'public'), eq(schema.conversations.userId, user.id)),
         ),
       )
       .orderBy(desc(schema.conversations.updatedAt))
@@ -56,8 +89,11 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
         return {
           id: row.id,
           client_id: row.clientId,
+          project_id: row.projectId,
+          user_id: row.userId,
           title: row.title,
           status: row.status,
+          visibility: row.visibility,
           last_agent: lastMessage?.agent ?? null,
           last_message_preview: lastMessage?.content?.slice(0, 120) ?? null,
           created_at: row.createdAt.toISOString(),
@@ -69,17 +105,52 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     return { conversations };
   });
 
+  app.get<{ Params: { id: string } }>('/conversations/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, request.params.id));
+    if (!conversation) {
+      reply.code(404);
+      return { error: `Conversation '${request.params.id}' not found` };
+    }
+    if (!canReadConversation(user, conversation)) {
+      reply.code(403);
+      return { error: 'This conversation is private' };
+    }
+    return {
+      id: conversation.id,
+      client_id: conversation.clientId,
+      project_id: conversation.projectId,
+      user_id: conversation.userId,
+      title: conversation.title,
+      status: conversation.status,
+      visibility: conversation.visibility,
+      created_at: conversation.createdAt.toISOString(),
+      updated_at: conversation.updatedAt.toISOString(),
+    };
+  });
+
   app.get<{ Params: { id: string } }>(
     '/conversations/:id/messages',
     { preHandler: requireAuth },
     async (request, reply) => {
+      const user = request.authUser;
+      if (!user) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
       const [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, request.params.id));
       if (!conversation) {
         reply.code(404);
         return { error: `Conversation '${request.params.id}' not found` };
       }
-      // Chat compartilhado (mesma decisão do GET /conversations acima): não
-      // é mais preciso ser o dono nem master para ler uma conversa.
+      if (!canReadConversation(user, conversation)) {
+        reply.code(403);
+        return { error: 'This conversation is private' };
+      }
 
       const rows = await db
         .select()
@@ -99,4 +170,75 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       };
     },
   );
+
+  app.patch<{ Params: { id: string } }>('/conversations/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const body = updateConversationSchema.parse(request.body);
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, request.params.id));
+    if (!conversation) {
+      reply.code(404);
+      return { error: `Conversation '${request.params.id}' not found` };
+    }
+    if (!canWriteConversation(user, conversation)) {
+      reply.code(403);
+      return { error: 'Only the owner or a master can change this conversation' };
+    }
+
+    if (body.project_id) {
+      const [project] = await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, body.project_id));
+      if (!project) {
+        reply.code(404);
+        return { error: `Project '${body.project_id}' not found` };
+      }
+    }
+
+    const [updated] = await db
+      .update(schema.conversations)
+      .set({
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.project_id !== undefined ? { projectId: body.project_id } : {}),
+        ...(body.visibility !== undefined ? { visibility: body.visibility } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.conversations.id, request.params.id))
+      .returning();
+
+    return {
+      id: updated!.id,
+      client_id: updated!.clientId,
+      project_id: updated!.projectId,
+      user_id: updated!.userId,
+      title: updated!.title,
+      status: updated!.status,
+      visibility: updated!.visibility,
+      created_at: updated!.createdAt.toISOString(),
+      updated_at: updated!.updatedAt.toISOString(),
+    };
+  });
+
+  // Delete real (não soft): a FK de messages tem onDelete cascade, então as
+  // mensagens morrem junto — é o que "Excluir conversa" promete na UI.
+  app.delete<{ Params: { id: string } }>('/conversations/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const [conversation] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, request.params.id));
+    if (!conversation) {
+      reply.code(404);
+      return { error: `Conversation '${request.params.id}' not found` };
+    }
+    if (!canWriteConversation(user, conversation)) {
+      reply.code(403);
+      return { error: 'Only the owner or a master can delete this conversation' };
+    }
+    await db.delete(schema.conversations).where(eq(schema.conversations.id, request.params.id));
+    reply.code(204);
+    return null;
+  });
 }

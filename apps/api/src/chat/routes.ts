@@ -43,14 +43,17 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
     // abre uma nova. User -> Conversation -> Execution (seção 6.3).
     let conversationId = body.conversation_id ?? null;
     if (conversationId) {
-      const [existing] = await db.select({ id: schema.conversations.id }).from(schema.conversations).where(eq(schema.conversations.id, conversationId));
+      const [existing] = await db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId));
       if (!existing) {
         reply.code(404);
         return { error: `Conversation '${conversationId}' not found` };
       }
-      // Chat compartilhado (pedido do usuário, 2026-09-03): antes só o dono
-      // (ou master) podia postar numa conversa existente; agora qualquer
-      // colaborador autenticado pode continuar qualquer conversa.
+      // Conversa privada (2026-09-04): só o dono (ou master) continua nela.
+      // Pública continua aberta pra qualquer colaborador, como antes.
+      if (existing.visibility === 'private' && existing.userId !== user.id && !user.roles.includes('master')) {
+        reply.code(403);
+        return { error: 'This conversation is private' };
+      }
     } else {
       const [conversation] = await db
         .insert(schema.conversations)

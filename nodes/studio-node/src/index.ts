@@ -8,6 +8,7 @@ import { generateImageViaComfyUI, resolveCheckpointName, stepsForQuality } from 
 import { parseResolution, snapToFluxGrid } from './generate';
 import { enrichImagePrompt } from './prompt-quality';
 import { compositeSlideText, type SlideText } from './text-overlay';
+import { renderCarouselCards, type CardData, type CardLayout, type CarouselMeta } from './html-carousel/renderer';
 import { uploadAsset } from './storage';
 
 const logger = createLogger({ service: 'studio-node' });
@@ -25,6 +26,63 @@ async function getCheckpointName(): Promise<string> {
 async function reportProgress(jobId: string, progress: number, status: string): Promise<void> {
   await db.update(schema.studioJobs).set({ progress, status }).where(eq(schema.studioJobs.jobId, jobId));
   await publishWsEvent({ type: 'studio.job.progress', payload: { job_id: jobId, progress, status } });
+}
+
+/**
+ * Estrutura canônica do carrossel (10 cards): capa, premissa, itens, follow
+ * no 5, golpe no 7, tese no penúltimo, CTA no último. Contagens menores
+ * degradam mantendo capa/premissa/tese/cta fixos nas pontas.
+ */
+function layoutForSlide(index: number, total: number): CardLayout {
+  if (index === 0) return 'capa';
+  if (index === 1) return 'premissa';
+  if (index === total - 1) return 'cta';
+  if (index === total - 2) return 'tese';
+  if (index === 4 && total >= 8) return 'follow';
+  if (index === 6 && total >= 9) return 'golpe';
+  return 'item';
+}
+
+/**
+ * Upload pro Storage + registro em studioAssets: o mesmo pra qualquer caminho
+ * de geração (ComfyUI ou carrossel HTML), então fica extraído pra os dois
+ * compartilharem. Só o bloco `metadata` varia por caminho.
+ */
+async function persistSlideAsset(params: {
+  jobId: string;
+  clientId: string;
+  requestedBy: string | null;
+  projectId: string | null;
+  type: string;
+  prompt: string | null;
+  model: string;
+  filename: string;
+  content: Buffer;
+  metadata: Record<string, unknown>;
+}): Promise<{ storageUrl: string; assetId: string }> {
+  const path = `${params.clientId}/${params.filename}`;
+  const storageUrl = await uploadAsset(config, path, params.content, 'image/png');
+
+  const [asset] = await db
+    .insert(schema.studioAssets)
+    .values({
+      clientId: params.clientId,
+      // Sem isso a galeria não sabe QUEM criou cada peça (requisito da spec
+      // da Galeria). A coluna já existia no schema e nunca era preenchida.
+      userId: params.requestedBy,
+      projectId: params.projectId,
+      type: params.type,
+      filename: params.filename,
+      storageUrl,
+      agent: 'studio',
+      prompt: params.prompt,
+      model: params.model,
+      metadata: params.metadata,
+    })
+    .returning();
+
+  if (!asset) throw new Error(`Failed to persist studio asset (${params.filename})`);
+  return { storageUrl, assetId: asset.id };
 }
 
 /**
@@ -101,71 +159,127 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
   }
 
   const slidesCount = type === 'carousel' ? Math.max(1, numSlides ?? 1) : 1;
-  const parsed = parseResolution(resolution ?? '1344x896');
-  // Alinha na grade do Flux antes de gerar: ver snapToFluxGrid() pro
-  // porquê e pra comparação medida de qualidade.
-  const width = snapToFluxGrid(parsed.width);
-  const height = snapToFluxGrid(parsed.height);
-  const checkpointName = await getCheckpointName();
-  await reportProgress(jobId, 20, 'rendering');
-
-  // PDF não entra como referência visual (o ComfyUI não rasteriza PDF); só
-  // imagem. Se a pessoa anexou só PDF, gera por texto e o anexo continua
-  // registrado no asset — nunca finge que usou.
-  const referenceImage = (attachments ?? []).find((a) => a.contentType.startsWith('image/'));
-  const model = referenceImage ? `${checkpointName} (img2img)` : checkpointName;
-  const steps = stepsForQuality(qualityPreset);
 
   const generated: { storageUrl: string; filename: string }[] = [];
   let firstAssetId: string | null = null;
+  let model: string;
 
-  for (let slideIndex = 0; slideIndex < slidesCount; slideIndex++) {
-    const slideCopy: SlideText | undefined = copySlides?.[slideIndex];
+  // Caminho novo do carrossel: cards em HTML/CSS (pele canônica) renderizados
+  // via Chrome headless, em vez de ComfyUI+sharp/SVG. Liga quando o job traz
+  // frames de referência ou quando o produtor pede explicitamente
+  // metadata.design='html'. Jobs genéricos sem frames seguem no caminho antigo.
+  const referenceImages = job.data.referenceImages ?? [];
+  const jobMeta = job.data.metadata ?? {};
+  const useHtmlCarousel = type === 'carousel' && (referenceImages.length > 0 || jobMeta.design === 'html');
 
-    // Cada slide do carrossel varia a cena com o headline da copy, senão
-    // vira a mesma imagem repetida N vezes.
-    const slideHint = slideCopy
-      ? ` — cena para o slide ${slideIndex + 1}: ${slideCopy.headline}${slideCopy.subtext ? `, ${slideCopy.subtext}` : ''}`
-      : '';
-    // Prompt curto vira imagem chapada; ver prompt-quality.ts pra comparação medida.
-    const enrichedPrompt = enrichImagePrompt((prompt ?? '') + slideHint);
+  if (useHtmlCarousel) {
+    model = 'html-carousel (puppeteer-core)';
+    await reportProgress(jobId, 20, 'rendering');
 
-    let content = await generateImageViaComfyUI(
-      { baseUrl: config.COMFYUI_URL, checkpointName },
-      {
-        prompt: enrichedPrompt.prompt,
-        width,
-        height,
-        referenceImage: referenceImage ? { url: referenceImage.url, filename: referenceImage.filename } : undefined,
-        steps,
-      },
-    );
+    const meta: CarouselMeta = {
+      seriesName: typeof jobMeta.seriesName === 'string' ? jobMeta.seriesName : undefined,
+      footerText: typeof jobMeta.footerText === 'string' ? jobMeta.footerText : undefined,
+    };
+    const cards: CardData[] = Array.from({ length: slidesCount }, (_, slideIndex) => {
+      const slideCopy = copySlides?.[slideIndex];
+      return {
+        layout: layoutForSlide(slideIndex, slidesCount),
+        headline: slideCopy?.headline ?? prompt ?? '',
+        subtext: slideCopy?.subtext,
+        frame: referenceImages[slideIndex] ?? null,
+        page: slideIndex + 1,
+        totalPages: slidesCount,
+      };
+    });
 
-    // Texto de verdade via compositing (não confiar no modelo de imagem pra
-    // "desenhar" texto — isso é notoriamente ruim mesmo nos modelos mais
-    // avançados). Só roda se a copy trouxe texto pra esse slide.
-    if (includeText && slideCopy) {
-      content = await compositeSlideText(content, slideCopy);
-    }
+    const contents = await renderCarouselCards(cards, meta);
 
-    const filename = slidesCount > 1 ? `${jobId}-${slideIndex + 1}.png` : `${jobId}.png`;
-    const path = `${clientId}/${filename}`;
-    const storageUrl = await uploadAsset(config, path, content, 'image/png');
-
-    const [asset] = await db
-      .insert(schema.studioAssets)
-      .values({
+    for (let slideIndex = 0; slideIndex < contents.length; slideIndex++) {
+      const content = contents[slideIndex];
+      if (!content) throw new Error(`Renderer não devolveu o card ${slideIndex + 1}/${slidesCount}`);
+      const filename = slidesCount > 1 ? `${jobId}-${slideIndex + 1}.png` : `${jobId}.png`;
+      const { storageUrl, assetId } = await persistSlideAsset({
+        jobId,
         clientId,
-        // Sem isso a galeria não sabe QUEM criou cada peça (requisito da spec
-        // da Galeria). A coluna já existia no schema e nunca era preenchida.
-        userId: requestedBy,
+        requestedBy,
         projectId,
         type,
-        filename,
-        storageUrl,
-        agent: 'studio',
         prompt,
         model,
+        filename,
+        content,
+        metadata: {
+          resolution: '1080x1350',
+          stub: false,
+          design: 'html',
+          frame: referenceImages[slideIndex] ?? null,
+          node_id: config.NODE_ID,
+          job_id: jobId,
+          slide_index: slideIndex,
+          slides_total: slidesCount,
+          headline: copySlides?.[slideIndex]?.headline ?? null,
+        },
+      });
+      generated.push({ storageUrl, filename });
+      firstAssetId ??= assetId;
+      await reportProgress(jobId, 30 + Math.round(((slideIndex + 1) / slidesCount) * 60), 'rendering');
+    }
+  } else {
+    const parsed = parseResolution(resolution ?? '1344x896');
+    // Alinha na grade do Flux antes de gerar: ver snapToFluxGrid() pro
+    // porquê e pra comparação medida de qualidade.
+    const width = snapToFluxGrid(parsed.width);
+    const height = snapToFluxGrid(parsed.height);
+    const checkpointName = await getCheckpointName();
+    await reportProgress(jobId, 20, 'rendering');
+
+    // PDF não entra como referência visual (o ComfyUI não rasteriza PDF); só
+    // imagem. Se a pessoa anexou só PDF, gera por texto e o anexo continua
+    // registrado no asset — nunca finge que usou.
+    const referenceImage = (attachments ?? []).find((a) => a.contentType.startsWith('image/'));
+    model = referenceImage ? `${checkpointName} (img2img)` : checkpointName;
+    const steps = stepsForQuality(qualityPreset);
+
+    for (let slideIndex = 0; slideIndex < slidesCount; slideIndex++) {
+      const slideCopy: SlideText | undefined = copySlides?.[slideIndex];
+
+      // Cada slide do carrossel varia a cena com o headline da copy, senão
+      // vira a mesma imagem repetida N vezes.
+      const slideHint = slideCopy
+        ? ` — cena para o slide ${slideIndex + 1}: ${slideCopy.headline}${slideCopy.subtext ? `, ${slideCopy.subtext}` : ''}`
+        : '';
+      // Prompt curto vira imagem chapada; ver prompt-quality.ts pra comparação medida.
+      const enrichedPrompt = enrichImagePrompt((prompt ?? '') + slideHint);
+
+      let content = await generateImageViaComfyUI(
+        { baseUrl: config.COMFYUI_URL, checkpointName },
+        {
+          prompt: enrichedPrompt.prompt,
+          width,
+          height,
+          referenceImage: referenceImage ? { url: referenceImage.url, filename: referenceImage.filename } : undefined,
+          steps,
+        },
+      );
+
+      // Texto de verdade via compositing (não confiar no modelo de imagem pra
+      // "desenhar" texto — isso é notoriamente ruim mesmo nos modelos mais
+      // avançados). Só roda se a copy trouxe texto pra esse slide.
+      if (includeText && slideCopy) {
+        content = await compositeSlideText(content, slideCopy);
+      }
+
+      const filename = slidesCount > 1 ? `${jobId}-${slideIndex + 1}.png` : `${jobId}.png`;
+      const { storageUrl, assetId } = await persistSlideAsset({
+        jobId,
+        clientId,
+        requestedBy,
+        projectId,
+        type,
+        prompt,
+        model,
+        filename,
+        content,
         metadata: {
           resolution: resolution ?? null,
           stub: false,
@@ -177,8 +291,6 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
           // digitou: sem isso não dá pra reproduzir nem depurar um resultado.
           final_prompt: enrichedPrompt.prompt,
           prompt_enriched: enrichedPrompt.enriched,
-          // Qual máquina processou: a spec da Galeria pede isso explicitamente,
-          // e com mais de um node no futuro é o que explica diferença de fila.
           node_id: config.NODE_ID,
           job_id: jobId,
           slide_index: slideIndex,
@@ -187,14 +299,11 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
           quality_preset: qualityPreset ?? 'standard',
           steps,
         },
-      })
-      .returning();
-
-    if (!asset) throw new Error(`Failed to persist studio asset (slide ${slideIndex + 1}/${slidesCount})`);
-    generated.push({ storageUrl, filename });
-    firstAssetId ??= asset.id;
-
-    await reportProgress(jobId, 30 + Math.round(((slideIndex + 1) / slidesCount) * 60), 'rendering');
+      });
+      generated.push({ storageUrl, filename });
+      firstAssetId ??= assetId;
+      await reportProgress(jobId, 30 + Math.round(((slideIndex + 1) / slidesCount) * 60), 'rendering');
+    }
   }
 
   const primaryUrl = generated[0]!.storageUrl;

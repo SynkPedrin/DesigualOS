@@ -1,5 +1,5 @@
 import type { AgentName } from '@desigual-os/types';
-import type { ConversationMessageWire, ConversationSummaryWire } from '@/lib/api/contracts';
+import type { ConversationMessageWire, ConversationSummaryWire, ProjectWire } from '@/lib/api/contracts';
 import { mockClients } from './clients';
 
 function minutesAgo(minutes: number) {
@@ -51,8 +51,11 @@ function buildSeedConversation(
     summary: {
       id,
       client_id: clientId,
+      project_id: null,
+      user_id: 'mock-user',
       title: null,
       status: 'open',
+      visibility: 'public',
       last_agent: agent,
       last_message_preview: lastExchange?.assistant.slice(0, 96) ?? null,
       created_at: createdAt,
@@ -134,8 +137,11 @@ export function appendUserMessage(
     summary: {
       id,
       client_id: clientId,
+      project_id: null,
+      user_id: 'mock-user',
       title: null,
       status: 'open',
+      visibility: 'private',
       last_agent: null,
       last_message_preview: null,
       created_at: now,
@@ -154,4 +160,81 @@ export function appendAssistantMessage(conversationId: string, agent: AgentName,
   conversation.summary.last_agent = agent;
   conversation.summary.last_message_preview = content.slice(0, 96);
   conversation.summary.updated_at = now;
+}
+
+// --- Projetos do chat (mock da API /projects, 2026-09-04) ---
+
+let projectSeq = 0;
+export const projectStore = new Map<string, ProjectWire>();
+
+export function listProjects(): ProjectWire[] {
+  return Array.from(projectStore.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function createProject(name: string, clientId: string | null): ProjectWire {
+  projectSeq += 1;
+  const now = new Date().toISOString();
+  const project: ProjectWire = {
+    id: `proj-${projectSeq}`,
+    name,
+    client_id: clientId,
+    created_by: 'mock-user',
+    created_at: now,
+    updated_at: now,
+  };
+  projectStore.set(project.id, project);
+  return project;
+}
+
+export function updateProject(id: string, patch: { name?: string; client_id?: string | null }): ProjectWire | null {
+  const project = projectStore.get(id);
+  if (!project) return null;
+  if (patch.name !== undefined) project.name = patch.name;
+  if (patch.client_id !== undefined) project.client_id = patch.client_id;
+  project.updated_at = new Date().toISOString();
+  return project;
+}
+
+/** DELETE desvincula as conversas (voltam pra seção "Conversas"), não apaga. */
+export function deleteProject(id: string): boolean {
+  for (const conversation of conversationStore.values()) {
+    if (conversation.summary.project_id === id) conversation.summary.project_id = null;
+  }
+  return projectStore.delete(id);
+}
+
+export function getConversation(id: string): ConversationSummaryWire | null {
+  return conversationStore.get(id)?.summary ?? null;
+}
+
+/** Shape do GET/PATCH /conversations/:id: o summary sem os campos derivados de mensagem. */
+export function toConversationDetailWire(summary: ConversationSummaryWire) {
+  return {
+    id: summary.id,
+    client_id: summary.client_id,
+    project_id: summary.project_id,
+    user_id: summary.user_id,
+    title: summary.title,
+    status: summary.status,
+    visibility: summary.visibility,
+    created_at: summary.created_at,
+    updated_at: summary.updated_at,
+  };
+}
+
+export function updateConversation(
+  id: string,
+  patch: { title?: string | null; project_id?: string | null; visibility?: 'private' | 'public' },
+): ConversationSummaryWire | null {
+  const conversation = conversationStore.get(id);
+  if (!conversation) return null;
+  if (patch.title !== undefined) conversation.summary.title = patch.title;
+  if (patch.project_id !== undefined) conversation.summary.project_id = patch.project_id;
+  if (patch.visibility !== undefined) conversation.summary.visibility = patch.visibility;
+  conversation.summary.updated_at = new Date().toISOString();
+  return conversation.summary;
+}
+
+export function deleteConversation(id: string): boolean {
+  return conversationStore.delete(id);
 }

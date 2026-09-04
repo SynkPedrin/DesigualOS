@@ -99,6 +99,13 @@
       "when": 1788447401786,
       "tag": "0013_old_xavin",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788526458796,
+      "tag": "0014_outgoing_lethal_legion",
+      "breakpoints": true
     }
   ]
 }

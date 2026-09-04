@@ -21,7 +21,7 @@ import { createQueuedExecution, executionStore, resolveAgent } from './execution
 import { createStudioJob, listActiveStudioJobIds, mockStudioAssets, studioJobStore } from './studio';
 import { mockNotifications } from './notifications';
 import { buildCostsByAgent, buildCostsByClient, buildCostsByUser, buildCostsOverview } from './costs';
-import { appendAssistantMessage, appendUserMessage, getConversationMessages, listConversations } from './conversations';
+import { appendAssistantMessage, appendUserMessage, createProject, deleteConversation, deleteProject, getConversation, getConversationMessages, listConversations, listProjects, toConversationDetailWire, updateConversation, updateProject } from './conversations';
 import { mockTeamMembers } from './team';
 import { createMessage, listThreadMessages, listThreadPartnerIds, markThreadRead } from './messages';
 import { inviteMockUser, mockAdminUsers, USERS_WITH_HISTORY } from './admin';
@@ -323,6 +323,55 @@ export const handlers = [
       return HttpResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 });
     }
     return HttpResponse.json({ conversation_id: conversationId, messages });
+  }),
+
+  http.get('/conversations/:conversationId', ({ params }) => {
+    const conversation = getConversation(String(params.conversationId));
+    if (!conversation) {
+      return HttpResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 });
+    }
+    return HttpResponse.json(toConversationDetailWire(conversation));
+  }),
+
+  http.patch('/conversations/:conversationId', async ({ params, request }) => {
+    const patch = (await request.json()) as { title?: string | null; project_id?: string | null; visibility?: 'private' | 'public' };
+    const conversation = updateConversation(String(params.conversationId), patch);
+    if (!conversation) {
+      return HttpResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 });
+    }
+    return HttpResponse.json(toConversationDetailWire(conversation));
+  }),
+
+  http.delete('/conversations/:conversationId', ({ params }) => {
+    if (!deleteConversation(String(params.conversationId))) {
+      return HttpResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.get('/projects', () => {
+    return HttpResponse.json({ projects: listProjects() });
+  }),
+
+  http.post('/projects', async ({ request }) => {
+    const body = (await request.json()) as { name: string; client_id?: string | null };
+    return HttpResponse.json({ project: createProject(body.name, body.client_id ?? null) }, { status: 201 });
+  }),
+
+  http.patch('/projects/:projectId', async ({ params, request }) => {
+    const patch = (await request.json()) as { name?: string; client_id?: string | null };
+    const project = updateProject(String(params.projectId), patch);
+    if (!project) {
+      return HttpResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 });
+    }
+    return HttpResponse.json({ project });
+  }),
+
+  http.delete('/projects/:projectId', ({ params }) => {
+    if (!deleteProject(String(params.projectId))) {
+      return HttpResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 });
+    }
+    return new HttpResponse(null, { status: 204 });
   }),
 
   http.get('/search', ({ request }) => {

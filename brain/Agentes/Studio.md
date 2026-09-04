@@ -17,6 +17,10 @@ Criação multimídia local: imagens, carrosséis, vídeos, reels, upscale. Úni
 
 `image_generation`, `video_generation`, `image_editing`, `upscale`
 
+## Carrossel HTML/CSS (caminho canônico)
+
+Jobs `carousel` com `referenceImages` ou `metadata.design === 'html'` não passam pelo ComfyUI: os cards são HTML/CSS renderizados via Chrome headless (`puppeteer-core`, 1080x1350) em `nodes/studio-node/src/html-carousel/` (template data-driven + renderer). A pele visual e as leis de conteúdo seguem o modus operandi em `.agents/skills/carrossel-cinema-impossivel/SKILL.md` (fonte da verdade). A copy é gerada na API por `packages/router/src/marketing-copy.ts`, que injeta o modus operandi como cânone e o Brain-Marketing como camada estratégica. Smoke test: `pnpm tsx scripts/smoke-carousel.ts` em `nodes/studio-node`. Sem frames e sem flag `design`, o caminho antigo (ComfyUI + sharp/SVG) continua como fallback.
+
 ## Permissões (Tool Gateway)
 
 GPU, Storage, ClickUp, Instagram POST (opcional, com aprovação).

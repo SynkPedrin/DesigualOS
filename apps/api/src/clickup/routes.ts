@@ -4,8 +4,10 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
   createAttributedTask,
+  createTaskComment,
   deleteTask,
   getTaskComments,
+  getTaskListId,
   getTeamMembers,
   parseTaskCommentPostedEvent,
   recordToolResult,
@@ -17,6 +19,7 @@ import { createLogger } from '@desigual-os/logging';
 import { recordLearning } from '@desigual-os/orchestrator';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { resolveClickUpAccess } from '../integrations/access';
+import { hasClientAccess } from '../lib/access';
 import { respondAsBento } from '../lib/bento-mention';
 import { detectMentionedAgent, respondAsAgent } from '../lib/agent-mention';
 
@@ -26,6 +29,10 @@ const createTaskSchema = z.object({
   list_id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
+});
+
+const createCommentSchema = z.object({
+  comment_text: z.string().min(1).max(4000),
 });
 
 const taskParamsSchema = z.object({
@@ -126,11 +133,9 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
     return { members: members.map((member) => ({ id: member.id, email: member.email, username: member.username })) };
   });
 
-  // Comentários da tarefa lidos do ClickUp na hora (o "chat" da tarefa que a
-  // aba Conversas do workspace do cliente mostra). Mesmo acesso da listagem
-  // de tarefas (apps/api/src/clients/routes.ts): OAuth pessoal com fallback
-  // pra chave compartilhada. Só leitura: postar comentário passa pelo fluxo
-  // de menção a agente no webhook, não por aqui.
+  // Comentários da tarefa lidos do ClickUp na hora (o "chat" da tarefa).
+  // Mesmo acesso da listagem de tarefas (apps/api/src/clients/routes.ts):
+  // OAuth pessoal com fallback pra chave compartilhada.
   app.get('/clickup/tasks/:id/comments', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
     const params = taskParamsSchema.parse(request.params);
 
@@ -154,6 +159,58 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error({ error, taskId: params.id }, 'Falha ao buscar comentários da tarefa no ClickUp');
+      reply.code(502);
+      return { error: message };
+    }
+  });
+
+  // Postar comentário de verdade na tarefa (composer da aba Conversas do
+  // workspace do cliente). Antes de escrever, confirma que a tarefa pertence
+  // à lista de um cliente cadastrado e que o usuário tem acesso a ele: sem
+  // isso, qualquer autenticado escreveria em qualquer tarefa do workspace
+  // do ClickUp só adivinhando o id.
+  app.post('/clickup/tasks/:id/comments', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
+    const params = taskParamsSchema.parse(request.params);
+    // O parser application/json deste plugin entrega string crua (exigência
+    // do webhook com HMAC, mais abaixo), então o parse é manual aqui.
+    const rawBody = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;
+    const body = createCommentSchema.parse(rawBody);
+
+    const access = await resolveClickUpAccess(request.authUser?.id ?? '');
+    if (!access) {
+      reply.code(400);
+      return { error: 'No ClickUp access available for this user' };
+    }
+
+    const config = { apiKey: access.token, teamId: access.teamId };
+
+    let listId: string;
+    try {
+      listId = await getTaskListId(config, params.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ error, taskId: params.id }, 'Falha ao localizar a tarefa no ClickUp');
+      reply.code(502);
+      return { error: message };
+    }
+
+    const [ownerClient] = await db.select().from(schema.clients).where(eq(schema.clients.clickupListId, listId));
+    if (!ownerClient) {
+      reply.code(404);
+      return { error: 'Task does not belong to any client list known to Desigual OS' };
+    }
+    if (!request.authUser || !(await hasClientAccess(request.authUser, ownerClient.id))) {
+      reply.code(403);
+      return { error: 'No access granted to this client workspace' };
+    }
+
+    try {
+      const comment = await createTaskComment(config, params.id, body.comment_text);
+      reply.code(201);
+      return { comment };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ error, taskId: params.id }, 'Falha ao postar comentário na tarefa do ClickUp');
       reply.code(502);
       return { error: message };
     }

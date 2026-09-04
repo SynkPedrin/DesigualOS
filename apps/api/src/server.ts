@@ -17,6 +17,7 @@ import { registerWsRoutes } from './ws/routes';
 import { registerCostRoutes } from './costs/routes';
 import { registerClientRoutes } from './clients/routes';
 import { registerConversationRoutes } from './conversations/routes';
+import { registerProjectRoutes } from './projects/routes';
 import { registerAdminRoutes } from './admin/routes';
 import { registerClickUpRoutes } from './clickup/routes';
 import { registerIntegrationRoutes } from './integrations/routes';
@@ -100,6 +101,7 @@ async function start(): Promise<void> {
   await app.register(registerCostRoutes);
   await app.register(registerClientRoutes);
   await app.register(registerConversationRoutes);
+  await app.register(registerProjectRoutes);
   await app.register(registerAdminRoutes);
   await app.register(registerClickUpRoutes);
   await app.register(registerIntegrationRoutes);

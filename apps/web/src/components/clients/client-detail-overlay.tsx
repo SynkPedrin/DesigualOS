@@ -8,13 +8,14 @@ import { useIsMaster } from '@/hooks/use-is-master';
 import { GrantAccessForm } from './grant-access-form';
 import { ClickUpTaskRow } from './clickup-task-row';
 import { ClickUpTaskCommentsPanel } from './clickup-task-comments';
+import { ClientOverviewPanel } from './client-overview-panel';
+import { ClientStudioGallery } from './client-studio-gallery';
 import { useClientClickUpTasks } from '@/hooks/use-client-clickup-tasks';
 import { ApiRequestError } from '@/lib/api/client';
 import type { ClientSummary } from '@/lib/api/contracts';
-import { formatUsd } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-const BASE_TABS = ['ClickUp', 'Visão Geral', 'Conversas'] as const;
+const BASE_TABS = ['ClickUp', 'Visão Geral', 'Conversas', 'Studio'] as const;
 /** "Acesso" só pra master — mesma regra da tela antiga, não afrouxa nada. */
 const MASTER_TABS = [...BASE_TABS, 'Acesso'] as const;
 type Tab = (typeof MASTER_TABS)[number];
@@ -136,23 +137,11 @@ export function ClientDetailOverlay({ client, onClose }: { client: ClientSummary
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
           {tab === 'ClickUp' && <TasksPanel clientId={client.id} clickupUrl={clickupUrl} />}
 
-          {tab === 'Visão Geral' && workspace && (
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              {[
-                { label: 'Custo total', value: formatUsd(workspace.costSummary.totalCost), accent: true },
-                { label: 'Execuções', value: String(workspace.costSummary.executionCount) },
-                { label: 'Conversas', value: String(workspace.conversations.length) },
-                { label: 'Assets do Studio', value: String(workspace.studioAssets.length) },
-              ].map((stat) => (
-                <div key={stat.label} className="rounded-lg border border-grafite-elevado bg-carbono p-4">
-                  <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">{stat.label}</p>
-                  <p className={cn('mt-1 font-display text-2xl', stat.accent ? 'text-sinal' : 'text-branco-cru')}>{stat.value}</p>
-                </div>
-              ))}
-            </div>
-          )}
+          {tab === 'Visão Geral' && <ClientOverviewPanel clientId={client.id} />}
 
           {tab === 'Conversas' && <ClickUpTaskCommentsPanel clientId={client.id} />}
+
+          {tab === 'Studio' && <ClientStudioGallery clientId={client.id} />}
 
           {tab === 'Acesso' && isMaster && <GrantAccessForm clientId={client.id} />}
         </div>

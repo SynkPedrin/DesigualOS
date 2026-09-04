@@ -123,6 +123,52 @@ export async function getTaskComments(config: ClickUpConfig, taskId: string): Pr
   }));
 }
 
+const taskLookupSchema = z.object({
+  id: z.string(),
+  list: z.object({ id: z.string() }),
+});
+
+/** Lista à qual a tarefa pertence: como o POST de comentário confirma que a
+ * tarefa é de um cliente conhecido antes de escrever nela. */
+export async function getTaskListId(config: ClickUpConfig, taskId: string): Promise<string> {
+  const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}`, {
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) {
+    throw new Error(`ClickUp task lookup failed (${response.status}): ${await response.text()}`);
+  }
+  return taskLookupSchema.parse(await response.json()).list.id;
+}
+
+const createdCommentSchema = z.object({
+  id: z.coerce.string(),
+  date: z.coerce.string().optional(),
+});
+
+export interface CreatedTaskComment {
+  id: string;
+  text: string;
+  date: string | null;
+}
+
+/**
+ * Comentário novo no topo da tarefa (não resposta de thread; pra isso existe
+ * replyToComment). A resposta do ClickUp não devolve o texto, então o texto
+ * retornado é o que acabamos de enviar.
+ */
+export async function createTaskComment(config: ClickUpConfig, taskId: string, text: string): Promise<CreatedTaskComment> {
+  const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment_text: text }),
+  });
+  if (!response.ok) {
+    throw new Error(`ClickUp comment creation failed (${response.status}): ${await response.text()}`);
+  }
+  const created = createdCommentSchema.parse(await response.json());
+  return { id: created.id, text, date: created.date ?? null };
+}
+
 /**
  * Responde NA THREAD de um comentário específico (`parent`), igual ao
  * padrão já usado pelo Jarbas de verdade (clickup-reply.sh). `notifyAll`

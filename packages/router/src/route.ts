@@ -1,9 +1,18 @@
 import type { FastifyBaseLogger } from 'fastify';
+import type { AgentName } from '@desigual-os/types';
 import { classifyWithLLM } from './classifier';
 import { matchRule } from './rules';
 import { routerDecisionSchema, type RouterDecision } from './schema';
 
 const CONFIDENCE_THRESHOLD = 0.7;
+
+/** Menção explícita (@jarbas, @Suzy...) vence qualquer camada: quem menciona
+ * já escolheu o agente (pedido do usuário, 2026-09-04). */
+export function detectMentionedAgent(message: string): AgentName | null {
+  const match = message.match(/@(bento|jarbas|suzy|studio)\b/i);
+  if (!match?.[1]) return null;
+  return match[1].toLowerCase() as AgentName;
+}
 
 /**
  * Pipeline de 4 etapas em camadas (seção 6.2): intent detection via rule
@@ -13,6 +22,20 @@ const CONFIDENCE_THRESHOLD = 0.7;
  * necessário buscar.
  */
 export async function route(message: string, logger: FastifyBaseLogger): Promise<RouterDecision> {
+  const mentioned = detectMentionedAgent(message);
+  if (mentioned) {
+    return routerDecisionSchema.parse({
+      intent: 'direct_mention',
+      primary_agent: mentioned,
+      required_tools: [],
+      context: [],
+      estimated_complexity: 'medium',
+      workflow: null,
+      confidence: 1,
+      source: 'manual',
+    });
+  }
+
   const ruleMatch = matchRule(message);
 
   if (ruleMatch && ruleMatch.confidence >= CONFIDENCE_THRESHOLD) {
