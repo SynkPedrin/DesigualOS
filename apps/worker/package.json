@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@desigual-os/context-engine": "workspace:*",
     "@desigual-os/database": "workspace:*",
     "@desigual-os/logging": "workspace:*",
     "@desigual-os/node-protocol": "workspace:*",

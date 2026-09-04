@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
+import { buildContext, formatContextForPrompt } from '@desigual-os/context-engine';
 import { dispatchChatMessage, type AutomationJobData } from '@desigual-os/orchestrator';
 import type { RouterDecision } from '@desigual-os/router';
 import type { AgentName } from '@desigual-os/types';
@@ -56,10 +57,18 @@ export async function processAutomationJob(job: Job<AutomationJobData>, logger: 
     await db.insert(schema.messages).values({ conversationId, role: 'user', content: automation.prompt });
   }
 
+  // Mesmo enriquecimento de contexto do POST /chat (chat/routes.ts): sem
+  // isso a automação despachava o prompt cru e o agente não sabia nem de
+  // qual cliente se tratava (medido em 03/09: Jarbas respondeu "sobre qual
+  // cliente você tá falando?" numa automação com clientId vinculado).
+  const context = await buildContext({ userId: automation.createdBy, clientId: automation.clientId, conversationId });
+  const contextBlock = formatContextForPrompt(context);
+  const messageWithContext = contextBlock ? `${automation.prompt}\n\n---\nContexto:\n${contextBlock}` : automation.prompt;
+
   const startedAt = new Date();
   try {
     const result = await dispatchChatMessage({
-      message: automation.prompt,
+      message: messageWithContext,
       userId: automation.createdBy,
       clientId: automation.clientId,
       conversationId,

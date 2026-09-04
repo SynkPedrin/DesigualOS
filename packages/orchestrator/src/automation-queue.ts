@@ -29,7 +29,10 @@ export async function registerAutomationJob(automationId: string, schedule: stri
 }
 
 /** Precisa do MESMO pattern usado no registro — BullMQ identifica o repeatable pela
- * combinação {pattern, jobId}, não só pelo jobId. */
+ * combinação {pattern, jobId}, não só pelo jobId. E o jobId tem que ir no 3º
+ * argumento: dentro de repeatOpts ele é sobrescrito por undefined no
+ * Object.assign interno do BullMQ e a remoção falha em silêncio (repeatable
+ * órfão no Redis, medido em 03/09/2026). */
 export async function removeAutomationJob(automationId: string, schedule: string): Promise<void> {
-  await getAutomationsQueue().removeRepeatable('run', { pattern: schedule, jobId: automationId });
+  await getAutomationsQueue().removeRepeatable('run', { pattern: schedule }, automationId);
 }

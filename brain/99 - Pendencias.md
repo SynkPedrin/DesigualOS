@@ -7,6 +7,17 @@ status: living-document
 
 Notas ativas do estado atual do projeto. Atualizada conforme o trabalho avança.
 
+## Desbloqueio Jarbas/Suzy + ClickUp + automações (2026-09-03, sessão Kimi)
+
+- **`POST /internal/ask` deployado nas máquinas do Jarbas e da Suzy** (autorizado pelo usuário nesta sessão; era o bloqueante nº 1 desde 02/set): cada agente expõe `answerQuestion()` reusando o cérebro real do WhatsApp (Suzy: bentoAsk/openclawBrain/ollamaChat; Jarbas: generateResponse). Token único novo em `API_KEYS` com permission `internal_ask` (mesmo nas duas máquinas; credenciais antigas preservadas, nada rotacionado). Backups `.bak-20260903` em cada arquivo editado.
+- **Worker despacha Jarbas/Suzy de verdade**: novo client `askAgent` em `packages/tool-gateway/src/agent-ask-client.ts` (env `JARBAS_ASK_URL`, `SUZY_ASK_URL`, `AGENTES_ASK_TOKEN`), branch em `execute-job.ts` antes do `/execute` genérico. Validado E2E: chat privado, chats públicos (mesmo pipeline) e automação agendada, tudo com resposta real dos agentes.
+- **ClickUp: menções @Jarbas e @Suzy** agora respondidas pelo webhook (`detectMentionedAgent` + `respondAsAgent` em `apps/api/src/lib/agent-mention.ts`), mesmo fluxo do @Bento. Validado E2E com assinatura HMAC real e resposta postada numa task de teste (86bbuk847, lista Enxame). `CLICKUP_WEBHOOK_SECRET` de dev gerado (estava vazio); registrar webhook real continua dependendo de URL pública (deploy na VPS).
+- **Bug real corrigido**: `DELETE /automations/:id` retornava 204 mas deixava o repeatable job órfão no Redis — o `jobId` dentro de `repeatOpts` é sobrescrito por `undefined` no `Object.assign` interno do BullMQ 5.81; corrigido passando o jobId no 3º argumento de `removeRepeatable`. Órfãos removidos.
+- **Automações agora levam contexto** (cliente, tom de voz, histórico): `run-automation.ts` usa `buildContext`/`formatContextForPrompt` igual ao `POST /chat`. Antes o Jarbas respondia "sobre qual cliente?" numa automação com cliente vinculado.
+- **Workspace de cliente (frontend)**: removido embed/iframe do ClickUp (tasks abrem direto no ClickUp), aba Conversas passou a mostrar os comentários das tasks do ClickUp (novo `GET /clickup/tasks/:id/comments`), aba Studio removida de dentro do cliente (a página /studio continua).
+- **Commit inicial do repo** (estava zero commits, risco máximo): tudo protegido em `main`.
+- **Limitações externas que continuam**: Bento depende de OpenAI sem créditos (429, decisão do usuário ignorar); `ANTHROPIC_API_KEY` vazia no `.env`, então a copy de marketing do Studio sai null por design e o classifier do Router cai nas regras. Em dev, os IPs Tailscale foram apontados pros túneis SSH locais no `.env` (BENTO_QA_URL=localhost:8791 etc.) porque este Mac está fora da tailnet.
+
 ## Status geral do backend (2026-09-01, atualizado)
 
 Concluídas e validadas com infraestrutura real (Postgres/Supabase, Redis, BullMQ, Supabase Storage, nodes reais ou fakes conforme o caso): [[Fase 01 - Core e Database]], [[Fase 02 - Node Protocol e Node Agent base]], [[Fase 03 - Node Registry, Discovery e Health]], [[Fase 04 - Bento Node]], [[Fase 05 - Jarbas Node]], [[Fase 06 - Suzy Node]], [[Fase 07 - Studio Node e GPU Worker]], [[Fase 08 - AI Router]], [[Fase 09 - Queue e Orchestrator]], [[Fase 10 - Workflow Engine]], e a parte de Auth da [[Fase 13 - Auth e Auditoria]] (adiantada).
