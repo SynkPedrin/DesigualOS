@@ -12,7 +12,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
  * Aba Visão Geral: resumo data-driven do cliente com dados reais lidos na
  * hora (tarefas do ClickUp por status, últimos comentários, assets do
  * Studio, conversas do Desigual OS). O endpoint devolve null/0 pro que não
- * existe, então aqui só se renderiza o que veio — nada inventado.
+ * existe, então aqui só se renderiza o que veio - nada inventado.
  */
 export function ClientOverviewPanel({ clientId }: { clientId: string }) {
   const { data, isPending, isError } = useClientOverview(clientId);

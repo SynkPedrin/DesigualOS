@@ -1,4 +1,4 @@
-import { pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, timestampColumns } from './_shared';
 import { clients } from './clients';
 
@@ -33,15 +33,22 @@ export const clickupLists = pgTable('clickup_lists', {
   ...timestampColumns,
 });
 
-export const clickupTasks = pgTable('clickup_tasks', {
-  ...idColumn,
-  listId: uuid('list_id')
-    .notNull()
-    .references(() => clickupLists.id, { onDelete: 'cascade' }),
-  clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
-  clickupId: text('clickup_id').notNull().unique(),
-  name: text('name').notNull(),
-  status: text('status').notNull(),
-  url: text('url'),
-  ...timestampColumns,
-});
+export const clickupTasks = pgTable(
+  'clickup_tasks',
+  {
+    ...idColumn,
+    listId: uuid('list_id')
+      .notNull()
+      .references(() => clickupLists.id, { onDelete: 'cascade' }),
+    clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+    clickupId: text('clickup_id').notNull().unique(),
+    name: text('name').notNull(),
+    status: text('status').notNull(),
+    url: text('url'),
+    ...timestampColumns,
+  },
+  (table) => ({
+    listIdx: index('clickup_tasks_list_id_idx').on(table.listId),
+    clientIdx: index('clickup_tasks_client_id_idx').on(table.clientId),
+  }),
+);

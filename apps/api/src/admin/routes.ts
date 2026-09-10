@@ -128,7 +128,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
             .where(eq(schema.clientUsers.userId, user.id)),
           // Status das integrações por pessoa (pedido do Endrigo: o Admin
           // precisa ver quem está conectado ao ClickUp, em qual workspace e
-          // desde quando sincronizou). NUNCA devolve o token — só metadados.
+          // desde quando sincronizou). NUNCA devolve o token - só metadados.
           db
             .select({
               provider: schema.integrationConnections.provider,

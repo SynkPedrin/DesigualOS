@@ -26,11 +26,12 @@ function rowClass(active: boolean) {
 /**
  * Organização estilo Claude na sidebar global: PROJETOS e CONVERSAS RECENTES
  * abaixo da nav principal. Dados reais (useProjects / useConversations, este com
- * polling de 10s) — o /chat em si não tem mais rail próprio, então a navegação
- * entre conversas acontece daqui via deep links (?conversation= / ?project=).
+ * polling de 10s). A navegação acontece via deep links (?conversation= /
+ * ?project=) - o ChatThread reage à mudança de param na mesma rota. O rail
+ * próprio do /chat (ConversationSidebar) continua existindo dentro do ChatThread.
  *
  * Usa useSearchParams (destaque do item ativo), então quem renderiza precisa
- * envolver em <Suspense> — sem isso o build estático das páginas do shell falha.
+ * envolver em <Suspense> - sem isso o build estático das páginas do shell falha.
  */
 export function SidebarChatSections() {
   const pathname = usePathname();

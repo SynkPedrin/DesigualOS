@@ -1,0 +1,113 @@
+export { loadOttoConfig } from './llm/config.js';
+export type { OttoConfig } from './llm/config.js';
+
+export { createOttoLLMProvider, OttoLLMError } from './llm/ollama-provider.js';
+export { extractJsonPayload, parseJsonLoose } from './llm/json-extract.js';
+export type {
+  OttoChatMessage,
+  OttoChatOptions,
+  OttoLLMHealth,
+  OttoLLMHealthStatus,
+  OttoLLMProvider,
+  OttoLLMProviderConfig,
+} from './llm/ollama-provider.js';
+
+export {
+  checkBrainHealth,
+  invalidateBrainIndex,
+  loadBrainIndex,
+  retrieveRelevantKnowledge,
+} from './brain/retrieval.js';
+export type {
+  BrainDoc,
+  BrainFrontmatter,
+  BrainHealth,
+  BrainIndex,
+  RetrievedKnowledge,
+  RetrieveOptions,
+} from './brain/retrieval.js';
+
+export {
+  classifyRetrievalDepth,
+  depthPolicy,
+  planTurnDepth,
+  stripOrchestratorContext,
+  CONTEXT_BLOCK_MARKER,
+} from './brain/depth.js';
+export type { DepthDecision, DepthPolicy, RetrievalDepth, TurnDepthPlan } from './brain/depth.js';
+
+export {
+  artDirectionSchema,
+  carouselNarrativeFunctionSchema,
+  carouselPlanSchema,
+  carouselSlideSchema,
+  creativeFeedbackSchema,
+  creativePlanSchema,
+  productionSpecSchema,
+  qualityCriteriaSchema,
+  qualityEvaluationSchema,
+  qualityIssueSchema,
+  studioJobTypeSchema,
+  upscaleSpecSchema,
+  videoPlanSchema,
+  videoSceneSchema,
+} from './creative/schemas.js';
+export type {
+  ArtDirection,
+  CarouselNarrativeFunction,
+  CarouselPlan,
+  CarouselSlide,
+  CreativeFeedback,
+  CreativePlan,
+  ProductionSpec,
+  QualityCriteria,
+  QualityEvaluation,
+  QualityIssue,
+  StudioJobType,
+  UpscaleSpec,
+  VideoPlan,
+  VideoScene,
+} from './creative/schemas.js';
+
+export {
+  buildImagePrompt,
+  buildProductionSpec,
+  createCreativePlan,
+  planCarousel,
+  planVideo,
+} from './creative/planner.js';
+export type {
+  BuildProductionSpecOptions,
+  CreateCreativePlanInput,
+  PlannerDeps,
+} from './creative/planner.js';
+
+export { buildDirectionDirective } from './creative/stance.js';
+export type { DirectionDirectiveInput } from './creative/stance.js';
+
+export { evaluateCreative } from './creative/quality.js';
+export type { CreativeAssetUnderReview, QualityDeps } from './creative/quality.js';
+
+export { deriveCreativeDNA } from './creative/dna.js';
+export type { BrandKit, CreativeDNA } from './creative/dna.js';
+
+export { generateImageCaption } from './creative/caption-from-image.js';
+export type { GenerateImageCaptionInput, GeneratedImageCaption } from './creative/caption-from-image.js';
+
+export {
+  canPromote,
+  createLearning,
+  nextStage,
+  OTTO_LEARNING_KINDS,
+  OTTO_LEARNING_STAGES,
+  promoteLearning,
+  recordEvidence,
+} from './learning/pipeline.js';
+export type {
+  OttoEvidence,
+  OttoEvidenceOrigin,
+  OttoLearning,
+  OttoLearningKind,
+  OttoLearningStage,
+  PromotionCheck,
+} from './learning/pipeline.js';

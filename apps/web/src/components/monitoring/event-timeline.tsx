@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import type { SystemEvent } from '@/lib/monitoring/system-events';
+import type { SystemEvent } from '@/lib/api/contracts';
 
 const LEVEL_META = {
   info: { icon: Info, textClass: 'text-info' },

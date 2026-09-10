@@ -1,6 +1,33 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { extractBearerToken, hasPermission, loadUserAccess, resolveOrProvisionUser, verifySupabaseToken } from '@desigual-os/auth';
+import { db, schema } from '@desigual-os/database';
+import { createLogger } from '@desigual-os/logging';
 import type { RoleName } from '@desigual-os/types';
+
+const logger = createLogger({ service: 'orchestrator-api' });
+
+// Presença leve: users.last_seen_at é tocado aqui (cobrindo qualquer rota
+// autenticada, POST /messages incluso), mas no máximo 1x por minuto por
+// usuário — o UPDATE condicional abaixo é o throttle, sem query extra por
+// request. Fire-and-forget: nunca bloqueia a resposta.
+const LAST_SEEN_THROTTLE_MS = 60_000;
+
+function touchLastSeen(userId: string): void {
+  const threshold = new Date(Date.now() - LAST_SEEN_THROTTLE_MS);
+  db.update(schema.users)
+    .set({ lastSeenAt: new Date() })
+    .where(
+      and(
+        eq(schema.users.id, userId),
+        or(isNull(schema.users.lastSeenAt), lt(schema.users.lastSeenAt, threshold)),
+      ),
+    )
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      logger.warn({ error, userId }, 'Failed to touch users.last_seen_at');
+    });
+}
 
 export interface AuthenticatedUser {
   id: string;
@@ -75,6 +102,8 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
       roles: access.roles,
       permissions: access.permissions,
     };
+
+    touchLastSeen(user.id);
   } catch (error) {
     request.log.warn({ error }, 'Auth token rejected');
     reply.code(401).send({ error: 'Invalid or expired token' });
@@ -89,6 +118,7 @@ export function requirePermission(resource: string, action: string) {
     }
     if (!hasPermission(request.authUser.permissions, resource, action)) {
       reply.code(403).send({ error: `Missing permission ${resource}:${action}` });
+      return;
     }
   };
 }

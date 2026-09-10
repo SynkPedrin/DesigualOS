@@ -1,0 +1,25 @@
+CREATE INDEX IF NOT EXISTS "conversations_user_id_idx" ON "conversations" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "conversations_client_id_idx" ON "conversations" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "conversations_project_id_idx" ON "conversations" USING btree ("project_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "messages_conversation_id_idx" ON "messages" USING btree ("conversation_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "router_decisions_conversation_id_idx" ON "router_decisions" USING btree ("conversation_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tool_calls_execution_id_idx" ON "tool_calls" USING btree ("execution_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "cost_records_client_id_idx" ON "cost_records" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "cost_records_user_id_idx" ON "cost_records" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "cost_records_execution_id_idx" ON "cost_records" USING btree ("execution_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "token_usage_execution_id_idx" ON "token_usage" USING btree ("execution_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "embeddings_chunk_id_idx" ON "embeddings" USING btree ("chunk_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "knowledge_chunks_document_id_idx" ON "knowledge_chunks" USING btree ("document_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "memories_client_id_idx" ON "memories" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "clickup_tasks_list_id_idx" ON "clickup_tasks" USING btree ("list_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "clickup_tasks_client_id_idx" ON "clickup_tasks" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "studio_assets_client_id_idx" ON "studio_assets" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "studio_jobs_client_id_idx" ON "studio_jobs" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "workflows_execution_id_idx" ON "workflows" USING btree ("execution_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audit_logs_user_id_idx" ON "audit_logs" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audit_logs_client_id_idx" ON "audit_logs" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "health_checks_node_id_idx" ON "health_checks" USING btree ("node_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "notifications_user_id_idx" ON "notifications" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "direct_messages_sender_id_idx" ON "direct_messages" USING btree ("sender_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "direct_messages_recipient_id_idx" ON "direct_messages" USING btree ("recipient_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "automations_created_by_idx" ON "automations" USING btree ("created_by");

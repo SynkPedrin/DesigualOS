@@ -8,7 +8,7 @@ import { useMe } from '@/hooks/use-me';
 /**
  * Controle de visibilidade da conversa aberta. Pública = badge "Equipe";
  * privada = botão "Compartilhar com a equipe". Só o dono (ou master) pode
- * mudar, espelhando o PATCH /conversations/:id — pros demais vira só um
+ * mudar, espelhando o PATCH /conversations/:id - pros demais vira só um
  * indicador discreto.
  */
 export function ConversationVisibilityToggle({ conversationId }: { conversationId: string }) {

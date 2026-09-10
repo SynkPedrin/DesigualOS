@@ -7,6 +7,8 @@ import { Topbar } from './topbar';
 import { CommandPalette } from './command-palette';
 import { NoiseOverlay } from './noise-overlay';
 import { NotificationInboxPopup } from './notification-inbox-popup';
+import { MockModeBanner } from './mock-mode-banner';
+import { MobileNavDrawer } from './mobile-nav-drawer';
 import { StudioModal } from '@/components/studio/studio-modal';
 import { useRealtimeEvents } from '@/hooks/use-realtime-events';
 
@@ -20,7 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen justify-center overflow-hidden bg-carbono">
       <NoiseOverlay />
-      {/* Sidebar + content together, capped and centered as a unit — on an ultra-wide
+      {/* Sidebar + content together, capped and centered as a unit - on an ultra-wide
        * screen a left-pinned sidebar with only the content centered in what's left looks
        * lopsided (all the extra space dumped on the right). */}
       <div className="flex h-full w-full max-w-[2400px]">
@@ -46,6 +48,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <CommandPalette />
       <StudioModal />
       <NotificationInboxPopup />
+      <MockModeBanner />
+      <MobileNavDrawer />
     </div>
   );
 }

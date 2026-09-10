@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { HelpCircle, Monitor, Moon, Search, Sun } from 'lucide-react';
+import { HelpCircle, Menu, Monitor, Moon, Search, Sun } from 'lucide-react';
 import { useUiStore } from '@/stores/ui-store';
 import { useMe } from '@/hooks/use-me';
 import { useTheme } from '@/hooks/use-theme';
@@ -19,20 +19,31 @@ const THEME_NEXT_LABEL: Record<Theme, string> = {
 
 export function Topbar() {
   const setCommandPaletteOpen = useUiStore((state) => state.setCommandPaletteOpen);
+  const toggleMobileNav = useUiStore((state) => state.toggleMobileNav);
   const { data: me } = useMe();
   const { theme, setTheme } = useTheme();
   const ThemeIcon = THEME_ICON[theme];
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-grafite-elevado bg-carbono px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-grafite-elevado bg-carbono px-4 sm:px-6">
+      <button
+        type="button"
+        onClick={toggleMobileNav}
+        aria-label="Abrir menu de navegação"
+        className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite hover:text-branco-cru md:hidden"
+      >
+        <Menu size={18} />
+      </button>
+
       <button
         type="button"
         onClick={() => setCommandPaletteOpen(true)}
         className="flex w-full max-w-sm items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-left text-sm text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
       >
         <Search size={16} className="shrink-0" />
-        <span className="flex-1 truncate">Buscar ou executar um comando</span>
-        <kbd className="shrink-0 rounded border border-grafite-elevado bg-carbono px-1.5 py-0.5 font-mono text-[10px] text-nevoa">
+        <span className="hidden flex-1 truncate sm:inline">Buscar ou executar um comando</span>
+        <span className="flex-1 truncate sm:hidden">Buscar</span>
+        <kbd className="hidden shrink-0 rounded border border-grafite-elevado bg-carbono px-1.5 py-0.5 font-mono text-[10px] text-nevoa sm:inline-block">
           ⌘K
         </kbd>
       </button>

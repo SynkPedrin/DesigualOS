@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { DollarSign, ShieldAlert } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Surface } from '@/components/ui/surface';
 import { MetricValue } from '@/components/ui/metric-value';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { InlineSectionError } from '@/components/ui/inline-section-error';
 import { DonutChart, type DonutDatum } from '@/components/ui/donut-chart';
 import { useCostsByAgent, useCostsByClient, useCostsByUser, useCostsOverview } from '@/hooks/use-costs';
 import { useIsMaster } from '@/hooks/use-is-master';
@@ -24,10 +25,30 @@ const RANGE_OPTIONS: { value: CostRange; label: string }[] = [
 export default function CostsPage() {
   const [range, setRange] = useState<CostRange>('7d');
   const { isMaster, isPending: rolePending } = useIsMaster();
-  const { data: overview, isPending: overviewPending } = useCostsOverview(range, isMaster);
-  const { data: byAgent, isPending: byAgentPending } = useCostsByAgent(range, isMaster);
-  const { data: byClient, isPending: byClientPending } = useCostsByClient(range, isMaster);
-  const { data: byUser, isPending: byUserPending } = useCostsByUser(range, isMaster);
+  const {
+    data: overview,
+    isPending: overviewPending,
+    isError: overviewError,
+    refetch: refetchOverview,
+  } = useCostsOverview(range, isMaster);
+  const {
+    data: byAgent,
+    isPending: byAgentPending,
+    isError: byAgentError,
+    refetch: refetchByAgent,
+  } = useCostsByAgent(range, isMaster);
+  const {
+    data: byClient,
+    isPending: byClientPending,
+    isError: byClientError,
+    refetch: refetchByClient,
+  } = useCostsByClient(range, isMaster);
+  const {
+    data: byUser,
+    isPending: byUserPending,
+    isError: byUserError,
+    refetch: refetchByUser,
+  } = useCostsByUser(range, isMaster);
 
   const donutData: DonutDatum[] =
     byAgent?.map((row) => ({
@@ -72,25 +93,44 @@ export default function CostsPage() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        {[
-          { label: 'Custo total', value: overview ? formatUsd(overview.totalCostUsd) : '—', accent: true },
-          { label: 'Eventos de custo', value: overview?.costEvents },
-          { label: 'Tokens de entrada', value: overview ? formatTokens(overview.totalInputTokens) : '—' },
-          { label: 'Tokens de saída', value: overview ? formatTokens(overview.totalOutputTokens) : '—' },
-        ].map((stat) => (
-          <Surface key={stat.label} level="grafite" className="p-4">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">{stat.label}</p>
-            {overviewPending ? (
-              <Skeleton className="mt-1 h-7 w-20" />
-            ) : (
-              <MetricValue className={cn('text-2xl', stat.accent ? 'text-sinal' : 'text-branco-cru')}>
-                {stat.value}
-              </MetricValue>
-            )}
-          </Surface>
-        ))}
-      </div>
+      {overviewError ? (
+        <div className="mb-6 space-y-4">
+          <EmptyState
+            icon={DollarSign}
+            title="Não conseguimos carregar os custos."
+            description="Verifique sua conexão e tente novamente."
+          />
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => refetchOverview()}
+              className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+          {[
+            { label: 'Custo total', value: overview ? formatUsd(overview.totalCostUsd) : '-', accent: true },
+            { label: 'Eventos de custo', value: overview?.costEvents },
+            { label: 'Tokens de entrada', value: overview ? formatTokens(overview.totalInputTokens) : '-' },
+            { label: 'Tokens de saída', value: overview ? formatTokens(overview.totalOutputTokens) : '-' },
+          ].map((stat) => (
+            <Surface key={stat.label} level="grafite" className="p-4">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">{stat.label}</p>
+              {overviewPending ? (
+                <Skeleton className="mt-1 h-7 w-20" />
+              ) : (
+                <MetricValue className={cn('text-2xl', stat.accent ? 'text-sinal' : 'text-branco-cru')}>
+                  {stat.value}
+                </MetricValue>
+              )}
+            </Surface>
+          ))}
+        </div>
+      )}
 
       {overview?.note && (
         <p className="mb-6 font-mono text-xs text-nevoa">{overview.note}</p>
@@ -103,6 +143,8 @@ export default function CostsPage() {
           </h2>
           {byAgentPending ? (
             <Skeleton className="h-52 w-full" />
+          ) : byAgentError ? (
+            <InlineSectionError onRetry={() => refetchByAgent()} />
           ) : donutData.length === 0 ? (
             <p className="text-sm text-nevoa">Sem custos registrados no período.</p>
           ) : (
@@ -121,6 +163,8 @@ export default function CostsPage() {
           </h2>
           {byClientPending ? (
             <Skeleton className="h-52 w-full" />
+          ) : byClientError ? (
+            <InlineSectionError onRetry={() => refetchByClient()} />
           ) : (
             <table className="w-full text-sm">
               <tbody>
@@ -142,6 +186,8 @@ export default function CostsPage() {
         </h2>
         {byUserPending ? (
           <Skeleton className="h-20 w-full" />
+        ) : byUserError ? (
+          <InlineSectionError onRetry={() => refetchByUser()} />
         ) : (
           <table className="w-full text-sm">
             <tbody>

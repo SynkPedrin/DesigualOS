@@ -1,6 +1,7 @@
 'use client';
 
 import { useReducer, useRef } from 'react';
+import { notFound } from 'next/navigation';
 import {
   StudioProcessButton,
   jobButtonReducer,
@@ -13,10 +14,19 @@ import { PHASES } from '@/lib/job-phases';
  * (see the DESIGUAL_OS motion spec, §9) with manual controls that force every JobStatus
  * without touching the real Studio GPU pipeline. AgentDock / OutputCarousel / AuthScene join
  * this page as their own sections once each is built.
+ *
+ * Lives outside (shell) on purpose (no auth chrome needed for a component review ground), but
+ * that also meant it shipped to production reachable by anyone with the URL. Gated to dev only.
  */
 export default function MotionDevPage() {
+  // Depois dos hooks (não antes): notFound() lança, então nunca chegam a rodar em produção,
+  // mas manter os hooks incondicionais aqui evita qualquer ambiguidade de ordem de hooks.
   const [state, dispatch] = useReducer(jobButtonReducer, initialJobButtonState);
   const simulationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  if (process.env.NODE_ENV === 'production') {
+    notFound();
+  }
 
   function clearSimulation() {
     if (simulationTimer.current) {

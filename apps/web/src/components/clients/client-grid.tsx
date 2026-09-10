@@ -68,7 +68,7 @@ export function ClientGrid({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           // Escalonado só nos primeiros: com 51 clientes, atrasar todo mundo
-          // faria o último aparecer segundos depois — vira lentidão, não charme.
+          // faria o último aparecer segundos depois - vira lentidão, não charme.
           transition={{ duration: 0.28, ease: 'easeOut', delay: Math.min(index, 8) * 0.035 }}
         >
           <ClientCard client={client} onOpen={onOpen} />

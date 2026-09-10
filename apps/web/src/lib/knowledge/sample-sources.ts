@@ -24,4 +24,8 @@ export const SAMPLE_KNOWLEDGE_SOURCES: Record<AgentName, KnowledgeSource[]> = {
     { title: 'Criacao/Brand Kits.md', updatedLabel: 'Há 2 dias' },
     { title: 'Criacao/Referencias Visuais.md', updatedLabel: 'Há 1 semana' },
   ],
+  otto: [
+    { title: 'Criacao/Diretrizes de Campanha.md', updatedLabel: 'Há 1 dia' },
+    { title: 'Criacao/Conceitos e Territorios.md', updatedLabel: 'Há 4 dias' },
+  ],
 };

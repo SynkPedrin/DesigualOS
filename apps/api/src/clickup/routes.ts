@@ -9,6 +9,7 @@ import {
   getTaskComments,
   getTaskListId,
   getTeamMembers,
+  parseTaskChangedEvent,
   parseTaskCommentPostedEvent,
   recordToolResult,
   replyToComment,
@@ -16,14 +17,31 @@ import {
   verifyClickUpSignature,
 } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
-import { recordLearning } from '@desigual-os/orchestrator';
+import { getRedisConnection, publishWsEvent, recordLearning, recordOperationalEvent } from '@desigual-os/orchestrator';
+import { stripBlockMarkers, stripEmDashes } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { resolveClickUpAccess } from '../integrations/access';
 import { hasClientAccess } from '../lib/access';
 import { respondAsBento } from '../lib/bento-mention';
-import { detectMentionedAgent, respondAsAgent } from '../lib/agent-mention';
+import { detectMentionedAgent, respondAsAgent, respondAsOtto } from '../lib/agent-mention';
 
 const logger = createLogger({ service: 'clickup-webhook' });
+
+/**
+ * Assinatura das respostas que NÓS postamos (o prefixo "🧠 X responde:" vem
+ * do serviço do agente). Sem essa guarda o webhook dispara de novo no nosso
+ * próprio comentário: a resposta do Bento contém "marcando @Bento" no texto
+ * dele, o regex de menção casa, e vira loop infinito (aconteceu de verdade
+ * em 04/09/2026: 15 respostas em cadeia na task de teste).
+ */
+const BOT_REPLY_MARKER = /^🧠\s*(Bento|Jarbas|Suzy)\s+responde/im;
+
+/** TTL do registro de comentário respondido (7 dias) — cobre retries do ClickUp. */
+const MENTION_DEDUP_TTL_S = 7 * 24 * 60 * 60;
+
+function mentionDedupKey(commentId: string): string {
+  return `clickup:mention-answered:${commentId}`;
+}
 
 const createTaskSchema = z.object({
   list_id: z.string().min(1),
@@ -44,6 +62,63 @@ function getClickUpConfig(): { apiKey: string; teamId: string } | null {
   const teamId = process.env.CLICKUP_TEAM_ID;
   if (!apiKey || !teamId) return null;
   return { apiKey, teamId };
+}
+
+/**
+ * Task criada/editada/apagada no ClickUp (pedido do usuário, 09/09/2026:
+ * "se eu criar uma nova task agora em um cliente dentro clickup ele vai
+ * atualizar dentro do sistema automatico") - publica um evento leve no WS só
+ * com o `client_id` (nunca o conteúdo da task) pro front invalidar a lista
+ * de tarefas daquele cliente e refazer o GET /clients/:id/clickup/tasks
+ * (fonte real, já existente). `list_id` às vezes não vem no payload (webhook
+ * inscrito no escopo do Space inteiro em vez de por lista, ver
+ * parseTaskChangedEvent) - nesse caso busca a lista da task na API antes de
+ * descartar o evento como "não é de nenhum cliente conhecido".
+ */
+async function handleTaskChanged(
+  changed: { event: string; taskId: string; listId: string | null },
+  raw?: Record<string, unknown>,
+): Promise<void> {
+  const config = getClickUpConfig();
+  if (!config) return;
+
+  let listId = changed.listId;
+  if (!listId) {
+    try {
+      listId = await getTaskListId(config, changed.taskId);
+    } catch (error) {
+      logger.warn({ error, taskId: changed.taskId }, 'ClickUp webhook: não achei a lista da task alterada');
+      return;
+    }
+  }
+
+  const [client] = await db.select().from(schema.clients).where(eq(schema.clients.clickupListId, listId));
+  if (!client) return;
+
+  // EVENT STORE (10/09/2026): antes disto o evento era usado pra invalidar a UI e
+  // descartado. Nada ficava, então "o que mudou desde ontem?" era irrespondível. Agora
+  // fica gravado de forma idempotente (índice único source+external_id, porque o ClickUp
+  // reentrega evento em retry) e vira material de contexto e de proatividade.
+  const stored = await recordOperationalEvent({
+    source: 'clickup',
+    // 'taskCreated' -> 'task.created'
+    type: changed.event.replace(/^task/, 'task.').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase(),
+    externalId: `${changed.event}:${changed.taskId}:${(raw?.['webhook_id'] as string | undefined) ?? ''}`,
+    clientId: client.id,
+    entityType: 'task',
+    entityId: changed.taskId,
+    payload: { list_id: listId, event: changed.event },
+    ...(raw ? { raw } : {}),
+    occurredAt: new Date(),
+  });
+  if (stored.status === 'duplicate') {
+    logger.debug({ taskId: changed.taskId }, 'Evento reentregue pelo ClickUp, ignorado (idempotencia)');
+  }
+
+  await publishWsEvent({
+    type: 'clickup.task_changed',
+    payload: { client_id: client.id, task_id: changed.taskId, event: changed.event },
+  });
 }
 
 /**
@@ -257,13 +332,19 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
     // 200 confirmando que recebemos.
     reply.code(200).send({ ok: true });
 
+    const taskChanged = parseTaskChangedEvent(parsedBody);
+    if (taskChanged) {
+      await handleTaskChanged(taskChanged, parsedBody as Record<string, unknown>);
+      return;
+    }
+
     const event = parseTaskCommentPostedEvent(parsedBody);
     if (!event) {
       logger.debug({ body: parsedBody }, 'ClickUp webhook: evento ignorado ou payload não reconhecido');
       return;
     }
 
-    // Menção a agente (@Bento/@Jarbas/@Suzy, variação de caixa) dentro do
+    // Menção a agente (@Bento/@Jarbas/@Suzy/@Otto, variação de caixa) dentro do
     // texto plano do comentário. Formato exato de menção (@user) dentro da
     // estrutura interna do ClickUp não é documentado publicamente; isso é o
     // que dá pra confirmar sem inventar, com o texto plano que a doc garante
@@ -273,16 +354,48 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
       return;
     }
 
+    // Nunca responder à nossa própria resposta (ver BOT_REPLY_MARKER acima).
+    if (BOT_REPLY_MARKER.test(event.textContent)) {
+      return;
+    }
+
+    // Dedup por commentId: o ClickUp reentrega eventos e cada resposta nossa
+    // gera um comentário novo (que também dispara o webhook). O NX garante
+    // que cada comentário é respondido no máximo uma vez; o id da resposta é
+    // registrado logo depois de postar, antes do evento dela chegar.
+    // Se o Redis estiver fora, segue sem dedup: o BOT_REPLY_MARKER acima já
+    // impede o loop, e o pior caso é resposta duplicada num retry do ClickUp.
+    let redis: ReturnType<typeof getRedisConnection> | null = null;
+    try {
+      redis = getRedisConnection();
+      const claimed = await redis.set(mentionDedupKey(event.commentId), '1', 'EX', MENTION_DEDUP_TTL_S, 'NX');
+      if (claimed === null) {
+        logger.debug({ commentId: event.commentId }, 'Comentário já respondido (ou resposta nossa), ignorando');
+        return;
+      }
+    } catch (error) {
+      redis = null;
+      logger.warn({ error, commentId: event.commentId }, 'Redis indisponível, respondendo sem dedup de menção');
+    }
+
     logger.info({ taskId: event.taskId, commentId: event.commentId, agent: mentionedAgent }, 'Menção a agente detectada, disparando resposta');
 
     try {
       const answer =
         mentionedAgent === 'bento'
           ? await respondAsBento({ taskId: event.taskId, commentId: event.commentId })
-          : await respondAsAgent(mentionedAgent, { taskId: event.taskId, commentId: event.commentId });
+          : mentionedAgent === 'otto'
+            ? await respondAsOtto({ taskId: event.taskId, commentId: event.commentId })
+            : await respondAsAgent(mentionedAgent, { taskId: event.taskId, commentId: event.commentId });
       const config = getClickUpConfig();
       if (config && answer) {
-        await replyToComment(config, event.taskId, event.commentId, answer);
+        // Regra de ouro de craft: nunca travessão, nem no ClickUp. Os
+        // marcadores [FIM_BLOCO]/[AGUARDA_APROVACAO]/[HANDOFF] dos prompts de
+        // personalidade viram parágrafo/texto limpo antes de postar.
+        const replyId = await replyToComment(config, event.taskId, event.commentId, stripBlockMarkers(stripEmDashes(answer)));
+        await redis?.set(mentionDedupKey(replyId), '1', 'EX', MENTION_DEDUP_TTL_S).catch((error: unknown) => {
+          logger.warn({ error, replyId }, 'Falha ao registrar resposta no dedup de menção');
+        });
         await recordLearning({
           kind: 'clickup.mention_answered',
           agent: mentionedAgent,

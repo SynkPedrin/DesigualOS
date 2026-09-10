@@ -5,7 +5,15 @@ const CHANNEL = 'desigual-os:ws-events';
 const logger = createLogger({ service: 'orchestrator-pubsub' });
 
 export interface WsEvent {
-  type: 'execution.progress' | 'execution.completed' | 'node.status' | 'studio.job.progress' | 'agent.thinking' | 'dm.received';
+  type:
+    | 'execution.progress'
+    | 'execution.completed'
+    | 'node.status'
+    | 'studio.job.progress'
+    | 'agent.thinking'
+    | 'dm.received'
+    | 'message.delta'
+    | 'clickup.task_changed';
   payload: Record<string, unknown>;
 }
 
@@ -23,7 +31,7 @@ export function subscribeToWsEvents(onEvent: (event: WsEvent) => void): () => vo
   const subscriber = getRedisConnection().duplicate();
   // Sem isso, um erro de conexão nesse socket duplicado (Redis reiniciando,
   // rede instável) virava uma exceção não tratada e derrubava o processo
-  // inteiro (api ou worker) — ioredis trata 'error' sem listener como
+  // inteiro (api ou worker) - ioredis trata 'error' sem listener como
   // exceção fatal do Node, não como um evento que se pode simplesmente
   // ignorar.
   subscriber.on('error', (error) => {

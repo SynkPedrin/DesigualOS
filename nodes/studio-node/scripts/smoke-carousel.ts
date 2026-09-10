@@ -22,7 +22,7 @@ const cards: CardData[] = [
     layout: 'capa',
     kicker: 'Construção · Chico Buarque · 1971',
     headline: '*41 versos* escondem a regra que você nunca percebeu',
-    subtext: 'O júri de 92 especialistas da Rolling Stone elegeu, e eu discordei — até contar verso por verso.',
+    subtext: 'O júri de 92 especialistas da Rolling Stone elegeu, e eu discordei - até contar verso por verso.',
     frame: frame('FUNDO-PRETO.png'),
     page: 1,
     totalPages: 10,
@@ -30,7 +30,7 @@ const cards: CardData[] = [
   {
     layout: 'premissa',
     headline: '"Era uma casa muito engraçada, não tinha teto, *não tinha nada*"',
-    subtext: 'O verso que abre o filme é o mesmo que abre a canção — e isso não é coincidência.',
+    subtext: 'O verso que abre o filme é o mesmo que abre a canção - e isso não é coincidência.',
     page: 2,
     totalPages: 10,
   },

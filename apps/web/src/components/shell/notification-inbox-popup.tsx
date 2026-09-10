@@ -1,33 +1,36 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Bell, X } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
 import { useMarkNotificationRead, useNotifications } from '@/hooks/use-notifications';
+import { useOpenNotificationLink } from '@/hooks/use-open-notification-link';
 import { useUiStore } from '@/stores/ui-store';
 import type { Notification } from '@/lib/api/contracts';
 
 /**
- * Único popup de notificação do app: lista embaixo do sininho, no canto
- * superior direito (antes era superior esquerdo e tapava a sidebar do chat).
- * Dispara pra QUALQUER não-lida ainda não mostrada nesta sessão — o que já
+ * Único popup de notificação do app: aparece no canto INFERIOR direito,
+ * sempre, pra qualquer não-lida ainda não mostrada nesta sessão - o que já
  * tinha se acumulado antes de abrir (primeira carga) e o que chega depois
  * via polling (job do Studio terminou, agente respondeu), mesmo que a aba
  * nunca tenha saído de foco.
  *
  * Versão anterior só disparava em "primeira carga" ou "voltou de aba
- * oculta" — bug relatado (2026-09-03): navegando dentro do app sem nunca
+ * oculta" - bug relatado (2026-09-03): navegando dentro do app sem nunca
  * minimizar a aba, um job que falha noutra tela nunca aparecia, só ficava
  * acumulado no sininho. `insideStudio` continua suprimindo aqui porque
- * quem mostra ali é o job-progress-card, em contexto — evita duplicar.
+ * quem mostra ali é o job-progress-card, em contexto - evita duplicar.
+ *
+ * Clique em notificação do Studio abre o StudioModal (popup, com a animação
+ * de entrada) já na peça gerada - ver use-open-notification-link.ts.
  */
 export function NotificationInboxPopup() {
   const { data: notifications } = useNotifications();
   const markRead = useMarkNotificationRead();
-  const router = useRouter();
   const pathname = usePathname();
+  const openNotificationLink = useOpenNotificationLink();
   const studioModalOpen = useUiStore((state) => state.studioModalOpen);
   const insideStudio = studioModalOpen || pathname === '/studio';
 
@@ -35,10 +38,10 @@ export function NotificationInboxPopup() {
   const shownIds = useRef<Set<string>>(new Set());
 
   // Auto-fecha depois de 10s: antes disso o popup ficava aberto pra sempre (só
-  // saía no X) e, pior, cobria a sidebar do chat no canto superior esquerdo —
+  // saía no X) e, pior, cobria a sidebar do chat no canto superior esquerdo -
   // cliques em "Nova conversa" e nas conversas caíam no popup e pareciam não
-  // funcionar (bug relatado 2026-09-04). Agora ele também sai do canto
-  // esquerdo: fica embaixo do sininho, no canto superior direito.
+  // funcionar (bug relatado 2026-09-04). Morada atual: canto INFERIOR direito,
+  // sempre (2026-09-05).
   useEffect(() => {
     if (batch.length === 0) return;
     const timeout = setTimeout(() => setBatch([]), 10_000);
@@ -65,7 +68,7 @@ export function NotificationInboxPopup() {
   function open(notification: Notification) {
     markRead.mutate(notification.id);
     setBatch((current) => current.filter((n) => n.id !== notification.id));
-    router.push(notification.link ?? '/studio');
+    openNotificationLink(notification.link);
   }
 
   function markAllRead() {
@@ -74,13 +77,13 @@ export function NotificationInboxPopup() {
   }
 
   return (
-    <div className="pointer-events-none fixed right-6 top-20 z-[100] w-96">
+    <div className="pointer-events-none fixed bottom-6 right-6 z-[100] w-96">
       <AnimatePresence>
         {batch.length > 0 && (
           <motion.div
-            initial={{ opacity: 0, y: -12, scale: 0.97 }}
+            initial={{ opacity: 0, y: 12, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.97 }}
+            exit={{ opacity: 0, y: 8, scale: 0.97 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
             className="pointer-events-auto"
           >

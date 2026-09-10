@@ -1,6 +1,6 @@
 ---
 id: global-marketing-gtm
-titulo: "Go-to-Market — Lançamento de Produto ou Serviço"
+titulo: "Go-to-Market - Lançamento de Produto ou Serviço"
 descricao: "Framework sistemático para levar um produto/serviço novo ao mercado em três fases (pré-lançamento, lançamento, pós-lançamento) e escolher os canais certos."
 escopo: global
 dominio: marketing
@@ -14,12 +14,12 @@ fonte: "C-Level Squad / cmo-architect"
 versao: 1
 ---
 
-# Go-to-Market — Lançamento de Produto ou Serviço
+# Go-to-Market - Lançamento de Produto ou Serviço
 
 ## Quando usar
 Ao lançar um serviço novo (um procedimento, uma área de atuação, um plano anual, um pacote de BPO), entrar em um mercado novo ou reposicionar uma oferta existente.
 
-## O framework — três fases
+## O framework - três fases
 
 **Pré-lançamento (8–12 semanas antes).** Validação de mercado, feedback de usuários beta, teste de mensagem, seleção de canais, preparação do time comercial, narrativa de lançamento/PR.
 

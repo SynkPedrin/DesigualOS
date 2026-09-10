@@ -17,7 +17,7 @@ type AgentFilter = AgentName | 'all';
 
 export default function HistoryPage() {
   const [clientFilter, setClientFilter] = useState<string | null>(null);
-  const { data: executions, isPending } = useExecutions(clientFilter);
+  const { data: executions, isPending, isError, refetch } = useExecutions(clientFilter);
   const { data: clients } = useClients();
   const [agentFilter, setAgentFilter] = useState<AgentFilter>('all');
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
@@ -38,7 +38,8 @@ export default function HistoryPage() {
       const aPinned = pinnedIds.has(a.executionId);
       const bPinned = pinnedIds.has(b.executionId);
       if (aPinned !== bPinned) return aPinned ? -1 : 1;
-      return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime();
+      // queued tem startedAt null - cai como "mais antigo" na ordenação.
+      return new Date(b.startedAt ?? 0).getTime() - new Date(a.startedAt ?? 0).getTime();
     });
   }, [executions, agentFilter, pinnedIds]);
 
@@ -101,6 +102,23 @@ export default function HistoryPage() {
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-11" />
           ))}
+        </div>
+      ) : isError ? (
+        <div className="space-y-4">
+          <EmptyState
+            icon={HistoryIcon}
+            title="Não conseguimos carregar o histórico."
+            description="Verifique sua conexão e tente novamente."
+          />
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
+            >
+              Tentar novamente
+            </button>
+          </div>
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState

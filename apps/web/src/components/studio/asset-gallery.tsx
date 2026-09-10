@@ -1,42 +1,24 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Cpu, Download, ImageIcon, Maximize2, User, X } from 'lucide-react';
-import { Surface } from '@/components/ui/surface';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Download, ImageIcon, Layers, Maximize2, Play, User } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatRelativeTime } from '@/lib/format';
-import { downloadAssetsAsZip } from '@/lib/zip-download';
+import { downloadStudioGroup } from '@/lib/studio-actions';
+import { toast } from '@/stores/toast-store';
+import { useClients } from '@/hooks/use-clients';
+import { AssetActionsMenu } from './asset-actions-menu';
+import { AssetLightbox, AssetPreview, QUALITY_LABELS, TYPE_LABELS, isVideoAsset } from './asset-lightbox';
 import type { StudioAsset } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
-const TYPE_LABELS: Record<string, string> = {
-  image: 'Imagem',
-  carousel: 'Carousel',
-  video: 'Vídeo',
-  reels: 'Reels',
-  upscale: 'Upscale',
-};
-
-/** Vídeo e reels não renderizam em <img>; o resto do catálogo é imagem/SVG. */
-function isVideo(asset: StudioAsset): boolean {
-  return asset.type === 'video' || asset.type === 'reels' || /\.(mp4|webm|mov)$/i.test(asset.filename);
-}
-
-function AssetPreview({ asset, className }: { asset: StudioAsset; className?: string }) {
-  if (isVideo(asset)) {
-    return <video src={asset.storageUrl} controls className={className} />;
-  }
-  // <img> e não next/image: storage_url é externo (Supabase Storage), fora do loader do Next.
-  return <img src={asset.storageUrl} alt={asset.prompt} className={className} />;
-}
-
 /**
  * Assets de um mesmo job de carousel compartilham `jobId` (ver
- * nodes/studio-node/src/index.ts) — agrupa pra virar um único card com
- * strip de slides, em vez de N cards soltos e sem contexto de que são a
- * mesma peça.
+ * nodes/studio-node/src/index.ts) - agrupa pra virar um único card, em vez de
+ * N cards soltos e sem contexto de que são a mesma peça.
  */
-function groupAssets(assets: StudioAsset[]): StudioAsset[][] {
+export function groupAssets(assets: StudioAsset[]): StudioAsset[][] {
   const byJob = new Map<string, StudioAsset[]>();
   const groups: StudioAsset[][] = [];
 
@@ -59,265 +41,287 @@ function groupAssets(assets: StudioAsset[]): StudioAsset[][] {
   return groups;
 }
 
-function CopyCaptionButton({ caption }: { caption: string }) {
-  const [copied, setCopied] = useState(false);
+/** Badge de duração pra vídeo/reels: lê os metadados de verdade do arquivo. */
+function VideoDurationBadge({ src }: { src: string }) {
+  const [duration, setDuration] = useState<number | null>(null);
+  if (duration === null) {
+    return (
+      <video
+        src={src}
+        preload="metadata"
+        muted
+        className="hidden"
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+      />
+    );
+  }
+  if (!Number.isFinite(duration)) return null;
+  return (
+    <span className="absolute bottom-2 right-2 rounded bg-carbono/80 px-1.5 py-0.5 font-mono text-[9px] text-branco-cru">
+      {Math.round(duration)}s
+    </span>
+  );
+}
+
+function TypeBadge({ asset, groupSize }: { asset: StudioAsset; groupSize: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-grafite-elevado bg-carbono/80 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-nevoa">
+      {groupSize > 1 && <Layers size={9} className="text-roxo-eletrico" />}
+      {TYPE_LABELS[asset.type] ?? asset.type}
+      {groupSize > 1 ? ` · ${groupSize} slides` : ''}
+    </span>
+  );
+}
+
+function CardMedia({ group, onOpen }: { group: StudioAsset[]; onOpen: (asset: StudioAsset) => void }) {
+  const first = group[0]!;
+  const video = isVideoAsset(first);
 
   return (
     <button
       type="button"
-      onClick={() => {
-        navigator.clipboard?.writeText(caption).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        });
-      }}
-      className="flex items-center gap-1 text-[10px] font-medium text-roxo-eletrico hover:underline"
+      onClick={() => onOpen(first)}
+      className="group/media relative block w-full overflow-hidden"
+      aria-label={`Visualizar ${first.prompt || first.filename}`}
     >
-      {copied ? <Check size={11} /> : <Copy size={11} />}
-      {copied ? 'Copiado!' : 'Copiar legenda'}
+      <AssetPreview
+        asset={first}
+        className="aspect-square w-full object-cover transition-transform duration-300 group-hover/media:scale-[1.03]"
+      />
+      {video && (
+        <>
+          <span className="absolute inset-0 flex items-center justify-center">
+            <span className="flex size-11 items-center justify-center rounded-full bg-carbono/70 backdrop-blur-sm transition-transform group-hover/media:scale-110">
+              <Play size={18} className="ml-0.5 text-branco-cru" />
+            </span>
+          </span>
+          <VideoDurationBadge src={first.storageUrl} />
+        </>
+      )}
+      {!video && (
+        <span className="absolute inset-0 flex items-center justify-center bg-carbono/50 opacity-0 transition-opacity group-hover/media:opacity-100">
+          <Maximize2 size={20} className="text-branco-cru" />
+        </span>
+      )}
+      <span className="absolute left-2 top-2">
+        <TypeBadge asset={first} groupSize={group.length} />
+      </span>
     </button>
   );
 }
 
-/** Visualização em tela cheia com a ficha técnica completa que a spec pede. */
-function AssetLightbox({ asset, onClose }: { asset: StudioAsset; onClose: () => void }) {
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-carbono/90 p-6 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-grafite-elevado bg-carbono shadow-elevated md:flex-row"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-black/40 p-4">
-          <AssetPreview asset={asset} className="max-h-[70vh] w-auto max-w-full object-contain" />
-        </div>
-        <div className="w-full shrink-0 space-y-4 p-5 md:w-80">
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Ficha técnica</h3>
-            <button type="button" onClick={onClose} aria-label="Fechar" className="text-nevoa hover:text-branco-cru">
-              <X size={18} />
-            </button>
-          </div>
-
-          <p className="text-sm text-branco-cru">{asset.prompt || 'Sem prompt registrado.'}</p>
-
-          {asset.caption && (
-            <div className="rounded-md border border-grafite-elevado bg-grafite p-2.5">
-              <p className="text-xs text-branco-cru">{asset.caption}</p>
-              <div className="mt-1.5">
-                <CopyCaptionButton caption={asset.caption} />
-              </div>
-            </div>
-          )}
-
-          <dl className="space-y-2 font-mono text-[11px] text-nevoa">
-            <div className="flex justify-between gap-3">
-              <dt>Tipo</dt>
-              <dd className="text-branco-cru">{TYPE_LABELS[asset.type] ?? asset.type}</dd>
-            </div>
-            {asset.slidesTotal && asset.slidesTotal > 1 && (
-              <div className="flex justify-between gap-3">
-                <dt>Slide</dt>
-                <dd className="text-branco-cru">
-                  {(asset.slideIndex ?? 0) + 1} de {asset.slidesTotal}
-                </dd>
-              </div>
-            )}
-            <div className="flex justify-between gap-3">
-              <dt>Criado por</dt>
-              <dd className="truncate text-branco-cru">{asset.createdBy ?? 'não registrado'}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt>Quando</dt>
-              <dd className="text-branco-cru">{new Date(asset.createdAt).toLocaleString('pt-BR')}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt>Workflow</dt>
-              <dd className="truncate text-branco-cru">{asset.model ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt>Máquina</dt>
-              <dd className="truncate text-branco-cru">{asset.nodeId ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt>Arquivo</dt>
-              <dd className="truncate text-branco-cru">{asset.filename}</dd>
-            </div>
-          </dl>
-
-          <a
-            href={asset.storageUrl}
-            download={asset.filename}
-            target="_blank"
-            rel="noreferrer"
-            className="flex w-full items-center justify-center gap-2 rounded-md bg-roxo-eletrico py-2 text-sm font-semibold text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
-          >
-            <Download size={14} />
-            Baixar
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AssetGroupCard({
-  group,
-  highlightAssetId,
-  onOpen,
-}: {
-  group: StudioAsset[];
-  highlightAssetId?: string | null | undefined;
-  onOpen: (asset: StudioAsset) => void;
-}) {
+function DownloadButton({ group }: { group: StudioAsset[] }) {
   const [downloading, setDownloading] = useState(false);
-  const first = group[0]!;
-  const caption = group.find((asset) => asset.caption)?.caption ?? null;
   const isGroup = group.length > 1;
 
-  async function handleDownloadAll() {
+  async function handleClick() {
     setDownloading(true);
     try {
-      await downloadAssetsAsZip(
-        group.map((asset) => ({ url: asset.storageUrl, filename: asset.filename })),
-        `studio-${first.jobId ?? first.id}.zip`,
-      );
+      await downloadStudioGroup(group);
+      toast(isGroup ? 'Download do .zip iniciado.' : 'Download iniciado.', 'success');
     } catch {
-      // downloadAssetsAsZip já propagou o erro só pra sair do try; sem toast
-      // system no app ainda, então o botão volta ao normal e a pessoa tenta de novo.
+      toast('Não foi possível baixar. Tente de novo.', 'error');
     } finally {
       setDownloading(false);
     }
   }
 
   return (
-    <Surface
-      level="grafite"
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={downloading}
+      className="flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-[11px] text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-50"
+    >
+      <Download size={12} />
+      {downloading ? 'Compactando…' : isGroup ? 'Baixar tudo (.zip)' : 'Baixar'}
+    </button>
+  );
+}
+
+function AssetGroupCard({
+  group,
+  clientName,
+  highlightAssetId,
+  insideStudio,
+  onOpen,
+}: {
+  group: StudioAsset[];
+  clientName: string | null;
+  highlightAssetId?: string | null | undefined;
+  insideStudio: boolean;
+  onOpen: (group: StudioAsset[], assetId?: string) => void;
+}) {
+  const first = group[0]!;
+  const highlighted = group.some((asset) => asset.id === highlightAssetId);
+
+  return (
+    <motion.article
+      layout
+      initial={{ opacity: 0, scale: 0.96, y: 10 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: 'easeOut' }}
       className={cn(
-        'overflow-hidden p-0',
-        group.some((asset) => asset.id === highlightAssetId) && 'ring-2 ring-sinal',
+        'group overflow-hidden rounded-lg border border-grafite-elevado bg-grafite shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:border-roxo-eletrico/30 hover:shadow-elevated',
+        highlighted && 'ring-2 ring-sinal',
       )}
     >
-      {isGroup ? (
-        <div className="flex gap-1 overflow-x-auto p-1">
-          {group.map((asset) => (
-            <button
-              key={asset.id}
-              type="button"
-              onClick={() => onOpen(asset)}
-              className="relative shrink-0"
-              aria-label={`Visualizar slide ${(asset.slideIndex ?? 0) + 1} de ${group.length}`}
-            >
-              <AssetPreview asset={asset} className="size-20 rounded-md object-cover" />
-            </button>
-          ))}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => onOpen(first)}
-          className="group relative block w-full"
-          aria-label={`Visualizar ${first.filename}`}
-        >
-          <AssetPreview asset={first} className="aspect-square w-full object-cover" />
-          <span className="absolute inset-0 flex items-center justify-center bg-carbono/60 opacity-0 transition-opacity group-hover:opacity-100">
-            <Maximize2 size={20} className="text-branco-cru" />
-          </span>
-        </button>
-      )}
+      <CardMedia group={group} onOpen={(asset) => onOpen(group, asset.id)} />
 
       <div className="p-3">
-        <p className="truncate text-xs text-branco-cru">{first.prompt}</p>
-        <div className="mt-1 flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-nevoa">
-          <span>
-            {TYPE_LABELS[first.type] ?? first.type}
-            {isGroup ? ` · ${group.length} slides` : ''}
-          </span>
-          <span>{formatRelativeTime(first.createdAt)}</span>
+        <p className="line-clamp-2 min-h-8 text-xs font-medium text-branco-cru" title={first.prompt}>
+          {first.prompt || first.filename}
+        </p>
+
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {first.qualityPreset && (
+            <span className="rounded-full bg-roxo-eletrico/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violeta-sutil">
+              {QUALITY_LABELS[first.qualityPreset] ?? first.qualityPreset}
+            </span>
+          )}
+          {clientName && (
+            <span className="rounded-full bg-grafite-elevado px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-nevoa">
+              {clientName}
+            </span>
+          )}
         </div>
 
-        <div className="mt-1.5 space-y-0.5 font-mono text-[10px] text-nevoa">
-          {first.createdBy && (
-            <p className="flex items-center gap-1 truncate">
+        <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-nevoa">
+          {first.createdBy ? (
+            <span className="flex min-w-0 items-center gap-1 truncate">
               <User size={9} className="shrink-0" />
               {first.createdBy}
-            </p>
+            </span>
+          ) : (
+            <span />
           )}
-          {first.nodeId && (
-            <p className="flex items-center gap-1 truncate">
-              <Cpu size={9} className="shrink-0" />
-              {first.nodeId}
-            </p>
-          )}
+          <span className="shrink-0">{formatRelativeTime(first.createdAt)}</span>
         </div>
 
-        {caption && (
-          <div className="mt-2 rounded-md border border-grafite-elevado bg-carbono p-2">
-            <p className="line-clamp-3 text-[11px] text-branco-cru">{caption}</p>
-            <div className="mt-1">
-              <CopyCaptionButton caption={caption} />
-            </div>
-          </div>
-        )}
-
-        <div className="mt-2 flex gap-1 border-t border-grafite-elevado pt-2 text-nevoa">
+        <div className="mt-2 flex items-center gap-1 border-t border-grafite-elevado pt-2">
           <button
             type="button"
-            onClick={() => onOpen(first)}
-            className="flex flex-1 items-center justify-center gap-1 rounded p-1.5 text-[11px] transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
+            onClick={() => onOpen(group, first.id)}
+            className="flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-[11px] text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
           >
             <Maximize2 size={12} />
             Visualizar
           </button>
-          {isGroup ? (
-            <button
-              type="button"
-              onClick={handleDownloadAll}
-              disabled={downloading}
-              className="flex flex-1 items-center justify-center gap-1 rounded p-1.5 text-[11px] transition-colors hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-50"
-            >
-              <Download size={12} />
-              {downloading ? 'Compactando…' : 'Baixar tudo (.zip)'}
-            </button>
-          ) : (
-            <a
-              href={first.storageUrl}
-              download={first.filename}
-              target="_blank"
-              rel="noreferrer"
-              className="flex flex-1 items-center justify-center gap-1 rounded p-1.5 text-[11px] transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
-            >
-              <Download size={12} />
-              Baixar
-            </a>
-          )}
+          <DownloadButton group={group} />
+          <AssetActionsMenu
+            group={group}
+            insideStudio={insideStudio}
+            onView={() => onOpen(group, first.id)}
+            onDetails={() => onOpen(group, first.id)}
+          />
         </div>
       </div>
-    </Surface>
+    </motion.article>
   );
 }
 
-export function AssetGallery({ assets, highlightAssetId }: { assets: StudioAsset[]; highlightAssetId?: string | null }) {
-  const [openAsset, setOpenAsset] = useState<StudioAsset | null>(null);
+function AssetGroupRow({
+  group,
+  clientName,
+  highlightAssetId,
+  insideStudio,
+  onOpen,
+}: {
+  group: StudioAsset[];
+  clientName: string | null;
+  highlightAssetId?: string | null | undefined;
+  insideStudio: boolean;
+  onOpen: (group: StudioAsset[], assetId?: string) => void;
+}) {
+  const first = group[0]!;
+  const highlighted = group.some((asset) => asset.id === highlightAssetId);
+  const video = isVideoAsset(first);
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className={cn(
+        'flex items-center gap-3 rounded-lg border border-grafite-elevado bg-grafite px-3 py-2.5 shadow-card transition-colors hover:border-roxo-eletrico/30',
+        highlighted && 'ring-2 ring-sinal',
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onOpen(group, first.id)}
+        aria-label={`Visualizar ${first.prompt || first.filename}`}
+        className="relative shrink-0 overflow-hidden rounded-md"
+      >
+        <AssetPreview asset={first} className="size-12 object-cover" />
+        {video && (
+          <span className="absolute inset-0 flex items-center justify-center bg-carbono/40">
+            <Play size={12} className="text-branco-cru" />
+          </span>
+        )}
+      </button>
+
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-branco-cru">{first.prompt || first.filename}</p>
+        <p className="mt-0.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-nevoa">
+          <span>
+            {TYPE_LABELS[first.type] ?? first.type}
+            {group.length > 1 ? ` · ${group.length} slides` : ''}
+          </span>
+          {first.qualityPreset && <span>{QUALITY_LABELS[first.qualityPreset] ?? first.qualityPreset}</span>}
+          {clientName && <span className="truncate">{clientName}</span>}
+        </p>
+      </div>
+
+      <span className="hidden shrink-0 font-mono text-[10px] uppercase tracking-wider text-nevoa sm:block">
+        {formatRelativeTime(first.createdAt)}
+      </span>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onOpen(group, first.id)}
+          aria-label="Visualizar"
+          className="rounded-md p-1.5 text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
+        >
+          <Maximize2 size={13} />
+        </button>
+        <DownloadButton group={group} />
+        <AssetActionsMenu
+          group={group}
+          insideStudio={insideStudio}
+          onView={() => onOpen(group, first.id)}
+          onDetails={() => onOpen(group, first.id)}
+        />
+      </div>
+    </motion.div>
+  );
+}
+
+export function AssetGallery({
+  assets,
+  view = 'grid',
+  insideStudio = false,
+  highlightAssetId,
+}: {
+  assets: StudioAsset[];
+  view?: 'grid' | 'list';
+  insideStudio?: boolean;
+  highlightAssetId?: string | null | undefined;
+}) {
+  const [open, setOpen] = useState<{ group: StudioAsset[]; assetId?: string | undefined } | null>(null);
   const groups = useMemo(() => groupAssets(assets), [assets]);
+  const { data: clients } = useClients();
+  const clientNameById = useMemo(() => new Map(clients?.map((client) => [client.id, client.name]) ?? []), [clients]);
 
   // Notificação de job concluído leva pra cá com ?asset=<id>: abre direto a
   // peça que acabou de ficar pronta, em vez de largar a pessoa na grade.
   useEffect(() => {
     if (!highlightAssetId) return;
-    const target = assets.find((asset) => asset.id === highlightAssetId);
-    if (target) setOpenAsset(target);
-  }, [highlightAssetId, assets]);
+    const group = groups.find((candidate) => candidate.some((asset) => asset.id === highlightAssetId));
+    if (group) setOpen({ group, assetId: highlightAssetId });
+  }, [highlightAssetId, groups]);
 
   if (assets.length === 0) {
     return (
@@ -331,18 +335,39 @@ export function AssetGallery({ assets, highlightAssetId }: { assets: StudioAsset
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        {groups.map((group) => (
-          <AssetGroupCard
-            key={group[0]!.jobId ?? group[0]!.id}
-            group={group}
-            highlightAssetId={highlightAssetId}
-            onOpen={setOpenAsset}
-          />
-        ))}
-      </div>
+      {view === 'grid' ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
+          {groups.map((group) => (
+            <AssetGroupCard
+              key={group.length > 1 ? (group[0]!.jobId ?? group[0]!.id) : group[0]!.id}
+              group={group}
+              clientName={clientNameById.get(group[0]!.clientId) ?? null}
+              highlightAssetId={highlightAssetId}
+              insideStudio={insideStudio}
+              onOpen={(nextGroup, assetId) => setOpen({ group: nextGroup, assetId })}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {groups.map((group) => (
+            <AssetGroupRow
+              key={group.length > 1 ? (group[0]!.jobId ?? group[0]!.id) : group[0]!.id}
+              group={group}
+              clientName={clientNameById.get(group[0]!.clientId) ?? null}
+              highlightAssetId={highlightAssetId}
+              insideStudio={insideStudio}
+              onOpen={(nextGroup, assetId) => setOpen({ group: nextGroup, assetId })}
+            />
+          ))}
+        </div>
+      )}
 
-      {openAsset && <AssetLightbox asset={openAsset} onClose={() => setOpenAsset(null)} />}
+      <AnimatePresence>
+        {open && (
+          <AssetLightbox group={open.group} initialAssetId={open.assetId} onClose={() => setOpen(null)} />
+        )}
+      </AnimatePresence>
     </>
   );
 }

@@ -1,7 +1,7 @@
 ---
 id: global-marketing-funil-demanda
-titulo: "Funil de Demanda — da Descoberta à Recomendação"
-descricao: "Arquitetura de geração de demanda em funil completo: consciência, interesse, consideração, decisão e advocacia — com objetivo, táticas e métrica de cada etapa."
+titulo: "Funil de Demanda - da Descoberta à Recomendação"
+descricao: "Arquitetura de geração de demanda em funil completo: consciência, interesse, consideração, decisão e advocacia - com objetivo, táticas e métrica de cada etapa."
 escopo: global
 dominio: marketing
 framework: "Demand Generation Funnel"
@@ -14,7 +14,7 @@ fonte: "C-Level Squad / cmo-architect"
 versao: 1
 ---
 
-# Funil de Demanda — da Descoberta à Recomendação
+# Funil de Demanda - da Descoberta à Recomendação
 
 ## Quando usar
 Ao desenhar ou consertar a máquina de aquisição: como transformar desconhecidos em leads, leads em clientes e clientes em promotores.
@@ -27,7 +27,7 @@ Ao desenhar ou consertar a máquina de aquisição: como transformar desconhecid
 
 **Consideração.** Objetivo: construir confiança e virar a opção preferida. Táticas: casos de sucesso, demonstrações, avaliação/trial, conteúdo comparativo, prova social. Métrica: MQLs, pedidos de demonstração, agendamentos.
 
-**Decisão.** Objetivo: converter — tornar a compra fácil e convincente. Táticas: material de vendas, calculadora de ROI, suporte à implementação, transparência de preço. Métrica: SQLs, taxa de conversão, velocidade do fechamento.
+**Decisão.** Objetivo: converter - tornar a compra fácil e convincente. Táticas: material de vendas, calculadora de ROI, suporte à implementação, transparência de preço. Métrica: SQLs, taxa de conversão, velocidade do fechamento.
 
 **Advocacia.** Objetivo: transformar clientes em promotores. Táticas: sucesso do cliente, NPS, incentivos de indicação, comunidade, produção de casos. Métrica: NPS, taxa de indicação, receita de expansão.
 

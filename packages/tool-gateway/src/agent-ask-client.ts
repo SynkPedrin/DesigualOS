@@ -4,7 +4,7 @@
  * Jarbas e da Suzy e que é a fonte de verdade do WhatsApp/Instagram de
  * clientes reais. A rota despacha pro `answerQuestion()` de cada agente,
  * que reaproveita o cérebro real já usado no WhatsApp (bentoAsk,
- * openclawBrain, Ollama) — nenhuma lógica nova foi criada lá, então aqui
+ * openclawBrain, Ollama) - nenhuma lógica nova foi criada lá, então aqui
  * também não existe nenhuma.
  *
  * Compartilhado entre apps/api (menção no ClickUp) e apps/worker (dispatch

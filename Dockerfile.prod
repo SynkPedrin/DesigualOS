@@ -1,0 +1,60 @@
+# Dockerfile de produção do Orchestrator (apps/api e apps/worker).
+#
+# Um único Dockerfile com dois alvos (api, worker) em vez de dois arquivos
+# separados: os dois compartilham a mesma etapa de instalação/build do
+# monorepo pnpm, e usar `docker build --target` evita duplicar essa etapa
+# (e o cache de camadas) em dois lugares.
+#
+# Cada app já resolve o próprio bundle de produção com esbuild
+# (apps/api/build.mjs e apps/worker/build.mjs): o `pnpm --filter ... build`
+# abaixo gera um dist/*.js único, com todo o código do workspace e do
+# node_modules empacotado dentro (ver comentário em apps/api/build.mjs).
+# Por isso a imagem final não precisa copiar node_modules, só o dist/ e o
+# package.json do próprio app (para o Node reconhecer "type": "module").
+
+FROM node:20-alpine AS base
+# Versão fixa, igual ao "packageManager" do package.json raiz: evita a
+# imagem de produção usar um pnpm diferente do que gerou o pnpm-lock.yaml.
+RUN corepack enable && corepack prepare pnpm@9.9.0 --activate
+WORKDIR /app
+
+# --- Build: instala o workspace inteiro e empacota os dois apps ---
+FROM base AS build
+# Contexto de build já filtrado pelo .dockerignore (sem node_modules/dist
+# locais, sem a LP, sem brain/Brain-Marketing/STUDIO-BRAIN).
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @desigual-os/api build
+RUN pnpm --filter @desigual-os/worker build
+
+# --- Runtime da API (apps/api) ---
+FROM node:20-alpine AS api
+ENV NODE_ENV=production
+WORKDIR /app
+# package.json só para o Node reconhecer "type": "module" ao rodar o dist/
+# bundlado; nenhuma dependência é instalada aqui (tudo já está no bundle).
+COPY --from=build /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build /app/apps/api/dist ./apps/api/dist
+# Brain-Marketing é lido em runtime por packages/router/src/marketing-copy.ts
+# (contexto de frameworks de marketing para a copy gerada pelo Studio) via
+# caminho relativo a partir de dist/server.js: precisa manter a mesma
+# profundidade de pastas (apps/api/dist -> apps/api -> apps -> raiz).
+# Ausência não quebra o boot (falha graciosamente), só perde esse contexto.
+COPY --from=build /app/Brain-Marketing ./Brain-Marketing
+EXPOSE 3001
+CMD ["node", "apps/api/dist/server.js"]
+
+# --- Runtime do worker (apps/worker) ---
+FROM node:20-alpine AS worker
+ENV NODE_ENV=production
+WORKDIR /app
+# procps traz pgrep, usado só pelo HEALTHCHECK do docker-compose.prod.yml
+# (o worker não expõe HTTP, então a checagem de saúde é "o processo ainda
+# está de pé", não uma sonda real de progresso da fila).
+RUN apk add --no-cache procps
+COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
+COPY --from=build /app/apps/worker/dist ./apps/worker/dist
+# Mesmo motivo do estágio da API acima (execute-job.ts também usa a copy do
+# Studio); mesma profundidade de pastas (apps/worker/dist -> ... -> raiz).
+COPY --from=build /app/Brain-Marketing ./Brain-Marketing
+CMD ["node", "apps/worker/dist/index.js"]

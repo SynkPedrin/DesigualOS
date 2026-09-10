@@ -15,7 +15,7 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-/** Cliente criado à mão, sem lista do ClickUp vinculada — dá pra linkar depois pela
+/** Cliente criado à mão, sem lista do ClickUp vinculada - dá pra linkar depois pela
  * sincronização de Configurações → Integrações. */
 export function CreateClientModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');

@@ -15,13 +15,18 @@ const configSchema = z.object({
   SUPABASE_SECRET_KEY: z.string().min(1),
   SUPABASE_STORAGE_BUCKET: z.string().default('studio-assets'),
   // ComfyUI real do Studio (Pinokio, porta 8188, confirmado rodando na
-  // máquina desktop-itra471). Nome do checkpoint não é fixo: resolvido em
-  // runtime via resolveCheckpointName (arquivo de modelo pode mudar).
+  // máquina desktop-itra471). Nomes de arquivo não são fixos: resolvidos em
+  // runtime via resolveFluxModelNames (arquivo de modelo pode mudar).
   // IP Tailscale direto (não o hostname MagicDNS): é o que já usei em todo
   // o reconhecimento desta máquina, confirmado alcançável; resolução de
   // MagicDNS a partir da VPS não foi testada ainda.
   COMFYUI_URL: z.string().url().default('http://100.107.198.50:8188'),
-  COMFYUI_CHECKPOINT_HINT: z.string().default('flux1-dev'),
+  // FLUX.2 Dev não tem checkpoint único (trocou o antigo flux1-dev de
+  // arquivo só): diffusion model, text encoder e VAE são três arquivos
+  // separados, cada um resolvido pelo seu próprio hint.
+  COMFYUI_UNET_HINT: z.string().default('flux2'),
+  COMFYUI_CLIP_HINT: z.string().default('flux2'),
+  COMFYUI_VAE_HINT: z.string().default('flux2'),
 });
 
 export type StudioNodeConfig = z.infer<typeof configSchema>;

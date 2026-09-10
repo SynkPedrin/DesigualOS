@@ -37,6 +37,7 @@
   --color-agent-jarbas: #6b21a8;
   --color-agent-suzy: #d946ef;
   --color-agent-studio: #e1f900;
+  --color-agent-otto: #facc15;
 
   /* Typography (font CSS variables are set on <html> via next/font in layout.tsx) */
   --font-display: var(--font-big-shoulders), Impact, sans-serif;

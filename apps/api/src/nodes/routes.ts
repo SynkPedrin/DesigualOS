@@ -10,6 +10,7 @@ import {
 } from '@desigual-os/node-protocol';
 import { requireNodeSecret } from './auth';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { publishWsEvent } from '@desigual-os/orchestrator';
 
 // 'drain' não existe de verdade ainda porque não há rastreio de trabalho em
 // andamento por node (isso chega com a fila na Fase 9). Por enquanto os dois
@@ -110,6 +111,17 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         queueDepth: payload.queue_depth ?? null,
         activeJob: payload.active_job ?? null,
       });
+
+      // Avisa o Monitoramento pelo WS na hora, sem esperar o próximo polling.
+      // Falha no publish não pode derrubar o heartbeat: o dado já está gravado.
+      try {
+        await publishWsEvent({
+          type: 'node.status',
+          payload: { node_id: payload.node_id, status: payload.status },
+        });
+      } catch (error) {
+        request.log.error({ error }, 'Falha ao publicar node.status no WS');
+      }
 
       return heartbeatResponseSchema.parse({
         node_id: payload.node_id,

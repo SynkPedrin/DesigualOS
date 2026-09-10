@@ -2,7 +2,22 @@ import type { AgentName, ExecutionComplexity } from '@desigual-os/types';
 
 export interface RoutingRule {
   intent: string;
+  /** Frases que expressam INTENÇÃO ("performance da campanha", "cpa"). Uma só já basta
+   * pra decidir sem gastar chamada de LLM. */
   keywords: string[];
+  /**
+   * Palavras que indicam só o ASSUNTO, não a intenção ("campanha", "copy", "criativo").
+   * Contam pouco de propósito: sozinhas ficam ABAIXO do limiar de escalonamento, então a
+   * decisão vai pro classifier em vez de ser cravada pela regra.
+   *
+   * Por que isso existe (bug real medido em 10/09/2026): `creative_direction` tinha
+   * 'campanha' e 'copy' como keyword normal, e o match era substring solto valendo 0.85 —
+   * acima do limiar de 0.7. Efeito: "qual cliente tem a melhor CAMPANHA hoje?" era
+   * roteirizada pro Otto (direção criativa) com confiança alta e o classifier nunca era
+   * consultado, quando a pergunta é de performance cross-client (Jarbas). O usuário só não
+   * viu isso sempre porque escrevia "Jarbas, ..." e a detecção de menção passa na frente.
+   */
+  topicKeywords?: string[];
   primaryAgent: AgentName;
   requiredTools: string[];
   complexity: ExecutionComplexity;
@@ -36,6 +51,14 @@ export const ROUTING_RULES: RoutingRule[] = [
       'roas',
       'ctr',
       'métricas de tráfego',
+      // Comparação de performance ENTRE clientes é leitura de mídia paga, não direção
+      // criativa. Sem estas, "qual cliente tem a melhor campanha" caía em creative_direction
+      // por causa da palavra solta "campanha".
+      'melhor campanha',
+      'pior campanha',
+      'melhor resultado',
+      'campanha que merece escala',
+      'fadiga de criativo',
     ],
     primaryAgent: 'jarbas',
     requiredTools: ['meta_ads'],
@@ -54,6 +77,17 @@ export const ROUTING_RULES: RoutingRule[] = [
     ],
     primaryAgent: 'studio',
     requiredTools: ['gpu'],
+    complexity: 'medium',
+  },
+  {
+    // Direção criativa (pensar) é Otto; gerar a mídia em si (executar) segue
+    // sendo Studio. Em empate de confiança vale a regra que vem antes aqui,
+    // então "gere um carrossel" continua indo direto pro Studio.
+    intent: 'creative_direction',
+    keywords: ['direção de arte', 'identidade visual', 'prompt de imagem', 'conceito criativo', 'direção criativa'],
+    topicKeywords: ['carrossel', 'campanha', 'conceito', 'copy', 'criativo', 'roteiro', 'reels', 'posts'],
+    primaryAgent: 'otto',
+    requiredTools: ['studio'],
     complexity: 'medium',
   },
   {
@@ -84,18 +118,25 @@ export interface RuleMatch {
 }
 
 /**
- * Confiança simples por contagem de keywords batidas; 0 keywords = sem match.
- * Um match único e forte (>=1 keyword) já é confiança alta o suficiente pra
- * não gastar chamada de LLM; é exatamente o ponto do rule engine existir.
+ * Confiança por contagem de keywords batidas, com peso diferente para intenção e assunto.
+ *
+ * - keyword de INTENÇÃO: 0.7 + 0.15 por hit -> acima do limiar, decide sem LLM.
+ * - só keyword de ASSUNTO: 0.45 + 0.05 por hit -> ABAIXO do limiar de propósito, pra que
+ *   `route()` escale pro classifier em vez de cravar o agente pela palavra solta.
+ *
+ * O limiar de escalonamento vive em route.ts (RULE_CONFIDENCE_THRESHOLD); manter estes
+ * números abaixo dele é o que faz a escalada acontecer.
  */
 export function matchRule(message: string): RuleMatch | null {
   const normalized = message.toLowerCase();
   let best: RuleMatch | null = null;
 
   for (const rule of ROUTING_RULES) {
-    const hits = rule.keywords.filter((keyword) => normalized.includes(keyword)).length;
-    if (hits === 0) continue;
-    const confidence = Math.min(1, 0.7 + hits * 0.15);
+    const strong = rule.keywords.filter((keyword) => normalized.includes(keyword)).length;
+    const weak = (rule.topicKeywords ?? []).filter((keyword) => normalized.includes(keyword)).length;
+    if (strong === 0 && weak === 0) continue;
+    const confidence =
+      strong > 0 ? Math.min(1, 0.7 + strong * 0.15) : Math.min(0.65, 0.45 + weak * 0.05);
     if (!best || confidence > best.confidence) {
       best = { rule, confidence };
     }

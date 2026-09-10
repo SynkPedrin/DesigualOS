@@ -1,4 +1,4 @@
-export const AGENT_NAMES = ['bento', 'jarbas', 'suzy', 'studio'] as const;
+export const AGENT_NAMES = ['bento', 'jarbas', 'suzy', 'studio', 'otto'] as const;
 
 export type AgentName = (typeof AGENT_NAMES)[number];
 

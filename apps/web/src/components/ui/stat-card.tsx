@@ -11,12 +11,16 @@ export function StatCard({
   accent = false,
   formatValue = (v) => Math.round(v).toLocaleString('pt-BR'),
   isLoading = false,
+  isError = false,
 }: {
   label: string;
   value: number;
   accent?: boolean;
   formatValue?: (value: number) => string;
   isLoading?: boolean;
+  /** Fetch falhou pra essa métrica: mostra um indicador discreto no lugar do número em vez
+   * de cair silenciosamente em "0" (que parece um dado real, só que errado). */
+  isError?: boolean;
 }) {
   const animated = useCountUp(isLoading ? 0 : value);
 
@@ -29,6 +33,11 @@ export function StatCard({
       <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-nevoa">{label}</p>
       {isLoading ? (
         <Skeleton className="h-8 w-24" />
+      ) : isError ? (
+        <p className="flex items-center gap-1.5 text-sm font-medium text-erro" title="Não foi possível carregar essa métrica.">
+          <span className="size-1.5 shrink-0 rounded-full bg-erro" />
+          Falha ao carregar
+        </p>
       ) : (
         <p
           className={cn(

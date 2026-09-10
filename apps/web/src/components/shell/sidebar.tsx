@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronsLeft, ChevronsRight, LogOut, Plus } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, LogOut, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui-store';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
@@ -26,10 +26,19 @@ function formatBackupTime(iso: string | null) {
   return `Há ${diffHours}h`;
 }
 
-export function Sidebar() {
+export function Sidebar({
+  variant = 'desktop',
+  onNavigate,
+}: {
+  /** 'drawer': renderizada dentro do MobileNavDrawer (< md) - sempre expandida, sem o botão
+   * de colapsar (não faz sentido num overlay), e some sozinha quando o usuário navega. */
+  variant?: 'desktop' | 'drawer';
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
-  const collapsed = useUiStore((state) => state.sidebarCollapsed);
+  const collapsedSetting = useUiStore((state) => state.sidebarCollapsed);
+  const collapsed = variant === 'drawer' ? false : collapsedSetting;
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const setStudioModalOpen = useUiStore((state) => state.setStudioModalOpen);
   const { isMaster } = useIsMaster();
@@ -40,19 +49,27 @@ export function Sidebar() {
 
   async function handleSignOut() {
     await supabase.auth.signOut();
+    onNavigate?.();
     router.replace('/login');
   }
 
-  /** Mesmo rota não reseta o estado local do ChatThread — o nonce em ?new= é o
+  /** Mesmo rota não reseta o estado local do ChatThread - o nonce em ?new= é o
    * gatilho que o chat consome pra voltar à tela vazia (ver chat-thread.tsx). */
   function handleNewChat() {
+    onNavigate?.();
     router.push(`/chat?new=${Date.now()}`);
   }
 
   return (
     <aside
       className={cn(
-        'flex h-screen flex-col border-r border-grafite-elevado bg-carbono transition-[width] duration-300 ease-out',
+        'h-full flex-col bg-carbono transition-[width] duration-300 ease-out',
+        // Desktop: sidebar fixa, escondida abaixo do breakpoint md (o drawer assume nesse
+        // caso, ver mobile-nav-drawer.tsx). Drawer: sempre flex, tamanho controlado pelo
+        // container que a envolve.
+        variant === 'desktop'
+          ? 'hidden h-screen border-r border-grafite-elevado md:flex'
+          : 'flex',
         collapsed ? 'w-[76px]' : 'w-64',
       )}
     >
@@ -60,14 +77,25 @@ export function Sidebar() {
         {!collapsed && (
           <Image src={logoSrc} alt="desigual OS" width={160} height={53} priority className="h-auto w-[150px]" />
         )}
-        <button
-          type="button"
-          onClick={toggleSidebar}
-          aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
-          className="flex size-8 shrink-0 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite hover:text-branco-cru"
-        >
-          {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
-        </button>
+        {variant === 'desktop' ? (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite hover:text-branco-cru"
+          >
+            {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onNavigate}
+            aria-label="Fechar menu"
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite hover:text-branco-cru"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
       <div className={cn('mx-4 mb-4 rounded-lg bg-grafite px-3 py-3', collapsed && 'mx-2 px-2')}>
@@ -137,20 +165,28 @@ export function Sidebar() {
           // Studio opens as a popup (see StudioModal) instead of navigating away.
           if (item.href === '/studio') {
             return (
-              <button key={item.href} type="button" onClick={() => setStudioModalOpen(true)} className={itemClassName}>
+              <button
+                key={item.href}
+                type="button"
+                onClick={() => {
+                  setStudioModalOpen(true);
+                  onNavigate?.();
+                }}
+                className={itemClassName}
+              >
                 {itemContent}
               </button>
             );
           }
 
           return (
-            <Link key={item.href} href={item.href} className={itemClassName}>
+            <Link key={item.href} href={item.href} className={itemClassName} onClick={() => onNavigate?.()}>
               {itemContent}
             </Link>
           );
         })}
 
-        {/* Colapsada, a sidebar esconde tudo que não é ícone — as seções somem
+        {/* Colapsada, a sidebar esconde tudo que não é ícone - as seções somem
          * junto (mesmo destino do widget de saúde). Suspense: a seção usa
          * useSearchParams pro destaque do item ativo. */}
         {!collapsed && (

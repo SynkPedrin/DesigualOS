@@ -12,7 +12,7 @@ import { supabase } from '@/lib/supabase/client';
  * no backend) traz o token no fragmento da URL (#access_token=...&type=
  * recovery). O client Supabase já processa isso sozinho ao carregar
  * (detectSessionInUrl, ligado por padrão) e dispara o evento
- * PASSWORD_RECOVERY — é isso que autoriza chamar updateUser({ password })
+ * PASSWORD_RECOVERY - é isso que autoriza chamar updateUser({ password })
  * aqui, sem precisar reimplementar verificação de token nenhuma.
  */
 export default function ResetPasswordPage() {
@@ -29,7 +29,7 @@ export default function ResetPasswordPage() {
       if (event === 'PASSWORD_RECOVERY') setReady(true);
     });
     // Se a aba já processou o link antes deste componente montar (sessão já
-    // ativa), o evento acima nunca dispara de novo — checa a sessão direto
+    // ativa), o evento acima nunca dispara de novo - checa a sessão direto
     // como fallback, em vez de travar pra sempre em "verificando link".
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) setReady(true);

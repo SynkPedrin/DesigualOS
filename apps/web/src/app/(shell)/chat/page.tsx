@@ -2,10 +2,10 @@ import { Suspense } from 'react';
 import { ChatThread } from '@/components/chat/chat-thread';
 
 /**
- * O chat ocupa o centro inteiro: a coluna direita (AgentsPanel) e o rail de
- * conversas dentro do ChatThread saíram daqui — a lista de conversas vai para
- * a sidebar global (tarefa separada) e as infos de agente continuam em /agents.
- * Os componentes seguem no repo.
+ * O chat ocupa o centro da tela. A coluna direita (AgentsPanel) saiu daqui -
+ * as infos de agente continuam em /agents e o componente segue no repo.
+ * O rail de conversas (ConversationSidebar) continua renderizado dentro do
+ * ChatThread, ao lado da coluna central com a home/conversa.
  */
 export default function ChatPage() {
   return (

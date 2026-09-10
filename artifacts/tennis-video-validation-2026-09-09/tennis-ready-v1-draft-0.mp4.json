@@ -1,0 +1,18 @@
+{
+  "source_job_id": "tennis-ready-v1",
+  "quality_reference": "editorial-takes-v1",
+  "visual_qa": "pending_review",
+  "job_id": "tennis-ready-v1-takes",
+  "sequence_role": "take",
+  "slide_index": 0,
+  "slides_total": 1,
+  "quality_stage": "draft",
+  "seconds": 5.166666666666667,
+  "edit_seconds": 5,
+  "fps": 24,
+  "resolution": "768x1344",
+  "hero_frame": "http://127.0.0.1:63986/tennis-ready-v1-keyframe-0.png",
+  "final_prompt": "Single locked-camera editorial tennis portrait. The athlete breathes naturally, subtly settles the shoulders and gives a tiny confident change of expression. Hands and racket remain steady. Background still. Retain the exact new character, forest-green or burgundy clothing, clay-court environment and sunlight of the input. No speech; very quiet natural court ambience.. Camera: locked or subtle controlled movement. Sound: natural ambience only, no invented dialogue. One continuous shot, no internal cuts. Preserve the keyframe identity, wardrobe, product geometry and scene layout throughout the shot. Maintain coherent shadows, stable fine texture and natural anatomy; no morphing, duplicate limbs, flickering, sudden acceleration or unrequested people/objects. Follow only the specified camera movement.",
+  "seed": 1750725378,
+  "comfy_prompt_id": "4076836f-4608-4a2b-b89b-4efe6e8ee6ff"
+}

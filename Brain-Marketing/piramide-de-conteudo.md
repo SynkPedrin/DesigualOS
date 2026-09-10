@@ -1,6 +1,6 @@
 ---
 id: global-marketing-piramide-conteudo
-titulo: "Pirâmide de Conteúdo — criar uma vez, distribuir em todo lugar"
+titulo: "Pirâmide de Conteúdo - criar uma vez, distribuir em todo lugar"
 descricao: "Estratégia de conteúdo hierárquica (pilar, campanha, social) que maximiza eficiência: cada peça-pilar gera dezenas de derivadas, com foco em distribuição."
 escopo: global
 dominio: marketing
@@ -14,10 +14,10 @@ fonte: "C-Level Squad / cmo-architect"
 versao: 1
 ---
 
-# Pirâmide de Conteúdo — criar uma vez, distribuir em todo lugar
+# Pirâmide de Conteúdo - criar uma vez, distribuir em todo lugar
 
 ## Quando usar
-Ao montar uma máquina de conteúdo eficiente, sem cair na armadilha de "produzir mais" — o ganho vem de reaproveitar bem e distribuir muito.
+Ao montar uma máquina de conteúdo eficiente, sem cair na armadilha de "produzir mais" - o ganho vem de reaproveitar bem e distribuir muito.
 
 ## As três camadas
 - **Conteúdo pilar (1–2 por mês):** peças longas e fundamentais. Ex.: guias completos, séries em vídeo, estudos, podcasts.

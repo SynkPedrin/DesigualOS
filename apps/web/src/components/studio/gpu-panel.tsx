@@ -1,5 +1,5 @@
 import { Surface } from '@/components/ui/surface';
-import { MetricBar } from '@/components/monitoring/metric-bar';
+import { LiveMetricChart } from '@/components/monitoring/live-metric-chart';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { NODE_STATUS_META } from '@/lib/status-meta';
 import type { NodeSummary } from '@/lib/api/contracts';
@@ -22,8 +22,8 @@ export function GpuPanel({ node }: { node: NodeSummary | undefined }) {
         />
       </div>
       <div className="space-y-2.5">
-        {node.gpuPercent !== null && <MetricBar label="Utilização GPU" value={node.gpuPercent} />}
-        {node.vramPercent !== null && <MetricBar label="VRAM" value={node.vramPercent} />}
+        {node.gpuPercent !== null && <LiveMetricChart label="Utilização GPU" value={node.gpuPercent} />}
+        {node.vramPercent !== null && <LiveMetricChart label="VRAM" value={node.vramPercent} />}
       </div>
       <div className="mt-3 flex items-center justify-between border-t border-grafite-elevado pt-3 font-mono text-[11px] text-nevoa">
         {node.temperatureCelsius !== null && <span>{node.temperatureCelsius}°C</span>}

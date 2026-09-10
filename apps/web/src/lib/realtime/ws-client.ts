@@ -1,26 +1,49 @@
 /**
  * Cliente do canal WebSocket único do backend (apps/api/src/ws/routes.ts):
- * broadcast simples pra todo cliente conectado, sem filtro por usuário
- * (o servidor ainda não tem sessão por conexão WS, só REST tem auth — ver
- * comentário lá). Por isso este cliente só usa os eventos pra invalidar
- * queries do React Query e nunca pra exibir dado sensível direto do payload.
+ * a conexão exige sessão Supabase válida no handshake, e o servidor filtra
+ * por usuário os eventos que carregam conteúdo (`dm.received`,
+ * `message.delta` de conversa privada) antes de mandar pro socket. Eventos
+ * puramente operacionais (progresso de execution, status de node) seguem em
+ * broadcast e só disparam invalidação de query - `message.delta` é a
+ * exceção deliberada: o payload já filtrado é seguro de exibir direto,
+ * evitando o GET extra que a invalidação exigiria.
  */
 export interface WsEvent {
-  type: 'execution.progress' | 'execution.completed' | 'node.status' | 'studio.job.progress' | 'agent.thinking' | 'dm.received';
+  type:
+    | 'execution.progress'
+    | 'execution.completed'
+    | 'node.status'
+    | 'studio.job.progress'
+    | 'agent.thinking'
+    | 'dm.received'
+    | 'message.delta'
+    | 'clickup.task_changed';
   payload: Record<string, unknown>;
+}
+
+/** Payload de `message.delta` (ver publishMessageDelta no worker): `delta` é
+ * sempre o texto acumulado até agora, nunca um diff. */
+export interface MessageDeltaPayload {
+  execution_id: string;
+  conversation_id: string;
+  agent: string;
+  delta: string;
+  done: boolean;
 }
 
 const API_MODE = process.env.NEXT_PUBLIC_API_MODE ?? 'mock';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
-function wsUrl(): string | null {
+function wsUrl(token: string | null): string | null {
   // Modo mock: MSW não simula WebSocket, então nem tenta conectar (evita um
   // erro de conexão barulhento no console em todo ambiente sem API real).
-  if (API_MODE !== 'live' || !API_BASE_URL) return null;
+  // Sem token também não conecta: o servidor exige sessão no handshake.
+  if (API_MODE !== 'live' || !API_BASE_URL || !token) return null;
   try {
     const url = new URL(API_BASE_URL);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.pathname = '/ws';
+    url.searchParams.set('token', token);
     return url.toString();
   } catch {
     return null;
@@ -42,6 +65,7 @@ class RealtimeClient {
   private reconnectDelayMs = 1000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private manuallyClosed = false;
+  private token: string | null = null;
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -52,9 +76,17 @@ class RealtimeClient {
     };
   }
 
+  /** Chamado sempre que a sessão Supabase muda (login/logout/refresh de token). */
+  setToken(token: string | null) {
+    if (this.token === token) return;
+    this.token = token;
+    this.disconnect();
+    if (token && this.listeners.size > 0) this.connect();
+  }
+
   private connect() {
     if (this.socket || this.reconnectTimer) return;
-    const url = wsUrl();
+    const url = wsUrl(this.token);
     if (!url) return;
 
     this.manuallyClosed = false;

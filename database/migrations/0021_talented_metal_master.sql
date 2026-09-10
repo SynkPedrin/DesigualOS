@@ -1,0 +1,1 @@
+ALTER TABLE "cost_records" ALTER COLUMN "currency" SET DEFAULT 'USD';

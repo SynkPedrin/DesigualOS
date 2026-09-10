@@ -1,12 +1,17 @@
 import { db, schema } from '@desigual-os/database';
 import type { RouterDecision } from '@desigual-os/router';
-import type { AgentName, QueuePriority } from '@desigual-os/types';
+import type { AgentName, QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
+import { estimateCost } from '@desigual-os/token-engine';
 import { findHealthyNodeForAgent } from './discovery';
 import { generateExecutionId } from './execution-id';
-import { MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue } from './queues';
+import { AGENT_MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue } from './queues';
 import type { ChatResult } from './result';
 
-const COMPLEXITY_TO_PRIORITY: Record<string, QueuePriority> = { low: 'P3', medium: 'P2', high: 'P1' };
+const COMPLEXITY_TO_PRIORITY: Record<string, QueuePriority> = {
+  low: 'P3',
+  medium: 'P2',
+  high: 'P1',
+};
 
 export interface WorkflowDispatchParams {
   message: string;
@@ -14,6 +19,7 @@ export interface WorkflowDispatchParams {
   clientId: string | null;
   conversationId: string | null;
   decision: RouterDecision & { workflow: AgentName[] };
+  attachments?: StudioReferenceAsset[];
 }
 
 /**
@@ -23,7 +29,7 @@ export interface WorkflowDispatchParams {
  * (apps/worker/src/processors/execute-job.ts).
  */
 export async function startWorkflow(params: WorkflowDispatchParams): Promise<ChatResult> {
-  const { message, userId, clientId, conversationId, decision } = params;
+  const { message, userId, clientId, conversationId, decision, attachments } = params;
   const firstAgent = decision.workflow[0];
   if (!firstAgent) {
     throw new Error('Workflow decision has no steps');
@@ -41,16 +47,34 @@ export async function startWorkflow(params: WorkflowDispatchParams): Promise<Cha
 
   const executionId = generateExecutionId();
   const priority = COMPLEXITY_TO_PRIORITY[decision.estimated_complexity] ?? 'P1';
+  // Estimativa da execution inteira baseada só na 1ª etapa (mensagem
+  // original) - aproximado de propósito, mesma régua de economy_records
+  // usada no chat de agente único (ver chat-service.ts).
+  const { amountUsd: estimatedCost } = estimateCost('unknown', message);
 
   const [execution] = await db
     .insert(schema.executions)
-    .values({ executionId, userId, clientId, agent: firstAgent, intent: decision.intent, status: 'queued', priority })
+    .values({
+      executionId,
+      userId,
+      clientId,
+      agent: firstAgent,
+      intent: decision.intent,
+      status: 'queued',
+      priority,
+      estimatedCost: estimatedCost.toString(),
+    })
     .returning();
   if (!execution) throw new Error('Failed to create execution record');
 
   const [workflow] = await db
     .insert(schema.workflows)
-    .values({ name: decision.intent, executionId: execution.id, status: 'running', definition: decision.workflow })
+    .values({
+      name: decision.intent,
+      executionId: execution.id,
+      status: 'running',
+      definition: decision.workflow,
+    })
     .returning();
   if (!workflow) throw new Error('Failed to create workflow record');
 
@@ -96,11 +120,16 @@ export async function startWorkflow(params: WorkflowDispatchParams): Promise<Cha
       agent: firstAgent,
       message,
       contextRefs: decision.context,
+      ...(attachments?.length ? { attachments } : {}),
       conversationId,
       workflowId: workflow.id,
       stepIndex: 0,
     },
-    { priority: PRIORITY_VALUE[priority], attempts: MAX_ATTEMPTS, backoff: { type: 'fixed', delay: 2000 } },
+    {
+      priority: PRIORITY_VALUE[priority],
+      attempts: AGENT_MAX_ATTEMPTS[firstAgent],
+      backoff: { type: 'fixed', delay: 2000 },
+    },
   );
 
   return { executionId: execution.executionId, status: 'queued', agent: firstAgent };

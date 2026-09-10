@@ -9,8 +9,13 @@ export function formatRelativeTime(iso: string): string {
   return `Há ${diffDays}d`;
 }
 
+/** Horário curto (14:32) exibido dentro do balão, estilo WhatsApp. */
+export function formatClockTime(iso: string): string {
+  return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+}
+
 export function formatDuration(startIso: string, endIso: string | null): string {
-  if (!endIso) return '—';
+  if (!endIso) return '-';
   const diffSeconds = Math.max(0, (new Date(endIso).getTime() - new Date(startIso).getTime()) / 1000);
   if (diffSeconds < 60) return `${Math.round(diffSeconds)}s`;
   return `${Math.round(diffSeconds / 60)}min`;

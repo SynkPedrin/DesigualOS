@@ -1,0 +1,131 @@
+{
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux1-dev.safetensors",
+      "weight_dtype": "fp8_e4m3fn_fast"
+    }
+  },
+  "clip": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "t5xxl_fp16.safetensors",
+      "clip_name2": "clip_l.safetensors",
+      "type": "flux",
+      "device": "cpu"
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["clip", 0],
+      "text": "An editorial still-life photograph of a single ceramic cup of black coffee on a dark walnut table, thin steam rising and curling through a hard shaft of low afternoon sunlight coming from the left. The rim of the cup catches a bright specular highlight; the far side of the table falls into deep shadow. Fine dust particles float in the light beam. Shot on a 35mm film camera with an 85mm lens at f/2, focus on the cup rim, background falling into soft creamy bokeh. Warm amber and deep brown palette, natural film grain, slight halation around the highlights, unretouched surface texture on the wood grain and the ceramic glaze."
+    }
+  },
+  "neg": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": ["pos", 0]
+    }
+  },
+  "guide_base": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["pos", 0],
+      "guidance": 2.8
+    }
+  },
+  "guide_refine": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["pos", 0],
+      "guidance": 2.2
+    }
+  },
+  "shift_base": {
+    "class_type": "ModelSamplingFlux",
+    "inputs": {
+      "model": ["unet", 0],
+      "max_shift": 1.15,
+      "base_shift": 0.5,
+      "width": 896,
+      "height": 1152
+    }
+  },
+  "shift_refine": {
+    "class_type": "ModelSamplingFlux",
+    "inputs": {
+      "model": ["unet", 0],
+      "max_shift": 1.15,
+      "base_shift": 0.5,
+      "width": 1120,
+      "height": 1440
+    }
+  },
+  "latent": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": 896,
+      "height": 1152,
+      "batch_size": 1
+    }
+  },
+  "sample_base": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["shift_base", 0],
+      "positive": ["guide_base", 0],
+      "negative": ["neg", 0],
+      "latent_image": ["latent", 0],
+      "seed": 123456789,
+      "steps": 30,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 1
+    }
+  },
+  "latent_up": {
+    "class_type": "LatentUpscaleBy",
+    "inputs": {
+      "samples": ["sample_base", 0],
+      "upscale_method": "bislerp",
+      "scale_by": 1.25
+    }
+  },
+  "sample_refine": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["shift_refine", 0],
+      "positive": ["guide_refine", 0],
+      "negative": ["neg", 0],
+      "latent_image": ["latent_up", 0],
+      "seed": 987654321,
+      "steps": 16,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 0.45
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["sample_refine", 0],
+      "vae": ["vae", 0]
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["decode", 0],
+      "filename_prefix": "desigual-os-studio/%date:yyyy-MM-dd%/t2i"
+    }
+  }
+}

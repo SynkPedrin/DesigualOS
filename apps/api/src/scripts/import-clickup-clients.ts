@@ -5,7 +5,7 @@ import { syncClickUpClients } from '../integrations/clickup-sync';
 
 /**
  * Importa os clientes do ClickUp pela linha de comando (`pnpm clickup:import`),
- * usando a MESMA função que a rota POST /integrations/clickup/sync — não há
+ * usando a MESMA função que a rota POST /integrations/clickup/sync - não há
  * uma segunda implementação pra divergir.
  *
  * Serve pra popular o sistema sem depender de alguém logar no browser, e pra

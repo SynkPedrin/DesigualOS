@@ -15,7 +15,7 @@ const STATUS_STYLE: Record<string, string> = {
 /**
  * "Sincronizar" não recarrega a tela: dispara uma sonda que vai até cada
  * agente, mede, grava e diagnostica. Antes disso o Monitoramento dependia de
- * heartbeat que nenhuma máquina mandava — a tela vivia em "0/2 conectados".
+ * heartbeat que nenhuma máquina mandava - a tela vivia em "0/2 conectados".
  */
 export function SyncPanel() {
   const sync = useAgentSync();
@@ -68,7 +68,7 @@ export function SyncPanel() {
                   {agent.services.map((service) => (
                     <span
                       key={service.name}
-                      title={service.error ?? `HTTP ${service.http_status ?? '—'}`}
+                      title={service.error ?? `HTTP ${service.http_status ?? '-'}`}
                       className={cn(
                         'rounded border px-1.5 py-0.5 font-mono text-[10px]',
                         service.ok ? 'border-sinal/40 text-sinal' : 'border-erro/40 text-erro',

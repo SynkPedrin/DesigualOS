@@ -1,0 +1,355 @@
+import type { Logger } from '@desigual-os/logging';
+import { AGENT_PERSONALITIES, type CreativeSpec, type StudioReferenceAsset } from '@desigual-os/types';
+import type { RetrievedKnowledge } from '../brain/retrieval.js';
+import type { OttoLLMProvider } from '../llm/ollama-provider.js';
+import {
+  carouselPlanSchema,
+  creativePlanSchema,
+  productionSpecSchema,
+  videoPlanSchema,
+} from './schemas.js';
+import type {
+  CarouselPlan,
+  CreativePlan,
+  ProductionSpec,
+  StudioJobType,
+  VideoPlan,
+} from './schemas.js';
+
+/**
+ * Planner criativo do Otto: orquestra LLM (Ollama local) + conhecimento do
+ * Brain pra transformar briefing em plano estruturado. Os prompts de sistema
+ * são pt-BR porque o Otto é diretor criativo de uma agência brasileira e a
+ * saída criativa (copy, conceito) é em português; os prompts de imagem/vídeo
+ * pedem inglês porque os geradores (ComfyUI/SDXL/Flux) entendem melhor.
+ */
+
+export interface PlannerDeps {
+  llm: OttoLLMProvider;
+  logger?: Logger;
+}
+
+export interface CreateCreativePlanInput {
+  briefing: string;
+  /** Contexto do cliente (brand kit, histórico, restrições) em texto livre. */
+  clientContext?: string;
+  /** Docs recuperados do Brain (retrieveRelevantKnowledge) pra este briefing. */
+  knowledge?: RetrievedKnowledge[];
+  /** Referências anexadas neste turno, na ordem apresentada ao FLUX.2. */
+  referenceAssets?: StudioReferenceAsset[];
+}
+
+function formatKnowledgeBlock(knowledge: RetrievedKnowledge[] | undefined): string {
+  if (!knowledge || knowledge.length === 0) {
+    return '(nenhum conhecimento específico recuperado do Brain para este briefing; siga os princípios gerais da agência.)';
+  }
+  // Texto plano, sem "###": este bloco entra literal no system prompt, e o
+  // preâmbulo já pede "SOMENTE o JSON pedido, sem markdown" - um cabeçalho
+  // markdown aqui dentro é a própria fonte contradizendo a regra.
+  return knowledge
+    .map((entry) => `Documento: ${entry.doc.titulo} (${entry.doc.path})\n${entry.snippet}`)
+    .join('\n\n');
+}
+
+const CREATIVE_DIRECTOR_PREAMBLE = `${AGENT_PERSONALITIES.otto}
+
+Você não é um gerador de imagens: você PENSA antes de gerar. Seu trabalho é transformar briefing em direção criativa completa - estratégia, conceito, narrativa, direção de arte e critérios de qualidade - antes que qualquer pixel exista.
+
+Regras inegociáveis:
+- Português do Brasil com acentos sempre, exceto nos campos de prompt de geração (image_prompt, negative_prompt), que são em inglês porque os modelos de imagem entendem melhor.
+- NUNCA genérico: "foto bonita de produto" é falha de direção. Cada campo de art_direction é uma decisão concreta e específica.
+- NUNCA usar travessão (-) em nenhum texto em português.
+- Quando houver referências, decida explicitamente o papel de CADA uma. Use scene para preservar um lugar, subject para identidade, product para geometria/material, style apenas para linguagem visual, logo para um ativo de marca e mask para limitar uma edição.
+- Descreva preservação de forma positiva e observável: "keep the same face, camera, perspective and light direction". Não use uma lista vaga de negativos.
+- Uma logo em canvas deve ser aplicada pelo compositor, com placement canvas_*. Uma logo integrada a embalagem, roupa ou objeto usa in_scene e precisa ser conferida no QA.
+- Se o briefing pedir para representar um produto, máquina, pessoa, marca ou local REAL e específico (ex: "o trator X da marca Y", "a fachada da loja do cliente", "o CEO", um prédio ou monumento real) - e não algo genérico como "um trator" ou "uma pessoa sorrindo" - marque isso em real_world_fidelity. Sem uma referência de imagem fiel, o gerador INVENTA uma aproximação genérica que parece certa mas não é a coisa real, e isso é inaceitável quando a intenção era representar algo que existe de verdade.
+- Responda SOMENTE com o JSON pedido, sem markdown, sem texto antes ou depois.`;
+
+/**
+ * Passo 1 do pipeline criativo: briefing -> CreativePlan estruturado.
+ * O conhecimento do Brain entra como camada estratégica (posicionamento,
+ * funil, frameworks), nunca como substituto do briefing do cliente.
+ */
+export async function createCreativePlan(
+  deps: PlannerDeps,
+  input: CreateCreativePlanInput,
+): Promise<CreativePlan> {
+  const system = `${CREATIVE_DIRECTOR_PREAMBLE}
+
+Gere o plano criativo completo com estas chaves. O campo image_prompt deve ser um
+prompt autocontido em inglês: reescreva nele todas as decisões visuais
+necessárias para gerar a imagem, inclusive câmera, perspectiva, luz, sombra,
+materiais, anatomia, local e preservações das referências. O gerador não deve
+precisar traduzir os outros campos para entender a direção.
+
+Formato:
+{"client": string, "project": string (opcional), "objective": string, "audience": string, "strategy": string, "concept": string, "narrative": string, "copy": string, "art_direction": {"composition": string, "typography": string, "color": string, "lighting": string, "photography": string, "materials": string, "atmosphere": string}, "references": string[], "reference_strategy": [{"reference_index": number começando em 1, "role": "auto"|"scene"|"subject"|"product"|"style"|"layout"|"logo"|"mask", "fidelity": "exact"|"high"|"interpretive", "instruction": string em inglês, "placement": "reference_only"|"in_scene"|"canvas_top_left"|"canvas_top_right"|"canvas_bottom_left"|"canvas_bottom_right"}], "real_world_fidelity": {"requires_reference": boolean, "entity_type": "product"|"brand"|"person"|"location"|"machine" (opcional), "entity_description": string (opcional, o que precisa ser fiel)}, "image_prompt": string (inglês, detalhado), "negative_prompt": string (inglês), "technical_specs": string, "production_requirements": string, "quality_criteria": [{"criterion": string, "description": string, "weight": number 0..1}], "delivery_format": string}`;
+
+  const user = [
+    input.clientContext ? `Contexto do cliente:\n${input.clientContext}` : null,
+    `Conhecimento estratégico do Brain da agência (camada de embasamento):\n\n${formatKnowledgeBlock(input.knowledge)}`,
+    `Briefing:\n${input.briefing}`,
+    input.referenceAssets?.length
+      ? `Manifesto de referências anexadas (use os índices exatamente como estão):\n${input.referenceAssets
+          .map((asset, index) => `Reference Image ${index + 1}: filename="${asset.filename}", content_type="${asset.contentType}"`)
+          .join('\n')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n---\n\n');
+
+  deps.logger?.info({ client: input.clientContext ? 'with-context' : 'no-context' }, 'otto: gerando plano criativo');
+  return deps.llm.chatJson(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    creativePlanSchema,
+    { temperature: 0.8 },
+  );
+}
+
+/**
+ * Planejamento de carrossel respeitando as leis do modus operandi canônico
+ * (.agents/skills/carrossel-cinema-impossivel): 10 a 16 cards, hook na capa,
+ * CTA emocional no último, desenvolvimento no meio. slideCount é clampado
+ * pro intervalo canônico: pedir 5 cards não produz carrossel, produz peça
+ * quebrada - melhor ajustar do que entregar fora da lei.
+ */
+export async function planCarousel(
+  deps: PlannerDeps,
+  plan: CreativePlan,
+  slideCount = 10,
+): Promise<CarouselPlan> {
+  const count = Math.min(16, Math.max(10, Math.round(slideCount)));
+
+  const system = `${CREATIVE_DIRECTOR_PREAMBLE}
+
+Você está planejando um carrossel de Instagram (1080x1350) a partir de um plano criativo aprovado.
+
+Leis do carrossel (inegociáveis):
+- Estrutura: 1º slide é "hook" (promessa que para o feed), último é "cta" (CTA emocional: salvar/enviar, nunca "segue agora"), o meio alterna "context", "development" e "value".
+- Uma ideia por slide. Galeria espremida mata a curiosidade.
+- Copy direta, primeira pessoa, sem travessão, sem emoji nos cards.
+- Cada slide carrega seu próprio image_prompt (inglês, detalhado, herdando a direção de arte do plano).
+- Quando o briefing pede takes fotográficos, sequência de imagens ou storyboard visual, use render_mode="photographic": as imagens não recebem títulos/textos sobrepostos. Alterne retrato, detalhe, ação e ambiente conforme o briefing, com os mesmos sujeitos, produtos, roupas, local e luz. Copy pode ser legenda separada. Caso contrário, render_mode="editorial".
+
+Gere exatamente ${count} slides com estas chaves:
+{"concept": string, "render_mode": "editorial"|"photographic", "slide_count": ${count}, "slides": [{"index": number (1..${count}), "narrative_function": "hook"|"context"|"development"|"value"|"cta", "objective": string, "copy": string, "visual": string, "composition": string, "layout": string, "image_prompt": string}]}`;
+
+  const user = `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`;
+
+  deps.logger?.info({ slideCount: count }, 'otto: planejando carrossel');
+  return deps.llm.chatJson(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    carouselPlanSchema,
+    { temperature: 0.7 },
+  );
+}
+
+/** Planejamento de vídeo/reels: cena a cena com direção de câmera e ritmo. */
+export async function planVideo(deps: PlannerDeps, plan: CreativePlan): Promise<VideoPlan> {
+  const system = `${CREATIVE_DIRECTOR_PREAMBLE}
+
+Você está planejando um vídeo/reels a partir de um plano criativo aprovado. Cada cena tem direção de câmera, movimento de sujeito, ambiente, luz, transição e ritmo - um storyboard em JSON, não um prompt único.
+
+Padrão de produção: editorial publicitário com detalhe fotográfico, não slideshow genérico.
+- Planeje takes de 1 a 5 segundos, no máximo 16. A soma das durações deve ser duration.
+- Alterne retrato, plano aberto, detalhe de material/produto, ação simples e ambiente quando fizer sentido para o briefing. Não force esporte, tênis, azul ou personagens da referência em outros clientes.
+- Cada cena inclui image_prompt EM INGLÊS para uma fotografia FLUX.2 independente, shot_type e continuity. Repita os identificadores do mesmo personagem, roupa, produto real, local, paleta e direção de luz; altere apenas ação/enquadramento declarados.
+- generation_prompts tem exatamente um prompt EM INGLÊS por cena, descrevendo uma ação física simples e no máximo um movimento de câmera controlado. Nada de cortes/montagens dentro do mesmo take.
+- Preserve poros, cabelo/pelos, trama dos tecidos, reflexos e sombras de contato; não invente peças, identidade, logo ou modelo de produto. Referências reais têm prioridade sobre imaginação.
+- Textos e logos exatos pertencem à composição gráfica, não peça ao gerador de vídeo para redesenhá-los. Não afirme que houve aprovação visual automática.
+- Cuts são cortes de montagem entre takes. sound_direction descreve ambiente/SFX; trilha contínua, locução e tipografia exigem finalização separada.
+
+Gere com estas chaves:
+{"concept": string, "duration": number (segundos), "aspect_ratio": string (ex: "9:16"), "scenes": [{"duration_seconds": number, "image_prompt": string, "shot_type": "portrait"|"wide"|"detail"|"action"|"environment"|"closing", "continuity": string, "camera_movement": string, "subject_movement": string, "environment": string, "lighting": string, "transition": string, "pacing": string}], "sound_direction": string, "text_overlays": string[], "cta": string, "generation_prompts": string[] (inglês, um por cena)}`;
+
+  const user = `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`;
+
+  deps.logger?.info('otto: planejando vídeo');
+  return deps.llm.chatJson(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    videoPlanSchema,
+    { temperature: 0.7 },
+  );
+}
+
+/**
+ * Monta o prompt de imagem final a partir do plano. Esta função existe pra
+ * matar o prompt genérico: se o plano não tem direção de arte concreta, o
+ * prompt resultante deixa isso escancarado (campos vazios viram ausência de
+ * cláusula, não placeholder fofo). Saída em inglês (modelos de imagem).
+ */
+export function buildImagePrompt(plan: CreativePlan): string {
+  const ad = plan.art_direction;
+  const clauses = [
+    `Primary generation direction: ${plan.image_prompt}`,
+    `Subject and concept: ${plan.concept}`,
+    `Narrative: ${plan.narrative}`,
+    `Environment and composition: ${ad.composition}`,
+    `Photography: ${ad.photography}`,
+    `Lighting: ${ad.lighting}`,
+    `Color palette: ${ad.color}`,
+    `Materials and texture: ${ad.materials}`,
+    `Atmosphere: ${ad.atmosphere}`,
+    `Typography (if any text is rendered): ${ad.typography}`,
+    `Technical: ${plan.technical_specs}`,
+    `Visual hierarchy follows the objective: ${plan.objective}`,
+  ];
+  if (plan.references.length > 0) {
+    clauses.push(`Style references: ${plan.references.join('; ')}`);
+  }
+  return clauses.join('. ');
+}
+
+export interface BuildProductionSpecOptions {
+  clientId: string;
+  jobType?: StudioJobType;
+  /** Carrossel: o plano slide a slide vira o campo slides do spec. */
+  carouselPlan?: Omit<CarouselPlan, 'render_mode'> & { render_mode?: CarouselPlan['render_mode'] };
+  /** Storyboard completo: não perder cenas ao atravessar a fila. */
+  videoPlan?: VideoPlan;
+  quality?: string;
+  aspectRatio?: string;
+  metadata?: Record<string, unknown>;
+  referenceAssets?: StudioReferenceAsset[];
+}
+
+function applyReferenceStrategy(plan: CreativePlan, assets: StudioReferenceAsset[]): StudioReferenceAsset[] {
+  return assets.slice(0, 10).map((asset, index) => {
+    const strategy = plan.reference_strategy.find((item) => item.reference_index === index + 1);
+    return {
+      ...asset,
+      ...(strategy
+        ? {
+            role: strategy.role,
+            fidelity: strategy.fidelity,
+            instruction: strategy.instruction,
+            placement: strategy.placement,
+          }
+        : {}),
+    };
+  });
+}
+
+function buildCreativeSpec(
+  plan: CreativePlan,
+  assets: StudioReferenceAsset[],
+  jobType: StudioJobType,
+  quality: string,
+  aspectRatio: string,
+): CreativeSpec {
+  const hasScene = assets.some((asset) => asset.role === 'scene');
+  const hasSubject = assets.some((asset) => asset.role === 'subject');
+  const hasProduct = assets.some((asset) => asset.role === 'product');
+  const logo = assets.find((asset) => asset.role === 'logo' && asset.placement?.startsWith('canvas_'));
+  return {
+    objective: plan.objective,
+    contentType: jobType === 'reels' ? 'reel' : jobType === 'upscale' ? 'image' : jobType,
+    operation: assets.length > 0 ? 'edit' : 'generate',
+    subject: { description: plan.concept, identityCritical: hasSubject, productCritical: hasProduct },
+    environment: { description: plan.art_direction.atmosphere },
+    composition: { framing: plan.art_direction.composition, aspectRatio },
+    camera: { look: plan.art_direction.photography },
+    lighting: { description: plan.art_direction.lighting },
+    artDirection: { mood: plan.art_direction.atmosphere },
+    preservation: {
+      identity: hasSubject,
+      product: hasProduct,
+      background: hasScene,
+      composition: hasScene,
+      camera: hasScene,
+      lighting: hasScene,
+      perspective: hasScene,
+      materials: hasProduct,
+      textAndLogos: assets.some((asset) => asset.role === 'logo'),
+    },
+    referencePlan: { assets },
+    fidelity: {
+      level: 'maximum',
+      location: hasScene,
+      identity: hasSubject,
+      productGeometry: hasProduct,
+      physicalLighting: true,
+      materialMicrodetail: true,
+      anatomy: true,
+      typography: true,
+    },
+    qualityProfile: quality === 'draft' ? 'draft' : quality === 'standard' ? 'standard' : 'master',
+    brandComposition: logo
+      ? { logo: { sourceUrl: logo.url, placement: logo.placement ?? 'canvas_bottom_right', widthRatio: 0.18, marginRatio: 0.04 }, renderTextDeterministically: true }
+      : { renderTextDeterministically: true },
+  };
+}
+
+/**
+ * Não BLOQUEIA a geração: um plano de LLM tem falso positivo/negativo
+ * demais pra travar o pipeline inteiro numa aposta binária. Em vez disso,
+ * anexa um aviso explícito (metadata.fidelity_warning) que a resposta do
+ * Otto no chat e o job do Studio carregam adiante, pra pessoa saber que está
+ * recebendo um conceito fictício em vez de fingir uma fidelidade que a
+ * geração sem referência não consegue entregar.
+ */
+export function checkRealWorldFidelity(
+  plan: CreativePlan,
+  referenceAssets: StudioReferenceAsset[],
+): string | null {
+  const fidelity = plan.real_world_fidelity;
+  if (!fidelity?.requires_reference) return null;
+  const hasFaithfulReference = referenceAssets.some((asset) => asset.fidelity === 'exact' || asset.fidelity === 'high');
+  if (hasFaithfulReference) return null;
+  const entity = fidelity.entity_description?.trim() || `${fidelity.entity_type ?? 'elemento'} real mencionado no briefing`;
+  return `Atenção: este briefing pede para representar ${entity}, mas nenhuma referência de imagem fiel foi anexada. O resultado será um conceito visual fictício (aproximado, não o original) - anexe uma foto de referência se a fidelidade ao real importar aqui.`;
+}
+
+/**
+ * Converte o plano criativo na Production Spec que alimenta a fila
+ * studio-jobs: prompt final + negative + slides/copy quando couber.
+ * A saída é validada contra productionSpecSchema antes de sair daqui:
+ * spec inválida nunca chega na fila.
+ */
+export function buildProductionSpec(
+  plan: CreativePlan,
+  opts: BuildProductionSpecOptions,
+): ProductionSpec {
+  const jobType = opts.jobType ?? 'image';
+  const quality = opts.quality ?? 'high';
+  const aspectRatio = opts.aspectRatio ?? '4:5';
+  const referenceAssets = applyReferenceStrategy(plan, opts.referenceAssets ?? []);
+  const creativeSpec = buildCreativeSpec(plan, referenceAssets, jobType, quality, aspectRatio);
+  const fidelityWarning = checkRealWorldFidelity(plan, referenceAssets);
+  const spec = {
+    job_type: jobType,
+    client_id: opts.clientId,
+    // O prompt final é o detalhado (buildImagePrompt), não o rascunho do
+    // plano: o campo image_prompt do LLM é insumo, a montagem é nossa.
+    prompt: buildImagePrompt(plan),
+    negative_prompt: plan.negative_prompt,
+    ...(jobType === 'carousel' && opts.carouselPlan ? { slides: opts.carouselPlan.slides } : {}),
+    copy: plan.copy,
+    quality,
+    aspect_ratio: aspectRatio,
+    references: plan.references,
+    reference_assets: referenceAssets,
+    metadata: {
+      objective: plan.objective,
+      concept: plan.concept,
+      delivery_format: plan.delivery_format,
+      production_requirements: plan.production_requirements,
+      creative_spec: creativeSpec,
+      ...(opts.carouselPlan ? { carousel_plan: opts.carouselPlan } : {}),
+      ...(opts.carouselPlan?.render_mode === 'photographic' ? { design: 'photographic' } : {}),
+      ...(opts.videoPlan ? { video_plan: opts.videoPlan } : {}),
+      ...(fidelityWarning ? { fidelity_warning: fidelityWarning } : {}),
+      ...opts.metadata,
+    },
+  };
+  return productionSpecSchema.parse(spec);
+}

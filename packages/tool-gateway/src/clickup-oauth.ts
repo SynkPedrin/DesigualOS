@@ -15,7 +15,7 @@ export interface ClickUpOAuthConfig {
  * https://app.clickup.com/api?client_id=&redirect_uri=&state=
  *
  * `state` é obrigatório na prática (mesmo sendo opcional na doc): é ele que
- * amarra o callback ao usuário que iniciou o fluxo e protege contra CSRF —
+ * amarra o callback ao usuário que iniciou o fluxo e protege contra CSRF -
  * ver buildOAuthState/parseOAuthState em apps/api/src/integrations.
  */
 export function buildClickUpAuthorizeUrl(config: ClickUpOAuthConfig, state: string): string {
@@ -35,7 +35,7 @@ const tokenResponseSchema = z.object({ access_token: z.string().min(1) });
  * BODY, mas implementações reais do ClickUp historicamente também aceitam
  * (e em algumas versões só aceitam) query string. Mandar nos dois lugares é
  * um custo de uma linha e elimina a classe inteira de erro "400 sem motivo
- * aparente" — o ClickUp ignora o duplicado.
+ * aparente" - o ClickUp ignora o duplicado.
  */
 export async function exchangeClickUpCode(config: ClickUpOAuthConfig, code: string): Promise<string> {
   const url = new URL(`${CLICKUP_API_BASE}/oauth/token`);
@@ -80,7 +80,7 @@ export interface ClickUpTeam {
   name: string;
 }
 
-/** Workspaces (times) que ESTE token pode ver — usado logo após conectar. */
+/** Workspaces (times) que ESTE token pode ver - usado logo após conectar. */
 export async function getAuthorizedTeams(token: string): Promise<ClickUpTeam[]> {
   const response = await fetch(`${CLICKUP_API_BASE}/team`, {
     headers: { Authorization: clickUpAuthHeader(token) },
@@ -206,6 +206,9 @@ const clickUpUserSchema = z.object({
 });
 
 const tasksSchema = z.object({
+  // `last_page` existe na resposta real do ClickUp e nunca era lido — era isso que fazia
+  // esta função truncar em silêncio (ver getTasksInList).
+  last_page: z.boolean().nullish(),
   tasks: z.array(
     z.object({
       id: z.string(),
@@ -275,19 +278,64 @@ function toPerson(user: z.infer<typeof clickUpUserSchema>): ClickUpPerson {
   };
 }
 
-/** Tarefas de um cliente (= de uma lista), pra tela do cliente no Desigual OS. */
-export async function getTasksInList(token: string, listId: string, includeClosed = false): Promise<ClickUpTaskSummary[]> {
-  const url = new URL(`${CLICKUP_API_BASE}/list/${listId}/task`);
-  url.searchParams.set('archived', 'false');
-  url.searchParams.set('subtasks', 'false');
-  if (includeClosed) url.searchParams.set('include_closed', 'true');
+/**
+ * Teto de páginas. 100 tarefas por página × 20 = 2000 por lista; acima disso a resposta
+ * volta truncada, e quem exibe precisa dizer que é um mínimo (ver `getTasksInListPaged`).
+ */
+const LIST_TASKS_MAX_PAGES = 20;
 
-  const response = await fetch(url, { headers: { Authorization: clickUpAuthHeader(token) } });
-  if (!response.ok) {
-    throw new Error(`ClickUp tasks lookup failed (${response.status}): ${await response.text()}`);
+/**
+ * BUG DE PRODUÇÃO CORRIGIDO EM 10/09/2026: esta função nunca mandou o parâmetro `page` nem
+ * leu `last_page`, então o ClickUp devolvia só a PRIMEIRA página (100 tarefas) e o resto
+ * desaparecia sem erro nenhum. Qualquer cliente com mais de 100 tarefas era truncado em
+ * silêncio — e como `GET /clients/:id/overview` deriva `total_tasks` e a quebra por status
+ * DESTA lista, o painel do cliente mostrava número errado com cara de número certo, que é
+ * o pior tipo de defeito de dado.
+ *
+ * `getTasksInList` mantém a assinatura antiga (devolve só o array) porque há 4 chamadores
+ * em produção; quem precisa saber se houve truncamento usa `getTasksInListPaged`.
+ */
+export async function getTasksInListPaged(
+  token: string,
+  listId: string,
+  includeClosed = false,
+): Promise<{ tasks: ClickUpTaskSummary[]; truncated: boolean; pagesFetched: number }> {
+  const coletadas: z.infer<typeof tasksSchema>['tasks'] = [];
+  let page = 0;
+
+  for (; page < LIST_TASKS_MAX_PAGES; page += 1) {
+    const url = new URL(`${CLICKUP_API_BASE}/list/${listId}/task`);
+    url.searchParams.set('archived', 'false');
+    url.searchParams.set('subtasks', 'false');
+    url.searchParams.set('page', String(page));
+    if (includeClosed) url.searchParams.set('include_closed', 'true');
+
+    const response = await fetch(url, { headers: { Authorization: clickUpAuthHeader(token) } });
+    if (!response.ok) {
+      throw new Error(`ClickUp tasks lookup failed (${response.status}): ${await response.text()}`);
+    }
+
+    const parsed = tasksSchema.parse(await response.json());
+    coletadas.push(...parsed.tasks);
+
+    // Fim de dados: o ClickUp diz explicitamente, ou a página veio incompleta. As duas
+    // checagens juntas porque `last_page` não vem em toda versão da resposta.
+    if (parsed.last_page === true || parsed.tasks.length < 100) {
+      return { tasks: coletadas.map(mapTaskSummary), truncated: false, pagesFetched: page + 1 };
+    }
   }
 
-  return tasksSchema.parse(await response.json()).tasks.map((task) => ({
+  return { tasks: coletadas.map(mapTaskSummary), truncated: true, pagesFetched: page };
+}
+
+/** Tarefas de um cliente (= de uma lista), pra tela do cliente no Desigual OS. */
+export async function getTasksInList(token: string, listId: string, includeClosed = false): Promise<ClickUpTaskSummary[]> {
+  const { tasks } = await getTasksInListPaged(token, listId, includeClosed);
+  return tasks;
+}
+
+function mapTaskSummary(task: z.infer<typeof tasksSchema>['tasks'][number]): ClickUpTaskSummary {
+  return {
     id: task.id,
     name: task.name,
     // `description` vem vazia quando a tarefa foi escrita no editor rico;
@@ -307,5 +355,5 @@ export async function getTasksInList(token: string, listId: string, includeClose
     tags: (task.tags ?? []).map((tag) => ({ name: tag.name, background: tag.tag_bg ?? null, foreground: tag.tag_fg ?? null })),
     assignees: (task.assignees ?? []).map(toPerson),
     creator: task.creator ? toPerson(task.creator) : null,
-  }));
+  };
 }

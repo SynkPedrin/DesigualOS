@@ -322,7 +322,7 @@ Componentes-chave:
 - **Deploy do Orchestrator na VPS** (Fase 17) + registro do webhook ClickUp real.
 - Decisão: onde o worker roda em produção (Mac local vs VPS).
 - **Testes automatizados** (Fase 16 não iniciada; zero arquivos de teste).
-- Build de produção do monorepo (ADR 0002 registra que `tsc` puro com moduleResolution Bundler provavelmente precisará de esbuild/tsup).
+- ~~Build de produção do monorepo (ADR 0002 registra que `tsc` puro com moduleResolution Bundler provavelmente precisará de esbuild/tsup).~~ **Resolvido** para `apps/api`/`apps/worker`: `build.mjs` (esbuild) valida em 2026-09-07, confirmado rodando `pnpm build` e o `dist/*.js` gerado (ver ADR 0002 e `apps/api/build.mjs`). Os nodes (`nodes/desigual-node`, `nodes/studio-node`, `nodes/otto-node`) ainda não receberam o mesmo bundler; ver a seção "Rodar em produção" de cada `README.md` em `nodes/*/`.
 - Botão de deletar artes do Studio (investigação cortada pelo rate limit).
 - Upscale (removido como tipo de job; x4-upscaler existe na máquina mas não configurado).
 - Tutorial animado do Studio (item 12 do plano de blocos: "NÃO IMPLEMENTAR AGORA" — decisão do usuário).
@@ -356,10 +356,18 @@ Componentes-chave:
 
 - **Git sem commits nos dois projetos** — maior risco operacional.
 - Credenciais reais em plaintext nos JSONLs de sessão e no `.env`.
-- Zero testes automatizados.
 - Frontend em polling; Knowledge/Monitoring/admin com dados ilustrativos.
 - Mocks MSW deliberados (modo default mock) — risco de alguém achar que está em live.
-- Build de produção do backend não resolvido (ADR 0002).
+- ~~Build de produção do backend não resolvido (ADR 0002).~~ **Resolvido** para `apps/api`/
+  `apps/worker` (esbuild via `build.mjs`, validado em 2026-09-07) **e para os três `nodes/*`**
+  (`nodes/*/build.mjs`, validado em 2026-09-08 com boot real de cada um - `studio-node` externaliza
+  `sharp`/`puppeteer-core` em vez de empacotar, os outros dois empacotam tudo como `apps/api`). Ver
+  a seção "Rodar em produção" de cada `README.md` em `nodes/*/`.
+- ~~Zero testes automatizados.~~ **Parcialmente resolvido em 2026-09-08**: `packages/auth`,
+  `packages/context-engine`, `packages/orchestrator` e `apps/worker` ganharam suítes reais (130
+  testes no total no monorepo, 8 dos 17 packages cobertos). Ainda faltam `apps/web`,
+  `nodes/desigual-node`, `nodes/studio-node` e validação do classificador contra a API real da
+  Anthropic (bloqueado por falta de `ANTHROPIC_API_KEY`).
 - `infrastructure/` e subpastas de `docs/` vazias.
 - Prompt injection detectado em `apps/web/AGENTS.md` (bloco falso "breaking changes do Next.js" apontando para `node_modules/next/dist/docs/`) — o Claude não seguiu e pediu permissão para remover; **sem resposta registrada**. O mesmo bloco existe no `AGENTS.md` da LP (recriado automaticamente pelo `next dev`). **Recomendação: tratar como conteúdo não confiável e remover.**
 - `Brain-Marketing/` referencia produtos "Orvyn"/"Nyro" (reuso de outro projeto) — revisar.
@@ -436,7 +444,7 @@ Componentes-chave:
 
 | Tarefa | Objetivo | Arquivos | Dependências | Risco | Como validar | Status |
 |--------|----------|----------|--------------|-------|--------------|--------|
-| Deploy do Orchestrator na VPS | URL pública p/ webhook + produção | `apps/api`, `apps/worker`, `infrastructure/` (vazia) | Decisão Mac-local-vs-VPS; build de produção (ADR 0002) | Alto | API respondendo na VPS; webhook ClickUp registrado e recebendo | Pendente |
+| Deploy do Orchestrator na VPS | URL pública p/ webhook + produção | `apps/api`, `apps/worker`, `docker-compose.prod.yml`, `docs/deploy/` | Decisão Mac-local-vs-VPS (build de produção já resolvido, ver seção 25) | Alto | API respondendo na VPS; webhook ClickUp registrado e recebendo | Pendente (preparação pronta: `docker-compose.prod.yml`, `docs/deploy/vps-nginx.conf.example`, `docs/runbook.md`; falta a execução real, sem acesso a VPS neste ambiente) |
 | Resolver redirect http/https do ClickUp OAuth | OAuth por usuário funcional | `packages/tool-gateway/src/clickup-oauth.ts` | Acesso ao app no ClickUp (owner) | Baixo | Fluxo OAuth completo | Pendente |
 | `BENTO_VAULT_WRITER_URL` | Ativar auto-aprendizado real | máquina do Bento + `packages/orchestrator/src/learning.ts` | Acesso ao Bento | Médio | Aprendizado aparece no vault + reindex | Bloqueado (instruções entregues ao usuário) |
 | Timeout do ComfyUI em carrossel | Estabilizar geração pesada | `nodes/studio-node/` | Máquina RTX | Médio | Carrossel gerado sem timeout | Pendente |
@@ -448,7 +456,7 @@ Componentes-chave:
 | Tarefa | Objetivo | Arquivos | Dependências | Risco | Como validar | Status |
 |--------|----------|----------|--------------|-------|--------------|--------|
 | Testes automatizados (Fase 16) | Cobertura mínima | repo todo | nenhuma | Baixo | `pnpm test` verde | Não iniciada |
-| Build de produção (esbuild/tsup) | Resolver ADR 0002 | configs de build | nenhuma | Médio | `pnpm build` gera artefatos | Pendente |
+| Build de produção (esbuild/tsup) | Resolver ADR 0002 | configs de build | nenhuma | Médio | `pnpm build` gera artefatos | **Resolvido para apps/api e apps/worker** (2026-09-07); pendente ainda para nodes/* |
 | Vídeo/reels no Studio | Geração real de vídeo | `nodes/studio-node/`, ComfyUI LTX-V/Wan | Confirmar modelos na RTX | Alto | Job de vídeo gera MP4 | Pendente |
 | Entidade "agência" / multi-tenant | Responder pergunta final do usuário | schema + RBAC | Decisão de produto | Alto | Segunda agência operando isolada | Não iniciada |
 | Fusão da LP no monorepo | `/cadastro` + `/login` relativos | LP + `apps/web` | Decisão de estrutura | Médio | LP servida pelo app | Planejada |

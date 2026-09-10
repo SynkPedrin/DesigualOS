@@ -14,7 +14,7 @@ import { useHoverSound } from '@/hooks/use-hover-sound';
 import { cn } from '@/lib/utils';
 
 function formatResponseTime(seconds: number | null) {
-  if (seconds === null) return '—';
+  if (seconds === null) return '-';
   if (seconds < 60) return `${Math.round(seconds)}s`;
   return `${Math.round(seconds / 60)}min`;
 }
@@ -25,6 +25,7 @@ export function AgentCard({
   stats,
   compact = false,
   href,
+  onSelect,
   className,
 }: {
   agent: AgentName;
@@ -32,6 +33,8 @@ export function AgentCard({
   stats: AgentStats;
   compact?: boolean;
   href?: string;
+  /** Quando presente, o card vira botão e abre o detalhe do agente em vez de navegar. */
+  onSelect?: () => void;
   className?: string;
 }) {
   const meta = AGENT_META[agent];
@@ -66,7 +69,9 @@ export function AgentCard({
           </div>
           <div>
             <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Performance</p>
-            <MetricValue className={cn('text-lg', meta.textClass)}>{stats.performancePercent}%</MetricValue>
+            <MetricValue className={cn('text-lg', meta.textClass)}>
+              {stats.performancePercent === null ? '-' : `${stats.performancePercent}%`}
+            </MetricValue>
           </div>
           <div>
             <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Resposta média</p>
@@ -77,14 +82,31 @@ export function AgentCard({
         </div>
       )}
 
-      {href && (
+      {(href || onSelect) && (
         <div className={cn('mt-3 flex items-center gap-1 font-mono text-[11px]', meta.textClass)}>
-          Ver histórico de conversas
+          {onSelect ? 'Ver detalhes do agente' : 'Ver histórico de conversas'}
           <ArrowRight size={11} />
         </div>
       )}
     </>
   );
+
+  if (onSelect) {
+    return (
+      <Surface
+        level="grafite"
+        onMouseEnter={playHoverSound}
+        className={cn(
+          'group transition-[transform,border-color,box-shadow] hover:scale-[1.015] hover:border-roxo-eletrico/50 hover:shadow-glow active:scale-[0.99]',
+          className,
+        )}
+      >
+        <button type="button" onClick={onSelect} className="block w-full p-4 text-left">
+          {content}
+        </button>
+      </Surface>
+    );
+  }
 
   if (href) {
     return (

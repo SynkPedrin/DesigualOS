@@ -10,7 +10,7 @@ import { useMe } from '@/hooks/use-me';
 import { useUpdateMe, useUploadAvatar } from '@/hooks/use-update-me';
 import { useTheme } from '@/hooks/use-theme';
 import { useHoverSound } from '@/hooks/use-hover-sound';
-import { ClickUpIntegrationCard } from '@/components/settings/clickup-integration-card';
+import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';
 import { ApiRequestError } from '@/lib/api/client';
 import { LANGUAGES, THEMES, type Language, type Theme } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
@@ -33,8 +33,8 @@ const THEME_LABELS: Record<Theme, string> = {
 
 const THEME_CARD_ICON: Record<Theme, typeof Sun> = { light: Sun, dark: Moon, system: Monitor };
 
-/** Each card always previews its OWN target theme — the real light/dark wallpaper, not the
- * CSS tokens that follow whatever theme is active right now — so light and dark sit side by
+/** Each card always previews its OWN target theme - the real light/dark wallpaper, not the
+ * CSS tokens that follow whatever theme is active right now - so light and dark sit side by
  * side either way. System splits the two, since it resolves to whichever matches the OS. */
 const THEME_CARD_WALLPAPER: Record<Theme, string> = {
   dark: '/brand/fundo.png',
@@ -116,118 +116,144 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="space-y-6">
       <PageHeader eyebrow="Conta" title="Configurações" description="Idioma, tema, foto de perfil e integrações." />
 
-      <Surface level="grafite" className="p-5">
-        <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Perfil</h2>
+      <Surface level="grafite" className="p-0">
+        <div className="grid grid-cols-1 divide-y divide-grafite-elevado xl:grid-cols-4 xl:divide-x xl:divide-y-0">
+          <section className="p-5">
+            <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Perfil</h2>
 
-        <div className="mb-5 flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadAvatar.isPending}
-            aria-label="Trocar foto de perfil"
-            className="group relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-lg font-semibold text-branco-cru disabled:opacity-60"
-          >
-            {me.avatarUrl ? (
-              <Image src={me.avatarUrl} alt={me.name} fill sizes="64px" unoptimized className="object-cover" />
-            ) : (
-              me.name.charAt(0).toUpperCase()
-            )}
-            <span className="absolute inset-0 flex items-center justify-center bg-carbono/60 opacity-0 transition-opacity group-hover:opacity-100">
-              <Camera size={18} />
-            </span>
-          </button>
-          <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={handleAvatarPick} />
-          <div>
-            <p className="text-sm font-medium text-branco-cru">{me.name}</p>
-            <p className="font-mono text-xs text-nevoa">{me.email}</p>
-            <p className="mt-1 font-mono text-[10px] text-nevoa">
-              {uploadAvatar.isPending ? 'Enviando foto…' : 'PNG, JPEG ou WEBP, até 25MB. Visível para todos os usuários.'}
-            </p>
-            {uploadAvatar.isError && (
-              <p className="mt-1 text-[11px] text-erro">{errorMessage(uploadAvatar.error, 'Não foi possível enviar a foto.')}</p>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-nevoa">Nome</label>
-            <input
-              type="text"
-              value={displayName}
-              onChange={(event) => { setName(event.target.value); setNameDirty(true); }}
-              className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-nevoa">
-              E-mail do ClickUp (pode ser diferente do login)
-            </label>
-            <input
-              type="email"
-              placeholder="seu-email@clickup"
-              value={displayClickupEmail}
-              onChange={(event) => { setClickupEmail(event.target.value); setClickupDirty(true); }}
-              className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
-            />
-          </div>
-          {(nameDirty || clickupDirty) && (
-            <div className="space-y-1.5">
+            <div className="mb-5 flex items-center gap-4">
               <button
                 type="button"
-                onClick={handleSaveProfile}
-                disabled={updateMe.isPending}
-                className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-branco-cru transition-all hover:opacity-90 hover:shadow-glow disabled:opacity-50 disabled:hover:shadow-none"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadAvatar.isPending}
+                aria-label="Trocar foto de perfil"
+                className="group relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-lg font-semibold text-branco-cru disabled:opacity-60"
               >
-                {updateMe.isPending ? 'Salvando…' : 'Salvar'}
+                {me.avatarUrl ? (
+                  <Image src={me.avatarUrl} alt={me.name} fill sizes="64px" unoptimized className="object-cover" />
+                ) : (
+                  me.name.charAt(0).toUpperCase()
+                )}
+                <span className="absolute inset-0 flex items-center justify-center bg-carbono/60 opacity-0 transition-opacity group-hover:opacity-100">
+                  <Camera size={18} />
+                </span>
               </button>
-              {updateMe.isError && (
-                <p className="text-[11px] text-erro">{errorMessage(updateMe.error, 'Não foi possível salvar.')}</p>
+              <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={handleAvatarPick} />
+              <div>
+                <p className="text-sm font-medium text-branco-cru">{me.name}</p>
+                <p className="font-mono text-xs text-nevoa">{me.email}</p>
+                <p className="mt-1 font-mono text-[10px] text-nevoa">
+                  {uploadAvatar.isPending ? 'Enviando foto…' : 'PNG, JPEG ou WEBP, até 25MB. Visível para todos os usuários.'}
+                </p>
+                {uploadAvatar.isError && (
+                  <p className="mt-1 text-[11px] text-erro">{errorMessage(uploadAvatar.error, 'Não foi possível enviar a foto.')}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-nevoa">Nome</label>
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(event) => { setName(event.target.value); setNameDirty(true); }}
+                  className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-nevoa">
+                  E-mail do ClickUp (pode ser diferente do login)
+                </label>
+                <input
+                  type="email"
+                  placeholder="seu-email@clickup"
+                  value={displayClickupEmail}
+                  onChange={(event) => { setClickupEmail(event.target.value); setClickupDirty(true); }}
+                  className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+                />
+              </div>
+              {(nameDirty || clickupDirty) && (
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={handleSaveProfile}
+                    disabled={updateMe.isPending}
+                    className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-branco-cru transition-all hover:opacity-90 hover:shadow-glow disabled:opacity-50 disabled:hover:shadow-none"
+                  >
+                    {updateMe.isPending ? 'Salvando…' : 'Salvar'}
+                  </button>
+                  {updateMe.isError && (
+                    <p className="text-[11px] text-erro">{errorMessage(updateMe.error, 'Não foi possível salvar.')}</p>
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
-      </Surface>
+          </section>
 
-      <Surface level="grafite" className="p-5">
-        <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Idioma</h2>
-        <div className="flex flex-wrap gap-2">
-          {LANGUAGES.map((language) => (
-            <button
-              key={language}
-              type="button"
-              onClick={() => updateMe.mutate({ language })}
-              className={`rounded-md border px-3 py-2 text-sm transition-colors ${
-                me.language === language
-                  ? 'border-roxo-eletrico bg-roxo-eletrico/10 text-branco-cru'
-                  : 'border-grafite-elevado text-nevoa hover:text-branco-cru'
-              }`}
-            >
-              {LANGUAGE_LABELS[language]}
-            </button>
-          ))}
-        </div>
-        {updateMe.isError && !nameDirty && !clickupDirty && (
-          <p className="mt-2 text-[11px] text-erro">{errorMessage(updateMe.error, 'Não foi possível salvar.')}</p>
-        )}
-      </Surface>
+          <section className="p-5">
+            <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Idioma</h2>
+            <div className="flex flex-col items-start gap-2">
+              {LANGUAGES.map((language) => (
+                <button
+                  key={language}
+                  type="button"
+                  onClick={() => updateMe.mutate({ language })}
+                  className={`rounded-md border px-3 py-2 text-sm transition-colors ${
+                    me.language === language
+                      ? 'border-roxo-eletrico bg-roxo-eletrico/10 text-branco-cru'
+                      : 'border-grafite-elevado text-nevoa hover:text-branco-cru'
+                  }`}
+                >
+                  {LANGUAGE_LABELS[language]}
+                </button>
+              ))}
+            </div>
+            {updateMe.isError && !nameDirty && !clickupDirty && (
+              <p className="mt-2 text-[11px] text-erro">{errorMessage(updateMe.error, 'Não foi possível salvar.')}</p>
+            )}
+          </section>
 
-      <ClickUpIntegrationCard />
+          <section className="p-5">
+            <ClickUpIntegrationSection />
+          </section>
 
-      <Surface level="grafite" className="p-5">
-        <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Tema</h2>
-        <div className="flex flex-wrap gap-3">
-          {THEMES.map((themeOption) => (
-            <ThemeCard
-              key={themeOption}
-              value={themeOption}
-              active={theme === themeOption}
-              onSelect={() => setTheme(themeOption)}
-            />
-          ))}
+          <section className="p-5">
+            <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Tema</h2>
+            <div className="flex flex-col gap-3">
+              {THEMES.map((themeOption) => (
+                <ThemeCard
+                  key={themeOption}
+                  value={themeOption}
+                  active={theme === themeOption}
+                  onSelect={() => setTheme(themeOption)}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* Requisito de licença do TradingView Lightweight Charts (gráficos de
+           * tendência do Studio/Monitoramento/Dashboard): ou o logo de atribuição
+           * aparece em cada gráfico, ou este link cumpre a exigência uma vez só -
+           * escolhemos a 2ª opção pra não poluir gráficos pequenos com o logo. */}
+          <section className="p-5">
+            <h2 className="mb-2 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Sobre</h2>
+            <p className="text-xs text-nevoa">
+              Gráficos de tendência construídos com{' '}
+              <a
+                href="https://www.tradingview.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-roxo-eletrico hover:underline"
+              >
+                TradingView Lightweight Charts
+              </a>
+              .
+            </p>
+          </section>
         </div>
       </Surface>
     </div>

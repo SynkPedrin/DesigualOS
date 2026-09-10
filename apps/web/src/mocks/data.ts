@@ -1,6 +1,7 @@
-import type { InfrastructureHealthWire, NodeSummaryWire } from '@/lib/api/contracts';
+import type { AgentStatsWire, InfrastructureHealthWire, NodeSummaryWire, SystemEventWire } from '@/lib/api/contracts';
 
 const now = () => new Date().toISOString();
+const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 export const mockNodesWire: NodeSummaryWire[] = [
   {
@@ -74,3 +75,38 @@ export const mockInfrastructureHealthWire: InfrastructureHealthWire = {
   last_backup_at: null,
   nodes: mockNodesWire,
 };
+
+/** GET /health/events - mesmo shape do backend: desc por occurred_at, id no
+ * formato NODE_<AGENTE>-<epoch ms>. */
+export const mockSystemEventsWire: SystemEventWire[] = [
+  {
+    id: `NODE_JARBAS-${Date.now() - 6 * 60_000}`,
+    occurred_at: minutesAgo(6),
+    level: 'warning',
+    node_label: 'Jarbas (Mac Mini 2)',
+    message: 'Jarbas (Mac Mini 2) com CPU acima de 70% por mais de 5 minutos.',
+  },
+  {
+    id: `NODE_STUDIO-${Date.now() - 15 * 60_000}`,
+    occurred_at: minutesAgo(15),
+    level: 'info',
+    node_label: 'Studio (RTX 5090)',
+    message: 'Studio (RTX 5090) entrou em renderização, fila com 3 jobs.',
+  },
+  {
+    id: `NODE_BENTO-${Date.now() - 42 * 60_000}`,
+    occurred_at: minutesAgo(42),
+    level: 'error',
+    node_label: 'Bento (Mac Mini 1)',
+    message: 'Bento (Mac Mini 1) voltou a responder após heartbeat atrasado.',
+  },
+];
+
+/** GET /agents/stats - studio com nulls de propósito, pra exercitar o '-'
+ * da UI quando o backend ainda não tem base de cálculo. */
+export const mockAgentStatsWire: AgentStatsWire[] = [
+  { agent: 'bento', active_conversations: 2, performance_percent: 92, average_response_seconds: 1.4 },
+  { agent: 'jarbas', active_conversations: 1, performance_percent: 87, average_response_seconds: 2.3 },
+  { agent: 'suzy', active_conversations: 0, performance_percent: 95, average_response_seconds: 0.9 },
+  { agent: 'studio', active_conversations: 1, performance_percent: null, average_response_seconds: null },
+];

@@ -1,13 +1,10 @@
 import { Queue } from 'bullmq';
+import type { StudioReferenceAsset } from '@desigual-os/types';
 import { getRedisConnection } from './queues';
 
 export const STUDIO_JOBS_QUEUE_NAME = 'studio-jobs';
 
-export interface StudioJobAttachment {
-  filename: string;
-  url: string;
-  contentType: string;
-}
+export type StudioJobAttachment = StudioReferenceAsset;
 
 export interface StudioCopySlide {
   headline: string;
@@ -27,13 +24,17 @@ export interface StudioJobData {
   attachments: StudioJobAttachment[];
   /** Só carousel: quantas imagens gerar. */
   numSlides: number | null;
-  /** Só video/reels: guardados mesmo enquanto a geração real não está ligada. */
+  /** Só video/reels: duração em segundos (default 5 no worker; metadata.seconds sobrescreve). */
   durationSeconds: number | null;
   qualityPreset: string | null;
   /** Se deve sobrepor o texto da copy nas imagens/slides gerados. */
   includeText: boolean;
   /** Texto por slide, já gerado pela API antes de enfileirar (ver studio/routes.ts). */
   copySlides: StudioCopySlide[] | null;
+  /** Estilo visual escolhido na tela do Studio; o worker traduz em modificador de prompt. */
+  style?: string | undefined;
+  /** Só image: quantas variações gerar do mesmo prompt (default 1). */
+  variations?: number | undefined;
   /**
    * Só carousel HTML: URLs de frames (imagens) que entram como fundo dos
    * cards, na ordem. Presença não-vazia liga o caminho HTML (puppeteer-core)

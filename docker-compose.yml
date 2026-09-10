@@ -6,7 +6,9 @@ services:
     ports:
       # REDIS_HOST_PORT permite trocar a porta exposta no host quando 6379
       # já está em uso por outro projeto na máquina (definir em .env, nunca aqui).
-      - "${REDIS_HOST_PORT:-6379}:6379"
+      # Bind em 127.0.0.1: sem senha configurada, publicar em 0.0.0.0 deixa
+      # o Redis acessível a qualquer host na mesma rede/LAN.
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:

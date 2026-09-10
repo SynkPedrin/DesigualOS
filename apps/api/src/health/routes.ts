@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { desc, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { NODE_STATUSES } from '@desigual-os/types';
-import { syncAgents } from '@desigual-os/orchestrator';
+import { syncAgents, getProbeTargets } from '@desigual-os/orchestrator';
 import { requireAuth, requirePermission } from '../auth/middleware';
 
 export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
@@ -140,7 +140,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
   /**
    * Botão "Sincronizar" do Monitoramento: vai ATÉ cada agente, mede de
    * verdade, grava o resultado e devolve o diagnóstico com o que já foi
-   * autossolucionado. Substitui a espera passiva por heartbeat — que nunca
+   * autossolucionado. Substitui a espera passiva por heartbeat - que nunca
    * chegava, deixando a tela em "0/2 agentes conectados".
    */
   app.post('/health/sync', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
@@ -169,6 +169,63 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
         severity: d.severity,
       })),
     };
+  });
+  /**
+   * Linha do tempo do Monitoramento: derivada de health_checks (sem tabela
+   * nova). Cada TRANSIÇÃO de status entre registros consecutivos de um mesmo
+   * node vira um evento - offline vira erro, volta pro ar vira info, e
+   * qualquer estado intermediário vira aviso.
+   */
+  app.get('/health/events', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+    const rows = await db
+      .select({
+        nodeId: schema.nodes.nodeId,
+        status: schema.healthChecks.status,
+        createdAt: schema.healthChecks.createdAt,
+      })
+      .from(schema.healthChecks)
+      .innerJoin(schema.nodes, eq(schema.healthChecks.nodeId, schema.nodes.id))
+      .orderBy(desc(schema.healthChecks.createdAt))
+      .limit(100);
+
+    const labels = new Map(getProbeTargets().map((target) => [target.nodeId, target.label]));
+    const labelFor = (nodeId: string) => labels.get(nodeId) ?? nodeId;
+
+    // Agrupa por node mantendo a ordem (mais novo primeiro): só comparando
+    // registros consecutivos do MESMO node uma transição faz sentido.
+    const byNode = new Map<string, { status: string; createdAt: Date }[]>();
+    for (const row of rows) {
+      const list = byNode.get(row.nodeId) ?? [];
+      list.push(row);
+      byNode.set(row.nodeId, list);
+    }
+
+    const events: { id: string; occurred_at: string; level: 'error' | 'warning' | 'info'; node_label: string; message: string }[] = [];
+    for (const [nodeId, checks] of byNode) {
+      for (let i = 0; i < checks.length - 1; i += 1) {
+        const newer = checks[i]!;
+        const older = checks[i + 1]!;
+        if (newer.status === older.status) continue;
+
+        const label = labelFor(nodeId);
+        const event =
+          newer.status === 'offline'
+            ? { level: 'error' as const, message: `${label} ficou offline.` }
+            : newer.status === 'online'
+              ? { level: 'info' as const, message: `${label} voltou a responder.` }
+              : { level: 'warning' as const, message: `${label} ficou degradado.` };
+
+        events.push({
+          id: `${nodeId}-${newer.createdAt.getTime()}`,
+          occurred_at: newer.createdAt.toISOString(),
+          node_label: label,
+          ...event,
+        });
+      }
+    }
+
+    events.sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1));
+    return { events: events.slice(0, 20) };
   });
 
 }

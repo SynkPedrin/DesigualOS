@@ -22,3 +22,37 @@ drizzle/meta/
 
 # Projeto separado (landing page), com .git próprio
 LP - DESIGUAL OS/
+
+# Dados operacionais/de clientes reais da agência (vault Obsidian pessoal e
+# notas soltas por cliente) - nunca devem ir pro repositório público no
+# GitHub, mesmo que o resto do projeto vá (2026-09-10).
+arquivos clientes/
+brain/
+**/.obsidian/
+Brain-Marketing/2026-09-04.md
+Brain-Marketing/STUDIO-BRAIN/
+Brain-Marketing/cerebro/
+Brain-Marketing/Sem título.base
+Brain-Marketing/Sem título.md
+/3net.md
+/_index.md
+/_template-cliente.md
+/aaerp.md
+/biofit.md
+/bravvo-pizzaria.md
+/colpar.md
+/cosentino.md
+/costa-azul.md
+/da-mata.md
+/elite.md
+/engeuni.md
+/envu.md
+/facil-seguros.md
+/golfo.md
+/hikvision.md
+/ibiza-ii.md
+/jardim-do-lago-areia-branca.md
+/modulo-one.md
+/por-do-sol.md
+/specialist.md
+/SKILL E PROCESSO DE CRIAÇÃO/

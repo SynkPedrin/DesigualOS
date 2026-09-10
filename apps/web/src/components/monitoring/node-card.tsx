@@ -1,7 +1,7 @@
 import { AgentAvatar } from '@/components/ui/agent-avatar';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Surface } from '@/components/ui/surface';
-import { MetricBar } from './metric-bar';
+import { LiveMetricChart } from './live-metric-chart';
 import { AGENT_META } from '@/lib/agent-meta';
 import { NODE_STATUS_META } from '@/lib/status-meta';
 import { formatRelativeTime } from '@/lib/format';
@@ -36,11 +36,11 @@ export function NodeCard({ node }: { node: NodeSummary }) {
       </div>
 
       <div className="mt-4 space-y-2.5 border-t border-grafite-elevado pt-3">
-        <MetricBar label="CPU" value={node.cpuPercent} />
-        <MetricBar label="RAM" value={node.ramPercent} />
-        <MetricBar label="Disco" value={node.diskPercent} />
-        {node.gpuPercent !== null && <MetricBar label="GPU" value={node.gpuPercent} />}
-        {node.vramPercent !== null && <MetricBar label="VRAM" value={node.vramPercent} />}
+        <LiveMetricChart label="CPU" value={node.cpuPercent} />
+        <LiveMetricChart label="RAM" value={node.ramPercent} />
+        <LiveMetricChart label="Disco" value={node.diskPercent} />
+        {node.gpuPercent !== null && <LiveMetricChart label="GPU" value={node.gpuPercent} />}
+        {node.vramPercent !== null && <LiveMetricChart label="VRAM" value={node.vramPercent} />}
       </div>
 
       <div className="mt-3 flex items-center justify-between border-t border-grafite-elevado pt-3 font-mono text-[11px] text-nevoa">

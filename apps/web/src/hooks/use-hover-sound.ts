@@ -3,7 +3,7 @@
 import { useCallback, useRef } from 'react';
 
 /**
- * A tiny, very quiet "tick" synthesized with the Web Audio API on hover — no audio asset
+ * A tiny, very quiet "tick" synthesized with the Web Audio API on hover - no audio asset
  * needed. One shared AudioContext for the whole app (creating one per hover would be wasteful
  * and some browsers cap how many can exist). Browsers block audio before any user gesture, so
  * the first hover before a click may stay silent; that's expected, not a bug.

@@ -4,7 +4,13 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
 
-const searchQuerySchema = z.object({ q: z.string().min(1) });
+const searchQuerySchema = z.object({ q: z.string().min(1).max(100) });
+
+// Sem isso, `%`/`_` digitados pelo usuário viram wildcard de LIKE em vez de
+// caractere literal (mesmo padrão de studio/routes.ts).
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
 
 /**
  * Busca geral (pedido do usuário): usuários, clientes e agentes num só
@@ -14,7 +20,7 @@ const searchQuerySchema = z.object({ q: z.string().min(1) });
 export async function registerSearchRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { q: string } }>('/search', { preHandler: requireAuth }, async (request) => {
     const { q } = searchQuerySchema.parse(request.query);
-    const pattern = `%${q}%`;
+    const pattern = `%${escapeLikePattern(q)}%`;
 
     const [users, clients, agents] = await Promise.all([
       db

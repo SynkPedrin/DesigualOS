@@ -38,7 +38,7 @@ export function useConversation(conversationId: string | null) {
 }
 
 /**
- * Histórico persistido da conversa — fonte da verdade do que aparece na thread.
+ * Histórico persistido da conversa - fonte da verdade do que aparece na thread.
  * staleTime 0 de propósito: abrir uma conversa sempre busca o estado atual do
  * banco (a invalidação via WS/polling cobre o "enquanto está aberta").
  */

@@ -19,9 +19,12 @@ import { Composer } from './composer';
 import { ChatMessage, type ChatUiMessage } from './chat-message';
 import { ConversationSidebar } from './conversation-sidebar';
 import { ConversationVisibilityToggle } from './conversation-visibility-toggle';
+import { ProjectOverviewPanel } from './project-overview-panel';
+import { ProjectFilesSection } from './project-files-section';
 import { AgentCard, AgentChip, TRAVEL_SPRING, useAgentNodeStatuses } from './agent-spotlight';
 import { ChatAmbient } from './chat-ambient';
 import { Skeleton } from '@/components/ui/skeleton';
+import { realtimeClient, type MessageDeltaPayload } from '@/lib/realtime/ws-client';
 import { useSendChatMessage } from '@/hooks/use-send-chat-message';
 import { useExecution } from '@/hooks/use-executions';
 import { useClients } from '@/hooks/use-clients';
@@ -33,7 +36,7 @@ import { useSendMessage } from '@/hooks/use-messages';
 import { useMe } from '@/hooks/use-me';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { AGENT_SELECTIONS, type AgentSelection } from '@/lib/api/contracts';
+import { AGENT_SELECTIONS, type AgentSelection, type ChatAttachmentWire } from '@/lib/api/contracts';
 
 let localMessageSeq = 0;
 function nextLocalId() {
@@ -52,7 +55,7 @@ const CHAT_CHIP_SELECTIONS = ['auto', ...FEATURED_AGENTS] as const satisfies rea
 /**
  * Envio em andamento. O par otimista (pergunta + balão de thinking) vive aqui
  * até o histórico PERSISTIDO (GET /conversations/:id/messages) alcançar a
- * resposta — a partir daí quem renderiza é o banco, nunca o estado local.
+ * resposta - a partir daí quem renderiza é o banco, nunca o estado local.
  * Por isso refresh e reabrir a conversa sempre mostram tudo.
  */
 interface PendingExchange {
@@ -67,6 +70,8 @@ interface PendingExchange {
   answer: string;
   sources: string[];
   clientName: string | null;
+  /** Anexos enviados junto com a pergunta (já hospedados via POST /uploads), até 10. */
+  attachments: ChatAttachmentWire[];
   /** Marca de quando o envio começou, pra casar com created_at das mensagens persistidas. */
   sentAt: number;
 }
@@ -75,7 +80,7 @@ interface PendingExchange {
  * Dois estados dentro do MESMO LayoutGroup:
  *  - vazio (home): cards grandes + saudação + composer herói, centrados;
  *  - conversa: os MESMOS elementos (layoutId `agent-card-*` e `chat-composer`)
- *    docam como chips no topo e composer no rodapé — o framer mede a caixa do
+ *    docam como chips no topo e composer no rodapé - o framer mede a caixa do
  *    elemento saindo e anima o entrante a partir dela (movimento físico,
  *    transform/opacity only). Saudação e disclaimer saem em fade/slide.
  */
@@ -102,7 +107,7 @@ export function ChatThread() {
 
   // Deep link de projeto (/chat?project=<id>, vindo da seção PROJETOS da sidebar
   // global): a thread vira a lista de conversas do projeto. Sem o param, a query
-  // cai na MESMA key do useConversations(null) da sidebar — cache compartilhado,
+  // cai na MESMA key do useConversations(null) da sidebar - cache compartilhado,
   // nenhum request extra.
   const { data: projects } = useProjects();
   const { data: projectConversations, isPending: projectConversationsPending } = useConversations(
@@ -157,42 +162,105 @@ export function ChatThread() {
     router.replace(`/chat${query ? `?${query}` : ''}`, { scroll: false });
   }
 
-  // Deep link (notificação "Jarbas respondeu" -> /chat?agent=jarbas&conversation=<id>)
-  // e refresh: abre a conversa da URL uma vez, ao montar. O carregamento em si é
-  // do useConversationMessages — sem fetch manual aqui.
-  const didOpenFromQuery = useRef(false);
+  // A conversa aberta segue o ?conversation= da URL: deep link (notificação
+  // "Jarbas respondeu" -> /chat?agent=jarbas&conversation=<id>), refresh E a
+  // troca de conversa pela sidebar global, que navega na MESMA rota - um efeito
+  // mount-only não reagiria. O ref guarda o último valor aplicado pra não
+  // derrubar o par otimista quando o próprio handleSend sincroniza a URL.
+  // O carregamento em si é do useConversationMessages - sem fetch manual aqui.
+  const lastQueryConversation = useRef<string | null>(null);
   useEffect(() => {
-    if (didOpenFromQuery.current) return;
-    didOpenFromQuery.current = true;
-    const conversationFromQuery = searchParams.get('conversation');
-    if (conversationFromQuery) {
+    if (conversationFromQuery === lastQueryConversation.current) return;
+    lastQueryConversation.current = conversationFromQuery;
+    if (conversationFromQuery !== activeConversationId) {
+      // Conversa diferente (ou saída pra home/projeto): o par otimista pertence
+      // à thread anterior e não pode vazar pra nova.
+      setPending(null);
       setActiveConversationId(conversationFromQuery);
     }
-    // Deliberately mount-only ([]): one-shot "open from the URL", not a synced state.
-  }, []);
+  }, [conversationFromQuery, activeConversationId]);
+
+  // "Novo chat" da sidebar global navega pra /chat?new=<nonce>: mesma rota não
+  // remonta o ChatThread, então o nonce é o gatilho real de reset - limpa a
+  // thread (mensagens derivam de activeConversationId + pending) e foca o
+  // composer. O param some da URL em seguida pra não sujar o histórico.
+  const lastHandledNewChat = useRef<string | null>(null);
+  useEffect(() => {
+    if (!newChatNonce || newChatNonce === lastHandledNewChat.current) return;
+    lastHandledNewChat.current = newChatNonce;
+    lastQueryConversation.current = null;
+    setPending(null);
+    setActiveConversationId(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('new');
+    params.delete('conversation');
+    const query = params.toString();
+    router.replace(`/chat${query ? `?${query}` : ''}`, { scroll: false });
+    // Foco depois do commit: o reset troca pro composer hero da tela vazia.
+    requestAnimationFrame(() => composerTextareaRef.current?.focus());
+  }, [newChatNonce, searchParams, router]);
 
   // Execution em andamento: atualiza o status do balão de thinking e, ao
   // concluir, preenche a resposta na hora (execution.steps) E invalida o
   // histórico persistido, que assume a renderização assim que alcança.
   useEffect(() => {
     if (!execution || !pending?.executionId) return;
-    if (pending.status === 'completed' || pending.status === 'failed') return;
+    // Só 'completed' é terminal. 'failed' NÃO travava aqui antes, e isso congelava a bolha:
+    // quando a 1ª tentativa falhava (ex: timeout) e a 2ª respondia certo, o latch já tinha
+    // marcado 'failed' e nenhuma atualização posterior repintava o balão - o usuário ficava com
+    // uma bolha vazia pra sempre, mesmo com a resposta real salva em `messages` segundos depois
+    // (defeito medido ao vivo em 08/09/2026, briefing da Fratelli pro Otto).
+    if (pending.status === 'completed') return;
     if (execution.status === 'completed' || execution.status === 'failed') {
       // steps[0] pegava o PRIMEIRO agente de um workflow multi-etapa, não o resultado
-      // final — at(-1) é a última etapa, que é o que de fato aparece no balão do chat.
+      // final - at(-1) é a última etapa, que é o que de fato aparece no balão do chat.
       const step = execution.steps.at(-1);
+      const nextAnswer = step?.answer ?? '';
+      const nextSources = step?.sources ?? [];
+      // Guarda de repintura: sem ela, uma execução que fica em 'failed' dispararia setPending a
+      // cada render (o objeto novo muda a identidade e realimenta o efeito).
+      if (pending.status === execution.status && pending.answer === nextAnswer) return;
       setPending((current) =>
         current
-          ? { ...current, status: execution.status, answer: step?.answer ?? '', sources: step?.sources ?? [] }
+          ? { ...current, status: execution.status, answer: nextAnswer, sources: nextSources }
           : current,
       );
       if (pending.conversationId) {
         queryClient.invalidateQueries({ queryKey: ['conversations', pending.conversationId, 'messages'] });
       }
+      // Custo/tokens: invalidado globalmente pelo evento WS execution.completed
+      // (use-realtime-events.ts), que cobre qualquer aba aberta - não só esta.
     } else if (execution.status !== pending.status) {
       setPending((current) => (current ? { ...current, status: execution.status } : current));
     }
   }, [execution, pending, queryClient]);
+
+  // Texto ao vivo via WS (message.delta, ver publishMessageDelta no worker):
+  // pinta o balão assim que o texto existe, sem esperar o refetch que
+  // `execution.completed` dispara (use-realtime-events.ts) nem o próximo
+  // tick do poll de 700ms acima. `delta` é sempre o texto ACUMULADO (nunca
+  // um diff), então aplicar direto é seguro mesmo se um evento chegar fora
+  // de ordem ou duplicado. Hoje chega um único evento por execução (o Chat
+  // ainda não tem nenhum agente com streaming token a token de verdade); o
+  // mesmo handler já serve pra quando um agente passar a mandar vários
+  // eventos com `done: false` no meio.
+  useEffect(() => {
+    if (!pending?.executionId) return;
+    const executionId = pending.executionId;
+    return realtimeClient.subscribe((event) => {
+      if (event.type !== 'message.delta') return;
+      const payload = event.payload as unknown as MessageDeltaPayload;
+      if (payload.execution_id !== executionId) return;
+      setPending((current) =>
+        current && current.executionId === executionId && current.status !== 'completed'
+          ? { ...current, answer: payload.delta, status: payload.done ? 'completed' : 'running' }
+          : current,
+      );
+      if (payload.done) {
+        queryClient.invalidateQueries({ queryKey: ['conversations', payload.conversation_id, 'messages'] });
+      }
+    });
+  }, [pending?.executionId, queryClient]);
 
   // Quando o banco alcança (mensagem do assistente persistida depois do envio),
   // aposenta o par otimista: a thread passa a renderizar só o histórico.
@@ -211,19 +279,49 @@ export function ChatThread() {
     content: message.content,
     status: message.role === 'assistant' ? 'completed' : undefined,
     sources: [],
+    attachments: message.attachments.map((attachment) => ({
+      url: attachment.url,
+      type: attachment.contentType,
+      filename: attachment.filename,
+    })),
+    createdAt: message.createdAt,
   }));
 
   let messages = persistedUi;
   if (pending && pending.conversationId === activeConversationId) {
+    // Comparação por TEMPO, não por conteúdo — mesmo padrão do "caughtUp" do efeito de
+    // aposentadoria acima (linha ~241). Corrida real medida em código (09/09/2026): o evento WS
+    // de execution.completed invalida `persistedMessages` e ele já chega com a resposta real,
+    // mas `pending.status` só muda no próximo tick do poll de 700ms — nessa janela, a checagem
+    // antiga (`pending.status === 'completed' && message.content === pending.answer`) dava falso
+    // e a bolha otimista era empurrada JUNTO com a mensagem persistida real: duas bolhas com o
+    // mesmo conteúdo na tela ao mesmo tempo. Comparar por `createdAt >= pending.sentAt` não
+    // depende do estado local do poll: existe no máximo UM exchange pendente por vez (o composer
+    // fica desabilitado enquanto `isExchangeActive`), então "mensagem do papel certo criada depois
+    // do envio" identifica a mensagem deste exchange sem ambiguidade.
+    //
+    // Comparar por CONTEÚDO tinha um segundo defeito, mais raro: se o usuário já tinha mandado o
+    // mesmo texto antes na conversa ("ok", "oi"), a linha ANTIGA batia no `.some()` e a bolha
+    // otimista da mensagem NOVA sumia da tela até o histórico realmente alcançar.
     const userAlreadyPersisted = persistedUi.some(
-      (message) => message.role === 'user' && message.content === pending.userText,
+      (message) => message.role === 'user' && new Date(message.createdAt ?? 0).getTime() >= pending.sentAt,
     );
     const assistantAlreadyPersisted = persistedUi.some(
-      (message) => message.role === 'assistant' && pending.status === 'completed' && message.content === pending.answer,
+      (message) => message.role === 'assistant' && new Date(message.createdAt ?? 0).getTime() >= pending.sentAt,
     );
     messages = [...persistedUi];
     if (!userAlreadyPersisted) {
-      messages.push({ id: pending.userLocalId, role: 'user', content: pending.userText });
+      messages.push({
+        id: pending.userLocalId,
+        role: 'user',
+        content: pending.userText,
+        attachments: pending.attachments.map((attachment) => ({
+          url: attachment.url,
+          type: attachment.contentType,
+          filename: attachment.filename,
+        })),
+        createdAt: new Date(pending.sentAt).toISOString(),
+      });
     }
     if (!assistantAlreadyPersisted) {
       messages.push({
@@ -234,6 +332,7 @@ export function ChatThread() {
         status: pending.status,
         sources: pending.sources,
         clientName: pending.clientName,
+        createdAt: new Date(pending.sentAt).toISOString(),
       });
     }
   }
@@ -261,7 +360,10 @@ export function ChatThread() {
     });
   }
 
-  async function handleSend(text: string) {
+  async function handleSend(
+    text: string,
+    options?: { projectId?: string | null | undefined; attachments?: ChatAttachmentWire[] | undefined },
+  ) {
     const sentAt = Date.now();
     const exchange: PendingExchange = {
       conversationId: activeConversationId,
@@ -274,6 +376,7 @@ export function ChatThread() {
       answer: '',
       sources: [],
       clientName,
+      attachments: options?.attachments ?? [],
       sentAt,
     };
     setPending(exchange);
@@ -284,6 +387,10 @@ export function ChatThread() {
         clientId,
         agentSelection,
         conversationId: activeConversationId,
+        // Só entra numa conversa NOVA (activeConversationId nulo): "abrir um
+        // chat dentro do projeto" a partir da tela de Projeto.
+        projectId: activeConversationId ? null : options?.projectId,
+        attachments: options?.attachments ?? [],
       });
 
       setPending((current) =>
@@ -300,7 +407,7 @@ export function ChatThread() {
       queryClient.invalidateQueries({ queryKey: ['conversations', result.conversationId, 'messages'] });
     } catch {
       // Sem execution id pra pollar, nada tiraria o placeholder do estado
-      // "queued" — falha honesta no balão.
+      // "queued" - falha honesta no balão.
       setPending((current) => (current ? { ...current, status: 'failed' } : current));
     }
   }
@@ -340,7 +447,91 @@ export function ChatThread() {
           <ChatAmbient dimmed={hasMessages} />
 
         <AnimatePresence initial={false}>
-          {!hasMessages && (
+          {!hasMessages && projectFromQuery !== null && (
+            <motion.div
+              key="chat-project"
+              className="relative flex flex-1 flex-col overflow-y-auto px-4"
+              exit={{ opacity: 0, y: -16 }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+            >
+              <div className="mx-auto w-full max-w-3xl py-10">
+                <Link
+                  href="/chat"
+                  className="inline-flex items-center gap-1.5 rounded-md text-sm text-nevoa transition-colors hover:text-branco-cru"
+                >
+                  <ArrowLeft size={14} />
+                  Voltar pro chat
+                </Link>
+
+                <div className="mt-6 flex items-center gap-3">
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-grafite-elevado bg-grafite text-sinal">
+                    <FolderClosed size={18} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Projeto</p>
+                    <h1 className="truncate font-display text-3xl font-black uppercase leading-tight tracking-tight text-branco-cru">
+                      {activeProject?.name ?? 'Projeto'}
+                    </h1>
+                  </div>
+                </div>
+
+                {activeProject?.clientId && <div className="mt-8"><ProjectOverviewPanel clientId={activeProject.clientId} /></div>}
+
+                <div className="mb-8">
+                  <ProjectFilesSection projectId={projectFromQuery} />
+                </div>
+
+                <div className="mt-2">
+                  <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-nevoa">Nova conversa neste projeto</p>
+                  <Composer
+                    onSend={(text, attachments) => handleSend(text, { projectId: projectFromQuery, attachments })}
+                    disabled={composerDisabled}
+                    agentSelection={agentSelection}
+                    variant="docked"
+                    showDisclaimer={false}
+                  />
+                </div>
+
+                <p className="mb-2 mt-8 font-mono text-[10px] uppercase tracking-wider text-nevoa">Conversas</p>
+                <div className="space-y-1">
+                  {projectConversationsPending ? (
+                    <>
+                      <Skeleton className="h-11" />
+                      <Skeleton className="h-11" />
+                      <Skeleton className="h-11" />
+                    </>
+                  ) : sortedProjectConversations.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-grafite-elevado px-4 py-6 text-center text-sm text-nevoa">
+                      Nenhuma conversa neste projeto ainda.
+                    </p>
+                  ) : (
+                    sortedProjectConversations.map((conversation) => (
+                      <Link
+                        key={conversation.id}
+                        href={`/chat?conversation=${conversation.id}`}
+                        className="flex items-center gap-3 rounded-md px-3 py-2.5 transition-colors hover:bg-grafite"
+                      >
+                        {conversation.lastAgent ? (
+                          <span
+                            className={cn('size-1.5 shrink-0 rounded-full', AGENT_META[conversation.lastAgent].bgClass)}
+                          />
+                        ) : (
+                          <MessageCircle size={14} className="shrink-0 text-nevoa" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate text-sm text-branco-cru">
+                          {conversation.title ?? conversation.lastMessagePreview ?? 'Nova conversa'}
+                        </span>
+                        <span className="shrink-0 font-mono text-[10px] text-nevoa">
+                          {formatRelativeTime(conversation.updatedAt)}
+                        </span>
+                      </Link>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+          {!hasMessages && projectFromQuery === null && (
             <motion.div
               key="chat-home"
               className="relative flex flex-1 flex-col items-center justify-center gap-8 px-4"
@@ -374,17 +565,18 @@ export function ChatThread() {
                   </span>
                 </h1>
                 <p className="mt-3 text-sm text-nevoa md:text-base">
-                  Descreva o que você precisa — o AUTO roteia para o agente certo, ou escolha um especialista acima.
+                  Descreva o que você precisa - o AUTO roteia para o agente certo, ou escolha um especialista acima.
                 </p>
               </div>
 
               <motion.div layoutId="chat-composer" transition={TRAVEL_SPRING} className="w-full max-w-3xl">
                 <Composer
-                  onSend={handleSend}
+                  onSend={(text, attachments) => handleSend(text, { attachments })}
                   disabled={composerDisabled}
                   agentSelection={agentSelection}
                   variant="hero"
                   showDisclaimer={false}
+                  textareaRef={composerTextareaRef}
                 />
               </motion.div>
 
@@ -446,7 +638,12 @@ export function ChatThread() {
               transition={TRAVEL_SPRING}
               className="mx-auto w-full max-w-3xl shrink-0"
             >
-              <Composer onSend={handleSend} disabled={composerDisabled} agentSelection={agentSelection} />
+              <Composer
+                onSend={(text, attachments) => handleSend(text, { attachments })}
+                disabled={composerDisabled}
+                agentSelection={agentSelection}
+                textareaRef={composerTextareaRef}
+              />
             </motion.div>
           </div>
         )}

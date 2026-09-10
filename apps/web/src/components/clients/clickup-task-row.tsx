@@ -34,7 +34,7 @@ function dueLabel(iso: string | null): { text: string; late: boolean } | null {
 
 /**
  * Linha de tarefa "igual no ClickUp": status com a cor real dele, prioridade,
- * tags, prazo (destacando atraso) e as FOTOS de quem está atribuído — pedido
+ * tags, prazo (destacando atraso) e as FOTOS de quem está atribuído - pedido
  * do Endrigo pra bater o olho e saber de quem é.
  */
 export function ClickUpTaskRow({ task, fallbackUrl }: { task: ClickUpTaskWire; fallbackUrl: string | null }) {

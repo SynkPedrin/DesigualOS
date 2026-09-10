@@ -27,7 +27,7 @@ export const integrationConnections = pgTable(
     /** Id do workspace/team no provedor (ClickUp: team id). */
     externalWorkspaceId: text('external_workspace_id'),
     externalWorkspaceName: text('external_workspace_name'),
-    /** connected | revoked | error — `revoked` preserva o histórico em vez de apagar a linha. */
+    /** connected | revoked | error - `revoked` preserva o histórico em vez de apagar a linha. */
     status: text('status').notNull().default('connected'),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     ...timestampColumns,

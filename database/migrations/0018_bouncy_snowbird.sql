@@ -1,0 +1,1 @@
+ALTER TYPE "agent_name" ADD VALUE 'otto';

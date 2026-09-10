@@ -1,0 +1,99 @@
+# docker-compose de PRODUÇÃO do Orchestrator (VPS), diferente do
+# docker-compose.yml da raiz (que só sobe Redis para desenvolvimento local).
+#
+# O que NÃO está aqui, de propósito:
+# - Postgres: é Supabase gerenciado (ver ADR 0001 em docs/architecture/decisions),
+#   não roda neste compose nem nesta VPS.
+# - Node Agents (desigual-node, studio-node, otto-node): rodam nas máquinas
+#   físicas dos agentes (Mac Minis + PC da RTX), fora do VPS. Ver o README de
+#   cada um em nodes/*/README.md.
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# Pré-requisito: um .env de produção na raiz do repo, preenchido a partir de
+# .env.example (ver docs/runbook.md para a sequência completa de deploy).
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: desigual-os-redis
+    restart: unless-stopped
+    # Diferente do compose de dev: aqui SEMPRE com senha (REDIS_PASSWORD no
+    # .env). Sem isso, qualquer processo que alcance a porta do Redis dentro
+    # da VPS conseguiria ler/escrever a fila de jobs e o pub/sub do WebSocket.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD precisa estar definida no .env de produção}"]
+    volumes:
+      - redis_data:/data
+    # Sem "ports:" de propósito: o Redis não precisa ser alcançável de fora
+    # do compose (regra de ouro 3, nada exposto publicamente sem necessidade).
+    # api e worker chegam nele pela rede interna do compose, pelo nome do
+    # serviço ("redis"). Para inspecionar manualmente, use
+    # `docker compose -f docker-compose.prod.yml exec redis redis-cli -a ...`.
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: api
+    container_name: desigual-os-api
+    restart: unless-stopped
+    # Todo o resto das variáveis (SUPABASE_*, ANTHROPIC_API_KEY, NODE_SECRET,
+    # etc.) vem do .env de produção, nunca hardcoded aqui. Ver .env.example
+    # na raiz para a lista completa e o que cada uma faz.
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Bind só em 127.0.0.1: a API não fica exposta direto na internet, quem
+    # fala com o mundo externo é o Nginx na frente, com TLS (regra de ouro 3;
+    # ver docs/deploy/vps-nginx.conf.example). Ajuste a porta do host se
+    # PORT no .env for diferente de 3001.
+    ports:
+      - "127.0.0.1:${PORT:-3001}:3001"
+    healthcheck:
+      # GET /health é público (sem auth), existe exatamente para isto.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: worker
+    container_name: desigual-os-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Sem "ports:": o worker não expõe HTTP, só consome as filas do Redis.
+    healthcheck:
+      # O worker não tem endpoint HTTP (é consumidor BullMQ puro), então não
+      # dá para checar "processando de verdade" sem inventar um sinal. Isto
+      # aqui confere só se o processo Node do worker ainda está de pé, uma
+      # checagem fraca mas honesta. O sinal forte de saúde real (fila
+      # acumulando ou não) é lido de fora, no Redis: ver docs/runbook.md.
+      test: ["CMD-SHELL", "pgrep -f 'dist/index.js' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  redis_data:

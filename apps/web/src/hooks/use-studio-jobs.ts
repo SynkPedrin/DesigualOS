@@ -4,11 +4,13 @@ import {
   mapStudioJobDetail,
   type StudioJobAttachmentWire,
   type StudioJobCreatedWire,
+  type StudioJobDetail,
   type StudioJobDetailWire,
   type StudioJobRequestWire,
   type StudioJobSummaryWire,
   type StudioJobType,
   type StudioQualityPreset,
+  type StudioStyle,
 } from '@/lib/api/contracts';
 
 const ACTIVE_STATUSES = new Set(['queued', 'rendering']);
@@ -27,6 +29,10 @@ export function useCreateStudioJob() {
       durationSeconds?: number;
       qualityPreset?: StudioQualityPreset;
       includeText?: boolean;
+      style?: StudioStyle;
+      variations?: number;
+      referenceImages?: string[];
+      ultra?: boolean;
     }) => {
       const body: StudioJobRequestWire = {
         client_id: input.clientId,
@@ -38,6 +44,10 @@ export function useCreateStudioJob() {
         ...(input.durationSeconds !== undefined ? { duration_seconds: input.durationSeconds } : {}),
         ...(input.qualityPreset !== undefined ? { quality_preset: input.qualityPreset } : {}),
         ...(input.includeText !== undefined ? { include_text: input.includeText } : {}),
+        ...(input.style !== undefined ? { style: input.style } : {}),
+        ...(input.variations !== undefined ? { variations: input.variations } : {}),
+        ...(input.referenceImages?.length ? { reference_images: input.referenceImages } : {}),
+        ...(input.ultra ? { metadata: { ultra: true } } : {}),
       };
       const wire = await apiFetch<StudioJobCreatedWire>('/studio/jobs', {
         method: 'POST',
@@ -54,10 +64,15 @@ export function useCreateStudioJob() {
 export function useStudioJob(jobId: string | null) {
   return useQuery({
     queryKey: ['studio', 'jobs', jobId],
-    queryFn: async () => mapStudioJobDetail(await apiFetch<StudioJobDetailWire>(`/studio/jobs/${jobId}`)),
+    queryFn: async () => fetchStudioJobDetail(jobId!),
     enabled: Boolean(jobId),
     refetchInterval: (query) => (query.state.data && ACTIVE_STATUSES.has(query.state.data.status) ? 500 : false),
   });
+}
+
+/** Detail completo do job (config original inclusa) — base do "Duplicar"/"Editar projeto". */
+export async function fetchStudioJobDetail(jobId: string): Promise<StudioJobDetail> {
+  return mapStudioJobDetail(await apiFetch<StudioJobDetailWire>(`/studio/jobs/${jobId}`));
 }
 
 /**

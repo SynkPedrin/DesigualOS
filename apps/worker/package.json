@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "build": "node build.mjs",
+    "start": "NODE_ENV=production node dist/index.js",
     "lint": "eslint src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@desigual-os/context-engine": "workspace:*",
@@ -16,6 +17,7 @@
     "@desigual-os/logging": "workspace:*",
     "@desigual-os/node-protocol": "workspace:*",
     "@desigual-os/orchestrator": "workspace:*",
+    "@desigual-os/otto": "workspace:*",
     "@desigual-os/router": "workspace:*",
     "@desigual-os/tool-gateway": "workspace:*",
     "@desigual-os/types": "workspace:*",
@@ -25,7 +27,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.5.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
   }
 }

@@ -6,10 +6,38 @@ import { publishWsEvent } from '@desigual-os/orchestrator';
 import { requireAuth } from '../auth/middleware';
 import { uploadUserFile } from '../lib/storage';
 
+// Nome de arquivo vira parte da storage key: troca tudo que não é seguro pra
+// URL por hífen, preservando a extensão (mesmo padrão de uploads/routes.ts
+// e projects/routes.ts).
+function sanitizeFilename(filename: string): string {
+  return filename.replace(/[^a-zA-Z0-9._-]+/g, '-');
+}
+
 const sendMessageSchema = z.object({
   recipient_id: z.string().uuid(),
   content: z.string().min(1).optional(),
 });
+
+const updateThreadPrefsSchema = z
+  .object({
+    favorite: z.boolean().optional(),
+    archived: z.boolean().optional(),
+  })
+  .refine((body) => body.favorite !== undefined || body.archived !== undefined, {
+    message: 'At least one of favorite/archived is required',
+  });
+
+function serializeThreadPref(row: typeof schema.directMessageThreadPrefs.$inferSelect) {
+  return {
+    user_id: row.userId,
+    partner_id: row.partnerId,
+    favorited: row.favoritedAt !== null,
+    archived: row.archivedAt !== null,
+    favorited_at: row.favoritedAt?.toISOString() ?? null,
+    archived_at: row.archivedAt?.toISOString() ?? null,
+    updated_at: row.updatedAt.toISOString(),
+  };
+}
 
 function serializeMessage(row: typeof schema.directMessages.$inferSelect) {
   return {
@@ -63,7 +91,7 @@ export async function registerMessageRoutes(app: FastifyInstance): Promise<void>
       content = typeof contentField === 'string' && contentField.length > 0 ? contentField : undefined;
 
       const buffer = await file.toBuffer();
-      const path = `messages/${senderId}/${Date.now()}-${file.filename}`;
+      const path = `messages/${senderId}/${Date.now()}-${sanitizeFilename(file.filename)}`;
       const uploaded = await uploadUserFile(path, buffer, file.mimetype);
       attachment = { url: uploaded.url, type: file.mimetype, filename: file.filename };
     } else {
@@ -137,29 +165,94 @@ export async function registerMessageRoutes(app: FastifyInstance): Promise<void>
     const partners = partnerIds.length > 0 ? await db.select().from(schema.users).where(or(...partnerIds.map((id) => eq(schema.users.id, id)))) : [];
     const partnerById = new Map(partners.map((partner) => [partner.id, partner]));
 
-    return {
-      threads: partnerIds
-        .map((partnerId) => {
-          const thread = threads.get(partnerId);
-          const partner = partnerById.get(partnerId);
-          if (!thread || !partner) {
-            return null;
-          }
-          return {
-            user: { id: partner.id, name: partner.name, avatar_url: partner.avatarUrl },
-            last_message: serializeMessage(thread.lastMessage),
-            unread_count: thread.unread,
-          };
-        })
-        .filter((thread): thread is NonNullable<typeof thread> => thread !== null)
-        .sort((a, b) => b.last_message.created_at.localeCompare(a.last_message.created_at)),
-    };
+    // Preferências da thread são por usuário (favoritar/arquivar não afeta o
+    // outro lado). Threads arquivadas continuam na resposta — quem filtra é o
+    // frontend.
+    const myPrefs = await db
+      .select()
+      .from(schema.directMessageThreadPrefs)
+      .where(eq(schema.directMessageThreadPrefs.userId, myId));
+    const prefByPartner = new Map(myPrefs.map((pref) => [pref.partnerId, pref]));
+
+    const serialized = partnerIds
+      .map((partnerId) => {
+        const thread = threads.get(partnerId);
+        const partner = partnerById.get(partnerId);
+        if (!thread || !partner) {
+          return null;
+        }
+        const pref = prefByPartner.get(partnerId);
+        return {
+          user: {
+            id: partner.id,
+            name: partner.name,
+            avatar_url: partner.avatarUrl,
+            last_seen_at: partner.lastSeenAt?.toISOString() ?? null,
+          },
+          last_message: serializeMessage(thread.lastMessage),
+          unread_count: thread.unread,
+          favorited: pref?.favoritedAt != null,
+          archived: pref?.archivedAt != null,
+        };
+      })
+      .filter((thread): thread is NonNullable<typeof thread> => thread !== null)
+      .sort((a, b) => b.last_message.created_at.localeCompare(a.last_message.created_at));
+
+    // Soma real de não-lidas pra badge do header (inclui threads arquivadas).
+    const totalUnread = serialized.reduce((sum, thread) => sum + thread.unread_count, 0);
+
+    return { threads: serialized, total_unread: totalUnread };
+  });
+
+  // Favoritar/arquivar uma thread é preferência MINHA sobre o par, não estado
+  // compartilhado: upsert na linha (eu, parceiro) de direct_message_thread_prefs.
+  app.patch<{ Params: { partnerId: string } }>('/messages/threads/:partnerId', { preHandler: requireAuth }, async (request, reply) => {
+    const myId = request.authUser?.id ?? '';
+    const partnerId = request.params.partnerId;
+    const body = updateThreadPrefsSchema.parse(request.body ?? {});
+
+    const [partner] = await db.select().from(schema.users).where(eq(schema.users.id, partnerId));
+    if (!partner) {
+      reply.code(404);
+      return { error: `User '${partnerId}' not found` };
+    }
+
+    const now = new Date();
+    const [saved] = await db
+      .insert(schema.directMessageThreadPrefs)
+      .values({
+        userId: myId,
+        partnerId,
+        favoritedAt: body.favorite === undefined ? null : body.favorite ? now : null,
+        archivedAt: body.archived === undefined ? null : body.archived ? now : null,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [schema.directMessageThreadPrefs.userId, schema.directMessageThreadPrefs.partnerId],
+        set: {
+          // Só toca nos campos presentes no body; o resto preserva o valor atual.
+          ...(body.favorite !== undefined ? { favoritedAt: body.favorite ? now : null } : {}),
+          ...(body.archived !== undefined ? { archivedAt: body.archived ? now : null } : {}),
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    if (!saved) {
+      reply.code(500);
+      return { error: 'Failed to update thread preferences' };
+    }
+
+    return serializeThreadPref(saved);
   });
 
   app.get<{ Params: { userId: string } }>('/messages/:userId', { preHandler: requireAuth }, async (request) => {
     const myId = request.authUser?.id ?? '';
     const partnerId = request.params.userId;
 
+    // Busca as 200 MAIS RECENTES (desc) e reverte pra cronológico antes de
+    // responder: o ASC LIMIT 200 anterior perdia as mensagens novas em threads
+    // longas, mostrando só as 200 primeiras da conversa.
     const rows = await db
       .select()
       .from(schema.directMessages)
@@ -169,8 +262,9 @@ export async function registerMessageRoutes(app: FastifyInstance): Promise<void>
           and(eq(schema.directMessages.senderId, partnerId), eq(schema.directMessages.recipientId, myId)),
         ),
       )
-      .orderBy(schema.directMessages.createdAt)
+      .orderBy(desc(schema.directMessages.createdAt))
       .limit(200);
+    rows.reverse();
 
     await db
       .update(schema.directMessages)

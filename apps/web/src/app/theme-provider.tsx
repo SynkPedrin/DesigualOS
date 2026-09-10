@@ -31,14 +31,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
 
     function apply() {
-      // First paint sets the theme outright — nothing to cross-fade from yet, and animating
+      // First paint sets the theme outright - nothing to cross-fade from yet, and animating
       // it would just be a flash of the wrong theme. Every change after that gets the
       // View Transitions cross-fade (see tokens.css for the animation-duration override),
       // with a plain instant swap on browsers that don't support it yet (Firefox).
       if (hasAppliedOnce.current && document.startViewTransition) {
         const transition = document.startViewTransition(applyAttribute);
         // Toggling again before the ~0.45s cross-fade finishes aborts the prior transition by
-        // spec (only one can run at a time) — expected, not an error, but its promises reject
+        // spec (only one can run at a time) - expected, not an error, but its promises reject
         // with InvalidStateError and the browser reports that as an unhandled rejection unless
         // something is listening.
         transition.ready.catch(() => {});

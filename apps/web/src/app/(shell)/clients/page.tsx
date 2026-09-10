@@ -15,7 +15,7 @@ import type { ClientSummary } from '@/lib/api/contracts';
 
 function ClientsPageContent() {
   const searchParams = useSearchParams();
-  const { data: clients, isPending } = useClients();
+  const { data: clients, isPending, isError, refetch } = useClients();
   const [openClient, setOpenClient] = useState<ClientSummary | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -51,6 +51,23 @@ function ClientsPageContent() {
           {Array.from({ length: 6 }).map((_, index) => (
             <Skeleton key={index} className="h-52 rounded-2xl" />
           ))}
+        </div>
+      ) : isError ? (
+        <div className="space-y-4">
+          <EmptyState
+            icon={Users}
+            title="Não conseguimos carregar seus clientes."
+            description="Verifique sua conexão e tente novamente."
+          />
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
+            >
+              Tentar novamente
+            </button>
+          </div>
         </div>
       ) : !clients || clients.length === 0 ? (
         <EmptyState

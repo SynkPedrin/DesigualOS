@@ -6,7 +6,7 @@ import { requireAuth } from '../auth/middleware';
 export async function registerExecutionRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { client_id?: string } }>('/executions', { preHandler: requireAuth }, async (request) => {
     // Chat compartilhado (2026-09-03, mesma decisão de /conversations): execution é o que
-    // alimenta "conversas ativas" no dashboard de Agentes — sem isso ficava inconsistente
+    // alimenta "conversas ativas" no dashboard de Agentes - sem isso ficava inconsistente
     // com conversas/mensagens já públicas, e colaborador via a própria atividade zerada.
     const clientFilter = request.query.client_id ? eq(schema.executions.clientId, request.query.client_id) : undefined;
 

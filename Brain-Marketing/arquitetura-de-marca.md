@@ -1,6 +1,6 @@
 ---
 id: global-marketing-arquitetura-marca
-titulo: "Arquitetura de Marca — organizando marcas no portfólio"
+titulo: "Arquitetura de Marca - organizando marcas no portfólio"
 descricao: "Modelos para organizar marcas dentro de uma empresa (casa de marca, casa de marcas, endossada, híbrida) e critérios para decidir estender ou criar marca nova."
 escopo: global
 dominio: marketing
@@ -14,14 +14,14 @@ fonte: "C-Level Squad / cmo-architect"
 versao: 1
 ---
 
-# Arquitetura de Marca — organizando marcas no portfólio
+# Arquitetura de Marca - organizando marcas no portfólio
 
 ## Quando usar
 Quando o negócio tem (ou vai ter) mais de uma marca, produto ou linha e precisa decidir se estende a marca existente ou cria uma nova. Mais relevante para agências e operações com portfólio.
 
 ## Modelos
-- **Casa de marca (branded house):** uma marca-mãe (ex.: Google) — todos os produtos sob o guarda-chuva.
-- **Casa de marcas (house of brands):** marcas independentes (ex.: P&G) — cada produto com marca própria.
+- **Casa de marca (branded house):** uma marca-mãe (ex.: Google) - todos os produtos sob o guarda-chuva.
+- **Casa de marcas (house of brands):** marcas independentes (ex.: P&G) - cada produto com marca própria.
 - **Endossada:** submarcas endossadas pela mãe (ex.: Courtyard by Marriott).
 - **Híbrida:** mistura conforme necessidade estratégica.
 

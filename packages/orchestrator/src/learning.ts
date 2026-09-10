@@ -7,7 +7,7 @@ const logger = createLogger({ service: 'learning' });
 /**
  * Auto-aprendizado dos agentes (pedido do Endrigo, 03/09/2026):
  * "tudo que for feito e finalizado ele vai se auto aprendendo e guardando no
- * brain, de forma que ele sempre esteja atualizado — e isso para todos".
+ * brain, de forma que ele sempre esteja atualizado - e isso para todos".
  *
  * Como funciona: todo evento CONCLUÍDO no Desigual OS vira um registro
  * durável em `memories` (tabela que já existia e estava sem uso), e é
@@ -26,7 +26,12 @@ export type LearningKind =
   | 'clickup.clients_synced'
   | 'clickup.mention_answered'
   | 'client.access_granted'
-  | 'execution.completed';
+  | 'execution.completed'
+  // Ciclo criativo do Otto (Fase do otto-node): plano gerado, spec despachada
+  // pra fila studio-jobs e feedback humano sobre o asset produzido.
+  | 'otto.creative_plan_created'
+  | 'otto.studio_handoff'
+  | 'otto.feedback';
 
 export interface LearningEvent {
   kind: LearningKind;
@@ -57,7 +62,7 @@ async function resolveAgentId(agentName: string | undefined): Promise<string | n
  *
  * Então a entrega tem dois passos: escrever o .md no vault (via o agente de
  * escrita configurado) e pedir reindex daquele caminho. O caminho é sempre
- * dentro de `aprendizados/desigual-os/`, uma pasta dedicada — nunca no meio
+ * dentro de `aprendizados/desigual-os/`, uma pasta dedicada - nunca no meio
  * das notas escritas à mão pela equipe.
  *
  * Validado ponta a ponta: arquivo escrito, `POST /memory/reindex` com
@@ -65,7 +70,7 @@ async function resolveAgentId(agentName: string | undefined): Promise<string | n
  * encontrar o conteúdo novo.
  *
  * Sem BENTO_VAULT_WRITER_URL configurado, o aprendizado fica `pending` e o
- * flushPendingLearnings() reenvia depois — nada se perde.
+ * flushPendingLearnings() reenvia depois - nada se perde.
  */
 async function pushToBentoBrain(event: LearningEvent): Promise<DeliveryState> {
   const writerUrl = process.env.BENTO_VAULT_WRITER_URL;
@@ -115,7 +120,7 @@ async function pushToBentoBrain(event: LearningEvent): Promise<DeliveryState> {
 
 /**
  * Registra um aprendizado. NUNCA lança: aprender é efeito colateral do
- * trabalho real — se falhar, o trabalho não pode cair junto.
+ * trabalho real - se falhar, o trabalho não pode cair junto.
  */
 export async function recordLearning(event: LearningEvent): Promise<void> {
   try {

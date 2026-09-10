@@ -6,6 +6,7 @@ import { BrandBanner } from '@/components/ui/brand-banner';
 import { titleCardVideoFor } from '@/lib/title-card-videos';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard } from '@/components/ui/stat-card';
+import { InlineSectionError } from '@/components/ui/inline-section-error';
 import { DonutChart, type DonutDatum } from '@/components/ui/donut-chart';
 import { AreaTrend } from '@/components/ui/area-trend';
 import { useExecutions } from '@/hooks/use-executions';
@@ -19,10 +20,19 @@ import { formatTokens, formatUsd } from '@/lib/format';
 export default function DashboardPage() {
   const { isMaster } = useIsMaster();
   const { data: me } = useMe();
-  const { data: executions, isPending: executionsPending } = useExecutions();
-  const { data: overview, isPending: overviewPending } = useCostsOverview('7d', isMaster);
-  const { data: health, isPending: healthPending } = useInfrastructureHealth(isMaster);
-  const { data: byUser, isPending: byUserPending } = useCostsByUser('7d', isMaster);
+  const { data: executions, isPending: executionsPending, isError: executionsError } = useExecutions();
+  const {
+    data: overview,
+    isPending: overviewPending,
+    isError: overviewError,
+  } = useCostsOverview('7d', isMaster);
+  const { data: health, isPending: healthPending, isError: healthError } = useInfrastructureHealth(isMaster);
+  const {
+    data: byUser,
+    isPending: byUserPending,
+    isError: byUserError,
+    refetch: refetchByUser,
+  } = useCostsByUser('7d', isMaster);
 
   const tokensByAgent: DonutDatum[] = useMemo(() => {
     if (!executions) return [];
@@ -45,6 +55,9 @@ export default function DashboardPage() {
     if (!executions) return [];
     const byDay = new Map<string, number>();
     for (const execution of executions) {
+      // Execução ainda na fila (queued) tem started_at NULL no banco - sem
+      // guarda aqui o slice estourava e derrubava o dashboard inteiro.
+      if (!execution.startedAt) continue;
       const day = execution.startedAt.slice(5, 10); // MM-DD
       byDay.set(day, (byDay.get(day) ?? 0) + (execution.status === 'completed' ? 1 : 0));
     }
@@ -63,12 +76,18 @@ export default function DashboardPage() {
       </BrandBanner>
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <StatCard label="Execuções" value={executions?.length ?? 0} isLoading={executionsPending} />
+        <StatCard
+          label="Execuções"
+          value={executions?.length ?? 0}
+          isLoading={executionsPending}
+          isError={executionsError}
+        />
         <StatCard
           label="Tokens utilizados"
           value={tokensByAgent.reduce((sum, d) => sum + d.value, 0)}
           formatValue={(v) => formatTokens(Math.round(v))}
           isLoading={executionsPending}
+          isError={executionsError}
         />
         {isMaster && (
           <StatCard
@@ -77,6 +96,7 @@ export default function DashboardPage() {
             accent
             formatValue={(v) => formatUsd(v)}
             isLoading={overviewPending}
+            isError={overviewError}
           />
         )}
         {isMaster && (
@@ -85,6 +105,7 @@ export default function DashboardPage() {
             value={health?.agentsConnected.online ?? 0}
             formatValue={(v) => `${Math.round(v)}/${health?.agentsConnected.total ?? 4}`}
             isLoading={healthPending}
+            isError={healthError}
           />
         )}
       </div>
@@ -129,6 +150,8 @@ export default function DashboardPage() {
           </h2>
           {byUserPending ? (
             <Skeleton className="h-16 w-full" />
+          ) : byUserError ? (
+            <InlineSectionError message="Não conseguimos carregar os custos por usuário." onRetry={() => refetchByUser()} />
           ) : !byUser || byUser.length === 0 ? (
             <p className="text-sm text-nevoa">Sem custos registrados ainda.</p>
           ) : (

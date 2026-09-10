@@ -11,7 +11,7 @@ export const clients = pgTable('clients', {
    * LISTA do ClickUp que representa este cliente. Conferido na estrutura real
    * da agência (03/09/2026): o espaço "Espaço DESIGUAL" tem folders
    * "CLIENTES ATIVOS/PONTUAIS/INATIVOS", e cada LISTA dentro deles é um
-   * cliente (46 no total). Não é space nem folder — foi verificado na API
+   * cliente (46 no total). Não é space nem folder - foi verificado na API
    * antes de fechar esse mapeamento.
    *
    * O ClickUp é a FONTE DE VERDADE (decisão do Endrigo): esta coluna é só a

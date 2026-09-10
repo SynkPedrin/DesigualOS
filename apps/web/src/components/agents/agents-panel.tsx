@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { AGENT_NAMES } from '@desigual-os/types';
+import { AGENT_NAMES, type AgentName } from '@desigual-os/types';
 import { ArrowRight } from 'lucide-react';
 import { AgentCard } from './agent-card';
+import { AgentDetailModal } from './agent-detail-modal';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useAgentStats, agentStatsOrDefault } from '@/hooks/use-agent-stats';
@@ -18,6 +20,8 @@ export function AgentsPanel() {
   const { data: health } = useInfrastructureHealth(isMaster);
   const { isPending } = useExecutions();
   const stats = useAgentStats();
+  // Cards compactos também abrem o modal de detalhes, como no /agents.
+  const [selectedAgent, setSelectedAgent] = useState<AgentName | null>(null);
 
   return (
     <aside className="flex w-80 shrink-0 flex-col gap-4">
@@ -43,8 +47,15 @@ export function AgentsPanel() {
               status={health?.nodes.find((n) => n.agent === agent)?.status}
               stats={agentStatsOrDefault(stats, agent)}
               compact
+              onSelect={() => setSelectedAgent(agent)}
             />
           ))}
+
+      <AgentDetailModal
+        agent={selectedAgent}
+        node={health?.nodes.find((n) => n.agent === selectedAgent)}
+        onClose={() => setSelectedAgent(null)}
+      />
     </aside>
   );
 }

@@ -97,12 +97,16 @@ export function StudioModal() {
               ) : (
                 <motion.div
                   key="content"
-                  className="flex-1 overflow-y-auto p-8"
+                  className="flex-1 overflow-hidden p-8"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.3 }}
                 >
-                  <StudioContent />
+                  {/* boundedHeight: dentro do modal nada rola exceto a coluna
+                   * do formulário "Novo projeto" (pedido do usuário,
+                   * 2026-09-05) - a galeria agora é paginada, não cresce
+                   * mais sem limite, então o resto não precisa de scroll. */}
+                  <StudioContent boundedHeight />
                 </motion.div>
               )}
             </AnimatePresence>

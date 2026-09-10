@@ -1,0 +1,14 @@
+{
+  "source_job_id": "tennis-ready-v2",
+  "quality_reference": "editorial-takes-v1",
+  "visual_qa": "pending_review",
+  "job_id": "tennis-ready-v2-keyframes",
+  "slide_index": 0,
+  "slides_total": 1,
+  "sequence_role": "keyframe",
+  "scene_index": 0,
+  "final_prompt": "",
+  "reference_urls": [
+    "http://127.0.0.1:63986/tennis-ready-new.png"
+  ]
+}

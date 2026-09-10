@@ -5,26 +5,32 @@ import type {
   ChatResponseWire,
   ClickUpIntegrationStatusWire,
   ClickUpPersonWire,
+  CollaboratorWire,
+  CreateAutomationRequestWire,
   GrantClientAccessRequestWire,
   InviteUserRequestWire,
   MeResponse,
+  ProjectFileKind,
   StudioJobCreatedWire,
   StudioJobRequestWire,
+  UpdateAutomationRequestWire,
   UpdateMeRequestWire,
+  UpdateMessageThreadPrefsRequestWire,
   UpdateUserNameRequestWire,
   UpdateUserRoleRequestWire,
   UpdateUserStatusRequestWire,
 } from '@/lib/api/contracts';
-import { mockInfrastructureHealthWire } from './data';
-import { mockClients } from './clients';
+import { mockAgentStatsWire, mockInfrastructureHealthWire, mockSystemEventsWire } from './data';
+import { mockBrandKits, mockClients } from './clients';
 import { createQueuedExecution, executionStore, resolveAgent } from './executions';
-import { createStudioJob, listActiveStudioJobIds, mockStudioAssets, studioJobStore } from './studio';
+import { createStudioJob, deleteStudioAsset, deleteStudioJob, listActiveStudioJobIds, mockStudioAssets, studioJobStore } from './studio';
 import { mockNotifications } from './notifications';
 import { buildCostsByAgent, buildCostsByClient, buildCostsByUser, buildCostsOverview } from './costs';
-import { appendAssistantMessage, appendUserMessage, createProject, deleteConversation, deleteProject, getConversation, getConversationMessages, listConversations, listProjects, toConversationDetailWire, updateConversation, updateProject } from './conversations';
-import { mockTeamMembers } from './team';
-import { createMessage, listThreadMessages, listThreadPartnerIds, markThreadRead } from './messages';
+import { addProjectFile, appendAssistantMessage, appendUserMessage, createProject, deleteConversation, deleteProject, deleteProjectFile, getConversation, getConversationMessages, listConversations, listProjectFiles, listProjects, toConversationDetailWire, updateConversation, updateProject } from './conversations';
+import { mockClickUpByUserId, mockLastSeenByUserId, mockTeamMembers } from './team';
+import { createMessage, getThreadPrefs, listThreadMessages, listThreadPartnerIds, markThreadRead, updateThreadPrefs } from './messages';
 import { inviteMockUser, mockAdminUsers, USERS_WITH_HISTORY } from './admin';
+import { mockToolCalls } from './tool-calls';
 
 /** Chunked to avoid blowing the call stack on `String.fromCharCode(...bytes)` for large files
  * (avatar/attachment uploads allow up to 25MB). */
@@ -71,6 +77,7 @@ interface MockAutomation {
   schedule: string;
   schedule_label: string;
   enabled: boolean;
+  estimated_minutes_saved: number | null;
   last_run_at: string | null;
   created_at: string;
 }
@@ -86,6 +93,7 @@ const mockAutomations: MockAutomation[] = [
     schedule: '0 8 * * *',
     schedule_label: 'Todos os dias às 08:00',
     enabled: true,
+    estimated_minutes_saved: 20,
     last_run_at: null,
     created_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
   },
@@ -111,6 +119,14 @@ export const handlers = [
     return HttpResponse.json(mockInfrastructureHealthWire);
   }),
 
+  http.get('/health/events', () => {
+    return HttpResponse.json({ events: mockSystemEventsWire });
+  }),
+
+  http.get('/agents/stats', () => {
+    return HttpResponse.json({ agents: mockAgentStatsWire });
+  }),
+
   http.get('/me', () => {
     return HttpResponse.json(mockMe);
   }),
@@ -131,6 +147,7 @@ export const handlers = [
       status: 'active',
       clickupListId: null,
       clickupUrl: null,
+      projectId: null,
     };
     mockClients.push(created);
     return HttpResponse.json(created, { status: 201 });
@@ -142,7 +159,7 @@ export const handlers = [
       return HttpResponse.json({ error: 'Mensagem não pode ser vazia.' }, { status: 400 });
     }
     const agent = resolveAgent(body.agent_hint, body.message);
-    const conversationId = appendUserMessage(body.conversation_id ?? null, body.client_id, body.message);
+    const conversationId = appendUserMessage(body.conversation_id ?? null, body.client_id, body.message, body.attachment ?? null);
     const execution = createQueuedExecution(agent, body.message, body.client_id, (answer) => {
       appendAssistantMessage(conversationId, agent, answer);
     });
@@ -159,7 +176,7 @@ export const handlers = [
     const clientId = new URL(request.url).searchParams.get('client_id');
     const executions = Array.from(executionStore.values())
       .filter((e) => !clientId || e.client_id === clientId)
-      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+      .sort((a, b) => new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime())
       .map(({ estimated_cost: _estimatedCost, actual_cost: _actualCost, steps: _steps, ...rest }) => rest);
     return HttpResponse.json({ executions });
   }),
@@ -174,7 +191,7 @@ export const handlers = [
 
   http.post('/studio/jobs', async ({ request }) => {
     const body = (await request.json()) as StudioJobRequestWire;
-    const job = createStudioJob(body.client_id, body.type, body.prompt ?? '', body.resolution ?? null);
+    const job = createStudioJob(body);
     const response: StudioJobCreatedWire = { job_id: job.job_id, status: 'queued' };
     return HttpResponse.json(response, { status: 202 });
   }),
@@ -200,12 +217,56 @@ export const handlers = [
     return HttpResponse.json(job);
   }),
 
+  // DELETE /studio/jobs/:id — remove o job e todos os assets do grupo (cascade).
+  http.delete('/studio/jobs/:jobId', ({ params }) => {
+    if (!deleteStudioJob(String(params.jobId))) {
+      return HttpResponse.json({ error: 'Job não encontrado.' }, { status: 404 });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  // Filtros client_id/type/q (prompt+filename) + paginação limit/offset de verdade,
+  // no mesmo shape do backend: { assets, total } com total pós-filtro.
   http.get('/studio/assets', ({ request }) => {
-    const clientId = new URL(request.url).searchParams.get('client_id');
-    const assets = clientId
-      ? mockStudioAssets.filter((asset) => asset.client_id === clientId)
-      : mockStudioAssets;
-    return HttpResponse.json({ assets });
+    const url = new URL(request.url);
+    const clientId = url.searchParams.get('client_id');
+    const type = url.searchParams.get('type');
+    const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 24));
+    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+
+    let filtered = [...mockStudioAssets].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    if (clientId) filtered = filtered.filter((asset) => asset.client_id === clientId);
+    if (type) filtered = filtered.filter((asset) => asset.type === type);
+    if (q) {
+      filtered = filtered.filter(
+        (asset) => asset.prompt.toLowerCase().includes(q) || asset.filename.toLowerCase().includes(q),
+      );
+    }
+    return HttpResponse.json({ assets: filtered.slice(offset, offset + limit), total: filtered.length });
+  }),
+
+  http.delete('/studio/assets/:assetId', ({ params }) => {
+    if (!deleteStudioAsset(String(params.assetId))) {
+      return HttpResponse.json({ error: 'Asset não encontrado.' }, { status: 404 });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.get('/clients/:clientId/brand-kit', ({ params }) => {
+    const clientId = String(params.clientId);
+    if (!mockClients.some((c) => c.id === clientId)) {
+      return HttpResponse.json({ error: 'Cliente não encontrado.' }, { status: 404 });
+    }
+    const kit = mockBrandKits[clientId] ?? {
+      client_id: clientId,
+      logo_url: null,
+      colors: [],
+      fonts: [],
+      tone_of_voice: null,
+      reference_images: [],
+    };
+    return HttpResponse.json(kit);
   }),
 
   http.get('/clients/:clientId/clickup/tasks', ({ params }) => {
@@ -249,7 +310,7 @@ export const handlers = [
     });
   }),
 
-  // Integração ClickUp: no mock não existe OAuth de verdade (nem deveria — o
+  // Integração ClickUp: no mock não existe OAuth de verdade (nem deveria - o
   // secret é backend-only), então o estado vive nesta variável e o "conectar"
   // apenas simula o retorno do callback.
   http.get('/integrations/clickup/status', () => {
@@ -374,13 +435,65 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
+  http.get('/projects/:projectId/files', ({ params }) => {
+    return HttpResponse.json({ files: listProjectFiles(String(params.projectId)) });
+  }),
+
+  http.post('/projects/:projectId/files', async ({ params, request }) => {
+    const formData = await request.formData();
+    const file = formData.get('file') as File | null;
+    if (!file) {
+      return HttpResponse.json({ error: 'No file sent' }, { status: 400 });
+    }
+    const kindField = formData.get('kind');
+    const kind: ProjectFileKind =
+      kindField === 'identidade_visual' || kindField === 'briefing' ? kindField : 'referencia';
+    // Mesmo stand-in do avatar/anexo: imagem vira data URI pra thumbnail
+    // renderizar de verdade; outros tipos ganham uma URL simbólica.
+    const storageUrl = file.type.startsWith('image/')
+      ? `data:${file.type};base64,${await fileToBase64(file)}`
+      : `#arquivo-mock-${file.name}`;
+    const created = addProjectFile(String(params.projectId), {
+      kind,
+      filename: file.name,
+      storageUrl,
+      contentType: file.type || 'application/octet-stream',
+    });
+    if (!created) {
+      return HttpResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 });
+    }
+    return HttpResponse.json({ file: created }, { status: 201 });
+  }),
+
+  http.delete('/projects/:projectId/files/:fileId', ({ params }) => {
+    if (!deleteProjectFile(String(params.projectId), String(params.fileId))) {
+      return HttpResponse.json({ error: 'Arquivo não encontrado.' }, { status: 404 });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  // POST /uploads — upload genérico (anexo do composer). Mock stand-in: o
+  // endpoint real sobe pro Supabase Storage; aqui imagem vira data URI pra
+  // thumbnail renderizar, outros tipos ganham URL simbólica.
+  http.post('/uploads', async ({ request }) => {
+    const formData = await request.formData();
+    const file = formData.get('file') as File | null;
+    if (!file) {
+      return HttpResponse.json({ error: 'No file sent' }, { status: 400 });
+    }
+    const url = file.type.startsWith('image/')
+      ? `data:${file.type};base64,${await fileToBase64(file)}`
+      : `#anexo-mock-${file.name}`;
+    return HttpResponse.json({ filename: file.name, url, contentType: file.type || 'application/octet-stream' }, { status: 201 });
+  }),
+
   http.get('/search', ({ request }) => {
     const q = (new URL(request.url).searchParams.get('q') ?? '').trim().toLowerCase();
     if (!q) return HttpResponse.json({ users: [], clients: [], agents: [] });
     return HttpResponse.json({
       users: mockTeamMembers.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)).slice(0, 10),
       clients: mockClients.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 10),
-      agents: (['bento', 'jarbas', 'suzy', 'studio'] as const)
+      agents: (['bento', 'jarbas', 'suzy', 'studio', 'otto'] as const)
         .filter((a) => a.includes(q))
         .map((a) => ({ id: a, name: a, display_name: a.charAt(0).toUpperCase() + a.slice(1) }))
         .slice(0, 10),
@@ -478,14 +591,50 @@ export const handlers = [
       // least one message for it.
       const lastMessage = partnerMessages[partnerMessages.length - 1]!;
       const unreadCount = partnerMessages.filter((m) => m.recipient_id === mockMe.id && !m.read).length;
+      const prefs = getThreadPrefs(mockMe.id, partnerId);
       return {
-        user: { id: partnerId, name: partner?.name ?? 'Usuário', avatar_url: partner?.avatar_url ?? null },
+        user: {
+          id: partnerId,
+          name: partner?.name ?? 'Usuário',
+          avatar_url: partner?.avatar_url ?? null,
+          last_seen_at: mockLastSeenByUserId[partnerId] ?? null,
+        },
         last_message: lastMessage,
         unread_count: unreadCount,
+        favorited: prefs.favorited,
+        archived: prefs.archived,
       };
     });
     threads.sort((a, b) => new Date(b.last_message.created_at).getTime() - new Date(a.last_message.created_at).getTime());
-    return HttpResponse.json({ threads });
+    const totalUnread = threads.reduce((sum, thread) => sum + thread.unread_count, 0);
+    return HttpResponse.json({ threads, total_unread: totalUnread });
+  }),
+
+  http.patch('/messages/threads/:partnerId', async ({ request, params }) => {
+    const partnerId = String(params.partnerId);
+    if (!mockTeamMembers.some((m) => m.id === partnerId)) {
+      return HttpResponse.json({ error: `User '${partnerId}' not found` }, { status: 404 });
+    }
+    const body = (await request.json()) as UpdateMessageThreadPrefsRequestWire;
+    return HttpResponse.json(updateThreadPrefs(mockMe.id, partnerId, body));
+  }),
+
+  http.get('/collaborators', () => {
+    // Deriva do mock de equipe: ClickUp em alguns membros (join por e-mail),
+    // presença via mockLastSeenByUserId. clickup_synced: true no modo mock.
+    const collaborators: CollaboratorWire[] = mockTeamMembers.map((member) => {
+      const clickup = mockClickUpByUserId[member.id] ?? null;
+      return {
+        user_id: member.id,
+        name: member.name,
+        email: member.email,
+        avatar_url: clickup?.profile_picture ?? member.avatar_url ?? null,
+        roles: member.roles,
+        clickup,
+        last_seen_at: mockLastSeenByUserId[member.id] ?? null,
+      };
+    });
+    return HttpResponse.json({ collaborators, clickup_synced: true });
   }),
 
   http.get('/messages/:userId', ({ params }) => {
@@ -591,15 +740,8 @@ export const handlers = [
   }),
 
   http.post('/automations', async ({ request }) => {
-    const body = (await request.json()) as {
-      name: string;
-      agent: AgentName;
-      prompt: string;
-      client_id?: string | null;
-      schedule: string;
-      schedule_label: string;
-    };
-    const created = {
+    const body = (await request.json()) as CreateAutomationRequestWire;
+    const created: MockAutomation = {
       id: `automation-${Date.now()}`,
       name: body.name,
       agent: body.agent,
@@ -609,6 +751,7 @@ export const handlers = [
       schedule: body.schedule,
       schedule_label: body.schedule_label,
       enabled: true,
+      estimated_minutes_saved: body.estimated_minutes_saved ?? null,
       last_run_at: null,
       created_at: new Date().toISOString(),
     };
@@ -617,16 +760,67 @@ export const handlers = [
     return HttpResponse.json(created, { status: 201 });
   }),
 
+  http.get('/automations/metrics', () => {
+    const activeCount = mockAutomations.filter((a) => a.enabled).length;
+    const allRuns = [...mockAutomationRuns.values()].flat();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const runsToday = allRuns.filter((run) => new Date(run.started_at) >= startOfToday).length;
+    const finishedRuns = allRuns.filter((run) => run.completed_at !== null);
+    const successRate = finishedRuns.length > 0
+      ? (finishedRuns.filter((run) => run.error === null).length / finishedRuns.length) * 100
+      : null;
+    const timeSavedMinutes = allRuns.length > 0
+      ? allRuns.reduce((total, run) => {
+          const automation = mockAutomations.find((a) => mockAutomationRuns.get(a.id)?.includes(run));
+          return total + (automation?.estimated_minutes_saved ?? 0);
+        }, 0)
+      : null;
+    return HttpResponse.json({
+      active_count: activeCount,
+      active_delta_month: null,
+      runs_today: runsToday,
+      runs_today_delta: null,
+      success_rate: successRate,
+      success_delta_week: null,
+      time_saved_minutes: timeSavedMinutes,
+    });
+  }),
+
+  http.post('/automations/:id/run', ({ params }) => {
+    const id = String(params.id);
+    const automation = mockAutomations.find((a) => a.id === id);
+    if (!automation) {
+      return HttpResponse.json({ error: 'Automação não encontrada.' }, { status: 404 });
+    }
+    const run = {
+      id: `run-${Date.now()}`,
+      status: 'queued',
+      error: null,
+      started_at: new Date().toISOString(),
+      completed_at: null,
+    };
+    const runs = mockAutomationRuns.get(id) ?? [];
+    runs.unshift(run);
+    mockAutomationRuns.set(id, runs);
+    return HttpResponse.json({ status: 'queued' }, { status: 202 });
+  }),
+
   http.patch('/automations/:id', async ({ request, params }) => {
     const id = String(params.id);
     const automation = mockAutomations.find((a) => a.id === id);
     if (!automation) {
       return HttpResponse.json({ error: 'Automação não encontrada.' }, { status: 404 });
     }
-    const body = (await request.json()) as { enabled?: boolean; schedule?: string; schedule_label?: string };
+    const body = (await request.json()) as UpdateAutomationRequestWire;
+    if (body.name !== undefined) automation.name = body.name;
+    if (body.prompt !== undefined) automation.prompt = body.prompt;
+    if (body.agent !== undefined) automation.agent = body.agent;
+    if (body.client_id !== undefined) automation.client_id = body.client_id;
     if (body.enabled !== undefined) automation.enabled = body.enabled;
     if (body.schedule !== undefined) automation.schedule = body.schedule;
     if (body.schedule_label !== undefined) automation.schedule_label = body.schedule_label;
+    if (body.estimated_minutes_saved !== undefined) automation.estimated_minutes_saved = body.estimated_minutes_saved;
     return HttpResponse.json(automation);
   }),
 
@@ -644,5 +838,19 @@ export const handlers = [
   http.get('/automations/:id/runs', ({ params }) => {
     const id = String(params.id);
     return HttpResponse.json({ runs: mockAutomationRuns.get(id) ?? [] });
+  }),
+
+  http.get('/tool-calls', () => {
+    return HttpResponse.json({ tool_calls: mockToolCalls });
+  }),
+
+  http.post('/tool-calls/:id/approve', ({ params }) => {
+    const id = String(params.id);
+    const index = mockToolCalls.findIndex((call) => call.id === id);
+    if (index === -1) {
+      return HttpResponse.json({ error: 'Tool call já aprovada ou não encontrada.' }, { status: 409 });
+    }
+    const [approved] = mockToolCalls.splice(index, 1);
+    return HttpResponse.json({ id: approved!.id, tool: approved!.tool, status: 'completed' });
   }),
 ];

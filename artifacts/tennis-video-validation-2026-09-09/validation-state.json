@@ -1,0 +1,166 @@
+{
+  "tennis-portrait-new": {
+    "promptId": "9d155041-0265-430d-a3f1-5509b609d51b",
+    "seed": 815288105,
+    "workflowId": "edit_flux2_multireference_v2",
+    "done": true,
+    "generation": {
+      "workflowId": "edit_flux2_multireference_v2",
+      "workflowVersion": "2.0.0",
+      "seed": 815288105,
+      "qualityProfile": "master",
+      "steps": 28,
+      "refineSteps": null,
+      "denoise": null,
+      "resolution": {
+        "width": 752,
+        "height": 1328
+      },
+      "refineResolution": null,
+      "referenceCount": 1
+    },
+    "prompt": "Create a NEW fictional adult male tennis athlete, clearly a DIFFERENT person from the reference: dark brown skin, close-shaved hair, broad jaw, short neat beard, athletic build. Waist-up editorial portrait with calm focused expression and a black racket resting at his hip. Plain unbranded forest-green technical polo, no cap. CHANGE the environment completely to a terracotta-colored indoor clay tennis court with warm ivory plaster arches, distant net softly out of focus and tall side windows. Warm late-afternoon directional light from camera left, subtle cooler fill, honest skin pores and tiny beads of sweat, individual beard hairs, sharply resolved polo knit, physically plausible contact shadows, soft highlight rolloff. Restrained premium sports photography, 85mm lens, realistic depth of field. Match only the reference photographic craft, NOT the original face, blue colors or background. All garments and equipment are blank: no letters, symbols, logos or signage; exact branding is composited later. Vertical 9:16, space above shoulder for brand signature."
+  },
+  "tennis-ready-new": {
+    "promptId": "25eaf3c8-714a-4f7e-badd-51132e7eeefc",
+    "seed": 670134323,
+    "workflowId": "edit_flux2_multireference_v2",
+    "done": true,
+    "generation": {
+      "workflowId": "edit_flux2_multireference_v2",
+      "workflowVersion": "2.0.0",
+      "seed": 670134323,
+      "qualityProfile": "master",
+      "steps": 28,
+      "refineSteps": null,
+      "denoise": null,
+      "resolution": {
+        "width": 752,
+        "height": 1328
+      },
+      "refineResolution": null,
+      "referenceCount": 1
+    },
+    "prompt": "Create a NEW fictional adult female tennis athlete, clearly a DIFFERENT person from the reference: fair skin with visible freckles, auburn hair in a practical braid, hazel eyes, athletic build. Three-quarter upper-body ready stance with a dark graphite racket naturally held in both hands, correct five fingers on each hand, focused composed face looking just off camera. Plain unbranded burgundy performance tank and ivory skirt, no headband. CHANGE the environment to an outdoor terracotta clay tennis court beside an olive grove and low cream-stone clubhouse. Morning sunlight from upper left, rich defined contact shadows, accurate racket string mesh, tiny loose strands of hair, subtle skin sheen, detailed cloth weave, natural skin texture, believable anatomy. Premium photographic commercial, natural colors, no plastic smoothing, no over-sharpened edges. Keep only the reference editorial quality, not its person, blue stage or clothing. All clothing, racket and environment are blank without any text or logo; original brand signature is added in postproduction. Vertical 9:16 with readable negative space."
+  },
+  "tennis-portrait-v1": {
+    "sequence": {
+      "frames": {
+        "0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v1-keyframe-0.png",
+          "assetId": "tennis-portrait-v1-keyframe-0.png",
+          "filename": "tennis-portrait-v1-keyframe-0.png"
+        }
+      },
+      "clips": {
+        "draft-0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v1-draft-0.mp4",
+          "assetId": "tennis-portrait-v1-draft-0.mp4",
+          "filename": "tennis-portrait-v1-draft-0.mp4"
+        }
+      },
+      "submissions": {
+        "draft-0": {
+          "promptId": "aaf06261-201f-4ea2-add7-05201305c2dc",
+          "seed": 967051466
+        }
+      }
+    },
+    "done": true,
+    "result": {
+      "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v1.mp4",
+      "assetId": "tennis-portrait-v1.mp4",
+      "filename": "tennis-portrait-v1.mp4"
+    }
+  },
+  "tennis-portrait-v2": {
+    "sequence": {
+      "frames": {
+        "0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v2-keyframe-0.png",
+          "assetId": "tennis-portrait-v2-keyframe-0.png",
+          "filename": "tennis-portrait-v2-keyframe-0.png"
+        }
+      },
+      "clips": {
+        "draft-0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v2-draft-0.mp4",
+          "assetId": "tennis-portrait-v2-draft-0.mp4",
+          "filename": "tennis-portrait-v2-draft-0.mp4"
+        }
+      },
+      "submissions": {
+        "draft-0": {
+          "promptId": "60cb4b0f-7465-4bc3-91e1-524f3ad17edf",
+          "seed": 1357207751
+        }
+      }
+    },
+    "done": true,
+    "result": {
+      "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v2.mp4",
+      "assetId": "tennis-portrait-v2.mp4",
+      "filename": "tennis-portrait-v2.mp4"
+    }
+  },
+  "tennis-ready-v1": {
+    "sequence": {
+      "frames": {
+        "0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-ready-v1-keyframe-0.png",
+          "assetId": "tennis-ready-v1-keyframe-0.png",
+          "filename": "tennis-ready-v1-keyframe-0.png"
+        }
+      },
+      "clips": {
+        "draft-0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-ready-v1-draft-0.mp4",
+          "assetId": "tennis-ready-v1-draft-0.mp4",
+          "filename": "tennis-ready-v1-draft-0.mp4"
+        }
+      },
+      "submissions": {
+        "draft-0": {
+          "promptId": "4076836f-4608-4a2b-b89b-4efe6e8ee6ff",
+          "seed": 1750725378
+        }
+      }
+    },
+    "done": true,
+    "result": {
+      "storageUrl": "http://127.0.0.1:63986/tennis-ready-v1.mp4",
+      "assetId": "tennis-ready-v1.mp4",
+      "filename": "tennis-ready-v1.mp4"
+    }
+  },
+  "tennis-ready-v2": {
+    "sequence": {
+      "frames": {
+        "0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-ready-v2-keyframe-0.png",
+          "assetId": "tennis-ready-v2-keyframe-0.png",
+          "filename": "tennis-ready-v2-keyframe-0.png"
+        }
+      },
+      "clips": {
+        "draft-0": {
+          "storageUrl": "http://127.0.0.1:63986/tennis-ready-v2-draft-0.mp4",
+          "assetId": "tennis-ready-v2-draft-0.mp4",
+          "filename": "tennis-ready-v2-draft-0.mp4"
+        }
+      },
+      "submissions": {
+        "draft-0": {
+          "promptId": "77ba8226-7fcc-4480-8200-f4ae934b2c2a",
+          "seed": 1038826250
+        }
+      }
+    },
+    "done": true,
+    "result": {
+      "storageUrl": "http://127.0.0.1:63986/tennis-ready-v2.mp4",
+      "assetId": "tennis-ready-v2.mp4",
+      "filename": "tennis-ready-v2.mp4"
+    }
+  }
+}

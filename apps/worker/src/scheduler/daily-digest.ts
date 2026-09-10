@@ -33,7 +33,7 @@ export async function runEndOfDayChecklist(logger: Logger): Promise<void> {
 
   for (const [userId, executions] of byUser) {
     const checklist = executions
-      .map((execution) => `- [x] (${execution.agent}) ${execution.intent} — ${execution.executionId}`)
+      .map((execution) => `- [x] (${execution.agent}) ${execution.intent} - ${execution.executionId}`)
       .join('\n');
     const content = `Checklist de ${todayStart.toISOString().slice(0, 10)}:\n${checklist}`;
 

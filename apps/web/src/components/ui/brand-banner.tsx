@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 /**
  * Full-bleed textured background, with a dark overlay for WCAG AA contrast and content on
  * top. Two backgrounds supported: the static brand wallpaper (default), or a looping motion
- * video (`videoSrc`) for a more dynamic title card — falls back to the wallpaper if the video
+ * video (`videoSrc`) for a more dynamic title card - falls back to the wallpaper if the video
  * fails to load (slow network, corrupt file) instead of showing a broken player.
  */
 export function BrandBanner({

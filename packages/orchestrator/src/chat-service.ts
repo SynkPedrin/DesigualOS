@@ -1,9 +1,10 @@
 import { db, schema } from '@desigual-os/database';
 import type { RouterDecision } from '@desigual-os/router';
-import type { QueuePriority } from '@desigual-os/types';
+import type { QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
+import { estimateCost } from '@desigual-os/token-engine';
 import { findHealthyNodeForAgent } from './discovery';
 import { generateExecutionId } from './execution-id';
-import { MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue } from './queues';
+import { AGENT_MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue } from './queues';
 import type { ChatResult } from './result';
 
 const COMPLEXITY_TO_PRIORITY: Record<string, QueuePriority> = {
@@ -18,6 +19,9 @@ export interface SingleAgentDispatchParams {
   clientId: string | null;
   conversationId: string | null;
   decision: RouterDecision;
+  attachments?: StudioReferenceAsset[];
+  /** Ver AgentJobData.operationalContext. */
+  operationalContext?: string;
 }
 
 /**
@@ -26,8 +30,10 @@ export interface SingleAgentDispatchParams {
  * houver node saudável, responde na hora e nunca enfileira), grava a
  * execution e o router_decision, e só então enfileira no BullMQ.
  */
-export async function createAndEnqueueExecution(params: SingleAgentDispatchParams): Promise<ChatResult> {
-  const { message, userId, clientId, conversationId, decision } = params;
+export async function createAndEnqueueExecution(
+  params: SingleAgentDispatchParams,
+): Promise<ChatResult> {
+  const { message, userId, clientId, conversationId, decision, attachments, operationalContext } = params;
 
   const healthyNode = await findHealthyNodeForAgent(decision.primary_agent);
   if (!healthyNode) {
@@ -41,6 +47,10 @@ export async function createAndEnqueueExecution(params: SingleAgentDispatchParam
 
   const executionId = generateExecutionId();
   const priority = COMPLEXITY_TO_PRIORITY[decision.estimated_complexity] ?? 'P2';
+  // Estimativa pré-execução (economy_records, ver cost-service.ts): sem
+  // saber ainda o modelo real, usa o preço 'unknown' (nível Sonnet), mesmo
+  // fallback do custo real quando o modelo não é reportado.
+  const { amountUsd: estimatedCost } = estimateCost('unknown', message);
 
   const [execution] = await db
     .insert(schema.executions)
@@ -52,6 +62,7 @@ export async function createAndEnqueueExecution(params: SingleAgentDispatchParam
       intent: decision.intent,
       status: 'queued',
       priority,
+      estimatedCost: estimatedCost.toString(),
     })
     .returning();
 
@@ -78,11 +89,13 @@ export async function createAndEnqueueExecution(params: SingleAgentDispatchParam
       agent: decision.primary_agent,
       message,
       contextRefs: decision.context,
+      ...(attachments?.length ? { attachments } : {}),
+      ...(operationalContext ? { operationalContext } : {}),
       conversationId,
     },
     {
       priority: PRIORITY_VALUE[priority],
-      attempts: MAX_ATTEMPTS,
+      attempts: AGENT_MAX_ATTEMPTS[decision.primary_agent],
       backoff: { type: 'fixed', delay: 2000 },
     },
   );

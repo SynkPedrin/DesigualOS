@@ -18,7 +18,11 @@ export function GrantAccessForm({ clientId }: { clientId: string }) {
         Dê acesso a um colaborador que já tem conta no Desigual OS (crie a conta primeiro em Admin, se necessário).
       </p>
       <div className="flex flex-wrap gap-2">
+        <label htmlFor="grant-access-email" className="sr-only">
+          E-mail do colaborador
+        </label>
         <input
+          id="grant-access-email"
           type="email"
           value={email}
           onChange={(event) => setEmail(event.target.value)}

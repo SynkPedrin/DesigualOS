@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 /** Spring dos elementos que viajam entre os estados (cards e composer): rápido, sem quique. */
 export const TRAVEL_SPRING = { type: 'spring', stiffness: 190, damping: 26 } as const;
 
-/** layoutId estável por seleção — o MESMO id no card (tela vazia) e no chip (topo da thread)
+/** layoutId estável por seleção - o MESMO id no card (tela vazia) e no chip (topo da thread)
  * é o que faz o framer tratar os dois como um elemento só que se move. */
 export function agentCardLayoutId(selection: AgentSelection) {
   return `agent-card-${selection}`;
@@ -22,7 +22,7 @@ export function agentCardLayoutId(selection: AgentSelection) {
 
 /**
  * Status REAL dos nós por agente (GET /health/infrastructure, poll de 15s).
- * O endpoint é master-only no backend (colaborador leva 403 — vide
+ * O endpoint é master-only no backend (colaborador leva 403 - vide
  * use-infrastructure-health.ts): sem permissão ou sem dados o mapa fica null
  * e NENHUM dot é renderizado. Nada de "Online" fingido.
  */
@@ -47,7 +47,7 @@ const STATUS_PRESENTATION: Record<NodeStatus, { dotClass: string; label: string 
   maintenance: { dotClass: 'bg-nevoa', label: 'Manutenção' },
 };
 
-/* Profundidade do microparallax por posição (px no extremo do cursor) — o card
+/* Profundidade do microparallax por posição (px no extremo do cursor) - o card
  * do meio "flutua" mais, reforçando a elevação dele na composição. */
 const PARALLAX_DEPTH_X = [10, 16, 10];
 const PARALLAX_DEPTH_Y = [6, 10, 6];

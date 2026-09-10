@@ -15,9 +15,10 @@ export type ClassifierResult = z.infer<typeof classifierResultSchema>;
 
 const SYSTEM_PROMPT = `Você classifica pedidos de usuários de uma agência de marketing pro sistema Desigual OS.
 Agentes disponíveis: bento (conhecimento institucional, processos, SOPs), jarbas (performance e tráfego pago),
-suzy (social selling, WhatsApp/Instagram), studio (geração de imagem/vídeo em GPU).
+suzy (social selling, WhatsApp/Instagram), studio (geração de imagem/vídeo em GPU),
+otto (direção criativa: campanhas, carrosséis, conceitos, copy, direção de arte, prompts de imagem/vídeo).
 Responda SÓ com um JSON no formato:
-{"intent": string, "primary_agent": "bento"|"jarbas"|"suzy"|"studio", "required_tools": string[],
+{"intent": string, "primary_agent": "bento"|"jarbas"|"suzy"|"studio"|"otto", "required_tools": string[],
  "estimated_complexity": "low"|"medium"|"high", "workflow": string[] | null}
 workflow só é preenchido (lista ordenada de agentes) se a tarefa precisar de mais de um agente em sequência.`;
 

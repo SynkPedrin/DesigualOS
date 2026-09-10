@@ -1,4 +1,4 @@
-import { integer, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, timestampColumns } from './_shared';
 import {
   agentNameEnum,
@@ -13,18 +13,24 @@ import { users } from './identity';
 /**
  * Saída do AI Router (seção 6.2) para uma mensagem, antes de virar um plano.
  */
-export const routerDecisions = pgTable('router_decisions', {
-  ...idColumn,
-  conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
-  messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
-  intent: text('intent').notNull(),
-  primaryAgent: agentNameEnum('primary_agent').notNull(),
-  requiredTools: jsonb('required_tools').$type<string[]>().notNull().default([]),
-  contextRefs: jsonb('context_refs').$type<string[]>().notNull().default([]),
-  estimatedComplexity: executionComplexityEnum('estimated_complexity').notNull(),
-  workflow: jsonb('workflow').$type<string[] | null>(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const routerDecisions = pgTable(
+  'router_decisions',
+  {
+    ...idColumn,
+    conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
+    messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
+    intent: text('intent').notNull(),
+    primaryAgent: agentNameEnum('primary_agent').notNull(),
+    requiredTools: jsonb('required_tools').$type<string[]>().notNull().default([]),
+    contextRefs: jsonb('context_refs').$type<string[]>().notNull().default([]),
+    estimatedComplexity: executionComplexityEnum('estimated_complexity').notNull(),
+    workflow: jsonb('workflow').$type<string[] | null>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    conversationIdx: index('router_decisions_conversation_id_idx').on(table.conversationId),
+  }),
+);
 
 export const executionPlans = pgTable('execution_plans', {
   ...idColumn,

@@ -69,7 +69,7 @@ function buildInviteEmailHtml(params: { name: string | null; role: string; invit
 /**
  * Mesmo template visual do convite (logo + fundo da marca): "no padrão de
  * e-mail do sistema", pedido explícito do usuário. Só muda o texto e o
- * rótulo do botão — a estrutura HTML é a mesma por design, pra qualquer
+ * rótulo do botão - a estrutura HTML é a mesma por design, pra qualquer
  * novo e-mail transacional futuro seguir o mesmo corpo em vez de reinventar.
  */
 function buildResetPasswordEmailHtml(params: { name: string | null; resetLink: string }): string {
@@ -107,7 +107,7 @@ function buildResetPasswordEmailHtml(params: { name: string | null; resetLink: s
                   <a href="${params.resetLink}" style="color:#6B6B6B;word-break:break-all;">${params.resetLink}</a>
                 </p>
                 <p style="margin:24px 0 0 0;font-size:12px;color:#A1A1A1;">
-                  Se você não pediu essa redefinição, pode ignorar este e-mail — sua senha continua a mesma.
+                  Se você não pediu essa redefinição, pode ignorar este e-mail - sua senha continua a mesma.
                 </p>
               </td>
             </tr>
@@ -132,7 +132,7 @@ export async function sendResetPasswordEmail(params: { to: string; name: string 
     body: JSON.stringify({
       from,
       to: params.to,
-      subject: 'Redefinir sua senha — Desigual OS',
+      subject: 'Redefinir sua senha - Desigual OS',
       html: buildResetPasswordEmailHtml(params),
     }),
   });

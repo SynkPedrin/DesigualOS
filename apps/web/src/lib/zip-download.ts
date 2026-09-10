@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 /**
  * Baixa vários assets (ex: os slides de um carousel) como um único .zip.
  * Tudo client-side: busca cada storageUrl como blob, empacota e dispara o
- * download via blob URL — sem endpoint novo no backend.
+ * download via blob URL - sem endpoint novo no backend.
  */
 export async function downloadAssetsAsZip(
   files: { url: string; filename: string }[],

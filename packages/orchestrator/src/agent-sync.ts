@@ -2,6 +2,8 @@ import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { createLogger } from '@desigual-os/logging';
 import { probeAllAgents, type AgentProbeResult } from './agent-probe';
+import { sendOpsAlert } from './alerts';
+import { publishWsEvent } from './pubsub';
 
 const logger = createLogger({ service: 'agent-sync' });
 
@@ -27,7 +29,7 @@ export interface SyncReport {
  * Traduz o resultado bruto da sonda em problema + o que fazer.
  *
  * Regra: nunca inventar causa. Se o serviço não respondeu, o diagnóstico diz
- * exatamente isso e sugere o passo real — não chuta "deve ser o firewall".
+ * exatamente isso e sugere o passo real - não chuta "deve ser o firewall".
  */
 function diagnose(result: AgentProbeResult): Diagnosis[] {
   const found: Diagnosis[] = [];
@@ -64,7 +66,8 @@ function diagnose(result: AgentProbeResult): Diagnosis[] {
     found.push({
       agent: result.agent,
       problem: `VRAM da GPU em ${vram}%.`,
-      suggestion: 'Pouca memória de vídeo livre: uma geração pesada pode falhar. Considere esperar a fila esvaziar.',
+      suggestion:
+        'Pouca memória de vídeo livre: uma geração pesada pode falhar. Considere esperar a fila esvaziar.',
       autoFixed: false,
       severity: 'aviso',
     });
@@ -87,7 +90,7 @@ function diagnose(result: AgentProbeResult): Diagnosis[] {
 /**
  * AUTOSSOLUÇÃO: o que o sistema conserta sozinho, sem pedir nada a ninguém.
  *
- * Deliberadamente conservador. Só entra aqui o que é seguro e reversível —
+ * Deliberadamente conservador. Só entra aqui o que é seguro e reversível -
  * mexer no estado do NOSSO banco. Reiniciar processo em máquina de produção
  * NÃO entra: isso derruba atendimento real de cliente e precisa de gente
  * decidindo.
@@ -105,7 +108,7 @@ async function autoFix(results: AgentProbeResult[]): Promise<Diagnosis[]> {
     fixed.push({
       agent: 'sistema',
       problem: `Node de teste "${node.nodeId}" apontando pra ${node.privateHost} poluía o Monitoramento.`,
-      suggestion: 'Removido automaticamente — não representa máquina real.',
+      suggestion: 'Removido automaticamente - não representa máquina real.',
       autoFixed: true,
       severity: 'aviso',
     });
@@ -114,7 +117,10 @@ async function autoFix(results: AgentProbeResult[]): Promise<Diagnosis[]> {
   // 2. Agente que voltou a responder mas continuava marcado offline no banco.
   for (const result of results) {
     if (result.status === 'offline') continue;
-    const [node] = await db.select().from(schema.nodes).where(eq(schema.nodes.nodeId, result.nodeId));
+    const [node] = await db
+      .select()
+      .from(schema.nodes)
+      .where(eq(schema.nodes.nodeId, result.nodeId));
     if (node && node.status === 'offline') {
       fixed.push({
         agent: result.agent,
@@ -143,17 +149,23 @@ export async function syncAgents(): Promise<SyncReport> {
 
   let recorded = 0;
   for (const result of results) {
-    const [agentRow] = await db.select().from(schema.agents).where(eq(schema.agents.name, result.agent));
+    const [agentRow] = await db
+      .select()
+      .from(schema.agents)
+      .where(eq(schema.agents.name, result.agent));
     if (!agentRow) continue;
 
     // Upsert do node: a sonda é a fonte de verdade de quem existe de verdade.
-    const [existing] = await db.select().from(schema.nodes).where(eq(schema.nodes.nodeId, result.nodeId));
+    const [existing] = await db
+      .select()
+      .from(schema.nodes)
+      .where(eq(schema.nodes.nodeId, result.nodeId));
     const nodeValues = {
       nodeId: result.nodeId,
       agentId: agentRow.id,
       type: (result.agent === 'studio' ? 'gpu_server' : 'mac_mini') as 'gpu_server' | 'mac_mini',
       status: toNodeStatus(result.status),
-      // IP real, não o rótulo de exibição (bug corrigido em 03/09/2026 — ver
+      // IP real, não o rótulo de exibição (bug corrigido em 03/09/2026 - ver
       // comentário em ProbeTarget.host no agent-probe.ts).
       privateHost: result.host,
       // A sonda não instala nada nas máquinas, então não tem como ler a
@@ -164,24 +176,61 @@ export async function syncAgents(): Promise<SyncReport> {
     };
 
     const nodeId = existing
-      ? (await db.update(schema.nodes).set(nodeValues).where(eq(schema.nodes.id, existing.id)).returning())[0]?.id
+      ? (
+          await db
+            .update(schema.nodes)
+            .set(nodeValues)
+            .where(eq(schema.nodes.id, existing.id))
+            .returning()
+        )[0]?.id
       : (await db.insert(schema.nodes).values(nodeValues).returning())[0]?.id;
 
     if (!nodeId) continue;
+
+    // Alerta só na TRANSIÇÃO pra offline, nunca a cada ciclo de 10s enquanto
+    // segue offline: o próprio banco (status anterior antes do update acima)
+    // já serve de debounce natural, sem precisar de estado extra pra isso.
+    if (existing && existing.status !== 'offline' && result.status === 'offline') {
+      await sendOpsAlert({
+        severity: 'critical',
+        title: `${result.label} caiu`,
+        detail: `Status mudou de '${existing.status}' para 'offline'. Verifique se a máquina está ligada e com o Tailscale conectado.`,
+      });
+    }
 
     await db.insert(schema.healthChecks).values({
       nodeId,
       status: toNodeStatus(result.status),
       latencyMs: result.latencyMs,
+      cpu: result.metrics.cpuPercent ?? null,
       ram: result.metrics.ramPercent ?? null,
+      disk: result.metrics.diskPercent ?? null,
+      gpu: result.metrics.gpuPercent ?? null,
       vram: result.metrics.vramPercent ?? null,
+      temperature: result.metrics.temperature ?? null,
       queueDepth: result.metrics.queueDepth ?? null,
     });
     recorded += 1;
   }
 
   const diagnoses = [...autoFixes, ...results.flatMap(diagnose)];
+  const ranAt = new Date().toISOString();
   logger.info({ recorded, problemas: diagnoses.length }, 'Sincronização de agentes concluída');
 
-  return { ranAt: new Date().toISOString(), agents: results, diagnoses, recorded };
+  // Avisa o Monitoramento pelo WS que tem dado novo, em vez de depender só
+  // de polling. Falha aqui não pode derrubar o sync: o dado já está gravado.
+  try {
+    await publishWsEvent({
+      type: 'node.status',
+      payload: {
+        online: results.filter((r) => r.status === 'online').length,
+        total: results.length,
+        ran_at: ranAt,
+      },
+    });
+  } catch (error) {
+    logger.error({ error }, 'Falha ao publicar node.status no WS');
+  }
+
+  return { ranAt, agents: results, diagnoses, recorded };
 }

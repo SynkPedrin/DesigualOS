@@ -1,5 +1,5 @@
 import type { AgentName } from '@desigual-os/types';
-import type { ConversationMessageWire, ConversationSummaryWire, ProjectWire } from '@/lib/api/contracts';
+import type { ConversationMessageWire, ConversationSummaryWire, ProjectFileKind, ProjectFileWire, ProjectWire } from '@/lib/api/contracts';
 import { mockClients } from './clients';
 
 function minutesAgo(minutes: number) {
@@ -32,6 +32,9 @@ function buildSeedConversation(
       role: 'user',
       agent: null,
       content: exchange.user,
+      attachment_url: null,
+      attachment_type: null,
+      attachment_filename: null,
       created_at: minutesAgo(cursor),
     });
     cursor -= 1;
@@ -40,6 +43,9 @@ function buildSeedConversation(
       role: 'assistant',
       agent,
       content: exchange.assistant,
+      attachment_url: null,
+      attachment_type: null,
+      attachment_filename: null,
       created_at: minutesAgo(cursor),
     });
     cursor -= 1;
@@ -123,11 +129,22 @@ export function appendUserMessage(
   conversationId: string | null,
   clientId: string | null,
   message: string,
+  attachment?: { url: string; filename: string; contentType: string } | null,
 ): string {
   const now = new Date().toISOString();
+  const messageWire: ConversationMessageWire = {
+    id: nextMessageId(),
+    role: 'user',
+    agent: null,
+    content: message,
+    attachment_url: attachment?.url ?? null,
+    attachment_type: attachment?.contentType ?? null,
+    attachment_filename: attachment?.filename ?? null,
+    created_at: now,
+  };
   if (conversationId && conversationStore.has(conversationId)) {
     const conversation = conversationStore.get(conversationId)!;
-    conversation.messages.push({ id: nextMessageId(), role: 'user', agent: null, content: message, created_at: now });
+    conversation.messages.push(messageWire);
     conversation.summary.updated_at = now;
     return conversationId;
   }
@@ -147,7 +164,7 @@ export function appendUserMessage(
       created_at: now,
       updated_at: now,
     },
-    messages: [{ id: nextMessageId(), role: 'user', agent: null, content: message, created_at: now }],
+    messages: [messageWire],
   });
   return id;
 }
@@ -156,7 +173,7 @@ export function appendAssistantMessage(conversationId: string, agent: AgentName,
   const conversation = conversationStore.get(conversationId);
   if (!conversation) return;
   const now = new Date().toISOString();
-  conversation.messages.push({ id: nextMessageId(), role: 'assistant', agent, content, created_at: now });
+  conversation.messages.push({ id: nextMessageId(), role: 'assistant', agent, content, attachment_url: null, attachment_type: null, attachment_filename: null, created_at: now });
   conversation.summary.last_agent = agent;
   conversation.summary.last_message_preview = content.slice(0, 96);
   conversation.summary.updated_at = now;
@@ -237,4 +254,44 @@ export function updateConversation(
 
 export function deleteConversation(id: string): boolean {
   return conversationStore.delete(id);
+}
+
+// --- Arquivos de projeto (mock da API /projects/:id/files, 2026-09-05) ---
+
+let projectFileSeq = 0;
+const projectFileStore = new Map<string, ProjectFileWire>();
+
+export function listProjectFiles(projectId: string): ProjectFileWire[] {
+  return Array.from(projectFileStore.values())
+    .filter((file) => file.project_id === projectId)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+}
+
+export function addProjectFile(
+  projectId: string,
+  input: { kind: ProjectFileKind; filename: string; storageUrl: string; contentType: string },
+): ProjectFileWire | null {
+  const project = projectStore.get(projectId);
+  if (!project) return null;
+  projectFileSeq += 1;
+  const hasText = input.contentType.startsWith('text/') || /\.(md|txt)$/i.test(input.filename);
+  const file: ProjectFileWire = {
+    id: `pfile-${projectFileSeq}`,
+    project_id: projectId,
+    client_id: project.client_id,
+    kind: input.kind,
+    filename: input.filename,
+    storage_url: input.storageUrl,
+    content_type: input.contentType,
+    has_text: hasText,
+    created_at: new Date().toISOString(),
+  };
+  projectFileStore.set(file.id, file);
+  return file;
+}
+
+export function deleteProjectFile(projectId: string, fileId: string): boolean {
+  const file = projectFileStore.get(fileId);
+  if (!file || file.project_id !== projectId) return false;
+  return projectFileStore.delete(fileId);
 }

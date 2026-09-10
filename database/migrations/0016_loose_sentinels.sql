@@ -1,0 +1,1 @@
+ALTER TABLE "automations" ADD COLUMN "estimated_minutes_saved" integer;

@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 import { setAccessTokenProvider } from '@/lib/api/client';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -9,8 +9,13 @@ const supabasePublishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY 
  * shell: this talks to Supabase directly with the publishable key (safe to expose client-side
  * by design), per the architecture already agreed with the backend team. Independent of
  * NEXT_PUBLIC_API_MODE: the Orchestrator being mocked or live has no bearing on auth.
+ *
+ * Uses @supabase/ssr's browser client (cookie-backed session storage) instead of plain
+ * @supabase/supabase-js (which defaults to localStorage): src/proxy.ts needs to read the same
+ * session from the request cookies to gate (shell) routes server-side, so client and server
+ * have to agree on where the session lives.
  */
-export const supabase = createClient(supabaseUrl, supabasePublishableKey);
+export const supabase = createBrowserClient(supabaseUrl, supabasePublishableKey);
 
 let tokenProviderWired = false;
 

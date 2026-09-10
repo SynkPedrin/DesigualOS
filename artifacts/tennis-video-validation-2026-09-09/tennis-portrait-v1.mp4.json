@@ -1,0 +1,32 @@
+{
+  "source_job_id": "tennis-portrait-v1",
+  "quality_reference": "editorial-takes-v1",
+  "visual_qa": "pending_review",
+  "job_id": "tennis-portrait-v1",
+  "sequence_role": "assembled",
+  "quality_stage": "draft",
+  "slides_total": 1,
+  "slide_index": 0,
+  "takes_total": 1,
+  "seconds": 5,
+  "fps": 24,
+  "resolution": "768x1344",
+  "keyframes": [
+    {
+      "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v1-keyframe-0.png",
+      "assetId": "tennis-portrait-v1-keyframe-0.png",
+      "filename": "tennis-portrait-v1-keyframe-0.png"
+    }
+  ],
+  "takes": [
+    {
+      "storageUrl": "http://127.0.0.1:63986/tennis-portrait-v1-draft-0.mp4",
+      "assetId": "tennis-portrait-v1-draft-0.mp4",
+      "filename": "tennis-portrait-v1-draft-0.mp4"
+    }
+  ],
+  "editing": "hard cuts; native take audio; no interpolation",
+  "typography_status": "composited_after_generation",
+  "exact_logo_composited": true,
+  "text_overlay_count": 4
+}

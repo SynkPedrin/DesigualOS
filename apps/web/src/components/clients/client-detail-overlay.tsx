@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { ExternalLink, Link2Off, Loader2, X } from 'lucide-react';
+import { ExternalLink, Link2Off, Loader2, MessageCircle, X } from 'lucide-react';
 import { useClientWorkspace } from '@/hooks/use-client-workspace';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { GrantAccessForm } from './grant-access-form';
@@ -16,7 +17,7 @@ import type { ClientSummary } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
 const BASE_TABS = ['ClickUp', 'Visão Geral', 'Conversas', 'Studio'] as const;
-/** "Acesso" só pra master — mesma regra da tela antiga, não afrouxa nada. */
+/** "Acesso" só pra master - mesma regra da tela antiga, não afrouxa nada. */
 const MASTER_TABS = [...BASE_TABS, 'Acesso'] as const;
 type Tab = (typeof MASTER_TABS)[number];
 
@@ -113,9 +114,20 @@ export function ClientDetailOverlay({ client, onClose }: { client: ClientSummary
               {client.status} · {client.clickupListId ? `lista ${client.clickupListId}` : 'sem vínculo no ClickUp'}
             </p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Fechar" className="shrink-0 text-nevoa hover:text-branco-cru">
-            <X size={20} />
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            {workspace?.projectId && (
+              <Link
+                href={`/chat?project=${workspace.projectId}`}
+                className="flex items-center gap-1.5 rounded-md border border-roxo-eletrico/40 bg-roxo-eletrico/10 px-3 py-1.5 text-sm text-branco-cru transition-colors hover:border-roxo-eletrico/70"
+              >
+                <MessageCircle size={14} />
+                Abrir chat
+              </Link>
+            )}
+            <button type="button" onClick={onClose} aria-label="Fechar" className="text-nevoa hover:text-branco-cru">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex shrink-0 gap-1 border-b border-grafite-elevado px-6 py-3">

@@ -10,6 +10,9 @@ import {
   NODE_STATUSES,
   ROLE_NAMES,
   STUDIO_JOB_TYPES,
+  STUDIO_JOB_STATUSES,
+  STUDIO_QUALITY_PRESETS,
+  STUDIO_STYLES,
   type AgentName,
   type ConversationVisibility,
   type ExecutionStatus,
@@ -18,6 +21,17 @@ import {
   type QueuePriority,
   type RoleName,
   type StudioJobType,
+  type StudioJobStatus,
+  type StudioQualityPreset,
+  type StudioReferenceFidelity,
+  type StudioReferenceRole,
+  type StudioBrandPlacement,
+  type StudioStyle,
+  type CanvaDocumentWire,
+  type CanvaDocumentSummaryWire,
+  type CanvaPage,
+  type ImageSearchResultWire,
+  type ImageSearchProvider,
 } from '@desigual-os/types';
 
 export type ISODateString = string;
@@ -50,7 +64,7 @@ export type Theme = (typeof THEMES)[number];
 
 /**
  * GET /me is camelCase for avatarUrl/language/theme/clickupEmail, confirmed by the backend
- * (2026-09-01) — inconsistent with PATCH /me's snake_case response below, a known wart on
+ * (2026-09-01) - inconsistent with PATCH /me's snake_case response below, a known wart on
  * their side, not a frontend mapping bug.
  */
 export interface MeResponse {
@@ -101,9 +115,9 @@ export interface NodeSummaryWire {
   type: NodeType;
   status: NodeStatus;
   last_heartbeat_at: ISODateString;
-  cpu: number;
-  ram: number;
-  disk: number;
+  cpu: number | null;
+  ram: number | null;
+  disk: number | null;
   latency_ms: number;
   gpu: number | null;
   vram: number | null;
@@ -127,9 +141,9 @@ export interface NodeSummary {
   type: NodeType;
   status: NodeStatus;
   lastHeartbeatAt: ISODateString;
-  cpuPercent: number;
-  ramPercent: number;
-  diskPercent: number;
+  cpuPercent: number | null;
+  ramPercent: number | null;
+  diskPercent: number | null;
   latencyMs: number;
   gpuPercent: number | null;
   vramPercent: number | null;
@@ -175,7 +189,70 @@ export function mapInfrastructureHealth(wire: InfrastructureHealthWire): Infrast
 
 export const NODE_STATUS_VALUES = NODE_STATUSES;
 
-/** POST /health/sync — sonda ao vivo dos agentes + diagnóstico. */
+/**
+ * GET /health/events (2026-09-05) - linha do tempo de eventos da tela de
+ * Monitoramento. Master-only como /health/infrastructure (colaborador leva 403,
+ * o hook fica `enabled: isMaster`). Ordenado desc por occurred_at, máx 20, pode
+ * vir [].
+ */
+export interface SystemEventWire {
+  id: string;
+  occurred_at: ISODateString;
+  level: 'info' | 'warning' | 'error';
+  node_label: string;
+  message: string;
+}
+
+export interface SystemEvent {
+  id: string;
+  level: 'info' | 'warning' | 'error';
+  message: string;
+  nodeLabel: string;
+  timestamp: ISODateString;
+}
+
+export function mapSystemEvents(wire: { events: SystemEventWire[] }): SystemEvent[] {
+  return wire.events.map((event) => ({
+    id: event.id,
+    level: event.level,
+    message: event.message,
+    nodeLabel: event.node_label,
+    timestamp: event.occurred_at,
+  }));
+}
+
+/**
+ * GET /agents/stats (2026-09-05) - stats dos cards da tela de Agentes, qualquer
+ * papel autenticado. Sempre inclui os 4 agentes; performance_percent e
+ * average_response_seconds vêm null quando o backend ainda não tem base pra
+ * calcular - a UI exibe '-' nesses casos.
+ */
+export interface AgentStatsWire {
+  agent: AgentName;
+  active_conversations: number;
+  performance_percent: number | null;
+  average_response_seconds: number | null;
+}
+
+export interface AgentStats {
+  activeConversations: number;
+  performancePercent: number | null;
+  averageResponseSeconds: number | null;
+}
+
+export function mapAgentStats(wire: { agents: AgentStatsWire[] }): Partial<Record<AgentName, AgentStats>> {
+  const byAgent: Partial<Record<AgentName, AgentStats>> = {};
+  for (const row of wire.agents) {
+    byAgent[row.agent] = {
+      activeConversations: row.active_conversations,
+      performancePercent: row.performance_percent,
+      averageResponseSeconds: row.average_response_seconds,
+    };
+  }
+  return byAgent;
+}
+
+/** POST /health/sync - sonda ao vivo dos agentes + diagnóstico. */
 export interface AgentSyncServiceWire {
   name: string;
   ok: boolean;
@@ -221,11 +298,30 @@ export function agentSelectionToHint(selection: AgentSelection): ChatAgentHint {
   return selection.toUpperCase() as ChatAgentHint;
 }
 
+/** Anexo já hospedado (upload feito antes via POST /uploads); no POST /chat vai só a referência. */
+export interface ChatAttachmentWire {
+  url: string;
+  filename: string;
+  contentType: string;
+}
+
 export interface ChatRequestWire {
   message: string;
   client_id: string | null;
   conversation_id?: string;
+  project_id?: string | null;
   agent_hint: ChatAgentHint;
+  /** @deprecated usar `attachments`; mantido só para compatibilidade de wire. */
+  attachment?: ChatAttachmentWire | undefined;
+  /** Até 10 anexos (imagens/documentos), colados ou selecionados no composer. */
+  attachments?: ChatAttachmentWire[] | undefined;
+}
+
+/** POST /uploads — upload genérico (anexo do composer do chat). Só hospeda e devolve a URL. */
+export interface UploadFileResponseWire {
+  filename: string;
+  url: string;
+  contentType: string;
 }
 
 export interface ChatResponseWire {
@@ -267,7 +363,8 @@ export interface ExecutionListItemWire {
   intent: string;
   status: ExecutionStatus;
   priority: QueuePriority;
-  started_at: ISODateString;
+  /** NULL enquanto a execução está na fila (queued) - ainda não começou. */
+  started_at: ISODateString | null;
   completed_at: ISODateString | null;
   tokens_input: number;
   tokens_output: number;
@@ -286,7 +383,7 @@ export interface ExecutionListItem {
   intent: string;
   status: ExecutionStatus;
   priority: QueuePriority;
-  startedAt: ISODateString;
+  startedAt: ISODateString | null;
   completedAt: ISODateString | null;
   tokensInput: number;
   tokensOutput: number;
@@ -337,6 +434,8 @@ export interface ClientSummaryWire {
   /** Só vem no workspace do cliente (GET /clients/:id/workspace), não na listagem. */
   clickup_list_id?: string | null;
   clickup_url?: string | null;
+  /** Idem: id do projeto de chat vinculado a este cliente, se existir. */
+  project_id?: string | null;
 }
 
 export interface ClientSummary {
@@ -346,6 +445,7 @@ export interface ClientSummary {
   status: string;
   clickupListId: string | null;
   clickupUrl: string | null;
+  projectId: string | null;
 }
 
 export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
@@ -356,6 +456,7 @@ export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
     status: wire.status,
     clickupListId: wire.clickup_list_id ?? null,
     clickupUrl: wire.clickup_url ?? null,
+    projectId: wire.project_id ?? null,
   };
 }
 
@@ -377,21 +478,19 @@ export function mapExecutionDetail(wire: ExecutionDetailWire): ExecutionDetail {
 /**
  * POST /studio/jobs, GET /studio/jobs/:id, GET /studio/assets. Confirmed real, tested
  * contracts from the backend team (2026-09-01), requires `studio:write` permission on
- * write. image/carousel geram de verdade via ComfyUI (nodes/studio-node); video/reels/
- * upscale ainda falham honesto (sem workflow ComfyUI conectado pra eles ainda).
+ * write. Todos os 5 tipos (image/carousel/video/reels/upscale) geram de verdade via
+ * ComfyUI hoje (nodes/studio-node) - video via MiniMax H3 desde 08/09/2026. `upscale`
+ * só não é selecionável na UI de criação (job-form.tsx SELECTABLE_TYPES): suas partes
+ * relevantes (qualidade/proporção) viraram controles de image/carousel.
  *
  * `type` is validated backend-side against `STUDIO_JOB_TYPES` from `@desigual-os/types`
  * (imported, not redeclared here). `resolution` is a free string with no fixed mapping per
  * type on the backend, the per-type default resolutions are a frontend UI decision.
  */
-export { STUDIO_JOB_TYPES };
-export type { StudioJobType };
-
-export const STUDIO_JOB_STATUSES = ['queued', 'rendering', 'completed', 'failed'] as const;
-export type StudioJobStatus = (typeof STUDIO_JOB_STATUSES)[number];
-
-export const STUDIO_QUALITY_PRESETS = ['draft', 'standard', 'high'] as const;
-export type StudioQualityPreset = (typeof STUDIO_QUALITY_PRESETS)[number];
+// Fonte única em @desigual-os/types (dedup de 08/09/2026 - eram declarados de forma
+// independente aqui, em apps/api/src/studio/routes.ts e em nodes/studio-node também).
+export { STUDIO_JOB_TYPES, STUDIO_JOB_STATUSES, STUDIO_QUALITY_PRESETS, STUDIO_STYLES };
+export type { StudioJobType, StudioJobStatus, StudioQualityPreset, StudioStyle };
 
 export interface StudioCopySlideWire {
   headline: string;
@@ -412,6 +511,14 @@ export interface StudioJobRequestWire {
   quality_preset?: StudioQualityPreset;
   /** image/carousel: se deve gerar copy de marketing e sobrepor texto nas imagens. */
   include_text?: boolean;
+  /** Direção de arte (default backend: 'padrao'). */
+  style?: StudioStyle;
+  /** Só image: quantas variações do mesmo prompt gerar (1|2|4|6|8, default 1). */
+  variations?: number;
+  /** URLs de assets existentes usados como referência visual (máx 16). */
+  reference_images?: string[];
+  /** Flags sem preset próprio no backend. `ultra` = high + refinamento. */
+  metadata?: { ultra?: boolean };
 }
 
 export interface StudioJobCreatedWire {
@@ -423,6 +530,10 @@ export interface StudioJobAttachmentWire {
   filename: string;
   url: string;
   contentType: string;
+  role?: StudioReferenceRole;
+  fidelity?: StudioReferenceFidelity;
+  instruction?: string;
+  placement?: StudioBrandPlacement;
 }
 
 export interface StudioJobDetailWire {
@@ -440,6 +551,16 @@ export interface StudioJobDetailWire {
   asset_urls?: string[] | null;
   /** Legenda do post, gerada pelo passo de copy de marketing. */
   caption?: string | null;
+  style?: StudioStyle | null;
+  variations?: number | null;
+  /** Eco da config original do pedido, pra "Duplicar"/"Editar projeto" remontar o form. */
+  client_id?: string | null;
+  quality_preset?: StudioQualityPreset | null;
+  num_slides?: number | null;
+  include_text?: boolean | null;
+  duration_seconds?: number | null;
+  reference_images?: string[] | null;
+  metadata?: { ultra?: boolean } | null;
 }
 
 export interface StudioJobDetail {
@@ -454,6 +575,15 @@ export interface StudioJobDetail {
   assetUrl: string | null;
   assetUrls: string[] | null;
   caption: string | null;
+  style: StudioStyle | null;
+  variations: number | null;
+  clientId: string | null;
+  qualityPreset: StudioQualityPreset | null;
+  numSlides: number | null;
+  includeText: boolean | null;
+  durationSeconds: number | null;
+  referenceImages: string[] | null;
+  ultra: boolean;
 }
 
 export function mapStudioJobDetail(wire: StudioJobDetailWire): StudioJobDetail {
@@ -469,6 +599,15 @@ export function mapStudioJobDetail(wire: StudioJobDetailWire): StudioJobDetail {
     assetUrl: wire.asset_url,
     assetUrls: wire.asset_urls ?? null,
     caption: wire.caption ?? null,
+    style: wire.style ?? null,
+    variations: wire.variations ?? null,
+    clientId: wire.client_id ?? null,
+    qualityPreset: wire.quality_preset ?? null,
+    numSlides: wire.num_slides ?? null,
+    includeText: wire.include_text ?? null,
+    durationSeconds: wire.duration_seconds ?? null,
+    referenceImages: wire.reference_images ?? null,
+    ultra: wire.metadata?.ultra ?? false,
   };
 }
 
@@ -491,17 +630,20 @@ export interface StudioAssetWire {
   filename: string;
   storage_url: string;
   prompt: string;
-  /** Checkpoint/modelo que gerou de fato — o "workflow" da spec da Galeria. */
+  /** Checkpoint/modelo que gerou de fato - o "workflow" da spec da Galeria. */
   model?: string | null;
   /** Nome de quem pediu. Null em assets anteriores ao rastreio de autor. */
   created_by?: string | null;
   /** Máquina que processou (ex: NODE_STUDIO_TEST_01). */
   node_id?: string | null;
-  /** Ligação com o job que gerou este asset — mais de um asset por job_id vira um grupo (carousel). */
+  /** Ligação com o job que gerou este asset - mais de um asset por job_id vira um grupo (carousel). */
   job_id?: string | null;
   slide_index?: number | null;
   slides_total?: number | null;
   caption?: string | null;
+  /** Preset de qualidade com que o asset foi gerado (badge da galeria). */
+  quality_preset?: StudioQualityPreset | null;
+  style?: StudioStyle | null;
   created_at: ISODateString;
 }
 
@@ -520,6 +662,8 @@ export interface StudioAsset {
   slideIndex: number | null;
   slidesTotal: number | null;
   caption: string | null;
+  qualityPreset: StudioQualityPreset | null;
+  style: StudioStyle | null;
   createdAt: ISODateString;
 }
 
@@ -539,7 +683,76 @@ export function mapStudioAsset(wire: StudioAssetWire): StudioAsset {
     slideIndex: wire.slide_index ?? null,
     slidesTotal: wire.slides_total ?? null,
     caption: wire.caption ?? null,
+    qualityPreset: wire.quality_preset ?? null,
+    style: wire.style ?? null,
     createdAt: wire.created_at,
+  };
+}
+
+/** GET /studio/assets?client_id=&type=&q=&limit=&offset= — paginado de verdade:
+ * `total` é o count DEPOIS dos filtros (pra "Carregar mais" saber quando parar). */
+export interface StudioAssetsPageWire {
+  assets: StudioAssetWire[];
+  total: number;
+}
+
+export interface StudioAssetsPage {
+  assets: StudioAsset[];
+  total: number;
+}
+
+/** GET /clients/:id/brand-kit — campos null/[] quando o cliente não tem kit cadastrado. */
+export interface BrandKitWire {
+  client_id: string;
+  logo_url: string | null;
+  colors: string[];
+  fonts: string[];
+  tone_of_voice: string | null;
+  reference_images: string[];
+}
+
+export interface BrandKit {
+  clientId: string;
+  logoUrl: string | null;
+  colors: string[];
+  fonts: string[];
+  toneOfVoice: string | null;
+  referenceImages: string[];
+}
+
+export function mapBrandKit(wire: BrandKitWire): BrandKit {
+  return {
+    clientId: wire.client_id,
+    logoUrl: wire.logo_url ?? null,
+    colors: wire.colors ?? [],
+    fonts: wire.fonts ?? [],
+    toneOfVoice: wire.tone_of_voice ?? null,
+    referenceImages: wire.reference_images ?? [],
+  };
+}
+
+/** GET /clients/:id/memory — dossiê consolidado (kind 'client.profile' em `memories`).
+ * content/metadata/updated_at vêm null quando o cliente ainda não tem memória gravada. */
+export interface ClientMemoryWire {
+  client_id: string;
+  content: string | null;
+  metadata: Record<string, unknown> | null;
+  updated_at: ISODateString | null;
+}
+
+export interface ClientMemory {
+  clientId: string;
+  content: string | null;
+  metadata: Record<string, unknown> | null;
+  updatedAt: ISODateString | null;
+}
+
+export function mapClientMemory(wire: ClientMemoryWire): ClientMemory {
+  return {
+    clientId: wire.client_id,
+    content: wire.content,
+    metadata: wire.metadata,
+    updatedAt: wire.updated_at,
   };
 }
 
@@ -559,7 +772,7 @@ export interface ClickUpIntegrationStatusWire {
 }
 
 /**
- * GET /clients/:id/clickup/tasks — tarefas lidas do ClickUp na hora (fonte
+ * GET /clients/:id/clickup/tasks - tarefas lidas do ClickUp na hora (fonte
  * de verdade), não do espelho local.
  */
 export interface ClickUpPersonWire {
@@ -598,7 +811,7 @@ export interface ClickUpSyncResultWire {
 }
 
 /**
- * GET /clickup/tasks/:id/comments — comentários da tarefa lidos do ClickUp na
+ * GET /clickup/tasks/:id/comments - comentários da tarefa lidos do ClickUp na
  * hora (o "chat" da tarefa, mostrado na aba Conversas do workspace do cliente).
  * `date` vem como epoch em ms em string, que é o formato que o ClickUp devolve.
  */
@@ -795,6 +1008,12 @@ export interface ConversationMessageWire {
   role: 'user' | 'assistant';
   agent: AgentName | null;
   content: string;
+  attachment_url: string | null;
+  attachment_type: string | null;
+  attachment_filename: string | null;
+  /** Lista completa de anexos (metadata.attachments); pode vir vazia mesmo
+   * com attachment_url preenchido em mensagens antigas de antes desta coluna. */
+  attachments?: ChatAttachmentWire[];
   created_at: ISODateString;
 }
 
@@ -803,11 +1022,39 @@ export interface ConversationMessage {
   role: 'user' | 'assistant';
   agent: AgentName | null;
   content: string;
+  attachmentUrl: string | null;
+  attachmentType: string | null;
+  attachmentFilename: string | null;
+  attachments: ChatAttachmentWire[];
   createdAt: ISODateString;
 }
 
 export function mapConversationMessage(wire: ConversationMessageWire): ConversationMessage {
-  return { id: wire.id, role: wire.role, agent: wire.agent, content: wire.content, createdAt: wire.created_at };
+  // Mensagens antigas (antes de metadata.attachments existir) só têm as
+  // colunas legadas; sintetiza uma lista de 1 item pra não sumir da UI.
+  const attachments =
+    wire.attachments && wire.attachments.length > 0
+      ? wire.attachments
+      : wire.attachment_url
+        ? [
+            {
+              url: wire.attachment_url,
+              filename: wire.attachment_filename ?? 'anexo',
+              contentType: wire.attachment_type ?? 'application/octet-stream',
+            },
+          ]
+        : [];
+  return {
+    id: wire.id,
+    role: wire.role,
+    agent: wire.agent,
+    content: wire.content,
+    attachmentUrl: wire.attachment_url,
+    attachmentType: wire.attachment_type,
+    attachmentFilename: wire.attachment_filename,
+    attachments,
+    createdAt: wire.created_at,
+  };
 }
 
 /**
@@ -859,7 +1106,7 @@ export function mapTeamMember(wire: TeamMemberWire): TeamMember {
 /**
  * GET /clients/:id/workspace. Confirmed real (2026-09-02), requires clients:read; projetos
  * são compartilhados pela equipe (2026-09-03), então qualquer master/colaborador autenticado
- * passa — client_users deixou de ser um gate obrigatório aqui, ver apps/api/src/lib/access.ts.
+ * passa - client_users deixou de ser um gate obrigatório aqui, ver apps/api/src/lib/access.ts.
  */
 export interface ClientWorkspaceWire {
   client: ClientSummaryWire;
@@ -871,6 +1118,8 @@ export interface ClientWorkspaceWire {
 
 export interface ClientWorkspace {
   client: ClientSummary;
+  /** Projeto de chat vinculado a este cliente (seção "Projetos" de /chat), se existir. */
+  projectId: string | null;
   conversations: Array<{ id: string; title: string | null; status: string; updatedAt: ISODateString }>;
   studioAssets: Array<{ id: string; type: StudioJobType; filename: string; storageUrl: string; createdAt: ISODateString }>;
   executions: Array<{ id: string; executionId: string; agent: AgentName; status: ExecutionStatus; createdAt: ISODateString }>;
@@ -880,6 +1129,7 @@ export interface ClientWorkspace {
 export function mapClientWorkspace(wire: ClientWorkspaceWire): ClientWorkspace {
   return {
     client: mapClientSummary(wire.client),
+    projectId: wire.client.project_id ?? null,
     conversations: wire.conversations.map((c) => ({ id: c.id, title: c.title, status: c.status, updatedAt: c.updated_at })),
     studioAssets: wire.studio_assets.map((a) => ({
       id: a.id,
@@ -960,22 +1210,123 @@ export function mapMessage(wire: MessageWire): Message {
 }
 
 export interface MessageThreadWire {
-  user: { id: string; name: string; avatar_url: string | null };
+  user: { id: string; name: string; avatar_url: string | null; last_seen_at: ISODateString | null };
   last_message: MessageWire;
   unread_count: number;
+  favorited: boolean;
+  archived: boolean;
 }
 
 export interface MessageThread {
-  user: { id: string; name: string; avatarUrl: string | null };
+  user: { id: string; name: string; avatarUrl: string | null; lastSeenAt: ISODateString | null };
   lastMessage: Message;
   unreadCount: number;
+  favorited: boolean;
+  archived: boolean;
 }
 
 export function mapMessageThread(wire: MessageThreadWire): MessageThread {
   return {
-    user: { id: wire.user.id, name: wire.user.name, avatarUrl: wire.user.avatar_url },
+    user: { id: wire.user.id, name: wire.user.name, avatarUrl: wire.user.avatar_url, lastSeenAt: wire.user.last_seen_at },
     lastMessage: mapMessage(wire.last_message),
     unreadCount: wire.unread_count,
+    favorited: wire.favorited,
+    archived: wire.archived,
+  };
+}
+
+/** GET /messages/threads response. `total_unread` feeds the real header badge. */
+export interface MessageThreadsResponseWire {
+  threads: MessageThreadWire[];
+  total_unread: number;
+}
+
+/**
+ * PATCH /messages/threads/:partnerId. Favorite/archive are per-user thread
+ * preferences (direct_message_thread_prefs), upserted; only the fields sent
+ * in the body change.
+ */
+export interface UpdateMessageThreadPrefsRequestWire {
+  favorite?: boolean | undefined;
+  archived?: boolean | undefined;
+}
+
+export interface MessageThreadPrefsWire {
+  user_id: string;
+  partner_id: string;
+  favorited: boolean;
+  archived: boolean;
+  favorited_at: ISODateString | null;
+  archived_at: ISODateString | null;
+  updated_at: ISODateString;
+}
+
+/**
+ * GET /collaborators. Team directory (users + roles) enriched with ClickUp
+ * member data matched by email (users.clickup_email, falling back to the login
+ * email) and presence (users.last_seen_at, "online" is computed client-side).
+ * When ClickUp is unreachable/unconfigured the endpoint still responds with
+ * `clickup: null` on everyone and `clickup_synced: false`.
+ */
+export interface CollaboratorClickUpWire {
+  id: number;
+  username: string;
+  email: string;
+  profile_picture: string | null;
+  initials: string | null;
+  color: string | null;
+}
+
+export interface CollaboratorWire {
+  user_id: string;
+  name: string;
+  email: string;
+  avatar_url: string | null;
+  roles: string[];
+  clickup: CollaboratorClickUpWire | null;
+  last_seen_at: ISODateString | null;
+}
+
+export interface CollaboratorsResponseWire {
+  collaborators: CollaboratorWire[];
+  clickup_synced: boolean;
+}
+
+export interface Collaborator {
+  userId: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  roles: string[];
+  clickup: {
+    id: number;
+    username: string;
+    email: string;
+    profilePicture: string | null;
+    initials: string | null;
+    color: string | null;
+  } | null;
+  lastSeenAt: ISODateString | null;
+}
+
+export function mapCollaborator(wire: CollaboratorWire): Collaborator {
+  return {
+    userId: wire.user_id,
+    name: wire.name,
+    email: wire.email,
+    avatarUrl: wire.avatar_url,
+    roles: wire.roles,
+    clickup: wire.clickup
+      ? {
+          id: wire.clickup.id,
+          username: wire.clickup.username,
+          email: wire.clickup.email,
+          profilePicture: wire.clickup.profile_picture,
+          initials: wire.clickup.initials,
+          color: wire.clickup.color,
+        }
+      : null,
+    lastSeenAt: wire.last_seen_at,
   };
 }
 
@@ -994,7 +1345,7 @@ export interface AdminUserClientAccessWire {
   role: ClientAccessRole;
 }
 
-/** Status de uma integração do colaborador. Nunca traz token — só metadados. */
+/** Status de uma integração do colaborador. Nunca traz token - só metadados. */
 export interface AdminUserIntegrationWire {
   provider: string;
   status: string;
@@ -1075,7 +1426,7 @@ export interface UpdateUserStatusRequestWire {
   active: boolean;
 }
 
-/** PATCH /admin/users/:id — master editing someone else's name, distinct from PATCH /me
+/** PATCH /admin/users/:id - master editing someone else's name, distinct from PATCH /me
  * (self-edit). Confirmed real (2026-09-02). */
 export interface UpdateUserNameRequestWire {
   name: string;
@@ -1098,6 +1449,8 @@ export interface AutomationWire {
   schedule: string;
   schedule_label: string;
   enabled: boolean;
+  /** Estimativa de minutos economizados por execução; null quando nunca informada. */
+  estimated_minutes_saved: number | null;
   last_run_at: ISODateString | null;
   created_at: ISODateString;
 }
@@ -1112,6 +1465,7 @@ export interface Automation {
   schedule: string;
   scheduleLabel: string;
   enabled: boolean;
+  estimatedMinutesSaved: number | null;
   lastRunAt: ISODateString | null;
   createdAt: ISODateString;
 }
@@ -1127,6 +1481,7 @@ export function mapAutomation(wire: AutomationWire): Automation {
     schedule: wire.schedule,
     scheduleLabel: wire.schedule_label,
     enabled: wire.enabled,
+    estimatedMinutesSaved: wire.estimated_minutes_saved,
     lastRunAt: wire.last_run_at,
     createdAt: wire.created_at,
   };
@@ -1139,9 +1494,66 @@ export interface CreateAutomationRequestWire {
   client_id?: string | null;
   schedule: string;
   schedule_label: string;
+  estimated_minutes_saved?: number | null;
 }
 
-/** GET /automations/:id/runs — histórico de disparos. */
+/** PATCH /automations/:id - edição parcial da automação (2026-09-04). Antes aceitava só
+ * `enabled`; agora qualquer campo editável pode vir, todos opcionais. */
+export interface UpdateAutomationRequestWire {
+  name?: string;
+  prompt?: string;
+  agent?: AgentName;
+  client_id?: string | null;
+  schedule?: string;
+  schedule_label?: string;
+  enabled?: boolean;
+  estimated_minutes_saved?: number | null;
+}
+
+/** POST /automations/:id/run - dispara a automação na hora, fora do agendamento.
+ * Resposta 202: o run entra na fila e aparece depois no histórico de runs. */
+export interface RunAutomationNowResponseWire {
+  status: 'queued';
+}
+
+/**
+ * GET /automations/metrics (2026-09-04) - cartões de KPI do topo da tela de automações.
+ * Qualquer delta, success_rate ou time_saved_minutes pode vir null quando o backend não
+ * tem base de dados para calcular (ex.: nenhum run no período de comparação).
+ */
+export interface AutomationMetricsWire {
+  active_count: number;
+  active_delta_month: number | null;
+  runs_today: number;
+  runs_today_delta: number | null;
+  success_rate: number | null;
+  success_delta_week: number | null;
+  time_saved_minutes: number | null;
+}
+
+export interface AutomationMetrics {
+  activeCount: number;
+  activeDeltaMonth: number | null;
+  runsToday: number;
+  runsTodayDelta: number | null;
+  successRate: number | null;
+  successDeltaWeek: number | null;
+  timeSavedMinutes: number | null;
+}
+
+export function mapAutomationMetrics(wire: AutomationMetricsWire): AutomationMetrics {
+  return {
+    activeCount: wire.active_count,
+    activeDeltaMonth: wire.active_delta_month,
+    runsToday: wire.runs_today,
+    runsTodayDelta: wire.runs_today_delta,
+    successRate: wire.success_rate,
+    successDeltaWeek: wire.success_delta_week,
+    timeSavedMinutes: wire.time_saved_minutes,
+  };
+}
+
+/** GET /automations/:id/runs - histórico de disparos. */
 export interface AutomationRunWire {
   id: string;
   status: string;
@@ -1169,7 +1581,7 @@ export function mapAutomationRun(wire: AutomationRunWire): AutomationRun {
 }
 
 /**
- * GET /clients/:id/comments (2026-09-04) — comentários de TODAS as tarefas do
+ * GET /clients/:id/comments (2026-09-04) - comentários de TODAS as tarefas do
  * ClickUp do cliente agregados numa thread só, mais novo primeiro, cada item
  * dizendo de qual tarefa veio. O backend limita a busca às 10 tarefas mexidas
  * mais recentemente por causa do rate limit do ClickUp.
@@ -1186,7 +1598,7 @@ export interface ClickUpClientCommentWire {
   task_url: string | null;
 }
 
-/** POST /clickup/tasks/:id/comments — post real no ClickUp, resposta 201. */
+/** POST /clickup/tasks/:id/comments - post real no ClickUp, resposta 201. */
 export interface CreateClickUpTaskCommentRequestWire {
   comment_text: string;
 }
@@ -1196,7 +1608,7 @@ export interface CreateClickUpTaskCommentResponseWire {
 }
 
 /**
- * GET /clients/:id/overview (2026-09-04) — resumo sempre atualizado do cliente
+ * GET /clients/:id/overview (2026-09-04) - resumo sempre atualizado do cliente
  * (aba Visão Geral do workspace). `clickup` é null quando o cliente não tem
  * lista vinculada; os demais blocos sempre vêm, com estado vazio honesto.
  */
@@ -1221,7 +1633,7 @@ export { CONVERSATION_VISIBILITIES };
 export type { ConversationVisibility };
 
 /**
- * PATCH /conversations/:id — renomear, mover pra projeto (project_id null tira
+ * PATCH /conversations/:id - renomear, mover pra projeto (project_id null tira
  * do projeto) e trocar visibilidade. Só dono ou master (403 no backend).
  * DELETE /conversations/:id apaga a conversa e as mensagens (204).
  */
@@ -1272,7 +1684,7 @@ export function mapConversationDetail(wire: ConversationDetailWire): Conversatio
 }
 
 /**
- * GET/POST/PATCH/DELETE /projects (2026-09-04) — projetos do CHAT, a seção
+ * GET/POST/PATCH/DELETE /projects (2026-09-04) - projetos do CHAT, a seção
  * "Projetos" da sidebar estilo Claude. Não confundir com studio_projects
  * (domínio do Studio). DELETE desvincula as conversas (204), não apaga.
  * Escrita exige chat:write.
@@ -1314,4 +1726,212 @@ export interface CreateProjectRequestWire {
 export interface UpdateProjectRequestWire {
   name?: string | undefined;
   client_id?: string | null | undefined;
+}
+
+/**
+ * GET/POST/DELETE /projects/:id/files (2026-09-05) - arquivos de referência do
+ * projeto (identidade visual, briefing, referências). Upload multipart: o campo
+ * de texto `kind` precisa vir ANTES do campo `file` no FormData (mesma restrição
+ * do @fastify/multipart documentada no POST /messages). .md/.txt têm o texto
+ * extraído no backend (has_text true) pra injeção no contexto do chat.
+ */
+export const PROJECT_FILE_KINDS = ['identidade_visual', 'briefing', 'referencia'] as const;
+export type ProjectFileKind = (typeof PROJECT_FILE_KINDS)[number];
+
+export interface ProjectFileWire {
+  id: string;
+  project_id: string;
+  client_id: string | null;
+  kind: ProjectFileKind;
+  filename: string;
+  storage_url: string;
+  content_type: string;
+  has_text: boolean;
+  created_at: ISODateString;
+}
+
+export interface ProjectFile {
+  id: string;
+  projectId: string;
+  clientId: string | null;
+  kind: ProjectFileKind;
+  filename: string;
+  storageUrl: string;
+  contentType: string;
+  hasText: boolean;
+  createdAt: ISODateString;
+}
+
+export function mapProjectFile(wire: ProjectFileWire): ProjectFile {
+  return {
+    id: wire.id,
+    projectId: wire.project_id,
+    clientId: wire.client_id,
+    kind: wire.kind,
+    filename: wire.filename,
+    storageUrl: wire.storage_url,
+    contentType: wire.content_type,
+    hasText: wire.has_text,
+    createdAt: wire.created_at,
+  };
+}
+
+/**
+ * GET/POST /tool-calls (Tool Gateway, seção 6.6) - fila de aprovação humana:
+ * budget de Meta Ads (jarbas), publicação no Instagram (suzy) e exclusão de
+ * tarefa do ClickUp ficam pendentes aqui até um master aprovar. `input` é
+ * livre por tool: meta_ads/instagram carregam `{ proposal, session_id? }`,
+ * clickup.delete_task carrega `{ task_id }`. Não existe rota de rejeitar,
+ * só aprovar.
+ */
+export interface ToolCallWire {
+  id: string;
+  agent: AgentName;
+  tool: string;
+  input: Record<string, unknown>;
+  created_at: ISODateString;
+}
+
+export interface ToolCall {
+  id: string;
+  agent: AgentName;
+  tool: string;
+  input: Record<string, unknown>;
+  createdAt: ISODateString;
+}
+
+export function mapToolCall(wire: ToolCallWire): ToolCall {
+  return {
+    id: wire.id,
+    agent: wire.agent,
+    tool: wire.tool,
+    input: wire.input,
+    createdAt: wire.created_at,
+  };
+}
+
+export interface ApproveToolCallResponseWire {
+  id: string;
+  tool: string;
+  status: 'completed';
+}
+
+/** Studio > Canva: um documento do editor gráfico (posts, banners, carrosséis). */
+export interface CanvaDocument {
+  id: string;
+  clientId: string;
+  projectId: string | null;
+  name: string;
+  width: number;
+  height: number;
+  thumbnailUrl: string | null;
+  pages: CanvaPage[];
+  createdAt: ISODateString;
+  updatedAt: ISODateString;
+}
+
+export function mapCanvaDocument(wire: CanvaDocumentWire): CanvaDocument {
+  return {
+    id: wire.id,
+    clientId: wire.client_id,
+    projectId: wire.project_id,
+    name: wire.name,
+    width: wire.width,
+    height: wire.height,
+    thumbnailUrl: wire.thumbnail_url,
+    pages: wire.pages,
+    createdAt: wire.created_at,
+    updatedAt: wire.updated_at,
+  };
+}
+
+/** Versão enxuta pra sidebar "Projetos" (sem `pages`). */
+export interface CanvaDocumentSummary {
+  id: string;
+  clientId: string;
+  projectId: string | null;
+  name: string;
+  width: number;
+  height: number;
+  thumbnailUrl: string | null;
+  pageCount: number;
+  createdAt: ISODateString;
+  updatedAt: ISODateString;
+}
+
+export function mapCanvaDocumentSummary(wire: CanvaDocumentSummaryWire): CanvaDocumentSummary {
+  return {
+    id: wire.id,
+    clientId: wire.client_id,
+    projectId: wire.project_id,
+    name: wire.name,
+    width: wire.width,
+    height: wire.height,
+    thumbnailUrl: wire.thumbnail_url,
+    pageCount: wire.page_count,
+    createdAt: wire.created_at,
+    updatedAt: wire.updated_at,
+  };
+}
+
+export interface ImageSearchResult {
+  id: string;
+  provider: ImageSearchProvider;
+  thumbnailUrl: string;
+  previewUrl: string;
+  fullUrl: string;
+  width: number;
+  height: number;
+  author: string;
+  authorUrl: string | null;
+  sourceUrl: string;
+  downloadTrackingUrl: string | null;
+}
+
+export function mapImageSearchResult(wire: ImageSearchResultWire): ImageSearchResult {
+  return {
+    id: wire.id,
+    provider: wire.provider,
+    thumbnailUrl: wire.thumbnail_url,
+    previewUrl: wire.preview_url,
+    fullUrl: wire.full_url,
+    width: wire.width,
+    height: wire.height,
+    author: wire.author,
+    authorUrl: wire.author_url,
+    sourceUrl: wire.source_url,
+    downloadTrackingUrl: wire.download_tracking_url,
+  };
+}
+
+export interface FontCatalogEntryWire {
+  id: string;
+  family: string;
+  category: string;
+  subsets: string[];
+  weights: number[];
+  styles: string[];
+  default_subset: string;
+}
+
+export interface FontCatalogEntry {
+  id: string;
+  family: string;
+  category: string;
+  subsets: string[];
+  weights: number[];
+  styles: string[];
+  defaultSubset: string;
+}
+
+export function mapFontCatalogEntry(wire: FontCatalogEntryWire): FontCatalogEntry {
+  return {
+    id: wire.id,
+    family: wire.family,
+    category: wire.category,
+    subsets: wire.subsets,
+    weights: wire.weights,
+    styles: wire.styles,
+    defaultSubset: wire.default_subset,
+  };
 }

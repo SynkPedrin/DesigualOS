@@ -52,9 +52,9 @@ export async function syncClickUpClients(access: ClickUpAccess): Promise<ClickUp
     // foi criada à mão antes desta integração).
     //
     // Sem essa checagem, duas listas diferentes com nomes que geram o mesmo
-    // slug ficam trocando de dono a cada sync — foi medido de verdade: as
-    // listas 901414400351 ("🧪 CASE #0 — Endrigo Almada / CITÁVEL™") e
-    // 901414400406 ("🧪 Case #0 — ...") só diferem em maiúsculas e faziam a
+    // slug ficam trocando de dono a cada sync - foi medido de verdade: as
+    // listas 901414400351 ("🧪 CASE #0 - Endrigo Almada / CITÁVEL™") e
+    // 901414400406 ("🧪 Case #0 - ...") só diferem em maiúsculas e faziam a
     // importação reportar 2 updates em TODA rodada, num vaivém infinito.
     // Duas listas distintas são dois clientes distintos, mesmo com nome igual.
     const baseSlug = slugify(entry.name);

@@ -73,7 +73,7 @@ export function useUpdateUserStatus() {
   });
 }
 
-/** No confirmed contract for this yet (only invite/role/status exist for sure) — follows the
+/** No confirmed contract for this yet (only invite/role/status exist for sure) - follows the
  * obvious REST convention. If the backend hasn't wired it up yet this surfaces a real error
  * instead of silently pretending to succeed. */
 export function useDeleteUser() {

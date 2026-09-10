@@ -13,8 +13,18 @@ export interface ClickUpConfig {
   teamId: string;
 }
 
+// O GET /team/:teamId do ClickUp devolve mais campos em member.user do que
+// usávamos (profilePicture, initials, color). Eles alimentam o diretório de
+// colaboradores (GET /collaborators) sem nenhuma chamada extra à API.
 const teamMemberSchema = z.object({
-  user: z.object({ id: z.number(), email: z.string(), username: z.string() }),
+  user: z.object({
+    id: z.number(),
+    email: z.string(),
+    username: z.string(),
+    profilePicture: z.string().nullish(),
+    initials: z.string().nullish(),
+    color: z.string().nullish(),
+  }),
 });
 
 const teamResponseSchema = z.object({
@@ -25,6 +35,9 @@ export interface ClickUpMember {
   id: number;
   email: string;
   username: string;
+  profilePicture: string | null;
+  initials: string | null;
+  color: string | null;
 }
 
 export async function getTeamMembers(config: ClickUpConfig): Promise<ClickUpMember[]> {
@@ -35,7 +48,14 @@ export async function getTeamMembers(config: ClickUpConfig): Promise<ClickUpMemb
     throw new Error(`ClickUp team lookup failed (${response.status}): ${await response.text()}`);
   }
   const parsed = teamResponseSchema.parse(await response.json());
-  return parsed.team.members.map((member) => member.user);
+  return parsed.team.members.map((member) => ({
+    id: member.user.id,
+    email: member.user.email,
+    username: member.user.username,
+    profilePicture: member.user.profilePicture ?? null,
+    initials: member.user.initials ?? null,
+    color: member.user.color ?? null,
+  }));
 }
 
 export async function findMemberByEmail(config: ClickUpConfig, email: string): Promise<ClickUpMember | null> {
@@ -175,7 +195,7 @@ export async function createTaskComment(config: ClickUpConfig, taskId: string, t
  * espelha o `true` que o Jarbas manda por padrão (notifica quem participou
  * da thread).
  */
-export async function replyToComment(config: ClickUpConfig, taskId: string, parentCommentId: string, text: string, notifyAll = true): Promise<void> {
+export async function replyToComment(config: ClickUpConfig, taskId: string, parentCommentId: string, text: string, notifyAll = true): Promise<string> {
   const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
@@ -184,4 +204,7 @@ export async function replyToComment(config: ClickUpConfig, taskId: string, pare
   if (!response.ok) {
     throw new Error(`ClickUp reply failed (${response.status}): ${await response.text()}`);
   }
+  // O id da resposta precisa voltar pro chamador: o webhook a registra como
+  // "já respondida" pra não responder à própria resposta (loop infinito).
+  return createdCommentSchema.parse(await response.json()).id;
 }

@@ -33,7 +33,7 @@ function stateSecret(): string {
 
 /**
  * O callback do OAuth chega como navegação do browser, sem Authorization
- * header — então o `state` é a ÚNICA coisa que diz de quem é aquele code.
+ * header - então o `state` é a ÚNICA coisa que diz de quem é aquele code.
  * Por isso ele é assinado (HMAC) e tem validade curta: sem assinatura,
  * qualquer um poderia forjar um state e amarrar a própria conta do ClickUp
  * ao usuário de outra pessoa.
@@ -155,7 +155,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
   /**
    * Desconectar marca como `revoked` em vez de apagar a linha (mesma lógica
    * de ACTIVE/INACTIVE pedida pro Admin: preserva histórico). O token em si
-   * é sobrescrito por vazio — não faz sentido guardar segredo de uma
+   * é sobrescrito por vazio - não faz sentido guardar segredo de uma
    * conexão que o colaborador acabou de revogar.
    */
   app.delete('/integrations/clickup', { preHandler: requireAuth }, async (request, reply) => {

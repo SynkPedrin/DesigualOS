@@ -27,14 +27,24 @@ function manualDecision(agent: AgentName): RouterDecision {
  * de "terminei" (execute-job.ts -> notifyChatCompletion) acontece de graça,
  * sem duplicar aquele pipeline aqui.
  */
-export async function processAutomationJob(job: Job<AutomationJobData>, logger: Logger): Promise<void> {
+export async function processAutomationJob(
+  job: Job<AutomationJobData>,
+  logger: Logger,
+): Promise<void> {
   const { automationId } = job.data;
-  const [automation] = await db.select().from(schema.automations).where(eq(schema.automations.id, automationId));
+  const [automation] = await db
+    .select()
+    .from(schema.automations)
+    .where(eq(schema.automations.id, automationId));
   if (!automation) {
-    logger.warn({ automationId }, 'Automation job fired for an automation that no longer exists, skipping');
+    logger.warn(
+      { automationId },
+      'Automation job fired for an automation that no longer exists, skipping',
+    );
     return;
   }
-  if (!automation.enabled) {
+  if (!automation.enabled && job.data.manual !== true) {
+    // Disparo manual é intenção explícita do usuário - não pula por enabled=false.
     logger.info({ automationId }, 'Automation is disabled, skipping this fire');
     return;
   }
@@ -45,25 +55,41 @@ export async function processAutomationJob(job: Job<AutomationJobData>, logger: 
     // impede uma automação antiga sem conversa vinculada.
     const [conversation] = await db
       .insert(schema.conversations)
-      .values({ userId: automation.createdBy, clientId: automation.clientId, title: `Automação: ${automation.name}` })
+      .values({
+        userId: automation.createdBy,
+        clientId: automation.clientId,
+        title: `Automação: ${automation.name}`,
+      })
       .returning();
     conversationId = conversation?.id ?? null;
     if (conversationId) {
-      await db.update(schema.automations).set({ conversationId }).where(eq(schema.automations.id, automation.id));
+      await db
+        .update(schema.automations)
+        .set({ conversationId })
+        .where(eq(schema.automations.id, automation.id));
     }
   }
 
   if (conversationId) {
-    await db.insert(schema.messages).values({ conversationId, role: 'user', content: automation.prompt });
+    await db
+      .insert(schema.messages)
+      .values({ conversationId, role: 'user', content: automation.prompt });
   }
 
   // Mesmo enriquecimento de contexto do POST /chat (chat/routes.ts): sem
   // isso a automação despachava o prompt cru e o agente não sabia nem de
   // qual cliente se tratava (medido em 03/09: Jarbas respondeu "sobre qual
   // cliente você tá falando?" numa automação com clientId vinculado).
-  const context = await buildContext({ userId: automation.createdBy, clientId: automation.clientId, conversationId });
+  const context = await buildContext({
+    userId: automation.createdBy,
+    clientId: automation.clientId,
+    conversationId,
+    agent: automation.agent,
+  });
   const contextBlock = formatContextForPrompt(context);
-  const messageWithContext = contextBlock ? `${automation.prompt}\n\n---\nContexto:\n${contextBlock}` : automation.prompt;
+  const messageWithContext = contextBlock
+    ? `${automation.prompt}\n\n---\nContexto:\n${contextBlock}`
+    : automation.prompt;
 
   const startedAt = new Date();
   try {
@@ -79,11 +105,15 @@ export async function processAutomationJob(job: Job<AutomationJobData>, logger: 
       automationId: automation.id,
       status: result.status === 'unavailable' ? 'failed' : 'dispatched',
       executionCode: result.executionId,
-      error: result.status === 'unavailable' ? (result.error ?? 'Agente indisponível no momento') : null,
+      error:
+        result.status === 'unavailable' ? (result.error ?? 'Agente indisponível no momento') : null,
       startedAt,
       completedAt: new Date(),
     });
-    await db.update(schema.automations).set({ lastRunAt: startedAt }).where(eq(schema.automations.id, automation.id));
+    await db
+      .update(schema.automations)
+      .set({ lastRunAt: startedAt })
+      .where(eq(schema.automations.id, automation.id));
 
     if (result.status === 'unavailable') {
       logger.warn({ automationId, error: result.error }, 'Automation dispatch unavailable');
@@ -99,7 +129,10 @@ export async function processAutomationJob(job: Job<AutomationJobData>, logger: 
       startedAt,
       completedAt: new Date(),
     });
-    await db.update(schema.automations).set({ lastRunAt: startedAt }).where(eq(schema.automations.id, automation.id));
+    await db
+      .update(schema.automations)
+      .set({ lastRunAt: startedAt })
+      .where(eq(schema.automations.id, automation.id));
     logger.error({ automationId, error: message }, 'Automation dispatch threw');
     throw error;
   }

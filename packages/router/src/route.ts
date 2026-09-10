@@ -6,12 +6,34 @@ import { routerDecisionSchema, type RouterDecision } from './schema';
 
 const CONFIDENCE_THRESHOLD = 0.7;
 
-/** Menção explícita (@jarbas, @Suzy...) vence qualquer camada: quem menciona
- * já escolheu o agente (pedido do usuário, 2026-09-04). */
+const AGENT_NAME_RE = '(bento|jarbas|suzy|studio|otto)';
+
+/**
+ * Menção explícita (@jarbas, @Suzy...) vence qualquer camada: quem menciona já escolheu o
+ * agente (pedido do usuário, 2026-09-04).
+ *
+ * Endereçamento direto no INÍCIO da frase ("Jarbas, tudo certo?", "Bento, quem é você?") conta
+ * como menção explícita também, sem precisar de @ — bug real medido ao vivo em 09/09/2026,
+ * testado através do chat de verdade: "Jarbas, tudo certo?" caiu no classifier e foi respondido
+ * pelo Bento, não pelo Jarbas. Isso é exatamente o padrão que os próprios exemplos do produto
+ * usam sem @ ("Jarbas, como estão as campanhas da 3NET hoje?"), então sem isso a prioridade de
+ * menção explícita nunca disparava pra ninguém que escrevesse do jeito natural.
+ *
+ * Só a PRIMEIRA palavra conta, de propósito: "me atualiza sobre o que o Jarbas fez ontem" cita
+ * o nome no meio da frase, mas pode ser uma pergunta PRA outro agente (ex: Bento) SOBRE o
+ * Jarbas — tratar isso como menção explícita ao Jarbas estaria errado na direção oposta.
+ * Limitação aceita conhecida: uma frase que começa com o nome em 3ª pessoa ("Suzy é uma boa
+ * secretária, não acha?") também bateria aqui — mais raro em português que o padrão de
+ * endereçamento direto que isto existe pra cobrir.
+ */
 export function detectMentionedAgent(message: string): AgentName | null {
-  const match = message.match(/@(bento|jarbas|suzy|studio)\b/i);
-  if (!match?.[1]) return null;
-  return match[1].toLowerCase() as AgentName;
+  const arroba = message.match(new RegExp(`@${AGENT_NAME_RE}\\b`, 'i'));
+  if (arroba?.[1]) return arroba[1].toLowerCase() as AgentName;
+
+  const vocativo = message.trim().match(new RegExp(`^${AGENT_NAME_RE}\\s*[,:]?\\s`, 'i'));
+  if (vocativo?.[1]) return vocativo[1].toLowerCase() as AgentName;
+
+  return null;
 }
 
 /**

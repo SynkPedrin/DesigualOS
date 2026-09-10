@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 /**
  * Camada ambiente da home do chat: brilho roxo atrás da fileira de cards e
  * atrás do composer, um acento lime quase imperceptível e vinheta suave sobre
- * a base carbono. Persiste no estado de conversa, só que esmaecida — o fade
+ * a base carbono. Persiste no estado de conversa, só que esmaecida - o fade
  * é só opacity, nada de layout.
  */
 export function ChatAmbient({ dimmed }: { dimmed: boolean }) {

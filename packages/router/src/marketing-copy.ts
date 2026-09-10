@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { FastifyBaseLogger } from 'fastify';
+import { stripEmDashes } from '@desigual-os/types';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 /** packages/router/src -> packages/router -> packages -> raiz do repo. */
@@ -52,7 +52,7 @@ let cachedDocs: BrainMarketingDoc[] | null = null;
 /**
  * Frameworks de marketing (Brain-Marketing/*.md, frontmatter YAML simples) usados como
  * referência pela copy do Studio. Falha graciosamente se a pasta não existir nesta
- * máquina — nunca deve impedir a criação do job por falta desse contexto.
+ * máquina - nunca deve impedir a criação do job por falta desse contexto.
  */
 function loadBrainMarketingDocs(logger?: FastifyBaseLogger): BrainMarketingDoc[] {
   if (cachedDocs) return cachedDocs;
@@ -60,7 +60,7 @@ function loadBrainMarketingDocs(logger?: FastifyBaseLogger): BrainMarketingDoc[]
   if (!existsSync(BRAIN_MARKETING_DIR)) {
     logger?.warn(
       { dir: BRAIN_MARKETING_DIR },
-      'Brain-Marketing not found — studio copy will be generated without marketing framework context',
+      'Brain-Marketing not found - studio copy will be generated without marketing framework context',
     );
     cachedDocs = [];
     return cachedDocs;
@@ -101,7 +101,7 @@ let cachedModusOperandi: string | null | undefined;
  * Modus operandi canônico do carrossel do Cinema Impossível (.agents/skills/.../SKILL.md).
  * É a fonte da verdade da copy do Studio: as leis duras (seções 3 e 10) vêm daqui.
  * Retorna o corpo do arquivo sem o frontmatter YAML. Falha graciosamente (warn + null)
- * se o arquivo não existir nesta máquina — mesmo padrão do loadBrainMarketingDocs.
+ * se o arquivo não existir nesta máquina - mesmo padrão do loadBrainMarketingDocs.
  */
 function loadModusOperandi(logger?: FastifyBaseLogger): string | null {
   if (cachedModusOperandi !== undefined) return cachedModusOperandi;
@@ -109,7 +109,7 @@ function loadModusOperandi(logger?: FastifyBaseLogger): string | null {
   if (!existsSync(MODUS_OPERANDI_PATH)) {
     logger?.warn(
       { path: MODUS_OPERANDI_PATH },
-      'Modus operandi do carrossel não encontrado — studio copy seguirá sem o canon',
+      'Modus operandi do carrossel não encontrado - studio copy seguirá sem o canon',
     );
     cachedModusOperandi = null;
     return cachedModusOperandi;
@@ -122,12 +122,16 @@ function loadModusOperandi(logger?: FastifyBaseLogger): string | null {
 
 const studioSlideSchema = z.object({
   headline: z.string(),
-  subtext: z.string().optional(),
-  kicker: z.string().optional(),
+  // nullable além de optional: modelo local pequeno devolve null explícito
+  // pros campos vagos (o template do prompt sugere isso), e sem o nullable
+  // o parse morria e a copy inteira ia pro ralo por causa de um campo vazio.
+  subtext: z.string().nullable().optional(),
+  kicker: z.string().nullable().optional(),
   tag: z.enum(['verso', 'segredo']).nullable().optional(),
-  tagLabel: z.string().optional(),
+  tagLabel: z.string().nullable().optional(),
   layout: z
     .enum(['capa', 'premissa', 'item', 'follow', 'golpe', 'diptico', 'tese', 'cta'])
+    .nullable()
     .optional(),
 });
 
@@ -164,7 +168,7 @@ function buildSystemPrompt(numSlides: number, modusOperandi: string | null): str
       : `Estrutura dos layouts (peça curta): 1º slide sempre "capa", último sempre "cta"; os intermediários usam "premissa", "item" e, se couber, "follow" e "tese" com bom senso.`;
 
   const canonBlock = modusOperandi
-    ? `CANON INEGOCIÁVEL (modus operandi do carrossel — fonte da verdade da copy):
+    ? `CANON INEGOCIÁVEL (modus operandi do carrossel - fonte da verdade da copy):
 
 ${modusOperandi}
 
@@ -175,7 +179,7 @@ ${modusOperandi}
 
 ${canonBlock}As leis duras de copy (seções 3 e 10 do modus operandi) são INEGOCIÁVEIS, mesmo quando o canon não estiver anexado acima:
 - Abrir com verso da canção entre aspas quando houver contexto de música: vale pra capa, premissa e caption. A tese vem depois, nunca antes.
-- NUNCA usar travessão (—) em nenhum texto. Nem na caption, nem nos slides, nem nas hashtags.
+- NUNCA usar travessão (-) em nenhum texto. Nem na caption, nem nos slides, nem nas hashtags.
 - Nenhum emoji nos slides (headline, subtext, kicker, tagLabel). Na caption pode 1-2 emojis se fizer sentido.
 - CTA emocional: pedir pra SALVAR e ENVIAR ("salva pra lembrar", "manda pra quem..."). Nunca "segue agora" nem "marca 5 amigos" na caption.
 - O pedido de follow existe SÓ no slide 5 (layout "follow"), nunca na caption.
@@ -205,9 +209,10 @@ Responda SOMENTE com o JSON abaixo, sem markdown, sem texto antes ou depois:
  * Passo de copywriting do Studio (image/carousel): gera legenda + texto por slide usando
  * o modus operandi canônico do carrossel (.agents/skills/carrossel-cinema-impossivel) como
  * fonte da verdade e os frameworks de Brain-Marketing como camada estratégica secundária.
- * Roda na API (não no node da RTX) porque é aqui que temos o checkout completo do monorepo
- * e a única chave Anthropic configurada (mesmo padrão de classifier.ts). Retorna null em
- * qualquer falha — o job de criação nunca deve travar por causa da copy.
+ * Roda na API (não no node da RTX) porque é aqui que temos o checkout completo do monorepo.
+ * O LLM é o Ollama (decisão do usuário, 2026-09-04): ministral-3:3b no PC do Studio,
+ * sem depender de chave de API paga. Retorna null em qualquer falha: o job de criação
+ * nunca deve travar por causa da copy.
  */
 export async function generateStudioCopy(params: {
   objective: string;
@@ -216,11 +221,6 @@ export async function generateStudioCopy(params: {
   logger: FastifyBaseLogger;
 }): Promise<StudioCopyResult | null> {
   const { objective, briefing, numSlides, logger } = params;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    logger.warn('ANTHROPIC_API_KEY not configured, studio copy generation unavailable');
-    return null;
-  }
 
   const brief = [objective, briefing].filter((part) => part && part.trim().length > 0).join('. ');
   if (!brief.trim()) return null;
@@ -230,30 +230,59 @@ export async function generateStudioCopy(params: {
   const referenceBlock =
     docs.length > 0
       ? docs.map((doc) => `### ${doc.titulo}\n${doc.body}`).join('\n\n')
-      : '(nenhum framework de marketing específico encontrado para este briefing — siga o modus operandi.)';
+      : '(nenhum framework de marketing específico encontrado para este briefing, siga o modus operandi.)';
+
+  const ollamaUrl = process.env.COPY_OLLAMA_URL ?? 'http://100.107.198.50:11434';
+  const model = process.env.COPY_OLLAMA_MODEL ?? 'ministral-3:3b';
 
   try {
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1536,
-      system: buildSystemPrompt(numSlides, modusOperandi),
-      messages: [
-        {
-          role: 'user',
-          content: `Referências estratégicas de marketing (camada secundária — em conflito, o modus operandi vence):\n\n${referenceBlock}\n\n---\n\nBriefing da campanha:\n${brief}`,
-        },
-      ],
+    const response = await fetch(`${ollamaUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: 'json',
+        messages: [
+          { role: 'system', content: buildSystemPrompt(numSlides, modusOperandi) },
+          {
+            role: 'user',
+            content: `Referências estratégicas de marketing (camada secundária, em conflito o modus operandi vence):\n\n${referenceBlock}\n\n---\n\nBriefing da campanha:\n${brief}`,
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(120_000),
     });
+    if (!response.ok) {
+      logger.error({ status: response.status, model }, 'Studio copy generation failed (Ollama HTTP)');
+      return null;
+    }
 
-    const textBlock = response.content.find((block) => block.type === 'text');
-    if (!textBlock || textBlock.type !== 'text') return null;
+    const body = (await response.json()) as { message?: { content?: string } };
+    const content = body.message?.content;
+    if (!content) return null;
 
-    const parsed: unknown = JSON.parse(textBlock.text);
+    const parsed: unknown = JSON.parse(content);
     const result = studioCopySchema.parse(parsed);
-    return { ...result, slides: normalizeSlideCount(result.slides, numSlides) };
+    const normalized = normalizeSlideCount(result.slides, numSlides);
+    // Cinto e suspensório da regra "nunca travessão": o system prompt já
+    // proíbe, mas modelo local pequeno desobedece de vez em quando.
+    return {
+      caption: stripEmDashes(result.caption),
+      hashtags: result.hashtags.map((tag) => stripEmDashes(tag)),
+      slides: normalized.map((slide) => ({
+        headline: stripEmDashes(slide.headline),
+        // null vira ausência de campo: downstream (text-overlay, jsonb) espera
+        // string|undefined, não null.
+        ...(slide.subtext != null ? { subtext: stripEmDashes(slide.subtext) } : {}),
+        ...(slide.kicker != null ? { kicker: stripEmDashes(slide.kicker) } : {}),
+        ...(slide.tag != null ? { tag: slide.tag } : {}),
+        ...(slide.tagLabel != null ? { tagLabel: stripEmDashes(slide.tagLabel) } : {}),
+        ...(slide.layout != null ? { layout: slide.layout } : {}),
+      })),
+    };
   } catch (error) {
-    logger.error({ error }, 'Studio copy generation failed');
+    logger.error({ error, model }, 'Studio copy generation failed');
     return null;
   }
 }

@@ -1,0 +1,90 @@
+# Exemplo de config do Nginx para o VPS do Orchestrator (apps/api, via
+# docker-compose.prod.yml, publicada em 127.0.0.1:3001 no host).
+#
+# Por que existe um Nginx público aqui e não fere a regra de ouro 3 ("nenhuma
+# máquina exposta publicamente, toda comunicação passa por Tailscale") de
+# brain/01 - Regras de Ouro.md: essa regra é sobre as máquinas dos AGENTES
+# (Mac Minis, PC da RTX), que nunca ficam acessíveis fora da Tailscale. O
+# Orchestrator (este VPS) é a única peça do sistema que PRECISA de uma URL
+# pública de verdade (o webhook do ClickUp chama de fora, ver
+# apps/api/src/clickup/routes.ts), então o que a regra exige aqui é TLS +
+# autenticação em toda rota sensível, não zero exposição.
+#
+# Troque SEU_DOMINIO_AQUI pelo domínio real apontando para o IP deste VPS
+# (registro DNS tipo A) antes de rodar o certbot.
+#
+# Instalação (Debian/Ubuntu):
+#   sudo apt install nginx certbot python3-certbot-nginx
+#   sudo cp vps-nginx.conf.example /etc/nginx/sites-available/desigual-os
+#   sudo ln -s /etc/nginx/sites-available/desigual-os /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#   # O certbot reescreve o bloco 443 sozinho na primeira execução (plugin
+#   # --nginx); rode isto DEPOIS do "nginx -t" acima passar com o bloco 80:
+#   sudo certbot --nginx -d SEU_DOMINIO_AQUI
+
+# Bloco 80: só existe para o desafio HTTP-01 do certbot e para redirecionar
+# todo o resto para HTTPS. Nada de proxy para a API aqui: sem TLS, nada
+# passa (regra de ouro 3).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name SEU_DOMINIO_AQUI;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# Bloco 443: preenchido pelo certbot na primeira execução (certificate/key
+# paths abaixo são o padrão do Let's Encrypt via certbot --nginx; se você
+# gerar os certificados de outro jeito, ajuste os caminhos).
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name SEU_DOMINIO_AQUI;
+
+    ssl_certificate     /etc/letsencrypt/live/SEU_DOMINIO_AQUI/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/SEU_DOMINIO_AQUI/privkey.pem;
+    # options-ssl-nginx.conf é criado pelo próprio certbot (plugin --nginx)
+    # na primeira execução, com os protocolos/cifras recomendados atuais.
+    # Se você gerar certificado por outro caminho (sem o plugin --nginx),
+    # remova esta linha ou aponte para um hardening equivalente seu.
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+
+    # Tamanho de upload: a API já limita anexos a 25MB no próprio
+    # @fastify/multipart (apps/api/src/server.ts, `limits: { fileSize: 25 *
+    # 1024 * 1024 }`). O Nginx precisa de um limite igual ou maior, senão
+    # corta a requisição antes dela chegar na API.
+    client_max_body_size 25m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # /ws é WebSocket (@fastify/websocket, ver apps/api/src/ws/routes.ts):
+    # precisa dos headers de Upgrade/Connection, senão a conexão cai para
+    # HTTP comum e falha. Timeouts mais longos que o bloco acima porque a
+    # conexão fica aberta (não é uma requisição curta de request/response).
+    location /ws {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { getTaskComments, getTasksInList } from '@desigual-os/tool-gateway';
+import { getTaskComments, getTasksInList, getTasksInListPaged } from '@desigual-os/tool-gateway';
 import type { ClickUpTaskSummary } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
@@ -163,10 +163,13 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         return { error: 'No access granted to this client workspace' };
       }
 
-      const [conversationRows, assetRows, executionRows] = await Promise.all([
+      const [conversationRows, assetRows, executionRows, [project]] = await Promise.all([
         db.select().from(schema.conversations).where(eq(schema.conversations.clientId, clientId)).orderBy(desc(schema.conversations.updatedAt)).limit(20),
         db.select().from(schema.studioAssets).where(eq(schema.studioAssets.clientId, clientId)).orderBy(desc(schema.studioAssets.createdAt)).limit(20),
         db.select().from(schema.executions).where(eq(schema.executions.clientId, clientId)).orderBy(desc(schema.executions.createdAt)).limit(20),
+        // Projeto de chat vinculado a este cliente (tela de Clientes ainda não
+        // tinha como abrir o chat dele: faltava esse id pro botão "Abrir chat").
+        db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.clientId, clientId)).limit(1),
       ]);
 
       const totalCost = executionRows.reduce((sum, row) => sum + Number(row.actualCost ?? row.estimatedCost ?? 0), 0);
@@ -178,6 +181,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
           slug: client.slug,
           status: client.status,
           clickup_list_id: client.clickupListId,
+          project_id: project?.id ?? null,
           // Deep link direto pra lista do cliente no ClickUp. Embutir o
           // ClickUp por iframe NÃO é possível: o CSP dele responde
           // `frame-ancestors 'self' https://clickup.com` (verificado nos
@@ -250,6 +254,81 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
       return { client_id: clientId, user_id: targetUser.id, role: body.role };
     },
   );
+  /**
+   * Brand kit consolidado pro Studio: junta o branding geral
+   * (client_brand_kits) com as referências visuais específicas de geração
+   * (studio_brand_kits). Cliente sem kit NÃO é 404: devolve 200 com campos
+   * null/[] pra tela renderizar o estado vazio sem tratar exceção.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/brand-kit',
+    { preHandler: [requireAuth, requirePermission('clients', 'read')] },
+    async (request, reply) => {
+    const clientId = request.params.id;
+    const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+    if (!client) {
+      reply.code(404);
+      return { error: `Client '${clientId}' not found` };
+    }
+    if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+      reply.code(403);
+      return { error: 'No access granted to this client' };
+    }
+
+    const [brandKit, studioKit] = await Promise.all([
+      db.select().from(schema.clientBrandKits).where(eq(schema.clientBrandKits.clientId, clientId)),
+      db.select().from(schema.studioBrandKits).where(eq(schema.studioBrandKits.clientId, clientId)),
+    ]);
+
+    return {
+      client_id: clientId,
+      logo_url: brandKit[0]?.logoUrl ?? null,
+      colors: brandKit[0]?.colors ?? [],
+      fonts: brandKit[0]?.fonts ?? [],
+      tone_of_voice: brandKit[0]?.toneOfVoice ?? null,
+      reference_images: studioKit[0]?.referenceImages ?? [],
+    };
+    },
+  );
+
+  /**
+   * Memória consolidada do cliente (kind 'client.profile' em `memories`):
+   * dossiê reunido de histórico de conversas, ClickUp e material entregue,
+   * usado pela tela de Projeto no chat pra mostrar "memória, informações e
+   * padrões" antes de começar uma conversa nova ali dentro. Sem registro
+   * ainda é 200 com content null (estado vazio honesto, não 404).
+   */
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/memory',
+    { preHandler: [requireAuth, requirePermission('clients', 'read')] },
+    async (request, reply) => {
+    const clientId = request.params.id;
+    const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+    if (!client) {
+      reply.code(404);
+      return { error: `Client '${clientId}' not found` };
+    }
+    if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+      reply.code(403);
+      return { error: 'No access granted to this client' };
+    }
+
+    const [memory] = await db
+      .select()
+      .from(schema.memories)
+      .where(and(eq(schema.memories.clientId, clientId), eq(schema.memories.kind, 'client.profile')))
+      .orderBy(desc(schema.memories.updatedAt))
+      .limit(1);
+
+    return {
+      client_id: clientId,
+      content: memory?.content ?? null,
+      metadata: memory?.metadata ?? null,
+      updated_at: memory?.updatedAt.toISOString() ?? null,
+    };
+    },
+  );
+
   /**
    * Tarefas REAIS do cliente, lidas direto do ClickUp na hora (não do
    * espelho local): o ClickUp é a fonte de verdade, então a tela mostra o
@@ -393,6 +472,9 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
       // vazio honesto), mas o resto do resumo continua valendo.
       let clickup: {
         total_tasks: number;
+        /** true = a busca bateu no teto de páginas, então `total_tasks` é um MÍNIMO.
+         * A UI tem que dizer "mínimo"/"+" em vez de afirmar o número como total. */
+        counts_truncated: boolean;
         open_tasks: number;
         by_status: Array<{ status: string; color: string | null; count: number }>;
         latest_comments: ClientClickUpComment[];
@@ -405,7 +487,11 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
           return { error: 'No ClickUp access available for this user' };
         }
         try {
-          const tasks = await getTasksInList(access.token, client.clickupListId, true);
+          // Paginado de propósito: até 10/09/2026 esta contagem usava só a primeira página
+          // (100 tarefas) e exibia o resultado como se fosse o total do cliente. Cliente
+          // grande aparecia com número errado sem nenhum sinal de erro. `truncated` sobe pro
+          // wire pra que a UI possa dizer "mínimo" em vez de afirmar um total falso.
+          const { tasks, truncated } = await getTasksInListPaged(access.token, client.clickupListId, true);
           const byStatus = new Map<string, { status: string; color: string | null; count: number }>();
           for (const task of tasks) {
             const key = task.status ?? 'sem status';
@@ -415,6 +501,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
           }
           clickup = {
             total_tasks: tasks.length,
+            counts_truncated: truncated,
             open_tasks: tasks.filter((task) => task.statusType !== 'closed' && task.statusType !== 'done').length,
             by_status: [...byStatus.values()].sort((a, b) => b.count - a.count),
             latest_comments: (await fetchAggregatedComments(tasks, { apiKey: access.token, teamId: access.teamId })).slice(0, 5),

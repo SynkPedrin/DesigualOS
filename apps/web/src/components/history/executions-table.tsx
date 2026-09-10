@@ -81,11 +81,11 @@ export function ExecutionsTable({
                 </td>
                 <td className="px-3 py-3 text-right">
                   <MetricValue className="text-xs text-branco-cru">
-                    {formatDuration(execution.startedAt, execution.completedAt)}
+                    {execution.startedAt ? formatDuration(execution.startedAt, execution.completedAt) : '-'}
                   </MetricValue>
                 </td>
                 <td className="px-3 py-3 text-right text-xs text-nevoa">
-                  {formatRelativeTime(execution.startedAt)}
+                  {execution.startedAt ? formatRelativeTime(execution.startedAt) : 'na fila'}
                 </td>
               </tr>
             );

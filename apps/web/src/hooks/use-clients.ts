@@ -13,7 +13,7 @@ export function useClients() {
   });
 }
 
-/** Projeto criado à mão (sem lista do ClickUp vinculada) — pedido do usuário: qualquer
+/** Projeto criado à mão (sem lista do ClickUp vinculada) - pedido do usuário: qualquer
  * colaborador cria um projeto novo, e ele fica visível pra equipe toda (chat compartilhado). */
 export function useCreateClient() {
   const queryClient = useQueryClient();

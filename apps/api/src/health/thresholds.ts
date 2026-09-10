@@ -6,7 +6,7 @@
  */
 /**
  * Valores calibrados para o modelo REAL de coleta, que é PULL: quem mede é a
- * sonda do Orchestrator (health/probe-scheduler.ts), a cada 30s — os agentes
+ * sonda do Orchestrator (health/probe-scheduler.ts), a cada 30s - os agentes
  * não empurram heartbeat.
  *
  * Os valores antigos (10s/30s/60s) supunham heartbeat empurrado de poucos em

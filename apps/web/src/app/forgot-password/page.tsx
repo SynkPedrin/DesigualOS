@@ -19,7 +19,7 @@ export default function ForgotPasswordPage() {
     try {
       // A rota sempre responde sucesso genérico (nunca revela se o e-mail
       // tem conta ou não), então não há um "e-mail não encontrado" pra
-      // tratar aqui — só falha de rede/validação chega a este catch.
+      // tratar aqui - só falha de rede/validação chega a este catch.
       await apiFetch('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
       setDone(true);
     } catch (submitError) {

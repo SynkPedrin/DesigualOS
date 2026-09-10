@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { InlineSectionError } from '@/components/ui/inline-section-error';
 import { ApiRequestError } from '@/lib/api/client';
 import {
   useAdminUsers,
@@ -36,7 +37,7 @@ function errorText(error: unknown, fallback: string): string {
 /** The backend can create + provision the user for real and still return an error status,
  * because only the notification email failed (e.g. Resend sandbox mode only delivers to the
  * account owner's address). Detected by message prefix since there's no distinct status code
- * for "partially succeeded" — not a guess: the backend crafts this exact string on purpose. */
+ * for "partially succeeded" - not a guess: the backend crafts this exact string on purpose. */
 function isPartialInviteFailure(message: string): boolean {
   return message.startsWith('Convite criado');
 }
@@ -105,9 +106,8 @@ function InviteForm({ onDone }: { onDone: () => void }) {
         {inviteUser.isError && partialFailure && (
           <div className="w-full rounded-md border border-aviso/30 bg-aviso/10 p-3">
             <p className="text-sm text-aviso">
-              Usuário criado, mas o e-mail de convite não saiu (Resend em modo teste — só entrega pro e-mail dono da
-              conta). A pessoa já existe no sistema; verifique um domínio em resend.com/domains pra enviar pra
-              qualquer endereço.
+              O convite foi criado, mas não conseguimos confirmar que o e-mail foi enviado. Avise a pessoa
+              manualmente ou peça pro time técnico verificar o serviço de e-mail.
             </p>
             <p className="mt-1 font-mono text-[10px] text-nevoa">{errorMessage}</p>
           </div>
@@ -345,7 +345,7 @@ function UserCard({
       </div>
 
       {/* Integrações por pessoa (pedido do Endrigo): dá pra ver quem está
-        * conectado ao ClickUp, em qual workspace e desde quando sincronizou —
+        * conectado ao ClickUp, em qual workspace e desde quando sincronizou -
         * sem nunca expor o token, que não sai do servidor. */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <span className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Integrações:</span>
@@ -359,7 +359,7 @@ function UserCard({
                 key={integration.provider}
                 title={
                   conectada
-                    ? `Workspace: ${integration.workspaceName ?? '—'} · última sincronização: ${
+                    ? `Workspace: ${integration.workspaceName ?? '-'} · última sincronização: ${
                         integration.lastSyncedAt ? formatRelativeTime(integration.lastSyncedAt) : 'nunca'
                       }`
                     : `Status: ${integration.status}`
@@ -389,7 +389,7 @@ function UserCard({
 export default function AdminPage() {
   const { isMaster, isPending: rolePending } = useIsMaster();
   const { data: me } = useMe();
-  const { data: users, isPending } = useAdminUsers();
+  const { data: users, isPending, isError, refetch } = useAdminUsers();
   const updateRole = useUpdateUserRole();
   const updateStatus = useUpdateUserStatus();
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -435,6 +435,10 @@ export default function AdminPage() {
         <div className="mb-8 space-y-3">
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />
+        </div>
+      ) : isError ? (
+        <div className="mb-8">
+          <InlineSectionError message="Não conseguimos carregar o time." onRetry={() => refetch()} />
         </div>
       ) : !users || users.length === 0 ? (
         <div className="mb-8">

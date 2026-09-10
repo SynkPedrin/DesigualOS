@@ -165,6 +165,15 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
           role: row.role,
           agent: row.agent,
           content: row.content,
+          attachment_url: row.attachmentUrl,
+          attachment_type: row.attachmentType,
+          attachment_filename: row.attachmentFilename,
+          // Lista completa (2026-09): colunas acima seguem só com o primeiro
+          // anexo por compatibilidade; o histórico de fato lê daqui.
+          attachments: Array.isArray((row.metadata as { attachments?: unknown })?.attachments)
+            ? (row.metadata as { attachments: Array<{ url: string; filename: string; contentType: string }> })
+                .attachments
+            : [],
           created_at: row.createdAt.toISOString(),
         })),
       };
@@ -221,7 +230,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
   });
 
   // Delete real (não soft): a FK de messages tem onDelete cascade, então as
-  // mensagens morrem junto — é o que "Excluir conversa" promete na UI.
+  // mensagens morrem junto - é o que "Excluir conversa" promete na UI.
   app.delete<{ Params: { id: string } }>('/conversations/:id', { preHandler: requireAuth }, async (request, reply) => {
     const user = request.authUser;
     if (!user) {

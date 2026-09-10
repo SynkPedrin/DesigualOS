@@ -32,60 +32,79 @@ const AVATAR_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Recuperação de senha. Rota PÚBLICA por natureza (quem esqueceu a senha
-   * não tem token pra mandar) — a segurança aqui é: sempre responder
+   * não tem token pra mandar) - a segurança aqui é: sempre responder
    * sucesso genérico, nunca revelar se aquele e-mail tem conta ou não
    * (enumeração de usuário é a forma clássica de vazar essa informação).
    *
    * Mesmo padrão do convite (POST /admin/invite): o LINK é gerado pelo
    * Supabase Auth (generateLink), mas quem manda o e-mail é o Resend, com o
-   * template da marca — "no padrão de e-mail do sistema", pedido do usuário.
+   * template da marca - "no padrão de e-mail do sistema", pedido do usuário.
    * Sem Resend configurado, cai pro e-mail padrão do Supabase (funcional,
    * sem a marca), igual o convite já faz.
    */
-  app.post('/auth/forgot-password', async (request, reply) => {
-    const body = forgotPasswordSchema.parse(request.body);
+  app.post(
+    '/auth/forgot-password',
+    // Limite bem mais apertado que o global (300/min): é a rota pública mais
+    // exposta a abuso do sistema (spam de e-mail de recuperação, tentativa
+    // de enumeração por diferença de comportamento). 5 tentativas por 15
+    // minutos por IP é generoso pra alguém que esqueceu a senha de verdade
+    // e hostil o bastante pra tornar flood inviável.
+    { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } },
+    async (request, reply) => {
+      const body = forgotPasswordSchema.parse(request.body);
 
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const secretKey = process.env.SUPABASE_SECRET_KEY;
-    if (!supabaseUrl || !secretKey) {
-      reply.code(500);
-      return { error: 'SUPABASE_URL/SUPABASE_SECRET_KEY not configured on the Orchestrator' };
-    }
-
-    const admin = getSupabaseAdminClient(supabaseUrl, secretKey);
-    const redirectTo = `${process.env.FRONTEND_URL ?? 'http://localhost:3000'}/reset-password`;
-    const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
-
-    try {
-      if (hasResend) {
-        const { data, error } = await admin.auth.admin.generateLink({
-          type: 'recovery',
-          email: body.email,
-          options: { redirectTo },
-        });
-        // "User not found" cai aqui: resposta genérica de sucesso mesmo assim,
-        // de propósito (ver comentário acima sobre enumeração).
-        if (!error && data.user) {
-          const [profile] = await db.select().from(schema.users).where(eq(schema.users.email, body.email));
-          await sendResetPasswordEmail({ to: body.email, name: profile?.name ?? null, resetLink: data.properties.action_link });
-        } else if (error && !/user not found/i.test(error.message)) {
-          logger.error({ error }, 'Falha ao gerar link de recuperação');
-        }
-      } else {
-        // Sem Resend: deixa o próprio Supabase mandar o e-mail dele (sem a
-        // marca, mas funcional). resetPasswordForEmail já responde
-        // genérico, nunca revela se o e-mail existe.
-        await admin.auth.resetPasswordForEmail(body.email, { redirectTo });
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const secretKey = process.env.SUPABASE_SECRET_KEY;
+      if (!supabaseUrl || !secretKey) {
+        reply.code(500);
+        return { error: 'SUPABASE_URL/SUPABASE_SECRET_KEY not configured on the Orchestrator' };
       }
-    } catch (error) {
-      // Erro de ENVIO (Resend fora do ar etc.) também não vaza pro cliente:
-      // só loga pro time investigar. O usuário não pode aprender nada sobre
-      // o estado da própria conta a partir da resposta desta rota.
-      logger.error({ error }, 'Falha ao processar pedido de recuperação de senha');
-    }
 
-    return { ok: true, message: 'Se esse e-mail tiver uma conta, enviamos um link de redefinição de senha.' };
-  });
+      const admin = getSupabaseAdminClient(supabaseUrl, secretKey);
+      const redirectTo = `${process.env.FRONTEND_URL ?? 'http://localhost:3000'}/reset-password`;
+      const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
+
+      try {
+        if (hasResend) {
+          const { data, error } = await admin.auth.admin.generateLink({
+            type: 'recovery',
+            email: body.email,
+            options: { redirectTo },
+          });
+          // "User not found" cai aqui: resposta genérica de sucesso mesmo assim,
+          // de propósito (ver comentário acima sobre enumeração).
+          if (!error && data.user) {
+            const [profile] = await db
+              .select()
+              .from(schema.users)
+              .where(eq(schema.users.email, body.email));
+            await sendResetPasswordEmail({
+              to: body.email,
+              name: profile?.name ?? null,
+              resetLink: data.properties.action_link,
+            });
+          } else if (error && !/user not found/i.test(error.message)) {
+            logger.error({ error }, 'Falha ao gerar link de recuperação');
+          }
+        } else {
+          // Sem Resend: deixa o próprio Supabase mandar o e-mail dele (sem a
+          // marca, mas funcional). resetPasswordForEmail já responde
+          // genérico, nunca revela se o e-mail existe.
+          await admin.auth.resetPasswordForEmail(body.email, { redirectTo });
+        }
+      } catch (error) {
+        // Erro de ENVIO (Resend fora do ar etc.) também não vaza pro cliente:
+        // só loga pro time investigar. O usuário não pode aprender nada sobre
+        // o estado da própria conta a partir da resposta desta rota.
+        logger.error({ error }, 'Falha ao processar pedido de recuperação de senha');
+      }
+
+      return {
+        ok: true,
+        message: 'Se esse e-mail tiver uma conta, enviamos um link de redefinição de senha.',
+      };
+    },
+  );
 
   app.get('/me', { preHandler: requireAuth }, async (request) => {
     return request.authUser;
@@ -107,7 +126,9 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.language !== undefined ? { language: body.language } : {}),
         ...(body.theme !== undefined ? { theme: body.theme } : {}),
-        ...(body.dashboard_widgets !== undefined ? { dashboardWidgets: body.dashboard_widgets } : {}),
+        ...(body.dashboard_widgets !== undefined
+          ? { dashboardWidgets: body.dashboard_widgets }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(schema.users.id, request.authUser.id))

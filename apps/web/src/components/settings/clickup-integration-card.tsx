@@ -25,7 +25,7 @@ function formatDate(iso: string | null | undefined): string {
   return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-export function ClickUpIntegrationCard() {
+export function ClickUpIntegrationSection() {
   const { data: status, isPending } = useClickUpIntegration();
   const connect = useConnectClickUp();
   const disconnect = useDisconnectClickUp();
@@ -43,7 +43,7 @@ export function ClickUpIntegrationCard() {
   }, []);
 
   return (
-    <Surface level="grafite" className="p-5">
+    <>
       <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Integrações</h2>
 
       {callbackMessage && (
@@ -76,7 +76,7 @@ export function ClickUpIntegrationCard() {
               <dl className="mb-4 space-y-1 font-mono text-[11px] text-nevoa">
                 <div className="flex gap-2">
                   <dt>Workspace:</dt>
-                  <dd className="text-branco-cru">{status.workspace_name ?? '—'}</dd>
+                  <dd className="text-branco-cru">{status.workspace_name ?? '-'}</dd>
                 </div>
                 <div className="flex gap-2">
                   <dt>Última sincronização:</dt>
@@ -139,6 +139,14 @@ export function ClickUpIntegrationCard() {
           )}
         </div>
       )}
+    </>
+  );
+}
+
+export function ClickUpIntegrationCard() {
+  return (
+    <Surface level="grafite" className="p-5">
+      <ClickUpIntegrationSection />
     </Surface>
   );
 }

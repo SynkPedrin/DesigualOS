@@ -18,8 +18,21 @@ export async function recordCostEvent(params: {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Bento/Jarbas/Suzy não reportam usage de verdade (ver estimateTokenUsage
+   * em apps/worker/src/processors/execute-job.ts) - marca a linha como tal
+   * pra quem for ler `cost_records` depois saber que é aproximado, não medido. */
+  estimated?: boolean;
 }): Promise<void> {
-  const { executionDbId, clientId, userId, agent, model, inputTokens, outputTokens } = params;
+  const {
+    executionDbId,
+    clientId,
+    userId,
+    agent,
+    model,
+    inputTokens,
+    outputTokens,
+    estimated = false,
+  } = params;
   if (inputTokens === 0 && outputTokens === 0) {
     return;
   }
@@ -31,7 +44,7 @@ export async function recordCostEvent(params: {
     clientId,
     userId,
     agent,
-    kind: 'model',
+    kind: estimated ? 'model_estimated' : 'model',
     amount: amountUsd.toString(),
     currency: 'USD',
   });
@@ -45,5 +58,45 @@ export async function finalizeExecutionCost(executionDbId: string): Promise<void
     .where(eq(schema.costRecords.executionId, executionDbId));
 
   const total = rows.reduce((sum, row) => sum + Number(row.amount), 0);
-  await db.update(schema.executions).set({ actualCost: total.toString() }).where(eq(schema.executions.id, executionDbId));
+  const [execution] = await db
+    .update(schema.executions)
+    .set({ actualCost: total.toString() })
+    .where(eq(schema.executions.id, executionDbId))
+    .returning({ estimatedCost: schema.executions.estimatedCost });
+
+  await recordEconomy(executionDbId, execution?.estimatedCost ?? null, total);
+}
+
+/**
+ * `economy_records` (estimado vs real): migrada no banco desde a Fase 11,
+ * mas até 08/09/2026 nada escrevia nela - não existia estimativa nenhuma
+ * pra comparar (ver `estimateCost` em @desigual-os/token-engine, chamado na
+ * criação da execution em chat-service.ts/workflow-service.ts). Sem
+ * estimatedCost (execution criada antes desta mudança, ou custo real deu
+ * zero), não escreve linha - não faz sentido "economia" sem os dois lados.
+ */
+async function recordEconomy(
+  executionDbId: string,
+  estimatedCostRaw: string | null,
+  actualCost: number,
+): Promise<void> {
+  const estimatedCost = estimatedCostRaw ? Number(estimatedCostRaw) : null;
+  if (estimatedCost === null || estimatedCost <= 0) return;
+
+  const savedAmount = estimatedCost - actualCost;
+  const savedPercentage = Math.max(-999.99, Math.min(999.99, (savedAmount / estimatedCost) * 100));
+
+  // Sem unique constraint em executionId: se finalizeExecutionCost algum dia
+  // for chamado 2x pra mesma execution (não deveria, mas nada impede hoje),
+  // isto evita duas linhas de economia pra uma execution só.
+  await db
+    .delete(schema.economyRecords)
+    .where(eq(schema.economyRecords.executionId, executionDbId));
+  await db.insert(schema.economyRecords).values({
+    executionId: executionDbId,
+    estimatedCost: estimatedCost.toString(),
+    actualCost: actualCost.toString(),
+    savedAmount: savedAmount.toString(),
+    savedPercentage: savedPercentage.toFixed(2),
+  });
 }

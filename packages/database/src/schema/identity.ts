@@ -1,4 +1,4 @@
-import { boolean, jsonb, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
+import { boolean, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, softDeleteColumn, timestampColumns } from './_shared';
 import { roleNameEnum } from './enums';
 
@@ -29,6 +29,9 @@ export const users = pgTable('users', {
   // então a lista aqui é só preferência de exibição, sem risco de acesso.
   dashboardWidgets: jsonb('dashboard_widgets').$type<string[]>().notNull().default([]),
   active: boolean('active').notNull().default(true),
+  // Presença leve: atualizado pelo requireAuth (no máximo 1x por minuto por
+  // usuário). "Online" é calculado no cliente (ex.: visto nos últimos 3 min).
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   ...timestampColumns,
   ...softDeleteColumn,
 });

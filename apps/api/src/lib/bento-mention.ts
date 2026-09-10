@@ -8,20 +8,25 @@
  * O cliente HTTP em si vive em @desigual-os/tool-gateway (askBentoQA):
  * compartilhado com apps/worker, que precisa do MESMO caminho pra
  * despachar o Chat central pro Bento (ver apps/worker/src/processors/
- * execute-job.ts) — sem isso teria duas implementações divergindo.
+ * execute-job.ts) - sem isso teria duas implementações divergindo.
  */
 import { askBentoQA, BentoQAError } from '@desigual-os/tool-gateway';
+import { withPersonality } from '@desigual-os/types';
 
-function bentoQAConfig(): { url: string; token: string } {
+function bentoQAConfig(): { url: string; token: string; channel: 'clickup'; preferFormattedText: true } {
   const url = process.env.BENTO_QA_URL ?? 'http://100.93.182.83:8791';
   const token = process.env.BENTO_QA_TOKEN;
   if (!token) throw new BentoQAError('BENTO_QA_TOKEN not configured on the Orchestrator', 'config');
-  return { url, token };
+  // Comentário de ClickUp não tem UI de fontes separada: o texto pré-formatado com "Fontes:" é o
+  // certo aqui (diferente do Chat central, que pega `citations` à parte — ver bento-qa-client.ts).
+  return { url, token, channel: 'clickup', preferFormattedText: true };
 }
 
 /** Pergunta ao Bento e devolve o texto já formatado, pronto pra postar. */
 export async function askBento(question: string): Promise<string> {
-  const { text } = await askBentoQA(bentoQAConfig(), question);
+  // Personalidade oficial injetada (context-engine/personalities.ts): a
+  // menção no ClickUp tem que soar igual ao Bento do chat.
+  const { text } = await askBentoQA(bentoQAConfig(), withPersonality('bento', question));
   return text;
 }
 
@@ -57,7 +62,7 @@ export async function respondAsBento(params: { taskId: string; commentId: string
  * 03/09/2026). A BUSCA no vault, porém, é independente disso.
  *
  * Então em vez de devolver só "deu erro", devolve o material real do vault
- * com os caminhos dos arquivos. Não é o Bento redigindo — e o texto diz
+ * com os caminhos dos arquivos. Não é o Bento redigindo - e o texto diz
  * isso com todas as letras, pra ninguém confundir trecho de vault com
  * resposta pensada.
  */
@@ -98,10 +103,17 @@ export async function fetchClickUpCommentText(taskId: string, commentId: string)
   const apiKey = process.env.CLICKUP_API_KEY;
   if (!apiKey) return '(não foi possível carregar o texto do comentário: CLICKUP_API_KEY ausente)';
 
-  const response = await fetch(`https://api.clickup.com/api/v2/task/${taskId}/comment`, { headers: { Authorization: apiKey } });
-  if (!response.ok) return '(não foi possível carregar o texto do comentário)';
+  try {
+    const response = await fetch(`https://api.clickup.com/api/v2/task/${taskId}/comment`, {
+      headers: { Authorization: apiKey },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return '(não foi possível carregar o texto do comentário)';
 
-  const data = (await response.json()) as { comments?: { id: string; comment_text?: string }[] };
-  const comment = data.comments?.find((c) => c.id === commentId);
-  return comment?.comment_text ?? '(comentário não encontrado)';
+    const data = (await response.json()) as { comments?: { id: string; comment_text?: string }[] };
+    const comment = data.comments?.find((c) => c.id === commentId);
+    return comment?.comment_text ?? '(comentário não encontrado)';
+  } catch {
+    return '(não foi possível carregar o texto do comentário: tempo esgotado)';
+  }
 }

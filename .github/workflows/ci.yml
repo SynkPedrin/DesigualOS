@@ -1,0 +1,63 @@
+name: CI
+
+# Até 08/09/2026 não existia NENHUM CI configurado neste repositório - nada
+# impedia código quebrado (typecheck falhando, teste falhando) de ser
+# mergeado, tudo dependia de disciplina manual de quem commitava. Isto roda
+# exatamente os mesmos comandos que já existem e já são usados localmente
+# (pnpm typecheck / lint / test, via Turbo), só que automaticamente em toda
+# PR e push pra main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: typecheck, lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # packageManager no package.json raiz já fixa a versão (pnpm@9.9.0) -
+      # corepack lê isso sozinho, sem precisar duplicar a versão aqui.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # dependsOn: ["^build"] no turbo.json faz typecheck/lint/test
+      # dependerem do build dos packages que cada um consome (ex: apps/api
+      # depende de @desigual-os/database compilado) - build primeiro é
+      # obrigatório, não redundante.
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      # Só 4 dos 17 packages têm testes de verdade hoje (auth, context-engine,
+      # orchestrator e os demais ainda não têm suíte - ver docs/runbook.md);
+      # turbo pula silenciosamente quem não tem script "test", então isto já
+      # roda só o que existe, sem falhar por "no test script" nos outros.
+      - name: Test
+        run: pnpm test
+        env:
+          # Alguns testes (ex: packages/router/src/classifier.test.ts) fazem
+          # asserção explícita do comportamento SEM chave configurada
+          # (fallback seguro) - de propósito, nenhuma credencial real entra
+          # aqui. Nunca configure um secret de produção neste workflow.
+          NODE_ENV: test

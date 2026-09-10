@@ -3,6 +3,7 @@ import {
   BarChart3,
   Bot,
   BookOpen,
+  ClipboardCheck,
   Coins,
   GitBranch,
   History,
@@ -38,6 +39,9 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/costs', label: 'Tokens & Custos', icon: Coins, masterOnly: true },
   { href: '/monitoring', label: 'Monitoramento', icon: Activity, masterOnly: true },
+  // Fila de aprovação humana do Tool Gateway (budget de Meta Ads, publicação
+  // no Instagram, deletar task do ClickUp) - só master aprova (`requirePermission('tool_calls','approve')`).
+  { href: '/approvals', label: 'Aprovações', icon: ClipboardCheck, masterOnly: true },
   { href: '/admin', label: 'Admin', icon: ShieldCheck, masterOnly: true },
   { href: '/settings', label: 'Configurações', icon: Settings },
 ];

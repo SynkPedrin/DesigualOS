@@ -15,6 +15,7 @@ const AGENT_SOURCES: Record<AgentName, string[]> = {
   jarbas: ['Meta Ads Dashboard', 'ClickUp Tarefa #1301'],
   suzy: ['Instagram DM', 'ClickUp Tarefa #1190'],
   studio: ['Brand Kit: Cliente', 'ClickUp Tarefa #1322'],
+  otto: ['Diretrizes de Campanha.md', 'ClickUp Tarefa #1340'],
 };
 
 const AGENT_ANSWER_TEMPLATES: Record<AgentName, (message: string) => string> = {
@@ -26,6 +27,8 @@ const AGENT_ANSWER_TEMPLATES: Record<AgentName, (message: string) => string> = {
     `Revisei as conversas recentes sobre "${message}". Sugiro um follow-up em até 24h para os leads mais quentes, o padrão de resposta do Instagram indica maior conversão nesse intervalo.`,
   studio: (message) =>
     `Preparei um briefing de criativo para "${message}" usando o Brand Kit do cliente. Recomendo três variações de carrossel para teste A/B.`,
+  otto: (message) =>
+    `Desenvolvi a direção criativa para "${message}": conceito central, território visual e estrutura de copy. O passo de execução segue para o Studio.`,
 };
 
 /** Naive keyword router mimicking AUTO, mirrors the concept the real AI Router applies. */

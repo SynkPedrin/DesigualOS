@@ -4,7 +4,7 @@
  * Pedido do Endrigo (03/09/2026): "vincule os vídeos aos cards de títulos,
  * para cada um ficar um vídeo... deixar as telas mais dinâmicas". Os arquivos
  * vieram em assets/ na raiz do projeto; só 4 são únicos (um quinto era
- * duplicata exata, confirmado por hash MD5) — copiados pra
+ * duplicata exata, confirmado por hash MD5) - copiados pra
  * public/brand/videos/ com nome curto.
  *
  * Mapeamento fixo por rota, não aleatório: a mesma tela sempre mostra o

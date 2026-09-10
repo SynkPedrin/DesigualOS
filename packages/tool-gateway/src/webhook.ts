@@ -53,3 +53,32 @@ export function parseTaskCommentPostedEvent(body: unknown): ClickUpMentionEvent 
 
   return { taskId, commentId, textContent };
 }
+
+export interface ClickUpTaskChangedEvent {
+  event: 'taskCreated' | 'taskUpdated' | 'taskDeleted';
+  taskId: string;
+  listId: string | null;
+}
+
+/**
+ * Payload de `taskCreated`/`taskUpdated`/`taskDeleted` (mesma doc de
+ * webhooktaskpayloads): `list_id` só vem preenchido quando o webhook está
+ * inscrito no escopo do Space/Team inteiro (não quando é por lista única,
+ * caso em que o ClickUp omite o campo por já ser óbvio pelo `webhook_id`
+ * usado) - por isso o retorno aceita `listId: null` e quem chama resolve o
+ * cliente de outro jeito nesse caso (ex: busca a task na API pra achar a
+ * lista dela), em vez de descartar o evento inteiro.
+ */
+export function parseTaskChangedEvent(body: unknown): ClickUpTaskChangedEvent | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const record = body as Record<string, unknown>;
+  const event = record.event;
+  if (event !== 'taskCreated' && event !== 'taskUpdated' && event !== 'taskDeleted') return null;
+
+  const taskId = record.task_id;
+  if (typeof taskId !== 'string') return null;
+
+  const listId = typeof record.list_id === 'string' ? record.list_id : null;
+
+  return { event, taskId, listId };
+}

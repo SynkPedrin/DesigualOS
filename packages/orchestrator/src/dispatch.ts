@@ -1,4 +1,5 @@
 import type { RouterDecision } from '@desigual-os/router';
+import type { StudioReferenceAsset } from '@desigual-os/types';
 import { createAndEnqueueExecution } from './chat-service';
 import type { ChatResult } from './result';
 import { startWorkflow } from './workflow-service';
@@ -9,6 +10,7 @@ export interface DispatchParams {
   clientId: string | null;
   conversationId: string | null;
   decision: RouterDecision;
+  attachments?: StudioReferenceAsset[];
 }
 
 /**

@@ -3,9 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Check,
-  ChevronDown,
-  ChevronRight,
-  FolderClosed,
   Lock,
   MessageCircle,
   MessageSquare,
@@ -22,14 +19,13 @@ import { AgentAvatar } from '@/components/ui/agent-avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useConversations, useDeleteConversation, useUpdateConversation } from '@/hooks/use-conversations';
-import { useDeleteProject, useProjects, useUpdateProject } from '@/hooks/use-projects';
+import { useProjects } from '@/hooks/use-projects';
 import { useClients } from '@/hooks/use-clients';
 import { useMe } from '@/hooks/use-me';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { formatRelativeTime } from '@/lib/format';
 import type { ChatProject, ConversationSummary } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
-import { CreateProjectModal } from './create-project-modal';
 
 /** Menu de overflow comum (conversa e projeto): fecha clicando fora. */
 function useOverflowMenu() {
@@ -64,7 +60,7 @@ function ConversationItem({
   conversation: ConversationSummary;
   projects: ChatProject[];
   active: boolean;
-  /** Só o dono (ou master) pode renomear/mover/excluir — mesmo gate do backend. */
+  /** Só o dono (ou master) pode renomear/mover/excluir - mesmo gate do backend. */
   canWrite: boolean;
   onSelect: () => void;
   onDeleted: () => void;
@@ -239,149 +235,63 @@ function ConversationItem({
   );
 }
 
-function ProjectSection({
-  project,
+/**
+ * Uma seção plana da sidebar (Compartilhadas / Minhas conversas). Substituiu a árvore de
+ * projetos (ProjectSection, removida em 09/09/2026 a pedido do usuário: "retire projetos e
+ * conversas recentes do sidebar" — a organização primária do Chat passa a ser público/privado,
+ * não mais pasta por cliente). O vínculo conversa↔cliente/projeto continua existindo no banco
+ * (resolveDefaultProjectForClient, context-engine) — só não aparece mais como navegação aqui;
+ * "mover pra projeto" no menu de cada conversa (ConversationItem) continua funcionando pra quem
+ * quiser arquivar manualmente.
+ */
+function ConversationSection({
+  title,
+  icon,
   conversations,
   allProjects,
   activeConversationId,
-  expanded,
-  onToggle,
   currentUserId,
   isMaster,
+  emptyLabel,
   onSelect,
   onConversationDeleted,
 }: {
-  project: ChatProject;
+  title: string;
+  icon: React.ReactNode;
   conversations: ConversationSummary[];
   allProjects: ChatProject[];
   activeConversationId: string | null;
-  expanded: boolean;
-  onToggle: () => void;
   currentUserId: string | undefined;
   isMaster: boolean;
+  emptyLabel: string;
   onSelect: (id: string) => void;
   onConversationDeleted: (id: string) => void;
 }) {
-  const menu = useOverflowMenu();
-  const [renaming, setRenaming] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [name, setName] = useState(project.name);
-  const updateProject = useUpdateProject();
-  const deleteProject = useDeleteProject();
-
-  function submitRename() {
-    const trimmed = name.trim();
-    setRenaming(false);
-    if (!trimmed || trimmed === project.name) return;
-    updateProject.mutate({ id: project.id, name: trimmed });
-  }
-
-  if (renaming) {
-    return (
-      <div className="flex items-center gap-1.5 rounded-md bg-grafite-elevado px-2 py-1.5">
-        <input
-          autoFocus
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') submitRename();
-            if (event.key === 'Escape') setRenaming(false);
-          }}
-          className="min-w-0 flex-1 rounded border border-grafite-elevado bg-carbono px-2 py-1 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
-        />
-        <button type="button" onClick={submitRename} aria-label="Salvar nome do projeto" className="rounded p-1 text-sinal hover:bg-carbono">
-          <Check size={13} />
-        </button>
-        <button type="button" onClick={() => setRenaming(false)} aria-label="Cancelar" className="rounded p-1 text-nevoa hover:bg-carbono">
-          <X size={13} />
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div>
-      <div className="group flex items-center gap-1 rounded-md pr-1 transition-colors hover:bg-grafite">
-        <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1.5 text-left">
-          {expanded ? <ChevronDown size={13} className="shrink-0 text-nevoa" /> : <ChevronRight size={13} className="shrink-0 text-nevoa" />}
-          <FolderClosed size={13} className="shrink-0 text-sinal" />
-          <span className="truncate text-sm text-branco-cru">{project.name}</span>
-          <span className="shrink-0 font-mono text-[10px] text-nevoa">{conversations.length}</span>
-        </button>
-
-        <div ref={menu.ref} className="relative shrink-0">
-          <button
-            type="button"
-            aria-label="Opções do projeto"
-            onClick={() => {
-              menu.setOpen(!menu.open);
-              setConfirmingDelete(false);
-            }}
-            className={cn(
-              'rounded p-1 text-nevoa transition-all hover:bg-carbono hover:text-branco-cru',
-              menu.open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-            )}
-          >
-            <MoreHorizontal size={14} />
-          </button>
-
-          {menu.open && (
-            <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-md border border-grafite-elevado bg-grafite-elevado p-1 shadow-elevated">
-              <button
-                type="button"
-                className={menuButtonClass()}
-                onClick={() => {
-                  setName(project.name);
-                  setRenaming(true);
-                  menu.setOpen(false);
-                }}
-              >
-                <Pencil size={12} />
-                Renomear projeto
-              </button>
-              {confirmingDelete ? (
-                <button
-                  type="button"
-                  className={menuButtonClass(true)}
-                  onClick={() => {
-                    deleteProject.mutate(project.id);
-                    menu.setOpen(false);
-                  }}
-                >
-                  <Trash2 size={12} />
-                  Confirmar (conversas ficam soltas)
-                </button>
-              ) : (
-                <button type="button" className={menuButtonClass(true)} onClick={() => setConfirmingDelete(true)}>
-                  <Trash2 size={12} />
-                  Excluir projeto
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+    <section>
+      <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-nevoa">
+        {icon}
+        {title}
+        <span className="font-mono text-[10px] text-nevoa">{conversations.length}</span>
+      </p>
+      <div className="space-y-1">
+        {conversations.length === 0 ? (
+          <p className="px-1.5 py-1 text-xs text-nevoa">{emptyLabel}</p>
+        ) : (
+          conversations.map((conversation) => (
+            <ConversationItem
+              key={conversation.id}
+              conversation={conversation}
+              projects={allProjects}
+              active={activeConversationId === conversation.id}
+              canWrite={conversation.userId === currentUserId || isMaster}
+              onSelect={() => onSelect(conversation.id)}
+              onDeleted={() => onConversationDeleted(conversation.id)}
+            />
+          ))
+        )}
       </div>
-
-      {expanded && (
-        <div className="ml-4 space-y-1 border-l border-grafite-elevado pl-1.5">
-          {conversations.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-nevoa">Sem conversas aqui ainda.</p>
-          ) : (
-            conversations.map((conversation) => (
-              <ConversationItem
-                key={conversation.id}
-                conversation={conversation}
-                projects={allProjects}
-                active={activeConversationId === conversation.id}
-                canWrite={conversation.userId === currentUserId || isMaster}
-                onSelect={() => onSelect(conversation.id)}
-                onDeleted={() => onConversationDeleted(conversation.id)}
-              />
-            ))
-          )}
-        </div>
-      )}
-    </div>
+    </section>
   );
 }
 
@@ -402,36 +312,27 @@ export function ConversationSidebar({
   onNewConversation: () => void;
   onDeleteConversation: (id: string) => void;
 }) {
-  const { data: conversations, isPending } = useConversations(agentFilter, clientFilter);
+  const {
+    data: conversations,
+    isPending,
+    isError,
+    refetch,
+  } = useConversations(agentFilter, clientFilter);
   const { data: projects } = useProjects();
   const { data: clients } = useClients();
   const { data: me } = useMe();
   const { isMaster } = useIsMaster();
   const clientName = clientFilter ? clients?.find((c) => c.id === clientFilter)?.name : null;
 
-  const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({});
-
   const allProjects = projects ?? [];
-  const unfiled = (conversations ?? []).filter((conversation) => !conversation.projectId);
-  const conversationsByProject = new Map<string, ConversationSummary[]>();
-  for (const conversation of conversations ?? []) {
-    if (!conversation.projectId) continue;
-    const list = conversationsByProject.get(conversation.projectId) ?? [];
-    list.push(conversation);
-    conversationsByProject.set(conversation.projectId, list);
-  }
-
-  // Expandido por padrão; o clique colapsa. Projeto da conversa aberta nunca
-  // fica colapsado, senão a seleção some da vista.
-  function isExpanded(projectId: string) {
-    const containsActive = (conversationsByProject.get(projectId) ?? []).some((c) => c.id === activeConversationId);
-    return containsActive || !collapsedProjects[projectId];
-  }
-
-  const visibleProjects = allProjects.filter(
-    (project) => !clientFilter || project.clientId === clientFilter || (conversationsByProject.get(project.id)?.length ?? 0) > 0,
-  );
+  // Organização primária do Chat (09/09/2026, pedido do usuário): público/privado, não mais
+  // pasta por cliente. "Projetos" e a lista "Conversas" (não-arquivadas) saíram da sidebar —
+  // "mover pra projeto" continua disponível no menu de cada conversa pra quem quiser arquivar,
+  // e o vínculo automático conversa↔cliente (resolveDefaultProjectForClient) continua gravando
+  // no banco, só não vira navegação aqui.
+  const list = conversations ?? [];
+  const publicList = list.filter((conversation) => conversation.visibility === 'public');
+  const privateList = list.filter((conversation) => conversation.visibility !== 'public');
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-grafite-elevado pr-4">
@@ -444,71 +345,59 @@ export function ConversationSidebar({
         Nova conversa
       </button>
 
-      <div className="mb-2 flex items-center justify-between">
-        <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Projetos</p>
-        <button
-          type="button"
-          onClick={() => setCreateProjectOpen(true)}
-          aria-label="Criar projeto"
-          title="Criar projeto"
-          className="flex items-center gap-1 rounded-md border border-grafite-elevado bg-grafite px-1.5 py-1 font-mono text-[10px] uppercase tracking-wider text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
-        >
-          <Plus size={11} />
-          Novo
-        </button>
-      </div>
+      {clientName && (
+        <p className="mb-3 truncate font-mono text-[10px] uppercase tracking-wider text-nevoa">Filtrando · {clientName}</p>
+      )}
 
-      <div className="mb-3 space-y-0.5">
-        {visibleProjects.length === 0 ? (
-          <p className="px-1.5 py-1 text-xs text-nevoa">Nenhum projeto ainda.</p>
+      <div className="flex-1 space-y-5 overflow-y-auto">
+        {isPending ? (
+          Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14" />)
+        ) : isError ? (
+          <div className="space-y-4">
+            <EmptyState
+              icon={MessageSquare}
+              title="Não conseguimos carregar suas conversas."
+              description="Verifique sua conexão e tente novamente."
+            />
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => refetch()}
+                className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          </div>
         ) : (
-          visibleProjects.map((project) => (
-            <ProjectSection
-              key={project.id}
-              project={project}
-              conversations={conversationsByProject.get(project.id) ?? []}
+          <>
+            <ConversationSection
+              title="Compartilhadas com a equipe"
+              icon={<Users size={11} className="text-sinal" />}
+              conversations={publicList}
               allProjects={allProjects}
               activeConversationId={activeConversationId}
-              expanded={isExpanded(project.id)}
-              onToggle={() => setCollapsedProjects((current) => ({ ...current, [project.id]: !current[project.id] }))}
               currentUserId={me?.id}
               isMaster={isMaster}
+              emptyLabel="Nenhuma conversa pública ainda."
               onSelect={onSelect}
               onConversationDeleted={onDeleteConversation}
             />
-          ))
-        )}
-      </div>
-
-      <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-nevoa">
-        {clientName ? `Conversas · ${clientName}` : 'Conversas'}
-      </p>
-
-      <div className="flex-1 space-y-1 overflow-y-auto">
-        {isPending ? (
-          Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14" />)
-        ) : unfiled.length === 0 ? (
-          <EmptyState
-            icon={MessageSquare}
-            title="Nenhuma conversa"
-            description={clientName ? `Ainda não tem conversa em ${clientName}.` : 'Comece uma nova conversa.'}
-          />
-        ) : (
-          unfiled.map((conversation) => (
-            <ConversationItem
-              key={conversation.id}
-              conversation={conversation}
-              projects={allProjects}
-              active={activeConversationId === conversation.id}
-              canWrite={conversation.userId === me?.id || isMaster}
-              onSelect={() => onSelect(conversation.id)}
-              onDeleted={() => onDeleteConversation(conversation.id)}
+            <ConversationSection
+              title="Minhas conversas"
+              icon={<Lock size={10} />}
+              conversations={privateList}
+              allProjects={allProjects}
+              activeConversationId={activeConversationId}
+              currentUserId={me?.id}
+              isMaster={isMaster}
+              emptyLabel={clientName ? `Ainda não tem conversa em ${clientName}.` : 'Comece uma nova conversa.'}
+              onSelect={onSelect}
+              onConversationDeleted={onDeleteConversation}
             />
-          ))
+          </>
         )}
       </div>
-
-      {createProjectOpen && <CreateProjectModal onClose={() => setCreateProjectOpen(false)} />}
     </aside>
   );
 }

@@ -1,3 +1,4 @@
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { createLogger } from '@desigual-os/logging';
@@ -12,6 +13,7 @@ const AGENTS: Array<{ name: AgentName; displayName: string; description: string 
   { name: 'jarbas', displayName: 'Jarbas', description: 'Performance e tráfego pago.' },
   { name: 'suzy', displayName: 'Suzy', description: 'Social selling e comunicação.' },
   { name: 'studio', displayName: 'Studio', description: 'Criação multimídia em GPU.' },
+  { name: 'otto', displayName: 'Otto', description: 'Direção criativa e inteligência criativa.' },
 ];
 
 const ROLES: Array<{ name: 'master' | 'colaborador'; description: string }> = [
@@ -36,12 +38,18 @@ const AGENT_TOOLS: Array<{
   { agent: 'bento', tool: 'meta_ads', access: 'none' },
   { agent: 'bento', tool: 'instagram', access: 'none' },
 
-  { agent: 'jarbas', tool: 'meta_ads', access: 'write' },
+  // requiresApproval:true aqui não era o caso até 08/09/2026: a matriz
+  // permitia write sem aprovação pra mexer em budget real de cliente, e o
+  // "[AGUARDA_APROVACAO]" do prompt (personalities.ts) não tinha nenhuma
+  // barreira técnica correspondente - era confiança cega no LLM externo.
+  // Ver requestToolCall/extractApprovalProposal (gateway.ts, text.ts) para
+  // o enforcement de verdade.
+  { agent: 'jarbas', tool: 'meta_ads', access: 'write', requiresApproval: true },
   { agent: 'jarbas', tool: 'google_ads', access: 'write' },
   { agent: 'jarbas', tool: 'clickup', access: 'write' },
   { agent: 'jarbas', tool: 'studio', access: 'write' },
 
-  { agent: 'suzy', tool: 'instagram', access: 'write' },
+  { agent: 'suzy', tool: 'instagram', access: 'write', requiresApproval: true },
   { agent: 'suzy', tool: 'whatsapp', access: 'write' },
   { agent: 'suzy', tool: 'clickup', access: 'write' },
   { agent: 'suzy', tool: 'meta_ads', access: 'none' },
@@ -50,6 +58,13 @@ const AGENT_TOOLS: Array<{
   { agent: 'studio', tool: 'storage', access: 'write' },
   { agent: 'studio', tool: 'clickup', access: 'write' },
   { agent: 'studio', tool: 'instagram', access: 'write', requiresApproval: true },
+
+  // Otto entrega trabalho de execução visual pro Studio e lê o contexto de
+  // clientes no Obsidian (mesmo mínimo coerente do Bento); clickup pra
+  // registrar o acompanhamento das campanhas que ele concebe.
+  { agent: 'otto', tool: 'studio', access: 'write' },
+  { agent: 'otto', tool: 'obsidian', access: 'read' },
+  { agent: 'otto', tool: 'clickup', access: 'write' },
 ];
 
 // RBAC de usuário (seção 6.8), separado da matriz de ferramentas por agente
@@ -77,7 +92,7 @@ async function main(): Promise<void> {
   // agora, não as que já existiam. Re-rodar o seed depois de adicionar um
   // 5º agente só inseria esse (os outros 4 já existem, "conflitam" e saem
   // do returning()) e o fallback "sem nada inserido, busca tudo" nunca
-  // disparava porque insertedAgents.length > 0 (tinha 1 item, o novo) —
+  // disparava porque insertedAgents.length > 0 (tinha 1 item, o novo) -
   // agentsByName ficava só com o agente novo, e o loop de agent_tools
   // quebrava achando que bento/jarbas/suzy/studio não existiam. Sempre
   // buscar tudo do banco depois do insert resolve isso sem depender de
@@ -117,6 +132,25 @@ async function main(): Promise<void> {
         requiresApproval: entry.requiresApproval ?? false,
       })
       .onConflictDoNothing({ target: [schema.agentTools.agentId, schema.agentTools.tool] });
+  }
+
+  // Backfill de segurança: onConflictDoNothing acima NUNCA atualiza uma
+  // linha que já existia (ex: banco seedado antes de 08/09/2026, quando
+  // jarbas/meta_ads e suzy/instagram entraram sem requiresApproval). Sem
+  // isto, rodar o seed de novo num banco já populado não corrigia nada -
+  // a matriz continuava permitindo a ação sem aprovação em produção.
+  logger.info('Corrigindo requiresApproval em linhas de agent_tools já existentes (backfill de segurança)');
+  const criticalTools: Array<{ agent: 'jarbas' | 'suzy'; tool: string }> = [
+    { agent: 'jarbas', tool: 'meta_ads' },
+    { agent: 'suzy', tool: 'instagram' },
+  ];
+  for (const { agent: agentName, tool } of criticalTools) {
+    const agent = agentsByName.get(agentName);
+    if (!agent) continue;
+    await db
+      .update(schema.agentTools)
+      .set({ requiresApproval: true })
+      .where(and(eq(schema.agentTools.agentId, agent.id), eq(schema.agentTools.tool, tool)));
   }
 
   logger.info('Seed complete');

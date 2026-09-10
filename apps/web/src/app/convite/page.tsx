@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabase/client';
 /**
  * Where POST /admin/invite's email link lands (redirect_to=/convite). Supabase's invite verify
  * URL, once clicked, redirects here with the session tokens in the URL hash; supabase-js reads
- * that automatically (detectSessionInUrl, on by default) and logs the invited user in — but
+ * that automatically (detectSessionInUrl, on by default) and logs the invited user in - but
  * they were never given a password, so this page's only job is to make them set one before
  * sending them into the app for real.
  */

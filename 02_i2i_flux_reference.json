@@ -1,0 +1,104 @@
+{
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux1-dev.safetensors",
+      "weight_dtype": "fp8_e4m3fn_fast"
+    }
+  },
+  "clip": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "t5xxl_fp16.safetensors",
+      "clip_name2": "clip_l.safetensors",
+      "type": "flux",
+      "device": "cpu"
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "ref_load": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "desigual-ref-<uuid>-referencia.png"
+    }
+  },
+  "ref_fit": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": ["ref_load", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 1.0
+    }
+  },
+  "encode": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["ref_fit", 0],
+      "vae": ["vae", 0]
+    }
+  },
+  "pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["clip", 0],
+      "text": "A deep metallic blue car parked on a snow-covered mountain road at dusk. Fresh powder snow on the hood and roof, cold blue ambient light with a warm sodium glow from a distant streetlamp, low contrast winter haze in the background. Shot on 35mm film with a 50mm lens, natural grain, realistic paint reflections and wet slush on the tires."
+    }
+  },
+  "neg": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": ["pos", 0]
+    }
+  },
+  "guide": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["pos", 0],
+      "guidance": 3.0
+    }
+  },
+  "shift": {
+    "class_type": "ModelSamplingFlux",
+    "inputs": {
+      "model": ["unet", 0],
+      "max_shift": 1.15,
+      "base_shift": 0.5,
+      "width": 1024,
+      "height": 1024
+    }
+  },
+  "sample": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["shift", 0],
+      "positive": ["guide", 0],
+      "negative": ["neg", 0],
+      "latent_image": ["encode", 0],
+      "seed": 123456789,
+      "steps": 28,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 0.55
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["sample", 0],
+      "vae": ["vae", 0]
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["decode", 0],
+      "filename_prefix": "desigual-os-studio/%date:yyyy-MM-dd%/i2i"
+    }
+  }
+}

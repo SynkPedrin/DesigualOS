@@ -1,6 +1,6 @@
 /**
  * Cabeçalho "Authorization: Bearer <token>" -> só o token. Usado tanto pra
- * autenticar usuário (JWT do Supabase) quanto node (NODE_SECRET) — mesma
+ * autenticar usuário (JWT do Supabase) quanto node (NODE_SECRET) - mesma
  * extração, credenciais diferentes; existia duplicada em apps/api/src/auth
  * /middleware.ts e apps/api/src/nodes/auth.ts.
  */

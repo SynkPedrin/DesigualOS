@@ -144,7 +144,7 @@ h2 { font-size:100px; }
     if (card.tagLabel) {
       body.appendChild(el('div', 'tag-corte ' + (card.tag === 'verso' ? 'verso' : 'segredo'), esc(card.tagLabel)));
     }
-    body.appendChild(el(layout === 'follow' || layout === 'cta' ? 'h2' : 'h1', null, markup(card.headline)));
+    if (card.headline) body.appendChild(el(layout === 'follow' || layout === 'cta' ? 'h2' : 'h1', null, markup(card.headline)));
     if (card.subtext) body.appendChild(el('p', 'subtext', markup(card.subtext)));
     if (layout === 'capa') body.appendChild(el('div', 'arrasta', 'Arrasta &gt;&gt;&gt;'));
     section.appendChild(body);

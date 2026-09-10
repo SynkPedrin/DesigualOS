@@ -1,78 +1,17 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { File, MessageCircle, Paperclip, Plus, Send, X } from 'lucide-react';
-import { PageHeader } from '@/components/ui/page-header';
-import { EmptyState } from '@/components/ui/empty-state';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { MessageCircle } from 'lucide-react';
+import { MessagesSidebar, type MessagesFilter } from '@/components/messages/messages-sidebar';
+import { MessagesEmptyState } from '@/components/messages/messages-empty-state';
+import { ConversationView, type ConversationPartner } from '@/components/messages/conversation-view';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AgentAvatar } from '@/components/ui/agent-avatar';
-import { useMe } from '@/hooks/use-me';
-import { useMessageThread, useMessageThreads, useSendMessage } from '@/hooks/use-messages';
-import { useTeamMembers } from '@/hooks/use-team-members';
-import { ApiRequestError } from '@/lib/api/client';
-import type { Message } from '@/lib/api/contracts';
-import { AGENT_META, FEATURED_AGENTS } from '@/lib/agent-meta';
-import { formatRelativeTime } from '@/lib/format';
+import { InlineSectionError } from '@/components/ui/inline-section-error';
+import { useMessageThreads } from '@/hooks/use-messages';
+import { useCollaborators } from '@/hooks/use-collaborators';
 import { cn } from '@/lib/utils';
-
-function Avatar({ name, avatarUrl, size = 36 }: { name: string; avatarUrl: string | null; size?: number }) {
-  return (
-    <div
-      className="relative flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru"
-      style={{ width: size, height: size }}
-    >
-      {avatarUrl ? (
-        <Image src={avatarUrl} alt={name} fill sizes={`${size}px`} unoptimized className="object-cover" />
-      ) : (
-        name.charAt(0).toUpperCase()
-      )}
-    </div>
-  );
-}
-
-function Attachment({ message }: { message: Message }) {
-  if (!message.attachmentUrl) return null;
-  const type = message.attachmentType ?? '';
-
-  if (type.startsWith('image/')) {
-    return (
-      <a href={message.attachmentUrl} target="_blank" rel="noreferrer" className="mt-2 block">
-        <Image
-          src={message.attachmentUrl}
-          alt={message.attachmentFilename ?? 'imagem'}
-          width={240}
-          height={180}
-          unoptimized
-          className="h-auto max-w-[240px] rounded-md border border-grafite-elevado object-cover"
-        />
-      </a>
-    );
-  }
-
-  if (type.startsWith('audio/')) {
-    return <audio controls src={message.attachmentUrl} className="mt-2 h-9 max-w-[240px]" />;
-  }
-
-  if (type.startsWith('video/')) {
-    return (
-      <video controls src={message.attachmentUrl} className="mt-2 max-w-[240px] rounded-md border border-grafite-elevado" />
-    );
-  }
-
-  return (
-    <a
-      href={message.attachmentUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="mt-2 flex max-w-[240px] items-center gap-2 rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-xs text-nevoa hover:border-roxo-eletrico/50 hover:text-branco-cru"
-    >
-      <File size={14} className="shrink-0" />
-      <span className="truncate">{message.attachmentFilename ?? 'arquivo'}</span>
-    </a>
-  );
-}
 
 export default function MessagesPage() {
   return (
@@ -82,218 +21,208 @@ export default function MessagesPage() {
   );
 }
 
+const VALID_FILTERS: readonly MessagesFilter[] = ['todas', 'nao-lidas', 'favoritas', 'arquivadas'];
+
+function parseFilter(value: string | null): MessagesFilter {
+  return VALID_FILTERS.includes(value as MessagesFilter) ? (value as MessagesFilter) : 'todas';
+}
+
 function MessagesPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { data: me } = useMe();
-  const { data: threads, isPending: threadsPending } = useMessageThreads();
-  const { data: members } = useTeamMembers();
+  const reduceMotion = useReducedMotion();
+
   const [selectedUserId, setSelectedUserId] = useState<string | null>(searchParams.get('to'));
+  const [filter, setFilter] = useState<MessagesFilter>(parseFilter(searchParams.get('filter')));
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [content, setContent] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { data: messages, isPending: messagesPending } = useMessageThread(selectedUserId);
-  const sendMessage = useSendMessage();
+  const {
+    data: threadsData,
+    isPending: threadsPending,
+    isError: threadsError,
+    refetch: refetchThreads,
+  } = useMessageThreads();
+  const {
+    data: collaboratorsData,
+    isPending: collaboratorsPending,
+    isError: collaboratorsError,
+    refetch: refetchCollaborators,
+  } = useCollaborators();
 
+  // O estado mora na URL (?to= / ?filter=): o deep link da command palette
+  // (/messages?to=<userId>) abre a thread direto e refresh não perde o contexto.
+  function syncUrl(userId: string | null, nextFilter: MessagesFilter) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (userId) params.set('to', userId);
+    else params.delete('to');
+    if (nextFilter === 'todas') params.delete('filter');
+    else params.set('filter', nextFilter);
+    const query = params.toString();
+    router.replace(`/messages${query ? `?${query}` : ''}`, { scroll: false });
+  }
+
+  // Navegação externa pra mesma rota (command palette com outro ?to=) não
+  // remonta a página - o efeito aplica o novo valor, espelhando o chat-thread.
+  const lastToParam = useRef(searchParams.get('to'));
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
+    const to = searchParams.get('to');
+    if (to === lastToParam.current) return;
+    lastToParam.current = to;
+    setSelectedUserId(to);
+  }, [searchParams]);
 
-  const selectedPerson = useMemo(() => {
-    const fromThread = threads?.find((t) => t.user.id === selectedUserId)?.user;
-    if (fromThread) return fromThread;
-    return members?.find((m) => m.id === selectedUserId) ?? null;
-  }, [threads, members, selectedUserId]);
+  function handleSelect(userId: string | null) {
+    lastToParam.current = userId;
+    setSelectedUserId(userId);
+    syncUrl(userId, filter);
+  }
 
-  function handleSend() {
-    if (!selectedUserId || sendMessage.isPending || (!content.trim() && !file)) return;
-    sendMessage.mutate(
-      { recipientId: selectedUserId, content: content.trim(), file },
-      { onSuccess: () => { setContent(''); setFile(null); } },
+  function handleFilterChange(nextFilter: MessagesFilter) {
+    setFilter(nextFilter);
+    syncUrl(selectedUserId, nextFilter);
+  }
+
+  const thread = useMemo(
+    () => threadsData?.threads.find((t) => t.user.id === selectedUserId),
+    [threadsData, selectedUserId],
+  );
+  const collaborator = useMemo(
+    () => collaboratorsData?.collaborators.find((c) => c.userId === selectedUserId),
+    [collaboratorsData, selectedUserId],
+  );
+
+  const partner: ConversationPartner | null = useMemo(() => {
+    if (!selectedUserId) return null;
+    if (collaborator) {
+      return {
+        id: collaborator.userId,
+        name: collaborator.name,
+        email: collaborator.email,
+        avatarUrl: collaborator.avatarUrl,
+        lastSeenAt: collaborator.lastSeenAt,
+        clickup: collaborator.clickup
+          ? { username: collaborator.clickup.username, color: collaborator.clickup.color, initials: collaborator.clickup.initials }
+          : null,
+      };
+    }
+    if (thread) {
+      return {
+        id: thread.user.id,
+        name: thread.user.name,
+        email: null,
+        avatarUrl: thread.user.avatarUrl,
+        lastSeenAt: thread.user.lastSeenAt,
+        clickup: null,
+      };
+    }
+    return null;
+  }, [selectedUserId, collaborator, thread]);
+
+  const directoryLoaded = !threadsPending && !collaboratorsPending;
+
+  if (directoryLoaded && (threadsError || collaboratorsError)) {
+    return (
+      <div className="flex h-[calc(100vh-8rem)] items-center justify-center">
+        <InlineSectionError
+          message="Não conseguimos carregar suas mensagens."
+          onRetry={() => {
+            refetchThreads();
+            refetchCollaborators();
+          }}
+        />
+      </div>
     );
   }
 
+  const transition = reduceMotion
+    ? { duration: 0 }
+    : { duration: 0.25, ease: 'easeOut' as const };
+  const panelInitial = reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.99 };
+  const panelExit = reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.99 };
+
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col">
-      <PageHeader eyebrow="Comunicação" title="Mensagens" description="Converse com outros usuários e envie anexos." />
+    <div className="flex h-[calc(100vh-8rem)] gap-4">
+      <MessagesSidebar
+        selectedUserId={selectedUserId}
+        onSelect={handleSelect}
+        filter={filter}
+        onFilterChange={handleFilterChange}
+        pickerOpen={pickerOpen}
+        onPickerOpenChange={setPickerOpen}
+        className={cn(selectedUserId && 'hidden lg:flex')}
+      />
 
-      <div className="flex min-h-0 flex-1 gap-4">
-        <aside className="flex w-72 shrink-0 flex-col border-r border-grafite-elevado pr-4">
-          <div className="mb-3">
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-nevoa">
-              Chat privado com a IA
-            </p>
-            <div className="flex gap-2">
-              {FEATURED_AGENTS.map((agent) => {
-                const meta = AGENT_META[agent];
-                return (
-                  <button
-                    key={agent}
-                    type="button"
-                    onClick={() => router.push(`/chat?agent=${agent}`)}
-                    title={`Conversar com ${meta.label}`}
-                    className="flex flex-1 flex-col items-center gap-1 rounded-md border border-grafite-elevado bg-grafite py-2 transition-colors hover:border-roxo-eletrico/50 hover:bg-grafite-elevado"
-                  >
-                    <AgentAvatar agent={agent} size="sm" />
-                    <span className="truncate text-[11px] text-nevoa">{meta.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setPickerOpen((v) => !v)}
-            className="mb-3 flex items-center justify-center gap-2 rounded-md border border-grafite-elevado bg-grafite py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50"
-          >
-            <Plus size={15} />
-            Nova mensagem
-          </button>
-
-          {pickerOpen && (
-            <div className="mb-3 max-h-48 space-y-1 overflow-y-auto rounded-md border border-grafite-elevado bg-carbono p-2">
-              {members
-                ?.filter((m) => m.id !== me?.id)
-                .map((member) => (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => { setSelectedUserId(member.id); setPickerOpen(false); }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-nevoa hover:bg-grafite hover:text-branco-cru"
-                  >
-                    <Avatar name={member.name} avatarUrl={member.avatarUrl} size={24} />
-                    <span className="truncate">{member.name}</span>
-                  </button>
-                ))}
-            </div>
-          )}
-
-          <div className="flex-1 space-y-1 overflow-y-auto">
-            {threadsPending ? (
-              Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14" />)
-            ) : !threads || threads.length === 0 ? (
-              <EmptyState icon={MessageCircle} title="Nenhuma conversa" description="Comece uma nova mensagem." />
-            ) : (
-              threads.map((thread) => (
-                <button
-                  key={thread.user.id}
-                  type="button"
-                  onClick={() => setSelectedUserId(thread.user.id)}
-                  className={cn(
-                    'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2.5 text-left transition-colors',
-                    selectedUserId === thread.user.id ? 'bg-grafite-elevado' : 'hover:bg-grafite',
-                  )}
-                >
-                  <Avatar name={thread.user.name} avatarUrl={thread.user.avatarUrl} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm text-branco-cru">{thread.user.name}</p>
-                      {thread.unreadCount > 0 && (
-                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-sinal font-mono text-[10px] font-semibold text-carbono">
-                          {thread.unreadCount}
-                        </span>
-                      )}
-                    </div>
-                    <p className="truncate font-mono text-[10px] text-nevoa">
-                      {thread.lastMessage.content ?? thread.lastMessage.attachmentFilename ?? 'Anexo'}
-                    </p>
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          {!selectedUserId || !selectedPerson ? (
-            <EmptyState icon={MessageCircle} title="Selecione uma conversa" description="Escolha alguém para conversar." />
-          ) : (
-            <>
-              <div className="mb-3 flex items-center gap-2.5 border-b border-grafite-elevado pb-3">
-                <Avatar name={selectedPerson.name} avatarUrl={selectedPerson.avatarUrl} size={28} />
-                <p className="text-sm font-medium text-branco-cru">{selectedPerson.name}</p>
-              </div>
-
-              <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto pr-1">
-                {messagesPending ? (
-                  Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-2/3" />)
-                ) : (
-                  messages?.map((message) => {
-                    const isMine = message.senderId === me?.id;
-                    return (
-                      <div key={message.id} className={cn('flex', isMine ? 'justify-end' : 'justify-start')}>
-                        <div
-                          className={cn(
-                            'max-w-[70%] rounded-lg px-3 py-2 text-sm',
-                            isMine ? 'bg-roxo-eletrico text-branco-cru' : 'bg-grafite text-branco-cru',
-                          )}
-                        >
-                          {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
-                          <Attachment message={message} />
-                          <p className="mt-1 font-mono text-[10px] opacity-60">{formatRelativeTime(message.createdAt)}</p>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              <div className="mt-3 border-t border-grafite-elevado pt-3">
-                {sendMessage.isError && (
-                  <p className="mb-2 text-xs text-erro">
-                    {sendMessage.error instanceof ApiRequestError ? sendMessage.error.message : 'Não foi possível enviar a mensagem.'}
-                  </p>
-                )}
-                {file && (
-                  <div className="mb-2 flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3 py-1.5 text-xs text-nevoa">
-                    <Paperclip size={12} />
-                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                    <button type="button" onClick={() => setFile(null)} aria-label="Remover anexo">
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    hidden
-                    onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    aria-label="Anexar arquivo"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite hover:text-branco-cru"
-                  >
-                    <Paperclip size={16} />
-                  </button>
-                  <input
-                    type="text"
-                    value={content}
-                    onChange={(event) => setContent(event.target.value)}
-                    onKeyDown={(event) => { if (event.key === 'Enter') handleSend(); }}
-                    placeholder="Escreva uma mensagem..."
-                    className="flex-1 rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru placeholder:text-nevoa focus:border-roxo-eletrico/60 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSend}
-                    disabled={sendMessage.isPending || (!content.trim() && !file)}
-                    aria-label="Enviar"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-md bg-roxo-eletrico text-branco-cru transition-all hover:opacity-90 hover:shadow-glow disabled:opacity-50 disabled:hover:shadow-none"
-                  >
-                    <Send size={16} />
-                  </button>
+      <div className={cn('relative grid min-h-0 min-w-0 flex-1', !selectedUserId && 'hidden lg:grid')}>
+        <AnimatePresence initial={false}>
+          {selectedUserId && partner ? (
+            <motion.div
+              key={selectedUserId}
+              initial={panelInitial}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={panelExit}
+              transition={transition}
+              className="col-start-1 row-start-1 flex min-h-0 flex-col"
+            >
+              <ConversationView partner={partner} thread={thread} onBack={() => handleSelect(null)} />
+            </motion.div>
+          ) : selectedUserId && !directoryLoaded ? (
+            <motion.div
+              key="loading-partner"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={panelExit}
+              transition={transition}
+              className="col-start-1 row-start-1 flex min-h-0 flex-col gap-3"
+            >
+              <div className="flex items-center gap-3 border-b border-white/5 pb-3">
+                <Skeleton className="size-11 rounded-full" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-24" />
                 </div>
               </div>
-            </>
+              <Skeleton className="h-12 w-2/3" />
+              <Skeleton className="ml-auto h-12 w-1/2" />
+              <Skeleton className="h-12 w-2/3" />
+            </motion.div>
+          ) : selectedUserId && !partner ? (
+            <motion.div
+              key="partner-not-found"
+              initial={panelInitial}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={panelExit}
+              transition={transition}
+              className="col-start-1 row-start-1 flex min-h-0 flex-col items-center justify-center gap-3 text-center"
+            >
+              <MessageCircle size={22} className="text-nevoa" />
+              <p className="text-sm font-medium text-branco-cru">Conversa não encontrada</p>
+              <p className="max-w-xs text-xs text-nevoa">
+                Este usuário não está mais no diretório de colaboradores.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleSelect(null)}
+                className="rounded-md border border-grafite-elevado bg-grafite px-3 py-1.5 text-xs font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50"
+              >
+                Voltar
+              </button>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="empty"
+              initial={panelInitial}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={panelExit}
+              transition={transition}
+              className="col-start-1 row-start-1 flex min-h-0 flex-col"
+            >
+              <MessagesEmptyState
+                onNewConversation={() => setPickerOpen(true)}
+                onFilterChange={handleFilterChange}
+              />
+            </motion.div>
           )}
-        </div>
+        </AnimatePresence>
       </div>
     </div>
   );

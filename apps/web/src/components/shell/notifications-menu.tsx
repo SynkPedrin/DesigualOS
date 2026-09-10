@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Bell } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
 import { useMarkNotificationRead, useNotifications } from '@/hooks/use-notifications';
+import { useOpenNotificationLink } from '@/hooks/use-open-notification-link';
 import type { Notification } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
@@ -33,8 +33,9 @@ function NotificationRow({
       type="button"
       onClick={() => {
         if (!notification.read) onRead(notification.id);
-        // "Ao clicar: abrir diretamente a Galeria do Studio" — o destino vem
-        // pronto do backend (notifications.link), não é montado aqui.
+        // "Ao clicar: abrir diretamente a Galeria do Studio" - o destino vem
+        // pronto do backend (notifications.link); links do Studio abrem o
+        // StudioModal popup na peça (use-open-notification-link), não a rota.
         if (notification.link) onNavigate(notification.link);
       }}
       className={cn(
@@ -55,7 +56,7 @@ function NotificationRow({
 export function NotificationsMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const router = useRouter();
+  const openNotificationLink = useOpenNotificationLink();
   const { data: notifications } = useNotifications();
   const markRead = useMarkNotificationRead();
   const unreadCount = notifications?.filter((n) => !n.read).length ?? 0;
@@ -109,7 +110,7 @@ export function NotificationsMenu() {
                       onRead={markRead.mutate}
                       onNavigate={(link) => {
                         setOpen(false);
-                        router.push(link);
+                        openNotificationLink(link);
                       }}
                     />
                   ))}
