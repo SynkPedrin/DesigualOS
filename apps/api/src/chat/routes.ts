@@ -19,6 +19,7 @@ import {
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context';
+import { agenteAceitaBlocoNaMensagem, contextoEnvenenaBusca } from './message-assembly';
 
 const AGENT_HINTS = ['AUTO', ...AGENT_NAMES.map((agent) => agent.toUpperCase())] as [
   string,
@@ -261,7 +262,8 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       // Os outros agentes seguem recebendo: Jarbas e Suzy não fazem busca vetorial na mensagem
       // (Jarbas detecta cliente por nome e puxa da Meta API), e o Otto faz RAG no Brain dele mas
       // com peso muito menor na resposta final.
-      const contextoEnvenenaBusca = decision.primary_agent === 'bento';
+      //
+      // Regra extraída para ./message-assembly.ts (testável; portão do Jarbas, Onda 0).
 
       // DADO OPERACIONAL AO VIVO (10/09/2026). Antes disto, uma pergunta como "quantas
       // tasks vencem amanhã?" chegava ao agente sem NENHUM dado: não existia primitiva de
@@ -278,7 +280,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         operationalTurn.briefingBlock ?? formatOperationalContextForPrompt(operationalTurn.context);
 
       const partesDaMensagem = [body.message];
-      if (contextBlock && !contextoEnvenenaBusca) {
+      if (contextBlock && !contextoEnvenenaBusca(decision.primary_agent)) {
         partesDaMensagem.push(`---\nContexto:\n${contextBlock}`);
       }
       // O Bento agora tem CAMPO SEPARADO pro dado operacional (`operational_context` no
@@ -302,8 +304,8 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       // `job_via_whatsapp` (">100 chars" + palavra de job), que responde "recebi seu
       // briefing da <cliente em cache>, tive um problema técnico" e ignora a pergunta.
       // Só o Bento recebe o dado, e por CAMPO SEPARADO (operational_context).
-      const agenteAceitaBlocoNaMensagem = decision.primary_agent === 'otto' || decision.primary_agent === 'studio';
-      if (operationalBlock && !operationalParaBento && agenteAceitaBlocoNaMensagem) {
+      // Regra extraída para ./message-assembly.ts (testável; portão do Jarbas, Onda 0).
+      if (operationalBlock && !operationalParaBento && agenteAceitaBlocoNaMensagem(decision.primary_agent)) {
         partesDaMensagem.push(`---\n${operationalBlock}`);
       }
       const messageWithContext = partesDaMensagem.join('\n\n');
