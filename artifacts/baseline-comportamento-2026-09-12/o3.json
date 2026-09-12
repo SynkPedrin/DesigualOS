@@ -1,0 +1,17 @@
+{
+  "id": "o3",
+  "agente": "otto",
+  "criterio": "aceite 3: revisão de peça com veredito e direção",
+  "conversation_id": "f6c73b51-371c-4cb9-8d24-bca2fdf16343",
+  "trocas": [
+    {
+      "pergunta": "Revisa essa peça de topo de funil: headline \"Agende sua consulta\", fundo branco puro, foto de stock de dentista sorrindo, logo pequeno no rodapé.",
+      "execution_id": "EXE-2026-MTYRV0GQBA8617",
+      "ack_ms": 2566,
+      "status": "completed",
+      "total_ms": 26892,
+      "resposta": "Isso emociona ou é decoração? \n\n1. Headline \"Agende sua consulta\", fundo branco puro, foto de stock de dentista sorrindo, logo pequeno no rodapé.\n2. Headline \"Aproveite nosso serviço especializado\", fundo branco puro, foto de stock de profissional de saúde sorrindo, logo grande no topo.\n3. Headline \"Entre em contato conosco\", fundo branco puro, foto de stock de pessoa sorrindo, logo grande no topo.",
+      "fontes": null
+    }
+  ]
+}

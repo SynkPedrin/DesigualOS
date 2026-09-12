@@ -1,0 +1,17 @@
+{
+  "id": "s5",
+  "agente": "suzy",
+  "criterio": "aceite 5: diagnóstico de conversa por estágio",
+  "conversation_id": "f10b05aa-5f2c-4354-b03c-74dcea2da3e5",
+  "trocas": [
+    {
+      "pergunta": "Analisa essa conversa: o lead perguntou preço, sumiu uma semana, voltou pedindo desconto. Qual o estágio dele e qual a próxima melhor ação?",
+      "execution_id": "EXE-2026-MTYRNL652EE7C5",
+      "ack_ms": 2409,
+      "status": "completed",
+      "total_ms": 79189,
+      "resposta": "Estágio: Decisão/negociação. Ele já decidiu comprar, só está tentando pagar menos. Sumir foi hesitação de preço, não desinteresse. Quem não quer comprar não volta.\n\nPróxima melhor ação: Não dê desconto direto. Responda ancorando valor antes:\n\n> \"Oi [nome], que bom que voltou! Antes de falar de valor, me conta o que ficou travando: foi o orçamento total ou alguma dúvida sobre o que está incluso?\"\n\nIsso serve para duas coisas: você descobre se é objeção real de preço ou se ele está só testando, e repositiona o valor antes de ceder qualquer coisa.\n\nSe ele confirmar que é preço, aí você negocia, mas na forma de condição, não de corte:\n\n> \"Posso ajustar se fecharmos essa semana\" ou \"posso tirar [X da proposta] pra caber no budget dele\".\n\nDesconto sem contrapartida enfraquece percepção de valor e abre precedente.",
+      "fontes": null
+    }
+  ]
+}

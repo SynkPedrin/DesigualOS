@@ -1,0 +1,17 @@
+{
+  "id": "b6",
+  "agente": "bento",
+  "criterio": "aceite 6: pesquisa web com fonte (impossível hoje, BL-02)",
+  "conversation_id": "5ef085f4-a5b9-4ee2-972e-dbb81bcb4bb9",
+  "trocas": [
+    {
+      "pergunta": "Pesquisa o benchmark atual de CPL para clínicas odontológicas no Meta Ads",
+      "execution_id": "EXE-2026-MTYRDY7S41A136",
+      "ack_ms": 2396,
+      "status": "failed",
+      "total_ms": 39978,
+      "resposta": "Não consegui responder agora: a ação reportou falha técnica; a observação veio vazia",
+      "fontes": []
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "b8",
+  "agente": "bento",
+  "criterio": "aceite 8: não encontrou + o que existe próximo + sugestão de registro",
+  "conversation_id": "681718ce-bb5a-41ab-9614-a29c1cab8810",
+  "trocas": [
+    {
+      "pergunta": "Qual o procedimento padrão para onboarding de estagiário na agência?",
+      "execution_id": "EXE-2026-MTYRFR3O95CFEE",
+      "ack_ms": 2327,
+      "status": "failed",
+      "total_ms": 38934,
+      "resposta": "Não consegui responder agora: a ação reportou falha técnica; a observação veio vazia",
+      "fontes": []
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "b3",
+  "agente": "bento",
+  "criterio": "aceite 3: editar task (impossível hoje, BL-01)",
+  "conversation_id": "e7d4039d-3288-4e05-bcf4-27ac88e62818",
+  "trocas": [
+    {
+      "pergunta": "Marca a última task criada como em revisão e passa pro responsável dela",
+      "execution_id": "EXE-2026-MTYRBZOME8CBC3",
+      "ack_ms": 3530,
+      "status": "failed",
+      "total_ms": 27458,
+      "resposta": "Não consegui responder agora: a ação reportou falha técnica; a observação veio vazia",
+      "fontes": []
+    }
+  ]
+}

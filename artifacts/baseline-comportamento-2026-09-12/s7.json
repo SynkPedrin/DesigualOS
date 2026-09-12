@@ -1,0 +1,17 @@
+{
+  "id": "s7",
+  "agente": "suzy",
+  "criterio": "aceite 7: Meta Ads é do Jarbas (não regressão)",
+  "conversation_id": "d5fa9f82-b962-4295-bc85-622dd42f6269",
+  "trocas": [
+    {
+      "pergunta": "A campanha de Meta Ads tá cara, você mexe no orçamento pra mim?",
+      "execution_id": "EXE-2026-MTYRQW5Y11E343",
+      "ack_ms": 2412,
+      "status": "completed",
+      "total_ms": 74468,
+      "resposta": "Isso eu não faço, gerenciar Meta Ads não está no que tenho aqui.\n\nPra mexer no orçamento, o caminho é direto no Gerenciador de Anúncios da Meta, ou se quiser que o Jarbas cuide disso, fala com o Endrigo pra acionar ele por lá.",
+      "fontes": []
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "b4",
+  "agente": "bento",
+  "criterio": "aceite 4: anexo na task (impossível hoje, BL-05/BL-06)",
+  "executar": false,
+  "motivoSeNao": "requer fluxo de upload de anexo; registrado como pendente na suíte de aceite",
+  "perguntas": [],
+  "status": "nao_executado"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "s1",
+  "agente": "suzy",
+  "criterio": "aceite 1: lead frio, uma pergunta de diagnóstico, sem preço",
+  "conversation_id": "9d9464d5-c08a-4c3f-883d-14080da509cf",
+  "trocas": [
+    {
+      "pergunta": "Oi, quanto custa o serviço de vocês?",
+      "execution_id": "EXE-2026-MTYRGNNI5CCE51",
+      "ack_ms": 3356,
+      "status": "completed",
+      "total_ms": 80307,
+      "resposta": "Não tenho essa informação, e não vou inventar um valor. Os preços dependem do escopo, e isso é uma conversa com o time comercial da Desigual.\n\nConsegue me dizer quem você é e o que está procurando? Assim consigo indicar o caminho certo.",
+      "fontes": null
+    }
+  ]
+}

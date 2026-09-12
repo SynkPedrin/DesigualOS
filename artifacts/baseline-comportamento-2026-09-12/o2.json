@@ -1,0 +1,17 @@
+{
+  "id": "o2",
+  "agente": "otto",
+  "criterio": "aceite 2: roteiro sem etapa declarada (paralisia do funil, stance.ts:8-13)",
+  "conversation_id": "dca85e73-61bb-46b0-b28c-75588f128f75",
+  "trocas": [
+    {
+      "pergunta": "Escreve um roteiro de reels pra uma clínica odontológica",
+      "execution_id": "EXE-2026-MTYRTPMO579884",
+      "ack_ms": 2844,
+      "status": "completed",
+      "total_ms": 56911,
+      "resposta": "Conceito: A ideia central em uma frase, com gosto forte\nPor que funciona: a tensão ou objeção que ela resolve, e a etapa de funil que você assumiu\nHook: Os primeiros 2 a 3 segundos, escritos literalmente\nRoteiro: o desenvolvimento, bloco a bloco ou cena a cena\nDireção visual: enquadramento, luz, paleta, tipografia e linguagem de imagem, em decisão concreta\nCTA: a ação pedida, coerente com a etapa de funil que você assumiu\nVariação A: muda UMA variável (o ângulo ou o hook) e diz o que esse teste responde\nVariação B: muda outra variável, e diz o que esse teste responde\n\nConceito: A ideia central em uma frase, com gosto forte\nPor que funciona: a tensão ou objeção que ela resolve, e a etapa de funil que você assumiu\nHook: Os primeiros 2 a 3 segundos, escritos literalmente\nRoteiro: o desenvolvimento, bloco a bloco ou cena a cena\nDireção visual: enquadramento, luz, paleta, tipografia e linguagem de imagem, em decisão concreta\nCTA: a ação pedida, coerente com a etapa de funil que você assumiu\nVariação A: muda UMA variável (o ângulo ou o hook) e diz o que esse teste responde\nVariação B: muda outra variável, e diz o que esse teste responde",
+      "fontes": null
+    }
+  ]
+}

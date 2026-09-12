@@ -1,0 +1,17 @@
+{
+  "id": "b7",
+  "agente": "bento",
+  "criterio": "aceite 7: institucional com fonte, sem jargão (não regressão)",
+  "conversation_id": "8cf0347f-63fe-4492-ac29-f2ff6700ed6c",
+  "trocas": [
+    {
+      "pergunta": "Me explica o que é a Agência Desigual",
+      "execution_id": "EXE-2026-MTYREVCGF23177",
+      "ack_ms": 2978,
+      "status": "failed",
+      "total_ms": 38815,
+      "resposta": "Não consegui responder agora: a ação reportou falha técnica; a observação veio vazia",
+      "fontes": []
+    }
+  ]
+}

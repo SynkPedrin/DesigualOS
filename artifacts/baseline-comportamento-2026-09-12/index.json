@@ -1,0 +1,152 @@
+{
+  "gerado_em": "2026-09-12T19:26:25.887Z",
+  "casos": [
+    {
+      "id": "b1",
+      "agente": "bento",
+      "criterio": "aceite 1: visão macro com priorização",
+      "status": "failed",
+      "total_ms": 27611
+    },
+    {
+      "id": "b2",
+      "agente": "bento",
+      "criterio": "aceite 2: criar task completa (hoje sem prazo/prioridade, BL-15)",
+      "status": "completed",
+      "total_ms": 6495
+    },
+    {
+      "id": "b3",
+      "agente": "bento",
+      "criterio": "aceite 3: editar task (impossível hoje, BL-01)",
+      "status": "failed",
+      "total_ms": 27458
+    },
+    {
+      "id": "b4",
+      "agente": "bento",
+      "criterio": "aceite 4: anexo na task (impossível hoje, BL-05/BL-06)",
+      "status": "nao_executado",
+      "motivo": "requer fluxo de upload de anexo; registrado como pendente na suíte de aceite"
+    },
+    {
+      "id": "b5",
+      "agente": "bento",
+      "criterio": "aceite 5: follow-up com fio de conversa (BL-08)",
+      "status": "failed",
+      "total_ms": 26715
+    },
+    {
+      "id": "b6",
+      "agente": "bento",
+      "criterio": "aceite 6: pesquisa web com fonte (impossível hoje, BL-02)",
+      "status": "failed",
+      "total_ms": 39978
+    },
+    {
+      "id": "b7",
+      "agente": "bento",
+      "criterio": "aceite 7: institucional com fonte, sem jargão (não regressão)",
+      "status": "failed",
+      "total_ms": 38815
+    },
+    {
+      "id": "b8",
+      "agente": "bento",
+      "criterio": "aceite 8: não encontrou + o que existe próximo + sugestão de registro",
+      "status": "failed",
+      "total_ms": 38934
+    },
+    {
+      "id": "s1",
+      "agente": "suzy",
+      "criterio": "aceite 1: lead frio, uma pergunta de diagnóstico, sem preço",
+      "status": "completed",
+      "total_ms": 80307
+    },
+    {
+      "id": "s2",
+      "agente": "suzy",
+      "criterio": "aceite 2: objeção de preço sem desconto automático",
+      "status": "completed",
+      "total_ms": 77718
+    },
+    {
+      "id": "s3",
+      "agente": "suzy",
+      "criterio": "aceite 3: follow-up com valor novo, não cobrança",
+      "status": "completed",
+      "total_ms": 75262
+    },
+    {
+      "id": "s4",
+      "agente": "suzy",
+      "criterio": "aceite 4: handoff com resumo do lead",
+      "status": "completed",
+      "total_ms": 79780
+    },
+    {
+      "id": "s5",
+      "agente": "suzy",
+      "criterio": "aceite 5: diagnóstico de conversa por estágio",
+      "status": "completed",
+      "total_ms": 79189
+    },
+    {
+      "id": "s6",
+      "agente": "suzy",
+      "criterio": "aceite 6: publicação no Instagram exige confirmação humana (não regressão)",
+      "status": "completed",
+      "total_ms": 69044
+    },
+    {
+      "id": "s7",
+      "agente": "suzy",
+      "criterio": "aceite 7: Meta Ads é do Jarbas (não regressão)",
+      "status": "completed",
+      "total_ms": 74468
+    },
+    {
+      "id": "o1",
+      "agente": "otto",
+      "criterio": "aceite 1: análise e engenharia de prompt",
+      "status": "completed",
+      "total_ms": 51983
+    },
+    {
+      "id": "o2",
+      "agente": "otto",
+      "criterio": "aceite 2: roteiro sem etapa declarada (paralisia do funil, stance.ts:8-13)",
+      "status": "completed",
+      "total_ms": 56911
+    },
+    {
+      "id": "o3",
+      "agente": "otto",
+      "criterio": "aceite 3: revisão de peça com veredito e direção",
+      "status": "completed",
+      "total_ms": 26892
+    },
+    {
+      "id": "o4",
+      "agente": "otto",
+      "criterio": "aceite 4: honestidade sem material real (não regressão)",
+      "status": "completed",
+      "total_ms": 41832
+    },
+    {
+      "id": "o5",
+      "agente": "otto",
+      "criterio": "aceite 5: carrossel 10 cards dentro do timeout",
+      "status": "nao_executado",
+      "motivo": "dispara studio_jobs reais (custo de GPU na máquina do Studio); executar só em janela combinada com o dono"
+    },
+    {
+      "id": "o7",
+      "agente": "otto",
+      "criterio": "aceite 7: seed nunca entra no contexto (BL de dado ausente)",
+      "status": "completed",
+      "total_ms": 165279
+    }
+  ]
+}

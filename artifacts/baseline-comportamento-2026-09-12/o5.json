@@ -1,0 +1,9 @@
+{
+  "id": "o5",
+  "agente": "otto",
+  "criterio": "aceite 5: carrossel 10 cards dentro do timeout",
+  "executar": false,
+  "motivoSeNao": "dispara studio_jobs reais (custo de GPU na máquina do Studio); executar só em janela combinada com o dono",
+  "perguntas": [],
+  "status": "nao_executado"
+}

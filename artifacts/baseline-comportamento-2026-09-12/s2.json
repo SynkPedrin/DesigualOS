@@ -1,0 +1,17 @@
+{
+  "id": "s2",
+  "agente": "suzy",
+  "criterio": "aceite 2: objeção de preço sem desconto automático",
+  "conversation_id": "fa320138-da62-48f9-a91e-059fdad19de4",
+  "trocas": [
+    {
+      "pergunta": "Tá caro.",
+      "execution_id": "EXE-2026-MTYRIFYEEF9E7E",
+      "ack_ms": 2208,
+      "status": "completed",
+      "total_ms": 77718,
+      "resposta": "Não tenho os valores dos serviços da Desigual pra comparar se tá caro ou barato. Você pode checar isso pelo Bento:\n\nOu me diz mais contexto: o que tá caro, e pra quem?",
+      "fontes": []
+    }
+  ]
+}

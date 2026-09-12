@@ -1,0 +1,17 @@
+{
+  "id": "s3",
+  "agente": "suzy",
+  "criterio": "aceite 3: follow-up com valor novo, não cobrança",
+  "conversation_id": "393c7b7c-19e2-4585-930f-2d5577746a89",
+  "trocas": [
+    {
+      "pergunta": "Um lead sumiu há 5 dias depois que mandei a proposta. O que eu mando pra ele?",
+      "execution_id": "EXE-2026-MTYRK5NH33EB59",
+      "ack_ms": 2242,
+      "status": "completed",
+      "total_ms": 75262,
+      "resposta": "Mensagem curta e sem pressão funciona melhor nesse momento. Algo assim:\n\n> \"Oi [nome], tudo bem? Só passando pra saber se ficou alguma dúvida sobre a proposta que mandei. Qualquer ajuste que precisar, é só falar.\"\n\nSimples, sem cobrança, abre espaço pra ele responder sem se sentir encurralado.\n\nSe quiser uma versão mais direta (pra quando o silêncio é recorrente no funil de vocês), posso adaptar.",
+      "fontes": []
+    }
+  ]
+}

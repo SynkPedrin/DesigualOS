@@ -1,0 +1,17 @@
+{
+  "id": "s4",
+  "agente": "suzy",
+  "criterio": "aceite 4: handoff com resumo do lead",
+  "conversation_id": "e517b343-be54-4ed7-b062-64ae076c0bc1",
+  "trocas": [
+    {
+      "pergunta": "O lead respondeu \"pode fechar, como pago?\". O que eu faço agora?",
+      "execution_id": "EXE-2026-MTYRLTKBF1EA92",
+      "ack_ms": 2618,
+      "status": "completed",
+      "total_ms": 79780,
+      "resposta": "Responde agora, não deixa esfriar. Algo assim:\n\n> \"Ótimo! Mando os dados de pagamento agora. Pode ser PIX? Assim a gente já confirma e dá início.\"\n\nAí manda o PIX (ou boleto/link de cobrança, dependendo do que vocês usam) junto com um resumo do que foi fechado, valor e prazo, pra não ter dúvida depois.\n\nSe não souber os dados de pagamento padrão da agência, manda um",
+      "fontes": []
+    }
+  ]
+}

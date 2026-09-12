@@ -1,0 +1,17 @@
+{
+  "id": "o4",
+  "agente": "otto",
+  "criterio": "aceite 4: honestidade sem material real (não regressão)",
+  "conversation_id": "94d61820-aa45-4bdb-843a-bacbd80a4bb8",
+  "trocas": [
+    {
+      "pergunta": "Quais são os melhores criativos rodando agora?",
+      "execution_id": "EXE-2026-MTYRVO40E8B52F",
+      "ack_ms": 3177,
+      "status": "completed",
+      "total_ms": 41832,
+      "resposta": "Conceito: A ideia central em uma frase, com gosto forte\nPor que funciona: a tensão ou objeção que ela resolve, e a etapa de funil que você assumiu\nHook: Os primeiros 2 a 3 segundos, escritos literalmente\nRoteiro: O desenvolvimento, bloco a bloco ou cena a cena\nDireção visual: Enquadramento, luz, paleta, tipografia e linguagem de imagem, em decisão concreta\nCTA: A ação pedida, coerente com a etapa de funil que você assumiu\nVariação A: Muda UMA variável (o ângulo ou o hook) e diz o que esse teste responde\nVariação B: Muda outra variável, e diz o que esse teste responde",
+      "fontes": []
+    }
+  ]
+}
