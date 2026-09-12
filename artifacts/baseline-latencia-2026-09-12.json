@@ -1,0 +1,93 @@
+{
+  "gerado_em": "2026-09-12T19:01:10.047Z",
+  "janela_dias": 30,
+  "total_execucoes": 380,
+  "por_agente": {
+    "jarbas": {
+      "execucoes": 177,
+      "concluidas": 139,
+      "falhas": 35,
+      "fila_ms": {
+        "p50": 564,
+        "p95": 15438
+      },
+      "execucao_ms": {
+        "p50": 4676,
+        "p95": 74396
+      },
+      "total_ms": {
+        "p50": 6841,
+        "p95": 78216
+      }
+    },
+    "otto": {
+      "execucoes": 37,
+      "concluidas": 30,
+      "falhas": 6,
+      "fila_ms": {
+        "p50": 1019,
+        "p95": 322841
+      },
+      "execucao_ms": {
+        "p50": 66772,
+        "p95": 273548
+      },
+      "total_ms": {
+        "p50": 74139,
+        "p95": 607993
+      }
+    },
+    "bento": {
+      "execucoes": 120,
+      "concluidas": 106,
+      "falhas": 14,
+      "fila_ms": {
+        "p50": 1143,
+        "p95": 22649
+      },
+      "execucao_ms": {
+        "p50": 9136,
+        "p95": 39436
+      },
+      "total_ms": {
+        "p50": 10688,
+        "p95": 44004
+      }
+    },
+    "suzy": {
+      "execucoes": 45,
+      "concluidas": 45,
+      "falhas": 0,
+      "fila_ms": {
+        "p50": 572,
+        "p95": 3255
+      },
+      "execucao_ms": {
+        "p50": 12868,
+        "p95": 69813
+      },
+      "total_ms": {
+        "p50": 13523,
+        "p95": 70304
+      }
+    },
+    "studio": {
+      "execucoes": 1,
+      "concluidas": 0,
+      "falhas": 1,
+      "fila_ms": {
+        "p50": 4122,
+        "p95": 4122
+      },
+      "execucao_ms": {
+        "p50": 629,
+        "p95": 629
+      },
+      "total_ms": {
+        "p50": 4751,
+        "p95": 4751
+      }
+    }
+  },
+  "limitacao": "classify_ms/retrieval_ms/llm_ms do Otto não são persistidos pelo worker (execute-job.ts:908 grava só answer/sources/error); baseline mede tempos de parede."
+}
