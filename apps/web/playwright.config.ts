@@ -31,8 +31,22 @@ export default defineConfig({
         // localhost antes de qualquer teste rodar. Desliga só a checagem do
         // browser — a de verdade continua sendo verificada no preflight da
         // API. NUNCA ligar em CI: mascararia bug real de CORS.
-        ...(process.env.E2E_INSECURE_BROWSER && !process.env.CI
-          ? { launchOptions: { args: ['--disable-web-security'] } }
+        //
+        // E2E_CHROME_ARGS passa argumentos extras ao Chromium. O uso real é
+        // rodar contra PRODUÇÃO de dentro da tailnet: ali o hostname da API
+        // resolve pro IP privado (100.x) e o Chrome bloqueia por Private
+        // Network Access antes de qualquer asserção. Mapear o hostname pro IP
+        // público do Funnel reproduz o browser de quem está fora da tailnet:
+        //   E2E_CHROME_ARGS='--host-resolver-rules=MAP <api-host> <ip-publico>'
+        ...(!process.env.CI && (process.env.E2E_INSECURE_BROWSER || process.env.E2E_CHROME_ARGS)
+          ? {
+              launchOptions: {
+                args: [
+                  ...(process.env.E2E_INSECURE_BROWSER ? ['--disable-web-security'] : []),
+                  ...(process.env.E2E_CHROME_ARGS ? process.env.E2E_CHROME_ARGS.split('|') : []),
+                ],
+              },
+            }
           : {}),
       },
     },
