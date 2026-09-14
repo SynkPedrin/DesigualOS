@@ -1,2 +1,6 @@
 .vercel
 .env*
+
+# Saída do Playwright (traces/screenshots de falha) - artefato local, nunca versionado.
+test-results
+playwright-report

@@ -35,7 +35,10 @@ export function CommandPalette() {
 
   useEffect(() => {
     if (!open) setQuery('');
-  }, [open]);
+    // Entrar num cliente é o caminho mais usado daqui: pagar o custo da rota
+    // enquanto a pessoa ainda está digitando tira a espera do Enter.
+    if (open) router.prefetch('/clients');
+  }, [open, router]);
 
   function navigateTo(href: string) {
     if (href === '/studio') {
@@ -67,6 +70,29 @@ export function CommandPalette() {
         <Command.Empty className="px-3 py-6 text-center text-sm text-nevoa">
           Nenhum resultado encontrado.
         </Command.Empty>
+        {/* Clientes vêm ANTES da navegação de propósito: quem digita o nome de
+            um cliente quer entrar na conta dele, e o cmdk seleciona o primeiro
+            item da lista - com "Navegação" em cima, o Enter caía numa tela. */}
+        {results && results.clients.length > 0 && (
+          <Command.Group
+            heading="Clientes"
+            className="px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-nevoa [&_[cmdk-group-items]]:mt-1"
+          >
+            {results.clients.map((client) => (
+              <Command.Item
+                key={client.id}
+                value={`cliente ${client.name} ${client.slug} ${client.id}`}
+                onSelect={() => navigateTo(`/clients?id=${client.id}`)}
+                className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm text-nevoa aria-selected:bg-grafite aria-selected:text-branco-cru"
+              >
+                <Building2 size={16} />
+                <span className="min-w-0 flex-1 truncate">{client.name}</span>
+                <span className="shrink-0 font-mono text-[10px] text-nevoa">Abrir conta</span>
+              </Command.Item>
+            ))}
+          </Command.Group>
+        )}
+
         <Command.Group
           heading="Navegação"
           className="px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-nevoa [&_[cmdk-group-items]]:mt-1"
@@ -102,25 +128,6 @@ export function CommandPalette() {
                 <Users size={16} />
                 <span className="min-w-0 flex-1 truncate">{user.name}</span>
                 <span className="truncate font-mono text-[10px] text-nevoa">{user.email}</span>
-              </Command.Item>
-            ))}
-          </Command.Group>
-        )}
-
-        {results && results.clients.length > 0 && (
-          <Command.Group
-            heading="Clientes"
-            className="px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-nevoa [&_[cmdk-group-items]]:mt-1"
-          >
-            {results.clients.map((client) => (
-              <Command.Item
-                key={client.id}
-                value={`client-${client.id}-${client.name}`}
-                onSelect={() => navigateTo(`/clients?id=${client.id}`)}
-                className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm text-nevoa aria-selected:bg-grafite aria-selected:text-branco-cru"
-              >
-                <Building2 size={16} />
-                {client.name}
               </Command.Item>
             ))}
           </Command.Group>

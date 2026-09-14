@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
@@ -10,15 +12,24 @@ export default defineConfig({
     // localhost, não 127.0.0.1: o Next 16 bloqueia dev resources cross-origin
     // (allowedDevOrigins) e a página não hidratava via 127.0.0.1 — o form de
     // login submetia nativo (GET /login?) e todo teste de aceite falhava.
-    baseURL: 'http://localhost:3000',
+    //
+    // E2E_BASE_URL aponta a suíte pro ambiente publicado (14/09/2026): desde
+    // que a API passou a rodar com FRONTEND_URL da Vercel, o CORS barra o
+    // frontend local, então validar de verdade só acontece contra o deploy.
+    baseURL: BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: {
-    command: 'pnpm dev',
-    url: 'http://localhost:3000/login',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  // Contra ambiente publicado não há servidor pra subir: o app já está no ar.
+  ...(process.env.E2E_BASE_URL
+    ? {}
+    : {
+        webServer: {
+          command: 'pnpm dev',
+          url: 'http://localhost:3000/login',
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+      }),
 });

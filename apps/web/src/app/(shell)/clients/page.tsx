@@ -1,32 +1,48 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence } from 'framer-motion';
 import { Plus, Users } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useClients } from '@/hooks/use-clients';
+import { useClientWorkspace } from '@/hooks/use-client-workspace';
 import { ClientGrid } from '@/components/clients/client-grid';
 import { ClientDetailOverlay } from '@/components/clients/client-detail-overlay';
 import { CreateClientModal } from '@/components/clients/create-client-modal';
 import type { ClientSummary } from '@/lib/api/contracts';
 
 function ClientsPageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { data: clients, isPending, isError, refetch } = useClients();
   const [openClient, setOpenClient] = useState<ClientSummary | null>(null);
   const [creating, setCreating] = useState(false);
 
   // Deep link ?id=<cliente> continua abrindo direto a ficha (o link antigo
-  // não pode quebrar só porque a tela virou roleta).
+  // não pode quebrar só porque a tela virou roleta). É também o caminho da
+  // busca (⌘K -> nome do cliente -> Enter), então ele precisa abrir a conta
+  // sem escalas.
   const deepLinkId = searchParams.get('id');
+  const fromList = clients?.find((client) => client.id === deepLinkId) ?? null;
+  // Mesma query que a própria ficha dispara ao montar (React Query dedupa pela
+  // chave): não custa request nenhum e evita depender da lista dos 57 clientes
+  // ter chegado pra abrir a conta de UM cliente.
+  const { data: deepLinkWorkspace } = useClientWorkspace(deepLinkId);
   useEffect(() => {
-    if (!deepLinkId || !clients) return;
-    const target = clients.find((client) => client.id === deepLinkId);
+    const target = deepLinkWorkspace?.client ?? fromList;
     if (target) setOpenClient(target);
-  }, [deepLinkId, clients]);
+  }, [deepLinkWorkspace, fromList]);
+
+  function closeClient() {
+    setOpenClient(null);
+    // Sem limpar o ?id=, escolher o MESMO cliente de novo na busca não reabria
+    // nada: a URL não mudava, o efeito não rodava de novo e o Enter virava um
+    // clique morto (reproduzido em 14/09/2026).
+    if (deepLinkId) router.replace('/clients', { scroll: false });
+  }
 
   return (
     <div>
@@ -83,7 +99,7 @@ function ClientsPageContent() {
       )}
 
       <AnimatePresence>
-        {openClient && <ClientDetailOverlay client={openClient} onClose={() => setOpenClient(null)} />}
+        {openClient && <ClientDetailOverlay client={openClient} onClose={closeClient} />}
       </AnimatePresence>
 
       <AnimatePresence>
