@@ -1,0 +1,13 @@
+-- Busca de cliente tolerante a erro de digitação (14/09/2026).
+--
+-- Reproduzido em produção: procurar "consentino" na barra de pesquisa não
+-- achava "Cosentino" (um "n" a mais) e a tela dizia "Nenhum resultado
+-- encontrado" com o cliente visível logo atrás, na mesma página. ILIKE só
+-- resolve substring exata; pg_trgm dá similaridade por trigrama, e
+-- word_similarity() compara o termo com o MELHOR TRECHO do nome — essencial
+-- aqui, onde os nomes são longos ("🔥 Construtora e Imobiliária Cosentino
+-- Ltda. — Enterprise") e o termo digitado é uma palavra só.
+--
+-- Extensão já disponível no Supabase; só não estava instalada. Aditivo: não
+-- altera tabela, dado nem contrato.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;

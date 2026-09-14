@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
@@ -28,45 +28,80 @@ function escapeLikePattern(value: string): string {
 export const ACCENTED_CHARS = 'áàâãäéèêëíìîïóòôõöúùûüçñÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ';
 export const PLAIN_CHARS = 'aaaaaeeeeiiiiooooouuuucnAAAAAEEEEIIIIOOOOOUUUUCN';
 
-function matchesIgnoringAccents(column: PgColumn, pattern: string): SQL {
-  return sql`translate(${column}, ${ACCENTED_CHARS}, ${PLAIN_CHARS}) ILIKE translate(${pattern}, ${ACCENTED_CHARS}, ${PLAIN_CHARS})`;
+/**
+ * Erro de digitação (14/09/2026, reproduzido em produção): "consentino" não
+ * achava "Cosentino" e a tela dizia "Nenhum resultado encontrado" com o
+ * cliente visível atrás. `word_similarity` do pg_trgm compara o termo com o
+ * melhor TRECHO do nome — indispensável aqui, onde o nome é longo
+ * ("🔥 Construtora e Imobiliária Cosentino Ltda. — Enterprise") e o termo é
+ * uma palavra só; `similarity()` puro afundaria por causa do resto do nome.
+ *
+ * Limiares medidos contra a carteira real, não chutados:
+ *   "consentino" -> Cosentino 0.615 | melhor falso positivo 0.364
+ *   "jonh deere" -> John Deere 0.571 | próximo 0.182
+ *   "xyzabc"     -> 0.000 em toda a base
+ * 0.45 aceita os dois erros reais com folga e recusa o falso positivo.
+ */
+const FUZZY_THRESHOLD = 0.45;
+/**
+ * Abaixo disso o fuzzy só adiciona ruído: "a" tem similaridade 0.5 com meia
+ * carteira, e termo curto já é bem servido pelo casamento por substring.
+ */
+const FUZZY_MIN_LENGTH = 4;
+
+function folded(value: PgColumn | string): SQL {
+  return sql`translate(${value}, ${ACCENTED_CHARS}, ${PLAIN_CHARS})`;
 }
 
 /**
  * Busca geral (pedido do usuário): usuários, clientes e agentes num só
- * lugar. Sem full-text search dedicado por enquanto, ILIKE cobre o volume
- * atual de dados da agência.
+ * lugar. Sem full-text search dedicado por enquanto, ILIKE + trigrama cobrem
+ * o volume atual da agência (dezenas de registros).
  */
 export async function registerSearchRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { q: string } }>('/search', { preHandler: requireAuth }, async (request) => {
     const { q } = searchQuerySchema.parse(request.query);
     const pattern = `%${escapeLikePattern(q)}%`;
+    const useFuzzy = q.trim().length >= FUZZY_MIN_LENGTH;
+
+    /** Casa por substring (ignorando acento) em qualquer uma das colunas. */
+    const substringMatch = (...columns: PgColumn[]): SQL =>
+      sql.join(
+        columns.map((column) => sql`${folded(column)} ILIKE ${folded(pattern)}`),
+        sql` OR `,
+      );
+
+    const similarityTo = (column: PgColumn): SQL => sql`word_similarity(${folded(q)}, ${folded(column)})`;
+
+    /** Substring primeiro, depois o mais parecido: o melhor resultado fica no topo. */
+    const ranked = (column: PgColumn, ...matchOn: PgColumn[]): SQL =>
+      sql`CASE WHEN (${substringMatch(...matchOn)}) THEN 0 ELSE 1 END, ${similarityTo(column)} DESC, ${column} ASC`;
+
+    const matches = (column: PgColumn, ...matchOn: PgColumn[]): SQL =>
+      useFuzzy
+        ? sql`((${substringMatch(...matchOn)}) OR ${similarityTo(column)} >= ${FUZZY_THRESHOLD})`
+        : sql`(${substringMatch(...matchOn)})`;
 
     const [users, clients, agents] = await Promise.all([
       db
         .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, avatarUrl: schema.users.avatarUrl })
         .from(schema.users)
-        .where(and(isNull(schema.users.deletedAt), matchesIgnoringAccents(schema.users.name, pattern)))
+        .where(and(isNull(schema.users.deletedAt), matches(schema.users.name, schema.users.name)))
+        .orderBy(ranked(schema.users.name, schema.users.name))
         .limit(10),
       db
         .select({ id: schema.clients.id, name: schema.clients.name, slug: schema.clients.slug })
         .from(schema.clients)
-        .where(
-          and(
-            isNull(schema.clients.deletedAt),
-            // Slug também: quem cola o slug do ClickUp ("abitte-urbanismo")
-            // estava recebendo "nenhum resultado" com o cliente na frente.
-            or(
-              matchesIgnoringAccents(schema.clients.name, pattern),
-              matchesIgnoringAccents(schema.clients.slug, pattern),
-            ),
-          ),
-        )
+        // Slug também: quem cola o slug do ClickUp ("abitte-urbanismo")
+        // estava recebendo "nenhum resultado" com o cliente na frente.
+        .where(and(isNull(schema.clients.deletedAt), matches(schema.clients.name, schema.clients.name, schema.clients.slug)))
+        .orderBy(ranked(schema.clients.name, schema.clients.name, schema.clients.slug))
         .limit(10),
       db
         .select({ id: schema.agents.id, name: schema.agents.name, displayName: schema.agents.displayName })
         .from(schema.agents)
-        .where(and(eq(schema.agents.active, true), ilike(schema.agents.displayName, pattern)))
+        .where(and(eq(schema.agents.active, true), matches(schema.agents.displayName, schema.agents.displayName)))
+        .orderBy(ranked(schema.agents.displayName, schema.agents.displayName))
         .limit(10),
     ]);
 

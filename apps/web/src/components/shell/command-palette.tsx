@@ -7,6 +7,7 @@ import { Users, Bot, Building2 } from 'lucide-react';
 import { useUiStore } from '@/stores/ui-store';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useSearch } from '@/hooks/use-search';
+import { matchesQuery } from '@/lib/search-match';
 import { NAV_ITEMS } from './nav-items';
 
 export function CommandPalette() {
@@ -15,7 +16,12 @@ export function CommandPalette() {
   const setOpen = useUiStore((state) => state.setCommandPaletteOpen);
   const setStudioModalOpen = useUiStore((state) => state.setStudioModalOpen);
   const { isMaster } = useIsMaster();
-  const visibleNavItems = NAV_ITEMS.filter((item) => !item.masterOnly || isMaster);
+  // O filtro do cmdk está desligado (shouldFilter={false}), então a navegação
+  // é filtrada aqui. O motivo de desligar está em lib/search-match.ts: o
+  // filtro dele escondia cliente que o servidor tinha encontrado.
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => (!item.masterOnly || isMaster) && matchesQuery(item.label, query),
+  );
   const [query, setQuery] = useState('');
   const { data: results } = useSearch(query);
 
@@ -55,6 +61,9 @@ export function CommandPalette() {
       open={open}
       onOpenChange={setOpen}
       label="Command palette"
+      // Quem filtra é o servidor (acento + erro de digitação) e, pra
+      // navegação, matchesQuery. Ver lib/search-match.ts.
+      shouldFilter={false}
       overlayClassName="fixed inset-0 z-[60] bg-carbono/70 backdrop-blur-sm"
       contentClassName="fixed left-1/2 top-24 z-[61] w-full max-w-lg -translate-x-1/2 overflow-hidden rounded-lg border border-grafite-elevado bg-grafite-elevado shadow-elevated"
     >
@@ -93,6 +102,7 @@ export function CommandPalette() {
           </Command.Group>
         )}
 
+        {visibleNavItems.length > 0 && (
         <Command.Group
           heading="Navegação"
           className="px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-nevoa [&_[cmdk-group-items]]:mt-1"
@@ -112,6 +122,7 @@ export function CommandPalette() {
             );
           })}
         </Command.Group>
+        )}
 
         {results && results.users.length > 0 && (
           <Command.Group
