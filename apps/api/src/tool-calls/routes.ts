@@ -6,6 +6,7 @@ import {
   deleteTask,
   listPendingToolCalls,
   recordToolResult,
+  updateTask,
   askAgent,
   AgentAskError,
   type ClickUpConfig,
@@ -24,6 +25,26 @@ const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise
       throw new Error('CLICKUP_API_KEY/CLICKUP_TEAM_ID not configured on the Orchestrator');
     }
     await deleteTask(config, taskId);
+  },
+  // BL-01: edição de task aprovada executa de fato o PUT no ClickUp. O
+  // input carrega os campos validados pelo updateTaskSchema da rota PATCH.
+  'clickup.update_task': async (input) => {
+    const taskId = input.task_id;
+    if (typeof taskId !== 'string') {
+      throw new Error("Missing 'task_id' in tool call input");
+    }
+    const config = getClickUpConfig();
+    if (!config) {
+      throw new Error('CLICKUP_API_KEY/CLICKUP_TEAM_ID not configured on the Orchestrator');
+    }
+    const fields = (input.fields ?? {}) as Record<string, unknown>;
+    await updateTask(config, taskId, {
+      ...(typeof fields.name === 'string' ? { name: fields.name } : {}),
+      ...(typeof fields.description === 'string' ? { description: fields.description } : {}),
+      ...(typeof fields.status === 'string' ? { status: fields.status } : {}),
+      ...(typeof fields.priority === 'number' ? { priority: fields.priority as 1 | 2 | 3 | 4 } : {}),
+      ...(fields.due_date === null || typeof fields.due_date === 'number' ? { dueDate: fields.due_date } : {}),
+    });
   },
   // Executor da aprovação humana real de Jarbas (budget de Meta Ads) e Suzy
   // (publicação no Instagram) - ver o lado que INTERCEPTA a proposta em

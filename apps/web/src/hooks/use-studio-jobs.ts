@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, API_FETCH_UPLOAD_TIMEOUT_MS } from '@/lib/api/client';
 import {
   mapStudioJobDetail,
   type StudioJobAttachmentWire,
@@ -13,7 +13,23 @@ import {
   type StudioStyle,
 } from '@/lib/api/contracts';
 
-const ACTIVE_STATUSES = new Set(['queued', 'rendering']);
+/**
+ * Achado real (2026-09-11): isto só considerava 'queued'/'rendering' como
+ * "ainda em andamento, continua pollando" - mas `StudioJobStatus`
+ * (packages/types/src/studio.ts) já documenta 9 estágios extras do "pipeline
+ * adaptativo" (planning, quality_check, refining, post_processing,
+ * uploading, keyframe_generation, keyframe_qa, video_draft, motion_qa,
+ * video_master, video_qa) como valores válidos, com um comentário
+ * explicitamente convidando código futuro a emiti-los. No dia em que
+ * QUALQUER um desses passar a ser emitido de verdade pelo worker, o job
+ * ficaria com `refetchInterval` retornando `false` pra sempre nesse status -
+ * `JobProgressCard` congelaria mostrando aquele estágio intermediário pra
+ * sempre, sem nenhum jeito de saber que virou completed/failed sem recarregar
+ * a página manualmente. Lista invertida (só os 2 estados TERMINAIS) é o
+ * default seguro: um status desconhecido/novo continua sendo pollado, nunca
+ * trava silenciosamente.
+ */
+const TERMINAL_STATUSES = new Set(['completed', 'failed']);
 
 export function useCreateStudioJob() {
   const queryClient = useQueryClient();
@@ -66,7 +82,7 @@ export function useStudioJob(jobId: string | null) {
     queryKey: ['studio', 'jobs', jobId],
     queryFn: async () => fetchStudioJobDetail(jobId!),
     enabled: Boolean(jobId),
-    refetchInterval: (query) => (query.state.data && ACTIVE_STATUSES.has(query.state.data.status) ? 500 : false),
+    refetchInterval: (query) => (query.state.data && !TERMINAL_STATUSES.has(query.state.data.status) ? 500 : false),
   });
 }
 
@@ -107,7 +123,7 @@ export function useUploadStudioReference() {
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append('file', file);
-      return apiFetch<StudioJobAttachmentWire>('/studio/references', { method: 'POST', body: form });
+      return apiFetch<StudioJobAttachmentWire>('/studio/references', { method: 'POST', body: form }, { timeoutMs: API_FETCH_UPLOAD_TIMEOUT_MS });
     },
   });
 }

@@ -27,6 +27,10 @@ export const studioAssets = pgTable(
     type: text('type').notNull(),
     filename: text('filename').notNull(),
     storageUrl: text('storage_url').notNull(),
+    /** Thumbnail 480px webp gerada em background pelo worker (fila
+     * studio-thumbnails). A galeria usa ela em vez do original de 2-17MB;
+     * o original segue pro lightbox/download. Null até o worker processar. */
+    thumbUrl: text('thumb_url'),
     agent: agentNameEnum('agent').notNull().default('studio'),
     prompt: text('prompt'),
     model: text('model'),

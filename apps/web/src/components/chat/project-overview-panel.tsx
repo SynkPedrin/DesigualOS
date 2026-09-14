@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Pencil } from 'lucide-react';
 import { useBrandKit } from '@/hooks/use-brand-kit';
 import { useClientMemory } from '@/hooks/use-client-memory';
 import { useClientOverview } from '@/hooks/use-client-overview';
+import { useIsMaster } from '@/hooks/use-is-master';
+import { BrandKitEditor } from '@/components/chat/brand-kit-editor';
 import { formatRelativeTime } from '@/lib/format';
 
 function PanelLoading() {
@@ -54,15 +56,34 @@ export function ProjectOverviewPanel({ clientId }: { clientId: string }) {
   const { data: memory, isPending: memoryPending } = useClientMemory(clientId);
   const { data: brandKit, isPending: brandKitPending } = useBrandKit(clientId);
   const { data: overview, isPending: overviewPending } = useClientOverview(clientId);
+  const { isMaster } = useIsMaster();
+  const [editingBrandKit, setEditingBrandKit] = useState(false);
 
   const hasBrandKit = brandKit && (brandKit.colors.length > 0 || brandKit.logoUrl || brandKit.toneOfVoice || brandKit.fonts.length > 0 || brandKit.referenceImages.length > 0);
 
   return (
     <div className="mb-8 grid gap-3 sm:grid-cols-2">
       <div className="rounded-lg border border-grafite-elevado bg-grafite/40 p-4">
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-nevoa">Padrões</p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Padrões</p>
+          {/* Edição é master-only porque o backend exige clients:write no PUT
+              /clients/:id/brand-kit — mostrar o botão pra colaborador seria
+              prometer uma ação que termina em 403. */}
+          {isMaster && !editingBrandKit && !brandKitPending && (
+            <button
+              type="button"
+              onClick={() => setEditingBrandKit(true)}
+              className="flex shrink-0 items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-roxo-eletrico transition-colors hover:text-branco-cru"
+            >
+              <Pencil size={10} />
+              {hasBrandKit ? 'Editar' : 'Cadastrar'}
+            </button>
+          )}
+        </div>
         {brandKitPending ? (
           <PanelLoading />
+        ) : editingBrandKit ? (
+          <BrandKitEditor clientId={clientId} brandKit={brandKit} onClose={() => setEditingBrandKit(false)} />
         ) : !hasBrandKit ? (
           <p className="text-xs text-nevoa">Este cliente ainda não tem Brand Kit cadastrado.</p>
         ) : (

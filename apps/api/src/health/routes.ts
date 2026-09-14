@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { NODE_STATUSES } from '@desigual-os/types';
-import { syncAgents, getProbeTargets } from '@desigual-os/orchestrator';
+import { syncAgents, getProbeTargets, readWorkerHealth } from '@desigual-os/orchestrator';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { separarRegistrosAposentados } from './retired-nodes';
 
 export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
   // Gerenciamento de agentes/infra é assunto de master (pedido do usuário:
@@ -21,54 +22,95 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
       .from(schema.nodes)
       .innerJoin(schema.agents, eq(schema.nodes.agentId, schema.agents.id));
 
+    // Registro antigo de máquina que trocou de NODE_ID sai da conta; máquina realmente caída
+    // continua contando. A regra e o porquê estão em retired-nodes.ts, com testes.
+    const { ativos, aposentados } = separarRegistrosAposentados(rows);
+
     const summary = Object.fromEntries(NODE_STATUSES.map((status) => [status, 0])) as Record<
       (typeof NODE_STATUSES)[number],
       number
     >;
-    for (const row of rows) {
+    for (const row of ativos) {
       summary[row.status] += 1;
     }
 
-    // Um node por vez é aceitável aqui: o sistema tem no máximo alguns
-    // nodes (3 Macs + RTX), não vale a pena uma window function pra isso.
-    const nodes = await Promise.all(
-      rows.map(async (row) => {
-        const [latest] = await db
-          .select()
-          .from(schema.healthChecks)
-          .where(eq(schema.healthChecks.nodeId, row.internalId))
-          .orderBy(desc(schema.healthChecks.createdAt))
-          .limit(1);
+    // Achado real (2026-09-10): "um node por vez" virou N consultas por
+    // requisição (3 Macs + RTX = ~4-5 roundtrips ao Postgres remoto,
+    // SEQUENCIAIS a cada chamada de /health/infrastructure). Esta rota é
+    // pollada a cada 15s (use-infrastructure-health.ts) e MULTIPLICADA por
+    // aba/sessão aberta - sob concorrência real (várias abas do navegador),
+    // isso saturava o pool de conexões do Supabase e deixava TODA outra
+    // rota que também precisa de uma conexão (conversas, notificações,
+    // clientes) lenta junto, mesmo sem relação nenhuma com infraestrutura -
+    // sintoma reportado como "tudo dentro do Studio demora pra abrir".
+    // `selectDistinctOn` busca o health check mais recente de TODOS os
+    // nodes numa única consulta, não uma por node.
+    const latestHealthByNode =
+      rows.length > 0
+        ? await db
+            .selectDistinctOn([schema.healthChecks.nodeId])
+            .from(schema.healthChecks)
+            .where(inArray(schema.healthChecks.nodeId, rows.map((row) => row.internalId)))
+            .orderBy(schema.healthChecks.nodeId, desc(schema.healthChecks.createdAt))
+        : [];
+    const latestByNodeId = new Map(latestHealthByNode.map((check) => [check.nodeId, check]));
 
-        return {
-          node_id: row.nodeId,
-          agent: row.agent,
-          type: row.type,
-          status: row.status,
-          last_heartbeat_at: row.lastHeartbeatAt?.toISOString() ?? null,
-          cpu: latest?.cpu ?? null,
-          ram: latest?.ram ?? null,
-          disk: latest?.disk ?? null,
-          latency_ms: latest?.latencyMs ?? null,
-          // Só o Studio preenche isso de verdade (seção 7.3).
-          gpu: latest?.gpu ?? null,
-          vram: latest?.vram ?? null,
-          temperature: latest?.temperature ?? null,
-          queue_depth: latest?.queueDepth ?? null,
-        };
-      }),
-    );
+    const nodes = ativos.map((row) => {
+      const latest = latestByNodeId.get(row.internalId);
+      return {
+        node_id: row.nodeId,
+        agent: row.agent,
+        type: row.type,
+        status: row.status,
+        last_heartbeat_at: row.lastHeartbeatAt?.toISOString() ?? null,
+        cpu: latest?.cpu ?? null,
+        ram: latest?.ram ?? null,
+        disk: latest?.disk ?? null,
+        latency_ms: latest?.latencyMs ?? null,
+        // Só o Studio preenche isso de verdade (seção 7.3).
+        gpu: latest?.gpu ?? null,
+        vram: latest?.vram ?? null,
+        temperature: latest?.temperature ?? null,
+        queue_depth: latest?.queueDepth ?? null,
+      };
+    });
 
     const online = summary.online;
-    const total = rows.length;
+    const total = ativos.length;
+
+    // O WORKER ENTRA NA CONTA. Antes esta rota só olhava a tabela `nodes` (as máquinas remotas
+    // dos agentes), e o processo local que executa TODO job do sistema não aparecia. Resultado
+    // medido em 10/09/2026: worker morto por 10 minutos, fila empilhando, e o painel estampando
+    // "Saúde geral 100% / Todos os sistemas online". Saúde que não cobre o executor não é saúde.
+    const worker = await readWorkerHealth();
 
     return {
       total_nodes: total,
       summary,
-      // Curinga: nenhum node degraded/warning/offline conta como "tudo saudável".
-      all_systems_online: total > 0 && online === total,
+      // Curinga: nenhum node degraded/warning/offline conta como "tudo saudável" — e agora o
+      // worker vale como curinga também, porque com ele fora NADA é executado, por mais que
+      // todos os nodes remotos estejam de pé.
+      all_systems_online: total > 0 && online === total && worker.online,
       overall_health_percent: total > 0 ? Math.round((online / total) * 100) : 0,
       agents_connected: { online, total },
+      worker: {
+        online: worker.online,
+        pid: worker.pid,
+        started_at: worker.startedAt,
+        last_heartbeat_at: worker.lastBeatAt,
+        seconds_since_heartbeat: worker.segundosDesdeUltimoBatimento,
+        jobs_waiting: worker.jobsAguardando,
+        jobs_active: worker.jobsAtivos,
+        queues: worker.filas,
+        diagnosis: worker.diagnostico,
+      },
+      // Declarado, não escondido: quem olhar a saúde vê que existem registros antigos fora da
+      // conta, e quais são.
+      retired_registrations: aposentados.map((row) => ({
+        node_id: row.nodeId,
+        agent: row.agent,
+        last_heartbeat_at: row.lastHeartbeatAt?.toISOString() ?? null,
+      })),
       // Não existe sistema de backup implementado ainda; nunca inventar um valor aqui.
       last_backup_at: null,
       nodes,

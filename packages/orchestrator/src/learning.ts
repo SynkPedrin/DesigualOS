@@ -1,6 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { createLogger } from '@desigual-os/logging';
+import { rememberFact, type MemorySourceType } from './memory-engine';
 
 const logger = createLogger({ service: 'learning' });
 
@@ -41,6 +42,20 @@ export interface LearningEvent {
   clientId?: string | null | undefined;
   userId?: string | null | undefined;
   metadata?: Record<string, unknown> | undefined;
+  /**
+   * Identidade do FATO (ex: `cliente:3net:direcao-estetica`), não do texto -
+   * ver memory-engine.ts. Só quando o chamador QUER que um fato novo aposente
+   * o anterior sobre o mesmo assunto (ex: "a direção estética mudou pra X").
+   * Sem subject (o padrão, e o comportamento de todo chamador já existente),
+   * o registro é aditivo - vira mais um item de histórico, nunca substitui
+   * nada. Nunca usar subject pra eventos que devem se ACUMULAR (ex: cada
+   * asset gerado, cada feedback) - isso apagaria o histórico que o
+   * aprendizado de identidade visual do Otto precisa.
+   */
+  subject?: string | null | undefined;
+  /** Default 'agent' (evidência de agente, não confirmação humana direta) -
+   * ver DEFAULT_CONFIDENCE em memory-engine.ts. */
+  sourceType?: MemorySourceType | undefined;
 }
 
 /** `pushed` = já entregue ao brain remoto; `pending` = só local, a reenviar. */
@@ -122,21 +137,57 @@ async function pushToBentoBrain(event: LearningEvent): Promise<DeliveryState> {
  * Registra um aprendizado. NUNCA lança: aprender é efeito colateral do
  * trabalho real - se falhar, o trabalho não pode cair junto.
  */
+/**
+ * Achado real (2026-09-11, "melhore o sistema de autoaprendizagem dos 4
+ * agentes"): isto gravava direto em `memories` com um INSERT cru - sem
+ * dedup (o mesmo fato registrado 40 vezes virava 40 linhas soltas) e sem
+ * supersessão (um fato atualizado, ex: nova direção estética do cliente,
+ * nunca aposentava o anterior; a leitura em build-context.ts pegava um dos
+ * dois por ordenação, o que na prática é aleatório). `rememberFact`
+ * (memory-engine.ts) já resolvia tudo isso - dedup por conteúdo normalizado
+ * + escopo, supersessão determinística por `subject`, confiança que sobe
+ * com reconfirmação de OUTRA fonte, filtro de relevância (não guarda
+ * "beleza, obrigado") - só nunca tinha sido chamado de lugar nenhum, apesar
+ * de testado e pronto. Passa a ser o motor de escrita real por baixo de
+ * `recordLearning`, SEM mudar a assinatura pública: os 7 chamadores
+ * existentes (Studio, ClickUp, Otto) e qualquer chamador novo ganham dedup/
+ * supersessão de graça, sem precisar saber que isso mudou por baixo.
+ */
 export async function recordLearning(event: LearningEvent): Promise<void> {
   try {
     const delivery = await pushToBentoBrain(event);
     const agentId = await resolveAgentId(event.agent);
+    const recordedAt = new Date().toISOString();
 
-    await db.insert(schema.memories).values({
-      agentId,
-      clientId: event.clientId ?? null,
-      userId: event.userId ?? null,
+    const outcome = await rememberFact({
       kind: event.kind,
       content: event.content,
-      metadata: { ...(event.metadata ?? {}), delivery, recorded_at: new Date().toISOString() },
+      subject: event.subject ?? null,
+      clientId: event.clientId ?? null,
+      agentId,
+      userId: event.userId ?? null,
+      sourceType: event.sourceType ?? 'agent',
+      metadata: { ...(event.metadata ?? {}), delivery, recorded_at: recordedAt },
     });
 
-    logger.info({ kind: event.kind, delivery }, 'Aprendizado registrado');
+    if (outcome.status === 'skipped') {
+      logger.info({ kind: event.kind, reason: outcome.reason }, 'Aprendizado descartado (sem fato operacional novo)');
+      return;
+    }
+
+    // `rememberFact` só regrava `metadata` no caminho de escrita nova - no
+    // caminho de reconfirmação (fato idêntico já existia) ele só atualiza
+    // confiança/timestamp, então `delivery` desta tentativa específica
+    // ficaria perdido sem isto (a linha continuaria com o status de entrega
+    // da vez ANTERIOR, o que quebraria flushPendingLearnings - uma entrega
+    // que passou a funcionar nunca sairia de "pending", ou uma que passou a
+    // falhar ficaria erradamente marcada "pushed").
+    await db
+      .update(schema.memories)
+      .set({ metadata: sql`${schema.memories.metadata} || ${JSON.stringify({ delivery, recorded_at: recordedAt })}::jsonb` })
+      .where(eq(schema.memories.id, outcome.memoryId));
+
+    logger.info({ kind: event.kind, delivery, outcome: outcome.status }, 'Aprendizado registrado');
   } catch (error) {
     logger.error({ error, kind: event.kind }, 'Falha ao registrar aprendizado (o trabalho em si continua)');
   }

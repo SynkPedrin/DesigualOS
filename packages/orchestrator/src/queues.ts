@@ -49,6 +49,17 @@ export const PRIORITY_VALUE: Record<QueuePriority, number> = {
 export const MAX_ATTEMPTS = 2;
 
 /**
+ * Teto de retenção do histórico de jobs no Redis (achado da auditoria de
+ * prontidão, 2026-09-11): sem defaultJobOptions, jobs completed/failed
+ * acumulavam sem limite nenhum. Número = "guarda só os N mais recentes"
+ * (BullMQ 5, ver BaseJobOptions.removeOnComplete/removeOnFail). O estado
+ * autoritativo da execução vive no Postgres (executions/execution_steps),
+ * então encurtar o histórico do Redis não apaga rastro de verdade. Failed
+ * fica com teto maior porque é o que se consulta pra diagnosticar.
+ */
+const DEFAULT_JOB_OPTIONS = { removeOnComplete: 100, removeOnFail: 500 } as const;
+
+/**
  * Tentativas do BullMQ por agente. Jarbas e Suzy são exceção: quando o
  * agentes-desigual devolve falha, não dá pra garantir que o efeito colateral
  * real (mensagem enviada de verdade pro WhatsApp do lead via answerQuestion)
@@ -107,7 +118,10 @@ export function queueNameForAgent(agent: AgentName): string {
 export function getAgentQueue(agent: AgentName): Queue<AgentJobData> {
   let queue = queuesByAgent.get(agent);
   if (!queue) {
-    queue = new Queue<AgentJobData>(queueNameForAgent(agent), { connection: getRedisConnection() });
+    queue = new Queue<AgentJobData>(queueNameForAgent(agent), {
+      connection: getRedisConnection(),
+      defaultJobOptions: DEFAULT_JOB_OPTIONS,
+    });
     queuesByAgent.set(agent, queue);
   }
   return queue;

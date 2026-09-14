@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { desc, eq, or } from 'drizzle-orm';
+import { desc, eq, inArray, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { ROLE_NAMES } from '@desigual-os/types';
-import { requireAuth, requirePermission } from '../auth/middleware';
+import { invalidateUserAccessCache, requireAuth, requirePermission } from '../auth/middleware';
 import { sendInviteEmail } from '../lib/email';
 
 const inviteSchema = z.object({
@@ -112,54 +112,86 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   // por cliente.
   app.get('/admin/users', { preHandler: [requireAuth, requirePermission('users', 'read')] }, async () => {
     const rows = await db.select().from(schema.users).orderBy(desc(schema.users.createdAt));
+    const userIds = rows.map((user) => user.id);
 
-    const users = await Promise.all(
-      rows.map(async (user) => {
-        const [roleRows, clientAccessRows, integrationRows] = await Promise.all([
-          db
-            .select({ name: schema.roles.name })
-            .from(schema.userRoles)
-            .innerJoin(schema.roles, eq(schema.userRoles.roleId, schema.roles.id))
-            .where(eq(schema.userRoles.userId, user.id)),
-          db
-            .select({ clientId: schema.clientUsers.clientId, clientName: schema.clients.name, role: schema.clientUsers.role })
-            .from(schema.clientUsers)
-            .innerJoin(schema.clients, eq(schema.clients.id, schema.clientUsers.clientId))
-            .where(eq(schema.clientUsers.userId, user.id)),
-          // Status das integrações por pessoa (pedido do Endrigo: o Admin
-          // precisa ver quem está conectado ao ClickUp, em qual workspace e
-          // desde quando sincronizou). NUNCA devolve o token - só metadados.
-          db
-            .select({
-              provider: schema.integrationConnections.provider,
-              status: schema.integrationConnections.status,
-              workspaceName: schema.integrationConnections.externalWorkspaceName,
-              lastSyncedAt: schema.integrationConnections.lastSyncedAt,
-              connectedAt: schema.integrationConnections.createdAt,
-            })
-            .from(schema.integrationConnections)
-            .where(eq(schema.integrationConnections.userId, user.id)),
-        ]);
+    // As 3 consultas de contexto (papéis, acessos a cliente, integrações)
+    // eram feitas POR usuário dentro do map: 3 x N queries, ~0.9s ao vivo
+    // (RTT ~130ms pro Supabase). Em lote com inArray viram 3 no total,
+    // agrupadas em memória na montagem da resposta. O formato não muda.
+    const [roleRows, clientAccessRows, integrationRows] =
+      userIds.length > 0
+        ? await Promise.all([
+            db
+              .select({ userId: schema.userRoles.userId, name: schema.roles.name })
+              .from(schema.userRoles)
+              .innerJoin(schema.roles, eq(schema.userRoles.roleId, schema.roles.id))
+              .where(inArray(schema.userRoles.userId, userIds)),
+            db
+              .select({
+                userId: schema.clientUsers.userId,
+                clientId: schema.clientUsers.clientId,
+                clientName: schema.clients.name,
+                role: schema.clientUsers.role,
+              })
+              .from(schema.clientUsers)
+              .innerJoin(schema.clients, eq(schema.clients.id, schema.clientUsers.clientId))
+              .where(inArray(schema.clientUsers.userId, userIds)),
+            // Status das integrações por pessoa (pedido do Endrigo: o Admin
+            // precisa ver quem está conectado ao ClickUp, em qual workspace e
+            // desde quando sincronizou). NUNCA devolve o token - só metadados.
+            db
+              .select({
+                userId: schema.integrationConnections.userId,
+                provider: schema.integrationConnections.provider,
+                status: schema.integrationConnections.status,
+                workspaceName: schema.integrationConnections.externalWorkspaceName,
+                lastSyncedAt: schema.integrationConnections.lastSyncedAt,
+                connectedAt: schema.integrationConnections.createdAt,
+              })
+              .from(schema.integrationConnections)
+              .where(inArray(schema.integrationConnections.userId, userIds)),
+          ])
+        : [[], [], []];
 
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          avatar_url: user.avatarUrl,
-          active: user.active,
-          roles: roleRows.map((role) => role.name),
-          client_access: clientAccessRows.map((row) => ({ client_id: row.clientId, client_name: row.clientName, role: row.role })),
-          integrations: integrationRows.map((row) => ({
-            provider: row.provider,
-            status: row.status,
-            workspace_name: row.workspaceName,
-            last_synced_at: row.lastSyncedAt?.toISOString() ?? null,
-            connected_at: row.connectedAt.toISOString(),
-          })),
-          created_at: user.createdAt.toISOString(),
-        };
-      }),
-    );
+    const rolesByUser = new Map<string, string[]>();
+    for (const row of roleRows) {
+      const list = rolesByUser.get(row.userId) ?? [];
+      list.push(row.name);
+      rolesByUser.set(row.userId, list);
+    }
+
+    const clientAccessByUser = new Map<string, Array<{ client_id: string; client_name: string; role: string }>>();
+    for (const row of clientAccessRows) {
+      const list = clientAccessByUser.get(row.userId) ?? [];
+      list.push({ client_id: row.clientId, client_name: row.clientName, role: row.role });
+      clientAccessByUser.set(row.userId, list);
+    }
+
+    type IntegrationRow = (typeof integrationRows)[number];
+    const integrationsByUser = new Map<string, IntegrationRow[]>();
+    for (const row of integrationRows) {
+      const list = integrationsByUser.get(row.userId) ?? [];
+      list.push(row);
+      integrationsByUser.set(row.userId, list);
+    }
+
+    const users = rows.map((user) => ({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatar_url: user.avatarUrl,
+      active: user.active,
+      roles: rolesByUser.get(user.id) ?? [],
+      client_access: clientAccessByUser.get(user.id) ?? [],
+      integrations: (integrationsByUser.get(user.id) ?? []).map((row) => ({
+        provider: row.provider,
+        status: row.status,
+        workspace_name: row.workspaceName,
+        last_synced_at: row.lastSyncedAt?.toISOString() ?? null,
+        connected_at: row.connectedAt.toISOString(),
+      })),
+      created_at: user.createdAt.toISOString(),
+    }));
 
     return { users };
   });
@@ -177,6 +209,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       await db.delete(schema.userRoles).where(eq(schema.userRoles.userId, request.params.id));
       await db.insert(schema.userRoles).values({ userId: request.params.id, roleId: role.id });
+      // requireAuth guarda papéis/permissões em cache curto por processo -
+      // sem isto, o papel novo só valeria depois do TTL.
+      invalidateUserAccessCache(request.params.id);
 
       await db.insert(schema.auditLogs).values({
         userId: request.authUser?.id ?? null,
@@ -208,6 +243,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         reply.code(404);
         return { error: `User '${request.params.id}' not found` };
       }
+      // Desativar alguém precisa valer na hora, não depois do TTL do cache.
+      invalidateUserAccessCache(updated.authUserId ?? request.params.id);
 
       await db.insert(schema.auditLogs).values({
         userId: request.authUser?.id ?? null,
@@ -238,6 +275,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         reply.code(404);
         return { error: `User '${request.params.id}' not found` };
       }
+      invalidateUserAccessCache(updated.authUserId ?? request.params.id);
 
       return { id: updated.id, name: updated.name };
     },
@@ -287,6 +325,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       await db.delete(schema.clientUsers).where(eq(schema.clientUsers.userId, request.params.id));
       await db.delete(schema.notifications).where(eq(schema.notifications.userId, request.params.id));
       await db.delete(schema.users).where(eq(schema.users.id, request.params.id));
+      invalidateUserAccessCache(user.authUserId ?? request.params.id);
 
       return { id: request.params.id, deleted: true };
     },

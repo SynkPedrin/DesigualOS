@@ -78,6 +78,16 @@ export interface OttoChatOptions {
    * valer. Assim nenhum valor desta opção é capaz de gerar HTTP 400.
    */
   suppressThinking?: boolean;
+  /**
+   * Teto de tokens GERADOS (num_predict do Ollama). Sem teto, o modelo gera
+   * até EOS - e em CPU (~10 tok/s medidos na máquina do Otto) uma resposta
+   * longa custa minutos. Defaults medidos contra o uso real: chat 1000,
+   * chatJson 1600 (o plano criativo de 18 campos cabe em ~700-1200 tokens).
+   * Quem precisar de mais passa explicitamente. JSON truncado pelo teto cai
+   * no retry de correção já existente do chatJson, nunca vira plano quebrado
+   * silencioso.
+   */
+  numPredict?: number;
 }
 
 export type OttoLLMHealthStatus = 'ok' | 'degraded' | 'down';
@@ -113,6 +123,9 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_NUM_CTX = 16_384;
 /** Ver OttoLLMProviderConfig.keepAlive: evita cold load de ~1,9 GB entre perguntas. */
 const DEFAULT_KEEP_ALIVE = '30m';
+/** Tetos de geração (ver OttoChatOptions.numPredict). */
+const DEFAULT_NUM_PREDICT_CHAT = 1_000;
+const DEFAULT_NUM_PREDICT_JSON = 1_600;
 
 export function createOttoLLMProvider(config: OttoLLMProviderConfig): OttoLLMProvider {
   const { baseUrl, model } = config;
@@ -121,7 +134,7 @@ export function createOttoLLMProvider(config: OttoLLMProviderConfig): OttoLLMPro
 
   async function postChat(
     messages: OttoChatMessage[],
-    opts: { json: boolean; timeoutMs?: number; temperature?: number; suppressThinking?: boolean },
+    opts: { json: boolean; timeoutMs?: number; temperature?: number; suppressThinking?: boolean; numPredict?: number },
   ): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     let response: Response;
@@ -142,6 +155,7 @@ export function createOttoLLMProvider(config: OttoLLMProviderConfig): OttoLLMPro
           // num_ctx nunca era enviado e o Ollama silenciosamente usava 4096.
           options: {
             num_ctx: config.numCtx ?? DEFAULT_NUM_CTX,
+            ...(opts.numPredict !== undefined ? { num_predict: opts.numPredict } : {}),
             ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
           },
           messages,
@@ -179,6 +193,7 @@ export function createOttoLLMProvider(config: OttoLLMProviderConfig): OttoLLMPro
         ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
         ...(opts?.suppressThinking !== undefined ? { suppressThinking: opts.suppressThinking } : {}),
+        numPredict: opts?.numPredict ?? DEFAULT_NUM_PREDICT_CHAT,
       });
     },
 
@@ -194,6 +209,7 @@ export function createOttoLLMProvider(config: OttoLLMProviderConfig): OttoLLMPro
         json: true,
         ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        numPredict: opts?.numPredict ?? DEFAULT_NUM_PREDICT_JSON,
         // Default de SUPRESSÃO no caminho estruturado: extrair JSON de schema
         // conhecido não é tarefa de raciocínio aberto, e com o modelo pensando
         // o plano criativo pagava milhares de tokens de monólogo antes da

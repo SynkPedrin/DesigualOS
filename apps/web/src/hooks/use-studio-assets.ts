@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
-import { mapStudioAsset, type StudioAssetsPageWire, type StudioJobType } from '@/lib/api/contracts';
+import { mapStudioAsset, type StudioAsset, type StudioAssetsPageWire, type StudioJobType } from '@/lib/api/contracts';
+
+interface StudioAssetsPage {
+  assets: StudioAsset[];
+  total: number;
+}
 
 export interface StudioAssetsFilter {
   clientId: string | null;
@@ -44,12 +49,33 @@ export function useStudioAssets(filter: StudioAssetsFilter, enabled = true) {
   });
 }
 
-/** Asset avulso. O grupo inteiro (carousel/variações) sai por useDeleteStudioJob. */
+/**
+ * Asset avulso. O grupo inteiro (carousel/variações) sai por useDeleteStudioJob.
+ *
+ * Achado real (2026-09-11): antes disto, o card excluído continuava
+ * aparecendo na galeria até o `invalidateQueries` completar um roundtrip
+ * inteiro (buscar a página de novo do zero) - por alguns instantes, clicar
+ * "Excluir" parecia não ter feito nada. `onMutate` remove o asset do cache
+ * na hora (otimista, mesmo princípio já aplicado no autosave do Canva:
+ * `setQueryData` em vez de só invalidar e esperar), com rollback em
+ * `onError` se o delete de fato falhar no servidor.
+ */
 export function useDeleteStudioAsset() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (assetId: string) => apiFetch<void>(`/studio/assets/${assetId}`, { method: 'DELETE' }),
-    onSuccess: () => {
+    onMutate: async (assetId) => {
+      await queryClient.cancelQueries({ queryKey: ['studio', 'assets', 'page'] });
+      const previous = queryClient.getQueriesData<StudioAssetsPage>({ queryKey: ['studio', 'assets', 'page'] });
+      queryClient.setQueriesData<StudioAssetsPage>({ queryKey: ['studio', 'assets', 'page'] }, (data) =>
+        data ? { assets: data.assets.filter((asset) => asset.id !== assetId), total: Math.max(0, data.total - 1) } : data,
+      );
+      return { previous };
+    },
+    onError: (_error, _assetId, context) => {
+      context?.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['studio', 'assets'] });
     },
   });
@@ -69,12 +95,32 @@ export function useGenerateAssetCaption() {
   });
 }
 
-/** Deleta o job e TODOS os assets do grupo (backend confirma o cascade). */
+/** Deleta o job e TODOS os assets do grupo (backend confirma o cascade).
+ * Mesmo tratamento otimista de useDeleteStudioAsset acima - um grupo
+ * inteiro (carousel/variações) some da tela na hora, não card por card
+ * conforme cada requisição individual completaria. */
 export function useDeleteStudioJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (jobId: string) => apiFetch<void>(`/studio/jobs/${jobId}`, { method: 'DELETE' }),
-    onSuccess: () => {
+    onMutate: async (jobId) => {
+      await queryClient.cancelQueries({ queryKey: ['studio', 'assets', 'page'] });
+      const previous = queryClient.getQueriesData<StudioAssetsPage>({ queryKey: ['studio', 'assets', 'page'] });
+      queryClient.setQueriesData<StudioAssetsPage>({ queryKey: ['studio', 'assets', 'page'] }, (data) => {
+        if (!data) return data;
+        const remaining = data.assets.filter((asset) => asset.jobId !== jobId);
+        // Grupo inteiro (carousel/variações) pode remover mais de 1 asset de
+        // uma vez - decrementa `total` pela quantidade REAL removida, não
+        // sempre 1 (diferente de useDeleteStudioAsset, que remove exatamente
+        // um asset por chamada).
+        return { assets: remaining, total: Math.max(0, data.total - (data.assets.length - remaining.length)) };
+      });
+      return { previous };
+    },
+    onError: (_error, _jobId, context) => {
+      context?.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['studio', 'assets'] });
       queryClient.invalidateQueries({ queryKey: ['studio', 'jobs'] });
     },

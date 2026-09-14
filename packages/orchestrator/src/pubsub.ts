@@ -13,7 +13,11 @@ export interface WsEvent {
     | 'agent.thinking'
     | 'dm.received'
     | 'message.delta'
-    | 'clickup.task_changed';
+    | 'clickup.task_changed'
+    // Agentic V2: transição de fase do agent loop (UNDERSTANDING, ACTING,
+    // EVALUATING, REPLANNING...). Alimenta os indicadores de atividade da
+    // UI com eventos REAIS em vez de etapas inventadas.
+    | 'agent.phase';
   payload: Record<string, unknown>;
 }
 

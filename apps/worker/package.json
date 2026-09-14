@@ -23,7 +23,10 @@
     "@desigual-os/types": "workspace:*",
     "bullmq": "^5.13.2",
     "dotenv": "^16.4.5",
-    "drizzle-orm": "^0.33.0"
+    "drizzle-orm": "^0.33.0",
+    "@desigual-os/agent-runtime": "workspace:*",
+    "sharp": "^0.33.5",
+    "@desigual-os/auth": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",

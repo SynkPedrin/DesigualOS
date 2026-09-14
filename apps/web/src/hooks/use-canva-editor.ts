@@ -1,38 +1,92 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActiveSelection, Canvas, Group, type FabricObject } from 'fabric';
+import { ActiveSelection, Canvas, Group, PencilBrush, util, type FabricObject, type Path } from 'fabric';
 import type {
+  CanvaBlendMode,
   CanvaImageFilters,
   CanvaImageObject,
   CanvaObject,
   CanvaObjectType,
   CanvaPage,
   CanvaPageBackground,
+  CanvaPathObject,
   CanvaShapeKind,
   CanvaShapeObject,
   CanvaTextObject,
 } from '@desigual-os/types';
 import {
+  blendModeToComposite,
+  buildClipShape,
+  clipShapeKindOf,
+  buildFallbackExisting,
   cloneCanvaObject,
+  computeImagePlacement,
   defaultShapeStroke,
   instantiateFabricObject,
   isManaged,
   loadImageElement,
   readCanvaObject,
+  type FabricObjectWithMeta,
 } from '@/lib/canva/fabric-sync';
+import { loadFontVariant } from '@/lib/canva/font-manager';
 import { toast } from '@/stores/toast-store';
 
 const MAX_HISTORY = 60;
 const SNAP_THRESHOLD = 6;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
-/** Resolução interna do canvas = 2x o tamanho do documento, não MAX_ZOOM (4x):
+/** Resolução interna do canvas = até 2x o tamanho do documento, não MAX_ZOOM (4x):
  * um PSD importado em resolução de impressão (ex: A4 a 300dpi) já é grande
  * sozinho - multiplicar por 4 arrisca estourar o limite de pixels de canvas
  * do navegador (Chrome: ~268M px totais). 2x já deixa nítido até 200% de
  * zoom (o preset mais usado) com folga de sobra pra documentos grandes. */
 const RENDER_OVERSAMPLE = 2;
+
+/**
+ * Achado real (2026-09-10): RENDER_OVERSAMPLE fixo em 2x, sem teto, quebrava
+ * PSDs de resolução de impressão importados ("não carrega pra edição",
+ * "espaço saindo cortado") - um documento de, digamos, 4960x7016 (A4 300dpi)
+ * vezes 2 gera um backstore de ~9920x14032px. Isso estoura limites reais de
+ * canvas do navegador (Safari historicamente trava por volta de 4096px por
+ * lado; mesmo o teto de área do Chrome fica apertado), e o resultado não é
+ * um erro visível - é canvas em branco ou recortado silenciosamente. Este
+ * teto reduz o oversample (nunca abaixo de 1x = nítido só até 100% de zoom)
+ * pra documentos grandes, em vez de arriscar estourar o backstore.
+ */
+const MAX_BACKSTORE_SIDE = 4096;
+
+/**
+ * Achado real (2026-09-10, prioridade explícita do usuário: "performance com
+ * documento grande"): lendo o código-fonte do fabric@6.9.1
+ * (canvas/DOMManagers/util.mjs, setCanvasDimensions), `enableRetinaScaling`
+ * (default TRUE) já multiplica o backstore que passamos pra
+ * `canvas.setDimensions` por `window.devicePixelRatio` sozinho, POR DENTRO -
+ * numa tela Retina comum (dpr=2), nosso `RENDER_OVERSAMPLE` empilhava em
+ * cima disso: backstore final = documentSide * oversample * dpr. Com
+ * oversample=2 e dpr=2, isso é 4x de lado = 16x de pixels totais pra
+ * compor a cada frame, sem ganho real de nitidez (o dpr sozinho já cobre a
+ * nitidez nativa da tela) - só custo de performance. O teto agora considera
+ * o backstore FINAL (pós-dpr), não só o nosso fator, então documentos
+ * grandes em tela Retina recebem MENOS oversample extra (o dpr já fez parte
+ * do trabalho de nitidez de graça).
+ */
+function computeRenderOversample(documentWidth: number, documentHeight: number): number {
+  const maxSide = Math.max(documentWidth, documentHeight);
+  if (maxSide <= 0) return RENDER_OVERSAMPLE;
+  const dpr = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  const budget = MAX_BACKSTORE_SIDE / dpr;
+  return Math.max(1, Math.min(RENDER_OVERSAMPLE, budget / maxSide));
+}
+
+function sameNumberArray(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function sameGuideArrays(prev: { vertical: number[]; horizontal: number[] }, vertical: number[], horizontal: number[]): boolean {
+  return sameNumberArray(prev.vertical, vertical) && sameNumberArray(prev.horizontal, horizontal);
+}
 
 function deepClonePages(pages: CanvaPage[]): CanvaPage[] {
   return JSON.parse(JSON.stringify(pages)) as CanvaPage[];
@@ -160,6 +214,12 @@ export function useCanvaEditor(
   const [selection, setSelection] = useState<CanvaSelectionState>({ ids: [], type: null, object: null });
   const [isReady, setIsReady] = useState(false);
   const [guides, setGuides] = useState<CanvaGuides>({ vertical: [], horizontal: [] });
+  // Pincel de desenho livre (pedido explícito: "ferramentas de seleção e
+  // pincel") - `isDrawingMode` espelha `canvas.isDrawingMode` (Fabric
+  // desliga a seleção/arraste normal de objetos sozinho enquanto ativo).
+  const [isDrawingMode, setIsDrawingModeState] = useState(false);
+  const [brushColor, setBrushColorState] = useState('#9333ea');
+  const [brushWidth, setBrushWidthState] = useState(4);
   // O valor em si não é lido; existe só pra forçar recomputar canUndo/canRedo
   // (derivados de historyRef.current, uma ref, a cada novo render).
   const [, setHistoryTick] = useState(0);
@@ -179,16 +239,41 @@ export function useCanvaEditor(
     if (pageIndex === -1) return;
     const page = pagesRef.current[pageIndex]!;
     const byId = new Map(page.objects.map((obj) => [obj.id, obj]));
+    // Achado real (2026-09-10): antes disto, um objeto do canvas SEM entrada
+    // prévia em `byId` (ou seja, qualquer objeto recém-criado: forma/texto/
+    // imagem adicionados, colar, duplicar, agrupar) virava `null` aqui e
+    // desaparecia silenciosamente do documento no autosave seguinte -
+    // `buildFallbackExisting` reconstrói um registro honesto direto do
+    // próprio objeto Fabric ao vivo, então NENHUM objeto do canvas é
+    // descartado por falta de histórico prévio (ver comentário completo em
+    // fabric-sync.ts).
     const objects = canvas
       .getObjects()
       .filter(isManaged)
       .map((fabricObject, index) => {
-        const existing = byId.get(fabricObject.canvaId);
-        if (!existing) return null;
+        const existing = byId.get(fabricObject.canvaId) ?? buildFallbackExisting(fabricObject);
         return readCanvaObject(fabricObject, existing, index);
-      })
-      .filter((value): value is CanvaObject => value !== null);
+      });
     pagesRef.current = pagesRef.current.map((p, index) => (index === pageIndex ? { ...p, objects } : p));
+  }, []);
+
+  /**
+   * Registra objetos recém-criados em `pagesRef` ANTES do primeiro
+   * `commitHistory()` deles. `flushActivePageFromCanvas` já tem um fallback
+   * que reconstrói um registro a partir do objeto Fabric ao vivo quando
+   * nenhum existe (ver buildFallbackExisting em fabric-sync.ts) - isto aqui
+   * é ainda melhor que esse fallback nos casos em que já temos os dados
+   * ORIGINAIS limpos em mãos (ex: a URL de uma imagem antes de qualquer
+   * filtro "assado" nela - o fallback só consegue ler a URL ATUAL via
+   * `getSrc()`, que pra uma imagem com filtro é um data: URL gigante do
+   * canvas offscreen, não a URL limpa original).
+   */
+  const seedObjectsIntoPage = useCallback((objs: CanvaObject[]) => {
+    const pageIndex = pagesRef.current.findIndex((p) => p.id === activePageIdRef.current);
+    if (pageIndex === -1) return;
+    pagesRef.current = pagesRef.current.map((p, index) =>
+      index === pageIndex ? { ...p, objects: [...p.objects, ...objs] } : p,
+    );
   }, []);
 
   const commitHistory = useCallback(() => {
@@ -275,7 +360,16 @@ export function useCanvaEditor(
       }
 
       moving.set({ left: snappedLeft, top: snappedTop });
-      setGuides({ vertical: guideLinesV, horizontal: guideLinesH });
+      // Achado real (2026-09-10, prioridade "performance com documento
+      // grande"): isto disparava `setGuides` com um array NOVO a cada
+      // mousemove do arraste (até ~60x/s), mesmo quando o resultado era
+      // idêntico ao anterior (ex: arrastando longe de qualquer guia, os
+      // dois arrays continuam vazios) - React não faz comparação profunda
+      // de array, só de referência, então cada chamada virava um re-render
+      // de verdade. Passar uma função pro setState e devolver a MESMA
+      // referência quando o conteúdo não mudou é o jeito documentado do
+      // React de pular o re-render (bail-out por Object.is).
+      setGuides((prev) => (sameGuideArrays(prev, guideLinesV, guideLinesH) ? prev : { vertical: guideLinesV, horizontal: guideLinesH }));
     },
     [documentWidth, documentHeight],
   );
@@ -323,18 +417,29 @@ export function useCanvaEditor(
     // inteiro sem aviso nenhum - a página inteira ficava em branco mesmo
     // com dezenas de outros objetos válidos esperando pra entrar. Cada
     // objeto agora falha sozinho, os outros continuam carregando normalmente.
+    //
+    // Achado real (2026-09-10, "performance com documento grande"): isto
+    // dava `await` um objeto de cada vez, num for-loop sequencial - pra um
+    // PSD importado com dezenas de camadas/imagens, o carregamento inteiro
+    // ficava preso à soma de TODOS os fetches de rede, um atrás do outro,
+    // em vez de rodar em paralelo. `Promise.allSettled` sobre todos de uma
+    // vez faz os fetches concorrerem de verdade; a ordem de `canvas.add()`
+    // continua a mesma (por índice do array já ordenado por zIndex, não pela
+    // ordem de chegada de cada promise).
     const sorted = [...page.objects].sort((a, b) => a.zIndex - b.zIndex);
+    const outcomes = await Promise.allSettled(sorted.map((obj) => instantiateFabricObject(obj)));
+    if (token !== loadTokenRef.current) return;
+
     let failedCount = 0;
-    for (const obj of sorted) {
-      try {
-        const fabricObject = await instantiateFabricObject(obj);
-        if (token !== loadTokenRef.current) return;
-        canvas.add(fabricObject);
-      } catch (error) {
+    outcomes.forEach((outcome, index) => {
+      const obj = sorted[index]!;
+      if (outcome.status === 'rejected') {
         failedCount += 1;
-        console.error('canvas_object_load_failed', { objectId: obj.id, type: obj.type, error });
+        console.error('canvas_object_load_failed', { objectId: obj.id, type: obj.type, error: outcome.reason });
+        return;
       }
-    }
+      canvas.add(outcome.value);
+    });
     canvas.requestRenderAll();
     if (failedCount > 0) {
       toast(
@@ -384,11 +489,12 @@ export function useCanvaEditor(
     // exportação: toDataURL/toBlob (ver use dos multiplicadores 1x/2x/4x)
     // ignoram o zoom do viewport de propósito, sempre re-renderizam do zero
     // no multiplicador pedido (confirmado lendo StaticCanvas.mjs).
+    const oversample = computeRenderOversample(documentWidth, documentHeight);
     canvas.setDimensions(
-      { width: documentWidth * RENDER_OVERSAMPLE, height: documentHeight * RENDER_OVERSAMPLE },
+      { width: documentWidth * oversample, height: documentHeight * oversample },
       { backstoreOnly: true },
     );
-    canvas.setZoom(RENDER_OVERSAMPLE);
+    canvas.setZoom(oversample);
 
     fabricCanvasRef.current = canvas;
 
@@ -399,7 +505,40 @@ export function useCanvaEditor(
     canvas.on('object:moving', (event) => {
       applySnapping(event.target);
     });
-    canvas.on('mouse:up', () => setGuides({ vertical: [], horizontal: [] }));
+    canvas.on('mouse:up', () =>
+      setGuides((prev) => (prev.vertical.length === 0 && prev.horizontal.length === 0 ? prev : { vertical: [], horizontal: [] })),
+    );
+    // Traço de pincel concluído (fabric.PencilBrush já adicionou o Path ao
+    // canvas sozinho) - vira um CanvaObject de verdade aqui, não fica só
+    // "desenhado na tela". `commitHistory`/`seedObjectsIntoPage` são
+    // referências estáveis (deps vazias em toda a cadeia delas), seguro
+    // referenciar direto dentro deste efeito de deps fixas ([]).
+    canvas.on('path:created', (event) => {
+      const path = event.path as FabricObjectWithMeta;
+      path.canvaId = newId();
+      path.canvaType = 'path';
+      const pathObj: CanvaPathObject = {
+        id: path.canvaId,
+        type: 'path',
+        x: path.left ?? 0,
+        y: path.top ?? 0,
+        width: path.width ?? 0,
+        height: path.height ?? 0,
+        scaleX: path.scaleX ?? 1,
+        scaleY: path.scaleY ?? 1,
+        rotation: path.angle ?? 0,
+        opacity: path.opacity ?? 1,
+        locked: false,
+        visible: true,
+        zIndex: 0,
+        pathData: util.joinPath((path as unknown as InstanceType<typeof Path>).path),
+        stroke: typeof path.stroke === 'string' ? path.stroke : '#9333ea',
+        strokeWidth: path.strokeWidth ?? 4,
+        fill: typeof path.fill === 'string' ? path.fill : null,
+      };
+      seedObjectsIntoPage([pathObj]);
+      commitHistory();
+    });
 
     const initialPage = pagesRef.current.find((p) => p.id === activePageIdRef.current);
     void loadPageIntoCanvas(initialPage ?? pagesRef.current[0]!).then(() => setIsReady(true));
@@ -420,9 +559,10 @@ export function useCanvaEditor(
       canvas.add(fabricObject);
       canvas.setActiveObject(fabricObject);
       canvas.requestRenderAll();
+      seedObjectsIntoPage([obj]);
       commitHistory();
     },
-    [commitHistory],
+    [commitHistory, seedObjectsIntoPage],
   );
 
   const addText = useCallback(
@@ -453,23 +593,17 @@ export function useCanvaEditor(
           // mantém o fallback 50% do artboard
         }
       }
-      // Cabe dentro de ~90% do artboard preservando proporção, sem upscale além do original.
-      const maxW = documentWidth * 0.9;
-      const maxH = documentHeight * 0.9;
-      const scale = Math.min(1, maxW / width, maxH / height);
-      const fitWidth = width * scale;
-      const fitHeight = height * scale;
+      // Cabe dentro de ~90% do artboard preservando proporção, sem upscale além
+      // do original. Toda inserção de imagem passa por aqui (upload, colar,
+      // arrastar, banco de imagens, Brand Kit) - ver computeImagePlacement
+      // sobre por que width/height NÃO é o tamanho exibido.
+      const placement = computeImagePlacement(width, height, documentWidth, documentHeight);
 
       await addObject({
         id: newId(),
         type: 'image',
         src,
-        x: (documentWidth - fitWidth) / 2,
-        y: (documentHeight - fitHeight) / 2,
-        width: fitWidth,
-        height: fitHeight,
-        scaleX: 1,
-        scaleY: 1,
+        ...placement,
         rotation: 0,
         opacity: 1,
         locked: false,
@@ -541,8 +675,9 @@ export function useCanvaEditor(
       canvas.setActiveObject(new ActiveSelection(newFabricObjects, { canvas }));
     }
     canvas.requestRenderAll();
+    seedObjectsIntoPage(clones);
     commitHistory();
-  }, [commitHistory, flushActivePageFromCanvas]);
+  }, [commitHistory, flushActivePageFromCanvas, seedObjectsIntoPage]);
 
   const copySelected = useCallback(() => {
     const canvas = fabricCanvasRef.current;
@@ -569,11 +704,12 @@ export function useCanvaEditor(
     if (newFabricObjects.length === 1) canvas.setActiveObject(newFabricObjects[0]!);
     else if (newFabricObjects.length > 1) canvas.setActiveObject(new ActiveSelection(newFabricObjects, { canvas }));
     canvas.requestRenderAll();
+    seedObjectsIntoPage(clones);
     commitHistory();
     // Cópia consecutiva (Ctrl+D repetido, ou C então V várias vezes) sempre desloca
     // a partir da última posição, não da original - senão colagens repetidas empilhariam.
     clipboardRef.current = clones;
-  }, [commitHistory]);
+  }, [commitHistory, seedObjectsIntoPage]);
 
   const withActiveObjects = useCallback((fn: (objects: FabricObject[]) => void) => {
     const canvas = fabricCanvasRef.current;
@@ -626,6 +762,56 @@ export function useCanvaEditor(
     [withActiveObjects, commitHistory],
   );
 
+  /** Modo de mesclagem (pedido explícito: "blend modes... essencial pra
+   * composição de imagem estilo Photoshop") - `globalCompositeOperation` é
+   * uma prop nativa de qualquer FabricObject, não precisou de nenhuma
+   * estrutura nova no motor, só o mapeamento de nomes (ver fabric-sync.ts). */
+  const setSelectedBlendMode = useCallback(
+    (blendMode: CanvaBlendMode) => {
+      withActiveObjects((objects) => {
+        for (const obj of objects) obj.set({ globalCompositeOperation: blendModeToComposite(blendMode) });
+      });
+      setSelection(readSelectionState());
+      commitHistory();
+    },
+    [withActiveObjects, commitHistory, readSelectionState],
+  );
+
+  /**
+   * Pincel de desenho livre (pedido explícito: "ferramentas de seleção e
+   * pincel"). Fabric já resolve tudo do desenho em si (`isDrawingMode` +
+   * `freeDrawingBrush`, um `PencilBrush` nativo) - ligar/desligar desliga
+   * sozinho a seleção/arraste normal de objetos enquanto ativo. O traço
+   * concluído vira um CanvaObject de verdade no `path:created` (registrado
+   * no efeito de setup do canvas, mais abaixo), não fica só "desenhado".
+   */
+  const setDrawingMode = useCallback(
+    (enabled: boolean) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+      canvas.isDrawingMode = enabled;
+      if (enabled) {
+        canvas.freeDrawingBrush = new PencilBrush(canvas);
+        canvas.freeDrawingBrush.color = brushColor;
+        canvas.freeDrawingBrush.width = brushWidth;
+      }
+      setIsDrawingModeState(enabled);
+    },
+    [brushColor, brushWidth],
+  );
+
+  const setBrushColor = useCallback((color: string) => {
+    setBrushColorState(color);
+    const canvas = fabricCanvasRef.current;
+    if (canvas?.freeDrawingBrush) canvas.freeDrawingBrush.color = color;
+  }, []);
+
+  const setBrushWidth = useCallback((width: number) => {
+    setBrushWidthState(width);
+    const canvas = fabricCanvasRef.current;
+    if (canvas?.freeDrawingBrush) canvas.freeDrawingBrush.width = width;
+  }, []);
+
   const toggleSelectedLock = useCallback(() => {
     withActiveObjects((objects) => {
       for (const obj of objects) {
@@ -671,7 +857,19 @@ export function useCanvaEditor(
       const existing = page?.objects.find((o) => o.id === image.canvaId);
       // Substituição limpa: sem herdar filtros da imagem anterior (conteúdo novo, ajustes zerados).
       const element = await loadImageElement(src, undefined);
+      // Tamanho OCUPADO na arte antes da troca (caixa de origem x escala). O
+      // `setElement` do Fabric redefine width/height pro tamanho natural do
+      // novo arquivo mas NÃO mexe em scaleX/scaleY: sem recalcular a escala
+      // aqui, trocar uma imagem por outra de resolução diferente fazia o
+      // objeto saltar de tamanho na tela (uma foto de 4000px substituindo uma
+      // de 1000px aparecia 4x maior, estourando o artboard).
+      const displayWidth = (active.width || 1) * (active.scaleX ?? 1);
+      const displayHeight = (active.height || 1) * (active.scaleY ?? 1);
       image.setElement(element);
+      const nextWidth = active.width || 1;
+      const nextHeight = active.height || 1;
+      active.set({ scaleX: displayWidth / nextWidth, scaleY: displayHeight / nextHeight });
+      active.setCoords();
       if (existing?.type === 'image') existing.src = src;
       canvas.requestRenderAll();
       commitHistory();
@@ -732,14 +930,29 @@ export function useCanvaEditor(
       const currentCropX = (active as unknown as { cropX?: number }).cropX ?? 0;
       const currentCropY = (active as unknown as { cropY?: number }).cropY ?? 0;
 
+      const newWidth = rect.width / scaleX;
+      const newHeight = rect.height / scaleY;
       active.set({
         cropX: currentCropX + rect.x / scaleX,
         cropY: currentCropY + rect.y / scaleY,
-        width: rect.width / scaleX,
-        height: rect.height / scaleY,
+        width: newWidth,
+        height: newHeight,
         left: (active.left ?? 0) + rect.x,
         top: (active.top ?? 0) + rect.y,
       });
+      // Achado real (2026-09-11, ao revisar a própria máscara de recorte
+      // recém-implementada): `clipPath` é construído com um rx/ry (ou
+      // width/height, no caso de triângulo/estrela) FIXOS no momento em que
+      // a máscara é aplicada - recortar a MESMA imagem depois muda
+      // width/height do objeto mas não redimensiona a máscara junto, então
+      // ela fica desalinhada/no tamanho errado em cima da imagem já
+      // recortada. Reconstrói a máscara pro novo tamanho sempre que existe
+      // uma ativa.
+      const existingClip = (active as unknown as { clipPath?: FabricObject }).clipPath;
+      if (existingClip) {
+        const newClip = buildClipShape(clipShapeKindOf(existingClip), newWidth, newHeight);
+        active.set({ clipPath: (newClip ?? undefined) as unknown as FabricObject });
+      }
       canvas.requestRenderAll();
       commitHistory();
     },
@@ -774,6 +987,28 @@ export function useCanvaEditor(
         if (existing?.type === 'text') existing.fontId = patch.fontId;
       }
 
+      // Achado real (2026-09-11): trocar peso (negrito) ou itálico de um
+      // texto com fonte do Fontsource nunca recarregava o arquivo .woff2 da
+      // variante certa - só o peso do Fabric mudava, sem o FontFace
+      // correspondente existir. Diferente de CSS normal, Canvas2D NÃO
+      // sintetiza um peso que falta - sem o FontFace exato, ele cai
+      // silenciosamente na fonte padrão do navegador pra aquele peso,
+      // incluindo na exportação final (PNG/JPEG com a fonte errada, sem
+      // nenhum erro visível). Recarrega a variante certa sempre que peso/
+      // itálico mudam num texto que tem `fontId` (fontes nativas do app,
+      // sem fontId, não precisam disso - já vêm todo peso via next/font).
+      if ((patch.fontWeight !== undefined || patch.fontStyle !== undefined) && isManaged(active)) {
+        const page = pagesRef.current.find((p) => p.id === activePageIdRef.current);
+        const existing = page?.objects.find((o) => o.id === active.canvaId);
+        if (existing?.type === 'text' && existing.fontId) {
+          const nextWeight = patch.fontWeight ?? existing.fontWeight;
+          const nextStyle = patch.fontStyle ?? existing.fontStyle;
+          loadFontVariant(existing.fontId, existing.fontFamily, nextWeight, nextStyle)
+            .then(() => canvas.requestRenderAll())
+            .catch((error: unknown) => console.error('font_variant_load_failed', error));
+        }
+      }
+
       canvas.requestRenderAll();
       setSelection(readSelectionState());
       commitHistory();
@@ -803,6 +1038,22 @@ export function useCanvaEditor(
     [commitHistory, readSelectionState],
   );
 
+  /** Editar um traço de pincel já desenhado (cor/espessura) - `pathData`
+   * (a geometria em si) nunca é tocado aqui, só a aparência do traço. */
+  const updateSelectedPath = useCallback(
+    (patch: { stroke?: string; strokeWidth?: number }) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+      const active = canvas.getActiveObject();
+      if (!active) return;
+      active.set(patch);
+      canvas.requestRenderAll();
+      setSelection(readSelectionState());
+      commitHistory();
+    },
+    [commitHistory, readSelectionState],
+  );
+
   /** Borda (moldura) da imagem selecionada - mesmo par stroke/strokeWidth de
    * updateSelectedShape, só que aplicável a `image` (Fabric.Image aceita
    * stroke/strokeWidth como qualquer outro FabricObject). */
@@ -817,6 +1068,27 @@ export function useCanvaEditor(
         stroke: nextStrokeWidth > 0 ? nextStroke : null,
         strokeWidth: nextStrokeWidth,
       });
+      canvas.requestRenderAll();
+      setSelection(readSelectionState());
+      commitHistory();
+    },
+    [commitHistory, readSelectionState],
+  );
+
+  /** Máscara de recorte (pedido explícito: "máscaras de camada") - recorta a
+   * imagem selecionada na silhueta da forma escolhida, via `clipPath` nativo
+   * do Fabric (ver buildClipShape em fabric-sync.ts pro porquê da posição
+   * centrada em vez de canto superior esquerdo). `null` remove a máscara. */
+  const setSelectedImageClipShape = useCallback(
+    (shape: CanvaShapeKind | null) => {
+      const canvas = fabricCanvasRef.current;
+      const active = canvas?.getActiveObject();
+      if (!canvas || !active || !isManaged(active) || active.canvaType !== 'image') return;
+      const clip = shape ? buildClipShape(shape, active.width ?? 0, active.height ?? 0) : null;
+      // `set({ clipPath: undefined })` é rejeitado por exactOptionalPropertyTypes
+      // na assinatura do Fabric (mesma razão do cast em clearBackgroundImage
+      // acima) - a prop É opcional em runtime, só o .d.ts é impreciso aqui.
+      active.set({ clipPath: (clip ?? undefined) as unknown as FabricObject });
       canvas.requestRenderAll();
       setSelection(readSelectionState());
       commitHistory();
@@ -1134,6 +1406,36 @@ export function useCanvaEditor(
     setZoomState(Math.max(MIN_ZOOM, scale));
   }, [documentWidth, documentHeight]);
 
+  /**
+   * Achado real (2026-09-10, "espaço saindo cortado, quero que saia maior"):
+   * quem chama `zoomToFit` faz isso uma vez só, logo no mount (useEffect com
+   * deps vazias em canva-workspace.tsx). Se o container ainda tiver
+   * clientWidth/clientHeight zerados nesse exato tick (layout flexbox/painéis
+   * laterais ainda não resolvidos - comum ao abrir um documento vindo de
+   * outra tela), a conta dá zoom negativo, cai no MIN_ZOOM (10%) e nunca mais
+   * se corrige sozinha. Este observer espera o PRIMEIRO tamanho real
+   * (>0x>0) do container e só então ajusta - depois disso se desliga, pra
+   * não sobrescrever um zoom que o usuário tenha escolhido manualmente.
+   */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    let didFit = false;
+    const observer = new ResizeObserver((entries) => {
+      if (didFit) return;
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) {
+        didFit = true;
+        zoomToFit();
+        observer.disconnect();
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [zoomToFit]);
+
   /** JPEG não tem canal alfa - exportar uma página com fundo "transparente"
    * nesse formato sem isto pintaria as áreas vazias de PRETO (comportamento
    * padrão do <canvas> ao achatar pixels sem alpha), não do branco/quadriculado
@@ -1385,6 +1687,12 @@ export function useCanvaEditor(
     addShape,
     addImageFromSrc,
     addImageFromFile,
+    isDrawingMode,
+    brushColor,
+    brushWidth,
+    setDrawingMode,
+    setBrushColor,
+    setBrushWidth,
     deleteSelected,
     duplicateSelected,
     copySelected,
@@ -1394,15 +1702,18 @@ export function useCanvaEditor(
     bringToFront,
     sendToBack,
     setSelectedOpacity,
+    setSelectedBlendMode,
     toggleSelectedLock,
     flipSelected,
     replaceSelectedImageSrc,
     updateSelectedImageFilters,
     updateSelectedImageBorder,
+    setSelectedImageClipShape,
     getActiveImageFrame,
     applyCrop,
     updateSelectedText,
     updateSelectedShape,
+    updateSelectedPath,
     setSelectedSize,
     setSelectedPosition,
     setSelectedRotation,

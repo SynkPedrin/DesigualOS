@@ -84,3 +84,46 @@ describe('extractApprovalProposal', () => {
     expect(extractApprovalProposal('[AGUARDA_APROVACAO]   [/AGUARDA_APROVACAO]')).toBeNull();
   });
 });
+
+
+describe('stripEmDashes preserva citação', () => {
+  /**
+   * Defeito medido no frontend real em 10/09/2026: a task foi criada no ClickUp com o nome
+   * `E2E Claude - pode apagar` (conferido na API) e a resposta na tela citou
+   * `"E2E Claude, pode apagar"`. Quem procura pelo nome que leu não acha a task.
+   */
+  it('hífen dentro de aspas sobrevive (nome de task citado)', () => {
+    expect(stripEmDashes('Criei a task "E2E Claude - pode apagar" na lista interna.')).toBe(
+      'Criei a task "E2E Claude - pode apagar" na lista interna.',
+    );
+  });
+
+  it('travessão dentro de aspas também sobrevive', () => {
+    expect(stripEmDashes('A headline é "Sabor \u2014 e memória" e fecha assim.')).toBe(
+      'A headline é "Sabor \u2014 e memória" e fecha assim.',
+    );
+  });
+
+  it('fora das aspas a regra continua valendo na MESMA frase', () => {
+    expect(stripEmDashes('Criei a task "Plano A - fase 1" e sim \u2014 já atribuí.')).toBe(
+      'Criei a task "Plano A - fase 1" e sim, já atribuí.',
+    );
+  });
+
+  it('lista com item citado mantém marcador e citação', () => {
+    expect(stripEmDashes('\u2014 item "A - B"\n\u2014 item "C \u2013 D"')).toBe(
+      '- item "A - B"\n- item "C \u2013 D"',
+    );
+  });
+
+  it('aspas não fechadas não engolem o resto do texto', () => {
+    expect(stripEmDashes('Ele disse "isso aqui e prossegue \u2014 assim mesmo')).toBe(
+      'Ele disse "isso aqui e prossegue, assim mesmo',
+    );
+  });
+
+  it('nenhuma sentinela vaza pro texto final', () => {
+    const saida = stripEmDashes('"a - b" e "c \u2014 d" fora \u2014 dentro');
+    expect(saida).not.toMatch(/[\u0011\u0012\u0013]/);
+  });
+});

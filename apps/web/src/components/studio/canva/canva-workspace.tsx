@@ -139,12 +139,20 @@ export function CanvaWorkspace({
   );
   updateThumbnailRef.current = updateThumbnail;
 
-  // Gera (ou atualiza) a thumbnail assim que o desenho carrega, ignorando o
-  // throttle de 30s (`force=true`) - sem isto, todo design salvo ANTES desta
-  // função existir ficaria com o placeholder genérico pra sempre em "Meus
-  // designs", só ganhando thumbnail de verdade se alguém editasse algo nele.
+  // Gera a thumbnail assim que o desenho carrega, ignorando o throttle de 30s
+  // (`force=true`) - sem isto, todo design salvo ANTES desta função existir
+  // ficaria com o placeholder genérico pra sempre em "Meus designs", só
+  // ganhando thumbnail de verdade se alguém editasse algo nele.
+  //
+  // Só pra quem AINDA NÃO TEM thumbnail, no entanto: rodar isto em toda
+  // abertura significava renderizar o artboard inteiro, subir um JPEG e
+  // gravar o documento de novo toda vez que alguém abria um design pra só
+  // olhar - trabalho pesado disputando rede e as 3 conexões do pool logo no
+  // momento em que as imagens da página ainda estão carregando. Documento já
+  // com thumbnail continua se atualizando pelo autosave (a cada 30s de
+  // edição de verdade), que é quando a prévia realmente mudou.
   useEffect(() => {
-    if (!editor.isReady) return;
+    if (!editor.isReady || document.thumbnailUrl) return;
     void updateThumbnailRef.current(true);
   }, [editor.isReady]);
 
@@ -260,7 +268,12 @@ export function CanvaWorkspace({
             type="file"
             accept="image/png,image/jpeg,image/webp"
             className="hidden"
-            onChange={(event) => void handleReplaceOrAddImage(event.target.files)}
+            onChange={(event) => {
+              const files = event.target.files;
+              void handleReplaceOrAddImage(files).finally(() => {
+                event.target.value = '';
+              });
+            }}
           />
         </div>
       </div>

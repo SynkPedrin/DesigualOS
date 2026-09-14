@@ -1,3 +1,4 @@
+import { desc } from 'drizzle-orm';
 import { index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { idColumn } from './_shared';
 import { agentNameEnum, nodeStatusEnum } from './enums';
@@ -85,5 +86,17 @@ export const healthChecks = pgTable(
   },
   (table) => ({
     nodeIdx: index('health_checks_node_id_idx').on(table.nodeId),
+    /**
+     * O painel de Monitoramento pede "o health check mais recente de cada
+     * node" (selectDistinctOn em apps/api/src/health/routes.ts) a cada 15s,
+     * por aba aberta. Com índice só em node_id, o Postgres percorria TODAS
+     * as linhas do node pra achar a mais nova - medido em 11/09/2026 com
+     * EXPLAIN ANALYZE: 93.661 linhas lidas, 85ms, pra devolver 10. Incluir
+     * created_at DESC no índice transforma isso em uma busca direta por
+     * node. Ver também a retenção de 7 dias em health/scheduler.ts: índice
+     * e retenção resolvem problemas diferentes (velocidade x crescimento
+     * infinito) e os dois são necessários.
+     */
+    nodeRecentIdx: index('health_checks_node_id_created_at_idx').on(table.nodeId, desc(table.createdAt)),
   }),
 );

@@ -112,8 +112,13 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function AgentRow({ agent, status }: { agent: (typeof FEATURED_AGENTS)[number]; status: NodeStatus | null }) {
   const router = useRouter();
   const meta = AGENT_META[agent];
-  const { data: conversations } = useConversations(agent);
-  const latest = conversations?.[0] ?? null;
+  // A lista base (sem filtro) já traz `agents` por conversa (aditivo,
+  // 12/09/2026): derivar a mais recente do agente aqui elimina um GET
+  // /conversations?agent=X POR agente a cada carga da página. Ressalva
+  // aceita: a lista base cobre as 50 conversas mais recentes; um agente
+  // cuja última conversa é mais antiga que isso cai no fallback do papel.
+  const { data: conversations } = useConversations(null);
+  const latest = conversations?.find((conversation) => conversation.agents.includes(agent)) ?? null;
 
   function handleClick() {
     const query = latest ? `?agent=${agent}&conversation=${latest.id}` : `?agent=${agent}`;

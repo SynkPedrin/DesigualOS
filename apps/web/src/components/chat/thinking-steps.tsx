@@ -20,15 +20,27 @@ function buildSteps(clientName: string | null) {
 export function ThinkingSteps({
   status,
   clientName,
+  liveSteps,
 }: {
   status: ExecutionStatus;
   clientName: string | null;
+  /** Fases reais reportadas pelo backend (agent.phase, Agentic V2). Quando
+   * existem, substituem as etapas genéricas por intervalo: a UI nunca mostra
+   * uma etapa que o backend não executou de verdade. */
+  liveSteps?: string[] | undefined;
 }) {
-  const steps = useRef(buildSteps(clientName)).current;
+  const genericSteps = useRef(buildSteps(clientName)).current;
+  const useLive = Boolean(liveSteps && liveSteps.length > 0);
+  const steps = useLive ? liveSteps! : genericSteps;
   const settled = SETTLED_STATUSES.includes(status);
   const [visibleStep, setVisibleStep] = useState(0);
 
   useEffect(() => {
+    if (useLive) {
+      // Com fases reais, o passo visível é sempre o último reportado.
+      setVisibleStep(steps.length - 1);
+      return;
+    }
     if (settled) {
       setVisibleStep(steps.length - 1);
       return;
@@ -37,7 +49,7 @@ export function ThinkingSteps({
       setVisibleStep((current) => Math.min(current + 1, steps.length - 2));
     }, 850);
     return () => clearInterval(interval);
-  }, [settled, steps.length]);
+  }, [settled, steps.length, useLive]);
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-grafite-elevado bg-grafite px-4 py-3">

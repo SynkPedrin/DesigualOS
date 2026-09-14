@@ -13,6 +13,11 @@ export function useInfrastructureHealth(enabled = true) {
       return mapInfrastructureHealth(wire);
     },
     enabled,
+    // staleTime > 0 porque sidebar + agent-spotlight montam a mesma query em
+    // sequência: sem isto, cada mount refetchava (medido: 2x GET
+    // /health/infrastructure por carga de página). O poll de 15s segue
+    // garantindo frescor.
+    staleTime: 10_000,
     refetchInterval: 15_000,
   });
 }

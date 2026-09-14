@@ -113,4 +113,30 @@ describe('getTasksInListPaged', () => {
     );
     await expect(getTasksInListPaged('pk_fake', 'L1')).rejects.toThrow(/401/);
   });
+
+  it('todo fetch sai com AbortSignal de timeout (auditoria 2026-09: fetch sem timeout pendurava pra sempre)', async () => {
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ tasks: [], last_page: true }),
+      text: async () => '',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getTasksInListPaged('pk_fake', 'L1');
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect((init.signal as AbortSignal).aborted).toBe(false);
+  });
+
+  it('timeout de rede vira mensagem legível (os call sites só propagam error.message)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+      }),
+    );
+    await expect(getTasksInListPaged('pk_fake', 'L1')).rejects.toThrow(/não respondeu em 20s/);
+  });
 });

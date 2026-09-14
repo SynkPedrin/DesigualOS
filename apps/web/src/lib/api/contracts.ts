@@ -125,12 +125,30 @@ export interface NodeSummaryWire {
   queue_depth: number | null;
 }
 
+export interface WorkerHealthWire {
+  online: boolean;
+  pid: number | null;
+  started_at: ISODateString | null;
+  last_heartbeat_at: ISODateString | null;
+  seconds_since_heartbeat: number | null;
+  jobs_waiting: number;
+  jobs_active: number;
+  diagnosis: string;
+}
+
 export interface InfrastructureHealthWire {
   total_nodes: number;
   summary: Partial<Record<NodeStatus, number>>;
   all_systems_online: boolean;
   overall_health_percent: number;
   agents_connected: { online: number; total: number };
+  /**
+   * O worker do orquestrador. Opcional no tipo porque uma API mais antiga que o frontend não
+   * manda este bloco - e nesse caso o certo é a tela dizer "não sei", nunca assumir que está de
+   * pé. Foi exatamente assumir saúde sem medir que produziu o painel verde com o worker morto
+   * em 10/09/2026.
+   */
+  worker?: WorkerHealthWire;
   last_backup_at: ISODateString | null;
   nodes: NodeSummaryWire[];
 }
@@ -151,12 +169,22 @@ export interface NodeSummary {
   queueDepth: number | null;
 }
 
+export interface WorkerHealth {
+  online: boolean;
+  jobsWaiting: number;
+  jobsActive: number;
+  diagnosis: string;
+  lastHeartbeatAt: ISODateString | null;
+}
+
 export interface InfrastructureHealth {
   totalNodes: number;
   statusSummary: Partial<Record<NodeStatus, number>>;
   allSystemsOnline: boolean;
   overallHealthPercent: number;
   agentsConnected: { online: number; total: number };
+  /** `null` = a API não reportou. Desconhecido não é o mesmo que saudável. */
+  worker: WorkerHealth | null;
   lastBackupAt: ISODateString | null;
   nodes: NodeSummary[];
 }
@@ -168,6 +196,15 @@ export function mapInfrastructureHealth(wire: InfrastructureHealthWire): Infrast
     allSystemsOnline: wire.all_systems_online,
     overallHealthPercent: wire.overall_health_percent,
     agentsConnected: wire.agents_connected,
+    worker: wire.worker
+      ? {
+          online: wire.worker.online,
+          jobsWaiting: wire.worker.jobs_waiting,
+          jobsActive: wire.worker.jobs_active,
+          diagnosis: wire.worker.diagnosis,
+          lastHeartbeatAt: wire.worker.last_heartbeat_at,
+        }
+      : null,
     lastBackupAt: wire.last_backup_at,
     nodes: wire.nodes.map((node) => ({
       nodeId: node.node_id,
@@ -629,6 +666,9 @@ export interface StudioAssetWire {
   type: StudioJobType;
   filename: string;
   storage_url: string;
+  /** Thumbnail 480px webp gerada em background (12/09/2026). Null enquanto
+   * o worker não processou; a galeria usa thumb_url ?? storage_url. */
+  thumb_url?: string | null;
   prompt: string;
   /** Checkpoint/modelo que gerou de fato - o "workflow" da spec da Galeria. */
   model?: string | null;
@@ -640,6 +680,11 @@ export interface StudioAssetWire {
   job_id?: string | null;
   slide_index?: number | null;
   slides_total?: number | null;
+  /** Mesma ideia de slide_index/slides_total, mas pro job de "variações"
+   * (várias imagens do mesmo prompt num job só, não um carrossel de slides
+   * diferentes) - ver groupAssets em asset-gallery.tsx. */
+  variation_index?: number | null;
+  variations_total?: number | null;
   caption?: string | null;
   /** Preset de qualidade com que o asset foi gerado (badge da galeria). */
   quality_preset?: StudioQualityPreset | null;
@@ -654,6 +699,7 @@ export interface StudioAsset {
   type: StudioJobType;
   filename: string;
   storageUrl: string;
+  thumbUrl: string | null;
   prompt: string;
   model: string | null;
   createdBy: string | null;
@@ -661,6 +707,8 @@ export interface StudioAsset {
   jobId: string | null;
   slideIndex: number | null;
   slidesTotal: number | null;
+  variationIndex: number | null;
+  variationsTotal: number | null;
   caption: string | null;
   qualityPreset: StudioQualityPreset | null;
   style: StudioStyle | null;
@@ -675,6 +723,7 @@ export function mapStudioAsset(wire: StudioAssetWire): StudioAsset {
     type: wire.type,
     filename: wire.filename,
     storageUrl: wire.storage_url,
+    thumbUrl: wire.thumb_url ?? null,
     prompt: wire.prompt,
     model: wire.model ?? null,
     createdBy: wire.created_by ?? null,
@@ -682,6 +731,8 @@ export function mapStudioAsset(wire: StudioAssetWire): StudioAsset {
     jobId: wire.job_id ?? null,
     slideIndex: wire.slide_index ?? null,
     slidesTotal: wire.slides_total ?? null,
+    variationIndex: wire.variation_index ?? null,
+    variationsTotal: wire.variations_total ?? null,
     caption: wire.caption ?? null,
     qualityPreset: wire.quality_preset ?? null,
     style: wire.style ?? null,
@@ -802,6 +853,36 @@ export interface ClickUpTaskWire {
   tags: { name: string; background: string | null; foreground: string | null }[];
   assignees: ClickUpPersonWire[];
   creator: ClickUpPersonWire | null;
+}
+
+/**
+ * GET /clickup/tasks/agency e /clickup/tasks/me ("Central de Tasks") - tarefas
+ * lidas via GET /team/{id}/task (escopo da operação inteira, não uma lista só),
+ * por isso o formato é mais simples que ClickUpTaskWire (sem foto/cor do
+ * responsável, só o texto do assignee) e carrega o cliente dono da lista.
+ */
+export interface AgencyTaskWire {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string | null;
+  status_type: string | null;
+  priority: string | null;
+  url: string | null;
+  due_date: number | null;
+  start_date: number | null;
+  created_at: number | null;
+  updated_at: number | null;
+  assignees: string[];
+  tags: string[];
+  list_name: string | null;
+  client: { id: string; name: string } | null;
+}
+
+export interface AgencyTasksResponseWire {
+  tasks: AgencyTaskWire[];
+  /** true = bateu no teto de páginas (20 x 100 tarefas) - a lista é um MÍNIMO. */
+  truncated: boolean;
 }
 
 export interface ClickUpSyncResultWire {
@@ -969,6 +1050,8 @@ export interface ConversationSummaryWire {
   visibility: ConversationVisibility;
   last_agent: AgentName | null;
   last_message_preview: string | null;
+  /** Agentes que já responderam na conversa (aditivo, 12/09/2026). */
+  agents?: AgentName[] | undefined;
   created_at: ISODateString;
   updated_at: ISODateString;
 }
@@ -983,6 +1066,8 @@ export interface ConversationSummary {
   visibility: ConversationVisibility;
   lastAgent: AgentName | null;
   lastMessagePreview: string | null;
+  /** Permite derivar "última conversa por agente" sem um GET por agente. */
+  agents: AgentName[];
   createdAt: ISODateString;
   updatedAt: ISODateString;
 }
@@ -998,6 +1083,7 @@ export function mapConversationSummary(wire: ConversationSummaryWire): Conversat
     visibility: wire.visibility,
     lastAgent: wire.last_agent,
     lastMessagePreview: wire.last_message_preview,
+    agents: wire.agents ?? [],
     createdAt: wire.created_at,
     updatedAt: wire.updated_at,
   };

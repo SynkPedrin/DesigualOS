@@ -59,8 +59,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="pt-BR"
+      suppressHydrationWarning
       className={`${bigShoulders.variable} ${bricolage.variable} ${workSans.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable}`}
     >
+      <head>
+        {/* Aplica o tema ANTES do primeiro paint: o data-theme só era setado
+            num useEffect pós-hidratação (flash do tema errado em toda carga,
+            confirmado visualmente na auditoria de 12/09/2026). A escolha
+            real continua vindo do /me (servidor) no ThemeProvider; aqui é só
+            o cache do último tema resolvido pra não piscar. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem('desigual:theme');if(!t){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t)}catch(e){document.documentElement.setAttribute('data-theme','dark')}`,
+          }}
+        />
+      </head>
       <body>
         <QueryProvider>
           <MswProvider>

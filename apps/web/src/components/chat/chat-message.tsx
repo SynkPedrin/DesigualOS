@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Copy, FileText, Forward } from 'lucide-react';
+import { Copy, FileText, Forward, RotateCcw } from 'lucide-react';
 import { AgentAvatar } from '@/components/ui/agent-avatar';
 import { Chip } from '@/components/ui/chip';
 import { MarkdownLite } from '@/lib/markdown-lite';
@@ -31,6 +31,10 @@ export interface ChatUiMessage {
   /** @deprecated usar `attachments`; mantido pra não quebrar quem só manda um. */
   attachment?: ChatUiAttachment | null | undefined;
   attachments?: ChatUiAttachment[] | undefined;
+  /** Fases REAIS do agent loop (eventos agent.phase do WS, Agentic V2).
+   * Presentes, o ThinkingSteps mostra o que o backend reportou de verdade
+   * em vez das etapas genéricas por intervalo. */
+  liveSteps?: string[] | undefined;
   createdAt?: string | undefined;
 }
 
@@ -76,11 +80,14 @@ export function ChatMessage({
   message,
   forwardTargets = [],
   onForward,
+  onRetry,
 }: {
   message: ChatUiMessage;
   /** Colaboradores pra quem esta resposta pode ser encaminhada como DM. */
   forwardTargets?: TeamMember[];
   onForward?: (recipientId: string) => void;
+  /** Só vem no balão falho do exchange ainda pendente: reenvia a pergunta. */
+  onRetry?: (() => void) | undefined;
 }) {
   const [copied, setCopied] = useState(false);
   const [forwardOpen, setForwardOpen] = useState(false);
@@ -149,7 +156,7 @@ export function ChatMessage({
   }
 
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-3" data-testid={message.role === 'assistant' ? 'chat-assistant-message' : 'chat-user-message'}>
       {message.agent && <AgentAvatar agent={message.agent} />}
       <div className="min-w-0 flex-1">
         {meta && (
@@ -159,7 +166,11 @@ export function ChatMessage({
         )}
 
         {pending ? (
-          <ThinkingSteps status={message.status ?? 'queued'} clientName={message.clientName ?? null} />
+          <ThinkingSteps
+            status={message.status ?? 'queued'}
+            clientName={message.clientName ?? null}
+            liveSteps={message.liveSteps}
+          />
         ) : message.status === 'failed' ? (
           // O worker JÁ grava o motivo real da falha no step ("Não consegui responder agora:
           // fetch failed", "job stalled", etc — ver failExecution em execute-job.ts) e o balão
@@ -167,11 +178,23 @@ export function ChatMessage({
           // pergunta" mesmo quando a pergunta não tinha nada de errado (medido no frontend em
           // 10/09/2026: agente indisponível virava "reformule"). Quem está operando precisa
           // saber SE o problema é a pergunta ou é o sistema — são reações opostas.
-          <p className="rounded-lg border border-erro/30 bg-erro/10 px-4 py-3 text-sm text-erro">
-            {message.content?.trim()
-              ? message.content
-              : 'Não consegui concluir essa resposta. Tente reformular a pergunta.'}
-          </p>
+          <div>
+            <p className="rounded-lg border border-erro/30 bg-erro/10 px-4 py-3 text-sm text-erro">
+              {message.content?.trim()
+                ? message.content
+                : 'Não consegui concluir essa resposta. Tente reformular a pergunta.'}
+            </p>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-2 flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
+              >
+                <RotateCcw size={12} />
+                Tentar novamente
+              </button>
+            )}
+          </div>
         ) : (
           <div className="flex max-w-xl flex-col gap-1">
             {blocks.map((block, index) => {

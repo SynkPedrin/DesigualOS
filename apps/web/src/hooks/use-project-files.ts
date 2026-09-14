@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, API_FETCH_UPLOAD_TIMEOUT_MS } from '@/lib/api/client';
 import { mapProjectFile, type ProjectFileKind, type ProjectFileWire } from '@/lib/api/contracts';
 
 /** Arquivos de referência do projeto (identidade visual, briefing, referências),
@@ -29,7 +29,7 @@ export function useUploadProjectFile(projectId: string) {
           await apiFetch<{ file: ProjectFileWire }>(`/projects/${projectId}/files`, {
             method: 'POST',
             body: formData,
-          })
+          }, { timeoutMs: API_FETCH_UPLOAD_TIMEOUT_MS })
         ).file,
       );
     },

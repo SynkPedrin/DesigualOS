@@ -23,7 +23,7 @@ Além do sistema, existe uma **landing page** (`/Users/pedro/Downloads/LP - DESI
 
 **11 sessões encontradas** (10 no projeto principal + 1 na LP). Horários em horário local (UTC-3).
 
-### Projeto principal (`/Users/pedro/Downloads/Desigual OS`)
+### Projeto principal (`/Users/pedro/DesigualOS`)
 
 | # | Sessão | Período | Tamanho | Papel | Relevância |
 |---|--------|---------|---------|-------|-----------|

@@ -15,9 +15,10 @@ system prompt de verdade. Testado ao vivo em 08/09/2026:
 - Jarbas retorna `answer: null` de forma consistente a partir de ~900
   caracteres.
 
-Os prompts desta pasta têm 9-13 mil caracteres cada - muito além do que esse
-canal aguenta. Colá-los em `personalities.ts` quebraria os dois agentes por
-completo, não os melhoraria.
+Os prompts desta pasta têm ~21,6 mil (jarbas.md) e ~29,5 mil caracteres
+(bento.md), medidos em 13/09/2026 - muito além do que esse canal aguenta.
+Colá-los em `personalities.ts` quebraria os dois agentes por completo, não
+os melhoraria.
 
 ## Onde eles devem ser implantados
 

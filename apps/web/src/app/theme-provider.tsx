@@ -28,6 +28,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       const resolved = theme === 'system' ? resolveSystemTheme() : theme;
       setResolvedTheme(resolved);
       document.documentElement.setAttribute('data-theme', resolved);
+      // Cache pro script inline do layout ler antes do primeiro paint na
+      // próxima visita (fim do flash de tema).
+      try {
+        localStorage.setItem('desigual:theme', resolved);
+      } catch {
+        // storage indisponível (modo privado): sem cache, o tema ainda aplica normal
+      }
     }
 
     function apply() {

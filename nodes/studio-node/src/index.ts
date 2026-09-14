@@ -642,15 +642,37 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
     metadata: { job_id: jobId, execution_db_id: studioJobDbId, asset_url: primaryUrl, assets_generated: generated.length },
   });
 
-  // Auto-aprendizado: o que foi CONCLUÍDO vira memória durável, pra o
-  // agente saber depois o que a casa já produziu pra este cliente.
+  // Auto-aprendizado de identidade visual: cada geração CONCLUÍDA vira
+  // memória durável e aditiva (sem `subject` - nunca aposenta a anterior,
+  // só acumula) do que a casa já produziu pra este cliente: estilo, modelo
+  // e a paleta/tom do brand kit realmente aplicados no momento da geração
+  // (snapshot em jobMeta.brand_kit, não o kit atual - o job é reproduzível
+  // mesmo se o kit mudar depois). Isto é o rastro bruto de identidade
+  // visual; o veredito humano (aprovado/rejeitado) que refina esse rastro
+  // em padrão é gravado à parte em otto.feedback (POST .../feedback).
+  const brandKitSnapshot = jobMeta.brand_kit as
+    | { colors?: string[]; fonts?: string[]; tone_of_voice?: string | null }
+    | undefined;
   await recordLearning({
     kind: 'studio.asset_created',
     agent: 'studio',
     clientId,
     userId: requestedBy,
-    content: `Studio gerou ${generated.length} asset(s) do tipo "${type}" para o cliente. Prompt: "${(prompt ?? '').slice(0, 300)}".`,
-    metadata: { job_id: jobId, asset_url: primaryUrl, model, node_id: config.NODE_ID },
+    content: `Studio gerou ${generated.length} asset(s) do tipo "${type}"${style ? ` (estilo: ${style})` : ''} para o cliente. Prompt: "${(prompt ?? '').slice(0, 300)}".`,
+    metadata: {
+      job_id: jobId,
+      asset_url: primaryUrl,
+      model,
+      style: style ?? null,
+      node_id: config.NODE_ID,
+      ...(brandKitSnapshot
+        ? {
+            brand_kit_colors: brandKitSnapshot.colors ?? [],
+            brand_kit_fonts: brandKitSnapshot.fonts ?? [],
+            brand_kit_tone_of_voice: brandKitSnapshot.tone_of_voice ?? null,
+          }
+        : {}),
+    },
   });
 
   logger.info({ jobId, assets: generated.length }, 'Studio job completed');

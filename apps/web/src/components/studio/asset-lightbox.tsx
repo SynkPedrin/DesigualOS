@@ -29,12 +29,25 @@ export function isVideoAsset(asset: StudioAsset): boolean {
   return asset.type === 'video' || asset.type === 'reels' || /\.(mp4|webm|mov)$/i.test(asset.filename);
 }
 
-export function AssetPreview({ asset, className }: { asset: StudioAsset; className?: string }) {
+export function AssetPreview({
+  asset,
+  className,
+  variant = 'full',
+}: {
+  asset: StudioAsset;
+  className?: string;
+  /** 'thumb' (grade da galeria): usa a thumbnail 480px webp gerada em
+   * background quando existe - medido em 12/09/2026: a galeria baixava ~80MB
+   * de originais Flux (2-17MB por imagem) só pra montar os cards. 'full'
+   * (lightbox/download) segue no original. */
+  variant?: 'thumb' | 'full';
+}) {
   if (isVideoAsset(asset)) {
-    return <video src={asset.storageUrl} controls className={className} />;
+    return <video src={asset.storageUrl} controls={variant === 'full'} preload={variant === 'thumb' ? 'metadata' : 'auto'} className={className} />;
   }
   // <img> e não next/image: storage_url é externo (Supabase Storage), fora do loader do Next.
-  return <img src={asset.storageUrl} alt={asset.prompt} className={className} />;
+  const src = variant === 'thumb' ? (asset.thumbUrl ?? asset.storageUrl) : asset.storageUrl;
+  return <img src={src} alt={asset.prompt} className={className} loading={variant === 'thumb' ? 'lazy' : 'eager'} decoding="async" />;
 }
 
 function CopyCaptionButton({ caption }: { caption: string }) {

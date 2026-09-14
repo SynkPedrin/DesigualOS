@@ -292,6 +292,96 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
   );
 
   /**
+   * Write path do Brand Kit (até 11/09/2026 NÃO existia: client_brand_kits e
+   * studio_brand_kits só eram populadas por SQL manual, e o loop de DNA do
+   * Otto ficava inerte pra cliente sem kit). Upsert nas duas tabelas de uma
+   * vez — o GET acima lê as duas juntas, então a escrita também grava as
+   * duas juntas, senão o painel mostraria metade do que foi salvo.
+   *
+   * Campos omitidos NÃO são apagados (merge com o que já existe): a tela
+   * manda o formulário inteiro, mas um caller parcial (ex: futuro importador
+   * de manual de marca em PDF) não destrói o resto por omissão. Pra limpar
+   * um campo, mande null/[] explicitamente.
+   */
+  const upsertBrandKitSchema = z.object({
+    logo_url: z.string().url().nullable().optional(),
+    colors: z.array(z.string().min(1)).max(24).optional(),
+    fonts: z.array(z.string().min(1)).max(12).optional(),
+    tone_of_voice: z.string().nullable().optional(),
+    reference_images: z.array(z.string().url()).max(20).optional(),
+  });
+
+  app.put<{ Params: { id: string } }>(
+    '/clients/:id/brand-kit',
+    { preHandler: [requireAuth, requirePermission('clients', 'write')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const body = upsertBrandKitSchema.parse(request.body ?? {});
+
+      const [client] = await db.select().from(schema.clients).where(eq(schema.clients.id, clientId));
+      if (!client) {
+        reply.code(404);
+        return { error: `Client '${clientId}' not found` };
+      }
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const [brandKit, studioKit] = await Promise.all([
+        db.select().from(schema.clientBrandKits).where(eq(schema.clientBrandKits.clientId, clientId)),
+        db.select().from(schema.studioBrandKits).where(eq(schema.studioBrandKits.clientId, clientId)),
+      ]);
+      const currentKit = brandKit[0];
+      const currentStudioKit = studioKit[0];
+
+      const merged = {
+        logoUrl: body.logo_url !== undefined ? body.logo_url : (currentKit?.logoUrl ?? null),
+        colors: body.colors ?? currentKit?.colors ?? [],
+        fonts: body.fonts ?? currentKit?.fonts ?? [],
+        toneOfVoice: body.tone_of_voice !== undefined ? body.tone_of_voice : (currentKit?.toneOfVoice ?? null),
+      };
+      const mergedReferenceImages = body.reference_images ?? currentStudioKit?.referenceImages ?? [];
+
+      await db
+        .insert(schema.clientBrandKits)
+        .values({ clientId, ...merged })
+        .onConflictDoUpdate({ target: schema.clientBrandKits.clientId, set: { ...merged, updatedAt: new Date() } });
+
+      await db
+        .insert(schema.studioBrandKits)
+        .values({ clientId, referenceImages: mergedReferenceImages })
+        .onConflictDoUpdate({
+          target: schema.studioBrandKits.clientId,
+          set: { referenceImages: mergedReferenceImages, updatedAt: new Date() },
+        });
+
+      await db.insert(schema.auditLogs).values({
+        userId: request.authUser.id,
+        action: 'client.brand_kit_saved',
+        clientId,
+        result: 'completed',
+        metadata: {
+          colors: merged.colors.length,
+          fonts: merged.fonts.length,
+          reference_images: mergedReferenceImages.length,
+          has_logo: merged.logoUrl !== null,
+          has_tone_of_voice: merged.toneOfVoice !== null,
+        },
+      });
+
+      return {
+        client_id: clientId,
+        logo_url: merged.logoUrl,
+        colors: merged.colors,
+        fonts: merged.fonts,
+        tone_of_voice: merged.toneOfVoice,
+        reference_images: mergedReferenceImages,
+      };
+    },
+  );
+
+  /**
    * Memória consolidada do cliente (kind 'client.profile' em `memories`):
    * dossiê reunido de histórico de conversas, ClickUp e material entregue,
    * usado pela tela de Projeto no chat pra mostrar "memória, informações e

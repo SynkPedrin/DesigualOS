@@ -626,4 +626,33 @@ describe('DNA criativo no turno (client_brand_kit)', () => {
 
     await app.close();
   });
+
+  it('com client_feedback_history real, o DNA acumula confiança e padrões (auto-aprendizagem)', async () => {
+    const { behavior, captured } = capturePlannerPrompt();
+    const app = buildTestApp(makeDeps(behavior, brainDir));
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-dna-feedback',
+      message: 'Crie um carrossel sobre o funil de demanda',
+      context_refs: [`client:${CLIENT_ID}`],
+      client_brand_kit: brandKit,
+      client_feedback_history: [
+        { verdict: 'approved', reason: 'gostou da paleta vibrante', context: '' },
+        { verdict: 'rejected', reason: 'tipografia fina demais', context: '' },
+        { verdict: 'rejected', reason: 'tipografia fina demais', context: '' },
+        { verdict: 'needs_iteration', reason: 'texto longo demais', context: '' },
+      ],
+    });
+
+    expect(body.status).toBe('completed');
+    // Antes desta busca real (execute-job.ts -> recallMemories), o node
+    // sempre recebia feedbacks: [] e a confiança nunca saía de 0%.
+    expect(captured.user).not.toContain('Confiança do DNA: 0%');
+    expect(body.metadata.creative_dna.feedbackCount).toBe(4);
+    // Razão repetida (2x) vira padrão rejeitado; razão única não.
+    expect(body.metadata.creative_dna.rejectedPatterns).toContain('tipografia fina demais');
+    expect(body.metadata.creative_dna.approvedPatterns).not.toContain('gostou da paleta vibrante');
+
+    await app.close();
+  });
 });

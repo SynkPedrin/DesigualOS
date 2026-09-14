@@ -2,6 +2,23 @@ import { z } from 'zod';
 
 const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
 
+// Timeout de rede (achado da auditoria de production readiness, 2026-09):
+// fetch sem signal pendura pra sempre se o ClickUp travar, segurando junto a
+// rota/conversa que disparou a chamada. O erro vira mensagem legível aqui
+// porque os call sites (rotas da API) só propagam error.message.
+const CLICKUP_FETCH_TIMEOUT_MS = 20_000;
+
+async function fetchClickUp(url: string | URL, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(CLICKUP_FETCH_TIMEOUT_MS) });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`ClickUp não respondeu em ${CLICKUP_FETCH_TIMEOUT_MS / 1000}s (timeout de rede)`);
+    }
+    throw error;
+  }
+}
+
 /**
  * Um único acesso de API do ClickUp, compartilhado (pedido do usuário: mais
  * simples que OAuth por colaborador). Atribuição de tarefa a uma pessoa
@@ -41,7 +58,7 @@ export interface ClickUpMember {
 }
 
 export async function getTeamMembers(config: ClickUpConfig): Promise<ClickUpMember[]> {
-  const response = await fetch(`${CLICKUP_API_BASE}/team/${config.teamId}`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/team/${config.teamId}`, {
     headers: { Authorization: config.apiKey },
   });
   if (!response.ok) {
@@ -63,6 +80,40 @@ export async function findMemberByEmail(config: ClickUpConfig, email: string): P
   return members.find((member) => member.email.toLowerCase() === email.toLowerCase()) ?? null;
 }
 
+function normalizePersonName(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Resolve um nome falado ("jamile", "jamille", "tami", "pedro") contra os
+ * membros REAIS do workspace. Ordem: nome completo exato > primeiro nome
+ * exato > prefixo de nome completo > nome contido. Sem match único, devolve
+ * null em vez de chutar (a camada de cima decide como perguntar).
+ */
+export async function findMemberByName(config: ClickUpConfig, name: string): Promise<ClickUpMember | null> {
+  const members = await getTeamMembers(config);
+  const wanted = normalizePersonName(name);
+  if (!wanted) return null;
+
+  const full = members.filter((m) => normalizePersonName(m.username) === wanted);
+  if (full.length === 1) return full[0]!;
+
+  const firstName = members.filter((m) => normalizePersonName(m.username).split(' ')[0] === wanted.split(' ')[0]);
+  if (firstName.length === 1) return firstName[0]!;
+
+  const prefix = members.filter((m) => normalizePersonName(m.username).startsWith(wanted));
+  if (prefix.length === 1) return prefix[0]!;
+
+  const contained = members.filter((m) => normalizePersonName(m.username).includes(wanted));
+  if (contained.length === 1) return contained[0]!;
+
+  return null;
+}
+
 const createdTaskSchema = z.object({ id: z.string(), url: z.string() });
 
 export interface CreateTaskParams {
@@ -70,6 +121,11 @@ export interface CreateTaskParams {
   name: string;
   description?: string;
   assigneeId?: number;
+  /** 1=urgente, 2=alta, 3=normal, 4=baixa (escala do ClickUp). */
+  priority?: 1 | 2 | 3 | 4;
+  /** Epoch em ms (formato do ClickUp). */
+  dueDate?: number;
+  tags?: string[];
 }
 
 export interface CreatedTask {
@@ -78,13 +134,16 @@ export interface CreatedTask {
 }
 
 export async function createTask(config: ClickUpConfig, params: CreateTaskParams): Promise<CreatedTask> {
-  const response = await fetch(`${CLICKUP_API_BASE}/list/${params.listId}/task`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${params.listId}/task`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: params.name,
       description: params.description,
       assignees: params.assigneeId ? [params.assigneeId] : undefined,
+      priority: params.priority,
+      due_date: params.dueDate,
+      tags: params.tags && params.tags.length > 0 ? params.tags : undefined,
     }),
   });
   if (!response.ok) {
@@ -94,13 +153,109 @@ export async function createTask(config: ClickUpConfig, params: CreateTaskParams
 }
 
 /**
+ * BL-01 (auditoria forense 12/09/2026): não existia NENHUMA escrita de task
+ * além de create/delete - "edita a descrição" era estruturalmente
+ * impossível. Campos seguem o PUT /task/{id} oficial: assignees com
+ * add/rem separados, due_date em epoch ms, priority na escala 1-4.
+ */
+export interface UpdateTaskParams {
+  name?: string;
+  description?: string;
+  status?: string;
+  priority?: 1 | 2 | 3 | 4;
+  dueDate?: number | null;
+  addAssignees?: number[];
+  removeAssignees?: number[];
+}
+
+export async function updateTask(config: ClickUpConfig, taskId: string, params: UpdateTaskParams): Promise<void> {
+  const body: Record<string, unknown> = {};
+  if (params.name !== undefined) body.name = params.name;
+  if (params.description !== undefined) body.description = params.description;
+  if (params.status !== undefined) body.status = params.status;
+  if (params.priority !== undefined) body.priority = params.priority;
+  if (params.dueDate !== undefined) body.due_date = params.dueDate;
+  if (params.addAssignees?.length || params.removeAssignees?.length) {
+    body.assignees = {
+      ...(params.addAssignees?.length ? { add: params.addAssignees } : {}),
+      ...(params.removeAssignees?.length ? { rem: params.removeAssignees } : {}),
+    };
+  }
+  if (Object.keys(body).length === 0) {
+    throw new Error('updateTask chamado sem nenhum campo para atualizar');
+  }
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
+    method: 'PUT',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    // Status é por LISTA no ClickUp (workflows custom). Em vez de um 400 seco
+    // ("Status does not exist", medido ao vivo em 13/09/2026), o erro passa a
+    // listar os status válidos daquela lista - o chamador (humano ou agente)
+    // consegue corrigir na hora em vez de adivinhar.
+    if (response.status === 400 && detail.includes('Status does not exist')) {
+      const valid = await listStatusesForTask(config, taskId).catch(() => null);
+      throw new Error(
+        valid && valid.length > 0
+          ? `Status inválido para esta lista. Status disponíveis: ${valid.join(', ')}`
+          : `ClickUp task update failed (400): ${detail}`,
+      );
+    }
+    throw new Error(`ClickUp task update failed (${response.status}): ${detail}`);
+  }
+}
+
+/** Status válidos da lista da task (workflow custom por lista no ClickUp). */
+export async function listStatusesForTask(config: ClickUpConfig, taskId: string): Promise<string[]> {
+  const listId = await getTaskListId(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${listId}`, {
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) {
+    throw new Error(`ClickUp list fetch failed (${response.status})`);
+  }
+  const body = (await response.json()) as { statuses?: { status: string }[] };
+  return (body.statuses ?? []).map((entry) => entry.status);
+}
+
+/**
+ * BL-05: anexo real no ClickUp. O arquivo mora no nosso Storage (URL
+ * pública); baixamos e reenviamos como multipart pro POST oficial de
+ * attachment. Nunca confirma sem o 200 da API.
+ */
+export async function uploadTaskAttachment(config: ClickUpConfig, taskId: string, fileUrl: string, filename: string): Promise<{ id: string | null }> {
+  const fileResponse = await fetchClickUp(fileUrl);
+  if (!fileResponse.ok) {
+    throw new Error(`Download do anexo falhou (${fileResponse.status})`);
+  }
+  const buffer = Buffer.from(await fileResponse.arrayBuffer());
+  const form = new FormData();
+  form.append('attachment', new Blob([buffer]), filename);
+
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/attachment`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey },
+    body: form,
+  });
+  if (!response.ok) {
+    throw new Error(`ClickUp attachment upload failed (${response.status}): ${await response.text()}`);
+  }
+  // O ClickUp devolve o anexo criado; o id volta pra API como prova de que
+  // o arquivo existe de verdade na task (nunca confirmar sem isto).
+  const body = (await response.json().catch(() => null)) as { id?: string } | null;
+  return { id: body?.id ?? null };
+}
+
+/**
  * Deletar tarefa é exatamente o exemplo de "ação crítica" citado na seção
  * 6.6 (Tool Gateway) do prompt mestre, por isso passa pela aprovação
  * humana central (ver packages/tool-gateway/src/gateway.ts), diferente de
  * createTask, que qualquer colaborador já pode disparar direto.
  */
 export async function deleteTask(config: ClickUpConfig, taskId: string): Promise<void> {
-  const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
     method: 'DELETE',
     headers: { Authorization: config.apiKey },
   });
@@ -127,7 +282,7 @@ export interface ClickUpComment {
 }
 
 export async function getTaskComments(config: ClickUpConfig, taskId: string): Promise<ClickUpComment[]> {
-  const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
     headers: { Authorization: config.apiKey },
   });
   if (!response.ok) {
@@ -151,7 +306,7 @@ const taskLookupSchema = z.object({
 /** Lista à qual a tarefa pertence: como o POST de comentário confirma que a
  * tarefa é de um cliente conhecido antes de escrever nela. */
 export async function getTaskListId(config: ClickUpConfig, taskId: string): Promise<string> {
-  const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
     headers: { Authorization: config.apiKey },
   });
   if (!response.ok) {
@@ -177,7 +332,7 @@ export interface CreatedTaskComment {
  * retornado é o que acabamos de enviar.
  */
 export async function createTaskComment(config: ClickUpConfig, taskId: string, text: string): Promise<CreatedTaskComment> {
-  const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({ comment_text: text }),
@@ -196,7 +351,7 @@ export async function createTaskComment(config: ClickUpConfig, taskId: string, t
  * da thread).
  */
 export async function replyToComment(config: ClickUpConfig, taskId: string, parentCommentId: string, text: string, notifyAll = true): Promise<string> {
-  const response = await fetch(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({ comment_text: text, notify_all: notifyAll, parent: parentCommentId }),

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import Anthropic from '@anthropic-ai/sdk';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
@@ -91,5 +92,36 @@ describe('classifyWithLLM', () => {
     const result = await classifyWithLLM('crie uma campanha', fakeLogger());
 
     expect(result).toBeNull();
+  });
+
+  it('configura timeout de 10s sem retries no client (a chamada roda no caminho síncrono do /chat)', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'chave-de-teste');
+    createMock.mockResolvedValue({ content: [{ type: 'text', text: JSON.stringify(VALID_RESULT) }] });
+    const { classifyWithLLM } = await import('./classifier.js');
+
+    await classifyWithLLM('crie uma campanha', fakeLogger());
+
+    expect(Anthropic).toHaveBeenCalledWith(expect.objectContaining({ timeout: 10_000, maxRetries: 0 }));
+  });
+
+  it('timeout vira null + warn (fallback pro rule engine), nunca derruba o /chat', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'chave-de-teste');
+    createMock.mockRejectedValue(Object.assign(new Error('Request timed out.'), { name: 'APIConnectionTimeoutError' }));
+    const { classifyWithLLM } = await import('./classifier.js');
+    const logger = fakeLogger();
+
+    const result = await classifyWithLLM('crie uma campanha', logger);
+
+    expect(result).toBeNull();
+    expect(logger.warn).toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('erros que não são timeout (ex: chave inválida) seguem propagando, como antes', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'chave-de-teste');
+    createMock.mockRejectedValue(Object.assign(new Error('invalid x-api-key'), { name: 'AuthenticationError' }));
+    const { classifyWithLLM } = await import('./classifier.js');
+
+    await expect(classifyWithLLM('crie uma campanha', fakeLogger())).rejects.toThrow('invalid x-api-key');
   });
 });

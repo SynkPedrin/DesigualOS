@@ -155,16 +155,22 @@ function formatAttachmentsBlock(attachments: ExecuteRequest['attachments']): str
 }
 
 /**
- * Deriva o DNA criativo do cliente a partir do brand kit que o worker mandou
- * no request (client_brand_kit, packages/node-protocol). Feedbacks vazios
- * POR ORA: o node não acessa o banco e o feedback loop grava `otto.feedback`
- * em memories no server-side. Sem brand kit no request, sem DNA - o turno
- * segue exatamente como antes (comportamento inalterado).
+ * Deriva o DNA criativo do cliente a partir do brand kit e do histórico real
+ * de feedback que o worker mandou no request (client_brand_kit e
+ * client_feedback_history, packages/node-protocol) - o worker é quem lê
+ * `memories` (kind otto.feedback, gravado no feedback loop server-side em
+ * apps/api/src/studio/routes.ts), o node nunca acessa o banco direto. Sem
+ * brand kit no request, sem DNA - o turno segue exatamente como antes.
  */
 function deriveClientDNA(request: ExecuteRequest, deps: OttoNodeDeps): CreativeDNA | null {
   const kit = request.client_brand_kit;
   if (!kit) return null;
   const derive = deps.deriveDNA ?? deriveCreativeDNA;
+  const feedbacks: CreativeFeedback[] = (request.client_feedback_history ?? []).map((entry) => ({
+    verdict: entry.verdict,
+    reason: entry.reason,
+    context: entry.context,
+  }));
   return derive(
     {
       clientId: extractClientId(request.context_refs) ?? 'unresolved',
@@ -172,7 +178,7 @@ function deriveClientDNA(request: ExecuteRequest, deps: OttoNodeDeps): CreativeD
       typography: kit.fonts,
       ...(kit.tone_of_voice ? { toneOfVoice: kit.tone_of_voice } : {}),
     },
-    [],
+    feedbacks,
   );
 }
 

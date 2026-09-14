@@ -70,7 +70,20 @@ export const config = {
      * - rotas públicas de auth (login, convite, forgot-password, reset-password, signup)
      * - /dev (fora do grupo (shell) de propósito, ver src/app/dev/motion/page.tsx)
      * - assets estáticos e internos do Next (_next/static, _next/image, favicon, etc.)
+     * - QUALQUER arquivo com extensão de asset em /public.
+     *
+     * A última exclusão conserta um defeito medido no navegador em 10/09/2026: 406 respostas
+     * `400 GET /_next/image` numa única bateria de chat, e nenhum avatar de agente na tela.
+     * `_next/image` estava excluído daqui, mas o otimizador, por dentro, busca a imagem
+     * original (`/agents/bento.png`) com uma requisição SERVIDOR-A-SERVIDOR, que não carrega
+     * o cookie de sessão do navegador. Sem cookie, este proxy respondia 307 pro /login, o
+     * otimizador recebia HTML de login em vez de PNG e devolvia 400. Pela mesma razão a
+     * marca e o wallpaper de /brand não renderizavam na TELA DE LOGIN — onde, por definição,
+     * ninguém está autenticado ainda.
+     *
+     * Nada em /public é privado (são logos, wallpaper e as fotos dos agentes), então gatear
+     * esses caminhos nunca protegeu nada: só quebrava a imagem.
      */
-    '/((?!login|convite|forgot-password|reset-password|signup|dev|_next/static|_next/image|favicon.ico|icon.png).*)',
+    '/((?!login|convite|forgot-password|reset-password|signup|dev|_next/static|_next/image|favicon.ico|icon.png|.*\\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|woff2?|ttf|otf|mp4|webm)$).*)',
   ],
 };

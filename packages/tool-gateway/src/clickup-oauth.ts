@@ -3,6 +3,23 @@ import { z } from 'zod';
 const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
 const CLICKUP_AUTHORIZE_BASE = 'https://app.clickup.com/api';
 
+// Timeout de rede (achado da auditoria de production readiness, 2026-09):
+// fetch sem signal pendura pra sempre se o ClickUp travar, segurando junto a
+// rota/conversa que disparou a chamada. O erro vira mensagem legível aqui
+// porque os call sites (rotas da API) só propagam error.message.
+const CLICKUP_FETCH_TIMEOUT_MS = 20_000;
+
+async function fetchClickUp(url: string | URL, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(CLICKUP_FETCH_TIMEOUT_MS) });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`ClickUp não respondeu em ${CLICKUP_FETCH_TIMEOUT_MS / 1000}s (timeout de rede)`);
+    }
+    throw error;
+  }
+}
+
 export interface ClickUpOAuthConfig {
   clientId: string;
   clientSecret: string;
@@ -43,7 +60,7 @@ export async function exchangeClickUpCode(config: ClickUpOAuthConfig, code: stri
   url.searchParams.set('client_secret', config.clientSecret);
   url.searchParams.set('code', code);
 
-  const response = await fetch(url, {
+  const response = await fetchClickUp(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -61,14 +78,16 @@ export async function exchangeClickUpCode(config: ClickUpOAuthConfig, code: stri
 }
 
 /**
- * Token pessoal (pk_...) vai cru no header; token de OAuth vai como Bearer
- * (doc de autenticação). Como o sistema tem os dois tipos convivendo (a API
- * key compartilhada antiga e as conexões por colaborador), quem monta o
- * header decide pelo formato do token em vez de exigir uma flag em todo
- * call site.
+ * O token vai SEMPRE cru no header Authorization, tanto o pessoal (pk_...)
+ * quanto o de OAuth (auditoria pré-deploy 14/09/2026). A doc oficial do
+ * ClickUp usa o token cru nos dois casos, e a sonda isClickUpTokenValid
+ * (apps/api/src/integrations/access.ts) também - antes, esta função mandava
+ * "Bearer <token>" pros tokens OAuth, então as chamadas reais falhavam
+ * enquanto a sonda passava (ou vice-versa). clickup-client.ts já mandava o
+ * token cru em tudo; agora os dois módulos concordam.
  */
 export function clickUpAuthHeader(token: string): string {
-  return token.startsWith('pk_') ? token : `Bearer ${token}`;
+  return token;
 }
 
 const authorizedTeamsSchema = z.object({
@@ -82,7 +101,7 @@ export interface ClickUpTeam {
 
 /** Workspaces (times) que ESTE token pode ver - usado logo após conectar. */
 export async function getAuthorizedTeams(token: string): Promise<ClickUpTeam[]> {
-  const response = await fetch(`${CLICKUP_API_BASE}/team`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/team`, {
     headers: { Authorization: clickUpAuthHeader(token) },
   });
   if (!response.ok) {
@@ -101,7 +120,7 @@ export interface ClickUpSpace {
 }
 
 export async function getSpaces(token: string, teamId: string): Promise<ClickUpSpace[]> {
-  const response = await fetch(`${CLICKUP_API_BASE}/team/${teamId}/space?archived=false`, {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/team/${teamId}/space?archived=false`, {
     headers: { Authorization: clickUpAuthHeader(token) },
   });
   if (!response.ok) {
@@ -170,7 +189,7 @@ export async function getClientLists(token: string, teamId: string): Promise<Cli
   const clients: ClickUpClientList[] = [];
 
   for (const space of spaces) {
-    const response = await fetch(`${CLICKUP_API_BASE}/space/${space.id}/folder?archived=false`, { headers });
+    const response = await fetchClickUp(`${CLICKUP_API_BASE}/space/${space.id}/folder?archived=false`, { headers });
     if (!response.ok) {
       throw new Error(`ClickUp folders lookup failed (${response.status}): ${await response.text()}`);
     }
@@ -310,7 +329,7 @@ export async function getTasksInListPaged(
     url.searchParams.set('page', String(page));
     if (includeClosed) url.searchParams.set('include_closed', 'true');
 
-    const response = await fetch(url, { headers: { Authorization: clickUpAuthHeader(token) } });
+    const response = await fetchClickUp(url, { headers: { Authorization: clickUpAuthHeader(token) } });
     if (!response.ok) {
       throw new Error(`ClickUp tasks lookup failed (${response.status}): ${await response.text()}`);
     }

@@ -111,3 +111,15 @@ export type {
   OttoLearningStage,
   PromotionCheck,
 } from './learning/pipeline.js';
+
+export {
+  applyFeedbackToLearning,
+  feedbackSubject,
+  learningKindForVerdict,
+} from './learning/feedback.js';
+export type {
+  OttoFeedbackInput,
+  OttoFeedbackTransition,
+  OttoFeedbackVerdict,
+  OttoLearningPersistedState,
+} from './learning/feedback.js';

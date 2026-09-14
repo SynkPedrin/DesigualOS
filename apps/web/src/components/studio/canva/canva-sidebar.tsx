@@ -15,6 +15,7 @@ import {
   Minus,
   Palette,
   Pentagon,
+  PenTool,
   Square,
   Star,
   Type,
@@ -38,12 +39,14 @@ const OBJECT_TYPE_ICONS: Record<CanvaObject['type'], typeof Square> = {
   text: Type,
   shape: Square,
   group: GroupIconLucide,
+  path: PenTool,
 };
 
 function layerLabel(object: CanvaObject): string {
   if (object.type === 'text') return object.text.trim() || 'Texto vazio';
   if (object.type === 'shape') return `Forma - ${object.shape}`;
   if (object.type === 'group') return 'Grupo';
+  if (object.type === 'path') return 'Traço de pincel';
   const filename = object.src.split('/').pop()?.split('?')[0];
   return filename || 'Imagem';
 }
@@ -137,7 +140,15 @@ function UploadsPanel({ editor }: { editor: UseCanvaEditorResult }) {
         accept="image/png,image/jpeg,image/webp"
         multiple
         className="hidden"
-        onChange={(event) => void handleFiles(event.target.files)}
+        onChange={(event) => {
+          const files = event.target.files;
+          // Zera o input: sem isto, escolher O MESMO arquivo de novo não
+          // dispara `change` nenhum e o clique parece não fazer nada.
+          const restart = () => {
+            event.target.value = '';
+          };
+          void handleFiles(files).finally(restart);
+        }}
       />
       <button
         type="button"

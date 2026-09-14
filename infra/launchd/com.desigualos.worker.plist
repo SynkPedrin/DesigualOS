@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Supervisor do WORKER do orquestrador.
+
+  POR QUE EXISTE (incidente medido em 10/09/2026): o worker rodava por `pnpm dev` (tsx watch)
+  numa sessão de terminal. O watcher tentou reiniciar, o processo antigo não saiu no prazo (a
+  chamada de LLM em curso levava mais que os 5s do tsx), ele foi morto à força — e o substituto
+  NUNCA subiu. O worker ficou 10 minutos morto. Nesse período a API seguia aceitando mensagens,
+  os jobs empilhavam no Redis, o usuário via "Não consegui concluir essa resposta" e o painel
+  dizia "Todos os sistemas online".
+
+  Um processo que executa todo o trabalho da operação não pode depender de um terminal aberto
+  nem de um watcher de desenvolvimento. KeepAlive resolve a parte que importa: se morrer, por
+  qualquer motivo, volta em ThrottleInterval segundos, sem ninguém perceber.
+
+  DECISÕES:
+  - KeepAlive.SuccessfulExit=false + Crashed=true: reinicia em QUALQUER saída que não seja um
+    desligamento limpo por sinal. Saída 0 (shutdown pedido) não reinicia, senão não dá pra
+    parar o serviço de propósito.
+  - ExitTimeOut=90: o worker drena o job ativo no SIGTERM (teto de 55s em apps/worker/src/index.ts).
+    Menos que isso e o launchd manda SIGKILL no meio de um job — exatamente o defeito de origem.
+  - ProcessType=Background: o macOS não deve fazer throttle de CPU dele como faz com processo
+    interativo ocioso.
+  - RunAtLoad: sobe junto com a sessão, sem depender de alguém lembrar.
+
+  INSTALAR:
+    cp infra/launchd/com.desigualos.worker.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.desigualos.worker.plist
+    launchctl kickstart -k gui/$(id -u)/com.desigualos.worker
+  PARAR:
+    launchctl bootout gui/$(id -u)/com.desigualos.worker
+
+  ATENÇÃO: sem `watch`. Recarregar código é trabalho de deploy, não do supervisor.
+
+  NOTA DE CAMINHO: o repositório fica em ~/DesigualOS, e NÃO pode voltar pra ~/Downloads,
+  ~/Documents ou ~/Desktop. Essas três são protegidas pelo TCC do macOS e um agente do launchd
+  recebe "Operation not permitted" ao ler qualquer arquivo dentro delas — verificado em
+  11/09/2026, e foi o motivo da mudança de pasta.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.desigualos.worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pedro/DesigualOS/apps/worker/node_modules/.bin/tsx</string>
+    <string>src/index.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pedro/DesigualOS/apps/worker</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PATH</key>
+    <string>/Users/pedro/.local/toolchain/node/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>ExitTimeOut</key>
+  <integer>90</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pedro/Library/Logs/desigualos-worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pedro/Library/Logs/desigualos-worker.log</string>
+</dict>
+</plist>

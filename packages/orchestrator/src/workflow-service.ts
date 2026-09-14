@@ -1,4 +1,6 @@
+import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { createLogger } from '@desigual-os/logging';
 import type { RouterDecision } from '@desigual-os/router';
 import type { AgentName, QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
 import { estimateCost } from '@desigual-os/token-engine';
@@ -12,6 +14,8 @@ const COMPLEXITY_TO_PRIORITY: Record<string, QueuePriority> = {
   medium: 'P2',
   high: 'P1',
 };
+
+const logger = createLogger({ service: 'orchestrator:workflow-service' });
 
 export interface WorkflowDispatchParams {
   message: string;
@@ -112,25 +116,68 @@ export async function startWorkflow(params: WorkflowDispatchParams): Promise<Cha
   });
 
   const queue = getAgentQueue(firstAgent);
-  await queue.add(
-    'execute',
-    {
-      executionDbId: execution.id,
+  // Mesmo padrão do chat-service (achado da auditoria de prontidão,
+  // 2026-09-11): os inserts acima e o enqueue não são atômicos; sem este
+  // try/catch uma falha do Redis deixava execution+workflow em
+  // 'queued'/'running' pra sempre, um job fantasma.
+  try {
+    await queue.add(
+      'execute',
+      {
+        executionDbId: execution.id,
+        executionId: execution.executionId,
+        agent: firstAgent,
+        message,
+        contextRefs: decision.context,
+        ...(attachments?.length ? { attachments } : {}),
+        conversationId,
+        workflowId: workflow.id,
+        stepIndex: 0,
+      },
+      {
+        priority: PRIORITY_VALUE[priority],
+        attempts: AGENT_MAX_ATTEMPTS[firstAgent],
+        backoff: { type: 'fixed', delay: 2000 },
+      },
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.error(
+      { error, executionId: execution.executionId, agent: firstAgent },
+      'Failed to enqueue workflow after insert',
+    );
+    try {
+      const now = new Date();
+      await db
+        .update(schema.executions)
+        .set({ status: 'failed', completedAt: now })
+        .where(eq(schema.executions.id, execution.id));
+      await db
+        .update(schema.workflows)
+        .set({ status: 'failed' })
+        .where(eq(schema.workflows.id, workflow.id));
+      await db
+        .update(schema.executionSteps)
+        .set({
+          status: 'failed',
+          output: { error: `Falha ao enfileirar o workflow: ${detail}` },
+          startedAt: now,
+          completedAt: now,
+        })
+        .where(eq(schema.executionSteps.id, stepRows[0]?.id ?? ''));
+    } catch (compensationError) {
+      logger.error(
+        { error: compensationError, executionId: execution.executionId },
+        'Failed to mark workflow as failed after enqueue error',
+      );
+    }
+    return {
       executionId: execution.executionId,
+      status: 'unavailable',
       agent: firstAgent,
-      message,
-      contextRefs: decision.context,
-      ...(attachments?.length ? { attachments } : {}),
-      conversationId,
-      workflowId: workflow.id,
-      stepIndex: 0,
-    },
-    {
-      priority: PRIORITY_VALUE[priority],
-      attempts: AGENT_MAX_ATTEMPTS[firstAgent],
-      backoff: { type: 'fixed', delay: 2000 },
-    },
-  );
+      error: 'Não foi possível enfileirar o workflow agora (fila temporariamente indisponível). Tente de novo em instantes.',
+    };
+  }
 
   return { executionId: execution.executionId, status: 'queued', agent: firstAgent };
 }

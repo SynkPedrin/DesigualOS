@@ -1,0 +1,39 @@
+{
+  "label": "depois-otto2",
+  "at": "2026-09-13T23:13:01.006Z",
+  "results": [
+    {
+      "scenarioId": "O01",
+      "agent": "otto",
+      "status": "running",
+      "latencyMs": 405404,
+      "answer": "",
+      "checksPassed": 1,
+      "checksTotal": 2,
+      "checksFailed": [
+        "conceito desenvolvido"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 37
+    },
+    {
+      "scenarioId": "O02",
+      "agent": "otto",
+      "status": "running",
+      "latencyMs": 405967,
+      "answer": "",
+      "checksPassed": 0,
+      "checksTotal": 2,
+      "checksFailed": [
+        "entregou múltiplos hooks",
+        "resposta substantiva"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 27
+    }
+  ]
+}

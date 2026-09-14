@@ -4,14 +4,31 @@ import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useStudioJob } from '@/hooks/use-studio-jobs';
 import { cn } from '@/lib/utils';
 
+// Achado real (2026-09-11): faltavam os 9 estágios extras do pipeline
+// adaptativo (packages/types/src/studio.ts, StudioJobStatus) - se algum
+// deles chegasse a ser emitido de verdade pelo worker, esta tela mostraria o
+// nome cru do status ("video_draft") em vez de um rótulo legível, já que o
+// fallback é `job.status` sem tradução nenhuma.
 const STATUS_LABEL: Record<string, string> = {
   queued: 'Na fila',
   rendering: 'Renderizando',
   completed: 'Concluído',
   failed: 'Falhou',
+  planning: 'Planejando',
+  quality_check: 'Verificando qualidade',
+  refining: 'Refinando',
+  post_processing: 'Pós-processando',
+  uploading: 'Enviando',
+  keyframe_generation: 'Gerando quadros-chave',
+  keyframe_qa: 'Verificando quadros-chave',
+  video_draft: 'Rascunho de vídeo',
+  motion_qa: 'Verificando movimento',
+  video_master: 'Finalizando vídeo',
+  video_qa: 'Verificando vídeo',
 };
 
 export function JobProgressCard({
@@ -34,7 +51,19 @@ export function JobProgressCard({
     }
   }, [job, jobId, onSettled]);
 
-  if (!job) return null;
+  // Sem o Skeleton a fila piscava vazia a cada job novo, até o primeiro fetch voltar.
+  if (!job) {
+    return (
+      <Surface level="grafite" className="p-4">
+        <Skeleton className="mb-2 h-4 w-2/3" />
+        <div className="mb-1.5 flex items-center justify-between">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-3 w-8" />
+        </div>
+        <Skeleton className="h-1.5 w-full" />
+      </Surface>
+    );
+  }
 
   const isDone = job.status === 'completed';
   const isFailed = job.status === 'failed';

@@ -22,6 +22,7 @@ const ROUTE_VIDEO: Record<string, (typeof VIDEOS)[number]> = {
   '/': VIDEOS[0],
   '/agents': VIDEOS[1],
   '/clients': VIDEOS[2],
+  '/tasks': VIDEOS[1],
   '/studio': VIDEOS[3],
   '/workflows': VIDEOS[0],
   '/history': VIDEOS[1],

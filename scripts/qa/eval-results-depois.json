@@ -1,0 +1,127 @@
+{
+  "label": "depois",
+  "at": "2026-09-13T22:58:49.532Z",
+  "results": [
+    {
+      "scenarioId": "B01",
+      "agent": "bento",
+      "status": "failed",
+      "latencyMs": 33685,
+      "answer": "Não consegui responder agora: a ação reportou falha técnica; a observação veio vazia",
+      "checksPassed": 1,
+      "checksTotal": 2,
+      "checksFailed": [
+        "resposta substantiva"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 2,
+      "leakDetected": false,
+      "score": 29
+    },
+    {
+      "scenarioId": "B02",
+      "agent": "bento",
+      "status": "failed",
+      "latencyMs": 32447,
+      "answer": "Não consegui responder agora: a ação reportou falha técnica; a observação veio vazia",
+      "checksPassed": 1,
+      "checksTotal": 1,
+      "checksFailed": [],
+      "groundingHits": 0,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 39
+    },
+    {
+      "scenarioId": "B03",
+      "agent": "bento",
+      "status": "failed",
+      "latencyMs": 44052,
+      "answer": "Não consegui responder agora: a ação reportou falha técnica; a observação veio vazia",
+      "checksPassed": 1,
+      "checksTotal": 1,
+      "checksFailed": [],
+      "groundingHits": 1,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 54
+    },
+    {
+      "scenarioId": "S01",
+      "agent": "suzy",
+      "status": "completed",
+      "latencyMs": 86405,
+      "answer": "Boa pergunta pra treinar. Minha sugestão de DM:\n\n---\n\n\"Oi [nome], que bom que chamou atenção! O valor depende do que você precisa. Me conta rapidinho: é pra uso pessoal ou pra empresa? Assim te passo algo mais certeiro 😊\"\n\n---\n\nA lógica: nunca joga preço frio numa DM, porque sem contexto o número só assusta. A pergunta de qualificação abre conversa e filtra se é lead real antes de você investir tempo.\n\nUma ressalva: o dossiê da Costa Azul não tem segmento nem serviços registrados, então esse template é genérico. Se você quiser algo mais afinado com o que eles vendem, me passa o produto/serviç",
+      "checksPassed": 3,
+      "checksTotal": 3,
+      "checksFailed": [],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 100
+    },
+    {
+      "scenarioId": "S02",
+      "agent": "suzy",
+      "status": "completed",
+      "latencyMs": 83170,
+      "answer": "Resposta que eu enviaria:\n\n> \"Faz sentido. Só me ajuda a entender uma coisa: o que tá pesando mais, o valor em si ou ainda tá avaliando se é o momento certo pra empresa?\"\n\nEssa pergunta abre o real: se for \"momento errado\", a conversa vira sobre timing e a gente agenda um follow-up com data. Se for \"valor\", aí dá pra explorar o que ele esperava gastar e o que ele espera ganhar, e conectar os dois.\n\nO que não faço: baixar o preço na hora, encher de argumentos ou sumir esperando ele \"pensar sozinho\". Lead que some sem próximo passo está perdido.",
+      "checksPassed": 2,
+      "checksTotal": 2,
+      "checksFailed": [],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 99
+    },
+    {
+      "scenarioId": "O01",
+      "agent": "otto",
+      "status": "running",
+      "latencyMs": 405036,
+      "answer": "",
+      "checksPassed": 1,
+      "checksTotal": 2,
+      "checksFailed": [
+        "conceito desenvolvido"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 37
+    },
+    {
+      "scenarioId": "O02",
+      "agent": "otto",
+      "status": "error",
+      "latencyMs": 5,
+      "answer": "HTTP 401: {\"error\":\"Invalid or expired token\"}",
+      "checksPassed": 0,
+      "checksTotal": 2,
+      "checksFailed": [
+        "entregou múltiplos hooks",
+        "resposta substantiva"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 31
+    },
+    {
+      "scenarioId": "J01",
+      "agent": "jarbas",
+      "status": "error",
+      "latencyMs": 4,
+      "answer": "HTTP 401: {\"error\":\"Invalid or expired token\"}",
+      "checksPassed": 0,
+      "checksTotal": 1,
+      "checksFailed": [
+        "resposta substantiva"
+      ],
+      "groundingHits": 1,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 31
+    }
+  ]
+}

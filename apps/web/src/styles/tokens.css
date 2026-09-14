@@ -56,6 +56,14 @@
   --shadow-elevated: 0 8px 40px rgba(107, 33, 168, 0.25);
   --shadow-glow: 0 0 20px rgba(147, 51, 234, 0.4);
   --shadow-sinal: 0 0 24px rgba(225, 249, 0, 0.25);
+
+  /* Motion (auditoria de performance 12/09/2026): o app inteiro usava o
+   * default do Tailwind (150ms) espalhado como transition-colors/transition-all.
+   * Tokens nomeados pra uso explícito + default global mais rápido: 120ms é o
+   * teto perceptível de "instantâneo" sem parecer seco. */
+  --transition-fast: 120ms;
+  --transition-normal: 180ms;
+  --default-transition-duration: 120ms;
 }
 
 /*

@@ -6,6 +6,11 @@ export interface CreateAttributedTaskParams {
   description?: string;
   requesterName: string;
   requesterClickUpEmail: string | null;
+  /** Campos ricos (BL-15): prioridade na escala do ClickUp (1-4), prazo em
+   * epoch ms, tags por nome. */
+  priority?: 1 | 2 | 3 | 4;
+  dueDate?: number;
+  tags?: string[];
 }
 
 export interface AttributedTaskResult extends CreatedTask {
@@ -33,6 +38,9 @@ export async function createAttributedTask(config: ClickUpConfig, params: Create
     name: params.name,
     description,
     ...(assigneeId !== undefined ? { assigneeId } : {}),
+    ...(params.priority !== undefined ? { priority: params.priority } : {}),
+    ...(params.dueDate !== undefined ? { dueDate: params.dueDate } : {}),
+    ...(params.tags?.length ? { tags: params.tags } : {}),
   });
 
   return { ...task, assigned: assigneeId !== undefined };

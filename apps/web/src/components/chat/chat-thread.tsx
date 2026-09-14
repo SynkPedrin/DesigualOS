@@ -72,9 +72,19 @@ interface PendingExchange {
   clientName: string | null;
   /** Anexos enviados junto com a pergunta (já hospedados via POST /uploads), até 10. */
   attachments: ChatAttachmentWire[];
+  /** Fases reais reportadas pelo agent loop via WS (Agentic V2). */
+  liveSteps?: string[] | undefined;
   /** Marca de quando o envio começou, pra casar com created_at das mensagens persistidas. */
   sentAt: number;
+  /** Watchdog disparou (execution ativa além do teto). Trava o poll da
+   * execution: worker morto não atualiza o status no servidor, então o poll
+   * seguiria voltando "running" pra sempre e ressuscitaria o balão. */
+  watchdogFired?: boolean;
 }
+
+/** Se a execution seguir ativa por mais de 6 minutos, o worker provavelmente
+ * morreu no meio: o balão vira falha com retry em vez de "pensando" eterno. */
+const EXECUTION_WATCHDOG_MS = 6 * 60 * 1000;
 
 /**
  * Dois estados dentro do MESMO LayoutGroup:
@@ -121,7 +131,9 @@ export function ChatThread() {
   );
 
   const sendMessage = useSendChatMessage();
-  const { data: execution } = useExecution(pending?.executionId ?? null);
+  const { data: execution } = useExecution(
+    pending?.executionId && !pending.watchdogFired ? pending.executionId : null,
+  );
   const { data: persistedMessages } = useConversationMessages(activeConversationId);
   const { data: me } = useMe();
   const { data: teamMembers } = useTeamMembers();
@@ -235,6 +247,32 @@ export function ChatThread() {
     }
   }, [execution, pending, queryClient]);
 
+  // Watchdog de execution travada (worker morreu sem atualizar o status no
+  // servidor): passado o teto, o balão vira falha com opção de tentar de novo.
+  // A recuperação tardia segue possível via message.delta (WS), que não lê
+  // `watchdogFired` e repinta o balão se a resposta real chegar depois.
+  useEffect(() => {
+    if (!pending || pending.status === 'completed' || pending.status === 'failed') return;
+    const fail = () =>
+      setPending((current) =>
+        current && current.status !== 'completed' && current.status !== 'failed'
+          ? {
+              ...current,
+              status: 'failed',
+              answer: 'O agente demorou demais pra responder. Tente novamente.',
+              watchdogFired: true,
+            }
+          : current,
+      );
+    const remaining = pending.sentAt + EXECUTION_WATCHDOG_MS - Date.now();
+    if (remaining <= 0) {
+      fail();
+      return;
+    }
+    const timeout = setTimeout(fail, remaining);
+    return () => clearTimeout(timeout);
+  }, [pending?.sentAt, pending?.status, pending?.watchdogFired]);
+
   // Texto ao vivo via WS (message.delta, ver publishMessageDelta no worker):
   // pinta o balão assim que o texto existe, sem esperar o refetch que
   // `execution.completed` dispara (use-realtime-events.ts) nem o próximo
@@ -261,6 +299,27 @@ export function ChatThread() {
       }
     });
   }, [pending?.executionId, queryClient]);
+
+  // Fases REAIS do agent loop (Agentic V2, evento agent.phase): cada
+  // transição que o backend executa de verdade vira um passo no indicador de
+  // atividade, substituindo as etapas genéricas por intervalo assim que a
+  // primeira fase chega (spec V2 seção 61: nunca inventar etapas).
+  useEffect(() => {
+    if (!pending?.executionId) return;
+    const executionId = pending.executionId;
+    return realtimeClient.subscribe((event) => {
+      if (event.type !== 'agent.phase') return;
+      const payload = event.payload as { execution_id?: string; label?: unknown; phase?: string };
+      if (payload.execution_id !== executionId || typeof payload.label !== 'string' || payload.label.length === 0) return;
+      const label: string = payload.label;
+      setPending((current) => {
+        if (!current || current.executionId !== executionId) return current;
+        const steps = current.liveSteps ?? [];
+        if (steps[steps.length - 1] === label) return current;
+        return { ...current, liveSteps: [...steps, label] };
+      });
+    });
+  }, [pending?.executionId]);
 
   // Quando o banco alcança (mensagem do assistente persistida depois do envio),
   // aposenta o par otimista: a thread passa a renderizar só o histórico.
@@ -332,14 +391,17 @@ export function ChatThread() {
         status: pending.status,
         sources: pending.sources,
         clientName: pending.clientName,
+        liveSteps: pending.liveSteps,
         createdAt: new Date(pending.sentAt).toISOString(),
       });
     }
   }
 
+  // pending.answer entra nas deps porque o texto cresce via message.delta sem
+  // mudar messages.length - sem ele o scroll não acompanhava o streaming.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages.length, pending?.status]);
+  }, [messages.length, pending?.status, pending?.answer]);
 
   function handleNewConversation() {
     setActiveConversationId(null);
@@ -410,6 +472,13 @@ export function ChatThread() {
       // "queued" - falha honesta no balão.
       setPending((current) => (current ? { ...current, status: 'failed' } : current));
     }
+  }
+
+  /** Reenvia a mesma pergunta do exchange que falhou (balão "Tentar
+   * novamente"). Reusa os anexos já hospedados, sem reupload. */
+  function handleRetry() {
+    if (!pending || pending.status !== 'failed') return;
+    void handleSend(pending.userText, { attachments: pending.attachments });
   }
 
   const isExchangeActive =
@@ -626,6 +695,11 @@ export function ChatThread() {
                         message={message}
                         forwardTargets={message.role === 'assistant' ? forwardTargets : []}
                         onForward={(recipientId) => handleForward(message, recipientId)}
+                        onRetry={
+                          pending && message.id === pending.assistantLocalId && message.status === 'failed'
+                            ? handleRetry
+                            : undefined
+                        }
                       />
                     </motion.div>
                   ))}

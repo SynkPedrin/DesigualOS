@@ -31,14 +31,32 @@ export type ScopeKind =
   | 'MULTI_CLIENT'
   /** Um termo bateu em 2+ clientes: dá pra perguntar a pergunta CERTA, nomeando os candidatos. */
   | 'AMBIGUOUS'
+  /** Pergunta sobre UMA PESSOA da equipe ("tasks da Jamile", "atribuídas ao Pedro",
+   * "o que a Tammy precisa entregar"): atravessa TODOS os clientes filtrando por
+   * responsável. É o caso que gerava "de qual cliente?" quando o usuário já tinha
+   * dito o que queria (falha real medida em 14/09/2026). */
+  | 'PERSON'
   /** Nenhum sinal de escopo: provavelmente não é pergunta operacional. */
   | 'NONE';
+
+/** Pessoa detectada na mensagem (nome bruto; a resolução pro membro do ClickUp
+ * acontece na camada que tem acesso à API, nunca por lista hardcoded aqui). */
+export interface PersonMention {
+  name: string;
+  confidence: number;
+  /** Ids de membro do ClickUp resolvidos downstream (operational-context.ts). */
+  memberIds?: number[];
+  /** Username real resolvido, pra exibição. */
+  resolvedAs?: string;
+}
 
 export interface OperationalScope {
   kind: ScopeKind;
   clients: ClientMatch[];
   ambiguous: Array<{ term: string; candidates: ClientMatch[] }>;
   temporal: TemporalRange | null;
+  /** Pessoa detectada (só quando kind === 'PERSON'). */
+  person?: PersonMention | null;
   /** A pergunta é sobre estado operacional (task/prazo/entrega)? Decide se vale buscar
    * dado ao vivo no ClickUp antes de responder. */
   operational: boolean;
@@ -189,6 +207,42 @@ function matched(haystack: string, needles: string[]): string[] {
 }
 
 /**
+ * Detecção de PERGUNTA SOBRE PESSOA (escopo PERSON). Só roda quando nenhum
+ * cliente foi resolvido: "tasks da 3net" já saiu como CLIENT antes. Os
+ * padrões cobrem português operacional real:
+ *   "tasks atribuídas à Jamile", "o que o Pedro precisa entregar",
+ *   "tarefas do Gabriel", "me mostra o que a Tammy tem hoje".
+ * O nome capturado é bruto por desenho: quem resolve pro membro real do
+ * ClickUp é a camada com acesso à API (operational-context.ts).
+ */
+function detectPersonMention(flat: string): PersonMention | null {
+  const patterns: RegExp[] = [
+    // atribuída(s) à/ao/para + nome
+    /atribuid[ao]s?\s+(?:a|à|ao|pro|pra|para)\s+([a-z][a-z ]{1,29})/,
+    // tasks/tarefas do/da/de + nome
+    /(?:tasks?|tarefas?|demandas?|entregas?)\s+(?:do|da|de)\s+([a-z][a-z ]{1,24})/,
+    // <nome> precisa/tem que (entregar|fazer|produzir)
+    /\b([a-z][a-z]+)\s+(?:precisa|tem que|vai)\s+(?:entregar|fazer|produzir|criar)/,
+    // o que (a|o) <nome> tem/faz/entrega hoje
+    /(?:o que|oque)\s+(?:a|o)\s+([a-z][a-z]+)\s+(?:tem|faz|entrega|produz)/,
+  ];
+  // Palavras que não são pessoa mesmo casando no padrão.
+  const notPerson = new Set([
+    'hoje', 'amanha', 'ontem', 'agora', 'semana', 'mes', 'ano', 'task', 'tasks', 'tarefa', 'tarefas',
+    'clickup', 'cliente', 'clientes', 'operacao', 'agencia', 'todos', 'todas', 'tudo', 'isso', 'essa',
+    'ele', 'ela', 'eles', 'elas', 'voce', 'você', 'eu', 'nos', 'mim', 'alguem', 'ninguem',
+  ]);
+  for (const pattern of patterns) {
+    const match = flat.match(pattern);
+    const name = match?.[1]?.trim().replace(/\s+/g, ' ');
+    if (name && name.length >= 2 && !notPerson.has(name)) {
+      return { name, confidence: 0.75 };
+    }
+  }
+  return null;
+}
+
+/**
  * @param message texto livre do usuário
  * @param now injetável pra teste; usado pela resolução temporal (§ relógio real, nunca
  *   data "sabida" pelo modelo)
@@ -271,6 +325,26 @@ export async function resolveOperationalScope(
       // confiança menor pra que o planner possa revisar.
       confidence: tier === 'fuzzy' ? 0.6 : 0.9,
       signals,
+    };
+  }
+
+  // PRECEDÊNCIA 2b — pergunta sobre PESSOA da equipe: atravessa todos os
+  // clientes filtrando por responsável. "quantas tasks estão atribuídas à
+  // Jamile?" não é pergunta de cliente nenhum.
+  const person = operational ? detectPersonMention(flat) : null;
+  if (person) {
+    signals.push(`pessoa:${person.name}`);
+    return {
+      kind: 'PERSON',
+      clients: [],
+      ambiguous,
+      temporal,
+      operational: true,
+      comparative,
+      briefing,
+      confidence: person.confidence,
+      signals,
+      person,
     };
   }
 

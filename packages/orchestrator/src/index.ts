@@ -16,3 +16,5 @@ export * from './event-store';
 export * from './agent-probe';
 export * from './agent-sync';
 export * from './alerts';
+export * from './worker-heartbeat';
+export * from './thumbnail-queue';

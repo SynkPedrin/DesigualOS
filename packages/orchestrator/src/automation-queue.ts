@@ -11,7 +11,7 @@ export interface AutomationJobData {
 
 let queue: Queue<AutomationJobData> | null = null;
 
-function getAutomationsQueue(): Queue<AutomationJobData> {
+export function getAutomationsQueue(): Queue<AutomationJobData> {
   queue ??= new Queue<AutomationJobData>(AUTOMATIONS_QUEUE_NAME, { connection: getRedisConnection() });
   return queue;
 }

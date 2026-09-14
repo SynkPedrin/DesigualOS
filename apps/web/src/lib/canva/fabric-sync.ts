@@ -1,6 +1,45 @@
-import { Ellipse, FabricImage, Group, Line, Polygon, Rect, Shadow, Textbox, Triangle, type FabricObject } from 'fabric';
-import type { CanvaObject, CanvaObjectBase, CanvaShapeKind } from '@desigual-os/types';
+import { Ellipse, FabricImage, Group, Line, Path, Polygon, Rect, Shadow, Textbox, Triangle, util, type FabricObject } from 'fabric';
+import type { CanvaBlendMode, CanvaObject, CanvaObjectBase, CanvaShapeKind } from '@desigual-os/types';
 import { loadFontVariant } from './font-manager';
+
+/**
+ * Nomes do Photoshop (nosso modelo, ver CANVA_BLEND_MODES) <-> valores reais
+ * de `globalCompositeOperation` do Canvas2D, que é o que `FabricObject`
+ * aceita de verdade (confirmado no .d.ts do fabric@6.9.1: a prop existe e é
+ * tipada como `GlobalCompositeOperation`, o mesmo tipo do lib.dom). Só
+ * 'normal' não bate 1:1 - o nome do Canvas2D pra "sem mesclagem nenhuma" é
+ * 'source-over', não 'normal'.
+ */
+const BLEND_MODE_TO_COMPOSITE: Record<CanvaBlendMode, GlobalCompositeOperation> = {
+  normal: 'source-over',
+  multiply: 'multiply',
+  screen: 'screen',
+  overlay: 'overlay',
+  darken: 'darken',
+  lighten: 'lighten',
+  'color-dodge': 'color-dodge',
+  'color-burn': 'color-burn',
+  'hard-light': 'hard-light',
+  'soft-light': 'soft-light',
+  difference: 'difference',
+  exclusion: 'exclusion',
+  hue: 'hue',
+  saturation: 'saturation',
+  color: 'color',
+  luminosity: 'luminosity',
+};
+
+const COMPOSITE_TO_BLEND_MODE: Partial<Record<string, CanvaBlendMode>> = Object.fromEntries(
+  Object.entries(BLEND_MODE_TO_COMPOSITE).map(([blendMode, composite]) => [composite, blendMode as CanvaBlendMode]),
+);
+
+export function blendModeToComposite(blendMode: CanvaBlendMode | undefined): GlobalCompositeOperation {
+  return BLEND_MODE_TO_COMPOSITE[blendMode ?? 'normal'];
+}
+
+export function compositeToBlendMode(composite: string | undefined): CanvaBlendMode {
+  return COMPOSITE_TO_BLEND_MODE[composite ?? 'source-over'] ?? 'normal';
+}
 
 /**
  * Ponte entre o modelo de dados portável (CanvaObject, o que é salvo/serializado)
@@ -31,6 +70,7 @@ function baseFabricProps(obj: CanvaObjectBase) {
     scaleY: obj.scaleY,
     angle: obj.rotation,
     opacity: obj.opacity,
+    globalCompositeOperation: blendModeToComposite(obj.blendMode),
     visible: obj.visible,
     selectable: !obj.locked,
     evented: !obj.locked,
@@ -95,6 +135,47 @@ function createShapeFabricObject(obj: Extract<CanvaObject, { type: 'shape' }>): 
       return new Polygon(starPoints(obj.width, obj.height), { ...common });
     default:
       return new Rect({ ...common, width: obj.width, height: obj.height });
+  }
+}
+
+/**
+ * Máscara de recorte (pedido explícito: "máscaras de camada") - recorta a
+ * imagem na silhueta da forma escolhida, em cima do recorte retangular já
+ * existente. `clipPath` do Fabric por padrão (`absolutePositioned: false`) é
+ * posicionado relativo ao CENTRO do objeto que ele recorta, não ao canto
+ * superior esquerdo - por isso a forma é construída centrada em (0,0), não
+ * em (width/2, height/2). `null` (não criar clipPath nenhum) pra 'rect'
+ * (retângulo = o recorte padrão já cobre isso, não precisa de silhueta
+ * extra) e 'line' (área zero, não faz sentido como máscara).
+ */
+/** Direção inversa de `buildClipShape`: de qual forma um `clipPath` AO VIVO
+ * foi construído - detectado pela classe Fabric da instância, não por
+ * lookup em `pagesRef` (que exigiria a máscara já ter sido commitada antes -
+ * mais robusto detectar direto do objeto, sem depender de ordem de eventos).
+ * Usado quando recortar (crop) uma imagem que já tem máscara: a máscara
+ * precisa ser reconstruída no novo tamanho, ver applyCrop em
+ * use-canva-editor.ts. */
+export function clipShapeKindOf(clipPath: FabricObject | null | undefined): Exclude<CanvaShapeKind, 'line'> | undefined {
+  if (!clipPath) return undefined;
+  if (clipPath instanceof Ellipse) return 'ellipse';
+  if (clipPath instanceof Triangle) return 'triangle';
+  if (clipPath instanceof Polygon) return 'star';
+  return undefined;
+}
+
+export function buildClipShape(shape: CanvaShapeKind | undefined, width: number, height: number): FabricObject | null {
+  switch (shape) {
+    case 'ellipse':
+      return new Ellipse({ rx: width / 2, ry: height / 2, originX: 'center', originY: 'center' });
+    case 'triangle':
+      return new Triangle({ width, height, originX: 'center', originY: 'center' });
+    case 'star':
+      return new Polygon(
+        starPoints(width, height).map((p) => ({ x: p.x - width / 2, y: p.y - height / 2 })),
+        { originX: 'center', originY: 'center' },
+      );
+    default:
+      return null;
   }
 }
 
@@ -208,6 +289,39 @@ export async function loadImageElement(
   return offscreen;
 }
 
+/**
+ * Onde uma imagem recém-inserida entra no artboard: centralizada e cabendo em
+ * ~90% dele, sem nunca ampliar além do tamanho original.
+ *
+ * O detalhe que importa (achado real, 2026-09-11, "o upload não funciona"):
+ * `width`/`height` de um CanvaObject imagem é a CAIXA DE ORIGEM - quantos
+ * pixels do arquivo original entram no quadro -, exatamente como
+ * `fabric.Image` trata width/height; quem reduz pro tamanho exibido é
+ * scaleX/scaleY. Devolver aqui o tamanho já reduzido como width/height (com
+ * escala 1) não encolhe a imagem: RECORTA o canto superior esquerdo dela. Uma
+ * foto de 3000x2000 num artboard 1080x1350 aparecia como um pedaço de
+ * 972x648 do canto dela - em foto de canto claro ou transparente, parecia que
+ * o upload não tinha feito nada.
+ */
+export function computeImagePlacement(
+  naturalWidth: number,
+  naturalHeight: number,
+  documentWidth: number,
+  documentHeight: number,
+): { x: number; y: number; width: number; height: number; scaleX: number; scaleY: number } {
+  const width = naturalWidth > 0 ? naturalWidth : documentWidth * 0.5;
+  const height = naturalHeight > 0 ? naturalHeight : documentHeight * 0.5;
+  const scale = Math.min(1, (documentWidth * 0.9) / width, (documentHeight * 0.9) / height);
+  return {
+    x: (documentWidth - width * scale) / 2,
+    y: (documentHeight - height * scale) / 2,
+    width,
+    height,
+    scaleX: scale,
+    scaleY: scale,
+  };
+}
+
 /** Cria a instância Fabric correspondente a um CanvaObject e já marca id/tipo. */
 export async function instantiateFabricObject(obj: CanvaObject): Promise<FabricObjectWithMeta> {
   let fabricObject: FabricObject;
@@ -224,6 +338,10 @@ export async function instantiateFabricObject(obj: CanvaObject): Promise<FabricO
       strokeWidth: obj.strokeWidth ?? 0,
       ...(obj.cropX !== undefined ? { cropX: obj.cropX } : {}),
       ...(obj.cropY !== undefined ? { cropY: obj.cropY } : {}),
+      ...(() => {
+        const clip = buildClipShape(obj.clipShape, obj.width, obj.height);
+        return clip ? { clipPath: clip } : {};
+      })(),
     });
   } else if (obj.type === 'text') {
     // Reabrir um documento salvo não lembra fontes carregadas em sessões
@@ -253,6 +371,19 @@ export async function instantiateFabricObject(obj: CanvaObject): Promise<FabricO
     });
   } else if (obj.type === 'shape') {
     fabricObject = createShapeFabricObject(obj);
+  } else if (obj.type === 'path') {
+    // Traço de pincel livre - `pathData` (string SVG "d") foi gerada uma
+    // única vez na criação (ver use-canva-editor.ts: handlePathCreated),
+    // `new Path(string, ...)` faz o parse de volta sozinho (fabric.parsePath
+    // internamente), não precisamos chamar isso na mão.
+    fabricObject = new Path(obj.pathData, {
+      ...baseFabricProps(obj),
+      fill: obj.fill,
+      stroke: obj.stroke,
+      strokeWidth: obj.strokeWidth,
+      strokeLineCap: 'round',
+      strokeLineJoin: 'round',
+    });
   } else {
     // group: reconstruído via Group.fromObject nativo do Fabric (round-trip
     // testado, preserva o layout aninhado exato) - ver CanvaGroupObject.
@@ -263,7 +394,102 @@ export async function instantiateFabricObject(obj: CanvaObject): Promise<FabricO
   const withMeta = fabricObject as FabricObjectWithMeta;
   withMeta.canvaId = obj.id;
   withMeta.canvaType = obj.type;
+  // `shape` (rect/ellipse/triangle/line/star) não é uma prop nativa do
+  // Fabric - sem guardar isto também, um objeto sem entrada prévia em
+  // pagesRef (ver buildFallbackExisting) não teria como saber que TIPO de
+  // forma reconstruir na volta, só que "é uma forma".
+  if (obj.type === 'shape') (withMeta as FabricObjectWithMeta & { canvaShapeKind?: CanvaShapeKind }).canvaShapeKind = obj.shape;
   return withMeta;
+}
+
+/**
+ * Achado real (2026-09-10, "objeto novo desaparece depois do primeiro
+ * commit"): `flushActivePageFromCanvas` (use-canva-editor.ts) só sabia
+ * RELER um objeto que já tinha uma entrada correspondente em `pagesRef`
+ * (merge via `readCanvaObject`) - não sabia INSERIR um objeto novo, e
+ * simplesmente descartava (retornava `null`) qualquer objeto do canvas sem
+ * entrada prévia. Isso afetava TODO fluxo que cria um objeto e chama
+ * `commitHistory()` logo em seguida - adicionar forma/texto/imagem, colar,
+ * duplicar, agrupar: o objeto aparecia na tela normalmente (o Fabric já
+ * tinha adicionado), mas sumia silenciosamente do documento salvo no
+ * autosave seguinte (e portanto ao reabrir), porque nunca existia uma
+ * entrada em `pagesRef` pra ele ser mesclado. Esta função monta um
+ * "existing" honesto direto do objeto Fabric AO VIVO, usado só quando não
+ * existe registro prévio - preenche o que dá pra ler do próprio Fabric (a
+ * maioria dos campos) e usa um default neutro só pro que genuinamente não
+ * tem como recuperar sem esse registro (ex: a URL original de uma imagem já
+ * "assada" com filtro num canvas offscreen - `getSrc()` devolve o data: URL
+ * ATUAL, que funciona pra exibir mas não é a URL limpa original).
+ */
+export function buildFallbackExisting(object: FabricObjectWithMeta): CanvaObject {
+  const base = {
+    id: object.canvaId,
+    x: object.left ?? 0,
+    y: object.top ?? 0,
+    width: object.width ?? 0,
+    height: object.height ?? 0,
+    scaleX: object.scaleX ?? 1,
+    scaleY: object.scaleY ?? 1,
+    rotation: object.angle ?? 0,
+    opacity: object.opacity ?? 1,
+    locked: object.selectable === false,
+    visible: object.visible ?? true,
+    zIndex: 0,
+  };
+
+  if (object.canvaType === 'image') {
+    const image = object as FabricImage & FabricMeta;
+    return { ...base, type: 'image', src: typeof image.getSrc === 'function' ? image.getSrc() : '' };
+  }
+
+  if (object.canvaType === 'text') {
+    const text = object as InstanceType<typeof Textbox> & FabricMeta;
+    return {
+      ...base,
+      type: 'text',
+      text: text.text ?? '',
+      fontFamily: (text.fontFamily as string) ?? 'Work Sans',
+      fontSize: (text.fontSize as number) ?? 24,
+      fontWeight: Number(text.fontWeight ?? 400),
+      fontStyle: (text.fontStyle as 'normal' | 'italic') ?? 'normal',
+      fill: (text.fill as string) ?? '#0f0f0f',
+      textAlign: (text.textAlign as 'left' | 'center' | 'right') ?? 'left',
+      letterSpacing: (text.charSpacing as number) ?? 0,
+      lineHeight: (text.lineHeight as number) ?? 1.16,
+      underline: Boolean(text.underline),
+      uppercase: false,
+    };
+  }
+
+  if (object.canvaType === 'shape') {
+    const shape = object as FabricObject & { rx?: number; canvaShapeKind?: CanvaShapeKind };
+    return {
+      ...base,
+      type: 'shape',
+      shape: shape.canvaShapeKind ?? 'rect',
+      fill: typeof object.fill === 'string' ? object.fill : '#9333ea',
+      stroke: typeof object.stroke === 'string' ? object.stroke : '#fafaf7',
+      strokeWidth: object.strokeWidth ?? 0,
+      cornerRadius: shape.rx,
+    };
+  }
+
+  if (object.canvaType === 'path') {
+    const path = object as unknown as InstanceType<typeof Path>;
+    return {
+      ...base,
+      type: 'path',
+      pathData: util.joinPath(path.path),
+      stroke: typeof object.stroke === 'string' ? object.stroke : '#9333ea',
+      strokeWidth: object.strokeWidth ?? 4,
+      fill: typeof object.fill === 'string' ? object.fill : null,
+    };
+  }
+
+  // group: `toObject()` nativo do Fabric é uma reconstrução MELHOR do que
+  // qualquer `fabricData` velho poderia ser (reflete o estado ao vivo).
+  const group = object as unknown as Group;
+  return { ...base, type: 'group', fabricData: group.toObject() as unknown as Record<string, unknown> };
 }
 
 /** Direção inversa: lê o estado atual de uma instância Fabric de volta pro formato portável.
@@ -287,6 +513,7 @@ export function readCanvaObject(object: FabricObjectWithMeta, existing: CanvaObj
     locked: object.selectable === false,
     visible: object.visible ?? existing.visible,
     zIndex,
+    blendMode: compositeToBlendMode(object.globalCompositeOperation),
     metadata: existing.metadata,
   };
 
@@ -301,6 +528,11 @@ export function readCanvaObject(object: FabricObjectWithMeta, existing: CanvaObj
       cropY: image.cropY ?? existing.cropY,
       stroke: typeof image.stroke === 'string' ? image.stroke : existing.stroke,
       strokeWidth: image.strokeWidth ?? existing.strokeWidth,
+      // `clipShape` não é relido do clipPath ao vivo de propósito - mesmo
+      // raciocínio do `pathData` do traço de pincel: só muda através do
+      // setter dedicado (setSelectedImageClipShape), nunca por transformação
+      // livre do objeto.
+      clipShape: existing.clipShape,
     };
   }
 
@@ -336,6 +568,21 @@ export function readCanvaObject(object: FabricObjectWithMeta, existing: CanvaObj
       stroke: typeof object.stroke === 'string' ? object.stroke : existing.stroke,
       strokeWidth: object.strokeWidth ?? existing.strokeWidth,
       cornerRadius: shape.rx ?? existing.cornerRadius,
+    };
+  }
+
+  if (existing.type === 'path') {
+    // `pathData` não é relido aqui de propósito - a geometria do traço não
+    // muda depois de criado, só a matriz de transform (já coberta por
+    // `base`); recalcular via util.joinPath a cada commit seria trabalho
+    // repetido pra um valor que já não muda. fill/stroke/strokeWidth SIM
+    // são relidos ao vivo, mesmo motivo do bug de shape corrigido acima.
+    return {
+      ...existing,
+      ...base,
+      fill: typeof object.fill === 'string' ? object.fill : existing.fill,
+      stroke: typeof object.stroke === 'string' ? object.stroke : existing.stroke,
+      strokeWidth: object.strokeWidth ?? existing.strokeWidth,
     };
   }
 

@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { and, count, desc, eq, ilike, or } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { generateStudioJobId, getStudioJobQueue, recordLearning } from '@desigual-os/orchestrator';
+import { generateStudioJobId, getStudioJobQueue, recordLearning, enqueueThumbnail } from '@desigual-os/orchestrator';
 import { generateStudioCopy } from '@desigual-os/router';
 import { generateImageCaption } from '@desigual-os/otto';
 import { hasPermission } from '@desigual-os/auth';
@@ -17,7 +17,9 @@ import {
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { hasClientAccess } from '../lib/access';
+import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
 import { deleteStudioAssetFile, uploadUserFile } from '../lib/storage';
+import { recordOttoFeedbackLearning } from './otto-learnings';
 
 /**
  * Referências que o colaborador anexa pra guiar a criação. Imagem e PDF só:
@@ -65,7 +67,42 @@ const createJobSchema = z.object({
   // studio-node; metadata.design='html' força esse caminho mesmo sem frames.
   reference_images: z.array(z.string().url()).max(16).optional(),
   metadata: z.record(z.unknown()).optional(),
-});
+}).refine(
+  (body) => {
+    // Achado real (2026-09-11): prompt era opcional pra TODO tipo de job,
+    // inclusive image/video/reels, que sempre precisam de um de verdade -
+    // `POST /studio/jobs` com prompt ausente/vazio virava 202 aceito e o
+    // studio-node gerava com `(prompt ?? '') + slideHint` (nodes/studio-node/
+    // src/index.ts) - uma geração real, cobrada de verdade na GPU, com
+    // prompt vazio, sem nenhum aviso pro usuário antes de disparar. `upscale`
+    // não precisa (opera sobre um anexo existente); `carousel` também não
+    // quando é o caminho de carrossel HTML pronto (reference_images ou
+    // metadata.design='html' - ver comentário de reference_images acima).
+    if (body.type === 'upscale') return true;
+    if (body.type === 'carousel' && ((body.reference_images?.length ?? 0) > 0 || body.metadata?.design === 'html')) return true;
+    return typeof body.prompt === 'string' && body.prompt.trim().length > 0;
+  },
+  { message: 'prompt is required for this job type', path: ['prompt'] },
+);
+
+/**
+ * Achado real (2026-09-11): tanto GET /studio/jobs/:id (carousel) quanto
+ * DELETE /studio/jobs/:id puxavam TODOS os assets do cliente pra memória da
+ * API (`where(clientId=...)`, sem filtro nenhum de job) só pra filtrar por
+ * `metadata.job_id === jobId` DEPOIS, em JS - exatamente o mesmo formato do
+ * bug já corrigido em health/routes.ts (N+1/full-scan). Cliente com
+ * histórico grande de Studio faz isso escalar mal e arrisca timeout. Como
+ * `studio_assets` não tem coluna `job_id` própria (só dentro do jsonb
+ * `metadata`, sem migração pra mudar isso agora), filtra pelo jsonb DIRETO
+ * no Postgres via `sql` - só as linhas do job realmente voltam pra API,
+ * nunca o histórico inteiro do cliente.
+ */
+async function findAssetsByJobId(clientId: string, jobId: string) {
+  return db
+    .select()
+    .from(schema.studioAssets)
+    .where(and(eq(schema.studioAssets.clientId, clientId), sql`${schema.studioAssets.metadata} ->> 'job_id' = ${jobId}`));
+}
 
 export async function registerStudioRoutes(app: FastifyInstance): Promise<void> {
   app.post(
@@ -82,6 +119,31 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
         reply.code(403);
         return { error: 'No access granted to this client' };
       }
+
+      // Idempotência de intenção (mesmo padrão do /chat e /clickup/tasks,
+      // auditoria 11/09/2026): double click em "gerar" não pode virar 2 jobs
+      // de GPU. A chave cobre cliente+tipo+prompt+anexos; a janela de 15s
+      // bloqueia só o gesto duplicado, não uma geração proposital repetida.
+      const idemKey = idempotencyKey('studio-job', [
+        request.authUser.id,
+        body.client_id,
+        body.type,
+        body.prompt ?? '',
+        String(body.num_slides ?? ''),
+        String(body.variations ?? ''),
+        ...(body.attachments ?? []).map((a) => a.url),
+      ]);
+      const existing = await claimIdempotency(idemKey);
+      if (existing !== null) {
+        if (existing !== 'pending') {
+          reply.code(202);
+          return { job_id: existing, status: 'queued', deduplicated: true };
+        }
+        reply.code(409);
+        return { error: 'Esta geração idêntica já está em andamento. Aguarde um instante.' };
+      }
+
+      try {
 
       const jobId = generateStudioJobId();
       const numSlides = body.type === 'carousel' ? (body.num_slides ?? 5) : 1;
@@ -168,6 +230,7 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
         .returning();
 
       if (!job) {
+        await releaseIdempotency(idemKey);
         reply.code(500);
         return { error: 'Failed to create studio job' };
       }
@@ -208,12 +271,21 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
           .set({ status: 'failed', error: `Falha ao enfileirar o job: ${message}` })
           .where(eq(schema.studioJobs.id, job.id));
         request.log.error({ error, jobId: job.jobId }, 'Failed to enqueue studio job after insert');
+        await releaseIdempotency(idemKey);
         reply.code(502);
         return { error: 'Failed to queue studio job for generation. Please try again.' };
       }
 
+      await fulfillIdempotency(idemKey, job.jobId);
+
       reply.code(202);
       return { job_id: job.jobId, status: 'queued' };
+      } catch (error) {
+        // Falha no meio do caminho: libera a chave pra não bloquear o retry
+        // legítimo do usuário com um 409 fantasma.
+        await releaseIdempotency(idemKey);
+        throw error;
+      }
     },
   );
 
@@ -229,17 +301,33 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       return { error: 'Not authenticated' };
     }
 
-    const rows = await db
-      .select()
-      .from(schema.studioJobs)
-      .where(eq(schema.studioJobs.requestedBy, request.authUser.id))
-      .orderBy(desc(schema.studioJobs.createdAt))
-      .limit(20);
+    // Achado real (2026-09-11): o filtro `status=active` rodava DEPOIS do
+    // `.limit(20)`, sobre jobs de QUALQUER status - um usuário com 20+ jobs
+    // mais recentes (qualquer status, ex: de outras sessões) fazia um job
+    // ainda `queued`/`rendering` mais antigo cair fora da janela de 20 antes
+    // mesmo do filtro rodar, e essa é justamente a rota que "restaura meus
+    // jobs em andamento" ao reabrir o Studio - o job continuava processando
+    // de verdade na GPU, só sumia da tela. Filtrar no WHERE (antes do LIMIT)
+    // corrige isso pro caso ativo; o histórico completo (sem filtro) ainda
+    // usa os 20 mais recentes normalmente.
+    // Lista invertida (só os 2 estados TERMINAIS), não uma lista de "quais
+    // status contam como ativo": StudioJobStatus (packages/types/src/studio.ts)
+    // documenta 9 estágios extras do pipeline adaptativo (planning,
+    // quality_check, refining, post_processing, uploading,
+    // keyframe_generation, keyframe_qa, video_draft, motion_qa, video_master,
+    // video_qa) como valores válidos - uma lista de permitidos aqui (que
+    // antes incluía até 'running', um valor que não existe no tipo) ficaria
+    // desatualizada no dia em que qualquer um desses passasse a ser emitido
+    // de verdade, fazendo o job sumir desta mesma rota de novo.
+    const statusFilter =
+      request.query.status === 'active'
+        ? and(eq(schema.studioJobs.requestedBy, request.authUser.id), notInArray(schema.studioJobs.status, ['completed', 'failed']))
+        : eq(schema.studioJobs.requestedBy, request.authUser.id);
 
-    const filtered = request.query.status === 'active' ? rows.filter((row) => row.status === 'queued' || row.status === 'rendering' || row.status === 'running') : rows;
+    const rows = await db.select().from(schema.studioJobs).where(statusFilter).orderBy(desc(schema.studioJobs.createdAt)).limit(20);
 
     return {
-      jobs: filtered.map((row) => ({
+      jobs: rows.map((row) => ({
         job_id: row.jobId,
         status: row.status,
         progress: row.progress,
@@ -273,17 +361,12 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     // Carousel: mais de um asset gera pro mesmo job (ligados por metadata.job_id,
     // ver nodes/studio-node/src/index.ts), então asset_url sozinho não basta.
     if (job.type === 'carousel' && job.status === 'completed') {
-      const siblings = await db
-        .select()
-        .from(schema.studioAssets)
-        .where(eq(schema.studioAssets.clientId, job.clientId));
-      const ordered = siblings
-        .filter((row) => (row.metadata as Record<string, unknown>)?.job_id === job.jobId)
-        .sort(
-          (a, b) =>
-            Number((a.metadata as Record<string, unknown>)?.slide_index ?? 0) -
-            Number((b.metadata as Record<string, unknown>)?.slide_index ?? 0),
-        );
+      const siblings = await findAssetsByJobId(job.clientId, job.jobId);
+      const ordered = siblings.sort(
+        (a, b) =>
+          Number((a.metadata as Record<string, unknown>)?.slide_index ?? 0) -
+          Number((b.metadata as Record<string, unknown>)?.slide_index ?? 0),
+      );
       if (ordered.length > 0) assetUrls = ordered.map((row) => row.storageUrl);
     }
 
@@ -374,6 +457,7 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
           type: schema.studioAssets.type,
           filename: schema.studioAssets.filename,
           storageUrl: schema.studioAssets.storageUrl,
+          thumbUrl: schema.studioAssets.thumbUrl,
           prompt: schema.studioAssets.prompt,
           model: schema.studioAssets.model,
           metadata: schema.studioAssets.metadata,
@@ -387,6 +471,15 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
         .limit(limit)
         .offset(offset);
 
+      // Assets de imagem sem thumbnail: dispara a geração em background
+      // (fila studio-thumbnails, jobId=assetId idempotente). Fire-and-forget:
+      // a listagem nunca espera o sharp; até a thumb existir o front usa o
+      // original (fallback no contrato).
+      const missingThumbs = rows.filter((row) => !row.thumbUrl && /\.(png|jpe?g|webp)$/i.test(row.filename));
+      if (missingThumbs.length > 0) {
+        void Promise.all(missingThumbs.map((row) => enqueueThumbnail(row.id).catch(() => null)));
+      }
+
       return {
         assets: rows.map((row) => ({
           id: row.id,
@@ -395,6 +488,7 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
           type: row.type,
           filename: row.filename,
           storage_url: row.storageUrl,
+          thumb_url: row.thumbUrl,
           prompt: row.prompt,
           // "qual workflow" da spec: o modelo/checkpoint que gerou de fato.
           model: row.model,
@@ -538,15 +632,32 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       return { error: 'No access granted to this job' };
     }
 
-    const siblings = await db.select().from(schema.studioAssets).where(eq(schema.studioAssets.clientId, job.clientId));
-    const jobAssets = siblings.filter((row) => (row.metadata as Record<string, unknown> | null)?.job_id === job.jobId);
-    for (const asset of jobAssets) {
-      try {
-        await deleteStudioAssetFile(asset.storageUrl);
-      } catch (error) {
-        request.log.warn({ error, assetId: asset.id }, 'Falha ao remover objeto do Storage; deletando registro mesmo assim');
-      }
-      await db.delete(schema.studioAssets).where(eq(schema.studioAssets.id, asset.id));
+    // Achado real (2026-09-11): isto buscava TODOS os assets do cliente (ver
+    // findAssetsByJobId) e depois apagava um de cada vez - um Storage delete
+    // e um DB delete SEQUENCIAIS por asset. Um carrossel/variações de 10-20
+    // slides virava 20+ roundtrips de rede um atrás do outro dentro da MESMA
+    // requisição HTTP, escalando linearmente com o tamanho do job e
+    // arriscando timeout. Storage deletes agora rodam em paralelo
+    // (Promise.allSettled - uma falha isolada de Storage não impede as
+    // outras nem trava o delete do registro, mesmo comportamento tolerante
+    // de antes) e o delete no banco vira UMA query com `inArray`, não N.
+    const jobAssets = await findAssetsByJobId(job.clientId, job.jobId);
+    if (jobAssets.length > 0) {
+      await Promise.allSettled(
+        jobAssets.map(async (asset) => {
+          try {
+            await deleteStudioAssetFile(asset.storageUrl);
+          } catch (error) {
+            request.log.warn({ error, assetId: asset.id }, 'Falha ao remover objeto do Storage; deletando registro mesmo assim');
+          }
+        }),
+      );
+      await db.delete(schema.studioAssets).where(
+        inArray(
+          schema.studioAssets.id,
+          jobAssets.map((asset) => asset.id),
+        ),
+      );
     }
     await db.delete(schema.studioJobs).where(eq(schema.studioJobs.jobId, job.jobId));
 
@@ -589,10 +700,11 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
   /**
    * Feedback humano sobre um asset (loop de aprendizado do Otto): approved /
    * rejected / needs_iteration, com motivo opcional. O verdict vira
-   * `metadata.feedback` do asset e um aprendizado `otto.feedback` em
-   * memories (packages/orchestrator/src/learning.ts) - é a evidência humana
-   * que o pipeline de learning do Otto exige pra promover observações a
-   * regras confiáveis (validated pra cima só com evidência humana).
+   * `metadata.feedback` do asset, um aprendizado `otto.feedback` em
+   * memories (packages/orchestrator/src/learning.ts) E uma evidência no
+   * funil de confiança (otto-learnings.ts -> packages/otto/src/learning/
+   * pipeline.ts), que é o que promove observações a regras confiáveis
+   * (validated pra cima só com evidência humana; core só com o diretor).
    *
    * `reason` é opcional de propósito: exigir texto bloquearia o feedback
    * rápido de um clique ("aprovado"), e feedback fácil demais de dar é o que
@@ -662,11 +774,27 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
         },
       });
 
+      // Funil de confiança do Otto (packages/otto/src/learning/pipeline.ts):
+      // o feedback vira EVIDÊNCIA num aprendizado persistente por motivo e
+      // tenta promoção de estágio. Master conta como 'director' — sem origem
+      // humana/diretor o funil nunca passa de experimental. Nunca lança.
+      const learningResult = await recordOttoFeedbackLearning({
+        clientId: asset.clientId,
+        userId: request.authUser.id,
+        assetId: asset.id,
+        verdict: body.verdict,
+        reason: body.reason,
+        isDirector: isMaster,
+      });
+
       return {
         id: updated.id,
         client_id: updated.clientId,
         type: updated.type,
         feedback,
+        learning: learningResult
+          ? { stage: learningResult.stage, promoted: learningResult.promoted }
+          : null,
       };
     },
   );

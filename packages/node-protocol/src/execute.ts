@@ -21,6 +21,25 @@ export const clientBrandKitSchema = z.object({
 
 export type ClientBrandKit = z.infer<typeof clientBrandKitSchema>;
 
+/**
+ * Histórico real de feedback (aprovado/rejeitado/precisa iterar) do cliente,
+ * lido de `memories` (kind `otto.feedback`, gravado em
+ * apps/api/src/studio/routes.ts no POST .../feedback) pelo worker do
+ * Orchestrator - mesmo padrão de client_brand_kit acima: quem tem acesso ao
+ * banco monta isto e manda pro node, que nunca fala com o Postgres direto.
+ * Achado real (2026-09-11): antes deste campo existir, `deriveCreativeDNA`
+ * (packages/otto/src/creative/dna.ts) sempre recebia `feedbacks: []` - o DNA
+ * criativo do cliente (approvedPatterns/rejectedPatterns/confidence) nunca
+ * saía de zero, mesmo depois de dezenas de feedbacks reais registrados.
+ */
+export const clientFeedbackEntrySchema = z.object({
+  verdict: z.enum(['approved', 'rejected', 'needs_iteration']),
+  reason: z.string().default(''),
+  context: z.string().default(''),
+});
+
+export type ClientFeedbackEntry = z.infer<typeof clientFeedbackEntrySchema>;
+
 export const executeAttachmentSchema = z.object({
   url: z.string().url(),
   filename: z.string().min(1),
@@ -43,6 +62,8 @@ export const executeRequestSchema = z.object({
   message: z.string().min(1),
   context_refs: z.array(z.string()).default([]),
   client_brand_kit: clientBrandKitSchema.optional(),
+  /** Ver clientFeedbackEntrySchema acima. Mais recente primeiro; o node decide quanto usar. */
+  client_feedback_history: z.array(clientFeedbackEntrySchema).default([]),
   /** Arquivos anexados no turno. Otto os transforma em referências do Studio. */
   attachments: z.array(executeAttachmentSchema).max(10).default([]),
 });

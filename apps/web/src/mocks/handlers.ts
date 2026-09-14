@@ -1,6 +1,7 @@
 import { HttpResponse, http } from 'msw';
 import type { AgentName } from '@desigual-os/types';
 import type {
+  BrandKitWire,
   ChatRequestWire,
   ChatResponseWire,
   ClickUpIntegrationStatusWire,
@@ -267,6 +268,34 @@ export const handlers = [
       reference_images: [],
     };
     return HttpResponse.json(kit);
+  }),
+
+  // PUT /clients/:id/brand-kit — write path do Brand Kit. Como o backend
+  // real, campo omitido mantém o valor atual (merge); null/[] limpa.
+  http.put('/clients/:clientId/brand-kit', async ({ params, request }) => {
+    const clientId = String(params.clientId);
+    if (!mockClients.some((c) => c.id === clientId)) {
+      return HttpResponse.json({ error: 'Cliente não encontrado.' }, { status: 404 });
+    }
+    const body = (await request.json()) as Partial<BrandKitWire>;
+    const current = mockBrandKits[clientId] ?? {
+      client_id: clientId,
+      logo_url: null,
+      colors: [],
+      fonts: [],
+      tone_of_voice: null,
+      reference_images: [],
+    };
+    const merged: BrandKitWire = {
+      client_id: clientId,
+      logo_url: body.logo_url !== undefined ? body.logo_url : current.logo_url,
+      colors: body.colors ?? current.colors,
+      fonts: body.fonts ?? current.fonts,
+      tone_of_voice: body.tone_of_voice !== undefined ? body.tone_of_voice : current.tone_of_voice,
+      reference_images: body.reference_images ?? current.reference_images,
+    };
+    mockBrandKits[clientId] = merged;
+    return HttpResponse.json(merged);
   }),
 
   http.get('/clients/:clientId/clickup/tasks', ({ params }) => {

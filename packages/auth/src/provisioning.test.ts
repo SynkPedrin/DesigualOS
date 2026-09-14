@@ -10,9 +10,14 @@ import type { SupabaseClaims } from './supabase-jwt';
  *
  * drizzle-orm também é mockado aqui (só a função `eq`) pra poder inspecionar,
  * no `.where()` fabricado abaixo, com QUAL valor o código realmente
- * consultou (ex: qual `roleName` foi buscado) - sem isso só daria pra
- * verificar o resultado final, não a decisão master vs. colaborador que leva
- * até ele.
+ * consultou - sem isso só daria pra verificar o resultado final, não a
+ * decisão que leva até ele.
+ *
+ * Auditoria pré-deploy (14/09/2026): o JIT dava 'colaborador' (com
+ * clients:write, clickup:write, chat:write) pra QUALQUER autocadastro em
+ * /signup. Agora só e-mails em masterEmails ganham papel; os demais ficam
+ * sem papel nenhum até um admin atribuir pelo painel. O teste "e-mail fora
+ * de MASTER_USER_EMAILS" abaixo trava exatamente isso.
  */
 
 const mockExistingUser = vi.fn<() => Array<{ id: string; authUserId: string; email: string }>>();
@@ -83,16 +88,18 @@ describe('resolveOrProvisionUser', () => {
     expect(mockInsertUserRole).toHaveBeenCalledWith({ userId: 'user-1', roleId: 'role-master' });
   });
 
-  it('primeiro acesso, e-mail fora de MASTER_USER_EMAILS: cria o usuário e atribui o papel colaborador', async () => {
+  it('primeiro acesso, e-mail fora de MASTER_USER_EMAILS: cria o usuário SEM papel nenhum', async () => {
     mockExistingUser.mockReturnValue([]);
     mockInsertUser.mockReturnValue([{ id: 'user-2', authUserId: 'auth-uuid-2', email: 'novo@desigual.com' }]);
-    mockRoleRow.mockReturnValue([{ id: 'role-colaborador', name: 'colaborador' }]);
     const masterEmails = new Set(['chefe@desigual.com']);
 
     const user = await resolveOrProvisionUser(claims({ sub: 'auth-uuid-2', email: 'novo@desigual.com' }), masterEmails);
 
     expect(user).toEqual({ id: 'user-2', authUserId: 'auth-uuid-2', email: 'novo@desigual.com' });
-    expect(mockInsertUserRole).toHaveBeenCalledWith({ userId: 'user-2', roleId: 'role-colaborador' });
+    // Nem consulta a roles, nem insert em user_roles: sem papel até um admin
+    // atribuir pelo painel (auditoria pré-deploy 14/09/2026).
+    expect(mockInsertUserRole).not.toHaveBeenCalled();
+    expect(mockDbInsert).toHaveBeenCalledTimes(1);
   });
 
   it('checagem de e-mail master é case-insensitive (masterEmails já normalizado em minúsculo pelo middleware)', async () => {
@@ -118,5 +125,27 @@ describe('resolveOrProvisionUser', () => {
     expect(user).toEqual({ id: 'user-1', authUserId: 'auth-uuid-1', email: 'chefe@desigual.com' });
     expect(mockDbInsert).not.toHaveBeenCalled();
     expect(mockInsertUserRole).not.toHaveBeenCalled();
+  });
+
+  it('nome vem de user_metadata.name quando presente (enviado pelo signup em options.data.name)', async () => {
+    mockExistingUser.mockReturnValue([]);
+    mockInsertUser.mockReturnValue([{ id: 'user-4', authUserId: 'auth-uuid-4', email: 'maria@desigual.com' }]);
+
+    await resolveOrProvisionUser(claims({ email: 'maria@desigual.com', raw: { user_metadata: { name: 'Maria Silva' } } }), new Set());
+
+    expect(mockInsertUser).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Maria Silva' }),
+    );
+  });
+
+  it('user_metadata.name ausente ou vazio cai pro prefixo do e-mail, como antes', async () => {
+    mockExistingUser.mockReturnValue([]);
+    mockInsertUser.mockReturnValue([{ id: 'user-5', authUserId: 'auth-uuid-5', email: 'joao@desigual.com' }]);
+    await resolveOrProvisionUser(claims({ email: 'joao@desigual.com', raw: { user_metadata: { name: '   ' } } }), new Set());
+    expect(mockInsertUser).toHaveBeenCalledWith(expect.objectContaining({ name: 'joao' }));
+
+    mockInsertUser.mockClear().mockReturnValue([{ id: 'user-6', authUserId: 'auth-uuid-6', email: 'ana@desigual.com' }]);
+    await resolveOrProvisionUser(claims({ email: 'ana@desigual.com', raw: {} }), new Set());
+    expect(mockInsertUser).toHaveBeenCalledWith(expect.objectContaining({ name: 'ana' }));
   });
 });

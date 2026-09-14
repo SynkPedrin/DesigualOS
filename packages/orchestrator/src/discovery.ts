@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { AgentName } from '@desigual-os/types';
 
@@ -22,11 +22,24 @@ export interface DiscoveredNode {
  * sozinho, mesmo com o serviço que o chat de fato usa no ar.
  */
 export async function findHealthyNodeForAgent(agent: AgentName): Promise<DiscoveredNode | null> {
+  // Achado real (2026-09-10): agent-probe.ts usava nodeIds sem o sufixo "_01"
+  // que o heartbeat real de cada máquina usa (NODE_OTTO vs NODE_OTTO_01,
+  // idem pros outros 4 agentes) - isso criava DUAS linhas por agente físico
+  // em `nodes`. Já corrigido o nodeId da sonda pra bater com o real (mesmo
+  // arquivo, getProbeTargets), mas linhas antigas já existentes no banco não
+  // são apagadas sozinhas (nada varre "nodes velhos", só o autoFix de
+  // FAKE/TEST) - ficam congeladas pra sempre com `status` desatualizado.
+  // Sem isto, essa consulta continuava não-determinística mesmo depois do
+  // nodeId corrigido. `lastHeartbeatAt` é o único campo que TODO caminho de
+  // escrita (heartbeat real em nodes/routes.ts, sonda em agent-sync.ts)
+  // atualiza sempre - ordenar por ele garante que a linha ativamente mantida
+  // vence, mesmo que uma linha órfã antiga continue existindo no banco.
   const [node] = await db
     .select({ nodeId: schema.nodes.nodeId, privateHost: schema.nodes.privateHost })
     .from(schema.nodes)
     .innerJoin(schema.agents, eq(schema.nodes.agentId, schema.agents.id))
     .where(and(eq(schema.agents.name, agent), inArray(schema.nodes.status, ['online', 'degraded'])))
+    .orderBy(desc(schema.nodes.lastHeartbeatAt))
     .limit(1);
 
   return node ?? null;

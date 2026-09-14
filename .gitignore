@@ -56,3 +56,12 @@ Brain-Marketing/Sem título.md
 /por-do-sol.md
 /specialist.md
 /SKILL E PROCESSO DE CRIAÇÃO/
+.vercel
+.env*
+# Documento canônico BRAIN (Nexus/Scribe/Prism) com nomes da equipe e clientes
+# reais: operacional interno, fica local (regra dos vaults). O vault do Otto na
+# máquina dele recebe por cópia manual, não pelo git.
+Brain-Marketing/brain-desigual-ia-labs.md
+
+# Build info incremental do TypeScript (artefato local)
+*.tsbuildinfo

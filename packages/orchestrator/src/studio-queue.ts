@@ -54,6 +54,12 @@ let queue: Queue<StudioJobData> | null = null;
  * ficam em fila própria pra não misturar os dois formatos.
  */
 export function getStudioJobQueue(): Queue<StudioJobData> {
-  queue ??= new Queue<StudioJobData>(STUDIO_JOBS_QUEUE_NAME, { connection: getRedisConnection() });
+  // defaultJobOptions: mesmo teto de retenção das filas de agente (ver
+  // DEFAULT_JOB_OPTIONS em queues.ts) - o histórico autoritativo do job de
+  // mídia vive em studio_jobs no Postgres.
+  queue ??= new Queue<StudioJobData>(STUDIO_JOBS_QUEUE_NAME, {
+    connection: getRedisConnection(),
+    defaultJobOptions: { removeOnComplete: 100, removeOnFail: 500 },
+  });
   return queue;
 }

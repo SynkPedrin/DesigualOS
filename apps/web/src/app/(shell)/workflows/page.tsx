@@ -38,6 +38,38 @@ import {
  * O teto evita fan-out de requests em contas com muitas automações. */
 const RUN_SUMMARY_LIMIT = 50;
 
+/** O useQueries dispara todos os queryFns de uma vez: sem este semáforo, uma
+ * conta com 50 automações abria 50 GET /automations/:id/runs em paralelo no
+ * load. 6 por vez mantém os dados (filtros e ordenações usam os resumos de
+ * TODAS as linhas, não só da página atual) sem mudar a UI. */
+const MAX_CONCURRENT_RUN_FETCHES = 6;
+let activeRunFetches = 0;
+const runFetchQueue: Array<() => void> = [];
+
+function acquireRunFetchSlot(): Promise<void> {
+  if (activeRunFetches < MAX_CONCURRENT_RUN_FETCHES) {
+    activeRunFetches += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => runFetchQueue.push(resolve));
+}
+
+function releaseRunFetchSlot() {
+  const next = runFetchQueue.shift();
+  if (next) next();
+  else activeRunFetches -= 1;
+}
+
+async function fetchAutomationRuns(automationId: string) {
+  await acquireRunFetchSlot();
+  try {
+    const wire = await apiFetch<{ runs: AutomationRunWire[] }>(`/automations/${automationId}/runs`);
+    return wire.runs.map(mapAutomationRun);
+  } finally {
+    releaseRunFetchSlot();
+  }
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function lastRunWithin(lastRunAt: string | null, period: AutomationFilters['lastRunPeriod']): boolean {
@@ -85,10 +117,7 @@ export default function WorkflowsPage() {
   const runQueries = useQueries({
     queries: summarized.map((automation) => ({
       queryKey: ['automations', automation.id, 'runs'],
-      queryFn: async () => {
-        const wire = await apiFetch<{ runs: AutomationRunWire[] }>(`/automations/${automation.id}/runs`);
-        return wire.runs.map(mapAutomationRun);
-      },
+      queryFn: () => fetchAutomationRuns(automation.id),
       staleTime: 30_000,
     })),
   });

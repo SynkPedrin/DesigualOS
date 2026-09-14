@@ -4,6 +4,7 @@ import { db, schema } from '@desigual-os/database';
 import {
   executeResponseSchema,
   type ClientBrandKit,
+  type ClientFeedbackEntry,
   type ExecuteResponse,
 } from '@desigual-os/node-protocol';
 import { creativePlanSchema, productionSpecSchema, type ProductionSpec } from '@desigual-os/otto';
@@ -19,10 +20,11 @@ import {
   publishWsEvent,
   recordCostEvent,
   recordLearning,
+  recallMemories,
   type AgentJobData,
 } from '@desigual-os/orchestrator';
 import type { AgentName } from '@desigual-os/types';
-import { stripEmDashes } from '@desigual-os/types';
+import { AGENT_NAMES, stripEmDashes } from '@desigual-os/types';
 import {
   askBentoQA,
   BentoQAError,
@@ -32,6 +34,33 @@ import {
 } from '@desigual-os/tool-gateway';
 import { stripBlockMarkers, stripMarkdownArtifacts, withPersonality, extractApprovalProposal } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
+import { dispatchWithAgentLoop } from './agentic-dispatch';
+import { tryBentoActionGuard } from './bento-action-guard';
+
+// Feature flag do Agentic V2 (seção 112 da spec): o loop com estado,
+// avaliação e replan só assume o dispatch quando ligado; desligado, o
+// caminho é exatamente o de antes. Rollback = unset na env + restart.
+//
+// 13/09/2026: a flag vira POR AGENTE. A auditoria forense (divergência 1 do
+// relatório da Onda 0) flagrou o loop ligado no worker de produção envolvendo
+// TODOS os agentes, Jarbas incluso. Jarbas é golden agent/read-only: ele
+// NUNCA entra no loop, nem com AGENT_LOOP_V2=true, nem nomeado na lista.
+// Valores: "true" = todos exceto jarbas; "bento,suzy" = só os listados.
+export function parseAgentLoopFlag(raw: string | undefined): Set<AgentName> {
+  if (!raw || raw === 'false' || raw === '') return new Set();
+  const enabled: AgentName[] = raw === 'true' ? [...AGENT_NAMES] : (raw.split(',').map((a) => a.trim()) as AgentName[]);
+  return new Set(enabled.filter((agent) => AGENT_NAMES.includes(agent) && agent !== 'jarbas'));
+}
+
+// Parse preguiçoso: AGENT_NAMES não pode ser lido no escopo de módulo (TDZ
+// em import circular com @desigual-os/types — quebrou o vitest na primeira
+// versão). A primeira consulta acontece no primeiro dispatch.
+let agentLoopV2Agents: Set<AgentName> | null = null;
+
+function agentLoopV2Enabled(agent: AgentName): boolean {
+  if (!agentLoopV2Agents) agentLoopV2Agents = parseAgentLoopFlag(process.env.AGENT_LOOP_V2);
+  return agentLoopV2Agents.has(agent);
+}
 
 // Convenção de porta padrão dos Node Agents genéricos (desigual-node). Em
 // produção cada agente é uma máquina física separada, então todos podem
@@ -112,7 +141,15 @@ export async function callBento(message: string, logger: Logger, operationalCont
   }
 
   try {
-    const { text, citations } = await askBentoQA({ url, token, channel: 'whatsapp' }, message, operationalContext);
+    // BL-23 (auditoria forense 12/09/2026): sem timeoutMs explícito o cliente
+    // usava o default de 100s, não os 120s declarados pro Bento em
+    // AGENT_TIMEOUT_MS — execução lenta legítima morria 20s antes do teto
+    // pensado. Agora o timeout é o mesmo valor declarado na tabela.
+    const { text, citations } = await askBentoQA(
+      { url, token, channel: 'whatsapp', timeoutMs: AGENT_TIMEOUT_MS.bento },
+      message,
+      operationalContext,
+    );
     return {
       execution_id: '',
       agent: 'bento',
@@ -177,6 +214,46 @@ function looksLikeInternalLeak(answer: string): boolean {
   return INTERNAL_LEAK_SIGNATURES.some((pattern) => pattern.test(answer));
 }
 
+/**
+ * Diretiva interna de handoff do susy-service vazando pro chat (medido em
+ * teste real, 2026-09-11): a Suzy respondeu ao usuário com
+ * `pergunta pro bento: <pergunta>` em backticks - sintaxe do mecanismo
+ * INTERNO dela de pedir ajuda ao Bento, que o backend do agentes-desigual
+ * deveria interceptar antes de exibir. A correção de raiz fica na máquina
+ * remota (prompt/serviço fora deste repo); aqui na borda a diretiva é
+ * removida da resposta. Âncora nos backticks de propósito: sem eles,
+ * "pergunta pro bento" pode ser texto natural legítimo e remover seria uma
+ * mutilação falsa.
+ */
+/**
+ * Diretiva interna de handoff do susy-service vazando pro chat (medido em
+ * teste real, 2026-09-11): a Suzy respondeu ao usuário com
+ * `pergunta pro bento: <pergunta>` em backticks - sintaxe do mecanismo
+ * INTERNO dela de pedir ajuda ao Bento, que o backend do agentes-desigual
+ * deveria interceptar antes de exibir. A correção de raiz fica na máquina
+ * remota (prompt/serviço fora deste repo); aqui na borda a diretiva é
+ * removida da resposta. Âncora nos backticks de propósito: sem eles,
+ * "pergunta pro bento" pode ser texto natural legítimo e remover seria uma
+ * mutilação falsa.
+ *
+ * 13/09/2026: o baseline de comportamento (Onda 0, caso s2) pegou um segundo
+ * formato vazando: `cria uma task no clickup: ...`, mesma família (ordem
+ * interna para outra ferramenta em backticks). A regex vira lista de padrões
+ * da mesma família, sempre ancorada em backticks + verbo de comando interno.
+ */
+const INTERNAL_HANDOFF_DIRECTIVES: RegExp[] = [
+  /`[^`]*pergunta pro bento\s*:[^`]*`/gi,
+  /`[^`]*cria uma task no clickup\s*:[^`]*`/gi,
+];
+
+function stripInternalHandoffDirectives(answer: string): string {
+  let cleaned = answer;
+  for (const pattern of INTERNAL_HANDOFF_DIRECTIVES) {
+    cleaned = cleaned.replace(pattern, '');
+  }
+  return cleaned.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 /** Ferramenta do Tool Gateway (agent_tools, seed.ts) associada à ação que o bloco [AGUARDA_APROVACAO] de cada agente protege. */
 const APPROVAL_TOOL: Record<'jarbas' | 'suzy', string> = { jarbas: 'meta_ads', suzy: 'instagram' };
 
@@ -221,6 +298,23 @@ export async function callAgentesDesigual(
       );
     }
 
+    // Ver stripInternalHandoffDirectives: remove a diretiva interna de
+    // handoff que o susy-service às vezes deixa vazar na resposta. Se a
+    // resposta era SÓ a diretiva, não sobrou resposta nenhuma - vira falha
+    // controlada (mesmo destino do looksLikeInternalLeak acima) em vez de
+    // jargão interno na tela.
+    const cleanAnswer = stripInternalHandoffDirectives(answer);
+    if (!cleanAnswer) {
+      logger.warn(
+        { agent, answer },
+        'agentes-desigual answer was only an internal handoff directive',
+      );
+      return failedAgentResponse(
+        agent,
+        `${agent} acionou um mecanismo interno no lugar de responder de verdade (resposta descartada: "${answer}")`,
+      );
+    }
+
     // Barreira real de aprovação humana (até 08/09/2026 isto era só texto de
     // prompt sem enforcement nenhum, ver personalities.ts e o achado da
     // auditoria de prontidão): o agente emitiu [AGUARDA_APROVACAO] pedindo
@@ -233,7 +327,7 @@ export async function callAgentesDesigual(
     // apps/api/src/tool-calls/routes.ts) - não quando alguém digita "pode
     // ir" solto no chat, que o agente externo não teria como distinguir de
     // um "pode ir" real vindo de uma pessoa autorizada.
-    const proposal = extractApprovalProposal(answer);
+    const proposal = extractApprovalProposal(cleanAnswer);
     if (proposal) {
       const outcome = await requestToolCall({
         executionId,
@@ -268,7 +362,7 @@ export async function callAgentesDesigual(
       execution_id: '',
       agent,
       status: 'completed',
-      answer,
+      answer: cleanAnswer,
       sources: [],
       tool_calls: [],
       usage: { input_tokens: 0, output_tokens: 0 },
@@ -295,12 +389,14 @@ async function callNode(
   clientBrandKit?: ClientBrandKit,
   attachments: AgentJobData['attachments'] = [],
   operationalContext?: string,
+  clientFeedbackHistory: ClientFeedbackEntry[] = [],
 ): Promise<ExecuteResponse> {
   // Personalidade oficial (pacote v1.0, ver personalities.ts no
-  // context-engine): injetada na mensagem na hora do dispatch, assim vale
-  // pra chat, workflow e automação sem depender de editar o prompt que vive
-  // na máquina do agente. Otto recebe a dele no planner (system prompt
-  // próprio); Studio não conversa, então não tem.
+  // context-engine). ATENÇÃO (alinhamento de docs, 13/09/2026): desde
+  // 09/09/2026 PREPEND_PERSONALITY está VAZIO e withPersonality é um no-op -
+  // a personalidade vive no system prompt do serviço de cada máquina, não
+  // nesta injeção. A chamada fica aqui como ponto único de reintrodução, se
+  // algum serviço novo aparecer sem prompt próprio.
   const personalizedMessage = withPersonality(agent, message);
 
   if (agent === 'bento') {
@@ -344,6 +440,10 @@ async function callNode(
       // criativo no node, que não acessa o banco). Campo aditivo do protocolo;
       // nodes que não conhecem ignoram.
       ...(clientBrandKit ? { client_brand_kit: clientBrandKit } : {}),
+      // Idem client_brand_kit: histórico real de aprovação/rejeição, pro
+      // otto-node derivar approvedPatterns/rejectedPatterns em
+      // deriveCreativeDNA em vez do `feedbacks: []` fixo de antes.
+      ...(clientFeedbackHistory.length ? { client_feedback_history: clientFeedbackHistory } : {}),
       attachments,
     }),
     signal: AbortSignal.timeout(timeoutMs),
@@ -620,6 +720,28 @@ async function publishMessageDelta(params: {
  * sentido pra execution de CHAT (tem conversationId) - jobs do Studio já
  * notificam por conta própria (nodes/studio-node), não duplicar aqui.
  */
+/**
+ * Texto que o usuário vê quando o agente devolveu FALHA sem lançar exceção.
+ *
+ * Achado real (11/09/2026): `callBento`/`callAgentesDesigual` não lançam - eles
+ * RETORNAM `{status:'failed', error:'...'}` com o motivo verdadeiro dentro. Só
+ * que o gravador do step montava `output: { answer, sources }` e descartava
+ * `error`, então o step ficava `{"answer":null,"sources":[]}` (medido no banco,
+ * execução bento/manual_override das 12:02Z) e o chat caía no texto genérico
+ * "Tente reformular a pergunta". Naquele caso concreto o motivo real era um
+ * HTTP 502 do bento-qa - "o motor de texto não respondeu em 30s" -, ou seja, a
+ * tela mandava a pessoa reescrever uma pergunta que não tinha defeito nenhum,
+ * enquanto o defeito era de infraestrutura. São reações opostas: uma a pessoa
+ * refaz a pergunta, a outra ela vai ligar uma máquina.
+ */
+export function failureAnswerFor(agent: AgentName, error: string | null | undefined): string {
+  const label = agent.charAt(0).toUpperCase() + agent.slice(1);
+  const detalhe = (error ?? '').trim();
+  return detalhe
+    ? `Não consegui responder agora: ${detalhe}`
+    : `Não consegui responder agora e ${label} não informou o motivo.`;
+}
+
 async function notifyChatCompletion(
   userId: string | undefined,
   agent: AgentName,
@@ -630,10 +752,13 @@ async function notifyChatCompletion(
   if (!userId || !conversationId) return;
   const label = agent.charAt(0).toUpperCase() + agent.slice(1);
   const title = status === 'completed' ? `${label} respondeu` : `${label} não conseguiu responder`;
+  // Na falha, `answer` já vem preenchido com o motivo real (ver
+  // failureAnswerFor). O texto fixo antigo mandava reformular a pergunta
+  // mesmo quando o problema era a máquina do agente estar fora.
   const body =
     status === 'completed'
       ? (answer ?? '').slice(0, 140)
-      : 'Tente reformular a pergunta ou mandar de novo.';
+      : (answer ?? '').trim().slice(0, 140) || 'Tente reformular a pergunta ou mandar de novo.';
   await db.insert(schema.notifications).values({
     userId,
     type: 'chat.execution_completed',
@@ -664,11 +789,47 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     payload: { execution_id: executionId, agent, status: 'running' },
   });
 
+  // BENTO ACTION GUARD (14/09/2026): intenções de ESCRITA no ClickUp
+  // (criar/atribuir/reagendar/mudar status) com alvo resolvível são
+  // executadas na borda, com read-after-write e recibo, em vez de cair no
+  // caminho cego do serviço remoto (que criou a task "perfeito, a ele" numa
+  // conversa de atribuição). Retorna null quando não é escrita tratável: o
+  // fluxo segue pro agente como antes.
+  let guardedResult: ExecuteResponse | null = null;
+  if (agent === 'bento') {
+    const [jobUser] = runningExecution?.userId
+      ? await db.select().from(schema.users).where(eq(schema.users.id, runningExecution.userId))
+      : [];    const agencyClient = await db
+      .select({ clickupListId: schema.clients.clickupListId })
+      .from(schema.clients)
+      .where(eq(schema.clients.slug, 'agencia-desigual'))
+      .limit(1);
+    const guarded = await tryBentoActionGuard({
+      message,
+      conversationId: conversationId ?? null,
+      userName: jobUser?.name ?? jobUser?.email ?? 'usuário',
+      userClickUpEmail: jobUser?.clickupEmail ?? null,
+      agencyListId: agencyClient[0]?.clickupListId ?? null,
+      briefingWriter: async (prompt) => {
+        const brief = await callBento(prompt, logger);
+        return brief.status === 'completed' ? brief.answer : null;
+      },
+      logger,
+    }).catch((error: unknown) => {
+      logger.error({ error, executionId }, 'Bento action guard falhou; seguindo pro fluxo normal do agente');
+      return null;
+    });
+    if (guarded) {
+      guardedResult = guarded;
+    }
+  }
+
   // Brand kit do cliente pro Otto derivar o DNA criativo no turno (o node
   // não acessa o banco). Só busca quando faz sentido: agente otto + execution
   // com cliente. Falha/ausência de kit não pode impedir o dispatch - o turno
   // sem DNA é o comportamento anterior, perfeitamente válido.
   let clientBrandKit: ClientBrandKit | undefined;
+  let clientFeedbackHistory: ClientFeedbackEntry[] = [];
   if (agent === 'otto' && runningExecution?.clientId) {
     const [kit] = await db
       .select()
@@ -682,22 +843,92 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         logo_url: kit.logoUrl,
       };
     }
+
+    // Aprendizado real de identidade visual: feedback humano já gravado em
+    // `memories` (kind otto.feedback, ver POST /studio/assets/:id/feedback)
+    // vira o histórico que deriveCreativeDNA usa pra achar padrões
+    // aprovados/rejeitados - antes desta busca, o node sempre recebia
+    // `feedbacks: []` e o DNA nunca saía de zero.
+    const feedbackMemories = await recallMemories({
+      clientId: runningExecution.clientId,
+      kinds: ['otto.feedback'],
+      limit: 30,
+    });
+    clientFeedbackHistory = feedbackMemories
+      .map((memory) => {
+        const verdict = (memory.metadata as { verdict?: string } | null)?.verdict;
+        if (verdict !== 'approved' && verdict !== 'rejected' && verdict !== 'needs_iteration') {
+          return null;
+        }
+        const reason = (memory.metadata as { reason?: string } | null)?.reason;
+        return { verdict, reason: reason ?? '', context: '' } satisfies ClientFeedbackEntry;
+      })
+      .filter((entry): entry is ClientFeedbackEntry => entry !== null);
+
+    // Regras que o funil de confiança já promoveu (validated pra cima, ver
+    // apps/api/src/studio/otto-learnings.ts) entram como feedback
+    // consolidado: o DNA passa a derivar de padrões CONFIRMADOS por
+    // evidência humana recorrente, não só de feedback individual solto.
+    const promotedLearnings = await recallMemories({
+      clientId: runningExecution.clientId,
+      kinds: ['otto.approval_reason', 'otto.rejection_reason'],
+      limit: 20,
+    });
+    for (const memory of promotedLearnings) {
+      const stage = (memory.metadata as { otto_learning?: { stage?: string } } | null)?.otto_learning?.stage;
+      if (stage !== 'validated' && stage !== 'trusted' && stage !== 'core') continue;
+      clientFeedbackHistory.push({
+        verdict: memory.kind === 'otto.approval_reason' ? 'approved' : 'rejected',
+        reason: memory.content,
+        context: `regra ${stage} do funil de aprendizado (confiança ${memory.confidence ?? 'n/a'})`,
+      });
+    }
   }
 
   let result: ExecuteResponse;
   let usageEstimated = false;
-  try {
-    result = await callNode(
-      agent,
-      executionId,
-      message,
-      contextRefs,
-      logger,
-      conversationId ?? undefined,
-      clientBrandKit,
-      attachments,
-      operationalContext,
-    );
+  if (guardedResult) {
+    result = guardedResult;
+  } else try {
+    if (agentLoopV2Enabled(agent)) {
+      // Caminho agêntico: o callNode vira uma ferramenta dentro do loop
+      // understand→context→plan→act→observe→evaluate→replan, com checkpoint
+      // no Postgres e outcome gravado por execução.
+      result = await dispatchWithAgentLoop({
+        data,
+        userId: runningExecution?.userId ?? null,
+        clientId: runningExecution?.clientId ?? null,
+        clientBrandKit,
+        clientFeedbackHistory,
+        logger,
+        callAgent: (msg) =>
+          callNode(
+            agent,
+            executionId,
+            msg,
+            contextRefs,
+            logger,
+            conversationId ?? undefined,
+            clientBrandKit,
+            attachments,
+            operationalContext,
+            clientFeedbackHistory,
+          ),
+      });
+    } else {
+      result = await callNode(
+        agent,
+        executionId,
+        message,
+        contextRefs,
+        logger,
+        conversationId ?? undefined,
+        clientBrandKit,
+        attachments,
+        operationalContext,
+        clientFeedbackHistory,
+      );
+    }
     // Regra de ouro de craft: bot nunca usa travessão. Aplicado na borda,
     // porque os prompts dos agentes vivem nas máquinas deles. Os marcadores
     // [FIM_BLOCO] dos prompts de personalidade viram parágrafo aqui também.
@@ -720,6 +951,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   }
 
   const now = new Date();
+  // Agente que devolveu falha (sem lançar) traz o motivo em `result.error`;
+  // sem isto ele morria aqui e o chat mostrava "reformule a pergunta" pra uma
+  // queda de infraestrutura. Ver failureAnswerFor.
+  const failureAnswer = result.status === 'failed' ? failureAnswerFor(agent, result.error) : null;
   // callNode() já teve sucesso aqui - o agente já respondeu de verdade (e no
   // caso de Jarbas/Suzy, uma resposta real pode já ter saído no WhatsApp do
   // lead). Tudo daqui pra baixo é só gravação/pós-processamento: se algo
@@ -763,7 +998,16 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         stepIndex: 0,
         agent,
         status: result.status,
-        output: { answer: result.answer, sources: result.sources },
+        output: {
+          answer: result.answer ?? failureAnswer,
+          sources: result.sources,
+          ...(result.error ? { error: result.error } : {}),
+          // Metadata do node (timings de fase do Otto: classify_ms,
+          // retrieval_ms, llm_ms; bloco agentic do loop V2) — antes era
+          // descartada, então a análise fina de latência era impossível
+          // (achado 4 da Onda 0, 12/09/2026).
+          ...(result.metadata ? { metadata: result.metadata } : {}),
+        },
         startedAt: now,
         completedAt: now,
       })
@@ -771,7 +1015,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         target: [schema.executionSteps.executionId, schema.executionSteps.stepIndex],
         set: {
           status: result.status,
-          output: { answer: result.answer, sources: result.sources },
+          output: {
+            answer: result.answer ?? failureAnswer,
+            sources: result.sources,
+            ...(result.error ? { error: result.error } : {}),
+            ...(result.metadata ? { metadata: result.metadata } : {}),
+          },
           completedAt: now,
         },
       });
@@ -816,7 +1065,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     agent,
     conversationId,
     result.status === 'failed' ? 'failed' : 'completed',
-    result.answer,
+    result.answer ?? failureAnswer,
   );
 
   if (result.status === 'failed') {

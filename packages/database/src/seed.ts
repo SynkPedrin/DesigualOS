@@ -33,6 +33,9 @@ const AGENT_TOOLS: Array<{
   // de criar tarefa: precisa de aprovação de um master antes de executar
   // (ver packages/tool-gateway/src/gateway.ts).
   { agent: 'bento', tool: 'clickup.delete_task', access: 'write', requiresApproval: true },
+  // Editar task (BL-01): mesma régua do delete no início - aprovação humana
+  // até os evals provarem segurança (recomendação da auditoria forense).
+  { agent: 'bento', tool: 'clickup.update_task', access: 'write', requiresApproval: true },
   { agent: 'bento', tool: 'studio', access: 'write' },
   { agent: 'bento', tool: 'obsidian', access: 'read' },
   { agent: 'bento', tool: 'meta_ads', access: 'none' },

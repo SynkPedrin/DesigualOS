@@ -4,11 +4,26 @@
  * serializável (não um asset renderizado): a peça inteira nunca é salva só
  * como PNG, sempre como estrutura editável (`CanvaPage.objects`).
  */
-export const CANVA_OBJECT_TYPES = ['image', 'text', 'shape', 'group'] as const;
+export const CANVA_OBJECT_TYPES = ['image', 'text', 'shape', 'group', 'path'] as const;
 export type CanvaObjectType = (typeof CANVA_OBJECT_TYPES)[number];
 
 export const CANVA_SHAPE_KINDS = ['rect', 'ellipse', 'triangle', 'line', 'star'] as const;
 export type CanvaShapeKind = (typeof CANVA_SHAPE_KINDS)[number];
+
+/**
+ * Modos de mesclagem, nomes do Photoshop (não os nomes crus do Canvas2D
+ * `globalCompositeOperation`, que o usuário não reconheceria) - o mapeamento
+ * pra API do navegador vive em fabric-sync.ts (BLEND_MODE_TO_COMPOSITE /
+ * COMPOSITE_TO_BLEND_MODE). Nem todo modo do Photoshop tem equivalente exato
+ * no Canvas2D (falta Linear Burn/Dodge, Vivid/Linear/Pin Light, Hard Mix) -
+ * só os que têm correspondência direta e sem gambiarra entraram na lista.
+ */
+export const CANVA_BLEND_MODES = [
+  'normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten',
+  'color-dodge', 'color-burn', 'hard-light', 'soft-light',
+  'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity',
+] as const;
+export type CanvaBlendMode = (typeof CANVA_BLEND_MODES)[number];
 
 /** Campos que TODO objeto da arte possui, independente do tipo. */
 export interface CanvaObjectBase {
@@ -24,6 +39,9 @@ export interface CanvaObjectBase {
   locked: boolean;
   visible: boolean;
   zIndex: number;
+  /** `undefined` = 'normal' (compositing padrão) - mantido opcional pra não
+   * inflar todo objeto já salvo antes desta feature existir. */
+  blendMode?: CanvaBlendMode | undefined;
   metadata?: Record<string, unknown> | undefined;
 }
 
@@ -59,6 +77,18 @@ export interface CanvaImageObject extends CanvaObjectBase {
    * de CanvaShapeObject, por consistência. `strokeWidth` 0/undefined = sem borda. */
   stroke?: string | undefined;
   strokeWidth?: number | undefined;
+  /**
+   * Máscara de recorte não-destrutiva (pedido explícito: "máscaras de
+   * camada"): recorta a imagem na SILHUETA da forma, além do recorte
+   * retangular já existente (cropX/cropY/width/height). `undefined`/'rect' =
+   * sem máscara extra (só o retângulo padrão). Implementado via
+   * `FabricObject.clipPath` nativo do Fabric (não é uma máscara em tons de
+   * cinza pintada à mão, tipo Photoshop de verdade - isso exigiria um canvas
+   * de máscara à parte e composição manual; esta é a versão vetorial/
+   * silhueta, mais simples e ainda assim um recurso real de máscara não
+   * disponível antes). 'line' não faz sentido como máscara (área zero).
+   */
+  clipShape?: Exclude<CanvaShapeKind, 'line'> | undefined;
 }
 
 export interface CanvaTextObject extends CanvaObjectBase {
@@ -104,7 +134,28 @@ export interface CanvaGroupObject extends CanvaObjectBase {
   fabricData: Record<string, unknown>;
 }
 
-export type CanvaObject = CanvaImageObject | CanvaTextObject | CanvaShapeObject | CanvaGroupObject;
+/**
+ * Traço de pincel livre (pedido explícito: "ferramentas de seleção e
+ * pincel" - dá pra desenhar algo do zero, não só usar formas/texto/imagem
+ * prontos). `pathData` é a string SVG "d" gerada UMA VEZ, no momento em que
+ * o traço é concluído (evento `path:created` do Fabric) - depois disso a
+ * geometria em si nunca muda, só a matriz de transform (x/y/scaleX/scaleY/
+ * rotation, já em CanvaObjectBase), então não precisa ser recalculada a
+ * cada leitura do canvas. Vetorial (um `fabric.Path`), não pintura raster
+ * de pixel - fica de fora por ora qualquer coisa tipo borracha que apague
+ * pixel de uma camada de imagem existente.
+ */
+export interface CanvaPathObject extends CanvaObjectBase {
+  type: 'path';
+  pathData: string;
+  stroke: string;
+  strokeWidth: number;
+  /** Preenchimento do traço fechado - `null` é o normal (só o traço, sem
+   * fill), igual ao comportamento de um pincel de verdade. */
+  fill: string | null;
+}
+
+export type CanvaObject = CanvaImageObject | CanvaTextObject | CanvaShapeObject | CanvaGroupObject | CanvaPathObject;
 
 export interface CanvaPageBackground {
   type: 'color' | 'image' | 'transparent';

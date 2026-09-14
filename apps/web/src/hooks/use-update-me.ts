@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, API_FETCH_UPLOAD_TIMEOUT_MS } from '@/lib/api/client';
 import type { Language, MeResponse, Theme, UpdateAvatarResponseWire, UpdateMeRequestWire, UpdateMeResponseWire } from '@/lib/api/contracts';
 
 export function useUpdateMe() {
@@ -44,7 +44,7 @@ export function useUploadAvatar() {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
-      return apiFetch<UpdateAvatarResponseWire>('/me/avatar', { method: 'POST', body: formData });
+      return apiFetch<UpdateAvatarResponseWire>('/me/avatar', { method: 'POST', body: formData }, { timeoutMs: API_FETCH_UPLOAD_TIMEOUT_MS });
     },
     onSuccess: (wire) => {
       queryClient.setQueryData<MeResponse>(['me'], (current) =>

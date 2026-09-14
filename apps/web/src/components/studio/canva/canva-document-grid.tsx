@@ -16,7 +16,7 @@ import {
 } from '@/hooks/use-canva-documents';
 import { useUploadStudioReference } from '@/hooks/use-studio-jobs';
 import { apiFetch } from '@/lib/api/client';
-import { parsePsdFile } from '@/lib/canva/psd-import';
+import { describePsdApproximations, parsePsdFile } from '@/lib/canva/psd-import';
 import { formatRelativeTime } from '@/lib/format';
 import { toast } from '@/stores/toast-store';
 import { NewDesignModal } from './new-design-modal';
@@ -25,25 +25,65 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 }
 
+/** Quantas camadas sobem ao mesmo tempo. `Promise.allSettled` sobre a lista
+ * inteira disparava TODOS os uploads de uma vez (um PSD de 21 camadas = 21
+ * multipart simultâneos): o navegador enfileira além de ~6 por origem, a API
+ * atende todos de uma vez e o resultado é que nenhum termina cedo, sem
+ * nenhum sinal de progresso na tela. Em lotes pequenos os primeiros terminam
+ * logo e a contagem anda de verdade. */
+const PSD_UPLOAD_CONCURRENCY = 4;
+
+/** Executa `worker` sobre `items` com no máximo `limit` em voo, preservando a
+ * ordem dos resultados (mesmo formato de Promise.allSettled). */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let cursor = 0;
+  async function runNext(): Promise<void> {
+    const index = cursor;
+    cursor += 1;
+    if (index >= items.length) return;
+    try {
+      results[index] = { status: 'fulfilled', value: await worker(items[index]!, index) };
+    } catch (reason) {
+      results[index] = { status: 'rejected', reason };
+    }
+    await runNext();
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => runNext()));
+  return results;
+}
+
 /** Importa um .psd inteiro como um design novo: cada camada (com pixel
  * próprio, grupos/pastas viram só um passo de recursão) vira um objeto
  * `image` comum na primeira página, na posição/tamanho exatos do PSD -
  * texto e efeitos do Photoshop não viram texto editável, a aparência final
  * é preservada como imagem (ver psd-import.ts). Falha em UMA camada não
- * derruba a importação inteira (Promise.allSettled). */
+ * derruba a importação inteira (uma falha vira `rejected` e as outras seguem). */
 function usePsdImport(clientId: string, onImported: (documentId: string) => void) {
   const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const createDocument = useCreateCanvaDocument();
   const uploadReference = useUploadStudioReference();
 
   async function importFile(file: File) {
     setImporting(true);
+    setProgress(null);
     try {
+      // `readPsd` é síncrono e pesado (descomprime cada camada): sem ceder um
+      // frame antes, o "Importando..." do botão só aparecia DEPOIS da leitura
+      // terminar - a tela ficava congelada sem nenhum sinal de vida, que é o
+      // que se via como "nem carrega".
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const parsed = await parsePsdFile(file);
       if (parsed.layers.length === 0) {
         toast('Este PSD não tem nenhuma camada visível com conteúdo pra importar.', 'error');
         return;
       }
+      setProgress({ done: 0, total: parsed.layers.length });
 
       const doc = await createDocument.mutateAsync({
         clientId,
@@ -52,15 +92,17 @@ function usePsdImport(clientId: string, onImported: (documentId: string) => void
         height: parsed.height,
       });
 
-      const uploaded = await Promise.allSettled(
-        parsed.layers.map(async (layer) => {
-          const blob = await canvasToBlob(layer.canvas);
-          if (!blob) throw new Error('canvas vazio');
-          const uploadedFile = new File([blob], `${layer.name || 'camada'}.png`, { type: 'image/png' });
+      const uploaded = await mapWithConcurrency(parsed.layers, PSD_UPLOAD_CONCURRENCY, async (layer) => {
+        const blob = await canvasToBlob(layer.canvas);
+        if (!blob) throw new Error('canvas vazio');
+        const uploadedFile = new File([blob], `${layer.name || 'camada'}.png`, { type: 'image/png' });
+        try {
           const result = await uploadReference.mutateAsync(uploadedFile);
           return { layer, url: result.url };
-        }),
-      );
+        } finally {
+          setProgress((prev) => (prev ? { ...prev, done: prev.done + 1 } : prev));
+        }
+      });
 
       const objects: CanvaImageObject[] = [];
       let failures = 0;
@@ -76,12 +118,16 @@ function usePsdImport(clientId: string, onImported: (documentId: string) => void
           src: url,
           x: layer.left,
           y: layer.top,
+          // width/height = tamanho natural do PNG da camada e escala 1: a
+          // camada entra no tamanho exato que tinha no PSD (ver
+          // computeImagePlacement em fabric-sync.ts sobre esse modelo).
           width: layer.width,
           height: layer.height,
           scaleX: 1,
           scaleY: 1,
           rotation: 0,
           opacity: layer.opacity,
+          blendMode: layer.blendMode,
           locked: false,
           visible: true,
           zIndex: index,
@@ -106,15 +152,28 @@ function usePsdImport(clientId: string, onImported: (documentId: string) => void
       } else {
         toast('PSD importado com sucesso.', 'success');
       }
+      // O que o navegador não reproduz igual ao Photoshop é dito em voz alta,
+      // logo depois do resultado - a arte sair diferente sem explicação é
+      // pior do que sair diferente com o motivo na tela.
+      const caveat = describePsdApproximations(parsed.approximations);
+      if (caveat) toast(caveat, 'error');
       onImported(doc.id);
-    } catch {
-      toast('Não foi possível importar este arquivo PSD.', 'error');
+    } catch (error) {
+      // Achado real (2026-09-10): este catch não logava NADA - qualquer
+      // falha (readPsd rejeitando o arquivo, canvas grande demais pro
+      // navegador, criação do documento falhando) virava só um toast
+      // genérico, sem nenhum jeito de diagnosticar depois. console.error
+      // aqui é o mínimo pra qualquer relato futuro ser investigável.
+      console.error('psd_import_failed', error);
+      const detail = error instanceof Error ? error.message : null;
+      toast(detail ? `Não foi possível importar este arquivo PSD: ${detail}` : 'Não foi possível importar este arquivo PSD.', 'error');
     } finally {
       setImporting(false);
+      setProgress(null);
     }
   }
 
-  return { importing, importFile };
+  return { importing, progress, importFile };
 }
 
 /** Sidebar "Projetos" e tela inicial do Canva compartilham este grid - só muda
@@ -126,7 +185,7 @@ export function CanvaDocumentGrid({ clientId, onOpen }: { clientId: string; onOp
   const [showNewModal, setShowNewModal] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const psdInputRef = useRef<HTMLInputElement>(null);
-  const { importing: importingPsd, importFile: importPsdFile } = usePsdImport(clientId, onOpen);
+  const { importing: importingPsd, progress: psdProgress, importFile: importPsdFile } = usePsdImport(clientId, onOpen);
 
   return (
     <div className="space-y-4">
@@ -152,7 +211,11 @@ export function CanvaDocumentGrid({ clientId, onOpen }: { clientId: string; onOp
             className="flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-1.5 text-xs font-semibold text-nevoa transition-colors hover:border-roxo-eletrico/60 hover:text-branco-cru disabled:opacity-50"
           >
             {importingPsd ? <Loader2 size={13} className="animate-spin" /> : <FileUp size={13} />}
-            {importingPsd ? 'Importando...' : 'Importar PSD'}
+            {!importingPsd
+              ? 'Importar PSD'
+              : psdProgress
+                ? `Enviando camadas ${psdProgress.done}/${psdProgress.total}`
+                : 'Lendo arquivo...'}
           </button>
           <button
             type="button"
@@ -252,16 +315,18 @@ export function CanvaDocumentGrid({ clientId, onOpen }: { clientId: string; onOp
           <ConfirmDialog
             title="Excluir design"
             description="Excluir este design? Essa ação não pode ser desfeita."
-            isPending={deleteDoc.isPending}
-            onConfirm={() =>
-              deleteDoc.mutate(confirmingDeleteId, {
-                onSuccess: () => {
-                  setConfirmingDeleteId(null);
-                  toast('Design excluído.', 'success');
-                },
-                onError: () => toast('Não foi possível excluir o design.', 'error'),
-              })
-            }
+            onConfirm={() => {
+              const documentId = confirmingDeleteId;
+              // Fecha o diálogo e tira o card da lista na hora (a mutação é
+              // otimista, ver useDeleteCanvaDocument) - antes disto o diálogo
+              // ficava travado em "excluindo..." até o DELETE e o GET da lista
+              // voltarem do servidor.
+              setConfirmingDeleteId(null);
+              deleteDoc.mutate(documentId, {
+                onSuccess: () => toast('Design excluído.', 'success'),
+                onError: () => toast('Não foi possível excluir o design. O design foi restaurado na lista.', 'error'),
+              });
+            }}
             onCancel={() => setConfirmingDeleteId(null)}
           />
         )}

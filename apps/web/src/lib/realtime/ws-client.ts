@@ -17,7 +17,9 @@ export interface WsEvent {
     | 'agent.thinking'
     | 'dm.received'
     | 'message.delta'
-    | 'clickup.task_changed';
+    | 'clickup.task_changed'
+    // Agentic V2: fases reais do agent loop (ver agentic-dispatch no worker).
+    | 'agent.phase';
   payload: Record<string, unknown>;
 }
 

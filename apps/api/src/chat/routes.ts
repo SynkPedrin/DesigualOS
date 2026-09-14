@@ -18,6 +18,7 @@ import {
   type AgentName,
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context';
 import { agenteAceitaBlocoNaMensagem, contextoEnvenenaBusca } from './message-assembly';
 
@@ -77,6 +78,36 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         reply.code(401);
         return { error: 'Not authenticated' };
       }
+
+      // Idempotência de intenção (auditoria 11/09/2026: double submit criava
+      // 2 conversas, 2 mensagens e 2 execuções). A janela de 15s cobre clique
+      // duplo e retry de rede sem impedir mandar o mesmo texto de propósito
+      // depois. Se o primeiro request ainda está em voo ('pending'), o
+      // duplicado recebe 409 em vez de uma segunda execução.
+      const idemKey = idempotencyKey('chat', [
+        user.id,
+        body.conversation_id ?? 'new',
+        body.project_id ?? '',
+        body.message,
+        ...attachments.map((a) => a.url),
+      ]);
+      const existing = await claimIdempotency(idemKey);
+      if (existing !== null) {
+        if (existing !== 'pending') {
+          try {
+            const replay = JSON.parse(existing) as { execution_id: string | null; conversation_id: string | null; agent: string };
+            reply.code(202);
+            return { ...replay, status: 'queued', deduplicated: true };
+          } catch {
+            // valor corrompido: cai no 409 abaixo
+          }
+        }
+        reply.code(409);
+        return { error: 'Esta mensagem já está sendo processada. Aguarde a resposta antes de reenviar.' };
+      }
+      // Se qualquer coisa falhar daqui pra frente, o retry legítimo do
+      // usuário não pode ficar bloqueado pela chave: libera no throw.
+      try {
 
       // Conversa nova puxando o client_id do projeto (tela de Projeto no chat,
       // "abrir um novo chat dentro desse projeto"): quem manda a mensagem não
@@ -231,13 +262,20 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           ? await route(body.message, request.log)
           : manualDecision(body.agent_hint.toLowerCase() as AgentName);
 
-      const context = await buildContext({
-        userId: user.id,
-        clientId: effectiveClientId,
-        conversationId,
-        projectId: effectiveProjectId,
-        agent: decision.primary_agent,
-      });
+      // As duas montagens são independentes (a de contexto lê o banco pela
+      // decision; a operacional lê mensagem+usuário e às vezes o ClickUp).
+      // Com o Postgres remoto a ~130ms de RTT, rodar em série somava os dois
+      // tempos no ack do chat (medido ~3s na auditoria de 11/09/2026).
+      const [context, operationalTurn] = await Promise.all([
+        buildContext({
+          userId: user.id,
+          clientId: effectiveClientId,
+          conversationId,
+          projectId: effectiveProjectId,
+          agent: decision.primary_agent,
+        }),
+        resolveOperationalTurn(body.message, user),
+      ]);
       const contextBlock = formatContextForPrompt(context);
       // O Bento NÃO recebe o bloco de contexto, e isso é deliberado.
       //
@@ -273,7 +311,6 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       // relógio real, e o dado vem do ClickUp na hora — com precedência declarada sobre
       // memória. Falha de integração vira instrução de admitir a falha, nunca número
       // chutado. Ver packages/context-engine/src/resolve-scope.ts.
-      const operationalTurn = await resolveOperationalTurn(body.message, user);
       // Briefing tem precedência sobre a lista crua: quando o pedido é "me monte um
       // briefing", mandar as duas coisas duplicaria o mesmo dado no prompt.
       const operationalBlock =
@@ -327,6 +364,13 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
 
       request.log.info({ conversationId, messageId: userMessage?.id }, 'Chat message dispatched');
 
+      // Sucesso: registra o resultado pra um reenvio idêntico dentro da
+      // janela receber a MESMA execução em vez de criar outra.
+      await fulfillIdempotency(
+        idemKey,
+        JSON.stringify({ execution_id: result.executionId, conversation_id: conversationId, agent: result.agent }),
+      );
+
       reply.code(202);
       return {
         execution_id: result.executionId,
@@ -334,6 +378,12 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         agent: result.agent,
         conversation_id: conversationId,
       };
+      } catch (error) {
+        // Falha no meio do caminho: libera a chave pra não punir o retry
+        // legítimo do usuário com um 409 fantasma.
+        await releaseIdempotency(idemKey);
+        throw error;
+      }
     },
   );
 }

@@ -1,14 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { LogIn } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/auth-layout';
 import { supabase } from '@/lib/supabase/client';
 
-export default function LoginPage() {
+/**
+ * Destino pós-login: o proxy (src/proxy.ts) manda o usuário barrado pra
+ * /login?next=<rota-original>, e antes desta correção a página ignorava o
+ * parâmetro e mandava todo mundo pra '/' (auditoria pré-deploy 14/09/2026).
+ * Só aceita path interno (começa com '/' e NÃO com '//'), senão viraria
+ * open redirect pra domínio externo.
+ */
+function safeNextPath(next: string | null): string {
+  if (next && next.startsWith('/') && !next.startsWith('//')) return next;
+  return '/';
+}
+
+function LoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +37,7 @@ export default function LoginPage() {
       setError(authError.message);
       return;
     }
-    router.push('/');
+    router.push(safeNextPath(searchParams.get('next')));
   }
 
   return (
@@ -36,10 +49,14 @@ export default function LoginPage() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-nevoa">
+          <label
+            htmlFor="email"
+            className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-nevoa"
+          >
             E-mail
           </label>
           <input
+            id="email"
             type="email"
             required
             value={email}
@@ -49,7 +66,10 @@ export default function LoginPage() {
         </div>
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <label className="block font-mono text-[10px] uppercase tracking-wider text-nevoa">
+            <label
+              htmlFor="password"
+              className="block font-mono text-[10px] uppercase tracking-wider text-nevoa"
+            >
               Senha
             </label>
             <Link href="/forgot-password" className="font-mono text-[10px] text-roxo-eletrico hover:underline">
@@ -57,6 +77,7 @@ export default function LoginPage() {
             </Link>
           </div>
           <input
+            id="password"
             type="password"
             required
             value={password}
@@ -84,5 +105,15 @@ export default function LoginPage() {
         </Link>
       </p>
     </AuthLayout>
+  );
+}
+
+// useSearchParams exige Suspense boundary no Next 16 (mesmo padrão de
+// (shell)/clients/page.tsx); sem isso o build falha na pré-renderização.
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
   );
 }

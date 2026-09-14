@@ -1,0 +1,134 @@
+{
+  "label": "baseline",
+  "at": "2026-09-13T21:51:42.781Z",
+  "results": [
+    {
+      "scenarioId": "B01",
+      "agent": "bento",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 2,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 2,
+      "leakDetected": false,
+      "score": 0
+    },
+    {
+      "scenarioId": "B02",
+      "agent": "bento",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 1,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 0
+    },
+    {
+      "scenarioId": "B03",
+      "agent": "bento",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 1,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 0
+    },
+    {
+      "scenarioId": "S01",
+      "agent": "suzy",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 3,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 0
+    },
+    {
+      "scenarioId": "S02",
+      "agent": "suzy",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 2,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 0
+    },
+    {
+      "scenarioId": "O01",
+      "agent": "otto",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 2,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 0
+    },
+    {
+      "scenarioId": "O02",
+      "agent": "otto",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 2,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 0,
+      "leakDetected": false,
+      "score": 0
+    },
+    {
+      "scenarioId": "J01",
+      "agent": "jarbas",
+      "status": "harness-error",
+      "latencyMs": 0,
+      "answer": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "checksPassed": 0,
+      "checksTotal": 1,
+      "checksFailed": [
+        "harness"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 0
+    }
+  ]
+}

@@ -9,8 +9,9 @@ import { z } from 'zod';
 import { createLogger } from '@desigual-os/logging';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
-import { startHealthSweep } from './health/scheduler';
+import { startHealthCheckRetention, startHealthSweep } from './health/scheduler';
 import { startAgentProbe } from './health/probe-scheduler';
+import { startWorkerWatchdog } from './health/worker-watchdog';
 import { registerAuthRoutes } from './auth/routes';
 import { registerChatRoutes } from './chat/routes';
 import { registerExecutionRoutes } from './executions/routes';
@@ -83,6 +84,14 @@ app.setErrorHandler((error, _request, reply) => {
         message: issue.message,
       })),
     });
+    return;
+  }
+
+  // JSON malformado no corpo: o parser default do Fastify propaga o
+  // SyntaxError cru (sem code FST próprio) com statusCode 400; o detalhe
+  // ("Expected property name ...") é ruído técnico pra quem chama a API.
+  if (error.statusCode === 400 && error instanceof SyntaxError) {
+    reply.code(400).send({ error: 'Invalid JSON body' });
     return;
   }
 
@@ -174,6 +183,11 @@ async function start(): Promise<void> {
   // Sem isto o sweep acima derruba tudo pra offline em 60s: nossos agentes
   // não mandam heartbeat, é o Orchestrator que vai até eles.
   const agentProbeTimer = startAgentProbe(logger);
+  // Vigia do worker: roda AQUI e não no worker, porque worker morto não avisa que morreu.
+  const pararWatchdog = startWorkerWatchdog();
+  // Sem isto `health_checks` cresce pra sempre (medido: +21 mil linhas/dia) e
+  // a consulta do painel varre a tabela inteira, ficando mais lenta a cada dia.
+  const retentionTimer = startHealthCheckRetention(logger);
   logger.info({ port }, 'Orchestrator API listening');
 
   // Sem isso, um restart/redeploy corta requisições em voo com SIGKILL e os
@@ -182,6 +196,8 @@ async function start(): Promise<void> {
     logger.info({ signal }, 'Shutting down Orchestrator API');
     clearInterval(healthSweepTimer);
     clearInterval(agentProbeTimer);
+    clearInterval(retentionTimer);
+    pararWatchdog();
     app
       .close()
       .then(() => process.exit(0))

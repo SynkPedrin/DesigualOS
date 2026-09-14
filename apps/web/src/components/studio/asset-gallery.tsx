@@ -14,16 +14,26 @@ import type { StudioAsset } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
 /**
- * Assets de um mesmo job de carousel compartilham `jobId` (ver
- * nodes/studio-node/src/index.ts) - agrupa pra virar um único card, em vez de
- * N cards soltos e sem contexto de que são a mesma peça.
+ * Assets de um mesmo job de carousel (slidesTotal>1) OU de um job de
+ * "variações" (variationsTotal>1, várias imagens do mesmo prompt num job só)
+ * compartilham `jobId` (ver nodes/studio-node/src/index.ts) - agrupa pra
+ * virar um único card, em vez de N cards soltos sem contexto de que são a
+ * mesma peça.
+ *
+ * Achado real (2026-09-11): só o caminho de carousel (`slidesTotal`) entrava
+ * aqui - `variationsTotal`/`variationIndex` existiam no job/worker e na API
+ * há tempos, mas o mapeamento do wire pro frontend (mapStudioAsset) nunca os
+ * lia, então SEMPRE chegavam como `null` aqui, e um job de "4 variações"
+ * virava 4 cards soltos e sem relação nenhuma na galeria, cada um exigindo
+ * exclusão individual. Corrigido junto (ver contracts.ts).
  */
 export function groupAssets(assets: StudioAsset[]): StudioAsset[][] {
   const byJob = new Map<string, StudioAsset[]>();
   const groups: StudioAsset[][] = [];
 
   for (const asset of assets) {
-    if (asset.jobId && (asset.slidesTotal ?? 1) > 1) {
+    const groupSize = Math.max(asset.slidesTotal ?? 1, asset.variationsTotal ?? 1);
+    if (asset.jobId && groupSize > 1) {
       const list = byJob.get(asset.jobId) ?? [];
       list.push(asset);
       byJob.set(asset.jobId, list);
@@ -34,7 +44,9 @@ export function groupAssets(assets: StudioAsset[]): StudioAsset[][] {
   }
 
   for (const group of groups) {
-    if (group.length > 1) group.sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0));
+    if (group.length > 1) {
+      group.sort((a, b) => (a.slideIndex ?? a.variationIndex ?? 0) - (b.slideIndex ?? b.variationIndex ?? 0));
+    }
   }
   // `assets` já vem ordenado por created_at desc da API; groups preserva essa
   // ordem porque cada grupo nasce na posição do primeiro asset encontrado.
@@ -63,12 +75,19 @@ function VideoDurationBadge({ src }: { src: string }) {
   );
 }
 
+/** "N slides" pro carousel, "N variações" pro job de variações - mesmo
+ * `groupAssets` acima, distingue pelo campo que realmente está preenchido. */
+function groupUnitLabel(asset: StudioAsset, groupSize: number): string {
+  if (groupSize <= 1) return '';
+  return (asset.slidesTotal ?? 0) > 1 ? ` · ${groupSize} slides` : ` · ${groupSize} variações`;
+}
+
 function TypeBadge({ asset, groupSize }: { asset: StudioAsset; groupSize: number }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-grafite-elevado bg-carbono/80 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-nevoa">
       {groupSize > 1 && <Layers size={9} className="text-roxo-eletrico" />}
       {TYPE_LABELS[asset.type] ?? asset.type}
-      {groupSize > 1 ? ` · ${groupSize} slides` : ''}
+      {groupUnitLabel(asset, groupSize)}
     </span>
   );
 }
@@ -86,6 +105,7 @@ function CardMedia({ group, onOpen }: { group: StudioAsset[]; onOpen: (asset: St
     >
       <AssetPreview
         asset={first}
+        variant="thumb"
         className="aspect-square w-full object-cover transition-transform duration-300 group-hover/media:scale-[1.03]"
       />
       {video && (
@@ -267,7 +287,7 @@ function AssetGroupRow({
         <p className="mt-0.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-nevoa">
           <span>
             {TYPE_LABELS[first.type] ?? first.type}
-            {group.length > 1 ? ` · ${group.length} slides` : ''}
+            {groupUnitLabel(first, group.length)}
           </span>
           {first.qualityPreset && <span>{QUALITY_LABELS[first.qualityPreset] ?? first.qualityPreset}</span>}
           {clientName && <span className="truncate">{clientName}</span>}

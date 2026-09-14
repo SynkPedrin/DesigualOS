@@ -1,5 +1,5 @@
 import { createBrowserClient } from '@supabase/ssr';
-import { setAccessTokenProvider } from '@/lib/api/client';
+import { setAccessTokenAsyncProvider, setAccessTokenProvider } from '@/lib/api/client';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const supabasePublishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '';
@@ -28,11 +28,30 @@ export function wireSupabaseAccessToken() {
   let currentToken: string | null = null;
   setAccessTokenProvider(() => currentToken);
 
-  supabase.auth.getSession().then(({ data }) => {
+  // O getSession inicial é a fonte da verdade do boot; quem chegar antes
+  // dele espera essa promise (com teto de 2s pra nunca pendurar a UI se a
+  // auth travar) em vez de disparar sem token. Depois do boot, o provider
+  // síncrono acima já tem o token e este caminho nem é consultado.
+  const initialSession = supabase.auth.getSession().then(({ data }) => {
     currentToken = data.session?.access_token ?? null;
+    return currentToken;
   });
+  setAccessTokenAsyncProvider(() =>
+    Promise.race([
+      initialSession,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]).catch(() => null),
+  );
 
   supabase.auth.onAuthStateChange((_event, session) => {
     currentToken = session?.access_token ?? null;
   });
 }
+
+// Wiring em ESCOPO DE MÓDULO, não em useEffect: efeitos de filhos rodam
+// antes dos pais, então queries montadas abaixo do auth-provider disparavam
+// /me sem token (401 garantido em toda carga de página, medido na auditoria
+// de performance). O guard `tokenProviderWired` torna a chamada do
+// auth-provider um no-op idempotente. createBrowserClient acima já executa
+// no import, então isto não amplia a superfície de SSR.
+wireSupabaseAccessToken();

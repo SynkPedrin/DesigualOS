@@ -37,6 +37,9 @@ export interface OperationalContextDeps {
     dueAfter?: number;
     dueBefore?: number;
     includeClosed?: boolean;
+    /** Recorte por responsável (escopo PERSON): ids de membro do ClickUp já
+     * resolvidos pelo chamador, que é quem tem acesso à API. */
+    assigneeIds?: number[];
   }) => Promise<{ tasks: OperationalTaskLike[]; truncated: boolean }>;
 }
 
@@ -84,10 +87,13 @@ export async function buildOperationalContext(
     return { block: null, summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})` };
   }
 
-  // Escopo de cliente(s): só as listas daqueles clientes. Escopo global: todas as listas
-  // dos clientes AUTORIZADOS — nunca "sem filtro", pra que a consulta não alcance
-  // nada fora da carteira que o usuário pode ver.
-  const alvo = scope.kind === 'GLOBAL' ? clients : clients.filter((c) => scope.clients.some((s) => s.id === c.id));
+  // Escopo de cliente(s): só as listas daqueles clientes. Escopo GLOBAL e
+  // PERSON: todas as listas autorizadas — no PERSON o recorte é por
+  // responsável (assigneeIds), nunca por cliente.
+  const alvo =
+    scope.kind === 'GLOBAL' || scope.kind === 'PERSON'
+      ? clients
+      : clients.filter((c) => scope.clients.some((s) => s.id === c.id));
   const listIds = alvo.map((c) => c.clickupListId).filter((id): id is string => Boolean(id));
 
   if (listIds.length === 0) {
@@ -107,6 +113,7 @@ export async function buildOperationalContext(
       listIds,
       ...(scope.temporal ? { dueAfter: scope.temporal.from, dueBefore: scope.temporal.to } : {}),
       includeClosed: false,
+      ...(scope.kind === 'PERSON' && scope.person?.memberIds?.length ? { assigneeIds: scope.person.memberIds } : {}),
     });
   } catch (error) {
     return { block: null, summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})` };

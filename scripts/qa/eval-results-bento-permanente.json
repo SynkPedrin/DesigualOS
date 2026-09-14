@@ -1,0 +1,50 @@
+{
+  "label": "bento-permanente",
+  "at": "2026-09-14T13:16:54.957Z",
+  "results": [
+    {
+      "scenarioId": "B01",
+      "agent": "bento",
+      "status": "completed",
+      "latencyMs": 8466,
+      "answer": "Nada para a Missão Guadalupe.",
+      "checksPassed": 1,
+      "checksTotal": 2,
+      "checksFailed": [
+        "resposta substantiva"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 2,
+      "leakDetected": false,
+      "score": 60
+    },
+    {
+      "scenarioId": "B02",
+      "agent": "bento",
+      "status": "completed",
+      "latencyMs": 10161,
+      "answer": "6 tarefas vão vencer amanhã (janela: amanha), em 4 clientes de 50 consultados.",
+      "checksPassed": 1,
+      "checksTotal": 1,
+      "checksFailed": [],
+      "groundingHits": 1,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 89
+    },
+    {
+      "scenarioId": "B03",
+      "agent": "bento",
+      "status": "completed",
+      "latencyMs": 36450,
+      "answer": "Os clientes em risco na operação são o Grupo WTA e o Bravvo.\n\nO Grupo WTA está em pré-orçamento e aguarda validação dos sócios, com uma validade de 20/09/2026. Isso sugere que há um risco de perda do contrato se não for confirmado a tempo.\n\nJá o Bravvo apresenta sinais de risco, como ausência de relatório de desempenho mensal para março e abril, falta de uma nova âncora de campanha, tasks sem prazo definido e dependência de uma pessoa (Jamile).",
+      "checksPassed": 1,
+      "checksTotal": 1,
+      "checksFailed": [],
+      "groundingHits": 1,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 97
+    }
+  ]
+}

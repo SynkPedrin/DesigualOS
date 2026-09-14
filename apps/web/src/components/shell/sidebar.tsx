@@ -227,6 +227,38 @@ export function Sidebar({
                   {health?.agentsConnected.online}/{health?.agentsConnected.total}
                 </dd>
               </div>
+              {/*
+                O EXECUTOR NA TELA. Em 10/09/2026 o worker ficou 10 minutos morto, a fila
+                empilhou e este painel dizia "Todos os sistemas online" — porque a saúde só
+                olhava as máquinas remotas dos agentes, e nunca o processo que executa os
+                pedidos. Quem está operando precisa distinguir "o agente está pensando" de
+                "ninguém vai responder", e essa diferença mora aqui.
+
+                `worker === null` é a API antiga, sem o bloco: mostra "sem dado", nunca verde.
+              */}
+              {health?.worker === null ? (
+                <div className="flex items-center justify-between">
+                  <dt className="text-nevoa">Execução</dt>
+                  <dd className="text-nevoa">sem dado</dd>
+                </div>
+              ) : health?.worker ? (
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-nevoa">Execução</dt>
+                  <dd
+                    className={cn(
+                      'truncate tabular-nums',
+                      health.worker.online ? 'text-branco-cru' : 'text-erro',
+                    )}
+                    title={health.worker.diagnosis}
+                  >
+                    {health.worker.online
+                      ? health.worker.jobsWaiting > 0
+                        ? `${health.worker.jobsWaiting} na fila`
+                        : 'em dia'
+                      : 'PARADA'}
+                  </dd>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between">
                 <dt className="text-nevoa">Último backup</dt>
                 <dd className="text-branco-cru">{formatBackupTime(health?.lastBackupAt ?? null)}</dd>

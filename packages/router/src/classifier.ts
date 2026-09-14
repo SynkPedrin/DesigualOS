@@ -13,6 +13,9 @@ const classifierResultSchema = z.object({
 
 export type ClassifierResult = z.infer<typeof classifierResultSchema>;
 
+// Teto da chamada ao LLM no caminho síncrono do /chat (ver classifyWithLLM).
+const CLASSIFIER_TIMEOUT_MS = 10_000;
+
 const SYSTEM_PROMPT = `Você classifica pedidos de usuários de uma agência de marketing pro sistema Desigual OS.
 Agentes disponíveis: bento (conhecimento institucional, processos, SOPs), jarbas (performance e tráfego pago),
 suzy (social selling, WhatsApp/Instagram), studio (geração de imagem/vídeo em GPU),
@@ -36,14 +39,30 @@ export async function classifyWithLLM(message: string, logger: FastifyBaseLogger
     return null;
   }
 
-  const client = new Anthropic({ apiKey });
+  // Timeout explícito (achado da auditoria, 2026-09): esta chamada roda no
+  // caminho SÍNCRONO do POST /chat, então uma API da Anthropic lenta/travada
+  // segurava a resposta do usuário indefinidamente. maxRetries: 0 porque os 2
+  // retries padrão do SDK multiplicariam a espera além do teto de 10s.
+  const client = new Anthropic({ apiKey, timeout: CLASSIFIER_TIMEOUT_MS, maxRetries: 0 });
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 512,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: message }],
-  });
+  let response;
+  try {
+    response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 512,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: message }],
+    });
+  } catch (error) {
+    // Timeout = classifier indisponível: devolve null e o Router cai pro
+    // rule engine/Bento, mesmo fallback de quando a chave não existe. Outros
+    // erros (auth, schema da API) seguem propagando como antes.
+    if (error instanceof Error && error.name === 'APIConnectionTimeoutError') {
+      logger.warn({ timeoutMs: CLASSIFIER_TIMEOUT_MS }, 'Classifier LLM timed out, falling back to rules');
+      return null;
+    }
+    throw error;
+  }
 
   const textBlock = response.content.find((block) => block.type === 'text');
   if (!textBlock || textBlock.type !== 'text') {

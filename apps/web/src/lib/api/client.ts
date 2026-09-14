@@ -23,12 +23,35 @@ export class ApiRequestError extends Error {
 /** Set by the auth layer once Supabase login is wired up (later phase). Until then, undefined. */
 let accessTokenProvider: (() => string | null) | null = null;
 
+/** Provider assíncrono para o boot: queries que disparam antes do
+ * getSession() inicial resolver iam SEM token e voltavam 401, gerando um
+ * retry e um erro de console em toda carga de página (medido na auditoria
+ * de performance: 1x 401 /me em TODA rota). Agora o primeiro token é
+ * aguardado (com teto) em vez de sair sem ele. */
+let accessTokenAsyncProvider: (() => Promise<string | null>) | null = null;
+
 export function setAccessTokenProvider(provider: () => string | null) {
   accessTokenProvider = provider;
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = accessTokenProvider?.() ?? null;
+export function setAccessTokenAsyncProvider(provider: () => Promise<string | null>) {
+  accessTokenAsyncProvider = provider;
+}
+
+/** Timeout default de toda chamada. Uploads de anexos passam um teto maior
+ * via `timeoutMs` (arquivo grande em conexão lenta estouraria 30s fácil). */
+export const API_FETCH_DEFAULT_TIMEOUT_MS = 30_000;
+export const API_FETCH_UPLOAD_TIMEOUT_MS = 120_000;
+
+export interface ApiFetchOptions {
+  timeoutMs?: number;
+}
+
+export async function apiFetch<T>(path: string, init?: RequestInit, options?: ApiFetchOptions): Promise<T> {
+  let token = accessTokenProvider?.() ?? null;
+  if (!token && accessTokenAsyncProvider) {
+    token = await accessTokenAsyncProvider().catch(() => null);
+  }
   const headers = new Headers(init?.headers);
   // FormData bodies (file uploads) need the browser to set Content-Type itself
   // (multipart boundary included); setting it manually breaks the upload.
@@ -39,16 +62,41 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
-
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as ApiError | null;
-    throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details);
+  const controller = new AbortController();
+  const callerSignal = init?.signal ?? null;
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener('abort', abortFromCaller, { once: true });
   }
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, options?.timeoutMs ?? API_FETCH_DEFAULT_TIMEOUT_MS);
 
-  if (response.status === 204) {
-    return undefined as T;
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers, signal: controller.signal });
+
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as ApiError | null;
+      throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details);
+    }
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    return (await response.json()) as T;
+  } catch (error) {
+    // Timeout vira ApiRequestError com status 0 (nenhuma resposta chegou) pra
+    // cair no tratamento de erro já existente dos hooks com mensagem humana.
+    if (timedOut && error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiRequestError('A conexão demorou demais. Tente novamente.', 0);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
   }
-
-  return (await response.json()) as T;
 }

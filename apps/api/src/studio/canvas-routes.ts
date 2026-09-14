@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import type { CanvaPage } from '@desigual-os/types';
+import { CANVA_BLEND_MODES, type CanvaPage } from '@desigual-os/types';
 import { hasPermission } from '@desigual-os/auth';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { hasClientAccess } from '../lib/access';
@@ -46,6 +46,7 @@ const objectBaseSchema = z.object({
   locked: z.boolean(),
   visible: z.boolean(),
   zIndex: z.number(),
+  blendMode: z.enum(CANVA_BLEND_MODES).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -62,6 +63,7 @@ const canvaObjectSchema: z.ZodType<CanvaPage['objects'][number]> = z.discriminat
     flipY: z.boolean().optional(),
     stroke: z.string().optional(),
     strokeWidth: z.number().optional(),
+    clipShape: z.enum(['rect', 'ellipse', 'triangle', 'star']).optional(),
     filters: z
       .object({
         brightness: z.number().optional(),
@@ -103,6 +105,13 @@ const canvaObjectSchema: z.ZodType<CanvaPage['objects'][number]> = z.discriminat
   objectBaseSchema.extend({
     type: z.literal('group'),
     fabricData: z.record(z.unknown()),
+  }),
+  objectBaseSchema.extend({
+    type: z.literal('path'),
+    pathData: z.string(),
+    stroke: z.string(),
+    strokeWidth: z.number(),
+    fill: z.string().nullable(),
   }),
 ]);
 
@@ -280,18 +289,9 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
     { preHandler: [requireAuth, requirePermission('studio', 'write')] },
     async (request, reply) => {
       const body = updateDocumentSchema.parse(request.body);
-
-      const [existing] = await db
-        .select({ clientId: schema.studioCanvasDocuments.clientId })
-        .from(schema.studioCanvasDocuments)
-        .where(eq(schema.studioCanvasDocuments.id, request.params.id));
-      if (!existing) {
-        reply.code(404);
-        return { error: `Canvas document '${request.params.id}' not found` };
-      }
-      if (!request.authUser || !(await hasClientAccess(request.authUser, existing.clientId))) {
-        reply.code(403);
-        return { error: 'No access granted to this document' };
+      if (!request.authUser) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
       }
 
       const patch: Partial<typeof schema.studioCanvasDocuments.$inferInsert> = {};
@@ -301,14 +301,25 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
       if (body.thumbnail_url !== undefined) patch.thumbnailUrl = body.thumbnail_url;
       if (body.pages !== undefined) patch.pages = body.pages;
 
+      // Esta é a rota mais chamada do editor (o autosave bate aqui a cada
+      // 1,5s de edição). Fazia SELECT + UPDATE em série = duas idas ao
+      // Postgres remoto (~130ms cada, medidos daqui) por salvamento, com as
+      // 3 conexões do pool ocupadas o dobro do tempo necessário. O SELECT
+      // prévio existia só pra chamar `hasClientAccess` antes de escrever -
+      // e hoje ela é sempre true pra qualquer autenticado (ver lib/access.ts,
+      // decisão de 2026-09-03: cliente é compartilhado pela equipe inteira),
+      // então a autorização real desta rota é o `studio:write` do
+      // requirePermission acima. ATENÇÃO: se algum dia voltar escopo de
+      // acesso por pessoa, este atalho tem que ser desfeito - autorizar
+      // DEPOIS de escrever não autoriza nada.
       const [updated] = await db
         .update(schema.studioCanvasDocuments)
         .set(patch)
         .where(eq(schema.studioCanvasDocuments.id, request.params.id))
         .returning();
       if (!updated) {
-        reply.code(500);
-        return { error: 'Failed to update canvas document' };
+        reply.code(404);
+        return { error: `Canvas document '${request.params.id}' not found` };
       }
       return toWire(updated);
     },
@@ -371,25 +382,33 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
         return { error: 'Not authenticated' };
       }
 
-      const [doc] = await db
-        .select({ clientId: schema.studioCanvasDocuments.clientId })
-        .from(schema.studioCanvasDocuments)
-        .where(eq(schema.studioCanvasDocuments.id, request.params.id));
-      if (!doc) {
-        reply.code(404);
-        return { error: `Canvas document '${request.params.id}' not found` };
-      }
-
+      // Permissão primeiro (não custa banco): quem não pode apagar nada nem
+      // chega a consultar. `hasClientAccess` hoje é sempre true (ver
+      // lib/access.ts), então a autorização não depende de saber de qual
+      // cliente é o documento - o que permite resolver tudo em UMA ida ao
+      // banco em vez de duas. ATENÇÃO: se voltar escopo de acesso por
+      // pessoa, isto precisa voltar a consultar o dono antes de apagar.
       const isMaster = request.authUser.roles.includes('master');
-      const canWriteForClient =
-        hasPermission(request.authUser.permissions, 'studio', 'write') &&
-        (await hasClientAccess(request.authUser, doc.clientId));
-      if (!isMaster && !canWriteForClient) {
+      if (!isMaster && !hasPermission(request.authUser.permissions, 'studio', 'write')) {
         reply.code(403);
         return { error: 'No access granted to this document' };
       }
 
-      await db.delete(schema.studioCanvasDocuments).where(eq(schema.studioCanvasDocuments.id, request.params.id));
+      // Achado real (2026-09-11, "demora um século pra deletar um projeto"):
+      // isto fazia SELECT e depois DELETE, em série. Contra o Postgres remoto
+      // (~130ms de ida e volta medidos daqui) são ~260ms só aqui, somados aos
+      // ~260ms que o requireAuth gastava (agora em cache) - com o autosave do
+      // editor disputando as 3 conexões do pool, a exclusão ia pro fim da
+      // fila. `returning` resolve o 404 e a exclusão de uma vez só.
+      const deleted = await db
+        .delete(schema.studioCanvasDocuments)
+        .where(eq(schema.studioCanvasDocuments.id, request.params.id))
+        .returning({ id: schema.studioCanvasDocuments.id });
+      if (deleted.length === 0) {
+        reply.code(404);
+        return { error: `Canvas document '${request.params.id}' not found` };
+      }
+
       reply.code(204);
       return;
     },

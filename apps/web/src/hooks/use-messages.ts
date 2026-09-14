@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, API_FETCH_UPLOAD_TIMEOUT_MS } from '@/lib/api/client';
 import {
   mapMessage,
   mapMessageThread,
@@ -46,7 +46,7 @@ export function useSendMessage() {
         formData.append('recipient_id', input.recipientId);
         formData.append('content', input.content);
         formData.append('file', input.file);
-        return mapMessage(await apiFetch<MessageWire>('/messages', { method: 'POST', body: formData }));
+        return mapMessage(await apiFetch<MessageWire>('/messages', { method: 'POST', body: formData }, { timeoutMs: API_FETCH_UPLOAD_TIMEOUT_MS }));
       }
       return mapMessage(
         await apiFetch<MessageWire>('/messages', {

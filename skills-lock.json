@@ -31,6 +31,12 @@
       "skillPath": ".agents/skills/impeccable/SKILL.md",
       "computedHash": "bb529f103869c4e9b19ebaa1486d551affe0500f0af7d5dea0ef172bfba8196d"
     },
+    "qa-testing-playwright": {
+      "source": "vasilyu1983/ai-agents-public",
+      "sourceType": "github",
+      "skillPath": "frameworks/shared-skills/skills/qa-testing-playwright/SKILL.md",
+      "computedHash": "2da21c1afed76b637ac45cff40b175108e9601163d6168b74b1037cc30453dec"
+    },
     "remotion-best-practices": {
       "source": "remotion-dev/skills",
       "sourceType": "github",

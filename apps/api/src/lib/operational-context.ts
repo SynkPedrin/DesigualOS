@@ -8,7 +8,7 @@ import {
   type OperationalContext,
   type OperationalScope,
 } from '@desigual-os/context-engine';
-import { queryOperationTasks } from '@desigual-os/tool-gateway';
+import { findMemberByName, queryOperationTasks } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import type { AuthenticatedUser } from '../auth/middleware';
 import { hasClientAccess } from './access';
@@ -93,6 +93,26 @@ export async function resolveOperationalTurn(
   let tarefasBuscadas: Awaited<ReturnType<typeof queryOperationTasks>>['tasks'] = [];
   let truncado = false;
   const clientesAutorizados = await listAuthorizedClients(user).catch(() => []);
+
+  // Escopo PERSON (14/09/2026): resolve o nome falado pro membro REAL do
+  // ClickUp antes de consultar. Sem membro resolvido, a resposta honesta é
+  // "não achei essa pessoa", nunca "de qual cliente?".
+  if (scope.kind === 'PERSON' && scope.person) {
+    const member = await findMemberByName(config, scope.person.name).catch(() => null);
+    if (!member) {
+      return {
+        scope,
+        context: {
+          block: null,
+          summary: null,
+          failure: `não encontrei ninguém chamado "${scope.person.name}" entre os membros do ClickUp`,
+        },
+        briefingBlock: null,
+      };
+    }
+    scope.person.memberIds = [member.id];
+    scope.person.resolvedAs = member.username;
+  }
 
   const context = await buildOperationalContext(
     scope,

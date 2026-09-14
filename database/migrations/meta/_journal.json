@@ -169,6 +169,27 @@
       "when": 1789048344276,
       "tag": "0023_loud_wind_dancer",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789127564787,
+      "tag": "0024_marvelous_wolverine",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1789165606184,
+      "tag": "0025_chunky_energizer",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1789237978920,
+      "tag": "0026_daily_gunslinger",
+      "breakpoints": true
     }
   ]
 }

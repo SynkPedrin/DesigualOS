@@ -242,6 +242,48 @@ describe('callAgentesDesigual (Jarbas/Suzy)', () => {
     expect(mockRequestToolCall).not.toHaveBeenCalled();
   });
 
+  it('resposta que é SÓ a diretiva interna `pergunta pro bento:` vira failed, não jargão na tela', async () => {
+    // Medido em teste real (2026-09-11): a Suzy respondeu ao usuário com a
+    // sintaxe interna de handoff pro Bento em backticks.
+    mockAskAgent.mockResolvedValue('`pergunta pro bento: quais são as tarefas abertas da 3net?`');
+    const { callAgentesDesigual } = await import('./execute-job.js');
+
+    const result = await callAgentesDesigual('suzy', 'oi', 'session-1', 'exec-1', logger);
+
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('mecanismo interno');
+    expect(mockRequestToolCall).not.toHaveBeenCalled();
+  });
+
+  it('diretiva interna embutida numa resposta válida é removida e o resto segue normal', async () => {
+    mockAskAgent.mockResolvedValue(
+      'Claro! Sobre as tarefas, deixa eu verificar. `pergunta pro bento: tarefas da 3net`\n\nEnquanto isso, posso adiantar o relatório.',
+    );
+    const { callAgentesDesigual } = await import('./execute-job.js');
+
+    const result = await callAgentesDesigual('suzy', 'oi', 'session-1', 'exec-1', logger);
+
+    expect(result.status).toBe('completed');
+    expect(result.answer).not.toContain('pergunta pro bento');
+    expect(result.answer).toContain('Claro!');
+    expect(result.answer).toContain('relatório');
+  });
+
+  it('o segundo formato vazado (`cria uma task no clickup:`) também é removido', async () => {
+    // Baseline de comportamento, Onda 0 caso s2 (13/09/2026): a Suzy vazou a
+    // ordem interna de criação de task em backticks no meio da resposta.
+    mockAskAgent.mockResolvedValue(
+      'Perfeito, vou organizar isso pra você. `cria uma task no clickup: revisar carrossel da Elite`\n\nJá te confirmo assim que estiver lá.',
+    );
+    const { callAgentesDesigual } = await import('./execute-job.js');
+
+    const result = await callAgentesDesigual('suzy', 'cria essa task', 'session-1', 'exec-1', logger);
+
+    expect(result.status).toBe('completed');
+    expect(result.answer).not.toContain('cria uma task no clickup');
+    expect(result.answer).toContain('Perfeito');
+  });
+
   it('askAgent lançando AgentAskError vira failed com a mensagem do erro (não propaga a exceção)', async () => {
     const { AgentAskError } = await import('@desigual-os/tool-gateway');
     mockAskAgent.mockRejectedValue(new AgentAskError('a Suzy não respondeu em 180s', 'timeout'));
@@ -251,5 +293,63 @@ describe('callAgentesDesigual (Jarbas/Suzy)', () => {
 
     expect(result.status).toBe('failed');
     expect(result.error).toBe('a Suzy não respondeu em 180s');
+  });
+});
+
+/**
+ * Regressão do defeito relatado em 11/09/2026 ("o Bento não está conseguindo
+ * gerar nenhuma resposta"): o motivo verdadeiro da falha existia, vinha
+ * preenchido em `result.error`, e era descartado antes de chegar na tela -
+ * o usuário recebia "Tente reformular a pergunta" enquanto o problema real
+ * era um HTTP 502 do bento-qa ("o motor de texto não respondeu em 30s").
+ */
+describe('failureAnswerFor', () => {
+  it('repassa o motivo real do agente em vez de culpar a pergunta', async () => {
+    const { failureAnswerFor } = await import('./execute-job.js');
+
+    expect(failureAnswerFor('bento', 'HTTP 502')).toBe('Não consegui responder agora: HTTP 502');
+    expect(failureAnswerFor('bento', 'o Bento não respondeu em 100s')).toBe(
+      'Não consegui responder agora: o Bento não respondeu em 100s',
+    );
+  });
+
+  it('agente que falhou sem informar motivo diz exatamente isso, e nomeia quem falhou', async () => {
+    const { failureAnswerFor } = await import('./execute-job.js');
+
+    expect(failureAnswerFor('bento', undefined)).toBe('Não consegui responder agora e Bento não informou o motivo.');
+    expect(failureAnswerFor('jarbas', null)).toBe('Não consegui responder agora e Jarbas não informou o motivo.');
+    expect(failureAnswerFor('suzy', '   ')).toBe('Não consegui responder agora e Suzy não informou o motivo.');
+  });
+});
+
+describe('parseAgentLoopFlag (AGENT_LOOP_V2 por agente)', () => {
+  // A flag v2 liga o loop agêntico por agente. Jarbas é golden agent
+  // (read-only): ele NUNCA entra no loop, nem com "true", nem nomeado.
+  it('desligado por default (ausente, vazio, false)', async () => {
+    const { parseAgentLoopFlag } = await import('./execute-job.js');
+    expect(parseAgentLoopFlag(undefined).size).toBe(0);
+    expect(parseAgentLoopFlag('').size).toBe(0);
+    expect(parseAgentLoopFlag('false').size).toBe(0);
+  });
+
+  it('"true" liga todos EXCETO jarbas', async () => {
+    const { parseAgentLoopFlag } = await import('./execute-job.js');
+    const enabled = parseAgentLoopFlag('true');
+    expect(enabled.has('bento')).toBe(true);
+    expect(enabled.has('suzy')).toBe(true);
+    expect(enabled.has('otto')).toBe(true);
+    expect(enabled.has('jarbas')).toBe(false);
+  });
+
+  it('lista explícita com jarbas ainda o exclui', async () => {
+    const { parseAgentLoopFlag } = await import('./execute-job.js');
+    const enabled = parseAgentLoopFlag('jarbas,bento');
+    expect(enabled.has('jarbas')).toBe(false);
+    expect(enabled.has('bento')).toBe(true);
+  });
+
+  it('ignora nomes desconhecidos', async () => {
+    const { parseAgentLoopFlag } = await import('./execute-job.js');
+    expect(parseAgentLoopFlag('bento,fulano').size).toBe(1);
   });
 });

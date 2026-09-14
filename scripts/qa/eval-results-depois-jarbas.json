@@ -1,0 +1,20 @@
+{
+  "label": "depois-jarbas",
+  "at": "2026-09-13T23:05:22.560Z",
+  "results": [
+    {
+      "scenarioId": "J01",
+      "agent": "jarbas",
+      "status": "completed",
+      "latencyMs": 27108,
+      "answer": "Não consegui rodar a análise agora: os dois motores que eu uso pra isso estão fora (o rápido sem crédito e o local sem responder). Não vou chutar número de campanha.",
+      "checksPassed": 1,
+      "checksTotal": 1,
+      "checksFailed": [],
+      "groundingHits": 0,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 78
+    }
+  ]
+}

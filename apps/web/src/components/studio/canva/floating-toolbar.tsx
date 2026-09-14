@@ -21,8 +21,10 @@ import {
   Palette,
   Crop,
   Pentagon,
+  PenTool,
   RotateCw,
   Rows,
+  Shapes,
   SlidersHorizontal,
   Square,
   SquareDashed,
@@ -34,7 +36,8 @@ import {
   Unlock,
   Wand2,
 } from 'lucide-react';
-import type { CanvaShapeKind } from '@desigual-os/types';
+import type { CanvaBlendMode, CanvaShapeKind } from '@desigual-os/types';
+import { CANVA_BLEND_MODES } from '@desigual-os/types';
 import type { UseCanvaEditorResult } from '@/hooks/use-canva-editor';
 import { useBrandKit } from '@/hooks/use-brand-kit';
 import { FontPicker } from './font-picker';
@@ -140,6 +143,46 @@ function ColorPicker({
         </div>
       )}
     </div>
+  );
+}
+
+const BLEND_MODE_LABELS: Record<CanvaBlendMode, string> = {
+  normal: 'Normal',
+  multiply: 'Multiplicar',
+  screen: 'Tela',
+  overlay: 'Sobrepor',
+  darken: 'Escurecer',
+  lighten: 'Clarear',
+  'color-dodge': 'Subexposição de cor',
+  'color-burn': 'Superexposição de cor',
+  'hard-light': 'Luz forte',
+  'soft-light': 'Luz suave',
+  difference: 'Diferença',
+  exclusion: 'Exclusão',
+  hue: 'Matiz',
+  saturation: 'Saturação',
+  color: 'Cor',
+  luminosity: 'Luminosidade',
+};
+
+/** Pedido explícito: "blend modes... essencial pra composição de imagem
+ * estilo Photoshop" - `globalCompositeOperation` já é uma prop nativa de
+ * qualquer FabricObject, disponível pra imagem/texto/forma/grupo igual. */
+function BlendModeSelect({ editor }: { editor: UseCanvaEditorResult }) {
+  const blendMode = editor.selection.object?.blendMode ?? 'normal';
+  return (
+    <select
+      value={blendMode}
+      onChange={(event) => editor.setSelectedBlendMode(event.target.value as CanvaBlendMode)}
+      className="h-8 rounded-md border-none bg-transparent px-2 text-xs text-branco-cru focus:outline-none"
+      title="Modo de mesclagem"
+    >
+      {CANVA_BLEND_MODES.map((mode) => (
+        <option key={mode} value={mode} className="bg-grafite text-branco-cru">
+          {BLEND_MODE_LABELS[mode]}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -305,6 +348,84 @@ function ImageBorderMenu({ editor, brandColors }: { editor: UseCanvaEditorResult
         </div>
       )}
     </div>
+  );
+}
+
+const MASK_SHAPE_ICONS: Record<Exclude<CanvaShapeKind, 'line'>, typeof Square> = {
+  rect: Square,
+  ellipse: Circle,
+  triangle: Pentagon,
+  star: Star,
+};
+
+/** Máscara de recorte (pedido explícito: "máscaras de camada") - recorta a
+ * imagem selecionada na silhueta de uma forma, via clipPath nativo do Fabric
+ * (ver setSelectedImageClipShape/buildClipShape). "Retângulo" = sem máscara
+ * extra (só o recorte padrão), é a opção que remove uma máscara já aplicada. */
+function ImageMaskMenu({ editor }: { editor: UseCanvaEditorResult }) {
+  const [open, setOpen] = useState(false);
+  const image = editor.selection.object?.type === 'image' ? editor.selection.object : null;
+  if (!image) return null;
+  const current = image.clipShape ?? 'rect';
+
+  return (
+    <div className="relative">
+      <ToolbarButton label="Máscara" icon={Shapes} active={current !== 'rect'} onClick={() => setOpen((v) => !v)} />
+      {open && (
+        <div
+          role="menu"
+          className="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 gap-1 rounded-lg border border-grafite-elevado bg-grafite p-1 shadow-elevated"
+          onMouseLeave={() => setOpen(false)}
+        >
+          {(Object.keys(MASK_SHAPE_ICONS) as (keyof typeof MASK_SHAPE_ICONS)[]).map((shape) => {
+            const Icon = MASK_SHAPE_ICONS[shape];
+            return (
+              <ToolbarButton
+                key={shape}
+                label={shape === 'rect' ? 'Sem máscara' : `Máscara: ${shape}`}
+                icon={Icon}
+                active={current === shape}
+                onClick={() => {
+                  editor.setSelectedImageClipShape(shape === 'rect' ? null : shape);
+                  setOpen(false);
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Pincel de desenho livre (pedido explícito: "ferramentas de seleção e
+ * pincel") - botão liga/desliga o modo de desenho; enquanto ativo, mostra
+ * cor e espessura do traço direto na toolbar (não escondido num popover,
+ * já que o usuário provavelmente vai ajustar entre um traço e outro). */
+function BrushControls({ editor, brandColors }: { editor: UseCanvaEditorResult; brandColors?: string[] | undefined }) {
+  return (
+    <>
+      <ToolbarButton
+        label={editor.isDrawingMode ? 'Parar de desenhar' : 'Pincel'}
+        icon={PenTool}
+        active={editor.isDrawingMode}
+        onClick={() => editor.setDrawingMode(!editor.isDrawingMode)}
+      />
+      {editor.isDrawingMode && (
+        <>
+          <ColorPicker label="Cor do pincel" value={editor.brushColor} onChange={editor.setBrushColor} brandColors={brandColors} />
+          <input
+            type="range"
+            min={1}
+            max={60}
+            value={editor.brushWidth}
+            onChange={(event) => editor.setBrushWidth(Number(event.target.value))}
+            title="Espessura do pincel"
+            className="w-16 accent-roxo-eletrico"
+          />
+        </>
+      )}
+    </>
   );
 }
 
@@ -519,6 +640,8 @@ export function FloatingToolbar({
         <ToolbarButton label="Imagem" icon={ImageIcon} onClick={onReplaceImage} />
         <ShapePicker editor={editor} />
         <ToolbarButton label="Background" icon={Palette} onClick={onOpenBackground} />
+        <Divider />
+        <BrushControls editor={editor} brandColors={brandColors} />
       </div>
     );
   }
@@ -530,6 +653,7 @@ export function FloatingToolbar({
         {selection.type === 'image' && <ToolbarButton label="Substituir" icon={ImageIcon} onClick={onReplaceImage} />}
         {selection.type === 'image' && <ImageFiltersMenu editor={editor} />}
         {selection.type === 'image' && <ImageBorderMenu editor={editor} brandColors={brandColors} />}
+        {selection.type === 'image' && <ImageMaskMenu editor={editor} />}
         {selection.type === 'image' && (
           <ToolbarButton
             label={removingBackground ? 'Removendo fundo…' : 'Remover fundo'}
@@ -561,6 +685,7 @@ export function FloatingToolbar({
           title="Opacidade"
           className="w-16 accent-roxo-eletrico"
         />
+        <BlendModeSelect editor={editor} />
         <Divider />
         <LayersMenu editor={editor} />
         <ToolbarButton label={isLocked ? 'Desbloquear' : 'Bloquear'} icon={isLocked ? Unlock : Lock} onClick={editor.toggleSelectedLock} />
@@ -657,6 +782,60 @@ export function FloatingToolbar({
           onClick={() => editor.updateSelectedText({ uppercase: !text.uppercase })}
         />
         <Divider />
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={text.opacity}
+          onChange={(event) => editor.setSelectedOpacity(Number(event.target.value))}
+          title="Opacidade"
+          className="w-16 accent-roxo-eletrico"
+        />
+        <BlendModeSelect editor={editor} />
+        <Divider />
+        <SizePositionControls editor={editor} />
+        <Divider />
+        <LayersMenu editor={editor} />
+        <ToolbarButton label={isLocked ? 'Desbloquear' : 'Bloquear'} icon={isLocked ? Unlock : Lock} onClick={editor.toggleSelectedLock} />
+        <ToolbarButton label="Duplicar" icon={Copy} onClick={() => void editor.duplicateSelected()} />
+        <ToolbarButton label="Excluir" icon={Trash2} onClick={editor.deleteSelected} />
+      </div>
+    );
+  }
+
+  if (selection.type === 'path' && selection.object?.type === 'path') {
+    const path = selection.object;
+    return (
+      <div className={shell}>
+        <ColorPicker
+          label="Cor do traço"
+          value={path.stroke}
+          onChange={(color) => editor.updateSelectedPath({ stroke: color })}
+          brandColors={brandColors}
+        />
+        <input
+          type="number"
+          min={1}
+          max={100}
+          value={path.strokeWidth}
+          onChange={(event) => editor.updateSelectedPath({ strokeWidth: Number(event.target.value) })}
+          title="Espessura do traço"
+          className="h-8 w-12 rounded-md bg-carbono px-1.5 text-center text-xs text-branco-cru focus:outline-none"
+        />
+        <Divider />
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={path.opacity}
+          onChange={(event) => editor.setSelectedOpacity(Number(event.target.value))}
+          title="Opacidade"
+          className="w-16 accent-roxo-eletrico"
+        />
+        <BlendModeSelect editor={editor} />
+        <Divider />
         <SizePositionControls editor={editor} />
         <Divider />
         <LayersMenu editor={editor} />
@@ -714,6 +893,7 @@ export function FloatingToolbar({
           title="Opacidade"
           className="w-16 accent-roxo-eletrico"
         />
+        <BlendModeSelect editor={editor} />
         <Divider />
         <SizePositionControls editor={editor} />
         <Divider />
@@ -730,6 +910,18 @@ export function FloatingToolbar({
       {selection.type === 'group' && <ToolbarButton label="Desagrupar" icon={UngroupIcon} onClick={editor.ungroupSelected} />}
       {selection.type === 'group' && <Divider />}
       <SizePositionControls editor={editor} />
+      <Divider />
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={selection.object?.opacity ?? 1}
+        onChange={(event) => editor.setSelectedOpacity(Number(event.target.value))}
+        title="Opacidade"
+        className="w-16 accent-roxo-eletrico"
+      />
+      <BlendModeSelect editor={editor} />
       <Divider />
       <LayersMenu editor={editor} />
       <ToolbarButton label={isLocked ? 'Desbloquear' : 'Bloquear'} icon={isLocked ? Unlock : Lock} onClick={editor.toggleSelectedLock} />

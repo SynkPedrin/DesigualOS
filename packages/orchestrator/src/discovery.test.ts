@@ -67,20 +67,32 @@ vi.mock('@desigual-os/database', () => ({
       from: (_table: unknown) => ({
         innerJoin: (_joinTable: unknown, _joinCond: unknown) => ({
           where: (condition: ConditionDescriptor) => ({
-            limit: (n: number) =>
-              Promise.resolve(
-                fixtureRows
-                  .filter((row) => matches(row, condition))
-                  .slice(0, n)
-                  .map((row) => ({ nodeId: row.nodeId, privateHost: row.privateHost })),
-              ),
+            // `.orderBy()` é só um passthrough aqui - os testes não têm
+            // fixtures com duas linhas ambíguas pro MESMO agente (o cenário
+            // real que a ordenação resolve, ver comentário em discovery.ts),
+            // só precisa existir na cadeia pro código de produção rodar.
+            orderBy: (..._columns: unknown[]) => ({
+              limit: (n: number) =>
+                Promise.resolve(
+                  fixtureRows
+                    .filter((row) => matches(row, condition))
+                    .slice(0, n)
+                    .map((row) => ({ nodeId: row.nodeId, privateHost: row.privateHost })),
+                ),
+            }),
           }),
         }),
       }),
     }),
   },
   schema: {
-    nodes: { nodeId: 'nodes.nodeId', privateHost: 'nodes.privateHost', agentId: 'nodes.agentId', status: NODES_STATUS },
+    nodes: {
+      nodeId: 'nodes.nodeId',
+      privateHost: 'nodes.privateHost',
+      agentId: 'nodes.agentId',
+      status: NODES_STATUS,
+      lastHeartbeatAt: 'nodes.lastHeartbeatAt',
+    },
     agents: { id: 'agents.id', name: AGENTS_NAME },
   },
 }));

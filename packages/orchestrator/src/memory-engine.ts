@@ -259,12 +259,16 @@ export interface RecalledMemory {
   confidence: number | null;
   importance: number | null;
   subject: string | null;
+  metadata: Record<string, unknown> | null;
   updatedAt: Date;
 }
 
 export interface RecallQuery {
   clientId?: string | null;
   agentId?: string | null;
+  /** Escopo M2 (user memory, seção 19/48 da spec V2): preferências e fatos
+   * de um usuário nunca vazam pra outro. */
+  userId?: string | null;
   kinds?: string[];
   limit?: number;
   /** Piso de importância — corta ruído em consulta de contexto apertada. */
@@ -288,6 +292,7 @@ export async function recallMemories(query: RecallQuery): Promise<RecalledMemory
   ];
   if (query.clientId) conditions.push(eq(schema.memories.clientId, query.clientId));
   if (query.agentId) conditions.push(eq(schema.memories.agentId, query.agentId));
+  if (query.userId) conditions.push(eq(schema.memories.userId, query.userId));
   if (query.kinds?.length) {
     conditions.push(sql`${schema.memories.kind} = ANY(${sql.raw(`ARRAY['${query.kinds.map((k) => k.replace(/'/g, "''")).join("','")}']`)})`);
   }
@@ -323,6 +328,7 @@ export async function recallMemories(query: RecallQuery): Promise<RecalledMemory
     confidence: row.confidence === null ? null : Number(row.confidence),
     importance: row.importance === null ? null : Number(row.importance),
     subject: ((row.metadata as { subject?: string } | null)?.subject) ?? null,
+    metadata: (row.metadata as Record<string, unknown> | null) ?? null,
     updatedAt: row.updatedAt,
   }));
 }

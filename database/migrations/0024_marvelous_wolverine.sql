@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "health_checks_node_id_created_at_idx" ON "health_checks" USING btree ("node_id","created_at" desc);

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
-import { requireAuth } from './middleware';
+import { invalidateUserAccessCache, requireAuth } from './middleware';
 import { uploadUserFile } from '../lib/storage';
 import { sendResetPasswordEmail } from '../lib/email';
 
@@ -133,6 +133,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       })
       .where(eq(schema.users.id, request.authUser.id))
       .returning();
+    // requireAuth guarda o perfil em cache curto por processo (nome, tema,
+    // idioma, avatar saem de lá) - sem isto a tela voltaria o valor antigo
+    // até o TTL vencer.
+    invalidateUserAccessCache(request.authUser.id);
 
     if (!updated) {
       reply.code(404);
@@ -179,6 +183,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       .set({ avatarUrl: uploaded.url, updatedAt: new Date() })
       .where(eq(schema.users.id, request.authUser.id))
       .returning();
+    // requireAuth guarda o perfil em cache curto por processo (nome, tema,
+    // idioma, avatar saem de lá) - sem isto a tela voltaria o valor antigo
+    // até o TTL vencer.
+    invalidateUserAccessCache(request.authUser.id);
 
     if (!updated) {
       // O arquivo já subiu pro Storage nesse ponto; fica órfão (não é

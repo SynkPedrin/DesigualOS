@@ -77,30 +77,66 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       .orderBy(desc(schema.conversations.updatedAt))
       .limit(50);
 
-    const conversations = await Promise.all(
-      rows.map(async (row) => {
-        const [lastMessage] = await db
-          .select({ agent: schema.messages.agent, content: schema.messages.content })
-          .from(schema.messages)
-          .where(eq(schema.messages.conversationId, row.id))
-          .orderBy(desc(schema.messages.createdAt))
-          .limit(1);
+    // A última mensagem de cada conversa era buscada numa query POR conversa
+    // (até 50 idas e vindas; com RTT de ~130ms pro Supabase, 5-7s ao vivo).
+    // DISTINCT ON resolve numa ida só: a linha mais recente de cada
+    // conversation_id, sem mudar nada do que volta pro cliente.
+    type LastMessage = Pick<typeof schema.messages.$inferSelect, 'conversationId' | 'agent' | 'content'>;
+    const lastMessageByConversation = new Map<string, LastMessage>();
+    if (rows.length > 0) {
+      const lastMessages = await db
+        .selectDistinctOn([schema.messages.conversationId], {
+          conversationId: schema.messages.conversationId,
+          agent: schema.messages.agent,
+          content: schema.messages.content,
+        })
+        .from(schema.messages)
+        .where(inArray(schema.messages.conversationId, rows.map((row) => row.id)))
+        .orderBy(schema.messages.conversationId, desc(schema.messages.createdAt));
+      for (const message of lastMessages) {
+        lastMessageByConversation.set(message.conversationId, message);
+      }
+    }
 
-        return {
-          id: row.id,
-          client_id: row.clientId,
-          project_id: row.projectId,
-          user_id: row.userId,
-          title: row.title,
-          status: row.status,
-          visibility: row.visibility,
-          last_agent: lastMessage?.agent ?? null,
-          last_message_preview: lastMessage?.content?.slice(0, 120) ?? null,
-          created_at: row.createdAt.toISOString(),
-          updated_at: row.updatedAt.toISOString(),
-        };
-      }),
-    );
+    // Agentes por conversa numa query agrupada só (DISTINCT ON
+    // conversation+agent, restrita às 50 listadas). Sem isto, a sidebar de
+    // /messages disparava GET /conversations?agent=X uma vez POR agente (4
+    // scans completos em messages + 4 HTTP) só pra achar a conversa mais
+    // recente de cada um (medido na auditoria de performance, 12/09/2026).
+    // Campo aditivo: clients antigos simplesmente ignoram `agents`.
+    const agentsByConversation = new Map<string, AgentName[]>();
+    if (rows.length > 0) {
+      const agentRows = await db
+        .selectDistinctOn([schema.messages.conversationId, schema.messages.agent], {
+          conversationId: schema.messages.conversationId,
+          agent: schema.messages.agent,
+        })
+        .from(schema.messages)
+        .where(and(inArray(schema.messages.conversationId, rows.map((row) => row.id)), eq(schema.messages.role, 'assistant')));
+      for (const row of agentRows) {
+        const list = agentsByConversation.get(row.conversationId) ?? [];
+        if (row.agent && !list.includes(row.agent)) list.push(row.agent);
+        agentsByConversation.set(row.conversationId, list);
+      }
+    }
+
+    const conversations = rows.map((row) => {
+      const lastMessage = lastMessageByConversation.get(row.id);
+      return {
+        id: row.id,
+        client_id: row.clientId,
+        project_id: row.projectId,
+        user_id: row.userId,
+        title: row.title,
+        status: row.status,
+        visibility: row.visibility,
+        last_agent: lastMessage?.agent ?? null,
+        last_message_preview: lastMessage?.content?.slice(0, 120) ?? null,
+        agents: agentsByConversation.get(row.id) ?? [],
+        created_at: row.createdAt.toISOString(),
+        updated_at: row.updatedAt.toISOString(),
+      };
+    });
 
     return { conversations };
   });

@@ -1,0 +1,50 @@
+{
+  "label": "depois-bento-vivo",
+  "at": "2026-09-14T12:12:58.208Z",
+  "results": [
+    {
+      "scenarioId": "B01",
+      "agent": "bento",
+      "status": "completed",
+      "latencyMs": 8113,
+      "answer": "A operação está tranquila. Nenhuma tarefa aberta para a Missão Guadalupe hoje.",
+      "checksPassed": 1,
+      "checksTotal": 2,
+      "checksFailed": [
+        "resposta substantiva"
+      ],
+      "groundingHits": 0,
+      "groundingTotal": 2,
+      "leakDetected": false,
+      "score": 64
+    },
+    {
+      "scenarioId": "B02",
+      "agent": "bento",
+      "status": "completed",
+      "latencyMs": 5914,
+      "answer": "6 tarefas vencem amanhã. Isso vem do ClickUp, consultado agora.",
+      "checksPassed": 1,
+      "checksTotal": 1,
+      "checksFailed": [],
+      "groundingHits": 1,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 89
+    },
+    {
+      "scenarioId": "B03",
+      "agent": "bento",
+      "status": "completed",
+      "latencyMs": 16221,
+      "answer": "Os clientes em risco na operação são:\n\nO D. Carvalho está em questão operacional. Além disso, há sinais de risco no Bravvo, incluindo ausência de relatório de performance, fase pós-inauguração sem nova âncora e tasks sem prazo definido. O Risco 4 do Bravvo diz respeito à dependência de uma pessoa (Jamile).\n\nO Clínica São José é um prospecto quente, mas não há sinais de risco imediato.",
+      "checksPassed": 1,
+      "checksTotal": 1,
+      "checksFailed": [],
+      "groundingHits": 1,
+      "groundingTotal": 1,
+      "leakDetected": false,
+      "score": 96
+    }
+  ]
+}
