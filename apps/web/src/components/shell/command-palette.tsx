@@ -16,14 +16,19 @@ export function CommandPalette() {
   const setOpen = useUiStore((state) => state.setCommandPaletteOpen);
   const setStudioModalOpen = useUiStore((state) => state.setStudioModalOpen);
   const { isMaster } = useIsMaster();
+  const [query, setQuery] = useState('');
+  const { data: results } = useSearch(query);
+  // Depende de `query`, então precisa vir DEPOIS do useState: o .filter roda
+  // na hora e ler a const antes da declaração derruba a tela inteira com
+  // "Cannot access before initialization" (o TS não acusa porque o uso está
+  // dentro do callback). Quebrou produção em 14/09/2026.
+  //
   // O filtro do cmdk está desligado (shouldFilter={false}), então a navegação
   // é filtrada aqui. O motivo de desligar está em lib/search-match.ts: o
   // filtro dele escondia cliente que o servidor tinha encontrado.
   const visibleNavItems = NAV_ITEMS.filter(
     (item) => (!item.masterOnly || isMaster) && matchesQuery(item.label, query),
   );
-  const [query, setQuery] = useState('');
-  const { data: results } = useSearch(query);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
