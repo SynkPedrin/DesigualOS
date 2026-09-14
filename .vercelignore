@@ -1,0 +1,13 @@
+# Só o necessário pro build do apps/web na Vercel.
+.agents
+.claude
+artifacts
+assets
+docs
+SKILL E PROCESSO DE CRIAÇÃO
+scripts
+infra
+database
+.github
+*.md
+!README.md

@@ -65,3 +65,7 @@ Brain-Marketing/brain-desigual-ia-labs.md
 
 # Build info incremental do TypeScript (artefato local)
 *.tsbuildinfo
+
+# Ferramentas locais de deploy/QA (binários baixados, outputs de skill)
+.tools/
+Claude outputs/

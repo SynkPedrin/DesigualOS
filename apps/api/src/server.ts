@@ -127,6 +127,18 @@ async function start(): Promise<void> {
     origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
     allowedHeaders: ['Authorization', 'Content-Type'],
   });
+  // Private Network Access (14/09/2026, medido no smoke de produção): quando a
+  // API é alcançada via Tailscale Funnel de DENTRO da tailnet, o hostname
+  // resolve pro IP privado do nó (100.x) e o Chrome exige este header no
+  // preflight, senão bloqueia com "Permission was denied". Quem está fora da
+  // tailnet resolve o IP público do edge e nem nota. Sem ele, ninguém do
+  // escritório conseguia usar o app publicado.
+  app.addHook('onSend', (request, reply, _payload, done) => {
+    if (request.headers.origin) {
+      reply.header('Access-Control-Allow-Private-Network', 'true');
+    }
+    done();
+  });
   // CSP desligado: a API não serve HTML nenhum (é puro JSON/WS), então a
   // única coisa que helmet precisa garantir aqui são os headers que fazem
   // sentido pra uma API pura (X-Content-Type-Options, X-Frame-Options,
