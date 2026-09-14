@@ -20,7 +20,23 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        // Opt-in explícito (E2E_INSECURE_BROWSER=1) pra rodar a suíte com o
+        // frontend LOCAL contra a API publicada: ela responde com o
+        // Access-Control-Allow-Origin da Vercel, então o browser barra
+        // localhost antes de qualquer teste rodar. Desliga só a checagem do
+        // browser — a de verdade continua sendo verificada no preflight da
+        // API. NUNCA ligar em CI: mascararia bug real de CORS.
+        ...(process.env.E2E_INSECURE_BROWSER && !process.env.CI
+          ? { launchOptions: { args: ['--disable-web-security'] } }
+          : {}),
+      },
+    },
+  ],
   // Contra ambiente publicado não há servidor pra subir: o app já está no ar.
   ...(process.env.E2E_BASE_URL
     ? {}

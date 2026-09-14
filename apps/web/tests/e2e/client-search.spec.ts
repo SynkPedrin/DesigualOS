@@ -57,7 +57,8 @@ test.describe('busca de cliente', () => {
     await page.getByRole('option', { name: new RegExp(CLIENT_NAME, 'i') }).click();
     await expect(page.getByRole('heading', { name: CLIENT_NAME })).toBeVisible({ timeout: 20_000 });
 
-    await page.getByRole('button', { name: 'Fechar' }).click();
+    // Escopo em <main>: o X da ficha, não o "Fechar" de outros elementos da tela.
+    await page.getByRole('main').getByRole('button', { name: 'Fechar' }).click();
     await expect(page.getByRole('heading', { name: CLIENT_NAME })).toHaveCount(0);
 
     // Segunda tentativa no MESMO cliente: antes do fix a URL continuava com o
