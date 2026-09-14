@@ -12,6 +12,14 @@
  */
 import { askBentoQA, BentoQAError } from '@desigual-os/tool-gateway';
 import { withPersonality } from '@desigual-os/types';
+import { createLogger } from '@desigual-os/logging';
+import {
+  CLICKUP_INTEGRATION,
+  formatOperationalContextForPrompt,
+  resolveOperationalTurn,
+} from './operational-context';
+
+const logger = createLogger({ service: 'bento-mention' });
 
 function bentoQAConfig(): { url: string; token: string; channel: 'clickup'; preferFormattedText: true } {
   const url = process.env.BENTO_QA_URL ?? 'http://100.93.182.83:8791';
@@ -22,11 +30,44 @@ function bentoQAConfig(): { url: string; token: string; channel: 'clickup'; pref
   return { url, token, channel: 'clickup', preferFormattedText: true };
 }
 
+/**
+ * Dado operacional ao vivo pra pergunta que precisa dele, no MESMO formato que o Chat central
+ * já manda (ver chat/routes.ts).
+ *
+ * POR QUE EXISTE (medido contra o bento-qa real em 14/09/2026): sem este campo, o cérebro do
+ * Bento intercepta a pergunta no detector de cliente dele e responde, em 176ms, "De qual
+ * cliente você quer saber as tasks do ClickUp?" — mesmo quando a pergunta não é sobre um
+ * cliente, e sim sobre a agência inteira ("quantas tarefas vencem hoje?") ou sobre uma pessoa.
+ * Com o campo preenchido, a MESMA pergunta foi respondida corretamente em 3,6s:
+ * "3 tarefas vencem hoje. Vêm do ClickUp, consultado agora".
+ *
+ * Quem sabe resolver escopo, autorizar carteira e consultar o ClickUp é o Orquestrador, e ele
+ * já fazia isso pro chat. Aqui é só reusar — nada de reimplementar consulta dentro do cérebro.
+ */
+async function contextoOperacionalDaMencao(question: string): Promise<string | undefined> {
+  try {
+    const turn = await resolveOperationalTurn(question, CLICKUP_INTEGRATION);
+    // Briefing tem precedência sobre a lista crua, mesma regra do chat.
+    const bloco = turn.briefingBlock ?? formatOperationalContextForPrompt(turn.context);
+    return bloco ?? undefined;
+  } catch (error) {
+    // Pergunta não-operacional e falha de consulta caem no mesmo lugar: seguir sem o bloco é
+    // melhor do que não responder. O cérebro ainda responde pelo vault.
+    logger.warn({ error }, 'não consegui montar o contexto operacional da menção; seguindo sem ele');
+    return undefined;
+  }
+}
+
 /** Pergunta ao Bento e devolve o texto já formatado, pronto pra postar. */
 export async function askBento(question: string): Promise<string> {
+  const operationalContext = await contextoOperacionalDaMencao(question);
   // Personalidade oficial injetada (context-engine/personalities.ts): a
   // menção no ClickUp tem que soar igual ao Bento do chat.
-  const { text } = await askBentoQA(bentoQAConfig(), withPersonality('bento', question));
+  const { text } = await askBentoQA(
+    bentoQAConfig(),
+    withPersonality('bento', question),
+    operationalContext,
+  );
   return text;
 }
 

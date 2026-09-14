@@ -34,8 +34,25 @@ function getClickUpConfig(): { apiKey: string; teamId: string } | null {
   return { apiKey, teamId };
 }
 
+/**
+ * Quem está perguntando, para efeito de recorte de carteira.
+ *
+ * `CLICKUP_INTEGRATION` não é um usuário do app: é a menção @Bento num comentário do ClickUp,
+ * onde quem pergunta já é membro do workspace (autenticado pelo próprio ClickUp) e o webhook
+ * chega assinado por HMAC. Não existe usuário logado nesse caminho, então o recorte é "o que a
+ * integração enxerga" — a carteira inteira, que é exatamente o que o Bento já consultava
+ * sozinho antes, só que agora passando pela listagem do Orquestrador.
+ *
+ * NO DIA em que `hasClientAccess` voltar a restringir de verdade, ESTE caminho precisa ser
+ * revisto junto: ele é o único que não passa por um usuário. Está nomeado assim de propósito,
+ * pra aparecer num grep por autorização.
+ */
+export const CLICKUP_INTEGRATION = 'clickup-integration' as const;
+
+type OperationalPrincipal = AuthenticatedUser | typeof CLICKUP_INTEGRATION;
+
 async function listAuthorizedClients(
-  user: AuthenticatedUser,
+  principal: OperationalPrincipal,
 ): Promise<Array<{ id: string; name: string; clickupListId: string | null }>> {
   const rows = await db
     .select({
@@ -49,9 +66,11 @@ async function listAuthorizedClients(
     // cliente arquivado no meio do briefing.
     .where(isNull(schema.clients.deletedAt));
 
+  if (principal === CLICKUP_INTEGRATION) return rows;
+
   const autorizados: Array<{ id: string; name: string; clickupListId: string | null }> = [];
   for (const row of rows) {
-    if (await hasClientAccess(user, row.id)) autorizados.push(row);
+    if (await hasClientAccess(principal, row.id)) autorizados.push(row);
   }
   return autorizados;
 }
@@ -71,7 +90,7 @@ export interface OperationalTurn {
  */
 export async function resolveOperationalTurn(
   message: string,
-  user: AuthenticatedUser,
+  principal: OperationalPrincipal,
   now: Date = new Date(),
 ): Promise<OperationalTurn> {
   const scope = await resolveOperationalScope(message, now);
@@ -92,7 +111,7 @@ export async function resolveOperationalTurn(
   // As tarefas buscadas são reaproveitadas pelo briefing (uma consulta, dois usos).
   let tarefasBuscadas: Awaited<ReturnType<typeof queryOperationTasks>>['tasks'] = [];
   let truncado = false;
-  const clientesAutorizados = await listAuthorizedClients(user).catch(() => []);
+  const clientesAutorizados = await listAuthorizedClients(principal).catch(() => []);
 
   // Escopo PERSON (14/09/2026): resolve o nome falado pro membro REAL do
   // ClickUp antes de consultar. Sem membro resolvido, a resposta honesta é
