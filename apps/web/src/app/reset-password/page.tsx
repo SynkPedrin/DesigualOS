@@ -25,6 +25,29 @@ export default function ResetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
+    // Mesmo bug do /convite (14/09/2026): o link de recovery traz os tokens
+    // no hash e o @supabase/ssr não os consumia sozinho. Consumo explícito
+    // com setSession; o evento PASSWORD_RECOVERY continua como caminho
+    // principal quando o cliente processa a URL sozinho.
+    async function hydrateFromRecoveryLink() {
+      const hash = window.location.hash;
+      if (hash.includes('access_token=')) {
+        const params = new URLSearchParams(hash.replace(/^#/, ''));
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        if (accessToken && refreshToken) {
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          window.history.replaceState(null, '', window.location.pathname);
+          if (!sessionError) setReady(true);
+          return;
+        }
+      }
+    }
+    void hydrateFromRecoveryLink();
+
     const { data: subscription } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') setReady(true);
     });

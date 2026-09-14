@@ -23,9 +23,40 @@ export default function ConvitePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    // Bug real medido em produção (14/09/2026): o link de convite chega com
+    // os tokens no HASH da URL (#access_token=...&refresh_token=...) e o
+    // cliente @supabase/ssr NÃO os consumia - a sessão nunca existia e a
+    // página mostrava "LINK INVÁLIDO" num link perfeitamente válido. Fix:
+    // parsear o hash e chamar setSession explicitamente, sem depender do
+    // detectSessionInUrl. O hash é removido da URL logo em seguida (o token
+    // não fica exposto no histórico do browser).
+    async function hydrateFromInviteLink() {
+      const hash = window.location.hash;
+      if (hash.includes('access_token=')) {
+        const params = new URLSearchParams(hash.replace(/^#/, ''));
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        if (accessToken && refreshToken) {
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          window.history.replaceState(null, '', window.location.pathname);
+          setStatus(sessionError ? 'invalid' : 'ready');
+          return;
+        }
+      }
+      // Erros do verify do Supabase vêm no hash também (#error=access_denied...).
+      if (hash.includes('error=')) {
+        window.history.replaceState(null, '', window.location.pathname);
+        setStatus('invalid');
+        return;
+      }
+      const { data } = await supabase.auth.getSession();
       setStatus(data.session ? 'ready' : 'invalid');
-    });
+    }
+
+    void hydrateFromInviteLink();
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) setStatus('ready');
     });
