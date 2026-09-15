@@ -26,6 +26,7 @@ import { getClickUpConfigOrNull } from './bento-action-guard';
 import { authorizeAction, proposeActions, resumoDeAcoes, MARCADOR_ATRASO, type AgentAction } from './agent-actions';
 import { executeAction } from './action-executor';
 import { capturePreferences, formatPreferenceBlock, recallPreferences } from './preference-memory';
+import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { queryOperationTasks, getTaskComments, type OperationTask } from '@desigual-os/tool-gateway';
 import { getWriteScopeListId } from '@desigual-os/tool-gateway';
 import type { Logger } from '@desigual-os/logging';
@@ -231,10 +232,31 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   );
   const preferencias = await recallPreferences({ clientId, userId }).catch(() => []);
 
+  // IDENTIDADE DO CLIENTE (bug real de 15/09/2026): sem isto o node recebia
+  // só o vault de teoria de marketing e inventava quem era o cliente — chegou
+  // a dizer que uma concessionária John Deere era "rede de joias".
+  const clienteDoTurno = await resolveClientTurnContext({
+    message: data.message,
+    executionClientId: clientId,
+  }).catch(() => null);
+  const totalClientes = await contarClientes().catch(() => 0);
+  const blocoCliente = clienteDoTurno ? formatClientBlock(clienteDoTurno, totalClientes) : "";
+
   const nowIso = new Date().toISOString();
   const evidence: Evidence[] = [];
   // Preferência é evidência de 1a classe: a resposta que a segue está
   // ancorada numa regra real do cliente, não em estilo do modelo.
+  if (clienteDoTurno?.clientId && clienteDoTurno.profile) {
+    evidence.push({
+      type: 'document',
+      source: 'client.profile',
+      sourceId: clienteDoTurno.clientId,
+      clientId: clienteDoTurno.clientId,
+      confidence: 0.95,
+      retrievedAt: nowIso,
+      summary: `Dossiê de ${clienteDoTurno.clientName}: ${clienteDoTurno.profile.slice(0, 200)}`,
+    });
+  }
   for (const p of preferencias) {
     evidence.push({
       type: 'memory',
@@ -312,7 +334,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   const planoInicial = state.structuredPlan.steps.map((x) => ({ id: x.id, type: x.type, objective: x.objective }));
 
   // ---- STEP LOOP: o runtime controla a execução ----
-  const evaluator = evaluatorFor(data.agent);
+  // O nome do cliente resolvido vira termo de marca do avaliador: copy que cita
+  // a marca não é genérica por definição.
+  const evaluator = evaluatorFor(data.agent, clienteDoTurno?.clientName ? [clienteDoTurno.clientName] : []);
   let nodeAnswer: string | null = null;
   let nodeCalled = false;
   let useReduced = false;
@@ -326,8 +350,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     state.iterations += 1;
     try {
       const blocoPreferencias = formatPreferenceBlock(preferencias);
+      const extras = [blocoCliente, blocoPreferencias].filter((b) => b.length > 0);
       const response = await callAgent(
-        blocoPreferencias ? `${message}\n\n---\n${blocoPreferencias}` : message,
+        extras.length > 0 ? `${message}\n\n---\n${extras.join('\n\n')}` : message,
       );
       lastNodeMetadata = response.metadata;
       const ok = response.status === 'completed' && Boolean(response.answer?.trim());
@@ -594,7 +619,20 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   };
 
   const loop = await runStepLoop(hooks, state, { ...DEFAULT_STEP_LIMITS, maxRetriesPerStep: 1 });
-  const completed = loop.completed && Boolean(loop.answer?.trim());
+  // ENTREGA COM RESSALVA (criativo): quando a porta de qualidade reprova até
+  // esgotar o replan, devolver VAZIO é o pior resultado possível pra quem
+  // pediu uma legenda — a pessoa fica sem nada e sem saber por quê. Copy fraca
+  // ela edita; silêncio ela não. A regra que continua valendo é a original:
+  // material genérico NÃO sai como aprovado. Sai rotulado.
+  //
+  // Só vale pro caminho criativo. Turno factual do Bento continua falhando de
+  // verdade: ali um número errado é pior que resposta nenhuma.
+  const criativo = data.agent === 'otto';
+  const textoDisponivel = (loop.answer ?? nodeAnswer ?? "").trim();
+  const entregaComRessalva =
+    !loop.completed && criativo && textoDisponivel.length > 0 && loop.terminationReason === 'replan_exhausted';
+
+  const completed = (loop.completed && Boolean(loop.answer?.trim())) || entregaComRessalva;
   state.phase = completed ? 'COMPLETED' : 'FAILED';
   await checkpoint(true);
 
@@ -648,7 +686,11 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     execution_id: data.executionId,
     agent: data.agent as AgentName,
     status: completed ? 'completed' : 'failed',
-    answer: completed ? loop.answer : null,
+    answer: entregaComRessalva
+      ? `${textoDisponivel}\n\n---\nObs.: não aprovei isso na minha própria régua de qualidade (ficou genérico demais pra marca). Estou entregando pra você não ficar travado, mas vale pedir outro ângulo.`
+      : completed
+        ? loop.answer
+        : null,
     sources: [],
     tool_calls: [],
     usage: { input_tokens: 0, output_tokens: 0 },

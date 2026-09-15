@@ -123,9 +123,22 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_NUM_CTX = 16_384;
 /** Ver OttoLLMProviderConfig.keepAlive: evita cold load de ~1,9 GB entre perguntas. */
 const DEFAULT_KEEP_ALIVE = '30m';
-/** Tetos de geração (ver OttoChatOptions.numPredict). */
+/**
+ * Tetos de geração (ver OttoChatOptions.numPredict).
+ *
+ * O teto de JSON era 1.600, dimensionado para os modelos 3B que o node usava
+ * antes (mistral/qwen2.5:3b, que escrevem pouco por campo). Com o modelo forte
+ * na RTX 4090 o plano de carrossel de 10 slides passou a ocupar mais de 6.000
+ * caracteres e era CORTADO no meio do array — o JSON chegava inválido e o turno
+ * morria em "invalid JSON even after unwrapping" (medido ao vivo em
+ * 15/09/2026, posições 6108 e 6191, as duas no fim da lista de slides).
+ *
+ * 4.000 cobre o pior caso real (10 slides com 8 campos cada) com folga. Não é
+ * gasto extra por turno: `num_predict` é TETO, não alvo — resposta curta
+ * continua curta. E `format: json` segura o decode dentro do formato.
+ */
 const DEFAULT_NUM_PREDICT_CHAT = 1_000;
-const DEFAULT_NUM_PREDICT_JSON = 1_600;
+const DEFAULT_NUM_PREDICT_JSON = 4_000;
 
 export function createOttoLLMProvider(config: OttoLLMProviderConfig): OttoLLMProvider {
   const { baseUrl, model } = config;

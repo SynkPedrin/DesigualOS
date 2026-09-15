@@ -80,7 +80,15 @@ export function successCriteriaFor(agent: AgentName): string[] {
  * DEPOIS da régua base (que continua valendo: ação ok, não vazio, sem
  * vazamento interno).
  */
-export function evaluatorFor(agent: AgentName): Evaluator {
+/**
+ * `brandTerms` é o que permite a porta anti-genérico responder a pergunta que
+ * ela existe pra responder: "essa copy serviria pra qualquer marca?". Sem o
+ * nome do cliente, NENHUMA copy podia ancorar em marca — e depois que o número
+ * deixou de contar como âncora (15/09/2026), turno criativo legítimo passou a
+ * reprovar duas vezes e morrer em replan_exhausted, deixando o usuário sem
+ * resposta nenhuma. Medido ao vivo com um pedido real de legenda.
+ */
+export function evaluatorFor(agent: AgentName, brandTerms: string[] = []): Evaluator {
   return (input) => {
     const base = deterministicEvaluator({
       ...input,
@@ -108,7 +116,7 @@ export function evaluatorFor(agent: AgentName): Evaluator {
         // PORTA DETERMINÍSTICA ANTES DO LLM (§74, §76): copy genérica que serviria
         // pra qualquer marca reprova, e o loop replaneja — que é a auto-revisão
         // criativa (§73) sem depender de um segundo julgamento por modelo.
-        const copy = assessCreativeCopy(text);
+        const copy = assessCreativeCopy(text, { brandTerms });
         if (copy.generic) failures.push(`Otto entregou ${copy.reason}`);
         break;
       }
