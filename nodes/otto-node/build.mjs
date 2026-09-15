@@ -16,6 +16,9 @@ import { build } from 'esbuild';
 // NOTA: `dist/index.js` só funciona com NODE_ENV=production (o "start" do
 // package.json já força isso) - ver comentário completo em
 // nodes/desigual-node/build.mjs (mesmo bug de __dirname em ESM bundled).
+const RELEASE_SHA = process.env.RELEASE_SHA ?? 'dev';
+const BUILD_TIME = new Date().toISOString();
+
 await build({
   entryPoints: ['src/index.ts'],
   bundle: true,
@@ -23,6 +26,12 @@ await build({
   format: 'esm',
   target: 'node20',
   outfile: 'dist/index.js',
+  // Carimba SHA e hora no bundle: o /health do node passa a dizer que versão
+  // está atendendo, em vez de "deve estar atualizado".
+  define: {
+    'process.env.RELEASE_SHA': JSON.stringify(RELEASE_SHA),
+    'process.env.BUILD_TIME': JSON.stringify(BUILD_TIME),
+  },
   sourcemap: true,
   logLevel: 'info',
   banner: {

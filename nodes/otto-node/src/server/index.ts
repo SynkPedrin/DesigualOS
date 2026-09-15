@@ -57,6 +57,14 @@ export function buildServer(
       status,
       node_id: config.NODE_ID,
       timestamp: new Date().toISOString(),
+      // RASTREABILIDADE (§23): sem isto, saber se a máquina roda o código
+      // novo virava arqueologia de `ls -la dist`. Injetado no build; em dev
+      // fica 'dev'. NUNCA carrega segredo: só SHA, data, modelo e host do
+      // backend de inferência.
+      release_sha: process.env.RELEASE_SHA ?? 'dev',
+      build_time: process.env.BUILD_TIME ?? 'dev',
+      model: config.otto.model,
+      inference_backend: new URL(config.otto.ollamaUrl).host,
       llm,
       brain,
     };
