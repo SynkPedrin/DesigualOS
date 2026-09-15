@@ -64,11 +64,24 @@ export interface StepLoopLimits {
   repeatedToolThreshold: number;
 }
 
+/**
+ * Tetos do loop.
+ *
+ * `maxDurationMs` era 120s, dimensionado para os modelos 3B locais. Com a
+ * inferência forte na RTX 4090 e o dossiê do cliente dentro do prompt, um turno
+ * criativo que precisa replanejar passa disso com folga — e o usuário recebia
+ * "o agente não completou o objetivo (timeout)" depois de o node já ter
+ * respondido (medido ao vivo em 15/09/2026).
+ *
+ * 300s casa com o timeout do próprio provider do Otto (OTTO_LLM_TIMEOUT_MS) e
+ * com a janela de uma geração longa + uma revisão. Continua sendo TETO: turno
+ * rápido segue rápido, e os limites de passo/tool/repetição é que impedem loop.
+ */
 export const DEFAULT_STEP_LIMITS: StepLoopLimits = {
   maxSteps: 12,
   maxToolCalls: 8,
   maxRetriesPerStep: 2,
-  maxDurationMs: 120_000,
+  maxDurationMs: 300_000,
   repeatedToolThreshold: 3,
 };
 

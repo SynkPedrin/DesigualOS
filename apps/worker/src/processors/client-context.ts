@@ -35,7 +35,11 @@ export interface ClientTurnContext {
   ambiguous: string[];
 }
 
-const PERFIL_MAX_CHARS = 2400;
+// Os BRAIN.md dos clientes tem mediana ~2.8k e chegam a 12k. 2.400 cortava
+// o dossie no meio — justamente as secoes de posicionamento e restricoes, que
+// sao o que impede o modelo de inventar. 6.000 cobre a grande maioria inteiro
+// e ainda cabe no orcamento de prompt do node.
+const PERFIL_MAX_CHARS = 6000;
 
 /**
  * Resolve o cliente do turno. Precedência: cliente da execução (seletor do
