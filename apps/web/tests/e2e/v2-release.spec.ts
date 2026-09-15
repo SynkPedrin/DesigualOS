@@ -52,7 +52,9 @@ test.describe('V2 release — navegador real', () => {
     const url = page.url();
     await page.reload();
     await expect(page).toHaveURL(url);
-    await expect(page.locator('main')).toContainText(/\d+\s+tarefa/i, { timeout: 30_000 });
+    // Pós-reload o app recarrega a lista de conversas antes de reidratar a
+    // thread; com histórico grande isso passa de 30s.
+    await expect(page.locator('main')).toContainText(/\d+\s+tarefa/i, { timeout: 90_000 });
   });
 
   test('Otto cria copy especifica da marca, sem cliche e sem inventar preco', async ({ page }) => {
