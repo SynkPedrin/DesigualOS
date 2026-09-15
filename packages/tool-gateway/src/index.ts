@@ -6,3 +6,5 @@ export * from './attributed-task';
 export * from './gateway';
 export * from './webhook';
 export * from './clickup-operation';
+export * from './task-verification';
+export * from './write-scope';

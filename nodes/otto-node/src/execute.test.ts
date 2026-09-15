@@ -11,6 +11,7 @@ import {
   productionSpecSchema,
   retrieveRelevantKnowledge,
   type OttoLLMProvider,
+  type ResearchProvider,
   type RetrieveOptions,
 } from '@desigual-os/otto';
 import { loadConfig } from './config.js';
@@ -86,6 +87,7 @@ function makeDeps(
   behavior: FakeProviderBehavior,
   brainPath: string,
   retrievalCalls: RetrievalCall[] = [],
+  researchProvider: ResearchProvider | null = null,
 ): OttoNodeDeps {
   // Cast no objeto inteiro: chatJson é genérica no contrato real e a fake
   // despacha por identidade do schema, algo que o TS não consegue tipar sem
@@ -110,6 +112,7 @@ function makeDeps(
       return retrieveRelevantKnowledge(loadBrainIndex(brainPath), query, options);
     },
     brainHealth: () => checkBrainHealth(brainPath),
+    researchProvider,
   };
 }
 
@@ -128,8 +131,13 @@ afterEach(() => {
   rmSync(brainDir, { recursive: true, force: true });
 });
 
+/**
+ * `logger: false` de propósito: sem ele cada caso subiria uma worker thread de
+ * pino-pretty, e os `process.on('exit')` do pino se acumulavam antes de as
+ * threads ficarem prontas (MaxListenersExceededWarning). Ver buildServer.
+ */
 function buildTestApp(deps: OttoNodeDeps) {
-  return buildServer(loadConfig({ NODE_SECRET: 'segredo-teste' }), deps);
+  return buildServer(loadConfig({ NODE_SECRET: 'segredo-teste' }), deps, false);
 }
 
 async function execute(app: ReturnType<typeof buildTestApp>, payload: Record<string, unknown>, secret = 'segredo-teste') {
@@ -652,6 +660,204 @@ describe('DNA criativo no turno (client_brand_kit)', () => {
     // Razão repetida (2x) vira padrão rejeitado; razão única não.
     expect(body.metadata.creative_dna.rejectedPatterns).toContain('tipografia fina demais');
     expect(body.metadata.creative_dna.approvedPatterns).not.toContain('gostou da paleta vibrante');
+
+    await app.close();
+  });
+});
+
+/**
+ * Loop criativo ao vivo no node (§52-§67): CreativeState -> lacunas ->
+ * pesquisa -> geração -> porta anti-genérico -> auto-revisão. Estes casos
+ * existem porque, até serem escritos, runCreativePipeline/runResearch eram
+ * código exportado e testado em packages/otto SEM nenhum caller em runtime:
+ * o node chamava createCreativePlan direto e entregava a 1a versão.
+ */
+describe('POST /execute — loop criativo (pipeline + pesquisa + qualidade)', () => {
+  const PEDIDO_COM_PESQUISA = {
+    execution_id: 'exe-pipeline',
+    message: 'Crie um post sobre as tendências atuais de mercado para o cliente',
+    context_refs: [`client:${CLIENT_ID}`],
+  };
+
+  it('expõe estado, lacunas e trace do pipeline na metadata', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        { chatJson: (schema) => (schema === creativePlanSchema ? Promise.resolve(creativePlanFixture) : Promise.reject(new OttoLLMError('schema inesperado'))) },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-pipeline-1',
+      message: 'Crie um post para o cliente',
+      context_refs: [`client:${CLIENT_ID}`],
+    });
+
+    const pipeline = body.metadata.creative_pipeline;
+    expect(pipeline).toBeDefined();
+    // Sem brand kit e sem histórico, o estado DECLARA o que falta em vez de inventar.
+    expect(pipeline.gaps).toContain('brand_context');
+    expect(pipeline.gaps).toContain('offer');
+    expect(pipeline.trace.length).toBeGreaterThan(0);
+    expect(pipeline.quality_passed).toBe(true);
+
+    await app.close();
+  });
+
+  it('objetivo que pede dado atual dispara pesquisa REAL e vira evidência web', async () => {
+    let buscou = '';
+    const provider: ResearchProvider = {
+      search: async (query) => {
+        buscou = query;
+        return [
+          { url: 'https://exame.com/tendencias', title: 'Tendências 2026', snippet: 'Vídeo curto domina o consumo em 2026.' },
+          { url: 'https://meioemensagem.com.br/x', title: 'Mercado', snippet: 'Marcas migram verba para creators.' },
+        ];
+      },
+    };
+
+    let clientContextVisto = '';
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema !== creativePlanSchema) return Promise.reject(new OttoLLMError('schema inesperado'));
+            clientContextVisto = JSON.stringify(messages);
+            return Promise.resolve(creativePlanFixture);
+          },
+        },
+        brainDir,
+        [],
+        provider,
+      ),
+    );
+
+    const { body } = await execute(app, PEDIDO_COM_PESQUISA);
+
+    const pesquisa = body.metadata.creative_pipeline.research;
+    expect(pesquisa.performed).toBe(true);
+    expect(buscou).toContain('tendências atuais');
+    expect(pesquisa.sources.length).toBeGreaterThanOrEqual(2);
+    expect(pesquisa.single_source).toBe(false);
+    // Evidência de 1a classe: type web, com a URL real como sourceId (§59).
+    expect(pesquisa.evidence[0].type).toBe('web');
+    expect(pesquisa.evidence[0].sourceId).toContain('https://');
+    // E o achado chegou de fato ao prompt do planner — pesquisa que não
+    // alimenta a geração seria teatro.
+    expect(clientContextVisto).toContain('Vídeo curto domina');
+
+    await app.close();
+  });
+
+  it('sem provider configurado a pesquisa NÃO acontece e isso fica declarado', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        { chatJson: (schema) => (schema === creativePlanSchema ? Promise.resolve(creativePlanFixture) : Promise.reject(new OttoLLMError('x'))) },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, PEDIDO_COM_PESQUISA);
+
+    const pipeline = body.metadata.creative_pipeline;
+    expect(pipeline.requires_research).toBe(true);
+    // O ponto do teste: requiresResearch=true + performed=false. O Otto não
+    // diz que pesquisou; a ausência aparece na auditoria.
+    expect(pipeline.research.performed).toBe(false);
+    expect(pipeline.research.evidence).toEqual([]);
+
+    await app.close();
+  });
+
+  it('copy genérica reprova na porta e o Otto se auto-revisa até passar', async () => {
+    let tentativas = 0;
+    const briefingsVistos: string[] = [];
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema !== creativePlanSchema) return Promise.reject(new OttoLLMError('schema inesperado'));
+            tentativas += 1;
+            briefingsVistos.push(JSON.stringify(messages));
+            // 1a tentativa: clichê puro, curto e sem âncora → reprova.
+            if (tentativas === 1) {
+              return Promise.resolve({ ...creativePlanFixture, copy: 'Transforme seu negócio. A solução completa.' });
+            }
+            return Promise.resolve({ ...creativePlanFixture, copy: 'A pizza que sai do forno a 400 graus em 90 segundos.' });
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-revisao',
+      message: 'Crie um post para o cliente',
+      context_refs: [`client:${CLIENT_ID}`],
+    });
+
+    const pipeline = body.metadata.creative_pipeline;
+    expect(tentativas).toBe(2);
+    expect(pipeline.revisions).toBe(1);
+    expect(pipeline.quality_passed).toBe(true);
+    // A revisão não foi um retry cego: o motivo da reprovação entrou no briefing.
+    expect(briefingsVistos[1]).toContain('REVISÃO OBRIGATÓRIA');
+    // E o que foi entregue é a versão revisada, não a genérica.
+    expect(body.metadata.creative_plan.copy).toContain('400 graus');
+
+    await app.close();
+  });
+
+  it('copy genérica persistente NÃO é entregue como aprovada', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) =>
+            schema === creativePlanSchema
+              ? Promise.resolve({ ...creativePlanFixture, copy: 'Transforme seu negócio. A solução completa.' })
+              : Promise.reject(new OttoLLMError('schema inesperado')),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-generica',
+      message: 'Crie um post para o cliente',
+      context_refs: [`client:${CLIENT_ID}`],
+    });
+
+    const pipeline = body.metadata.creative_pipeline;
+    expect(pipeline.quality_passed).toBe(false);
+    expect(pipeline.quality_assessment.generic).toBe(true);
+    expect(pipeline.revisions).toBeGreaterThanOrEqual(1);
+
+    await app.close();
+  });
+
+  it('histórico de feedback do cliente vira referência aprovada/rejeitada do estado', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        { chatJson: (schema) => (schema === creativePlanSchema ? Promise.resolve(creativePlanFixture) : Promise.reject(new OttoLLMError('x'))) },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-historico',
+      message: 'Crie um post para o cliente',
+      context_refs: [`client:${CLIENT_ID}`],
+      client_brand_kit: { colors: ['#000'], fonts: ['Grotesque'], tone_of_voice: 'direto', logo_url: null },
+      client_feedback_history: [
+        { verdict: 'approved', reason: 'close de produto', context: 'carrossel de maio' },
+        { verdict: 'rejected', reason: 'texto demais', context: 'post de abril' },
+      ],
+    });
+
+    const pipeline = body.metadata.creative_pipeline;
+    // Com brand kit e histórico reais, as lacunas de marca e histórico somem.
+    expect(pipeline.gaps).not.toContain('brand_context');
+    expect(pipeline.gaps).not.toContain('creative_history');
 
     await app.close();
   });

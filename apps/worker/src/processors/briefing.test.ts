@@ -1,0 +1,196 @@
+import { describe, expect, it } from 'vitest';
+import { classifyDeliveryType, sectionsFor } from './briefing-schema';
+import { extractLabeledFacts, mergeFacts } from './briefing-facts';
+import { composeBriefing } from './briefing-composer';
+import { evaluateBriefing } from './briefing-quality';
+
+/**
+ * O briefing que motivou tudo isto dizia "Executar a entrega descrita no
+ * título desta task" e foi anexado como se fosse trabalho. Estes testes
+ * guardam as duas coisas: que ele REPROVA, e que o briefing novo muda de
+ * forma conforme o que está sendo produzido.
+ */
+
+const base = {
+  taskName: 'Campanha de lançamento',
+  clientName: 'Nexa Fit',
+  requestedBy: 'QA Bot',
+  dueDateLabel: '20/09',
+  assignee: 'Ana',
+  references: [] as string[],
+  requestSummary: 'Lançar a nova unidade com campanha de captação de matrículas',
+};
+
+const fatosRicos = [
+  { field: 'objetivo', value: 'captar matrículas para a nova unidade', source: 'pedido do usuário' },
+  { field: 'publico', value: '25-40 anos, profissionais com pouco tempo', source: 'dossiê do cliente' },
+  { field: 'oferta', value: 'primeiro mês por R$49', source: 'comentário da task' },
+  { field: 'produto', value: 'academia premium', source: 'dossiê do cliente' },
+  { field: 'tom', value: 'sofisticado, energético, sem exagero', source: 'brand kit' },
+  { field: 'mensagem', value: 'treino premium que cabe na agenda', source: 'dossiê do cliente' },
+  { field: 'cta', value: 'Agende sua aula inaugural', source: 'pedido do usuário' },
+  { field: 'canal', value: 'Meta Ads + Instagram', source: 'pedido do usuário' },
+  { field: 'entregaveis', value: '3 criativos estáticos + 1 vídeo', source: 'pedido do usuário' },
+  { field: 'aprovacao', value: 'aprovação do gestor da unidade antes de subir mídia', source: 'comentário da task' },
+];
+
+describe('classificação por tipo de entrega', () => {
+  it.each([
+    ['campanha de lançamento da nova unidade', 'campaign'],
+    ['produzir 3 reels para lançamento', 'video'],
+    ['landing page da campanha', 'landing_page'],
+    ['automatizar a entrada dos leads no CRM', 'technical'],
+    ['post de carrossel para o feed', 'social_content'],
+    ['revisar contrato', 'generic'],
+  ])('%s -> %s', (texto, esperado) => {
+    expect(classifyDeliveryType(texto)).toBe(esperado);
+  });
+
+  it('cada tipo tem estrutura DIFERENTE', () => {
+    const chaves = (t: Parameters<typeof sectionsFor>[0]) => sectionsFor(t).map((s) => s.key).join(',');
+    expect(chaves('technical')).not.toBe(chaves('campaign'));
+    expect(chaves('video')).not.toBe(chaves('landing_page'));
+  });
+
+  it('briefing técnico NÃO fala de direção visual nem público', () => {
+    const chaves = sectionsFor('technical').map((s) => s.key);
+    expect(chaves).not.toContain('visual');
+    expect(chaves).not.toContain('publico');
+    expect(chaves).toContain('tecnico');
+  });
+
+  it('briefing de vídeo exige hook e estrutura', () => {
+    const campos = sectionsFor('video').flatMap((s) => s.fields.map((f) => f.key));
+    expect(campos).toContain('hook');
+    expect(campos).toContain('estrutura');
+  });
+
+  it('landing page exige seções e critério de conversão', () => {
+    const campos = sectionsFor('landing_page').flatMap((s) => s.fields.map((f) => f.key));
+    expect(campos).toContain('secoes');
+    expect(campos).toContain('conversao');
+  });
+});
+
+describe('extração de fatos com procedência', () => {
+  it('lê rótulos de markdown do dossiê', () => {
+    const fatos = extractLabeledFacts('- Público: donos de pet shop\n- Segmento: varejo', 'dossiê');
+    expect(fatos).toEqual([
+      { field: 'publico', value: 'donos de pet shop', source: 'dossiê', sourceId: null },
+      { field: 'produto', value: 'varejo', source: 'dossiê', sourceId: null },
+    ]);
+  });
+
+  it('ignora placeholder de "não informado" (não é fato)', () => {
+    expect(extractLabeledFacts('- Público: `Não informado`\n- Oferta: a definir', 'dossiê')).toEqual([]);
+  });
+
+  it('precedência: a primeira fonte declarada vence', () => {
+    const merged = mergeFacts(
+      [{ field: 'oferta', value: 'R$49', source: 'pedido' }],
+      [{ field: 'oferta', value: 'R$99', source: 'dossiê' }],
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.value).toBe('R$49');
+  });
+});
+
+describe('composição — não inventa, declara pendência', () => {
+  it('briefing rico fica executável e específico', () => {
+    const b = composeBriefing({ ...base, deliveryType: 'campaign', facts: fatosRicos });
+    const ev = evaluateBriefing(b, { clientName: 'Nexa Fit' });
+    expect(ev.executable).toBe(true);
+    expect(ev.recommendation).toBe('approve');
+    expect(b.markdown).toContain('primeiro mês por R$49');
+    expect(b.markdown).toContain('25-40 anos');
+    expect(ev.dimensions.clientSpecificity).toBeGreaterThan(0.9);
+  });
+
+  it('contexto ausente vira PENDENTE, nunca dado inventado', () => {
+    const b = composeBriefing({
+      ...base,
+      taskName: 'Campanha de lançamento do Produto X',
+      clientName: 'Produto X',
+      deliveryType: 'campaign',
+      facts: [{ field: 'objetivo', value: 'lançar o produto', source: 'pedido do usuário' }],
+    });
+    expect(b.markdown).toContain('PENDENTE DE CONFIRMAÇÃO');
+    expect(b.missing).toContain('Público-alvo');
+    expect(b.missing).toContain('Oferta');
+    // O ponto do teste: nada de público inventado.
+    expect(b.markdown).not.toMatch(/\d{2}\s*a\s*\d{2}\s*anos/);
+    expect(evaluateBriefing(b).executable).toBe(false);
+  });
+
+  it('todo campo preenchido carrega fonte (rastro interno)', () => {
+    const b = composeBriefing({ ...base, deliveryType: 'campaign', facts: fatosRicos });
+    expect(b.grounded.every((g) => g.source.length > 0)).toBe(true);
+    expect(b.grounded.find((g) => g.field === 'oferta')?.source).toBe('comentário da task');
+  });
+
+  it('multi-fonte: pedido + comentário + memória + dossiê convivem', () => {
+    const b = composeBriefing({
+      ...base,
+      deliveryType: 'campaign',
+      facts: mergeFacts(
+        extractLabeledFacts('Objetivo: campanha de aniversário', 'pedido do usuário'),
+        extractLabeledFacts('Oferta: 20% de desconto', 'comentário da task'),
+        [{ field: 'proibidos', value: 'Preferência de emoji: não usar emojis', source: 'memória do cliente' }],
+        extractLabeledFacts('- Público: famílias da região\n- Posicionamento: bairro, afetivo', 'dossiê do cliente'),
+      ),
+    });
+    expect(b.markdown).toContain('20% de desconto');
+    expect(b.markdown).toContain('famílias da região');
+    expect(b.markdown).toContain('não usar emojis');
+    const fontes = new Set(b.grounded.map((g) => g.source));
+    expect(fontes.has('pedido do usuário')).toBe(true);
+    expect(fontes.has('comentário da task')).toBe(true);
+    expect(fontes.has('memória do cliente')).toBe(true);
+    expect(fontes.has('dossiê do cliente')).toBe(true);
+  });
+});
+
+describe('porta anti-genérico do briefing', () => {
+  const GENERICO = [
+    '# Briefing: QA',
+    '## OBJETIVO',
+    '- Objetivo principal: Executar a entrega descrita no título desta task, dentro do prazo.',
+    '## CONTEXTO',
+    '- Situação: Task criada via chat. Detalhes adicionais devem ser complementados pelo solicitante.',
+  ].join('\n');
+
+  it('REPROVA o briefing genérico que estava sendo anexado', () => {
+    const ev = evaluateBriefing({
+      markdown: GENERICO,
+      deliveryType: 'generic',
+      missingCritical: [],
+      missing: [],
+      grounded: [
+        { field: 'objetivo', source: 'template' },
+        { field: 'situacao', source: 'template' },
+        { field: 'entregaveis', source: 'template' },
+        { field: 'aprovacao', source: 'template' },
+      ],
+    });
+    expect(ev.executable).toBe(false);
+    expect(ev.genericSections.length).toBeGreaterThan(0);
+    expect(ev.recommendation).toBe('revise');
+  });
+
+  it('briefing que é quase só pendência também reprova', () => {
+    const b = composeBriefing({ ...base, deliveryType: 'campaign', facts: [] });
+    const ev = evaluateBriefing(b);
+    expect(ev.executable).toBe(false);
+    expect(ev.recommendation).toBe('retrieve_more_context');
+  });
+
+  it('recomendação diz o que fazer, não só que está ruim', () => {
+    const b = composeBriefing({
+      ...base,
+      deliveryType: 'campaign',
+      facts: fatosRicos.filter((x) => x.field !== 'entregaveis'),
+    });
+    const ev = evaluateBriefing(b, { clientName: 'Nexa Fit' });
+    expect(['revise', 'ask_user', 'retrieve_more_context']).toContain(ev.recommendation);
+  });
+});

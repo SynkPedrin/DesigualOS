@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import {
   executeRequestSchema,
   nodeCapabilitiesResponseSchema,
@@ -9,20 +9,37 @@ import { createDefaultDeps, executeTask, type OttoNodeDeps } from '../execute.js
 import { requireNodeSecret } from '../security/index.js';
 import { runtimeState, uptimeSeconds } from '../state.js';
 
-export function buildServer(config: OttoNodeConfig, deps: OttoNodeDeps = createDefaultDeps(config)): FastifyInstance {
-  const isProd = process.env.NODE_ENV === 'production';
+/**
+ * Logger do turno. Fora de produção usamos pino-pretty, e cada transport do
+ * pino sobe uma worker thread e registra um `process.on('exit')` enquanto ela
+ * não fica pronta (pino/lib/transport.js: buildStream). Com UM servidor por
+ * processo isso é irrelevante - o próprio pino remove o listener no 'ready'.
+ * Em teste, porém, cada caso constrói um servidor novo, e os listeners se
+ * acumulam mais rápido do que as threads ficam prontas: era daí que vinha o
+ * MaxListenersExceededWarning ("11 exit listeners added to [process]").
+ * Por isso a opção é injetável: o teste passa `false` e não sobe transport
+ * nenhum. Ninguém lê log bonito no meio de uma suíte.
+ */
+export type OttoServerLogger = NonNullable<FastifyServerOptions['logger']>;
 
-  const app = Fastify({
-    logger: isProd
-      ? { level: process.env.LOG_LEVEL ?? 'info' }
-      : {
-          level: process.env.LOG_LEVEL ?? 'info',
-          transport: {
-            target: 'pino-pretty',
-            options: { colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
-          },
-        },
-  });
+function defaultLogger(): OttoServerLogger {
+  const level = process.env.LOG_LEVEL ?? 'info';
+  if (process.env.NODE_ENV === 'production') return { level };
+  return {
+    level,
+    transport: {
+      target: 'pino-pretty',
+      options: { colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
+    },
+  };
+}
+
+export function buildServer(
+  config: OttoNodeConfig,
+  deps: OttoNodeDeps = createDefaultDeps(config),
+  logger: OttoServerLogger = defaultLogger(),
+): FastifyInstance {
+  const app = Fastify({ logger });
 
   app.get('/health', async () => {
     // Health REAL agregado, não o "sempre ok" do desigual-node: o Otto sem

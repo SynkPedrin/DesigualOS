@@ -94,6 +94,9 @@ export type { BrandKit, CreativeDNA } from './creative/dna.js';
 export { generateImageCaption } from './creative/caption-from-image.js';
 export type { GenerateImageCaptionInput, GeneratedImageCaption } from './creative/caption-from-image.js';
 
+export { assessCreativeCopy } from './creative/anti-generic.js';
+export type { CopyAssessment, AssessCopyOptions } from './creative/anti-generic.js';
+
 export {
   canPromote,
   createLearning,
@@ -123,3 +126,11 @@ export type {
   OttoFeedbackVerdict,
   OttoLearningPersistedState,
 } from './learning/feedback.js';
+export { assembleCreativeState, assessCreativeReadiness } from './creative/creative-state.js';
+export type { CreativeState, CreativeStateInput, CreativeReadiness, CreativeGap, CreativeReference } from './creative/creative-state.js';
+export { classifySourceQuality, synthesizeFindings, researchToEvidence, runResearch } from './research/research.js';
+export { createWebSearchProvider, createWebSearchProviderFromEnv, WebSearchError, WEB_SEARCH_VENDORS } from './research/web-search-provider.js';
+export type { WebSearchVendor, WebSearchConfig } from './research/web-search-provider.js';
+export type { SourceQuality, ResearchSource, ResearchFinding, ResearchProvider, ResearchEvidence, ResearchResult } from './research/research.js';
+export { runCreativePipeline } from './creative/creative-pipeline.js';
+export type { CreativeOutput, CreativeGenerator, CreativePipelineResult, CreativePipelineDeps } from './creative/creative-pipeline.js';

@@ -184,6 +184,21 @@ const BRIEFING_MARKERS = [
   'me atualiza sobre',
   'situacao do',
   'situacao da',
+  // Prioridade e análise de operação (§113, §137): pedidos de "o que priorizar"
+  // e "analise a operação" exigem a resposta ESTRUTURADA (ranking + risco + próxima
+  // ação), não uma lista crua de tarefas. Ver rankPriorities/computeNextBestActions.
+  'prioriz',
+  'o que priorizar',
+  'o que devo priorizar',
+  'o que atacar',
+  'o que focar',
+  'o que resolver primeiro',
+  'o que fazer primeiro',
+  'analise a operacao',
+  'analisa a operacao',
+  'analise da operacao',
+  'como esta a operacao',
+  'como ta a operacao',
 ];
 
 const AGGREGATE_MARKERS = [

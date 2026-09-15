@@ -17,6 +17,8 @@ export interface UnderstandResult {
   successCriteria: string[];
   constraints?: string[];
   taskClass?: TaskClass;
+  /** true quando o turno afirma fato sobre estado real e exige evidência (seção 25). */
+  requiresEvidence?: boolean;
 }
 
 export interface ActResult {
@@ -87,6 +89,7 @@ export async function runAgentLoop<C = unknown>(
     state.interpretedGoal = understood.goal;
     state.successCriteria = understood.successCriteria;
     state.constraints = understood.constraints ?? [];
+    state.requiresEvidence = understood.requiresEvidence ?? false;
     const taskClass: TaskClass = understood.taskClass ?? 'standard';
     const maxIterations = MAX_ITERATIONS[taskClass];
 

@@ -42,7 +42,11 @@ const mockAskAgent = vi.fn();
 const mockAskBentoQA = vi.fn();
 const mockRequestToolCall = vi.fn();
 
-vi.mock('@desigual-os/tool-gateway', () => ({
+// Mock PARCIAL pelo mesmo motivo do workflow-consolidation: o grafo de import
+// do agentic-dispatch cresce (ciclo de ação autônoma, cerca de escopo) e um
+// mock total obrigaria a redeclarar cada símbolo novo aqui.
+vi.mock('@desigual-os/tool-gateway', async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@desigual-os/tool-gateway")>()),
   askAgent: mockAskAgent,
   askBentoQA: mockAskBentoQA,
   requestToolCall: mockRequestToolCall,

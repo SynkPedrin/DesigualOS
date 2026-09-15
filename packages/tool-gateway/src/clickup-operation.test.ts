@@ -197,3 +197,66 @@ describe('groupTasksByClient', () => {
     expect(unmatched.map((t) => t.id)).toEqual(['orfa']);
   });
 });
+
+/**
+ * Regressão do release gate (15/09/2026): 50 list_ids numa requisição só
+ * estouravam o timeout do ClickUp de forma intermitente, e a falha derrubava
+ * silenciosamente o grounding do Bento.
+ */
+describe('queryOperationTasks em lotes de listas', () => {
+  const config = { apiKey: 'k', teamId: 't' } as Parameters<typeof queryOperationTasks>[0];
+
+  function stubFetch(capturar: string[][]) {
+    return (async (url: string) => {
+      const params = new URL(String(url)).searchParams;
+      capturar.push(params.getAll('list_ids[]'));
+      const ids = params.getAll('list_ids[]');
+      return new Response(
+        JSON.stringify({ tasks: ids.map((id) => ({ id: `task-${id}`, name: `T${id}`, status: { status: 'aberto', type: 'open' }, assignees: [], tags: [] })), last_page: true }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
+  }
+
+  it('quebra 25 listas em lotes de no máximo 10', async () => {
+    const original = globalThis.fetch;
+    const lotes: string[][] = [];
+    globalThis.fetch = stubFetch(lotes);
+    try {
+      const listIds = Array.from({ length: 25 }, (_, i) => `L${i}`);
+      const r = await queryOperationTasks(config, { listIds });
+      expect(lotes).toHaveLength(3);
+      expect(lotes.map((l) => l.length)).toEqual([10, 10, 5]);
+      expect(r.tasks).toHaveLength(25);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('até 10 listas continua em uma requisição só', async () => {
+    const original = globalThis.fetch;
+    const lotes: string[][] = [];
+    globalThis.fetch = stubFetch(lotes);
+    try {
+      await queryOperationTasks(config, { listIds: ['a', 'b', 'c'] });
+      expect(lotes).toHaveLength(1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('não conta a mesma task duas vezes entre lotes', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ tasks: [{ id: 'repetida', name: 'X', status: { status: 'aberto', type: 'open' }, assignees: [], tags: [] }], last_page: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as unknown as typeof fetch;
+    try {
+      const r = await queryOperationTasks(config, { listIds: Array.from({ length: 30 }, (_, i) => `L${i}`) });
+      expect(r.tasks).toHaveLength(1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});

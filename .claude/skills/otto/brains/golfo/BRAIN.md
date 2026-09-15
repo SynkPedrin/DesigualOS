@@ -1,0 +1,109 @@
+# BRAIN — GOLFO ÓLEO E GÁS
+
+> Última atualização: 14/09/2026 · Responsável: `[FALTA]`
+> Migrado de `golfo.md`. Nada aqui foi inventado.
+> **Ficha reduzida:** este cliente tem pouco contexto consolidado. Antes de produzir, leia §13 e declare as lacunas na entrega (SKILL.md §3.5).
+
+---
+
+## 1. IDENTIFICAÇÃO
+
+- **Marca:** GOLFO ÓLEO E GÁS
+- **Segmento:** Instrumentação industrial e sensores para óleo e gás
+- **Onde atua:** `[FALTA]`
+- **Status:** Em andamento — catálogo digital
+- **Quem decide na aprovação:** `[FALTA]`
+- **Contatos:** `[FALTA]`
+- **Canais ativos:** `[FALTA]`
+- **Frequência de publicação:** `[FALTA]`
+
+---
+
+## 2. POSICIONAMENTO
+
+`[FALTA]` — promessa central, diferenciais reais, território de marca, o que a marca NÃO é.
+
+---
+
+## 3. PÚBLICO
+
+`[FALTA]` — quem é, dor, desejo, medo, objeção nº 1, vocabulário real, quem não é público.
+
+---
+
+## 4. OFERTA
+
+`[FALTA]` — produtos, faixas de preço, carro-chefe, sazonalidade, campanha vigente, o que pode e o que não pode ser divulgado.
+
+---
+
+## 5. VOZ VERBAL
+
+`[FALTA]` — bloco inteiro. Personalidade, pessoa do discurso, ritmo, formalidade, intensidade comercial, humor, emojis, hashtags, palavras-assinatura, palavras proibidas, como fala de preço e de concorrente.
+
+**Até isso ser preenchido, o Otto escreve em voz neutra profissional calibrada pelo segmento e declara a premissa na entrega.**
+
+---
+
+## 6. PROVAS E DADOS AUTORIZADOS
+
+`[FALTA]` — nenhum número, case, depoimento ou certificação autorizado registrado. Todo dado factual em peça vira `[CONFIRMAR: ...]`.
+
+---
+
+## 7. CTAs APROVADOS
+
+`[FALTA]` — topo, meio, fundo, canal preferencial de conversão e link/número oficial.
+
+---
+
+## 8. RESTRIÇÕES
+
+`[FALTA]` — compliance, proibições do cliente, temas sensíveis, obrigatórios de peça.
+
+---
+
+## 9. IDENTIDADE VISUAL
+
+`[FALTA]` — cores, tipografia, estilo fotográfico, templates, formatos padrão.
+
+---
+
+## 10. CONCORRÊNCIA
+
+`[FALTA]`
+
+---
+
+## 11. PADRÃO-OURO
+
+`[FALTA]` — nenhuma peça aprovada colada por inteiro.
+
+---
+
+## 12. HISTÓRICO — o que a agência de fato já fez
+
+Projeto de **dados**, não de comunicação: digitalização do catálogo do fabricante (PDF → JSON estruturado).
+
+- `golfo_catalogo_completo.json`: **117 produtos em 14 categorias** (sensores de pressão OEM piezoresistivos, sensores universais mV, transdutores OEM para refrigeração, transdutores compactos, pressão diferencial, pressão de massa fundida, aplicações militares, transmissores de nível, nível ultrassônico, nível por radar, temperatura, vazão, instrumentos digitais de exibição e controle)
+- JSON adicional com 6 itens de "Redes Sem Fio" (RTU/DTU, módulos LoRa, monitoramento wireless), que ficou de fora da primeira extração
+
+### Regras de dados acordadas (valem se houver nova extração)
+Campos: `categoria`, `produto` (nome completo em português), `descricao` (nome em inglês), `especificacoes` (objeto dinâmico). Chaves em português (`alcance`, `saida`, `temperatura_de_trabalho`); agrupamento sempre por categoria; **manter acentuação**; **não alterar valores das especificações**.
+
+### Em aberto
+`[CONFIRMAR: a Golfo é cliente da agência ou fornecedora de um cliente?]` · Qual sistema recebe o catálogo e status da integração: `[FALTA]`
+
+---
+
+## 13. LACUNAS
+
+Praticamente tudo. Prioridade para destravar produção:
+
+- [ ] **Voz verbal** (§5) — sem isso toda peça sai genérica
+- [ ] Público: dor, desejo e objeção nº 1 (§3)
+- [ ] Oferta e o que pode ser divulgado (§4)
+- [ ] CTA padrão e canal de conversão (§7)
+- [ ] Texto integral de 3 peças aprovadas (§11)
+- [ ] Quem aprova, do lado do cliente
+- [ ] Identidade visual (§9)

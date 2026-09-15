@@ -2,6 +2,7 @@ import type { Evaluation, Evaluator } from '@desigual-os/agent-runtime';
 import { deterministicEvaluator } from '@desigual-os/agent-runtime';
 import type { TaskClass } from '@desigual-os/agent-runtime';
 import type { AgentName } from '@desigual-os/types';
+import { assessCreativeCopy } from '@desigual-os/otto';
 
 export type { AgentName, TaskClass };
 
@@ -103,7 +104,14 @@ export function evaluatorFor(agent: AgentName): Evaluator {
         // Agente de operação: resposta substantiva mínima.
         if (text.trim().length < 20) failures.push('resposta do Bento curta demais pra ser fundamentada');
         break;
-      case 'otto':
+      case 'otto': {
+        // PORTA DETERMINÍSTICA ANTES DO LLM (§74, §76): copy genérica que serviria
+        // pra qualquer marca reprova, e o loop replaneja — que é a auto-revisão
+        // criativa (§73) sem depender de um segundo julgamento por modelo.
+        const copy = assessCreativeCopy(text);
+        if (copy.generic) failures.push(`Otto entregou ${copy.reason}`);
+        break;
+      }
       case 'suzy':
       default:
         break;
@@ -111,6 +119,6 @@ export function evaluatorFor(agent: AgentName): Evaluator {
 
     if (failures.length === 0) return base;
     const score = Math.max(0, base.score - 0.35);
-    return { score, pass: false, failures } satisfies Evaluation;
+    return { score, pass: false, grounded: base.grounded, failures } satisfies Evaluation;
   };
 }

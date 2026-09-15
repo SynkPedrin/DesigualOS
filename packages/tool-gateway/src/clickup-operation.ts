@@ -112,6 +112,17 @@ export interface OperationTaskPage {
 const MAX_PAGES = 20;
 const RATE_LIMIT_MAX_RETRIES = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
+/**
+ * Quantas listas por requisição. A carteira tem ~50 clientes e mandar os 50
+ * list_ids de uma vez fazia o ClickUp estourar os 20s de timeout de forma
+ * INTERMITENTE — e o efeito colateral era grave e silencioso: a consulta
+ * falhava, buildOperationalContext devolvia failure, o bloco de dado ao vivo
+ * não existia, e o turno do Bento seguia SEM evidência (requiresEvidence
+ * false), pulando o caminho de grounding inteiro. Medido ao vivo no release
+ * gate (15/09/2026): "quantas tarefas vencem hoje?" recuperava e "como está a
+ * operação hoje?" não, na mesma sessão. Em lotes de 10 responde estável.
+ */
+const LIST_IDS_POR_LOTE = 10;
 
 function toNumberOrNull(value: string | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -210,6 +221,28 @@ export async function queryOperationTasks(
   config: ClickUpConfig,
   query: OperationTaskQuery = {},
 ): Promise<OperationTaskPage> {
+  const listIds = query.listIds ?? [];
+  if (listIds.length > LIST_IDS_POR_LOTE) {
+    const acumuladas: OperationTask[] = [];
+    const vistos = new Set<string>();
+    let truncatedTotal = false;
+    let pagesTotal = 0;
+    for (let i = 0; i < listIds.length; i += LIST_IDS_POR_LOTE) {
+      const lote = listIds.slice(i, i + LIST_IDS_POR_LOTE);
+      const parcial = await queryOperationTasks(config, { ...query, listIds: lote });
+      // Dedup por id: uma task não pode ser contada duas vezes se aparecer
+      // em dois lotes (subtask cuja lista caiu noutro lote).
+      for (const t of parcial.tasks) {
+        if (vistos.has(t.id)) continue;
+        vistos.add(t.id);
+        acumuladas.push(t);
+      }
+      truncatedTotal = truncatedTotal || parcial.truncated;
+      pagesTotal += parcial.pagesFetched;
+    }
+    return { tasks: acumuladas, truncated: truncatedTotal, pagesFetched: pagesTotal };
+  }
+
   const tasks: OperationTask[] = [];
   let page = 0;
 

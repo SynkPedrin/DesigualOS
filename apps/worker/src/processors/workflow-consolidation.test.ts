@@ -72,7 +72,11 @@ vi.mock('@desigual-os/orchestrator', () => ({
   recordCostEvent: vi.fn(),
   recordLearning: vi.fn(),
 }));
-vi.mock('@desigual-os/tool-gateway', () => ({
+// Mock PARCIAL: só o que este teste precisa fingir; o resto vem do módulo
+// real. Com mock total, qualquer símbolo novo importado por outro arquivo do
+// grafo derrubava esta suíte por "export não definido no mock".
+vi.mock('@desigual-os/tool-gateway', async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@desigual-os/tool-gateway")>()),
   askBentoQA: vi.fn(),
   BentoQAError: class extends Error {},
   askAgent: vi.fn(),

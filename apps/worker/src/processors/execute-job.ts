@@ -36,6 +36,7 @@ import { stripBlockMarkers, stripMarkdownArtifacts, withPersonality, extractAppr
 import type { Logger } from '@desigual-os/logging';
 import { dispatchWithAgentLoop } from './agentic-dispatch';
 import { tryBentoActionGuard } from './bento-action-guard';
+import { detectSmallTalk } from './small-talk';
 
 // Feature flag do Agentic V2 (seção 112 da spec): o loop com estado,
 // avaliação e replan só assume o dispatch quando ligado; desligado, o
@@ -796,7 +797,27 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   // conversa de atribuição). Retorna null quando não é escrita tratável: o
   // fluxo segue pro agente como antes.
   let guardedResult: ExecuteResponse | null = null;
-  if (agent === 'bento') {
+
+  // FAST PATH de cortesia, ANTES de qualquer retrieval/dispatch: "Oi, tudo
+  // bem?" ia parar no RAG e voltava "não consegui montar uma resposta com
+  // fonte confiável" (medido no release gate). Saudação não tem fato pra
+  // ancorar — gastar retrieval e evidência aqui só produz resposta errada.
+  const smallTalk = detectSmallTalk(message, agent);
+  if (smallTalk) {
+    logger.info({ executionId, agent, kind: smallTalk.kind }, "[small-talk] resposta direta, sem retrieval");
+    guardedResult = {
+      execution_id: executionId,
+      agent,
+      status: 'completed',
+      answer: smallTalk.answer,
+      sources: [],
+      tool_calls: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      metadata: { fast_path: 'small_talk', kind: smallTalk.kind },
+    };
+  }
+
+  if (!guardedResult && agent === 'bento') {
     const [jobUser] = runningExecution?.userId
       ? await db.select().from(schema.users).where(eq(schema.users.id, runningExecution.userId))
       : [];    const agencyClient = await db
@@ -804,12 +825,24 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       .from(schema.clients)
       .where(eq(schema.clients.slug, 'agencia-desigual'))
       .limit(1);
+    // Nome do cliente da execução: entra no briefing como identificação e é
+    // o que torna o texto específico em vez de genérico.
+    const [clienteDaExecucao] = runningExecution?.clientId
+      ? await db
+          .select({ name: schema.clients.name })
+          .from(schema.clients)
+          .where(eq(schema.clients.id, runningExecution.clientId))
+          .limit(1)
+          .catch(() => [])
+      : [];
     const guarded = await tryBentoActionGuard({
       message,
       conversationId: conversationId ?? null,
       userName: jobUser?.name ?? jobUser?.email ?? 'usuário',
       userClickUpEmail: jobUser?.clickupEmail ?? null,
       agencyListId: agencyClient[0]?.clickupListId ?? null,
+      clientId: runningExecution?.clientId ?? null,
+      clientName: clienteDaExecucao?.name ?? null,
       briefingWriter: async (prompt) => {
         const brief = await callBento(prompt, logger);
         return brief.status === 'completed' ? brief.answer : null;

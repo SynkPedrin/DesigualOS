@@ -56,6 +56,30 @@ export interface OperationalBriefing {
   risks: string[];
   /** Sugestões de adiantamento: o que dá pra puxar pra frente hoje. */
   opportunities: string[];
+  /** Ranking de prioridade com o MOTIVO por trás de cada posição (§50). */
+  priorityRanking: PriorityRankingItem[];
+  /** Próxima melhor ação por risco detectado (§52): cada risco vira um passo concreto. */
+  nextBestActions: NextBestAction[];
+}
+
+export interface PriorityRankingItem {
+  taskId: string;
+  name: string;
+  clientName: string | null;
+  /** Pontuação transparente (sem ML): soma das contribuições em `reasons`. */
+  score: number;
+  /** Por que está nesta posição, em linguagem de gestor (§50, §64). */
+  reasons: string[];
+  status: string | null;
+  dueDate: number | null;
+  assignees: string[];
+}
+
+export interface NextBestAction {
+  /** O passo concreto a executar. */
+  action: string;
+  /** O risco/estado que motiva o passo (rastreável ao dado). */
+  because: string;
 }
 
 export interface BriefingInput {
@@ -113,6 +137,137 @@ function listaDeNomes(tasks: { name: string }[], max = 3): string {
   const mostradas = tasks.slice(0, max).map((t) => `\n  · "${t.name}"`);
   const resto = tasks.length - mostradas.length;
   return mostradas.join('') + (resto > 0 ? `\n  · ... e mais ${resto} tarefa(s)` : '');
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Pontuação de prioridade TRANSPARENTE (§50): sem ML, sem caixa-preta. Cada
+ * fator soma um peso documentado e entra em `reasons`, então o ranking sempre
+ * explica a si mesmo. Tarefa concluída não é prioridade (score 0).
+ */
+export function scoreTaskPriority(
+  task: OperationalTaskLike,
+  now: Date,
+): { score: number; reasons: string[] } {
+  const concluida = task.statusType === 'done' || task.statusType === 'closed';
+  if (concluida) return { score: 0, reasons: [] };
+
+  const inicioDeHoje = zonedDayStart(now, 0);
+  const fimDeHoje = zonedDayStart(now, 1) - 1;
+  const reasons: string[] = [];
+  let score = 0;
+
+  if (task.dueDate !== null && task.dueDate < inicioDeHoje) {
+    const dias = Math.max(1, Math.floor((inicioDeHoje - task.dueDate) / MS_PER_DAY));
+    const contrib = 40 + Math.min(dias, 30);
+    score += contrib;
+    reasons.push(`vencida há ${dias} dia(s)`);
+  } else if (task.dueDate !== null && task.dueDate <= fimDeHoje) {
+    score += 25;
+    reasons.push('vence hoje');
+  } else if (task.dueDate !== null && task.dueDate <= fimDeHoje + 2 * MS_PER_DAY) {
+    score += 15;
+    reasons.push('vence nos próximos 2 dias');
+  }
+
+  if (task.priority === 'urgent') {
+    score += 20;
+    reasons.push('prioridade urgente');
+  } else if (task.priority === 'high') {
+    score += 12;
+    reasons.push('prioridade alta');
+  } else if (task.priority === 'normal') {
+    score += 4;
+  }
+
+  if (statusMatches(task.status, BLOCKED_HINTS)) {
+    score += 18;
+    reasons.push('em status de bloqueio (pode estar segurando outras)');
+  }
+  if (task.assignees.length === 0) {
+    score += 10;
+    reasons.push('sem responsável definido');
+  }
+  if (statusMatches(task.status, APPROVAL_HINTS)) {
+    score += 8;
+    reasons.push('aguardando aprovação (destrava a fila)');
+  }
+
+  return { score, reasons };
+}
+
+/**
+ * Ranking de prioridade (§50, §64): ordena as tarefas por pontuação
+ * transparente e devolve o motivo por trás de cada posição. Empate desempata
+ * pelo prazo mais próximo. Só entra o que tem pontuação positiva (algo a fazer).
+ */
+export function rankPriorities(
+  input: { tasks: OperationalTaskLike[]; clientNameByListId?: Map<string, string>; clientName?: string | null; now?: Date; max?: number },
+): PriorityRankingItem[] {
+  const now = input.now ?? new Date();
+  const max = input.max ?? 8;
+  return input.tasks
+    .map((task) => {
+      const { score, reasons } = scoreTaskPriority(task, now);
+      const clientName =
+        input.clientName ??
+        (task.listId ? input.clientNameByListId?.get(task.listId) : undefined) ??
+        task.listName ??
+        null;
+      return { taskId: task.id, name: task.name, clientName, score, reasons, status: task.status, dueDate: task.dueDate, assignees: task.assignees };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => (b.score - a.score) || ((a.dueDate ?? Number.MAX_SAFE_INTEGER) - (b.dueDate ?? Number.MAX_SAFE_INTEGER)))
+    .slice(0, max);
+}
+
+/**
+ * Próxima melhor ação por risco (§52): cada estado problemático detectado no
+ * dado vira UM passo concreto, com o motivo rastreável. Não é conselho
+ * genérico — é derivado das tarefas reais deste turno.
+ */
+export function computeNextBestActions(input: {
+  overdue: OperationalTaskLike[];
+  unassigned: OperationalTaskLike[];
+  blocked: OperationalTaskLike[];
+  awaitingApproval: OperationalTaskLike[];
+  prioritariasParadas: OperationalTaskLike[];
+}): NextBestAction[] {
+  const actions: NextBestAction[] = [];
+  const primeiro = (list: OperationalTaskLike[]): string => (list[0] ? `"${list[0].name}"` : '');
+
+  if (input.overdue.length > 0) {
+    actions.push({
+      action: `Resolver hoje as ${input.overdue.length} tarefa(s) vencidas, começando por ${primeiro(input.overdue)}: concluir ou repactuar o prazo.`,
+      because: `${input.overdue.length} tarefa(s) já passaram do prazo e continuam abertas`,
+    });
+  }
+  if (input.blocked.length > 0) {
+    actions.push({
+      action: `Destravar as ${input.blocked.length} bloqueada(s): identificar o impedimento de ${primeiro(input.blocked)} e escalar quem resolve.`,
+      because: `${input.blocked.length} tarefa(s) em status de bloqueio podem estar segurando outras`,
+    });
+  }
+  if (input.unassigned.length > 0) {
+    actions.push({
+      action: `Designar responsável para as ${input.unassigned.length} tarefa(s) sem dono antes que virem atraso.`,
+      because: `${input.unassigned.length} tarefa(s) não têm ninguém designado para executar`,
+    });
+  }
+  if (input.prioritariasParadas.length > 0) {
+    actions.push({
+      action: `Colocar em produção as ${input.prioritariasParadas.length} tarefa(s) prioritária(s) ainda paradas, a partir de ${primeiro(input.prioritariasParadas)}.`,
+      because: `${input.prioritariasParadas.length} tarefa(s) de prioridade alta/urgente não estão em produção`,
+    });
+  }
+  if (input.awaitingApproval.length > 0) {
+    actions.push({
+      action: `Cobrar retorno das ${input.awaitingApproval.length} tarefa(s) aguardando aprovação para destravar a fila.`,
+      because: `${input.awaitingApproval.length} tarefa(s) esperam aprovação`,
+    });
+  }
+  return actions;
 }
 
 /**
@@ -292,6 +447,22 @@ export function buildOperationalBriefing(input: BriefingInput): OperationalBrief
     opportunities.push(`${awaitingApproval.length} aguardando aprovação — cobrar retorno destrava a fila`);
   }
 
+  // PRIORIZAÇÃO E PRÓXIMA AÇÃO (§50, §52): o ranking transparente e as ações
+  // por risco são calculados a partir das MESMAS tarefas reais já classificadas.
+  const priorityRanking = rankPriorities({
+    tasks,
+    clientName: input.clientName,
+    ...(input.clientNameByListId ? { clientNameByListId: input.clientNameByListId } : {}),
+    now,
+  });
+  const nextBestActions = computeNextBestActions({
+    overdue,
+    unassigned,
+    blocked,
+    awaitingApproval,
+    prioritariasParadas,
+  });
+
   return {
     title: `${escopo}${janela} — BRIEFING OPERACIONAL`,
     overview: {
@@ -309,6 +480,8 @@ export function buildOperationalBriefing(input: BriefingInput): OperationalBrief
     gaps,
     risks,
     opportunities,
+    priorityRanking,
+    nextBestActions,
   };
 }
 
@@ -349,6 +522,16 @@ export function formatBriefingForPrompt(briefing: OperationalBriefing): string {
   }
   linhas.push('');
 
+  if (briefing.priorityRanking.length) {
+    linhas.push('PRIORIZAÇÃO (ranking com o motivo — use esta ordem pra dizer o que atacar primeiro)');
+    briefing.priorityRanking.forEach((item, i) => {
+      const cliente = item.clientName ? `${item.clientName} — ` : '';
+      const resp = item.assignees.length ? item.assignees.join(', ') : 'sem responsável';
+      linhas.push(`${i + 1}. ${cliente}"${item.name}" [${resp}] — motivo: ${item.reasons.join('; ') || 'prioridade base'}`);
+    });
+    linhas.push('');
+  }
+
   for (const section of briefing.sections) {
     linhas.push(section.title.toUpperCase());
     for (const f of section.fields) {
@@ -364,6 +547,11 @@ export function formatBriefingForPrompt(briefing: OperationalBriefing): string {
   if (briefing.risks.length) {
     linhas.push('RISCOS DETECTADOS NO DADO');
     for (const r of briefing.risks) linhas.push(`- ${r}`);
+    linhas.push('');
+  }
+  if (briefing.nextBestActions.length) {
+    linhas.push('PRÓXIMAS AÇÕES (uma por risco detectado — cada passo é rastreável ao dado)');
+    for (const nba of briefing.nextBestActions) linhas.push(`- ${nba.action} (porque: ${nba.because})`);
     linhas.push('');
   }
   if (briefing.opportunities.length) {

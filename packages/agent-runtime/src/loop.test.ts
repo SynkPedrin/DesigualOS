@@ -193,11 +193,49 @@ describe('deterministicEvaluator', () => {
   });
 });
 
+describe('grounding factual (seções 25-26)', () => {
+  const factualObs = { text: 'Hoje vencem 6 tarefas em 3 clientes.', strategy: 's', attempt: 1 };
+
+  it('turno não-factual sem evidência continua aprovando (grounded=true)', () => {
+    const state = createInitialState(baseInput);
+    const evaluation = deterministicEvaluator({ state, observation: factualObs, actOk: true });
+    expect(evaluation.grounded).toBe(true);
+    expect(evaluation.pass).toBe(true);
+  });
+
+  it('turno factual sem NENHUMA evidência recuperada NÃO passa', () => {
+    const state = createInitialState(baseInput);
+    state.requiresEvidence = true;
+    const evaluation = deterministicEvaluator({ state, observation: factualObs, actOk: true });
+    expect(evaluation.grounded).toBe(false);
+    expect(evaluation.pass).toBe(false);
+    expect(evaluation.failures.join(' ')).toContain('grounding');
+  });
+
+  it('turno factual COM evidência recuperada pode passar', () => {
+    const state = createInitialState(baseInput);
+    state.requiresEvidence = true;
+    state.evidence.push({
+      type: 'clickup_task',
+      source: 'clickup_operational',
+      confidence: 1,
+      retrievedAt: new Date().toISOString(),
+      validAt: new Date().toISOString(),
+      summary: '6 tarefas vencem hoje',
+    });
+    const evaluation = deterministicEvaluator({ state, observation: factualObs, actOk: true });
+    expect(evaluation.grounded).toBe(true);
+    expect(evaluation.pass).toBe(true);
+  });
+});
+
 describe('createInitialState', () => {
   it('estado inicial coerente', () => {
     const state = createInitialState(baseInput);
     expect(state.phase).toBe('RECEIVED');
     expect(state.iterations).toBe(0);
     expect(state.strategiesTried).toEqual([]);
+    expect(state.evidence).toEqual([]);
+    expect(state.requiresEvidence).toBe(false);
   });
 });

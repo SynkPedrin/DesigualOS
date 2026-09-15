@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildOperationalBriefing, formatBriefingForPrompt } from './briefing-engine';
+import { buildOperationalBriefing, formatBriefingForPrompt, rankPriorities, scoreTaskPriority, computeNextBestActions } from './briefing-engine';
 import type { OperationalTaskLike } from './build-operational-context';
 
 const NOW = new Date('2026-09-10T04:30:00.000Z'); // 01:30 local, quinta
@@ -289,5 +289,64 @@ describe('nome de tarefa com vírgula dentro', () => {
     });
     const risco = b.risks.find((r) => /passaram do prazo/.test(r))!;
     expect(risco).toContain('e mais 4 tarefa(s)');
+  });
+});
+
+describe('priorityRanking (§50) — pontuação transparente com motivo', () => {
+  it('vencida pontua mais que vence-hoje e concluída não prioriza', () => {
+    const vencida = scoreTaskPriority(task({ dueDate: new Date('2026-09-05T12:00:00Z').getTime() }), NOW).score;
+    const hoje = scoreTaskPriority(task({ dueDate: new Date('2026-09-10T12:00:00Z').getTime() }), NOW).score;
+    expect(vencida).toBeGreaterThan(hoje);
+    expect(scoreTaskPriority(task({ statusType: 'done', dueDate: new Date('2026-09-01T12:00:00Z').getTime() }), NOW).score).toBe(0);
+  });
+
+  it('acumula fatores e explica cada um em reasons', () => {
+    const r = scoreTaskPriority(task({ priority: 'urgent', assignees: [], dueDate: new Date('2026-09-01T12:00:00Z').getTime() }), NOW);
+    expect(r.score).toBeGreaterThanOrEqual(40);
+    expect(r.reasons.join(' ')).toMatch(/urgente/);
+    expect(r.reasons.join(' ')).toMatch(/sem responsável/);
+    expect(r.reasons.join(' ')).toMatch(/vencida/);
+  });
+
+  it('rankPriorities ordena por score desc e exclui concluída', () => {
+    const ranked = rankPriorities({
+      now: NOW,
+      tasks: [
+        task({ id: 'a', statusType: 'done', dueDate: new Date('2026-09-01T12:00:00Z').getTime() }),
+        task({ id: 'b', priority: 'urgent', dueDate: new Date('2026-09-01T12:00:00Z').getTime() }),
+        task({ id: 'c', priority: 'normal', dueDate: null }),
+      ],
+    });
+    expect(ranked.some((x) => x.taskId === 'a')).toBe(false);
+    expect(ranked[0]?.taskId).toBe('b');
+    expect(ranked[0]?.reasons.length).toBeGreaterThan(0);
+  });
+});
+
+describe('nextBestActions (§52) — uma ação por risco, rastreável', () => {
+  it('gera ação de vencidas nomeando a primeira e ação de sem-responsável', () => {
+    const nba = computeNextBestActions({
+      overdue: [task({ name: 'Vencida X' })],
+      unassigned: [task({ assignees: [] })],
+      blocked: [],
+      awaitingApproval: [],
+      prioritariasParadas: [],
+    });
+    expect(nba.some((a) => /Vencida X/.test(a.action))).toBe(true);
+    expect(nba.some((a) => /designar/i.test(a.action))).toBe(true);
+    expect(nba.every((a) => a.because.length > 0)).toBe(true);
+  });
+});
+
+describe('formatBriefingForPrompt inclui priorização e próximas ações', () => {
+  it('renderiza as seções novas quando há dado', () => {
+    const b = buildOperationalBriefing({
+      clientName: '3Net',
+      now: NOW,
+      tasks: [task({ id: 'b', priority: 'urgent', assignees: [], dueDate: new Date('2026-09-01T12:00:00Z').getTime() })],
+    });
+    const prompt = formatBriefingForPrompt(b);
+    expect(prompt).toMatch(/PRIORIZAÇÃO/);
+    expect(prompt).toMatch(/PRÓXIMAS AÇÕES/);
   });
 });

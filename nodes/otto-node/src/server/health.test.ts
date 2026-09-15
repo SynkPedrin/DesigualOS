@@ -45,7 +45,7 @@ function makeConfig() {
 
 describe('GET /health agregado', () => {
   it('reporta ok quando Ollama responde, modelo instalado e brain legível', async () => {
-    const app = buildServer(makeConfig(), makeDeps(async () => tagsResponse(['mistral:latest'])));
+    const app = buildServer(makeConfig(), makeDeps(async () => tagsResponse(['mistral:latest'])), false);
     const response = await app.inject({ method: 'GET', url: '/health' });
     const body = response.json();
 
@@ -65,6 +65,7 @@ describe('GET /health agregado', () => {
       makeDeps(async () => {
         throw new Error('connect ECONNREFUSED');
       }),
+      false,
     );
     const response = await app.inject({ method: 'GET', url: '/health' });
     const body = response.json();
@@ -77,7 +78,7 @@ describe('GET /health agregado', () => {
   });
 
   it('reporta degraded quando o modelo configurado não está instalado', async () => {
-    const app = buildServer(makeConfig(), makeDeps(async () => tagsResponse(['llama3.1:latest'])));
+    const app = buildServer(makeConfig(), makeDeps(async () => tagsResponse(['llama3.1:latest'])), false);
     const response = await app.inject({ method: 'GET', url: '/health' });
     const body = response.json();
 
@@ -92,6 +93,7 @@ describe('GET /health agregado', () => {
     const app = buildServer(
       makeConfig(),
       makeDeps(async () => tagsResponse(['mistral:latest']), join(brainDir, 'nao-existe')),
+      false,
     );
     const response = await app.inject({ method: 'GET', url: '/health' });
     const body = response.json();

@@ -12,6 +12,9 @@ export interface Evaluation {
   pass: boolean;
   /** Lista legível do que falhou, usada pelo replan pra escolher estratégia. */
   failures: string[];
+  /** Eixo de grounding factual (seção 25): true quando não era exigida evidência
+   * ou quando havia evidência recuperada; false quando o turno era factual e veio sem nenhuma. */
+  grounded: boolean;
 }
 
 export interface EvaluatorInput {
@@ -81,5 +84,15 @@ export const deterministicEvaluator: Evaluator = ({ state, observation, actOk })
     score += 0.25;
   }
 
-  return { score: Math.round(score * 1000) / 1000, pass: score >= 0.6 && failures.length === 0, failures };
+  // GROUNDING FACTUAL (seções 25-26): pergunta factual sobre estado real sem
+  // nenhuma evidência recuperada NÃO passa, por melhor que a resposta soe.
+  // É o que impede resposta plausível-porém-inventada de ser entregue, e o
+  // que pega a regressão em que a recuperação operacional silenciosamente some.
+  const grounded = !state.requiresEvidence || state.evidence.length > 0;
+  if (!grounded) {
+    failures.push('turno factual sobre estado real sem nenhuma evidência recuperada (grounding ausente)');
+    score = Math.max(0, score - 0.3);
+  }
+
+  return { score: Math.round(score * 1000) / 1000, pass: score >= 0.6 && failures.length === 0, grounded, failures };
 };

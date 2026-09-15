@@ -143,3 +143,21 @@ describe('observabilidade', () => {
     expect(s.signals.join(' ')).toMatch(/operacional:|agregado:/);
   });
 });
+
+describe('marcadores de priorização/análise disparam o caminho estruturado (§113, §137)', () => {
+  it('"o que eu deveria priorizar hoje?" -> operational + briefing', async () => {
+    const s = await resolveOperationalScope('Bento, o que eu deveria priorizar hoje?', NOW);
+    expect(s.operational).toBe(true);
+    expect(s.briefing).toBe(true);
+  });
+
+  it('"analise a operação e me diga o que atacar" -> briefing', async () => {
+    const s = await resolveOperationalScope('Bento, analise a operação e me diga o que atacar', NOW);
+    expect(s.briefing).toBe(true);
+  });
+
+  it('"como está a operação?" -> briefing', async () => {
+    const s = await resolveOperationalScope('Bento, como está a operação?', NOW);
+    expect(s.briefing).toBe(true);
+  });
+});

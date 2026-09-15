@@ -1,4 +1,4 @@
-import { boolean, index, integer, jsonb, numeric, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, timestampColumns } from './_shared';
 import { agentNameEnum } from './enums';
 import { clients } from './clients';
@@ -65,5 +65,43 @@ export const agentOutcomes = pgTable(
     agentIdx: index('agent_outcomes_agent_idx').on(table.agent),
     clientIdx: index('agent_outcomes_client_id_idx').on(table.clientId),
     createdIdx: index('agent_outcomes_created_at_idx').on(table.createdAt),
+  }),
+);
+
+
+/**
+ * Evidência de 1a classe (seções 24-26 da spec V2): cada informação REAL recuperada que
+ * ancora uma afirmação factual do turno, com origem, confiança e validade temporal
+ * rastreáveis. É o que separa "resposta fundamentada" de "resposta plausível": o
+ * evaluator reprova turno factual sobre estado real que chega sem nenhuma linha aqui.
+ * NUNCA inventada: uma linha só existe porque algo foi recuperado de fato.
+ */
+export const agentEvidence = pgTable(
+  'agent_evidence',
+  {
+    ...idColumn,
+    executionId: text('execution_id').notNull(),
+    agent: agentNameEnum('agent').notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+    /** clickup_task | clickup_comment | document | database | obsidian | memory | user_message | web | tool_result */
+    type: text('type').notNull(),
+    /** Rótulo legível da fonte. */
+    source: text('source').notNull(),
+    /** Id na origem quando existir (id da task, id da memória). */
+    sourceId: text('source_id'),
+    /** 0..1: dado ao vivo = 1; memória herda a confiança dela. */
+    confidence: numeric('confidence', { precision: 4, scale: 3 }),
+    retrievedAt: timestamp('retrieved_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Para dado com validade temporal (operacional ao vivo): quando era verdade. */
+    validAt: timestamp('valid_at', { withTimezone: true }),
+    summary: text('summary').notNull(),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    ...timestampColumns,
+  },
+  (table) => ({
+    executionIdx: index('agent_evidence_execution_id_idx').on(table.executionId),
+    agentIdx: index('agent_evidence_agent_idx').on(table.agent),
+    clientIdx: index('agent_evidence_client_id_idx').on(table.clientId),
   }),
 );

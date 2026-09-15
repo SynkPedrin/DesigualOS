@@ -5,6 +5,7 @@ export {
   createInitialState,
   type AgentExecutionState,
   type AgentPhase,
+  type Evidence,
   type Observation,
   type TaskClass,
   type ToolCallRecord,
@@ -17,3 +18,37 @@ export {
   type AgentLoopResult,
   type UnderstandResult,
 } from './loop';
+export {
+  buildPlan,
+  inferPlanSignals,
+  planStepObjectives,
+  type AgentPlan,
+  type PlanInput,
+  type PlanStep,
+  type PlanStepStatus,
+  type PlanStepType,
+  type PlanStatus,
+} from './planner';
+export {
+  runStepLoop,
+  nextRunnableStep,
+  DEFAULT_STEP_LIMITS,
+  type StepHandler,
+  type StepContext,
+  type StepResult,
+  type StepObservation,
+  type StepLoopHooks,
+  type StepLoopLimits,
+  type StepLoopResult,
+  type SuccessCheck,
+  type TerminationReason,
+} from './step-loop';
+export {
+  classifyClaimType,
+  splitClaims,
+  groundClaims,
+  type ClaimType,
+  type GroundedClaim,
+  type EvidenceRef,
+  type GroundingReport,
+} from './grounding';

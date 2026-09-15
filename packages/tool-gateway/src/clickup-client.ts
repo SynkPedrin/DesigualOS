@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertListInScope, assertTaskInScope } from './write-scope.js';
 
 const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
 
@@ -134,6 +135,7 @@ export interface CreatedTask {
 }
 
 export async function createTask(config: ClickUpConfig, params: CreateTaskParams): Promise<CreatedTask> {
+  assertListInScope(params.listId);
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${params.listId}/task`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
@@ -169,6 +171,7 @@ export interface UpdateTaskParams {
 }
 
 export async function updateTask(config: ClickUpConfig, taskId: string, params: UpdateTaskParams): Promise<void> {
+  await assertTaskInScope(config, taskId);
   const body: Record<string, unknown> = {};
   if (params.name !== undefined) body.name = params.name;
   if (params.description !== undefined) body.description = params.description;
@@ -226,6 +229,7 @@ export async function listStatusesForTask(config: ClickUpConfig, taskId: string)
  * attachment. Nunca confirma sem o 200 da API.
  */
 export async function uploadTaskAttachment(config: ClickUpConfig, taskId: string, fileUrl: string, filename: string): Promise<{ id: string | null }> {
+  await assertTaskInScope(config, taskId);
   const fileResponse = await fetchClickUp(fileUrl);
   if (!fileResponse.ok) {
     throw new Error(`Download do anexo falhou (${fileResponse.status})`);
@@ -255,6 +259,7 @@ export async function uploadTaskAttachment(config: ClickUpConfig, taskId: string
  * createTask, que qualquer colaborador já pode disparar direto.
  */
 export async function deleteTask(config: ClickUpConfig, taskId: string): Promise<void> {
+  await assertTaskInScope(config, taskId);
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
     method: 'DELETE',
     headers: { Authorization: config.apiKey },
@@ -315,6 +320,52 @@ export async function getTaskListId(config: ClickUpConfig, taskId: string): Prom
   return taskLookupSchema.parse(await response.json()).list.id;
 }
 
+const taskDetailSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.object({ status: z.string() }).nullish(),
+  due_date: z.union([z.string(), z.number(), z.null()]).optional(),
+  list: z.object({ id: z.string() }).nullish(),
+  assignees: z
+    .array(z.object({ id: z.number(), username: z.string().nullish() }))
+    .optional()
+    .default([]),
+});
+
+export interface TaskDetail {
+  id: string;
+  name: string;
+  status: string | null;
+  dueDate: number | null;
+  listId: string | null;
+  assignees: Array<{ id: number; username: string | null }>;
+}
+
+/**
+ * READ-BACK completo (seção 32): reler a task DEPOIS de uma escrita e conferir
+ * os campos. getTaskListId só provava que a task existe; isto devolve nome,
+ * status, prazo e responsáveis reais, que é o que o guard compara com o que
+ * a ação prometeu antes de dizer "validada".
+ */
+export async function getTask(config: ClickUpConfig, taskId: string): Promise<TaskDetail> {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) {
+    throw new Error(`ClickUp task lookup failed (${response.status}): ${await response.text()}`);
+  }
+  const raw = taskDetailSchema.parse(await response.json());
+  const due = raw.due_date == null ? null : Number(raw.due_date);
+  return {
+    id: raw.id,
+    name: raw.name,
+    status: raw.status?.status ?? null,
+    dueDate: due != null && Number.isFinite(due) ? due : null,
+    listId: raw.list?.id ?? null,
+    assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),
+  };
+}
+
 const createdCommentSchema = z.object({
   id: z.coerce.string(),
   date: z.coerce.string().optional(),
@@ -332,6 +383,7 @@ export interface CreatedTaskComment {
  * retornado é o que acabamos de enviar.
  */
 export async function createTaskComment(config: ClickUpConfig, taskId: string, text: string): Promise<CreatedTaskComment> {
+  await assertTaskInScope(config, taskId);
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
@@ -351,6 +403,7 @@ export async function createTaskComment(config: ClickUpConfig, taskId: string, t
  * da thread).
  */
 export async function replyToComment(config: ClickUpConfig, taskId: string, parentCommentId: string, text: string, notifyAll = true): Promise<string> {
+  await assertTaskInScope(config, taskId);
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },

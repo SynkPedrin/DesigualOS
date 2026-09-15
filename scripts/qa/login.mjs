@@ -4,14 +4,31 @@
 import { writeFileSync, chmodSync } from 'node:fs';
 
 process.loadEnvFile(new URL('../../.env', import.meta.url).pathname);
+// .env.local também: é onde ficam as credenciais de QA (fora do .env que
+// carrega config de serviço). Ausente em máquina que não faz QA — por isso
+// o try, em vez de quebrar quem só quer rodar o resto.
+try {
+  process.loadEnvFile(new URL('../../.env.local', import.meta.url).pathname);
+} catch {
+  // sem .env.local: a checagem de QA_USER_* abaixo dá a mensagem certa.
+}
 
 const url = process.env.SUPABASE_URL;
 const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY;
-const email = process.env.QA_USER_EMAIL || 'super@institutoalmada.org';
-const password = process.env.QA_USER_PASSWORD || 'Elefante#123';
+// Credencial SÓ por env (.env/.env.local, ambos gitignored). Antes havia
+// e-mail e SENHA REAL embutidos como fallback neste arquivo versionado —
+// achado na revisão do release gate (15/09/2026). Sem env, o script falha
+// alto: melhor não rodar do que carregar segredo no repositório.
+const email = process.env.QA_USER_EMAIL;
+const password = process.env.QA_USER_PASSWORD;
 
 if (!url || !anonKey) {
   console.log(JSON.stringify({ ok: false, error: 'SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY ausentes no .env' }));
+  process.exit(1);
+}
+
+if (!email || !password) {
+  console.log(JSON.stringify({ ok: false, error: 'QA_USER_EMAIL/QA_USER_PASSWORD ausentes no .env.local' }));
   process.exit(1);
 }
 

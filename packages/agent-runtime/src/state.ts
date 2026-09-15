@@ -1,3 +1,4 @@
+import type { AgentPlan } from './planner';
 /**
  * Estado de execução de um agente (Agentic V2). Persistido como checkpoint
  * após cada transição de fase (ver packages/database schema
@@ -41,6 +42,38 @@ export interface Observation {
   attempt: number;
 }
 
+/**
+ * Evidência (seções 24-26 da spec V2): informação REAL recuperada que sustenta
+ * uma afirmação. Diferente de contexto (o que entrou no turno) e de memória (o
+ * que persiste): evidência é o que ancora um CLAIM factual, com origem e
+ * validade rastreáveis. Turno factual sem evidência não passa no evaluator.
+ */
+export interface Evidence {
+  type:
+    | 'clickup_task'
+    | 'clickup_comment'
+    | 'document'
+    | 'database'
+    | 'obsidian'
+    | 'memory'
+    | 'user_message'
+    | 'web'
+    | 'tool_result';
+  /** Rótulo legível da fonte (nome da lista/cliente, kind da memória, ferramenta). */
+  source: string;
+  /** Id na origem quando existir (id da task no ClickUp, id da memória). */
+  sourceId?: string;
+  clientId?: string | null;
+  /** 0..1: dado ao vivo = 1; memória herda a confiança dela. */
+  confidence?: number;
+  /** ISO: quando foi recuperada (sempre o instante do turno). */
+  retrievedAt: string;
+  /** ISO: para dado com validade temporal, o instante em que era verdade. */
+  validAt?: string;
+  /** Texto curto do que a evidência afirma (nunca o dump inteiro). */
+  summary: string;
+}
+
 export interface AgentExecutionState {
   executionId: string;
   requestId: string;
@@ -57,11 +90,18 @@ export interface AgentExecutionState {
 
   /** Plano mínimo interno (nunca exposto cru ao usuário). */
   plan: string[];
+  /** Plano ADAPTATIVO estruturado do turno (§10-15). Null até a fase PLANNING. */
+  structuredPlan: AgentPlan | null;
   currentStep: number;
   stepsCompleted: string[];
 
   toolCalls: ToolCallRecord[];
   observations: Observation[];
+
+  /** Evidências recuperadas que ancoram afirmações factuais (seção 24). */
+  evidence: Evidence[];
+  /** Este turno afirma fato sobre estado real e por isso EXIGE evidência (seção 25). */
+  requiresEvidence: boolean;
 
   artifacts: { type: string; ref: string }[];
 
@@ -109,10 +149,13 @@ export function createInitialState(input: {
     constraints: [],
     successCriteria: [],
     plan: [],
+    structuredPlan: null,
     currentStep: 0,
     stepsCompleted: [],
     toolCalls: [],
     observations: [],
+    evidence: [],
+    requiresEvidence: false,
     artifacts: [],
     confidence: 0,
     evaluatorScore: null,

@@ -15,13 +15,18 @@ import {
   planTurnDepth,
   planVideo,
   retrieveRelevantKnowledge,
+  runCreativePipeline,
   stripOrchestratorContext,
+  createWebSearchProviderFromEnv,
   type BrainHealth,
   type BrandKit,
   type CreativeDNA,
   type CreativeFeedback,
   type DepthPolicy,
   type OttoLLMProvider,
+  type CreativeReference,
+  type CreativeStateInput,
+  type ResearchProvider,
   type RetrievedKnowledge,
   type RetrieveOptions,
   type StudioJobType,
@@ -55,6 +60,13 @@ export interface OttoNodeDeps {
    * sincronizar memories, quem muda é a chamada, não o pipeline.
    */
   deriveDNA?: (brandKit: BrandKit, feedbacks: CreativeFeedback[]) => CreativeDNA;
+  /**
+   * Busca externa do loop criativo (§55-59). NULL quando não há
+   * OTTO_SEARCH_PROVIDER/OTTO_SEARCH_API_KEY na env: aí o pipeline roda sem
+   * pesquisa e DECLARA isso na metadata (research.performed=false). O Otto
+   * nunca afirma ter pesquisado sem ter feito chamada real.
+   */
+  researchProvider?: ResearchProvider | null;
 }
 
 export function createDefaultDeps(config: OttoNodeConfig): OttoNodeDeps {
@@ -70,6 +82,7 @@ export function createDefaultDeps(config: OttoNodeConfig): OttoNodeDeps {
     retrieveKnowledge: (query, options) =>
       retrieveRelevantKnowledge(loadBrainIndex(config.otto.brainPath), query, options),
     brainHealth: () => checkBrainHealth(config.otto.brainPath),
+    researchProvider: createWebSearchProviderFromEnv(process.env, { logger }),
   };
 }
 
@@ -256,6 +269,63 @@ function floorAtStandard(plan: TurnDepthPlan): DepthPolicy {
   return plan.depth === 'fast' ? depthPolicy('standard') : plan.policy;
 }
 
+/**
+ * CreativeState do turno (§52): a leitura unificada do que o Otto JÁ sabe
+ * sobre o cliente antes de criar. Não inventa nada — cada campo vem de uma
+ * fonte real do request ou do Brain, e o que não existe fica null pra virar
+ * lacuna explícita em assessCreativeReadiness.
+ */
+function buildCreativeStateInput(
+  request: ExecuteRequest,
+  knowledge: RetrievedKnowledge[],
+  dna: CreativeDNA | null,
+  clientId: string,
+): CreativeStateInput {
+  const kit = request.client_brand_kit;
+  // Histórico criativo real: o feedback já registrado do cliente vira
+  // referência aprovada/rejeitada do estado (o que repetir / o que evitar).
+  const approved: CreativeReference[] = [];
+  const rejected: CreativeReference[] = [];
+  (request.client_feedback_history ?? []).forEach((entry, index) => {
+    const ref: CreativeReference = {
+      id: `feedback-${index + 1}`,
+      summary: [entry.reason, entry.context].filter(Boolean).join(' — ') || entry.verdict,
+      verdict: entry.verdict === 'approved' ? 'approved' : 'rejected',
+    };
+    if (entry.verdict === 'approved') approved.push(ref);
+    else rejected.push(ref);
+  });
+
+  return {
+    clientId,
+    objective: stripOrchestratorContext(request.message),
+    ...(dna ? { dna } : {}),
+    ...(kit
+      ? {
+          brand: {
+            clientId,
+            palette: kit.colors,
+            typography: kit.fonts,
+            ...(kit.tone_of_voice ? { toneOfVoice: kit.tone_of_voice } : {}),
+          },
+        }
+      : {}),
+    approvedCreatives: approved,
+    rejectedCreatives: rejected,
+    // MEMÓRIA do turno: os documentos do Brain que o retrieval trouxe. É o
+    // que faz assessCreativeReadiness saber que já existe referência e não
+    // disparar pesquisa externa à toa (§67).
+    memories: knowledge.map((entry) => `${entry.doc.titulo}: ${entry.snippet}`),
+  };
+}
+
+/** Bloco de pesquisa pro prompt do planner. Vazio quando não houve pesquisa. */
+function formatResearchBlock(research: { performed: boolean; summary: string; findings: { claim: string; url: string }[] }): string {
+  if (!research.performed || research.findings.length === 0) return '';
+  const fontes = research.findings.map((f) => `- ${f.claim} (${f.url})`).join('\n');
+  return `\n\nPesquisa externa REAL feita para este turno (use como base factual; cite só o que está aqui):\n${research.summary}\nFontes:\n${fontes}`;
+}
+
 /** Resumo legível do plano pro chat: a metadata carrega o JSON completo. */
 function formatPlanAnswer(planConcept: string, planCopy: string, jobType: StudioJobType): string {
   return [
@@ -414,25 +484,106 @@ export async function executeTask(
       };
     }
 
-    // (e) Caminho de produção criativa: briefing -> CreativePlan -> Spec.
-    const plan = await measureLlm(() =>
-      createCreativePlan(
-        { llm: deps.llm },
-        {
-          briefing: request.message,
-          knowledge,
-          referenceAssets: request.attachments,
-          ...(dna ? { clientContext: `DNA criativo do cliente:\n${formatDnaBlock(dna)}` } : {}),
+    // (e) Caminho de produção criativa: o LOOP criativo completo (§60, §66) —
+    // CreativeState -> lacunas -> pesquisa (só se a lacuna exigir dado atual)
+    // -> geração -> porta anti-genérico -> auto-revisão. Antes daqui o node
+    // chamava createCreativePlan direto e entregava a primeira versão, fosse
+    // ela genérica ou não; agora a geração é um PASSO dentro do pipeline, que
+    // é quem decide se aceita, revisa ou reprova.
+    const refClientId = extractClientId(request.context_refs);
+    const stateInput = buildCreativeStateInput(request, knowledge, dna, refClientId ?? 'unresolved');
+
+    // Sem provider configurado a pesquisa não acontece; runResearch devolve
+    // performed=false e o trace registra o motivo. Nunca fingimos pesquisa.
+    const researchProvider: ResearchProvider = deps.researchProvider ?? {
+      search: () => Promise.reject(new Error('pesquisa externa não configurada (OTTO_SEARCH_PROVIDER/OTTO_SEARCH_API_KEY ausentes)')),
+    };
+
+    // A geração é o passo INJETADO do pipeline: o planner real do Otto, com o
+    // bloco de pesquisa e a nota de revisão quando o gate reprovou a anterior.
+    const pipeline = await runCreativePipeline(
+      {
+        researchProvider,
+        generator: {
+          generate: async ({ research, revisionNote }) => {
+            const generated = await measureLlm(() =>
+              createCreativePlan(
+                { llm: deps.llm },
+                {
+                  briefing: revisionNote ? `${request.message}\n\nREVISÃO OBRIGATÓRIA: ${revisionNote}` : request.message,
+                  knowledge,
+                  referenceAssets: request.attachments,
+                  clientContext: [
+                    dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
+                    formatResearchBlock(research),
+                  ]
+                    .filter(Boolean)
+                    .join('\n'),
+                },
+              ),
+            );
+            return { copy: generated.copy, concept: generated.concept, plan: generated };
+          },
         },
-      ),
+      },
+      stateInput,
+      // Sem brandTerms de propósito: o único identificador de cliente que o
+      // node tem aqui é o UUID do context_ref, e UUID não aparece em copy
+      // nenhuma — passá-lo como "termo de marca" só produziria uma âncora que
+      // jamais casa. Sem ele, assessCreativeCopy decide por clichê + âncora
+      // concreta (número), que é o sinal que de fato existe neste ponto.
+      {},
     );
-    logger.info({ concept: plan.concept, job_type: intent, llm_ms: llmMs }, '[OTTO:plan] plano criativo gerado');
+
+    if (!pipeline.output) {
+      throw new Error('pipeline criativo não produziu peça');
+    }
+    const plan = pipeline.output.plan as Awaited<ReturnType<typeof createCreativePlan>>;
+
+    logger.info(
+      {
+        concept: plan.concept,
+        job_type: intent,
+        llm_ms: llmMs,
+        gaps: pipeline.readiness.gaps,
+        research_performed: pipeline.research.performed,
+        research_sources: pipeline.research.findings.length,
+        quality_passed: pipeline.qualityPassed,
+        revisions: pipeline.revisions,
+      },
+      '[OTTO:creative] loop criativo concluído',
+    );
+    if (pipeline.readiness.requiresResearch && !pipeline.research.performed) {
+      logger.warn(
+        { execution_id: request.execution_id },
+        '[OTTO:research] o objetivo pedia dado atual e a pesquisa NÃO aconteceu; a peça sai sem base de mercado',
+      );
+    }
 
     const metadata: Record<string, unknown> = {
       intent,
       brain_docs_used: sources,
       retrieval: { depth: depth.depth, reason: depth.reason, signals: depth.signals, ...policy },
       creative_plan: plan,
+      // Trace do loop criativo: é o que prova, na auditoria, que houve estado,
+      // lacuna, pesquisa (ou a falta declarada dela), porta de qualidade e
+      // revisão — em vez de uma geração única disfarçada de pipeline.
+      creative_pipeline: {
+        gaps: pipeline.readiness.gaps,
+        notes: pipeline.readiness.notes,
+        requires_research: pipeline.readiness.requiresResearch,
+        research: {
+          performed: pipeline.research.performed,
+          summary: pipeline.research.summary,
+          sources: pipeline.research.findings,
+          single_source: pipeline.research.singleSource,
+          evidence: pipeline.research.evidence,
+        },
+        quality_passed: pipeline.qualityPassed,
+        quality_assessment: pipeline.qualityAssessment,
+        revisions: pipeline.revisions,
+        trace: pipeline.trace,
+      },
       ...(dna ? { creative_dna: dna } : {}),
     };
 
@@ -454,7 +605,7 @@ export async function executeTask(
       logger.info({ scenes: videoPlan.scenes.length, llm_ms: llmMs }, '[OTTO:plan] vídeo planejado');
     }
 
-    const clientId = extractClientId(request.context_refs) ?? plan.client;
+    const clientId = refClientId ?? plan.client;
     const spec = buildProductionSpec(plan, {
       clientId,
       jobType: intent,
