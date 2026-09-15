@@ -237,3 +237,31 @@ describe('resolveDefaultProjectForClient', () => {
     expect(r).toBeNull();
   });
 });
+
+/**
+ * Regressão do achado de 15/09/2026: a pergunta executiva
+ * "o que eu deveria OLHAR primeiro?" resolvia o escopo da operação inteira
+ * para o cliente Colpar — "olhar" fica a distância 2 de "colpar" — e o Bento
+ * respondia com confiança sobre o cliente errado.
+ */
+describe('fuzzy não sequestra a operação com palavra comum', () => {
+  it('"olhar" NÃO resolve para Colpar', async () => {
+    const r = await resolveClientsFromText('Bento, o que está pegando hoje? O que eu deveria olhar primeiro e por quê?');
+    expect(r.matches).toHaveLength(0);
+    expect(r.tier).toBe('none');
+  });
+
+  it.each([
+    'o que eu preciso fazer primeiro',
+    'me diz o que está pegando',
+    'qual campanha merece atenção',
+    'quais tarefas estão atrasadas',
+  ])('pergunta operacional sem cliente não casa: %s', async (m) => {
+    expect((await resolveClientsFromText(m)).matches).toHaveLength(0);
+  });
+
+  it('erro de digitação REAL em nome longo continua resolvendo', async () => {
+    const r = await resolveClientsFromText('analisa a campanha da consentino');
+    expect(r.matches.map((m) => m.name)).toContain('Cosentino');
+  });
+});

@@ -102,9 +102,48 @@ function editDistanceWithin(a: string, b: string, max: number): number | null {
   return distance <= max ? distance : null;
 }
 
+/**
+ * Distância de edição tolerada, PROPORCIONAL ao tamanho da palavra.
+ *
+ * Distância fixa de 2 é frouxa demais em palavra curta: "olhar" (5 letras)
+ * fica a 2 de "colpar", então a pergunta "o que eu deveria OLHAR primeiro?"
+ * resolvia o escopo inteiro da operação para o cliente Colpar — e a resposta
+ * saía confiante sobre o cliente errado, sem avisar ninguém. Medido ao vivo
+ * em 15/09/2026.
+ *
+ * Com a régua proporcional, 2 erros só são aceitos quando sobra nome
+ * suficiente para sustentar o palpite (8+ chars, como "consentino" ->
+ * "Cosentino", que é o caso real que o fuzzy existe para resolver).
+ */
+function maxFuzzyDistance(word: string): number {
+  return word.length >= 8 ? 2 : 1;
+}
+
+/**
+ * Palavras comuns do português que aparecem em pedido operacional e NUNCA são
+ * nome de cliente. Sem elas na lista, o fuzzy tenta casar verbo e advérbio com
+ * a carteira inteira a cada turno.
+ */
+const PALAVRA_COMUM_PT = new Set([
+  'olhar', 'olhando', 'pegando', 'primeiro', 'primeira', 'deveria', 'deveriamos',
+  'preciso', 'precisa', 'precisamos', 'quero', 'queria', 'pode', 'podemos',
+  'fazer', 'fazendo', 'criar', 'criando', 'analisar', 'analisando', 'revisar',
+  'atencao', 'atrasado', 'atrasada', 'atrasados', 'atrasadas', 'prazo', 'prazos',
+  'tarefa', 'tarefas', 'entrega', 'entregas', 'hoje', 'amanha', 'semana', 'ontem',
+  'porque', 'poque', 'quando', 'onde', 'qual', 'quais', 'sobre', 'entao',
+  'agora', 'ainda', 'depois', 'antes', 'melhor', 'pior', 'muito', 'pouco',
+  'operacao', 'operacional', 'status', 'situacao', 'resumo', 'briefing',
+  'campanha', 'campanhas', 'conteudo', 'conteudos', 'material', 'materiais',
+  'responsavel', 'responsaveis', 'aprovacao', 'aprovado', 'pendente', 'pendencia',
+]);
+
 /** Palavras da mensagem que podem ser tentadas em fuzzy (TIER 4). */
 function candidateWords(normalizedMessage: string): string[] {
-  return [...new Set(normalizedMessage.split(' ').filter((w) => w.length >= 5 && !PALAVRA_GENERICA_DEMAIS.has(w)))];
+  return [...new Set(
+    normalizedMessage
+      .split(' ')
+      .filter((w) => w.length >= 5 && !PALAVRA_GENERICA_DEMAIS.has(w) && !PALAVRA_COMUM_PT.has(w)),
+  )];
 }
 
 function buildMatchers(client: ClientRow): RegExp[] {
@@ -161,7 +200,8 @@ export interface ClientResolution {
  * TIER 1 exact  — mensagem contém o nome completo normalizado, ou o slug.
  * TIER 2 short  — contém a forma curta (antes de travessão/pipe), ex. "citavel".
  * TIER 3 word   — contém uma palavra distintiva (>=5 chars, fora da lista de genéricas).
- * TIER 4 fuzzy  — erro de digitação: distância de edição <=2 numa palavra de 5+ chars
+ * TIER 4 fuzzy  — erro de digitação: distância PROPORCIONAL (1 até 7 chars, 2 a partir
+ *                 de 8), fora da lista de palavras comuns do português
  *                 ("consentino" -> "Cosentino"). Só aceita se UM cliente ficar mais perto.
  */
 export async function resolveClientsFromText(message: string): Promise<ClientResolution> {
@@ -287,7 +327,7 @@ export async function resolveClientsFromText(message: string): Promise<ClientRes
       ];
       for (const alvo of alvos) {
         if (alvo.text.length < 5 || PALAVRA_GENERICA_DEMAIS.has(alvo.text)) continue;
-        const distance = editDistanceWithin(word, alvo.text, 2);
+        const distance = editDistanceWithin(word, alvo.text, maxFuzzyDistance(word));
         if (distance === null || distance === 0) continue;
         const melhor = !best || distance < best.distance || (distance === best.distance && alvo.rank < best.rank);
         if (melhor) {

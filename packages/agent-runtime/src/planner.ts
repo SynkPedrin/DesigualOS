@@ -64,7 +64,10 @@ function step(type: PlanStepType, objective: string, extra: Partial<PlanStep> = 
 }
 
 const WRITE_MARKERS = /(cri(e|a|ar)|adicione?|nova (task|tarefa)|atribu|designa|delega|muda|reagend|adia|remarc|marc(ar|a|que)|conclu|finaliz|fech|anex)/i;
-const OPS_ANALYSIS_MARKERS = /(prioriz|como esta a operacao|como está a operação|organiz|analise a operacao|analisa a operacao|o que atacar|o que focar|panorama|resumo operacional)/i;
+// Como a operação PERGUNTA de verdade, não como o manual escreveria. "o que
+// está pegando hoje?" é a pergunta executiva mais comum e caía no fast path
+// (2 passos, sem retrieval e sem verify) só por não estar nesta lista.
+const OPS_ANALYSIS_MARKERS = /(prioriz|como esta a operacao|como está a operação|organiz|analise a operacao|analisa a operacao|o que atacar|o que focar|panorama|resumo operacional|o que (esta|ta|está|tá) pegando|o que merece (minha )?aten|o que (eu )?(preciso|devo|deveria) (ver|olhar)|leitura executiva|como esta a opera|situacao da opera|situação da opera)/i;
 // Autonomia pedida EXPLICITAMENTE. Conservador de propósito: só entra no modo
 // que executa ação quando a pessoa pediu pra resolver/executar sozinho.
 // "como está a operação?" continua sendo análise, não mandato de escrita.

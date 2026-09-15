@@ -60,3 +60,24 @@ describe('buildPlan — planejador adaptativo (§10-15)', () => {
     expect(planStepObjectives(p)).toEqual(p.steps.map((s) => s.objective));
   });
 });
+
+/**
+ * §29: a pergunta executiva real da operação ("o que está pegando hoje?")
+ * caía no fast path — 2 passos, sem retrieval e sem verify — só porque a
+ * lista de marcadores usava a linguagem do manual, não a de quem trabalha.
+ */
+describe('linguagem real da operação dispara análise operacional', () => {
+  it.each([
+    'o que está pegando hoje?',
+    'o que ta pegando com esse cliente',
+    'o que merece minha atenção hoje',
+    'o que eu preciso ver hoje',
+    'me faz uma leitura executiva da operação',
+  ])('%s -> operationsAnalysis', (m) => {
+    expect(inferPlanSignals(m).operationsAnalysis).toBe(true);
+  });
+
+  it('pergunta factual simples NÃO vira análise operacional', () => {
+    expect(inferPlanSignals('quantas tarefas vencem hoje?').operationsAnalysis).toBe(false);
+  });
+});
