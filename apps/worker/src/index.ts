@@ -15,6 +15,7 @@ import {
   type AgentJobData,
   type AutomationJobData,
 } from '@desigual-os/orchestrator';
+import { iniciarGpuGateway } from './gpu-gateway.js';
 import { processAgentJob } from './processors/execute-job.js';
 import { processAutomationJob } from './processors/run-automation.js';
 import { backfillThumbnails, generateThumbnail } from './processors/generate-thumbnail.js';
@@ -148,6 +149,14 @@ const expireMemoriesTimer = setInterval(() => {
 }, EXPIRE_MEMORIES_MS);
 expireMemoriesTimer.unref();
 
+/**
+ * Porta única da GPU. Sobe junto com o worker de propósito: todo pedido de
+ * inferência nasce de um job daqui, então um gateway que só existisse quando o
+ * worker existe não perde disponibilidade nenhuma — e ganha o limite global
+ * que faltava.
+ */
+const gpuGateway = iniciarGpuGateway();
+
 logger.info({ agents: AGENT_NAMES, pid: process.pid }, 'Worker started, listening on all agent queues');
 
 /**
@@ -170,6 +179,7 @@ async function shutdown(motivo: string): Promise<void> {
   desligando = true;
   logger.info({ motivo }, 'Shutting down worker');
 
+  gpuGateway.close();
   clearInterval(flushLearningsTimer);
   clearInterval(expireMemoriesTimer);
   pararBatimento();

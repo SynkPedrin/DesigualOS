@@ -52,3 +52,25 @@ describe('mensagemDeFalhaDeInfra', () => {
     expect(mensagemDeFalhaDeInfra('INFERENCE_CONNECTION_TIMEOUT')).toMatch(/conexão/i);
   });
 });
+
+describe('capacidade', () => {
+  it('reconhece a recusa do controle de admissão pelo marcador, não pelo 503', () => {
+    expect(classificarFalha('Ollama 503: [INFERENCE_CAPACITY_TIMEOUT] fila da GPU cheia')).toBe(
+      'INFERENCE_CAPACITY_TIMEOUT',
+    );
+  });
+
+  it('503 sem marcador continua sendo falha de upstream', () => {
+    expect(classificarFalha('Ollama 503 Service Unavailable')).toBe('INFERENCE_UPSTREAM_5XX');
+  });
+
+  it('recusa por capacidade é infraestrutura: não replaneja', () => {
+    expect(ehFalhaDeInfraestrutura('INFERENCE_CAPACITY_TIMEOUT')).toBe(true);
+  });
+
+  it('a mensagem não culpa a pergunta de quem esperou', () => {
+    const m = mensagemDeFalhaDeInfra('INFERENCE_CAPACITY_TIMEOUT');
+    expect(m).toContain('Sua pergunta está certa');
+    expect(m).not.toMatch(/reformul|tente outra pergunta/i);
+  });
+});

@@ -18,6 +18,10 @@
  */
 
 export type TipoDeFalha =
+  /** Recusado pelo controle de admissão: a GPU não tinha vaga e a fila estava
+   * cheia ou a espera estourou. Distinto de timeout de geração — aqui a
+   * inferência nem começou, então nem a placa nem o modelo têm culpa. */
+  | 'INFERENCE_CAPACITY_TIMEOUT'
   | 'INFERENCE_QUEUE_TIMEOUT'
   | 'INFERENCE_CONNECTION_TIMEOUT'
   | 'INFERENCE_TTFT_TIMEOUT'
@@ -41,6 +45,10 @@ export function classificarFalha(erro: string | null | undefined): TipoDeFalha {
   const e = (erro ?? '').toLowerCase();
   if (e.length === 0) return 'COGNITIVE';
 
+  // Antes dos genéricos: o gateway devolve 503 COM o marcador, e o marcador é
+  // mais informativo que "upstream 5xx" — diz que foi decisão de capacidade
+  // nossa, não falha da placa.
+  if (e.includes('inference_capacity_timeout')) return 'INFERENCE_CAPACITY_TIMEOUT';
   if (/\b(502|503|504|bad gateway|service unavailable|gateway time-?out)\b/.test(e)) return 'INFERENCE_UPSTREAM_5XX';
   if (/aborted due to timeout|abort(ed)?error|timeouterror|operation was aborted/.test(e)) return 'INFERENCE_CONNECTION_TIMEOUT';
   if (/\bnão respondeu em\b|\bdid not respond\b|\btimed? ?out\b|\btimeout\b/.test(e)) return 'INFERENCE_GENERATION_TIMEOUT';
@@ -64,6 +72,8 @@ export function mensagemDeFalhaDeInfra(tipo: TipoDeFalha): string {
     case 'INFERENCE_QUEUE_TIMEOUT':
     case 'INFERENCE_TTFT_TIMEOUT':
       return 'O servidor de inferência está sem capacidade livre agora e a resposta não voltou a tempo. Sua pergunta está certa: é a fila da GPU. Tente de novo em instantes.';
+    case 'INFERENCE_CAPACITY_TIMEOUT':
+      return 'A GPU está ocupada com outro trabalho e a fila está cheia. Sua pergunta está certa: não tem nada errado com ela. Repita em instantes que eu respondo.';
     case 'INFERENCE_CONNECTION_TIMEOUT':
       return 'Não consegui falar com o servidor de inferência agora. Não é a sua pergunta: é conexão. Tente de novo em instantes.';
     case 'INFERENCE_GPU_UNAVAILABLE':

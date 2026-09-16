@@ -232,13 +232,19 @@ export async function generateStudioCopy(params: {
       ? docs.map((doc) => `### ${doc.titulo}\n${doc.body}`).join('\n\n')
       : '(nenhum framework de marketing específico encontrado para este briefing, siga o modus operandi.)';
 
-  const ollamaUrl = process.env.COPY_OLLAMA_URL ?? 'http://100.107.198.50:11434';
+  /**
+   * Gateway, não a placa. Esta função roda no processo da API, que é outro
+   * processo que o do worker — falar direto com a RTX punha um segundo
+   * concorrente na placa sem que o controle de admissão soubesse, que é
+   * exatamente o problema que o controle existe pra resolver.
+   */
+  const ollamaUrl = process.env.COPY_OLLAMA_URL ?? 'http://127.0.0.1:11500';
   const model = process.env.COPY_OLLAMA_MODEL ?? 'ministral-3:3b';
 
   try {
     const response = await fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Desigual-Caller': 'marketing-copy' },
       body: JSON.stringify({
         model,
         stream: false,

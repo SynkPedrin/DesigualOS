@@ -6,6 +6,7 @@ export * from './episodic-memory';
 export * from './agent-bus';
 export * from './vault-writer';
 export * from './execution-id';
+export * from './gpu-admission';
 export * from './queues';
 export * from './result';
 export * from './chat-service';

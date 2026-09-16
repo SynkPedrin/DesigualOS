@@ -72,11 +72,20 @@ function fakeLogger(): Logger {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as Logger;
 }
 
+/**
+ * Timeout explícito: o primeiro `import('./execute-job.js')` puxa o grafo
+ * inteiro do worker e paga o transform a frio. Isolado leva ~300ms, mas na
+ * suíte completa em paralelo passou dos 5s padrão e derrubou o gate de release
+ * por tempo, não por comportamento. Portão que reprova por acaso ensina a
+ * ignorar portão.
+ */
+const IMPORT_A_FRIO_MS = 30_000;
+
 describe('buildNodeUrl', () => {
   it('acrescenta a porta padrão 4001 quando o host não tem porta', async () => {
     const { buildNodeUrl } = await import('./execute-job.js');
     expect(buildNodeUrl('100.107.198.50')).toBe('http://100.107.198.50:4001');
-  });
+  }, IMPORT_A_FRIO_MS);
 
   it('não acrescenta porta quando o host já traz uma (dev, vários nodes fake na mesma máquina)', async () => {
     const { buildNodeUrl } = await import('./execute-job.js');
