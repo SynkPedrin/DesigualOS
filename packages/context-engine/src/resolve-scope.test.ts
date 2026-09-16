@@ -189,3 +189,31 @@ describe('bento_resolves_known_person_consistently', () => {
     expect(escopo.person?.name).not.toBe('responsavel');
   });
 });
+
+/**
+ * Regressão medida no navegador (16/09/2026): "quais entregas parecem mais
+ * próximas de atrasar e o que depende de aprovação?" era reconhecida como
+ * operacional e mesmo assim devolvia escopo NONE, por não ter marcador de
+ * tempo. Sem escopo a API não busca dado, e o agente respondia "de qual
+ * cliente?" — o comportamento que o produto existe para eliminar.
+ */
+describe('pergunta operacional sem cliente é sobre a operação', () => {
+  it('"quais entregas vão atrasar" resolve GLOBAL', async () => {
+    const e = await resolveOperationalScope('quais entregas parecem mais próximas de atrasar e o que depende de aprovação?');
+    expect(e.kind).toBe('GLOBAL');
+    expect(e.operational).toBe(true);
+  });
+
+  it('"o que depende de aprovação" resolve GLOBAL', async () => {
+    expect((await resolveOperationalScope('o que está pendente de aprovação?')).kind).toBe('GLOBAL');
+  });
+
+  it('conversa sem nada operacional continua NONE', async () => {
+    expect((await resolveOperationalScope('bom dia, tudo certo?')).kind).toBe('NONE');
+  });
+
+  it('pergunta de cliente continua CLIENT, não vira global', async () => {
+    const e = await resolveOperationalScope('quais tarefas da Cosentino estão abertas?');
+    expect(e.kind).toBe('CLIENT');
+  });
+});

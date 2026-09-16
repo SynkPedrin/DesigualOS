@@ -409,7 +409,15 @@ export async function resolveOperationalScope(
   // Pergunta agregada/temporal sobre operação, sem cliente e sem marcador explícito:
   // "quantas tasks vencem amanhã?" -> a leitura útil é a operação inteira. Confiança
   // menor de propósito: é inferência, não citação literal.
-  if (operational && (aggregateHits.length > 0 || temporal !== null)) {
+  // Pergunta OPERACIONAL sem cliente, sem pessoa e sem marcador de tempo
+  // ("quais entregas estão mais próximas de atrasar?", "o que depende de
+  // aprovação?"): a leitura útil continua sendo a operação inteira.
+  //
+  // Antes isto caía em NONE, a API não buscava dado nenhum, e o agente pedia
+  // "de qual cliente?" — que é exatamente o comportamento que o produto existe
+  // para eliminar: quem pergunta sobre a operação não deveria ter que nomear
+  // um cliente para receber resposta. Medido no navegador em 16/09/2026.
+  if (operational && (aggregateHits.length > 0 || temporal !== null || operationalHits.length > 0)) {
     return {
       kind: 'GLOBAL',
       clients: [],
