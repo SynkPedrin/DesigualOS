@@ -199,6 +199,27 @@ for (const [clientId, cs] of campanhasPorCliente) {
   }
 }
 
+// ---------- ÍNDICE VELHO ----------
+// Campanha é 100% DERIVADA da fonte: se deixou de ser derivada, ou o nome mudou
+// ou as tasks sumiram, e a linha antiga vira concorrente da nova na resolução —
+// foi assim que "Campanha Operação Blindada" e "Operação Blindada" passaram a
+// disputar o mesmo pedido. Reconciliar sem remover o que não existe mais é
+// deixar índice velho decidir.
+let removidas = 0;
+for (const [clientId, cs] of campanhasPorCliente) {
+  const vivas = new Set(cs.map((c) => c.normalizedName));
+  const atuais = await db
+    .select({ id: schema.campaigns.id, nome: schema.campaigns.normalizedName })
+    .from(schema.campaigns)
+    .where(eq(schema.campaigns.clientId, clientId))
+    .catch(() => []);
+  for (const a of atuais) {
+    if (vivas.has(a.nome)) continue;
+    await db.delete(schema.campaigns).where(eq(schema.campaigns.id, a.id)).catch(() => undefined);
+    removidas += 1;
+  }
+}
+
 // ---------- ESTADO DE SYNC ----------
 for (const c of clientes) {
   const ts = tasksPorCliente.get(c.id) ?? [];
@@ -220,5 +241,5 @@ for (const c of clientes) {
   }
 }
 
-console.log(`\nAPLICADO — ${idDaPessoa.size} pessoas, ${relacoes.size} relações, ${gravadas} campanhas, ${clientes.length} clientes com estado de sync`);
+console.log(`\nAPLICADO — ${idDaPessoa.size} pessoas, ${relacoes.size} relações, ${gravadas} campanhas gravadas, ${removidas} campanhas obsoletas removidas, ${clientes.length} clientes com estado de sync`);
 process.exit(0);

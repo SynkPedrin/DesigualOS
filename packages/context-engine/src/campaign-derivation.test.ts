@@ -102,3 +102,19 @@ describe('convenção por repetição', () => {
     expect(nomes).not.toContain('seu domingo aqui no por do sol');
   });
 });
+
+describe('nome de campanha normalizado', () => {
+  it('"Campanha X" e "X" viram a mesma campanha', () => {
+    const c = derivarCampanhas([
+      { id: '1', name: 'DC_Campanha Operação Blindada_Layout', closed: false, updatedAt: new Date('2026-09-01') },
+      { id: '2', name: 'DC_Operação Blindada_Edição', closed: false, updatedAt: new Date('2026-09-02') },
+    ]);
+    const blindada = c.filter((x) => x.normalizedName.includes('blindada'));
+    expect(blindada).toHaveLength(1);
+    expect(blindada[0]!.taskCount).toBe(2);
+  });
+
+  it('não descarta nome curto que é só a palavra-categoria', () => {
+    expect(derivarCampanhas([{ id: '1', name: 'DC_Ação_Layout', closed: false, updatedAt: null }]).length).toBeLessThanOrEqual(1);
+  });
+});

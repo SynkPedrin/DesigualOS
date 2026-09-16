@@ -217,8 +217,10 @@ export function formatCampaignBlock(
   }
   linhas.push(
     '',
-    'Use ISTO como contexto da peça. Uma campanha específica foi citada, então entregar apenas',
-    'discurso genérico de marca é falha. Se faltar algo, diga o que falta citando esta campanha.',
+    'A CAMPANHA JÁ ESTÁ RESOLVIDA: não pergunte qual é, não ofereça lista de campanhas para',
+    'escolher e não trate o pedido como ambíguo. Use ISTO como contexto da peça. Se algo',
+    'específico faltar, entregue o que dá com o que está aqui e diga o que falta, nomeando esta',
+    'campanha. Entregar só discurso genérico de marca é falha.',
   );
   return linhas.join('\n');
 }

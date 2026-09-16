@@ -172,6 +172,17 @@ export function segmentosCandidatos(nomeDaTask: string, clientName?: string): st
   return [...saida];
 }
 
+/**
+ * "Campanha Operação Blindada" e "Operação Blindada" são a MESMA campanha: a
+ * primeira só carrega a palavra-categoria na frente. Sem normalizar, o registro
+ * ganha duas linhas concorrentes para a mesma coisa e a contagem de tasks fica
+ * partida entre elas.
+ */
+function semPalavraCategoria(nome: string): string {
+  const limpo = nome.replace(/^\s*(campanhas?|a[çc][ãa]o|projeto)\s+/i, '').trim();
+  return limpo.length >= 4 ? limpo : nome;
+}
+
 /** Agrupa as tasks de UM cliente nas campanhas que a fonte nomeia. */
 export function derivarCampanhas(
   tasks: TaskParaDerivacao[],
@@ -180,8 +191,9 @@ export function derivarCampanhas(
   const porCampanha = new Map<string, { canonical: string; tasks: TaskParaDerivacao[] }>();
 
   for (const t of tasks) {
-    const nome = campanhaDoNomeDaTask(t.name);
-    if (!nome) continue;
+    const bruto = campanhaDoNomeDaTask(t.name);
+    if (!bruto) continue;
+    const nome = semPalavraCategoria(bruto);
     const chave = dobrar(nome);
     const atual = porCampanha.get(chave);
     if (atual) atual.tasks.push(t);
@@ -193,7 +205,8 @@ export function derivarCampanhas(
   const porRepeticao = new Map<string, { canonical: string; tasks: TaskParaDerivacao[] }>();
   for (const t of tasks) {
     if (campanhaDoNomeDaTask(t.name)) continue;
-    for (const seg of new Set(segmentosCandidatos(t.name, opcoes.clientName))) {
+    for (const bruto of new Set(segmentosCandidatos(t.name, opcoes.clientName))) {
+      const seg = semPalavraCategoria(bruto);
       const chave = dobrar(seg);
       if (porCampanha.has(chave)) continue;
       const atual = porRepeticao.get(chave);

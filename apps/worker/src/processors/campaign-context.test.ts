@@ -30,6 +30,10 @@ describe('formatCampaignBlock', () => {
     expect(b).toContain('ATIVA');
     expect(b).toContain('Campanha de Aniversário_Motion');
     expect(b).toContain('2026-09-16');
+    // Regressão: com o contexto em mãos, o agente ainda devolvia lista de
+    // campanhas e pedia para escolher. Campanha resolvida não é pergunta.
+    expect(b).toMatch(/J[ÁA] EST[ÁA] RESOLVIDA/);
+    expect(b).toMatch(/n[ãa]o pergunte qual/i);
   });
 
   it('otto_does_not_improvise_when_specific_context_exists', () => {
