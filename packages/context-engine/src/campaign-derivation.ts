@@ -55,14 +55,16 @@ const MESES = new Set([
  * campanha certa por causa disso.
  */
 const PALAVRA_DE_LIGACAO = new Set([
+  // SÓ palavra funcional: artigo, preposição, pronome, conjunção. Substantivo e
+  // advérbio NÃO entram. A primeira versão desta lista trazia "dia", e sozinha
+  // ela matou "Dia das Mães", "Dia do Cliente" e "Dia do Corretor" — campanhas
+  // reais, das mais comuns do calendário da agência. Derrubou 287 campanhas de
+  // uma vez. Filtro que remove verdade é pior que o ruído que ele evita.
   'que', 'voce', 'para', 'com', 'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na',
   'nos', 'nas', 'por', 'pelo', 'pela', 'um', 'uma', 'uns', 'umas', 'o', 'a', 'os',
   'as', 'e', 'ou', 'se', 'ao', 'aos', 'isso', 'esse', 'essa', 'este', 'esta',
-  'seu', 'sua', 'meu', 'minha', 'mais', 'menos', 'muito', 'todo', 'toda', 'todos',
-  'todas', 'sobre', 'como', 'quando', 'onde', 'qual', 'quais', 'ja', 'nao', 'sim',
-  'tudo', 'nada', 'ser', 'estar', 'ter', 'fazer', 'vai', 'vou', 'quero', 'preciso',
-  'aqui', 'ali', 'sem', 'ate', 'apos', 'antes', 'depois', 'entre', 'dia', 'dias',
-  'hoje', 'ontem', 'amanha', 'agora', 'ainda', 'sempre', 'nunca', 'tambem',
+  'seu', 'sua', 'meu', 'minha', 'sobre', 'como', 'quando', 'onde', 'qual',
+  'quais', 'nao', 'sim', 'sem', 'ate', 'apos', 'antes', 'depois', 'entre',
 ]);
 
 /** Segmento que descreve PEÇA ou ETAPA, nunca campanha. */
@@ -191,6 +193,10 @@ export function segmentosCandidatos(nomeDaTask: string, clientName?: string): st
           (tk) => !PALAVRA_DE_LIGACAO.has(tk) && !SEGMENTO_NAO_E_CAMPANHA.has(tk) && !PALAVRA_FRACA.has(tk),
         );
         if (!temConteudo) continue;
+        // Token repetido é expressão feita, não nome: "dia a dia", "cara a cara".
+        // Pega o ruído sem precisar proibir a palavra, que é o que quebrava
+        // "Dia das Mães".
+        if (new Set(janela).size !== janela.length) continue;
         // Data no meio quebra o nome.
         if (janela.some((tk) => /\d{1,2}\/\d{1,2}/.test(tk))) continue;
         const frase = original.slice(i, i + n).join(' ');

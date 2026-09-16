@@ -144,3 +144,24 @@ describe('frase comum não vira campanha', () => {
     expect(derivarCampanhas(tasks, { clientName: 'Cliente' }).map((c) => c.normalizedName)).toContain('evento inauguracao');
   });
 });
+
+describe('filtro não pode remover campanha real', () => {
+  const calendario = [
+    { id: '1', name: 'Cliente - Dia das Mães - MAIO', closed: false, updatedAt: null },
+    { id: '2', name: 'Cliente - Card Dia das Mães - MAIO', closed: false, updatedAt: null },
+    { id: '3', name: 'Cliente - Reels Dia das Mães - MAIO', closed: false, updatedAt: null },
+    { id: '4', name: 'Cliente - Card - No dia a dia da obra - X', closed: false, updatedAt: null },
+    { id: '5', name: 'Cliente - Post - No dia a dia da obra - Y', closed: false, updatedAt: null },
+    { id: '6', name: 'Cliente - Reels - No dia a dia da obra - Z', closed: false, updatedAt: null },
+  ];
+
+  it('campanha de calendário sobrevive ("Dia das Mães")', () => {
+    // A primeira versão do filtro tratava "dia" como palavra de ligação e
+    // matava as campanhas mais comuns do calendário: 287 de uma vez.
+    expect(derivarCampanhas(calendario, { clientName: 'Cliente' }).map((c) => c.normalizedName)).toContain('dia das maes');
+  });
+
+  it('expressão feita com token repetido continua fora ("dia a dia")', () => {
+    expect(derivarCampanhas(calendario, { clientName: 'Cliente' }).map((c) => c.normalizedName)).not.toContain('dia a dia');
+  });
+});

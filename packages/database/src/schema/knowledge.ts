@@ -112,6 +112,15 @@ export const memories = pgTable(
      * informação virar 40 linhas por ter sido dita 40 vezes. */
     dedupeKey: text('dedupe_key'),
 
+    /**
+     * ISOLAMENTO QA. Memória criada em teste NUNCA pode ser recuperada em
+     * produção: uma preferência inventada num QA vira regra de marca real na
+     * semana seguinte e ninguém descobre a origem. Default 'production' porque
+     * a origem esmagadora é a operação real; o caminho de QA marca explícito e
+     * a recuperação filtra.
+     */
+    environment: text('environment').notNull().default('production'),
+
     ...timestampColumns,
   },
   (table) => ({

@@ -218,6 +218,20 @@
       "when": 1789567993727,
       "tag": "0030_thin_romulus",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1789577671999,
+      "tag": "0031_third_banshee",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1789577688058,
+      "tag": "0032_rich_doctor_faustus",
+      "breakpoints": true
     }
   ]
 }

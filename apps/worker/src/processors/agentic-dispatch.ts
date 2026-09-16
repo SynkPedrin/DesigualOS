@@ -16,7 +16,17 @@ import {
 import { db, schema } from '@desigual-os/database';
 import { eq } from 'drizzle-orm';
 import type { AgentJobData } from '@desigual-os/orchestrator';
-import { publishWsEvent, recallMemories, rememberFact } from '@desigual-os/orchestrator';
+import {
+  extractEpisodeCandidates,
+  formatEpisodeBlock,
+  upsertBlackboard,
+  janelaDoTexto,
+  publishWsEvent,
+  recallEpisodes,
+  recallMemories,
+  recordEpisodes,
+  rememberFact,
+} from '@desigual-os/orchestrator';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
 import type { ClientBrandKit, ClientFeedbackEntry } from '@desigual-os/node-protocol';
 import type { AgentName } from '@desigual-os/types';
@@ -29,6 +39,9 @@ import { capturePreferences, formatPreferenceBlock, recallPreferences } from './
 import { captureClientFacts } from './client-fact';
 import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaignTurnContext } from './campaign-context';
 import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
+import { assembleContext, type BlocoDeContexto } from './context-assembler';
+import { resolveCrossAgentContext } from './cross-agent-context';
+import { formatFreshnessWarning } from '../scheduler/integration-health';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { queryOperationTasks, getTaskComments, type OperationTask } from '@desigual-os/tool-gateway';
 import { getWriteScopeListId } from '@desigual-os/tool-gateway';
@@ -246,6 +259,21 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     },
   );
 
+  // MEMÓRIA EPISÓDICA (L1). O que o turno DECIDE, REPROVA ou define como regra
+  // vira episódio datado. Só forma explícita entra: conversa não é verdade, e a
+  // esmagadora maioria dos turnos não deixa episódio nenhum — que é o certo.
+  const candidatosEpisodio = extractEpisodeCandidates(data.message);
+  if (candidatosEpisodio.length > 0) {
+    void recordEpisodes(candidatosEpisodio, {
+      clientId,
+      userId,
+      agent: data.agent,
+      conversationId: data.conversationId ?? null,
+      executionId: data.executionId,
+      sourceRefs: [`execution:${data.executionId}`],
+    }).catch((error: unknown) => logger.warn({ error }, '[memoria] falha ao gravar episódio'));
+  }
+
   // IDENTIDADE DO CLIENTE (bug real de 15/09/2026): sem isto o node recebia
   // só o vault de teoria de marketing e inventava quem era o cliente — chegou
   // a dizer que uma concessionária John Deere era "rede de joias".
@@ -293,6 +321,47 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // task" virava "responde pela conta" — o bug da Esther.
   const pessoasDoTurno = await resolvePersonTurnContext(data.message).catch(() => null);
   const blocoPessoas = pessoasDoTurno ? formatPersonBlock(pessoasDoTurno) : '';
+
+  // RECALL TEMPORAL. "o que conversamos ontem?" passa a ser respondível com o
+  // que ficou REGISTRADO na janela, em vez de reler a conversa (que numa
+  // conversa nova nem existe).
+  // FRESCOR DA FONTE. Quando o ClickUp está atrasado, o agente diz isso em vez
+  // de responder como se estivesse em dia — foi o que faltou nos cinco dias em
+  // que o webhook esteve morto e ninguém percebeu.
+  const blocoFrescor = await formatFreshnessWarning().catch(() => '');
+
+  // A2A: o domínio do OUTRO agente, quando o turno precisa dele. Registrado
+  // como envelope tipado e atendido pela FONTE — nunca por um modelo chamando
+  // o outro, que é o caminho de loop e de verdade inventada em consenso.
+  const cruzado = await resolveCrossAgentContext({
+    agent: data.agent,
+    message: data.message,
+    executionId: data.executionId,
+    clientId: clienteDoTurnoFinal?.clientId ?? clientId,
+    campaignId: campanhaDoTurno?.campanha?.id ?? null,
+    logger,
+  }).catch(() => ({ bloco: '', chamadas: [] }));
+
+  const janela = janelaDoTexto(data.message);
+  let blocoEpisodios = '';
+  if (janela) {
+    const episodios = await recallEpisodes({
+      userId,
+      clientId: clienteDoTurno?.clientId ?? clientId,
+      desde: janela.desde,
+      ...(janela.ate ? { ate: janela.ate } : {}),
+    }).catch(() => []);
+    blocoEpisodios = formatEpisodeBlock(episodios, janela.rotulo);
+  }
+
+  // BLACKBOARD: escopo e objetivo desta execução ficam legíveis para qualquer
+  // agente que entre depois, sem precisar redescobrir tudo.
+  void upsertBlackboard({
+    executionId: data.executionId,
+    clientId: clienteDoTurnoFinal?.clientId ?? clientId,
+    campaignId: campanhaDoTurno?.campanha?.id ?? null,
+    objective: data.message.slice(0, 500),
+  }).catch(() => undefined);
 
   const nowIso = new Date().toISOString();
   const evidence: Evidence[] = [];
@@ -433,6 +502,10 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   const evaluator = evaluatorFor(data.agent, clienteDoTurnoFinal?.clientName ? [clienteDoTurnoFinal.clientName] : []);
   let nodeAnswer: string | null = null;
   let nodeCalled = false;
+  // Observabilidade do pacote de contexto: sem isto não dá pra auditar quem
+  // ocupou o prompt nem por que uma fonte não chegou ao modelo.
+  let contextPackFontes: string[] = [];
+  let contextPackChars = 0;
   let useReduced = false;
 
   const callNode = async (): Promise<{ ok: boolean; answer: string; error?: string; durationMs: number }> => {
@@ -443,15 +516,28 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     }
     state.iterations += 1;
     try {
-      const blocoPreferencias = formatPreferenceBlock(preferencias);
-      const extras = [blocoClienteFinal, blocoCampanha, blocoPessoas, blocoPreferencias].filter((b) => b.length > 0);
-      // MARCADOR DO PROTOCOLO. Antes daqui ia só "\n\n---\n", que não é o
-      // marcador que o node conhece (CONTEXT_BLOCK_MARKER, em
-      // packages/otto/src/brain/depth.ts): o node nunca reconhecia este bloco
-      // como contexto do orquestrador, então não separava turno de contexto
-      // nem podia dar precedência ao cliente/campanha já resolvidos.
+      // CONTEXT ASSEMBLER: ordem por autoridade e orçamento com piso por bloco.
+      // Concatenar tudo funcionava com dois blocos; com seis vira despejo, e o
+      // modelo passa a prestar atenção no lugar errado — foi assim que um
+      // aprendizado velho ancorou um pedido no cliente errado.
+      const blocos: BlocoDeContexto[] = [
+        { fonte: 'frescor', texto: blocoFrescor },
+        { fonte: 'cliente', texto: blocoClienteFinal },
+        { fonte: 'campanha', texto: blocoCampanha },
+        { fonte: 'pessoas', texto: blocoPessoas },
+        // O bloco do outro domínio entra junto da campanha: é fato de fonte,
+        // não preferência nem histórico.
+        { fonte: 'campanha', texto: cruzado.bloco },
+        { fonte: 'episodios', texto: blocoEpisodios },
+        { fonte: 'preferencias', texto: formatPreferenceBlock(preferencias) },
+      ];
+      const pack = assembleContext(blocos);
+      contextPackFontes = pack.fontes;
+      contextPackChars = pack.totalChars;
+      // MARCADOR DO PROTOCOLO: é o que o node reconhece como contexto do
+      // orquestrador (CONTEXT_BLOCK_MARKER, packages/otto/src/brain/depth.ts).
       const response = await callAgent(
-        extras.length > 0 ? `${message}\n\n---\nContexto:\n${extras.join('\n\n')}` : message,
+        pack.texto.length > 0 ? `${message}\n\n---\nContexto:\n${pack.texto}` : message,
       );
       lastNodeMetadata = response.metadata;
       const ok = response.status === 'completed' && Boolean(response.answer?.trim());

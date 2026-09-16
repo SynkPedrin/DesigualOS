@@ -1,0 +1,1 @@
+ALTER TABLE "memories" ADD COLUMN "environment" text DEFAULT 'production' NOT NULL;
