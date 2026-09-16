@@ -56,7 +56,26 @@ interface DispatchParams {
   clientBrandKit: ClientBrandKit | undefined;
   clientFeedbackHistory: ClientFeedbackEntry[];
   logger: Logger;
-  callAgent: (message: string) => Promise<ExecuteResponse>;
+  /**
+   * `contextoApartado` existe por causa do Bento. O node do Otto reconhece o
+   * bloco de contexto DENTRO da mensagem (CONTEXT_BLOCK_MARKER); o Bento, não:
+   * ele usa a mensagem inteira como sinal de intenção E como consulta vetorial.
+   * Concatenar o pack ali fazia qualquer "task"/"tarefa" do contexto disparar o
+   * detector de ClickUp dele, e a listagem de tasks respondia no lugar do
+   * agente — a pergunta do usuário nunca era lida.
+   */
+  callAgent: (message: string, contextoApartado?: string) => Promise<ExecuteResponse>;
+}
+
+/**
+ * Quem entende o bloco de contexto dentro da própria mensagem. Otto entende (o
+ * node dele procura o CONTEXT_BLOCK_MARKER); Bento não. Lista explícita em vez
+ * de negar o Bento por nome: node novo entra sabendo que precisa declarar isso.
+ */
+const NODES_QUE_LEEM_CONTEXTO_NA_MENSAGEM = new Set(['otto', 'jarbas', 'suzy', 'studio']);
+
+export function aceitaContextoNaMensagem(agente: string): boolean {
+  return NODES_QUE_LEEM_CONTEXTO_NA_MENSAGEM.has(agente);
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -589,9 +608,20 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       contextPackChars = pack.totalChars;
       // MARCADOR DO PROTOCOLO: é o que o node reconhece como contexto do
       // orquestrador (CONTEXT_BLOCK_MARKER, packages/otto/src/brain/depth.ts).
-      const response = await callAgent(
-        pack.texto.length > 0 ? `${message}\n\n---\nContexto:\n${pack.texto}` : message,
-      );
+      /**
+       * Medido em 16/09/2026, bateria sênior: com o pack concatenado, "Quem é a
+       * Esther?" devolvia a lista de 16 tasks da D. Carvalho (status `clickup`).
+       * Com a MESMA pergunta e o MESMO contexto no campo apartado, devolveu
+       * `operacional` e a resposta certa: que não há Esther nos dados. O Bento
+       * já tem o canal próprio pra isso, e o comentário no código dele avisa
+       * exatamente contra o que estávamos fazendo.
+       */
+      const response =
+        pack.texto.length === 0
+          ? await callAgent(message)
+          : aceitaContextoNaMensagem(data.agent)
+            ? await callAgent(`${message}\n\n---\nContexto:\n${pack.texto}`)
+            : await callAgent(message, pack.texto);
       lastNodeMetadata = response.metadata;
       const ok = response.status === 'completed' && Boolean(response.answer?.trim());
       nodeAnswer = response.answer ?? '';

@@ -964,7 +964,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         clientBrandKit,
         clientFeedbackHistory,
         logger,
-        callAgent: (msg) =>
+        callAgent: (msg, contextoApartado) =>
           callNode(
             agent,
             executionId,
@@ -974,7 +974,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
             conversationId ?? undefined,
             clientBrandKit,
             attachments,
-            operationalContext,
+            // O contexto apartado entra pelo campo próprio, junto com o que já
+            // viesse de operacional. Ver `aceitaContextoNaMensagem`: pro Bento,
+            // contexto dentro da pergunta sequestra a intenção dele.
+            [operationalContext, contextoApartado].filter((t) => Boolean(t && t.trim())).join('\n\n') || undefined,
             clientFeedbackHistory,
           ),
       });
