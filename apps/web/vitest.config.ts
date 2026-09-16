@@ -15,6 +15,14 @@ export default defineConfig({
     environment: 'jsdom',
     exclude: ['tests/e2e/**', '**/node_modules/**'],
   },
+  /**
+   * JSX automático, igual ao Next. No runtime clássico o transform emite
+   * `React.createElement` e exige `React` no escopo — os componentes deste app
+   * importam só o que usam (`Fragment`), então qualquer teste que renderizasse
+   * um componente real estourava com "React is not defined" e dava a impressão
+   * de que o componente estava quebrado.
+   */
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
