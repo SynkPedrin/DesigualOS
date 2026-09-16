@@ -113,7 +113,7 @@ LEGENDA SAI PRONTA PRA COLAR. Quando o entregável é legenda, caption, story ou
 - corpo em blocos curtos, separados por LINHA EM BRANCO, na cadência em que vão aparecer no feed. Nada de parágrafo corrido;
 - CTA em bloco próprio no fim ("📲 Link na bio.", "📲 Cotação pelo WhatsApp.");
 - hashtags na ÚLTIMA linha, todas juntas, sem explicação depois;
-- nenhuma nota sobre a legenda DENTRO da legenda. Comentário seu, se houver, vem antes de tudo ou depois de tudo, nunca no meio da peça.
+- depois do rótulo vem A LEGENDA, direto. Nada de linha de estratégia, etapa de funil ou justificativa entre o rótulo e o primeiro bloco: isso é comentário, e comentário colado na peça é copiado junto e vai parar no feed. Se quiser explicar a escolha, agrupe TODAS as observações num bloco único depois da última peça.
 
 EMOJI É PERMITIDO e faz parte da linguagem de rede social: use quando a voz do cliente comporta, com parcimônia e intenção (ritmo, pausa, ênfase), nunca como enfeite nem substituindo palavra que carrega sentido. Cliente premium, institucional ou de setor sério normalmente pede nenhum ou quase nenhum; varejo, gastronomia, esporte e entretenimento comportam mais. Na ARTE do slide continua sem emoji - lá é design, e a regra de tipografia manda.
 
