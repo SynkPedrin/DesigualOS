@@ -44,6 +44,27 @@ const MESES = new Set([
   'setembro','outubro','novembro','dezembro',
 ]);
 
+/**
+ * Palavra de ligação do português. Frase feita só disso NÃO nomeia campanha.
+ *
+ * Sem esta régua a derivação por repetição criou campanhas chamadas "que você",
+ * "Por que o" e "Dia a dia" — e o dano não é estético: "que você" tem dois
+ * tokens e empata com qualquer campanha de dois tokens numa frase que contenha
+ * "que você", derrubando a resolução por ambiguidade. Medido ao vivo: a
+ * pergunta "o que VOCÊ sabe sobre a campanha Frescor V3?" deixou de resolver a
+ * campanha certa por causa disso.
+ */
+const PALAVRA_DE_LIGACAO = new Set([
+  'que', 'voce', 'para', 'com', 'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na',
+  'nos', 'nas', 'por', 'pelo', 'pela', 'um', 'uma', 'uns', 'umas', 'o', 'a', 'os',
+  'as', 'e', 'ou', 'se', 'ao', 'aos', 'isso', 'esse', 'essa', 'este', 'esta',
+  'seu', 'sua', 'meu', 'minha', 'mais', 'menos', 'muito', 'todo', 'toda', 'todos',
+  'todas', 'sobre', 'como', 'quando', 'onde', 'qual', 'quais', 'ja', 'nao', 'sim',
+  'tudo', 'nada', 'ser', 'estar', 'ter', 'fazer', 'vai', 'vou', 'quero', 'preciso',
+  'aqui', 'ali', 'sem', 'ate', 'apos', 'antes', 'depois', 'entre', 'dia', 'dias',
+  'hoje', 'ontem', 'amanha', 'agora', 'ainda', 'sempre', 'nunca', 'tambem',
+]);
+
 /** Segmento que descreve PEÇA ou ETAPA, nunca campanha. */
 const SEGMENTO_NAO_E_CAMPANHA = new Set([
   ...MESES,
@@ -162,6 +183,14 @@ export function segmentosCandidatos(nomeDaTask: string, clientName?: string): st
         if (janela.some((tk) => tk.length === 0)) continue;
         // Borda fraca faz a frase deixar de ser nome ("p/ Evento", "Evento de").
         if (proibido(janela[0]!) || proibido(janela[n - 1]!)) continue;
+        // Borda de ligação idem ("que Você", "Por que").
+        if (PALAVRA_DE_LIGACAO.has(janela[0]!) || PALAVRA_DE_LIGACAO.has(janela[n - 1]!)) continue;
+        // E a frase precisa ter ao menos UMA palavra de conteúdo: só ligação e
+        // palavra de peça não nomeia nada.
+        const temConteudo = janela.some(
+          (tk) => !PALAVRA_DE_LIGACAO.has(tk) && !SEGMENTO_NAO_E_CAMPANHA.has(tk) && !PALAVRA_FRACA.has(tk),
+        );
+        if (!temConteudo) continue;
         // Data no meio quebra o nome.
         if (janela.some((tk) => /\d{1,2}\/\d{1,2}/.test(tk))) continue;
         const frase = original.slice(i, i + n).join(' ');

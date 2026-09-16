@@ -118,3 +118,29 @@ describe('nome de campanha normalizado', () => {
     expect(derivarCampanhas([{ id: '1', name: 'DC_Ação_Layout', closed: false, updatedAt: null }]).length).toBeLessThanOrEqual(1);
   });
 });
+
+describe('frase comum não vira campanha', () => {
+  it('não cria campanha a partir de palavra de ligação repetida', () => {
+    // Regressão medida ao vivo: nasceram campanhas chamadas "que você",
+    // "Por que o" e "Dia a dia". "que você" empatava com qualquer campanha de
+    // dois tokens e derrubava a resolução por ambiguidade.
+    const tasks = [
+      { id: '1', name: 'Card 01/09 - Você sabia que você pode - Cliente', closed: false, updatedAt: null },
+      { id: '2', name: 'Card 02/09 - Por que o preço muda - Cliente', closed: false, updatedAt: null },
+      { id: '3', name: 'Card 03/09 - O que você precisa saber - Cliente', closed: false, updatedAt: null },
+      { id: '4', name: 'Card 04/09 - Sabia que você ganha - Cliente', closed: false, updatedAt: null },
+    ];
+    const nomes = derivarCampanhas(tasks, { clientName: 'Cliente' }).map((c) => c.normalizedName);
+    expect(nomes).not.toContain('que voce');
+    expect(nomes).not.toContain('por que o');
+  });
+
+  it('continua achando campanha de verdade na mesma convenção', () => {
+    const tasks = [
+      { id: '1', name: 'Cliente - Evento inauguração - SETEMBRO', closed: false, updatedAt: null },
+      { id: '2', name: 'Cliente - Convite Evento inauguração - SETEMBRO', closed: false, updatedAt: null },
+      { id: '3', name: 'Cliente - Spot Evento inauguração - RÁDIO', closed: false, updatedAt: null },
+    ];
+    expect(derivarCampanhas(tasks, { clientName: 'Cliente' }).map((c) => c.normalizedName)).toContain('evento inauguracao');
+  });
+});
