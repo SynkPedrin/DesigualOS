@@ -15,9 +15,17 @@
   qualquer motivo, volta em ThrottleInterval segundos, sem ninguém perceber.
 
   DECISÕES:
-  - KeepAlive.SuccessfulExit=false + Crashed=true: reinicia em QUALQUER saída que não seja um
-    desligamento limpo por sinal. Saída 0 (shutdown pedido) não reinicia, senão não dá pra
-    parar o serviço de propósito.
+  - KeepAlive=true (incondicional). A versão anterior era SuccessfulExit=false + Crashed=true,
+    com o raciocínio de que saída 0 é "shutdown pedido" e não deve reiniciar. Medido em
+    16/09/2026: isso significa que QUALQUER SIGTERM externo derruba o serviço PARA SEMPRE —
+    o handler drena o job e sai com 0, o launchd lê saída limpa e não levanta de novo.
+    Aconteceu duas vezes no mesmo dia; na segunda o worker ficou fora do ar sem que nada no
+    painel mudasse. Um sinal que ninguém mandou de propósito não pode ser interpretado como
+    "o operador quis parar". Parada intencional continua possível e é mais explícita:
+      launchctl bootout gui/$(id -u)/com.desigualos.<serviço>   # para
+      launchctl bootstrap gui/$(id -u) <plist>                  # volta
+    bootout desliga o job mesmo com KeepAlive, que é a diferença entre parar de propósito e
+    morrer por acidente.
   - ExitTimeOut=90: o worker drena o job ativo no SIGTERM (teto de 55s em apps/worker/src/index.ts).
     Menos que isso e o launchd manda SIGKILL no meio de um job — exatamente o defeito de origem.
   - ProcessType=Background: o macOS não deve fazer throttle de CPU dele como faz com processo
@@ -64,12 +72,7 @@
   <true/>
 
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-    <key>Crashed</key>
-    <true/>
-  </dict>
+  <true/>
 
   <key>ThrottleInterval</key>
   <integer>10</integer>

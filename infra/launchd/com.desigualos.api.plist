@@ -12,8 +12,16 @@
   uma bateria de testes, e o que o usuário viu foi erro genérico no chat.
 
   DECISÕES:
-  - KeepAlive.SuccessfulExit=false + Crashed=true: volta em qualquer saída que não seja parada
-    limpa. Saída 0 (SIGTERM tratado em server.ts) não reinicia, pra dar pra parar de propósito.
+  - KeepAlive=true (incondicional). A versão anterior era SuccessfulExit=false + Crashed=true,
+    com o raciocínio de que saída 0 é parada pedida e não deve reiniciar. Medido em 16/09/2026
+    no worker, que tinha a mesma política: QUALQUER SIGTERM externo derruba o serviço PARA
+    SEMPRE — o handler fecha limpo e sai com 0, o launchd lê saída limpa e não levanta de novo.
+    Aconteceu duas vezes no mesmo dia. Um sinal que ninguém mandou de propósito não pode ser
+    lido como "o operador quis parar". Parada intencional continua possível e mais explícita:
+      launchctl bootout gui/$(id -u)/com.desigualos.api    # para
+      launchctl bootstrap gui/$(id -u) <plist>             # volta
+    bootout desliga o job mesmo com KeepAlive — é a diferença entre parar de propósito e morrer
+    por acidente. Espere o bootout terminar antes do bootstrap, senão ele falha com I/O error 5.
   - ExitTimeOut=90: o shutdown de server.ts fecha o Fastify esperando as requisições em voo;
     matar antes disso corta resposta na cara de quem está usando.
   - ProcessType=Background: sem throttle de CPU do macOS quando a máquina está ociosa.
@@ -51,12 +59,7 @@
   <true/>
 
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-    <key>Crashed</key>
-    <true/>
-  </dict>
+  <true/>
 
   <key>ThrottleInterval</key>
   <integer>10</integer>

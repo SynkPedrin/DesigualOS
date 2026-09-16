@@ -70,6 +70,28 @@ function processosDoProjeto(): Processo[] {
  * Um worker solto por `pnpm dev` não tem — foi assim que o worker passou
  * tempo fora do ar depois de um SIGTERM, sem nada pra trazê-lo de volta.
  */
+/**
+ * KeepAlive incondicional, e não `SuccessfulExit=false`.
+ *
+ * Com a política antiga, um SIGTERM que ninguém mandou de propósito derrubava o
+ * serviço PARA SEMPRE: o handler drena, sai com 0, e o launchd lê saída limpa
+ * como "o operador quis parar". Aconteceu duas vezes em 16/09/2026. Verificar
+ * aqui porque a regressão é invisível — tudo parece certo até o dia em que o
+ * serviço some e não volta.
+ */
+function reiniciaSempre(label: string): boolean {
+  // Lê o plist INSTALADO, que é o que o launchd carregou — não o versionado,
+  // que pode estar à frente de um deploy que ninguém aplicou.
+  try {
+    const plist = execSync(`plutil -p "$HOME/Library/LaunchAgents/${label}.plist" 2>/dev/null`, {
+      encoding: 'utf8',
+    });
+    return /"KeepAlive"\s*=>\s*(1|true)\b/.test(plist);
+  } catch {
+    return false;
+  }
+}
+
 function pidDoLaunchd(label: string): number | null {
   try {
     const saida = execSync(`launchctl list ${label} 2>/dev/null`, { encoding: 'utf8' });
@@ -96,6 +118,12 @@ const checa = (n: string, ok: boolean, d = '') => { console.log(ok ? `PASS  ${n}
 
 checa('exatamente_um_worker_consumidor', workers.length === 1, `encontrados=${workers.length} (pids ${workers.map((w) => w.pid).join(',')})`);
 checa('exatamente_uma_api', apis.length === 1, `encontradas=${apis.length}`);
+const semReinicioAutomatico = ['com.desigualos.worker', 'com.desigualos.api'].filter((l) => !reiniciaSempre(l));
+checa(
+  'launchd_reinicia_sempre',
+  semReinicioAutomatico.length === 0,
+  `sem KeepAlive incondicional=${semReinicioAutomatico.join(',')}`,
+);
 checa('servicos_sob_supervisao', naoSupervisionados.length === 0, `sem supervisor=${naoSupervisionados.map((o) => `${o.entrada}:${o.pid}`).join(',')}`);
 
 // SHA do node remoto contra o HEAD local.
