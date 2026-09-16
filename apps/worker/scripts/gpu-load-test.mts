@@ -17,6 +17,10 @@ const GATEWAY = process.env.GPU_GATEWAY_TEST_URL ?? 'http://127.0.0.1:11500';
 const MODELO = process.env.OTTO_MODEL ?? 'qwen3.6:35b-a3b';
 
 const clientes = Number(process.argv[2] ?? 3);
+/** Tamanho da geração: o default é curto, mas turno real de agente é longo e
+ * come KV cache — e o modelo já ocupa 24,1 GB de um cartão de 24. */
+const NUM_PREDICT = Number(process.env.CARGA_NUM_PREDICT ?? 120);
+const NUM_CTX = Number(process.env.CARGA_NUM_CTX ?? 8192);
 const rodadas = Number(process.argv[3] ?? 1);
 
 /** Prompts com tamanho de trabalho real, não "diga ok". */
@@ -48,7 +52,7 @@ async function umPedido(indice: number): Promise<Resultado> {
         stream: false,
         think: false,
         keep_alive: '20m',
-        options: { num_ctx: 8192, num_predict: 120 },
+        options: { num_ctx: NUM_CTX, num_predict: NUM_PREDICT },
       }),
       signal: AbortSignal.timeout(300_000),
     });
