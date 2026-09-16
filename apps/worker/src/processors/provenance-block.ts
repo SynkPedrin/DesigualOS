@@ -54,3 +54,31 @@ export function formatProvenanceBlock(mensagem: string, fontes: FonteDeContexto[
   );
   return linhas.join('\n');
 }
+
+/**
+ * Seção de fontes ANEXADA à resposta, montada a partir das evidências que de
+ * fato entraram no turno.
+ *
+ * Por que determinística: o bloco de instrução resolve parte do problema, mas
+ * medido no navegador (16/09/2026) o Bento recebeu as fontes e ainda assim
+ * respondeu sem citá-las — a síntese do node prioriza o dado operacional e a
+ * instrução se perde. Depender do modelo "lembrar de mencionar" a fonte é
+ * depender exatamente do que falhou. Aqui a seção é escrita pelo sistema, com
+ * os nomes reais, e não há como inventar rótulo de fonte.
+ *
+ * Só aparece quando alguém PERGUNTA. Fonte em toda resposta transformaria o
+ * chat numa auditoria e treinaria a equipe a ignorar o rodapé.
+ */
+export function anexarFontes(resposta: string, mensagem: string, fontes: FonteDeContexto[]): string {
+  if (!pedeProveniencia(mensagem)) return resposta;
+  if (resposta.trim().length === 0) return resposta;
+
+  // Já citou de forma reconhecível? Não duplica a seção.
+  if (/^\s*fontes? (utilizadas|consultadas)/im.test(resposta)) return resposta;
+
+  if (fontes.length === 0) {
+    return `${resposta.trimEnd()}\n\nFontes utilizadas: nenhuma fonte estruturada entrou neste turno.`;
+  }
+  const linhas = [...new Set(fontes.map((f) => NOME_HUMANO[f] ?? f))].map((n) => `- ${n}`);
+  return `${resposta.trimEnd()}\n\nFontes utilizadas:\n${linhas.join('\n')}`;
+}

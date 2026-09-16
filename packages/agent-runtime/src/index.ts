@@ -52,3 +52,4 @@ export {
   type EvidenceRef,
   type GroundingReport,
 } from './grounding';
+export * from './failure-taxonomy';

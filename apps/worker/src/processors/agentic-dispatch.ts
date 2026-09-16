@@ -39,7 +39,8 @@ import { captureClientFacts } from './client-fact';
 import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaignTurnContext } from './campaign-context';
 import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto } from './context-assembler';
-import { formatProvenanceBlock } from './provenance-block';
+import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
+import { anexarFontes, formatProvenanceBlock } from './provenance-block';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
 import { formatFreshnessWarning } from '../scheduler/integration-health';
@@ -614,7 +615,14 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         answer: r.answer,
         toolCalls: [{ tool: `agent:${data.agent}`, input_summary: objective.slice(0, 120), ok: r.ok, duration_ms: r.durationMs, ...(r.error ? { error: r.error } : {}) }],
         toolSignature: `agent:${data.agent}:${useReduced ? 'reduzido' : 'completo'}`,
-        recoverable: true,
+        // FALHA DE INFRAESTRUTURA NÃO É RECUPERÁVEL POR REPLAN. Medido em
+        // 16/09/2026: GPU ocupada -> a chamada expira -> o loop replaneja ->
+        // dispara OUTRA chamada -> a GPU fica mais congestionada -> expira de
+        // novo -> replan_exhausted. Cada replan acrescentava carga na causa do
+        // problema, e o planner não consegue "pensar melhor" para corrigir uma
+        // placa saturada. Aqui o turno termina com uma mensagem honesta sobre
+        // capacidade em vez de alimentar a avalanche.
+        recoverable: !r.ok ? !ehFalhaDeInfraestrutura(classificarFalha(r.error)) : true,
         ...(r.error ? { error: r.error } : {}),
       };
     }
@@ -869,6 +877,13 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   const entregaComRessalva =
     !loop.completed && criativo && textoDisponivel.length > 0 && loop.terminationReason === 'replan_exhausted';
 
+  // FONTES DETERMINÍSTICAS. Quando perguntam, a seção é escrita pelo sistema a
+  // partir do que entrou no pacote — não pelo modelo. Medido: o Bento recebeu
+  // as fontes e mesmo assim respondeu sem citá-las.
+  if (loop.answer && contextPackFontes.length >= 0) {
+    loop.answer = anexarFontes(loop.answer, data.message, contextPackFontes as never);
+  }
+
   const completed = (loop.completed && Boolean(loop.answer?.trim())) || entregaComRessalva;
   state.phase = completed ? 'COMPLETED' : 'FAILED';
   await checkpoint(true);
@@ -931,7 +946,20 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     sources: [],
     tool_calls: [],
     usage: { input_tokens: 0, output_tokens: 0 },
-    ...(completed ? {} : { error: loop.evaluation?.failures.join('; ') || `o agente não completou o objetivo (${loop.terminationReason})` }),
+    // Quando a causa foi CAPACIDADE, o usuário precisa ouvir isso. A mensagem
+    // genérica ("o agente não completou o objetivo") manda reformular uma
+    // pergunta que não tinha nada de errado, e esconde que o problema era a
+    // fila da GPU.
+    ...(completed
+      ? {}
+      : {
+          error: (() => {
+            const ultimaFalha = state.toolCalls.filter((c) => !c.ok).at(-1)?.error;
+            const tipo = classificarFalha(ultimaFalha);
+            if (ehFalhaDeInfraestrutura(tipo)) return `${mensagemDeFalhaDeInfra(tipo)} [${tipo}]`;
+            return loop.evaluation?.failures.join('; ') || `o agente não completou o objetivo (${loop.terminationReason})`;
+          })(),
+        }),
     metadata: {
       ...(lastNodeMetadata ? { node: lastNodeMetadata } : {}),
       agentic: {
