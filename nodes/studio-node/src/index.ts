@@ -26,6 +26,8 @@ import { compositeExactLogo } from './brand-compositor';
 import { deriveCreativeSpec } from './creative-spec';
 import { resolveReferencePlan } from './reference-plan';
 import { runQualityLoop, QaLoopCancelledError, type QaAttemptOutput } from './qa-loop';
+import { critiqueUpscale } from './visual-critic';
+import { runFinish } from './finish';
 import { renderCarouselCards, type CardData, type CardLayout, type CarouselMeta } from './html-carousel/renderer';
 import { uploadAsset } from './storage';
 import { startMetricsServer } from './metrics-server';
@@ -544,6 +546,7 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
         const autonomous = config.STUDIO_AUTONOMOUS_QA && type === 'image';
         let result: GenerateImageResult;
         let qaReport: Record<string, unknown> | null = null;
+        let upscaleReport: Record<string, unknown> | null = null;
 
         if (autonomous) {
           const loop = await runQualityLoop<GenerateImageResult & QaAttemptOutput>({
@@ -577,10 +580,73 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
           });
 
           result = loop.chosen.payload;
+
+          // PASS -> upscale -> final QA -> delivery. Só roda quando a peça
+          // foi realmente APROVADA: gastar upscale em candidato reprovado é
+          // exatamente o desperdício de GPU que a seção 15 do plano proíbe.
+          //
+          // Usa a estratégia 'restore' (UpscaleModelLoader +
+          // ImageUpscaleWithModel + resize + sharpen): confirmado ao vivo em
+          // 16/09/2026 que esses nodes são CORE do ComfyUI e que o
+          // 4x-UltraSharp.pth está instalado. O 'master' continua bloqueado
+          // por depender do custom node UltimateSDUpscale, que não está
+          // instalado - e não precisa estar pra este caminho existir.
+          if (loop.finalDecision.action === 'approve' && !loop.criticUnavailableReason) {
+            try {
+              await reportProgress(jobId, 92, 'post_processing');
+              const beforeUpscale = result.bytes;
+              const upscaled = await runFinish('restore', {
+                baseUrl: config.COMFYUI_URL,
+                image: beforeUpscale,
+                // Dobra a dimensão gerada, com teto: o resize final do
+                // próprio finish leva ao alvo, e pedir 4x de um 1088 gera
+                // pixel que ninguém entrega.
+                targetWidth: Math.min(width * 2, 2048),
+                targetHeight: Math.min(height * 2, 2048),
+                grain: creativeSpec.finish?.grain ?? 'none',
+              });
+
+              // FINAL QA: o upscale NÃO aprova sozinho. Compara antes x
+              // depois e pode mandar entregar o original.
+              const upscaleQA = await critiqueUpscale(
+                { before: beforeUpscale, after: upscaled, briefing: prompt ?? '' },
+                {
+                  provider: config.STUDIO_CRITIC_PROVIDER,
+                  ollamaUrl: config.CRITIC_OLLAMA_URL,
+                  ollamaModel: config.CRITIC_OLLAMA_MODEL,
+                  timeoutMs: config.CRITIC_TIMEOUT_MS,
+                },
+              );
+              if (upscaleQA.keepUpscaled) result = { ...result, bytes: upscaled };
+              upscaleReport = {
+                ran: true,
+                strategy: 'restore',
+                kept: upscaleQA.keepUpscaled,
+                scores: {
+                  identity_preserved: upscaleQA.identity_preserved,
+                  texture_natural: upscaleQA.texture_natural,
+                  logo_product_intact: upscaleQA.logo_product_intact,
+                  oversharpen_free: upscaleQA.oversharpen_free,
+                  detail_gain: upscaleQA.detail_gain,
+                },
+                degradations: upscaleQA.degradations,
+                latency_ms: upscaleQA.latencyMs,
+              };
+              logger.info({ jobId, kept: upscaleQA.keepUpscaled, degradations: upscaleQA.degradations.length }, 'Studio final QA do upscale');
+            } catch (error) {
+              // Upscale é ACABAMENTO: a peça aprovada já é entregável sem
+              // ele. Falhar o job aqui jogaria fora uma geração boa que já
+              // custou GPU.
+              upscaleReport = { ran: false, error: error instanceof Error ? error.message : String(error) };
+              logger.warn({ jobId, error }, 'Upscale/final QA falhou - entregando a peça aprovada sem upscale');
+            }
+          }
+
           qaReport = {
             enabled: true,
             attempts_run: loop.attempts.length,
             chosen_attempt: loop.chosen.attempt,
+            upscale: upscaleReport,
             final_action: loop.finalDecision.action,
             final_reason: loop.finalDecision.reason,
             thresholds: loop.finalDecision.thresholds,

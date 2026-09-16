@@ -300,3 +300,115 @@ async function critiqueViaAnthropic(input: CriticInput): Promise<CriticResult> {
 export async function critiqueImage(input: CriticInput, config: CriticConfig): Promise<CriticResult> {
   return config.provider === 'anthropic' ? critiqueViaAnthropic(input) : critiqueViaOllama(input, config);
 }
+
+/**
+ * FINAL QA — o upscale também estraga imagem.
+ *
+ * Um upscale generativo/por modelo pode alucinar textura de pele, mudar
+ * traço de rosto, deformar logo e produzir oversharpen com halo. Por isso o
+ * passo depois do upscale NÃO é "aprovou, entrega": é uma comparação
+ * explícita ANTES x DEPOIS, e o resultado pode REPROVAR o upscale e mandar
+ * entregar a imagem original.
+ *
+ * As duas imagens vão na mesma chamada (o Ollama aceita `images` com mais
+ * de uma), na ordem ANTES, DEPOIS, e o prompt diz qual é qual — sem isso o
+ * modelo compara duas imagens sem saber qual deveria ser a melhorada.
+ */
+const upscaleQASchema = z.object({
+  identity_preserved: z.number().min(0).max(10),
+  texture_natural: z.number().min(0).max(10),
+  logo_product_intact: z.number().min(0).max(10),
+  oversharpen_free: z.number().min(0).max(10),
+  detail_gain: z.number().min(0).max(10),
+  degradations: z.array(z.string()),
+});
+
+export type UpscaleQAResult = z.infer<typeof upscaleQASchema> & {
+  /** Regra determinística (não é o veredito do modelo): manter o upscale ou devolver o original. */
+  keepUpscaled: boolean;
+  model: string;
+  latencyMs: number;
+};
+
+const UPSCALE_QA_FORMAT = {
+  type: 'object',
+  properties: {
+    identity_preserved: { type: 'number' },
+    texture_natural: { type: 'number' },
+    logo_product_intact: { type: 'number' },
+    oversharpen_free: { type: 'number' },
+    detail_gain: { type: 'number' },
+    degradations: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['identity_preserved', 'texture_natural', 'logo_product_intact', 'oversharpen_free', 'detail_gain', 'degradations'],
+} as const;
+
+const UPSCALE_QA_SYSTEM = [
+  'You compare two versions of the SAME AI-generated commercial image: the FIRST is BEFORE upscaling, the SECOND is AFTER upscaling.',
+  'Judge ONLY whether the upscale damaged the image. Score 0-10 where 10 means no damage at all.',
+  'identity_preserved: does the person still look like the same person?',
+  'texture_natural: did the upscaler hallucinate fake skin/fabric texture?',
+  'logo_product_intact: did logos, text or product geometry get distorted?',
+  'oversharpen_free: 10 = no halos or crunchy edges, 0 = heavy oversharpening.',
+  'detail_gain: how much REAL detail the upscale added (0 = none, 10 = large genuine gain).',
+  'List concrete degradations you can see, or an empty list.',
+].join(' ');
+
+/**
+ * Limiares do final QA. Deliberadamente severos nas dimensões de DANO:
+ * um upscale que ganha nitidez mas troca o rosto da pessoa é pior que não
+ * ter feito upscale nenhum. `detail_gain` NÃO reprova (ganho pequeno só
+ * significa que o upscale foi inócuo, não que estragou).
+ */
+const UPSCALE_QA_MIN = { identity: 7, texture: 6, logo: 7, oversharpen: 6 } as const;
+
+export async function critiqueUpscale(
+  input: { before: Buffer; after: Buffer; briefing: string },
+  config: CriticConfig,
+): Promise<UpscaleQAResult> {
+  const startedAt = Date.now();
+  const body = {
+    model: config.ollamaModel,
+    system: UPSCALE_QA_SYSTEM,
+    prompt: `Original briefing: "${input.briefing}"\nFirst image = BEFORE upscale. Second image = AFTER upscale. Did the upscale damage it?`,
+    images: [input.before.toString('base64'), input.after.toString('base64')],
+    stream: false,
+    think: false,
+    format: UPSCALE_QA_FORMAT,
+    options: { temperature: 0, num_predict: 700 },
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(`${config.ollamaUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+  } catch (error) {
+    throw new CriticUnavailableError(`final QA do upscale não alcançou ${config.ollamaUrl}: ${String(error)}`);
+  }
+  if (!response.ok) throw new CriticUnavailableError(`final QA do upscale: Ollama respondeu ${response.status}`);
+
+  const payload = (await response.json()) as { response?: string };
+  if (!payload.response) throw new CriticUnavailableError('final QA do upscale devolveu resposta vazia');
+
+  const parsed = upscaleQASchema.parse(JSON.parse(payload.response));
+  return {
+    ...parsed,
+    keepUpscaled: decideKeepUpscaled(parsed),
+    model: config.ollamaModel,
+    latencyMs: Date.now() - startedAt,
+  };
+}
+
+/** Regra pura, testável sem rede: o upscale só fica se não danificou nada. */
+export function decideKeepUpscaled(qa: z.infer<typeof upscaleQASchema>): boolean {
+  return (
+    qa.identity_preserved >= UPSCALE_QA_MIN.identity &&
+    qa.texture_natural >= UPSCALE_QA_MIN.texture &&
+    qa.logo_product_intact >= UPSCALE_QA_MIN.logo &&
+    qa.oversharpen_free >= UPSCALE_QA_MIN.oversharpen
+  );
+}

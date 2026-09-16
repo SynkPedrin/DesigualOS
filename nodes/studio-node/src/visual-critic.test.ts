@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeProblemRegion } from './visual-critic';
+import { normalizeProblemRegion, decideKeepUpscaled } from './visual-critic';
 
 describe('normalizeProblemRegion', () => {
   /**
@@ -49,5 +49,34 @@ describe('normalizeProblemRegion', () => {
       description: 'the face is fine but the fingers are fused',
     });
     expect(fixed.region).toBe('hands');
+  });
+});
+
+describe('decideKeepUpscaled (final QA)', () => {
+  const bom = { identity_preserved: 9, texture_natural: 8, logo_product_intact: 9, oversharpen_free: 8, detail_gain: 7, degradations: [] };
+
+  it('mantém o upscale quando nada foi danificado', () => {
+    expect(decideKeepUpscaled(bom)).toBe(true);
+  });
+
+  /** O ponto da Fase E: upscale não aprova sozinho. */
+  it('descarta o upscale que trocou o rosto, mesmo com ganho grande de detalhe', () => {
+    expect(decideKeepUpscaled({ ...bom, identity_preserved: 4, detail_gain: 10 })).toBe(false);
+  });
+
+  it('descarta oversharpen com halo', () => {
+    expect(decideKeepUpscaled({ ...bom, oversharpen_free: 3 })).toBe(false);
+  });
+
+  it('descarta textura de pele alucinada', () => {
+    expect(decideKeepUpscaled({ ...bom, texture_natural: 2 })).toBe(false);
+  });
+
+  it('descarta logo/produto deformado', () => {
+    expect(decideKeepUpscaled({ ...bom, logo_product_intact: 3 })).toBe(false);
+  });
+
+  it('ganho de detalhe baixo NÃO reprova (upscale inócuo não é upscale danoso)', () => {
+    expect(decideKeepUpscaled({ ...bom, detail_gain: 0 })).toBe(true);
   });
 });

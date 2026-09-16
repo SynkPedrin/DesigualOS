@@ -37,6 +37,7 @@ import type { Logger } from '@desigual-os/logging';
 import { dispatchWithAgentLoop } from './agentic-dispatch';
 import { tryBentoActionGuard } from './bento-action-guard';
 import { detectSmallTalk } from './small-talk';
+import { registrarConhecimentoDoTurno } from './knowledge-statement';
 
 // Feature flag do Agentic V2 (seção 112 da spec): o loop com estado,
 // avaliação e replan só assume o dispatch quando ligado; desligado, o
@@ -802,7 +803,36 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   // bem?" ia parar no RAG e voltava "não consegui montar uma resposta com
   // fonte confiável" (medido no release gate). Saudação não tem fato pra
   // ancorar — gastar retrieval e evidência aqui só produz resposta errada.
-  const smallTalk = detectSmallTalk(message, agent);
+  // REGISTRO DE CONHECIMENTO. Afirmação que ensina ("decidimos que...", "daqui
+  // pra frente...") não é pergunta, e empurrá-la para o loop operacional fazia
+  // o avaliador reprovar por não haver resposta e o replan se esgotar — medido:
+  // replan_exhausted em 11s numa frase que só registrava uma decisão. Como
+  // ENSINAR é o fluxo de que a memória depende, ele não pode devolver erro.
+  const registro = await registrarConhecimentoDoTurno({
+    message,
+    clientId: runningExecution?.clientId ?? null,
+    clientName: null,
+    userId: runningExecution?.userId ?? null,
+    agent,
+    conversationId: conversationId ?? null,
+    executionId,
+    logger,
+  }).catch(() => null);
+  if (registro) {
+    logger.info({ executionId, agent, tipos: registro.tipos }, '[registro] afirmação registrada sem passar pelo loop');
+    guardedResult = {
+      execution_id: executionId,
+      agent,
+      status: 'completed',
+      answer: registro.answer,
+      sources: [],
+      tool_calls: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      metadata: { fast_path: 'knowledge_statement', kinds: registro.tipos, episodios_gravados: registro.gravados },
+    };
+  }
+
+  const smallTalk = !guardedResult ? detectSmallTalk(message, agent) : null;
   if (smallTalk) {
     logger.info({ executionId, agent, kind: smallTalk.kind }, "[small-talk] resposta direta, sem retrieval");
     guardedResult = {

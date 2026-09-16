@@ -6,6 +6,7 @@ import { processPendingEvents } from '../processors/operational-events';
 import { checkIntegrationHealth } from './integration-health.js';
 import { runKnowledgeConsolidation } from './knowledge-consolidation.js';
 import { keepInferenceWarm } from './inference-warmth.js';
+import { expireStaleStudioJobs } from './studio-queue-timeout.js';
 
 const QUEUE_NAME = 'daily-digest';
 const logger = createLogger({ service: 'worker:scheduler' });
@@ -46,6 +47,11 @@ export function setupDailyJobs(): Worker {
     // era carga fria, não concorrência — duas chamadas simultâneas entregam
     // MAIS respostas por minuto que uma.
     queue.add('inference-warmth', {}, { repeat: { pattern: '*/10 * * * *' }, jobId: 'inference-warmth' }),
+    // TIMEOUT DE FILA DO STUDIO a cada minuto. Achado real: com o
+    // studio-node fora do ar, um job ficou `queued` por DOIS DIAS e o
+    // frontend mostrou "gerando" o tempo todo. De minuto em minuto porque
+    // o valor aqui é justamente a pessoa descobrir rápido.
+    queue.add('studio-queue-timeout', {}, { repeat: { pattern: '* * * * *' }, jobId: 'studio-queue-timeout' }),
   ])
     .then(() => logger.info('Scheduler armado (checklist 18:00, resumo 08:00, eventos 5min, saude da integracao 15min, consolidacao 03:00)'))
     .catch((error: unknown) => logger.error({ error }, 'Failed to register daily digest repeatable jobs'));
@@ -65,6 +71,8 @@ export function setupDailyJobs(): Worker {
         await keepInferenceWarm(logger);
       } else if (job.name === 'knowledge-consolidation') {
         await runKnowledgeConsolidation(logger, { somenteClientesComMudanca: true });
+      } else if (job.name === 'studio-queue-timeout') {
+        await expireStaleStudioJobs(logger);
       }
     },
     { connection: getRedisConnection() },
