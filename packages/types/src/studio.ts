@@ -37,6 +37,12 @@ export const STUDIO_JOB_STATUSES = [
   'rendering',
   'completed',
   'failed',
+  /**
+   * Cancelado pelo usuário. Terminal, como completed/failed - o worker
+   * descarta o job sem gerar quando encontra este status, e o loop de
+   * qualidade para antes do próximo ciclo (ver studio-node/src/qa-loop.ts).
+   */
+  'cancelled',
   // Novos estágios (pipeline adaptativo) - opcionais, um job simples pode
   // pular direto de 'queued' pra 'rendering' pra 'completed' como sempre fez.
   'planning',

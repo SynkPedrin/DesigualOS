@@ -41,7 +41,7 @@ export interface StoredClientFact {
  */
 export async function captureClientFacts(
   message: string,
-  ctx: { clientId: string | null; userId: string | null; executionId: string },
+  ctx: { clientId: string | null; userId: string | null; executionId: string; environment?: string },
   logger: Logger,
 ): Promise<StoredClientFact[]> {
   const extraidos = extractClientFacts(message);
@@ -70,6 +70,7 @@ export async function captureClientFacts(
       // Abaixo do dossiê curado (0.9): veio de conversa, não de ficha revisada.
       confidence: 0.85,
       importance: 0.9,
+      environment: ctx.environment ?? 'production',
       metadata: { aspect: fato.aspect, source_text: fato.source.slice(0, 300), origem: 'aprendizado' },
     });
     logger.info({ subject, status: outcome.status, aspect: fato.aspect }, '[memoria] fato de cliente capturado');

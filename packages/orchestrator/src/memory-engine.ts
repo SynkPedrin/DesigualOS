@@ -40,6 +40,12 @@ export type MemorySourceType =
   | 'system';
 
 export interface RememberInput {
+  /**
+   * Ambiente da execução que criou o fato. Sem isto o default 'production'
+   * vencia em silêncio e memória de TESTE virava recuperável na operação real
+   * — 35 memórias estavam assim em 16/09/2026.
+   */
+  environment?: string;
   kind: string;
   content: string;
   /**
@@ -213,6 +219,7 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
       .values({
         kind: input.kind,
         content,
+        environment: input.environment ?? 'production',
         clientId: input.clientId ?? null,
         agentId: input.agentId ?? null,
         userId: input.userId ?? null,
@@ -264,6 +271,8 @@ export interface RecalledMemory {
 }
 
 export interface RecallQuery {
+  /** Recuperação NUNCA cruza ambiente: QA não aparece em produção. */
+  environment?: string;
   clientId?: string | null;
   agentId?: string | null;
   /** Escopo M2 (user memory, seção 19/48 da spec V2): preferências e fatos
@@ -289,6 +298,9 @@ export async function recallMemories(query: RecallQuery): Promise<RecalledMemory
   const conditions = [
     eq(schema.memories.status, 'active'),
     or(isNull(schema.memories.expiresAt), sql`${schema.memories.expiresAt} > now()`)!,
+    // ISOLAMENTO DURO. Fica antes de qualquer outro filtro de propósito: é a
+    // condição que não pode ser esquecida por quem adicionar filtro novo.
+    eq(schema.memories.environment, query.environment ?? 'production'),
   ];
   if (query.clientId) conditions.push(eq(schema.memories.clientId, query.clientId));
   if (query.agentId) conditions.push(eq(schema.memories.agentId, query.agentId));

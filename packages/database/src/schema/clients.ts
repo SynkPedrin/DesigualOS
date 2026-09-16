@@ -19,6 +19,17 @@ export const clients = pgTable('clients', {
    * duplica). Null = cliente criado à mão, sem espelho no ClickUp.
    */
   clickupListId: text('clickup_list_id').unique(),
+
+  /**
+   * AMBIENTE DO CLIENTE. 'qa' marca registro de teste; 'production' é operação
+   * real. Explícito porque a alternativa era adivinhar pelo nome, e adivinhar
+   * errado nas duas direções custa caro: cliente real tratado como teste some
+   * do conhecimento, e cliente de teste tratado como real contamina a operação.
+   *
+   * Medido em 16/09/2026: 3 episódios, 35 memórias e 3 blackboards de clientes
+   * de teste estavam gravados como produção.
+   */
+  environment: text('environment').notNull().default('production'),
   ...timestampColumns,
   ...softDeleteColumn,
 });

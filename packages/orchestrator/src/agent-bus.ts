@@ -176,7 +176,7 @@ export async function upsertBlackboard(params: {
     .catch(() => undefined);
 }
 
-export async function lerBlackboard(executionId: string): Promise<{
+export async function lerBlackboard(executionId: string, environment = 'production'): Promise<{
   clientId: string | null;
   campaignId: string | null;
   objective: string | null;
@@ -197,7 +197,8 @@ export async function lerBlackboard(executionId: string): Promise<{
     .where(
       and(
         eq(schema.executionBlackboards.executionId, executionId),
-        eq(schema.executionBlackboards.environment, 'production'),
+        // Ambiente REAL da execução, nunca 'production' fixo.
+        eq(schema.executionBlackboards.environment, environment),
       ),
     )
     .catch(() => []);

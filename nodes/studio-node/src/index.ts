@@ -25,6 +25,7 @@ import { compositeSlideText, type SlideText } from './text-overlay';
 import { compositeExactLogo } from './brand-compositor';
 import { deriveCreativeSpec } from './creative-spec';
 import { resolveReferencePlan } from './reference-plan';
+import { runQualityLoop, QaLoopCancelledError, type QaAttemptOutput } from './qa-loop';
 import { renderCarouselCards, type CardData, type CardLayout, type CarouselMeta } from './html-carousel/renderer';
 import { uploadAsset } from './storage';
 import { startMetricsServer } from './metrics-server';
@@ -238,6 +239,25 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
   // por fingerprint na criação do job, na API - não implementado ainda,
   // ver relatório final).
   const [existingJob] = await db.select().from(schema.studioJobs).where(eq(schema.studioJobs.jobId, jobId)).limit(1);
+
+  // Achado real (16/09/2026): DELETE /studio/jobs/:id apagava a linha do
+  // banco mas NÃO removia o job da fila do BullMQ. O worker então pegava um
+  // job órfão, não achava linha nenhuma, e gerava assim mesmo - queimando
+  // GPU de verdade por uma peça que ninguém mais ia ver, e inserindo
+  // studio_assets apontando pra um job inexistente. Sem linha, não gera.
+  if (!existingJob) {
+    logger.warn({ jobId }, 'Job não existe mais no banco (apagado enquanto estava na fila) - descartando sem gerar');
+    return;
+  }
+
+  // Cancelamento pedido enquanto o job esperava na fila: o caminho barato.
+  // Nem chega a falar com o ComfyUI.
+  if (existingJob.status === 'cancelled') {
+    logger.info({ jobId }, 'Job cancelado antes de começar - descartando sem gerar');
+    await publishWsEvent({ type: 'studio.job.progress', payload: { job_id: jobId, progress: 0, status: 'cancelled' } });
+    return;
+  }
+
   if (existingJob?.status === 'completed' && existingJob.assetId) {
     logger.warn({ jobId }, 'Job já estava completed (infrastructure retry) - pulando geração, não cobra GPU de novo');
     await publishWsEvent({
@@ -499,19 +519,97 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
         });
         const finalPrompt = withDirectives(enrichedPrompt.prompt);
 
-        const result = await generateWithResume(
-          { baseUrl: config.COMFYUI_URL, ...fluxModel },
-          jobId,
-          `v${variationIndex}-s${slideIndex}`,
-          jobMetaRef,
-          {
-            prompt: finalPrompt,
-            width,
-            height,
-            referenceImages: slideReferences.map((asset) => ({ url: asset.url, filename: asset.filename })),
-            qualityProfile,
-          },
-        );
+        const runGeneration = (attempt: number, correctionDirective: string) =>
+          generateWithResume(
+            { baseUrl: config.COMFYUI_URL, ...fluxModel },
+            jobId,
+            // A chave do resume inclui a tentativa: sem isso a tentativa 2
+            // retomaria o prompt_id da tentativa 1 e devolveria exatamente a
+            // imagem que o crítico acabou de reprovar.
+            attempt > 1 ? `v${variationIndex}-s${slideIndex}-a${attempt}` : `v${variationIndex}-s${slideIndex}`,
+            jobMetaRef,
+            {
+              prompt: correctionDirective ? `${finalPrompt} ${correctionDirective}` : finalPrompt,
+              width,
+              height,
+              referenceImages: slideReferences.map((asset) => ({ url: asset.url, filename: asset.filename })),
+              qualityProfile,
+            },
+          );
+
+        // Pipeline autônomo (STUDIO_AUTONOMOUS_QA). Só o caminho de IMAGEM
+        // por enquanto: carrossel tem semântica de sequência (o slide N usa
+        // o N-1 como âncora) e refazer um slide do meio invalidaria a
+        // continuidade - entra depois, com âncora versionada.
+        const autonomous = config.STUDIO_AUTONOMOUS_QA && type === 'image';
+        let result: GenerateImageResult;
+        let qaReport: Record<string, unknown> | null = null;
+
+        if (autonomous) {
+          const loop = await runQualityLoop<GenerateImageResult & QaAttemptOutput>({
+            // Briefing ORIGINAL, não o prompt compilado: é contra a intenção
+            // da pessoa que se mede aderência, não contra o texto que o
+            // PromptCompiler produziu a partir dela.
+            briefing: prompt ?? '',
+            profile: qualityProfile,
+            maxAttempts: config.STUDIO_QA_MAX_ATTEMPTS,
+            identityCritical: referencePlan.all.some((asset) => asset.role === 'subject' && asset.fidelity !== 'interpretive'),
+            productCritical: referencePlan.all.some((asset) => asset.role === 'product'),
+            criticConfig: {
+              provider: config.STUDIO_CRITIC_PROVIDER,
+              ollamaUrl: config.CRITIC_OLLAMA_URL,
+              ollamaModel: config.CRITIC_OLLAMA_MODEL,
+              timeoutMs: config.CRITIC_TIMEOUT_MS,
+            },
+            generate: async (attempt, directive) => {
+              const generated = await runGeneration(attempt, directive);
+              return { ...generated, generation: { ...generated.generation } } as GenerateImageResult & QaAttemptOutput;
+            },
+            onStage: async (stage, attempt) => {
+              const status = stage === 'evaluating' ? 'quality_check' : stage === 'refining' ? 'refining' : 'rendering';
+              logger.info({ jobId, stage, attempt }, 'Studio QA stage');
+              await reportProgress(jobId, 30 + Math.round((iteration / totalIterations) * 60), status);
+            },
+            isCancelled: async () => {
+              const [row] = await db.select({ status: schema.studioJobs.status }).from(schema.studioJobs).where(eq(schema.studioJobs.jobId, jobId)).limit(1);
+              return row?.status === 'cancelled';
+            },
+          });
+
+          result = loop.chosen.payload;
+          qaReport = {
+            enabled: true,
+            attempts_run: loop.attempts.length,
+            chosen_attempt: loop.chosen.attempt,
+            final_action: loop.finalDecision.action,
+            final_reason: loop.finalDecision.reason,
+            thresholds: loop.finalDecision.thresholds,
+            critic_provider: loop.chosen.critic.provider,
+            critic_model: loop.chosen.critic.model,
+            ...(loop.criticUnavailableReason ? { critic_unavailable: loop.criticUnavailableReason } : {}),
+            // Lineage (seção 14): todas as tentativas, não só a escolhida.
+            lineage: loop.attempts.map((candidate) => ({
+              attempt: candidate.attempt,
+              seed: candidate.payload.generation.seed,
+              overall_score: candidate.critic.overall_score,
+              artifact_score: candidate.critic.artifact_score,
+              hands: candidate.critic.hands,
+              face: candidate.critic.face,
+              composition: candidate.critic.composition,
+              prompt_alignment: candidate.critic.prompt_alignment,
+              confidence: candidate.critic.confidence,
+              latency_ms: candidate.critic.latencyMs,
+              problems: candidate.critic.problems,
+            })),
+          };
+          logger.info(
+            { jobId, attempts: loop.attempts.length, chosen: loop.chosen.attempt, score: loop.chosen.critic.overall_score, action: loop.finalDecision.action },
+            'Studio QA loop finished',
+          );
+        } else {
+          result = await runGeneration(1, '');
+        }
+
         let content = result.bytes;
 
         // Texto de verdade via compositing (não confiar no modelo de imagem pra
@@ -593,6 +691,10 @@ async function processStudioJob(job: Job<StudioJobData>): Promise<void> {
             reference_count: result.generation.referenceCount,
             generation_resolution: result.generation.resolution,
             refine_resolution: result.generation.refineResolution,
+            // Laudo do pipeline autônomo: null quando a flag está off, pra
+            // que dê pra separar em consulta o que passou pelo loop do que
+            // não passou (a comparação A/B depende disso).
+            qa: qaReport,
             generation_fingerprint: computeGenerationFingerprint({
               clientId,
               workflowId: result.generation.workflowId,
@@ -703,6 +805,15 @@ const worker = new Worker<StudioJobData>(
     try {
       await processStudioJob(job);
     } catch (error) {
+      // Cancelamento é desfecho pedido pelo usuário, não falha: marcar
+      // 'failed' aqui mostraria "seu job falhou" pra quem clicou em
+      // cancelar, e ainda mandaria notificação de erro.
+      if (error instanceof QaLoopCancelledError) {
+        await db.update(schema.studioJobs).set({ status: 'cancelled' }).where(eq(schema.studioJobs.jobId, job.data.jobId));
+        await publishWsEvent({ type: 'studio.job.progress', payload: { job_id: job.data.jobId, progress: job.progress ?? 0, status: 'cancelled' } });
+        logger.info({ jobId: job.data.jobId }, 'Job cancelado durante o loop de qualidade');
+        return;
+      }
       const reason = describeFailure(error);
       await db
         .update(schema.studioJobs)

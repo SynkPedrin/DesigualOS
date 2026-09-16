@@ -69,7 +69,7 @@ async function snapshotOperacional(campaignId: string): Promise<string[]> {
  * Snapshot CRIATIVO de um cliente: o que o Otto saberia. Sai de feedback
  * registrado e de episódios de decisão — nunca de invenção.
  */
-async function snapshotCriativo(clientId: string): Promise<string[]> {
+async function snapshotCriativo(clientId: string, environment: string): Promise<string[]> {
   const linhas: string[] = [];
 
   const feedbacks = await db
@@ -79,7 +79,7 @@ async function snapshotCriativo(clientId: string): Promise<string[]> {
       and(
         eq(schema.memories.clientId, clientId),
         eq(schema.memories.status, 'active'),
-        eq(schema.memories.environment, 'production'),
+        eq(schema.memories.environment, environment),
         inArray(schema.memories.kind, ['otto.feedback', 'client.preference']),
       ),
     )
@@ -95,6 +95,7 @@ async function snapshotCriativo(clientId: string): Promise<string[]> {
     clientId,
     desde: new Date(Date.now() - 30 * 86_400_000),
     limit: 6,
+    environment,
   }).catch(() => []);
   const relevantes = episodios.filter((e) => e.eventType === 'decision' || e.eventType === 'feedback');
   if (relevantes.length > 0) {
@@ -118,9 +119,10 @@ export async function resolveCrossAgentContext(params: {
   executionId: string;
   clientId: string | null;
   campaignId: string | null;
+  environment: string;
   logger: Logger;
 }): Promise<ContextoCruzado> {
-  const { agent, message, executionId, clientId, campaignId, logger } = params;
+  const { agent, message, executionId, clientId, campaignId, environment, logger } = params;
 
   // Otto precisando de operação -> pede ao domínio do Bento.
   if (agent === 'otto' && campaignId && PEDE_OPERACIONAL.test(message)) {
@@ -132,6 +134,7 @@ export async function resolveCrossAgentContext(params: {
       clientId,
       campaignId,
       requestedContext: ['status', 'prazo', 'responsavel'],
+      environment,
     }).catch(() => ({ ok: false, hop: 0 }) as const);
     if (!r.ok) return VAZIO;
 
@@ -159,10 +162,11 @@ export async function resolveCrossAgentContext(params: {
       clientId,
       campaignId,
       requestedContext: ['feedback', 'decisoes', 'direcao_criativa'],
+      environment,
     }).catch(() => ({ ok: false, hop: 0 }) as const);
     if (!r.ok) return VAZIO;
 
-    const linhas = await snapshotCriativo(clientId).catch(() => []);
+    const linhas = await snapshotCriativo(clientId, environment).catch(() => []);
     if (linhas.length === 0) return VAZIO;
     logger.info({ executionId, hop: r.hop }, '[a2a] bento -> otto: contexto criativo');
     return {

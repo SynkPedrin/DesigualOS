@@ -1,0 +1,1 @@
+ALTER TABLE "clients" ADD COLUMN "environment" text DEFAULT 'production' NOT NULL;

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { and, count, desc, eq, ilike, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { generateStudioJobId, getStudioJobQueue, recordLearning, enqueueThumbnail } from '@desigual-os/orchestrator';
+import { generateStudioJobId, getStudioJobQueue, recordLearning, enqueueThumbnail, removeQueuedStudioJob, publishWsEvent } from '@desigual-os/orchestrator';
 import { generateStudioCopy } from '@desigual-os/router';
 import { generateImageCaption } from '@desigual-os/otto';
 import { hasPermission } from '@desigual-os/auth';
@@ -606,6 +606,67 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
   );
 
   /**
+   * Cancela um job do Studio.
+   *
+   * Dois caminhos, porque o custo é diferente (seção 20 do plano):
+   *
+   * - Job AINDA NA FILA: sai do Redis na hora e nunca chega a tocar a GPU.
+   * - Job JÁ RODANDO: não dá pra arrancar o job do worker sem corromper o
+   *   lock do BullMQ. Marca `cancelled` no banco e o worker para sozinho no
+   *   próximo checkpoint (antes da próxima tentativa do loop de qualidade,
+   *   ver studio-node/src/qa-loop.ts). O ComfyUI que estiver no meio de um
+   *   sampler termina aquele passo - interromper por fora deixaria a fila
+   *   do ComfyUI inconsistente com o estado do worker.
+   *
+   * Idempotente: cancelar um job já terminal devolve o estado atual em vez
+   * de erro, porque o duplo clique em "cancelar" é o caso comum.
+   */
+  app.post<{ Params: { id: string } }>('/studio/jobs/:id/cancel', { preHandler: requireAuth }, async (request, reply) => {
+    if (!request.authUser) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+
+    const [job] = await db.select().from(schema.studioJobs).where(eq(schema.studioJobs.jobId, request.params.id));
+    if (!job) {
+      reply.code(404);
+      return { error: `Studio job '${request.params.id}' not found` };
+    }
+
+    // Mesmo critério do DELETE: dono, master ou studio:write no cliente.
+    const isMaster = request.authUser.roles.includes('master');
+    const isOwner = job.requestedBy !== null && job.requestedBy === request.authUser.id;
+    const canWriteForClient =
+      hasPermission(request.authUser.permissions, 'studio', 'write') && (await hasClientAccess(request.authUser, job.clientId));
+    if (!isMaster && !isOwner && !canWriteForClient) {
+      reply.code(403);
+      return { error: 'No access granted to this job' };
+    }
+
+    if (['completed', 'failed', 'cancelled'].includes(job.status)) {
+      return { job_id: job.jobId, status: job.status, already_finished: true };
+    }
+
+    const removedFromQueue = await removeQueuedStudioJob(job.jobId);
+    await db
+      .update(schema.studioJobs)
+      .set({ status: 'cancelled', error: 'Cancelado pelo usuário.' })
+      .where(eq(schema.studioJobs.jobId, job.jobId));
+    await publishWsEvent({
+      type: 'studio.job.progress',
+      payload: { job_id: job.jobId, progress: job.progress, status: 'cancelled' },
+    });
+
+    return {
+      job_id: job.jobId,
+      status: 'cancelled',
+      // Diz pro front se a GPU foi poupada de fato ou se o worker ainda vai
+      // parar no próximo checkpoint - são experiências diferentes.
+      removed_from_queue: removedFromQueue,
+    };
+  });
+
+  /**
    * Remove um job e TODOS os assets que ele gerou (ligados por
    * metadata.job_id, ver nodes/studio-node/src/index.ts): sem isso, apagar
    * o job deixaria as peças órfãs na galeria sem rastro de onde vieram.
@@ -631,6 +692,13 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       reply.code(403);
       return { error: 'No access granted to this job' };
     }
+
+    // Achado real (16/09/2026): apagar a linha sem tirar o job da fila
+    // deixava o worker pegar um job órfão depois e GERAR assim mesmo, GPU
+    // real gasta numa peça que ninguém mais ia ver. Tira do Redis ANTES de
+    // apagar do banco; o worker também passou a se defender de linha
+    // ausente (ver studio-node/src/index.ts), mas a fila é a defesa barata.
+    await removeQueuedStudioJob(job.jobId);
 
     // Achado real (2026-09-11): isto buscava TODOS os assets do cliente (ver
     // findAssetsByJobId) e depois apagava um de cada vez - um Storage delete

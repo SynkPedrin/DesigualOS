@@ -36,6 +36,21 @@ async function perguntar(page: import('@playwright/test').Page, texto: string, t
   await expect
     .poll(async () => (await bolhas.first().innerText()).trim().length, { timeout })
     .toBeGreaterThan(40);
+  // ESPERA ESTABILIZAR. O balão renderiza com efeito de máquina de escrever, e
+  // ler assim que passa de 40 caracteres captura a resposta pela metade — uma
+  // asserção falhou com o texto cortado em "Tammy é", com a resposta correta
+  // terminando de aparecer na tela. Duas leituras iguais seguidas = terminou.
+  await expect
+    .poll(
+      async () => {
+        const a = (await bolhas.first().innerText()).trim().length;
+        await page.waitForTimeout(1200);
+        const b = (await bolhas.first().innerText()).trim().length;
+        return a === b ? 'estavel' : 'crescendo';
+      },
+      { timeout },
+    )
+    .toBe('estavel');
 }
 
 test.describe('Knowledge reliability — navegador real', () => {

@@ -41,6 +41,7 @@ import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaign
 import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto } from './context-assembler';
 import { resolveCrossAgentContext } from './cross-agent-context';
+import { resolveEnvironment } from './environment';
 import { formatFreshnessWarning } from '../scheduler/integration-health';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { queryOperationTasks, getTaskComments, type OperationTask } from '@desigual-os/tool-gateway';
@@ -231,6 +232,11 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
 
   // ---- GATHER CONTEXT + EVIDENCE (memória + dado operacional ao vivo) ----
   state.phase = 'GATHERING_CONTEXT';
+  // AMBIENTE DA EXECUÇÃO, resolvido antes de QUALQUER leitura ou escrita de
+  // cognição. Sem isto o default 'production' vencia em silêncio e turno de
+  // cliente de teste gravava episódio e memória recuperáveis na operação real:
+  // 41 registros estavam assim em 16/09/2026.
+  const ambiente = await resolveEnvironment(clientId).catch(() => 'production' as const);
   void checkpoint(false);
   const [episodes, preferences] = await Promise.all([
     recallMemories({ clientId, agentId: agentUuid, kinds: ['agent.episode'], limit: 3 }).catch(() => []),
@@ -240,19 +246,19 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // durável ("para o Cliente X, prefira headlines curtas"). A captura é
   // determinística e roda antes da recuperação, pra a regra ensinada AGORA
   // já valer neste mesmo turno.
-  await capturePreferences(data.message, { userId, clientId, executionId: data.executionId }, logger).catch(
+  await capturePreferences(data.message, { userId, clientId, executionId: data.executionId, environment: ambiente }, logger).catch(
     (error: unknown) => {
       logger.warn({ error }, '[memoria] falha ao capturar preferência');
       return [];
     },
   );
-  const preferencias = await recallPreferences({ clientId, userId }).catch(() => []);
+  const preferencias = await recallPreferences({ clientId, userId, environment: ambiente }).catch(() => []);
 
   // CONHECIMENTO DE CLIENTE dito AGORA ("anota que o decisor da Elite é a
   // Marina"). Roda antes de resolveClientTurnContext de propósito: o fato
   // gravado aqui entra no dossiê deste mesmo turno, então quem acabou de
   // ensinar vê o agente já usando o dado, em vez de só no turno seguinte.
-  await captureClientFacts(data.message, { clientId, userId, executionId: data.executionId }, logger).catch(
+  await captureClientFacts(data.message, { clientId, userId, executionId: data.executionId, environment: ambiente }, logger).catch(
     (error: unknown) => {
       logger.warn({ error }, '[memoria] falha ao capturar fato de cliente');
       return [];
@@ -271,6 +277,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       conversationId: data.conversationId ?? null,
       executionId: data.executionId,
       sourceRefs: [`execution:${data.executionId}`],
+      environment: ambiente,
     }).catch((error: unknown) => logger.warn({ error }, '[memoria] falha ao gravar episódio'));
   }
 
@@ -339,18 +346,23 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     executionId: data.executionId,
     clientId: clienteDoTurnoFinal?.clientId ?? clientId,
     campaignId: campanhaDoTurno?.campanha?.id ?? null,
+    environment: ambiente,
     logger,
   }).catch(() => ({ bloco: '', chamadas: [] }));
 
   const janela = janelaDoTexto(data.message);
   let blocoEpisodios = '';
+  let episodiosDoTurno: Awaited<ReturnType<typeof recallEpisodes>> = [];
   if (janela) {
     const episodios = await recallEpisodes({
       userId,
       clientId: clienteDoTurno?.clientId ?? clientId,
       desde: janela.desde,
       ...(janela.ate ? { ate: janela.ate } : {}),
+      // Recall NUNCA cruza ambiente: QA não aparece em produção e vice-versa.
+      environment: ambiente,
     }).catch(() => []);
+    episodiosDoTurno = episodios;
     blocoEpisodios = formatEpisodeBlock(episodios, janela.rotulo);
   }
 
@@ -361,6 +373,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     clientId: clienteDoTurnoFinal?.clientId ?? clientId,
     campaignId: campanhaDoTurno?.campanha?.id ?? null,
     objective: data.message.slice(0, 500),
+    environment: ambiente,
   }).catch(() => undefined);
 
   const nowIso = new Date().toISOString();
@@ -417,6 +430,35 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
           ? 'sem relação de cliente registrada'
           : pessoa.relacoes.map((r) => `${r.clientName} ${r.relationType} ${r.evidenceCount} evidencias ${r.temporalStatus}`).join('; ')
       }`,
+    });
+  }
+
+  // TUDO que entra no prompt precisa entrar na EVIDÊNCIA. Não é simetria
+  // estética: o grounding compara cada afirmação contra a evidência, então
+  // bloco que chega ao modelo sem chegar aqui faz o agente ser REPROVADO por
+  // usar o contexto que nós mesmos demos. Foi assim que 2 de 11 execuções
+  // passaram a morrer em replan_exhausted depois que o turno ganhou memória
+  // episódica e contexto cruzado.
+  for (const e of episodiosDoTurno) {
+    evidence.push({
+      type: 'memory',
+      source: 'memory:episode',
+      sourceId: e.occurredAt.toISOString(),
+      ...(e.clientId ? { clientId: e.clientId } : {}),
+      confidence: 0.9,
+      retrievedAt: nowIso,
+      summary: `[${e.occurredAt.toISOString().slice(0, 10)}] ${e.eventType}: ${e.summary}`,
+    });
+  }
+  if (cruzado.bloco.length > 0) {
+    evidence.push({
+      type: 'document',
+      source: 'a2a:cross_agent',
+      sourceId: data.executionId,
+      ...(clienteDoTurnoFinal?.clientId ? { clientId: clienteDoTurnoFinal.clientId } : {}),
+      confidence: 0.95,
+      retrievedAt: nowIso,
+      summary: cruzado.bloco,
     });
   }
 

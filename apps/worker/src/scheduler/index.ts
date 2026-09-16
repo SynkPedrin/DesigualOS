@@ -5,6 +5,7 @@ import { runEndOfDayChecklist, runMorningBriefing } from './daily-digest';
 import { processPendingEvents } from '../processors/operational-events';
 import { checkIntegrationHealth } from './integration-health.js';
 import { runKnowledgeConsolidation } from './knowledge-consolidation.js';
+import { keepInferenceWarm } from './inference-warmth.js';
 
 const QUEUE_NAME = 'daily-digest';
 const logger = createLogger({ service: 'worker:scheduler' });
@@ -40,6 +41,11 @@ export function setupDailyJobs(): Worker {
     // Com um só caminho de atualização, uma falha silenciosa vira conhecimento
     // velho apresentado como atual.
     queue.add('knowledge-consolidation', {}, { repeat: { pattern: '0 3 * * *' }, jobId: 'knowledge-consolidation' }),
+    // AQUECIMENTO a cada 10 min no expediente. Medido: modelo frio custa 88s de
+    // TTFT contra 0,6-4,2s quente. O que transformava turno de 10s em 4 minutos
+    // era carga fria, não concorrência — duas chamadas simultâneas entregam
+    // MAIS respostas por minuto que uma.
+    queue.add('inference-warmth', {}, { repeat: { pattern: '*/10 * * * *' }, jobId: 'inference-warmth' }),
   ])
     .then(() => logger.info('Scheduler armado (checklist 18:00, resumo 08:00, eventos 5min, saude da integracao 15min, consolidacao 03:00)'))
     .catch((error: unknown) => logger.error({ error }, 'Failed to register daily digest repeatable jobs'));
@@ -55,6 +61,8 @@ export function setupDailyJobs(): Worker {
         await processPendingEvents(logger);
       } else if (job.name === 'integration-health') {
         await checkIntegrationHealth(logger);
+      } else if (job.name === 'inference-warmth') {
+        await keepInferenceWarm(logger);
       } else if (job.name === 'knowledge-consolidation') {
         await runKnowledgeConsolidation(logger, { somenteClientesComMudanca: true });
       }

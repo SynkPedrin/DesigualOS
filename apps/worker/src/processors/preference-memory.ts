@@ -92,7 +92,7 @@ export interface StoredPreference {
  */
 export async function capturePreferences(
   message: string,
-  ctx: { userId: string | null; clientId: string | null; executionId: string },
+  ctx: { userId: string | null; clientId: string | null; executionId: string; environment?: string },
   logger: Logger,
 ): Promise<StoredPreference[]> {
   const extraidas = extractPreferences(message);
@@ -128,6 +128,7 @@ export async function capturePreferences(
       // Instrução explícita de quem manda na marca: confiança alta.
       confidence: 0.95,
       importance: 0.9,
+      environment: ctx.environment ?? 'production',
       metadata: { aspect: pref.aspect, source_text: pref.source.slice(0, 300) },
     });
     logger.info({ subject, status: outcome.status, aspect: pref.aspect }, '[memoria] preferência capturada');
@@ -149,13 +150,16 @@ export interface AppliedPreference {
 export async function recallPreferences(scope: {
   clientId: string | null;
   userId: string | null;
+  /** Ambiente da execução. Preferência de QA não pode reger turno real. */
+  environment?: string;
 }): Promise<AppliedPreference[]> {
+  const environment = scope.environment ?? 'production';
   const [doCliente, doUsuario] = await Promise.all([
     scope.clientId
-      ? recallMemories({ clientId: scope.clientId, kinds: [PREFERENCE_KIND_CLIENT], limit: 8 }).catch(() => [])
+      ? recallMemories({ clientId: scope.clientId, kinds: [PREFERENCE_KIND_CLIENT], limit: 8, environment }).catch(() => [])
       : Promise.resolve([]),
     scope.userId
-      ? recallMemories({ userId: scope.userId, kinds: [PREFERENCE_KIND_USER], limit: 5 }).catch(() => [])
+      ? recallMemories({ userId: scope.userId, kinds: [PREFERENCE_KIND_USER], limit: 5, environment }).catch(() => [])
       : Promise.resolve([]),
   ]);
   // Não existe coluna subject: ela vira dedupeKey no memory-engine. O aspecto

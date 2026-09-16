@@ -27,6 +27,37 @@ const configSchema = z.object({
   COMFYUI_UNET_HINT: z.string().default('flux2'),
   COMFYUI_CLIP_HINT: z.string().default('flux2'),
   COMFYUI_VAE_HINT: z.string().default('flux2'),
+
+  /**
+   * Liga o pipeline autônomo (crítica -> decisão -> correção -> melhor
+   * candidato). Desligado por padrão: com OFF o worker se comporta
+   * exatamente como antes desta mudança, que é o caminho de rollback.
+   */
+  STUDIO_AUTONOMOUS_QA: z
+    .string()
+    .default('false')
+    .transform((value) => value === 'true' || value === '1'),
+
+  /** Teto de tentativas por peça. 3 é o valor do plano; 1 desliga o loop mantendo a crítica (útil pra só coletar score). */
+  STUDIO_QA_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(3),
+
+  STUDIO_CRITIC_PROVIDER: z.enum(['ollama', 'anthropic']).default('ollama'),
+
+  /**
+   * Ollama do CRÍTICO. O default aponta pro localhost DESTE processo de
+   * propósito, não pro Ollama da caixa da GPU (100.107.198.50:11434).
+   *
+   * Medido em 16/09/2026 na GPU real: com o FLUX.2 residente sobram ~6,4GB
+   * dos 24GB. Subir o `qwen3.6:35b-a3b` (20,7GB) ao lado derrubou a VRAM
+   * livre do ComfyUI pra 0,08GB e a geração seguinte foi de 36,4s pra
+   * 110,1s (3x). Apontar esta URL pro host da GPU é possível e continua
+   * suportado - mas é escolha consciente de trocar tempo de geração por
+   * qualidade de crítica, e não o default.
+   */
+  CRITIC_OLLAMA_URL: z.string().url().default('http://127.0.0.1:11434'),
+  /** Medido: 9B/35B com visão dão scores equivalentes; o 3B não serve (ver visual-critic.ts). */
+  CRITIC_OLLAMA_MODEL: z.string().default('qwen3.5:9b'),
+  CRITIC_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
 export type StudioNodeConfig = z.infer<typeof configSchema>;

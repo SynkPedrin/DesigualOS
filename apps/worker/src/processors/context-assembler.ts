@@ -18,6 +18,20 @@
  *    grande zerava a campanha e as pessoas.
  */
 
+/**
+ * O bloco de contexto agora carrega PROVENIÊNCIA e diz se sustenta afirmação.
+ *
+ * A regra que este tipo codifica não é "tudo que entra no prompt vira
+ * evidência" — isso seria errado, e transformaria instrução e pergunta do
+ * usuário em lastro para o modelo se apoiar. A regra é mais estreita:
+ *
+ *   conteúdo FACTUAL, vindo de fonte autorizada, com proveniência,
+ *   precisa ter evidência correspondente.
+ *
+ * Instrução, hipótese de planner, rascunho e texto gerado por agente entram no
+ * prompt e NÃO são evidência. Task do ClickUp, registro de campanha, memória
+ * validada e episódio datado são.
+ */
 export type FonteDeContexto =
   | 'frescor'
   | 'cliente'
@@ -26,8 +40,36 @@ export type FonteDeContexto =
   | 'episodios'
   | 'preferencias';
 
+export interface ProvenienciaDoBloco {
+  /** 'clickup' | 'campaign.registry' | 'people.registry' | 'memory' | 'episode' | 'a2a' */
+  sourceType: string;
+  sourceId?: string | null;
+  clientId?: string | null;
+  sourceUpdatedAt?: Date | null;
+  confidence?: number;
+}
+
 export interface BlocoDeContexto {
   fonte: FonteDeContexto;
+  texto: string;
+  /**
+   * Este bloco pode sustentar uma afirmação do modelo?
+   *
+   * `false` para instrução, aviso e enquadramento — eles guiam a resposta mas
+   * não são lastro. `true` exige `proveniencia`: sem fonte, não há o que citar.
+   */
+  evidenciavel?: boolean;
+  proveniencia?: ProvenienciaDoBloco;
+}
+
+/** Registro de evidência nascido do MESMO bloco que foi ao prompt. */
+export interface RegistroDeEvidencia {
+  fonte: FonteDeContexto;
+  sourceType: string;
+  sourceId: string | null;
+  clientId: string | null;
+  confidence: number;
+  /** O texto COMO FOI ENTREGUE ao modelo, já cortado pelo orçamento. */
   texto: string;
 }
 
@@ -53,6 +95,14 @@ export const ORCAMENTO_PADRAO = 14_000;
 
 export interface ContextPack {
   texto: string;
+  /**
+   * Evidência gerada JUNTO com o prompt, a partir dos mesmos blocos e já com o
+   * corte do orçamento aplicado. Nascer junto é o ponto: quando o prompt era
+   * montado de um lado e a evidência do outro, o modelo recebia o fato e o
+   * grounding não — e o agente era reprovado por usar o contexto que o próprio
+   * sistema entregou (replan_exhausted, medido em 16/09/2026).
+   */
+  evidencias: RegistroDeEvidencia[];
   /** Quais fontes entraram, na ordem — vai pra observabilidade, não pro prompt. */
   fontes: FonteDeContexto[];
   /** Quanto cada fonte ocupou. Sem isto não dá pra saber quem está espremendo quem. */
@@ -76,11 +126,12 @@ export function assembleContext(
 ): ContextPack {
   const uteis = blocos.filter((b) => b.texto.trim().length > 0);
   if (uteis.length === 0) {
-    return { texto: '', fontes: [], tamanhoPorFonte: {}, totalChars: 0, truncou: false };
+    return { texto: '', evidencias: [], fontes: [], tamanhoPorFonte: {}, totalChars: 0, truncou: false };
   }
 
   const ordenados = [...uteis].sort((a, b) => indice(a.fonte) - indice(b.fonte));
   const partes: string[] = [];
+  const evidencias: RegistroDeEvidencia[] = [];
   const tamanhoPorFonte: Partial<Record<FonteDeContexto, number>> = {};
   const fontes: FonteDeContexto[] = [];
   let restante = orcamento;
@@ -97,8 +148,23 @@ export function assembleContext(
     tamanhoPorFonte[b.fonte] = cortado.length;
     fontes.push(b.fonte);
     restante -= cortado.length;
+
+    // A evidência sai do MESMO texto cortado que foi ao prompt. Se o orçamento
+    // cortou, o grounding vê exatamente o que o modelo viu — nem mais (o que
+    // deixaria passar afirmação sem lastro entregue) nem menos (o que reprovaria
+    // afirmação legítima).
+    if (b.evidenciavel && b.proveniencia) {
+      evidencias.push({
+        fonte: b.fonte,
+        sourceType: b.proveniencia.sourceType,
+        sourceId: b.proveniencia.sourceId ?? null,
+        clientId: b.proveniencia.clientId ?? null,
+        confidence: b.proveniencia.confidence ?? 0.9,
+        texto: cortado,
+      });
+    }
   });
 
   const texto = partes.join('\n\n');
-  return { texto, fontes, tamanhoPorFonte, totalChars: texto.length, truncou };
+  return { texto, evidencias, fontes, tamanhoPorFonte, totalChars: texto.length, truncou };
 }

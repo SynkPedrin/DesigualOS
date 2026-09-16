@@ -29,7 +29,7 @@ import {
  * default seguro: um status desconhecido/novo continua sendo pollado, nunca
  * trava silenciosamente.
  */
-const TERMINAL_STATUSES = new Set(['completed', 'failed']);
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 export function useCreateStudioJob() {
   const queryClient = useQueryClient();
