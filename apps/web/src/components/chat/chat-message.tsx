@@ -65,9 +65,14 @@ function ChatAttachmentView({ attachment }: { attachment: ChatUiAttachment }) {
   );
 }
 
-/** Quebra a mensagem em blocos (mesma fronteira do MarkdownLite: linha em
- * branco). Cada bloco vira um balão próprio, estilo WhatsApp - durante o
- * streaming os balões vão aparecendo conforme os parágrafos se completam. */
+/** Quebra a mensagem do USUÁRIO em blocos (mesma fronteira do MarkdownLite:
+ * linha em branco), estilo WhatsApp.
+ *
+ * NÃO vale mais para a resposta do agente. Fragmentar a resposta em um balão
+ * por parágrafo quebrava o trabalho de quem opera: a Tammy relatou (16/09/2026)
+ * que uma única resposta aparecia em várias caixas e que ela precisava copiar o
+ * conteúdo pedaço por pedaço pra reusar. Uma execução é uma resposta, e uma
+ * resposta é um balão — com o texto inteiro dentro, copiável de uma vez. */
 function splitChatBlocks(text: string): string[] {
   return text
     .trim()
@@ -147,7 +152,6 @@ export function ChatMessage({
 
   const pending = message.status === 'queued' || message.status === 'running';
   const meta = message.agent ? AGENT_META[message.agent] : null;
-  const blocks = splitChatBlocks(streamedContent);
 
   async function handleCopy() {
     await navigator.clipboard.writeText(message.content).catch(() => {});
@@ -197,79 +201,70 @@ export function ChatMessage({
           </div>
         ) : (
           <div className="flex max-w-xl flex-col gap-1">
-            {blocks.map((block, index) => {
-              const isLast = index === blocks.length - 1;
-              return (
-                <div
-                  key={index}
-                  className={cn(
-                    'rounded-lg border border-grafite-elevado bg-grafite px-4 py-3 text-sm leading-relaxed text-branco-cru',
-                    isLast && 'rounded-tl-sm',
-                  )}
-                >
-                  <MarkdownLite text={block} />
+            <div
+              data-testid="chat-assistant-bubble"
+              className="rounded-lg rounded-tl-sm border border-grafite-elevado bg-grafite px-4 py-3 text-sm leading-relaxed text-branco-cru"
+            >
+              <MarkdownLite text={streamedContent} />
 
-                  {isLast && message.sources && message.sources.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">
-                      {message.sources.map((source) => (
-                        <Chip key={source} label={source} />
-                      ))}
-                    </div>
-                  )}
-
-                  {isLast && (
-                    <div className="mt-3 flex items-center gap-1 border-t border-grafite-elevado pt-2 text-nevoa">
-                      <button
-                        type="button"
-                        onClick={handleCopy}
-                        aria-label="Copiar resposta"
-                        className="flex items-center gap-1 rounded p-1.5 text-xs transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
-                      >
-                        <Copy size={13} />
-                        {copied ? 'Copiado' : ''}
-                      </button>
-
-                      {message.createdAt && (
-                        <span className="ml-auto font-mono text-[10px] text-nevoa">
-                          {formatClockTime(message.createdAt)}
-                        </span>
-                      )}
-
-                      {forwardTargets.length > 0 && (
-                        <div ref={forwardRef} className={cn('relative', !message.createdAt && 'ml-auto')}>
-                          <button
-                            type="button"
-                            onClick={() => setForwardOpen((current) => !current)}
-                            className="flex items-center gap-1 rounded p-1.5 text-xs transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
-                          >
-                            <Forward size={13} />
-                            {forwarded ? 'Encaminhado' : 'Encaminhar'}
-                          </button>
-
-                          {forwardOpen && (
-                            <div className="absolute bottom-full right-0 z-10 mb-1 max-h-56 w-56 overflow-y-auto rounded-md border border-grafite-elevado bg-grafite-elevado p-1 shadow-elevated">
-                              <p className="px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-nevoa">
-                                Encaminhar para
-                              </p>
-                              {forwardTargets.map((member) => (
-                                <button
-                                  key={member.id}
-                                  type="button"
-                                  onClick={() => handleForwardTo(member.id)}
-                                  className="block w-full truncate rounded px-2 py-1.5 text-left text-sm text-branco-cru transition-colors hover:bg-carbono"
-                                >
-                                  {member.name}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+              {message.sources && message.sources.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">
+                  {message.sources.map((source) => (
+                    <Chip key={source} label={source} />
+                  ))}
                 </div>
-              );
-            })}
+              )}
+
+              <div className="mt-3 flex items-center gap-1 border-t border-grafite-elevado pt-2 text-nevoa">
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  aria-label="Copiar resposta"
+                  data-testid="chat-copy-button"
+                  className="flex items-center gap-1 rounded p-1.5 text-xs transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
+                >
+                  <Copy size={13} />
+                  {copied ? 'Copiado' : ''}
+                </button>
+
+                {message.createdAt && (
+                  <span className="ml-auto font-mono text-[10px] text-nevoa">
+                    {formatClockTime(message.createdAt)}
+                  </span>
+                )}
+
+                {forwardTargets.length > 0 && (
+                  <div ref={forwardRef} className={cn('relative', !message.createdAt && 'ml-auto')}>
+                    <button
+                      type="button"
+                      onClick={() => setForwardOpen((current) => !current)}
+                      className="flex items-center gap-1 rounded p-1.5 text-xs transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
+                    >
+                      <Forward size={13} />
+                      {forwarded ? 'Encaminhado' : 'Encaminhar'}
+                    </button>
+
+                    {forwardOpen && (
+                      <div className="absolute bottom-full right-0 z-10 mb-1 max-h-56 w-56 overflow-y-auto rounded-md border border-grafite-elevado bg-grafite-elevado p-1 shadow-elevated">
+                        <p className="px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-nevoa">
+                          Encaminhar para
+                        </p>
+                        {forwardTargets.map((member) => (
+                          <button
+                            key={member.id}
+                            type="button"
+                            onClick={() => handleForwardTo(member.id)}
+                            className="block w-full truncate rounded px-2 py-1.5 text-left text-sm text-branco-cru transition-colors hover:bg-carbono"
+                          >
+                            {member.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
