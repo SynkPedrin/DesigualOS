@@ -71,13 +71,40 @@ function responderJson(res: ServerResponse, status: number, corpo: unknown): voi
   res.end(texto);
 }
 
-async function encaminhar(caminho: string, metodo: string, corpo: Buffer | null): Promise<Response> {
+async function encaminhar(
+  caminho: string,
+  metodo: string,
+  corpo: Buffer | null,
+  desistencia?: AbortSignal,
+): Promise<Response> {
   const temCorpo = corpo !== null && corpo.length > 0;
+  const sinais = [AbortSignal.timeout(TIMEOUT_UPSTREAM_MS)];
+  if (desistencia) sinais.push(desistencia);
   return fetch(`${UPSTREAM}${caminho}`, {
     method: metodo,
     ...(temCorpo ? { headers: { 'Content-Type': 'application/json' }, body: corpo } : {}),
-    signal: AbortSignal.timeout(TIMEOUT_UPSTREAM_MS),
+    signal: AbortSignal.any(sinais),
   });
+}
+
+/**
+ * Cancelar quando quem pediu foi embora.
+ *
+ * Medido aqui mesmo, 16/09/2026: o Bento desiste aos 90s (timeout dele), mas a
+ * chamada ao Ollama seguia viva até os 240s do proxy — segurando a ÚNICA vaga
+ * da GPU por mais de dois minutos para uma resposta que ninguém receberia. Com
+ * concorrência 1, um cliente impaciente bloqueava a placa inteira. O controle
+ * de admissão teria piorado a situação que veio consertar.
+ *
+ * `res.on('close')` dispara tanto no fim normal quanto na desistência; por isso
+ * a checagem de `writableEnded` — só é abandono se a resposta NÃO terminou.
+ */
+function sinalDeDesistencia(res: ServerResponse): AbortSignal {
+  const controle = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) controle.abort(new Error('cliente desistiu antes da resposta'));
+  });
+  return controle.signal;
 }
 
 async function repassar(res: ServerResponse, upstream: Response): Promise<void> {
@@ -115,10 +142,11 @@ async function tratar(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   const chamador = chamadorDe(req);
   const corpo = await lerCorpo(req);
+  const desistencia = sinalDeDesistencia(res);
   const t0 = performance.now();
 
   try {
-    const upstream = await controle.executar(chamador, () => encaminhar(caminho, 'POST', corpo));
+    const upstream = await controle.executar(chamador, () => encaminhar(caminho, 'POST', corpo, desistencia));
     logger.info(
       { chamador, caminho, status: upstream.status, totalMs: Math.round(performance.now() - t0), ...controle.telemetria() },
       'inferência concluída',
@@ -136,9 +164,16 @@ async function tratar(req: IncomingMessage, res: ServerResponse): Promise<void> 
       responderJson(res, 503, { error: erro.message, motivo: erro.motivo });
       return;
     }
+    if (desistencia.aborted) {
+      logger.warn(
+        { chamador, caminho, totalMs: Math.round(performance.now() - t0), ...controle.telemetria() },
+        'cliente desistiu; vaga da GPU devolvida',
+      );
+      return;
+    }
     const detalhe = erro instanceof Error ? erro.message : String(erro);
     logger.error({ chamador, caminho, erro: detalhe }, 'falha ao falar com a GPU');
-    responderJson(res, 502, { error: `não alcancei o servidor de inferência: ${detalhe}` });
+    if (!res.writableEnded) responderJson(res, 502, { error: `não alcancei o servidor de inferência: ${detalhe}` });
   }
 }
 
