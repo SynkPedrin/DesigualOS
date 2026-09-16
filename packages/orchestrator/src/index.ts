@@ -4,6 +4,7 @@ export * from './preference-extraction';
 export * from './client-knowledge-extraction';
 export * from './episodic-memory';
 export * from './agent-bus';
+export * from './vault-writer';
 export * from './execution-id';
 export * from './queues';
 export * from './result';

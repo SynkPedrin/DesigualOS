@@ -1,7 +1,7 @@
 import { db, schema } from '@desigual-os/database';
 import { and, eq, gte, isNull, sql } from 'drizzle-orm';
 import { sincronizarCampanhasDoCliente } from '@desigual-os/context-engine';
-import { aspectoDoTexto, rememberFact } from '@desigual-os/orchestrator';
+import { aspectoDoTexto, escreverNoVault, lerDoVault, rememberFact } from '@desigual-os/orchestrator';
 import type { Logger } from '@desigual-os/logging';
 import { buscarTasksDaLista } from '../processors/campaign-context.js';
 import { checkIntegrationHealth } from './integration-health.js';
@@ -96,6 +96,16 @@ export async function runKnowledgeConsolidation(
 const REPETICOES_PARA_VIRAR_REGRA = 3;
 
 /**
+ * Onde o conhecimento consolidado de CLIENTE vive.
+ *
+ * Não é o `Brain-Marketing` que o node do Otto lê: aquele vault tem 196
+ * arquivos de TEORIA (funil, STP, GTM) e nenhum de cliente. Misturar regra de
+ * cliente ali poluiria a recuperação de teoria, que é o que ele existe para
+ * servir. Namespace próprio, e o Postgres segue como verdade estruturada.
+ */
+const RAIZ_DO_VAULT = process.env.VAULT_CLIENTES_PATH ?? './vault-clientes';
+
+/**
  * Episódio recorrente vira REGRA — de verdade, não como contagem.
  *
  * A primeira versão contava episódios por (cliente, tipo) e devolvia um número.
@@ -186,9 +196,52 @@ async function consolidarEpisodios(logger: Logger): Promise<number> {
         { cliente: g.clientId, aspecto: g.aspecto, episodios: g.itens.length, dias: dias.size, status: r.status },
         '[consolidacao] episódios recorrentes promovidos a regra do cliente',
       );
+
+      // VAULT: a regra validada vira documento legível. Só chega aqui o que já
+      // passou por recorrência, escopo e proveniência — nunca conversa crua.
+      // Falha de escrita NÃO derruba a consolidação: o banco continua sendo a
+      // verdade, e o vault é regerado na próxima rodada.
+      const slug = await slugDoCliente(g.clientId);
+      if (slug) {
+        const res = await escreverNoVault(
+          { raiz: RAIZ_DO_VAULT, clienteSlug: slug, environment: g.environment, secao: 'Preferências consolidadas' },
+          {
+            chave: g.aspecto,
+            conteudo: maisRecente.summary,
+            sourceRefs: g.itens.map((i) => `episode:${i.id}`).slice(0, 5),
+            atualizadoEm: new Date(),
+          },
+        ).catch((erro: unknown) => {
+          logger.warn({ erro, cliente: slug }, '[vault] escrita falhou; banco segue como verdade');
+          return null;
+        });
+        if (res && res.acao !== 'inalterado') {
+          // READ-BACK: escrever sem reler não é escrever.
+          const relido = await lerDoVault({ raiz: RAIZ_DO_VAULT, clienteSlug: slug, environment: g.environment, secao: 'Preferências consolidadas' }).catch(() => '');
+          const confirmado = relido.includes(maisRecente.summary.slice(0, 40));
+          logger.info({ vault: res.caminho, acao: res.acao, confirmado }, '[vault] regra consolidada gravada');
+          if (!confirmado) logger.error({ vault: res.caminho }, '[vault] READ-BACK falhou: gravou mas não releu');
+        }
+      }
     }
   }
   return promovidos;
+}
+
+/** Slug do cliente, que vira o nome do arquivo no vault. */
+async function slugDoCliente(clientId: string): Promise<string | null> {
+  const [c] = await db
+    .select({ slug: schema.clients.slug, name: schema.clients.name })
+    .from(schema.clients)
+    .where(eq(schema.clients.id, clientId))
+    .catch(() => []);
+  if (!c) return null;
+  return (c.slug ?? c.name ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || null;
 }
 
 /** Cobertura, para o relatório e para o gate de release. */

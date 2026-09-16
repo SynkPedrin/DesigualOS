@@ -39,6 +39,7 @@ import { captureClientFacts } from './client-fact';
 import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaignTurnContext } from './campaign-context';
 import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto } from './context-assembler';
+import { formatProvenanceBlock } from './provenance-block';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
 import { formatFreshnessWarning } from '../scheduler/integration-health';
@@ -576,7 +577,13 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         { fonte: 'episodios', texto: blocoEpisodios },
         { fonte: 'preferencias', texto: formatPreferenceBlock(preferencias) },
       ];
-      const pack = assembleContext(blocos);
+      let pack = assembleContext(blocos);
+      // PROVENIÊNCIA: só quando perguntam. O bloco lista as fontes que de fato
+      // entraram no pacote — citar vira leitura, não memória.
+      const blocoProveniencia = formatProvenanceBlock(data.message, pack.fontes);
+      if (blocoProveniencia.length > 0) {
+        pack = assembleContext([...blocos, { fonte: 'frescor', texto: blocoProveniencia }]);
+      }
       contextPackFontes = pack.fontes;
       contextPackChars = pack.totalChars;
       // MARCADOR DO PROTOCOLO: é o que o node reconhece como contexto do
