@@ -26,6 +26,9 @@ import { getClickUpConfigOrNull } from './bento-action-guard';
 import { authorizeAction, proposeActions, resumoDeAcoes, MARCADOR_ATRASO, type AgentAction } from './agent-actions';
 import { executeAction } from './action-executor';
 import { capturePreferences, formatPreferenceBlock, recallPreferences } from './preference-memory';
+import { captureClientFacts } from './client-fact';
+import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaignTurnContext } from './campaign-context';
+import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { queryOperationTasks, getTaskComments, type OperationTask } from '@desigual-os/tool-gateway';
 import { getWriteScopeListId } from '@desigual-os/tool-gateway';
@@ -232,6 +235,17 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   );
   const preferencias = await recallPreferences({ clientId, userId }).catch(() => []);
 
+  // CONHECIMENTO DE CLIENTE dito AGORA ("anota que o decisor da Elite é a
+  // Marina"). Roda antes de resolveClientTurnContext de propósito: o fato
+  // gravado aqui entra no dossiê deste mesmo turno, então quem acabou de
+  // ensinar vê o agente já usando o dado, em vez de só no turno seguinte.
+  await captureClientFacts(data.message, { clientId, userId, executionId: data.executionId }, logger).catch(
+    (error: unknown) => {
+      logger.warn({ error }, '[memoria] falha ao capturar fato de cliente');
+      return [];
+    },
+  );
+
   // IDENTIDADE DO CLIENTE (bug real de 15/09/2026): sem isto o node recebia
   // só o vault de teoria de marketing e inventava quem era o cliente — chegou
   // a dizer que uma concessionária John Deere era "rede de joias".
@@ -242,21 +256,101 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   const totalClientes = await contarClientes().catch(() => 0);
   const blocoCliente = clienteDoTurno ? formatClientBlock(clienteDoTurno, totalClientes) : "";
 
+  // CAMPANHA DO TURNO. A ordem importa: resolver a campanha ANTES de criar é o
+  // que impede o caminho que entregou legenda do cliente errado — campanha
+  // citada e não resolvida agora é estado declarado, não improviso silencioso.
+  const campanhaDoTurno = await resolveCampaignTurnContext({
+    message: data.message,
+    clientId: clienteDoTurno?.clientId ?? clientId,
+    // Fonte de verdade para a autocura: se a campanha citada não estiver no
+    // registro, o turno relê o ClickUp e tenta de novo antes de desistir.
+    buscarTasks: buscarTasksDaLista,
+  }).catch(() => null);
+  // A campanha CARREGA o cliente. Quando o texto nomeia a campanha e não o
+  // cliente ("campanha de aniversário do Jardim Europa 5"), é a campanha que
+  // diz de quem é o trabalho — e sem isto o Otto ficaria com o contexto da
+  // campanha certa e o dossiê de marca de ninguém.
+  let clienteDoTurnoFinal = clienteDoTurno;
+  if (campanhaDoTurno?.campanha && !clienteDoTurno?.clientId) {
+    clienteDoTurnoFinal = await resolveClientTurnContext({
+      message: data.message,
+      executionClientId: campanhaDoTurno.campanha.clientId,
+    }).catch(() => clienteDoTurno);
+  }
+  const blocoClienteFinal = clienteDoTurnoFinal ? formatClientBlock(clienteDoTurnoFinal, totalClientes) : blocoCliente;
+
+  const donoDaCampanha = campanhaDoTurno?.campanha ? await nomeDoCliente(campanhaDoTurno.campanha.clientId).catch(() => null) : null;
+  const donosForaDoEscopo: Record<string, string> = {};
+  for (const f of campanhaDoTurno?.foraDoEscopo ?? []) {
+    const n = await nomeDoCliente(f.clientId).catch(() => null);
+    if (n) donosForaDoEscopo[f.clientId] = n;
+  }
+  const blocoCampanha = campanhaDoTurno
+    ? formatCampaignBlock(campanhaDoTurno, { campanhaDe: donoDaCampanha, foraDoEscopo: donosForaDoEscopo })
+    : '';
+
+  // PESSOAS CITADAS, com tipo de relação e evidência. Sem isto, "aparece numa
+  // task" virava "responde pela conta" — o bug da Esther.
+  const pessoasDoTurno = await resolvePersonTurnContext(data.message).catch(() => null);
+  const blocoPessoas = pessoasDoTurno ? formatPersonBlock(pessoasDoTurno) : '';
+
   const nowIso = new Date().toISOString();
   const evidence: Evidence[] = [];
   // Preferência é evidência de 1a classe: a resposta que a segue está
   // ancorada numa regra real do cliente, não em estilo do modelo.
-  if (clienteDoTurno?.clientId && clienteDoTurno.profile) {
+  if (clienteDoTurnoFinal?.clientId && clienteDoTurnoFinal.profile) {
     evidence.push({
       type: 'document',
       source: 'client.profile',
-      sourceId: clienteDoTurno.clientId,
-      clientId: clienteDoTurno.clientId,
+      sourceId: clienteDoTurnoFinal.clientId,
+      clientId: clienteDoTurnoFinal.clientId,
       confidence: 0.95,
       retrievedAt: nowIso,
-      summary: `Dossiê de ${clienteDoTurno.clientName}: ${clienteDoTurno.profile.slice(0, 200)}`,
+      // Perfil INTEIRO, não os 200 primeiros caracteres. O grounding compara
+      // cada afirmação contra `ev.summary` (grounding.ts): com o corte antigo a
+      // evidência guardava pouco mais que o cabeçalho, e todo fato que vinha do
+      // dossiê caía como NÃO ancorado — o agente era barrado justamente quando
+      // acertava. Medido ao vivo: "o decisor é a Dra. Marina Salles", que estava
+      // no registro, virou "não consegui montar uma resposta com fonte
+      // confiável". Estes refs alimentam só o groundClaims, nunca o prompt, então
+      // o texto cheio aqui não custa contexto.
+      summary: `Dossiê de ${clienteDoTurnoFinal.clientName}: ${clienteDoTurnoFinal.profile}`,
     });
   }
+  // Campanha e pessoas são evidência de 1a classe: sem isto o grounding trata
+  // "a campanha tem 3 tarefas em aberto" como fato sem lastro e barra a resposta
+  // correta (é o mesmo defeito que o dossiê teve com summary cortado).
+  if (campanhaDoTurno?.campanha) {
+    const c = campanhaDoTurno.campanha;
+    evidence.push({
+      type: 'document',
+      source: 'campaign.registry',
+      sourceId: c.id,
+      clientId: c.clientId,
+      confidence: 0.95,
+      retrievedAt: nowIso,
+      summary: [
+        `Campanha ${c.canonicalName} (${c.status}), ${c.openTaskCount} de ${c.taskCount} tarefas em aberto`,
+        c.lastSourceUpdateAt ? `atualizada em ${c.lastSourceUpdateAt.toISOString().slice(0, 10)}` : '',
+        c.recentTasks.map((t) => t.name).join(' | '),
+      ].filter(Boolean).join('. '),
+    });
+  }
+  for (const pessoa of pessoasDoTurno?.encontradas ?? []) {
+    evidence.push({
+      type: 'document',
+      source: 'people.registry',
+      sourceId: pessoa.id,
+      confidence: 0.95,
+      retrievedAt: nowIso,
+      summary: `${pessoa.canonicalName} (${pessoa.employmentType}): ${
+        pessoa.relacoes.length === 0
+          ? 'sem relação de cliente registrada'
+          : pessoa.relacoes.map((r) => `${r.clientName} ${r.relationType} ${r.evidenceCount} evidencias ${r.temporalStatus}`).join('; ')
+      }`,
+    });
+  }
+
   for (const p of preferencias) {
     evidence.push({
       type: 'memory',
@@ -336,7 +430,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // ---- STEP LOOP: o runtime controla a execução ----
   // O nome do cliente resolvido vira termo de marca do avaliador: copy que cita
   // a marca não é genérica por definição.
-  const evaluator = evaluatorFor(data.agent, clienteDoTurno?.clientName ? [clienteDoTurno.clientName] : []);
+  const evaluator = evaluatorFor(data.agent, clienteDoTurnoFinal?.clientName ? [clienteDoTurnoFinal.clientName] : []);
   let nodeAnswer: string | null = null;
   let nodeCalled = false;
   let useReduced = false;
@@ -350,9 +444,14 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     state.iterations += 1;
     try {
       const blocoPreferencias = formatPreferenceBlock(preferencias);
-      const extras = [blocoCliente, blocoPreferencias].filter((b) => b.length > 0);
+      const extras = [blocoClienteFinal, blocoCampanha, blocoPessoas, blocoPreferencias].filter((b) => b.length > 0);
+      // MARCADOR DO PROTOCOLO. Antes daqui ia só "\n\n---\n", que não é o
+      // marcador que o node conhece (CONTEXT_BLOCK_MARKER, em
+      // packages/otto/src/brain/depth.ts): o node nunca reconhecia este bloco
+      // como contexto do orquestrador, então não separava turno de contexto
+      // nem podia dar precedência ao cliente/campanha já resolvidos.
       const response = await callAgent(
-        extras.length > 0 ? `${message}\n\n---\n${extras.join('\n\n')}` : message,
+        extras.length > 0 ? `${message}\n\n---\nContexto:\n${extras.join('\n\n')}` : message,
       );
       lastNodeMetadata = response.metadata;
       const ok = response.status === 'completed' && Boolean(response.answer?.trim());

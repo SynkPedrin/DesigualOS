@@ -50,22 +50,38 @@ const PERFIL_MAX_CHARS = 9000;
  * UMA DELAS ao acaso, e a que faltasse viraria exatamente a lacuna que o modelo
  * preenche inventando. Por isso: le todas, ordena e rotula.
  */
-const ORDEM_DAS_FONTES = ['brain', 'dossie'] as const;
+const ORDEM_DAS_FONTES = ['brain', 'dossie', 'aprendizado'] as const;
 type FonteDePerfil = (typeof ORDEM_DAS_FONTES)[number] | 'outra';
 
 const ROTULO_DA_FONTE: Record<FonteDePerfil, string> = {
   brain: 'REGISTRO CRIATIVO (posicionamento, publico, tom de voz)',
   dossie: 'REGISTRO OPERACIONAL (contrato, servicos, historico, lacunas)',
+  // Vem por ultimo de proposito: e o mais RECENTE. O que a equipe contou depois
+  // corrige o que a ficha dizia antes, e o modelo le a correcao por ultimo.
+  //
+  // O rotulo diz JA GRAVADO porque a primeira versao ("dito pela equipe no
+  // chat") fez o modelo tratar o fato como rascunho: ele respondeu usando o
+  // dado e no fim pediu "registre formalmente no sistema para eu poder usar",
+  // sendo que o dado ja estava em memoria permanente. Procedencia visivel, sim;
+  // duvida sobre a validade do proprio registro, nao.
+  aprendizado:
+    'REGISTRO APRENDIDO (ensinado pela equipe e JA GRAVADO em memoria permanente; e o mais recente, e corrige as fichas acima quando divergir)',
   outra: 'REGISTRO ADICIONAL',
 };
 
 /** Piso por fonte: uma fonte longa nunca zera a outra dentro do orcamento. */
 const MIN_CHARS_POR_FONTE = 2000;
 
-/** `cliente:<uuid>:brain` -> 'brain'. Subject desconhecido cai em 'outra'. */
+/**
+ * `cliente:<uuid>:brain` -> 'brain'; `cliente:<uuid>:aprendizado:decisor` ->
+ * 'aprendizado'. Varre os segmentos em vez de olhar so o ultimo: o subject do
+ * fato aprendido termina no ASPECTO, nao na fonte. Subject desconhecido cai em
+ * 'outra' — entra rotulado, nunca some.
+ */
 export function fonteDoPerfil(subject: unknown): FonteDePerfil {
-  const sufixo = typeof subject === 'string' ? subject.split(':').pop() ?? '' : '';
-  return (ORDEM_DAS_FONTES as readonly string[]).includes(sufixo) ? (sufixo as FonteDePerfil) : 'outra';
+  if (typeof subject !== 'string') return 'outra';
+  const achada = subject.split(':').find((seg) => (ORDEM_DAS_FONTES as readonly string[]).includes(seg));
+  return (achada as FonteDePerfil | undefined) ?? 'outra';
 }
 
 /**
@@ -80,16 +96,26 @@ export function comporPerfil(
   const uteis = fontes.filter((f) => f.content.trim().length > 0);
   if (uteis.length === 0) return null;
 
-  const ordenadas = [...uteis].sort((a, b) => indiceDaFonte(a.fonte) - indiceDaFonte(b.fonte));
+  // Agrupa antes de repartir: 'aprendizado' chega como VARIOS registros (um por
+  // aspecto), e trata-los como fontes separadas daria a cada fato um cabecalho
+  // proprio e faria o piso por fonte ser cobrado N vezes, espremendo o dossie.
+  const porFonte = new Map<FonteDePerfil, string[]>();
+  for (const f of uteis) {
+    const atual = porFonte.get(f.fonte) ?? [];
+    atual.push(f.content.trim());
+    porFonte.set(f.fonte, atual);
+  }
+
+  const ordenadas = [...porFonte.entries()].sort((a, b) => indiceDaFonte(a[0]) - indiceDaFonte(b[0]));
   const blocos: string[] = [];
   let restante = orcamento;
 
-  ordenadas.forEach((f, i) => {
+  ordenadas.forEach(([fonte, partes], i) => {
     const aindaPorEscrever = ordenadas.length - i - 1;
     const teto = Math.max(0, restante - MIN_CHARS_POR_FONTE * aindaPorEscrever);
-    const texto = f.content.trim().slice(0, teto);
+    const texto = partes.join('\n').slice(0, teto);
     if (texto.length === 0) return;
-    blocos.push(`[${ROTULO_DA_FONTE[f.fonte]}]\n${texto}`);
+    blocos.push(`[${ROTULO_DA_FONTE[fonte]}]\n${texto}`);
     restante -= texto.length;
   });
 
@@ -209,6 +235,18 @@ export function formatClientBlock(ctx: ClientTurnContext, totalClientes: number)
       'Trabalhe com o que o pedido trouxer e declare o que falta. NÃO invente ramo, produto ou público.',
     );
   }
+  // O registro é VIVO, e o agente precisa saber disso. Sem esta instrução ele
+  // trata a lacuna como parede: lista o que falta e encerra, e a resposta da
+  // equipe se perde no histórico do chat em vez de virar conhecimento. O que
+  // fecha o ciclo do outro lado é client-fact.ts, que grava o que for dito com
+  // verbo de registro.
+  linhas.push(
+    '',
+    'ESTE REGISTRO É VIVO, e mantê-lo é parte do seu trabalho:',
+    '- O que estiver marcado como lacuna, [FALTA] ou "a coletar" é pergunta em aberto. Ao terminar a entrega, PEÇA o que faltou e diga por que aquilo muda o trabalho.',
+    '- Quando a equipe responder, peça para registrar com "anota que..." ou "registra que...". Só assim vira conhecimento permanente; contado de passagem, se perde.',
+    '- Nunca preencha lacuna por dedução para parecer completo. Declarar o que falta é resposta certa; inventar é o erro mais caro que você pode cometer aqui.',
+  );
   return linhas.join('\n');
 }
 

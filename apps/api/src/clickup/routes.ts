@@ -21,6 +21,7 @@ import {
   verifyClickUpSignature,
   type OperationTask,
 } from '@desigual-os/tool-gateway';
+import { precisaResincronizar, sincronizarCampanhasDoCliente } from '@desigual-os/context-engine';
 import { createLogger } from '@desigual-os/logging';
 import { getRedisConnection, publishWsEvent, recordLearning, recordOperationalEvent } from '@desigual-os/orchestrator';
 import { stripBlockMarkers, stripEmDashes } from '@desigual-os/types';
@@ -181,6 +182,27 @@ async function handleTaskChanged(
   });
   if (stored.status === 'duplicate') {
     logger.debug({ taskId: changed.taskId }, 'Evento reentregue pelo ClickUp, ignorado (idempotencia)');
+  }
+
+  // SYNC INCREMENTAL do registro de campanhas. O evento do ClickUp já chegava
+  // aqui e só invalidava UI; agora ele mantém o conhecimento do agente vivo:
+  // task nova/alterada re-deriva as campanhas daquele cliente. `precisaResincronizar`
+  // segura a frequência (janela de 5 min por cliente), senão uma conta movimentada
+  // como a D. Carvalho dispararia releitura de 900+ tasks a cada clique.
+  if (await precisaResincronizar(client.id).catch(() => false)) {
+    void sincronizarCampanhasDoCliente(client.id, listId, async (lista) => {
+      const page = await queryOperationTasks(config, { listIds: [lista], includeClosed: true, subtasks: true }).catch(() => null);
+      return (page?.tasks ?? []).map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description ?? '',
+        status: t.status,
+        closed: t.statusType === 'closed' || t.statusType === 'done',
+        updatedAt: t.updatedAt ? new Date(t.updatedAt) : null,
+      }));
+    }).catch((error: unknown) => {
+      logger.warn({ error, clientId: client.id }, 'Sync incremental de campanhas falhou');
+    });
   }
 
   await publishWsEvent({

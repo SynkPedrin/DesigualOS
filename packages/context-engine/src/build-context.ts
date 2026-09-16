@@ -165,6 +165,17 @@ export async function buildContext(params: {
               ne(schema.memories.kind, CLIENT_PROFILE_KIND),
               eq(schema.memories.status, 'active'),
               or(isNull(schema.memories.expiresAt), sql`${schema.memories.expiresAt} > now()`),
+              // ESCOPO DE CLIENTE (16/09/2026). Antes, o filtro era só por
+              // agente: os 3 aprendizados mais importantes do Otto entravam em
+              // TODO turno, de qualquer cliente. Medido ao vivo: um episódio de
+              // avaliação sobre "campanha de aniversário de loja de tênis"
+              // entrou num pedido sobre a campanha Europa V (Cosentino) e o
+              // modelo ancorou no cliente errado, escrevendo para o Top Tennis
+              // Club. Aprendizado de outro cliente dentro do turno é vazamento
+              // entre contas, não memória.
+              params.clientId
+                ? or(eq(schema.memories.clientId, params.clientId), isNull(schema.memories.clientId))
+                : isNull(schema.memories.clientId),
             ),
           )
           // Importância primeiro: com orçamento de 3 aprendizados, o que entra deve ser o
@@ -192,8 +203,20 @@ export async function buildContext(params: {
         file.textContent === null ? null : truncateClean(file.textContent, PROJECT_FILE_MAX_CHARS),
     })),
     recentMessages: recentRows.reverse(),
-    recentLearnings: learningRows.map((row) => truncateClean(row.content, LEARNING_MAX_CHARS)),
+    recentLearnings: learningRows.map((row) => truncateClean(soEstrategia(row.content), LEARNING_MAX_CHARS)),
   };
+}
+
+/**
+ * O aprendizado existe pra carregar COMO o agente resolveu, não SOBRE O QUE era
+ * o pedido anterior. O conteúdo do episódio começa com "Objetivo: <pedido do
+ * usuário daquela vez>", e era justamente esse trecho que plantava o assunto de
+ * um turno antigo dentro de um turno novo — inclusive com nome de outro cliente
+ * e de outra campanha. A estratégia fica; o enunciado alheio sai.
+ */
+function soEstrategia(conteudo: string): string {
+  const semObjetivo = conteudo.replace(/^Objetivo:.*?(?=Estrat[ée]gia vencedora:)/is, '').trim();
+  return semObjetivo.length > 0 ? semObjetivo : conteudo;
 }
 
 /** Formata o contexto como um bloco de texto curto pra anexar ao prompt. */

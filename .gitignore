@@ -27,7 +27,12 @@ LP - DESIGUAL OS/
 # notas soltas por cliente) - nunca devem ir pro repositório público no
 # GitHub, mesmo que o resto do projeto vá (2026-09-10).
 arquivos clientes/
-brain/
+# Ancorado na raiz DE PROPOSITO. Sem a barra inicial, a regra casava qualquer
+# pasta chamada "brain" em qualquer nivel — e engolia packages/otto/src/brain/,
+# que e CODIGO do pacote do Otto, nao vault. Cinco arquivos de fonte do Otto
+# ficaram fora do controle de versao por isso, enquanto o artefato implantado no
+# node os continha: o deploy nao era reproduzivel a partir do repositorio.
+/brain/
 **/.obsidian/
 Brain-Marketing/2026-09-04.md
 Brain-Marketing/STUDIO-BRAIN/

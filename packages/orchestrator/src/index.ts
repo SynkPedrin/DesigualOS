@@ -1,6 +1,7 @@
 export * from './discovery';
 export * from './event-intelligence';
 export * from './preference-extraction';
+export * from './client-knowledge-extraction';
 export * from './execution-id';
 export * from './queues';
 export * from './result';

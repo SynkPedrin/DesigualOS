@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { PALAVRA_FRACA } from './entity-matching.js';
 
 /**
  * Resolução de cliente citado por NOME no texto da mensagem, não escolhido no seletor da UI.
@@ -204,8 +205,59 @@ export interface ClientResolution {
  *                 de 8), fora da lista de palavras comuns do português
  *                 ("consentino" -> "Cosentino"). Só aceita se UM cliente ficar mais perto.
  */
+/**
+ * A palavra casou, mas o TEXTO a estende num nome que não é deste cliente?
+ *
+ * Caso real (16/09/2026): pediram a "campanha de aniversário do Jardim Europa 5"
+ * e o TIER 3 casou a palavra "jardim" com o cliente "Jardim do Lago" — com
+ * confiança total, sem marcar ambiguidade. O Otto então escreveu a legenda de
+ * um empreendimento em Penápolis para uma campanha da Cosentino. Cliente
+ * errado, campanha errada, conteúdo inventado.
+ *
+ * A palavra seguinte no texto era "europa", que não existe no nome do cliente.
+ * Quando isso acontece, o texto está nomeando OUTRA entidade que só começa
+ * igual, e casar pela primeira palavra é ignorar justamente a que diferencia.
+ *
+ * Vale para qualquer nome composto: "Costa Azul" x "Costa Rica",
+ * "Areia Branca" x "Areia Preta".
+ */
+function palavraEstendidaNoTexto(
+  palavra: string,
+  mensagemNormalizada: string,
+  nomeCurto: string,
+  proprios: Set<string>,
+): boolean {
+  const doNome = new Set(nomeCurto.split(' ').filter(Boolean));
+  const re = new RegExp(`\\b${palavra.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+([a-z0-9]+)`, 'g');
+  for (const m of mensagemNormalizada.matchAll(re)) {
+    const seguinte = m[1] ?? '';
+    // Token curto ("do", "da", "de") não diferencia nada.
+    if (seguinte.length < 3) continue;
+    if (doNome.has(seguinte)) continue;
+    // SÓ conta como outra entidade quando a palavra seguinte é ela própria um
+    // NOME PRÓPRIO no texto original ("Jardim Europa"), não uma palavra comum
+    // ("a Fratelli confirmou"). Sem esta checagem a regra rejeitava frase
+    // legítima e o cliente deixava de ser resolvido — pior que o bug original.
+    if (proprios.has(seguinte)) return true;
+  }
+  return false;
+}
+
+/** Tokens escritos com inicial maiúscula na mensagem original, já dobrados. */
+function nomesPropriosDoTexto(message: string): Set<string> {
+  const saida = new Set<string>();
+  for (const bruto of message.split(/\s+/)) {
+    const limpo = bruto.replace(/[^\p{L}\p{N}]/gu, '');
+    if (limpo.length < 3) continue;
+    if (!/^[A-ZÀ-Ý]/.test(limpo)) continue;
+    saida.add(normalize(limpo));
+  }
+  return saida;
+}
+
 export async function resolveClientsFromText(message: string): Promise<ClientResolution> {
   const normalizedMessage = ` ${normalize(message)} `; // espaços nas pontas pra \b casar no início/fim
+  const propriosDoTexto = nomesPropriosDoTexto(message);
   if (normalizedMessage.trim().length < MIN_CONFIDENT_NAME_LEN) {
     return { matches: [], ambiguous: [], tier: 'none' };
   }
@@ -247,8 +299,8 @@ export async function resolveClientsFromText(message: string): Promise<ClientRes
     }
     const distinctive = shortForm
       .split(' ')
-      .filter((w) => w.length >= 5 && !PALAVRA_GENERICA_DEMAIS.has(w));
-    const hitWord = distinctive.find((w) => matchesTerm(w));
+      .filter((w) => w.length >= 5 && !PALAVRA_GENERICA_DEMAIS.has(w) && !PALAVRA_FRACA.has(w));
+    const hitWord = distinctive.find((w) => matchesTerm(w) && !palavraEstendidaNoTexto(w, normalizedMessage, shortForm, propriosDoTexto));
     if (hitWord) tiers[2]!.hits.set(client.id, { client, term: hitWord });
   }
 

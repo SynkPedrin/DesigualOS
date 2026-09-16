@@ -265,3 +265,39 @@ describe('fuzzy não sequestra a operação com palavra comum', () => {
     expect(r.matches.map((m) => m.name)).toContain('Cosentino');
   });
 });
+
+/**
+ * Regressão do sequestro por palavra comum (16/09/2026): "campanha de
+ * aniversário do Jardim Europa 5" resolvia para o cliente "Jardim do Lago" com
+ * confiança total, e o Otto entregou a legenda de um empreendimento em
+ * Penápolis para uma campanha da Cosentino.
+ */
+describe('palavra comum não sequestra cliente', () => {
+  it('não resolve cliente quando o texto estende a palavra em outro nome', async () => {
+    seed([{ id: 'c-lago', name: 'Jardim do Lago', slug: 'jardim-do-lago' }]);
+    const r = await resolveClientsFromText('legenda para a campanha de aniversário do Jardim Europa 5');
+    expect(r.matches).toEqual([]);
+  });
+
+  it('continua resolvendo o cliente quando é dele que se fala', async () => {
+    seed([{ id: 'c-lago', name: 'Jardim do Lago', slug: 'jardim-do-lago' }]);
+    const r = await resolveClientsFromText('as tarefas do Jardim do Lago');
+    expect(r.matches.map((m) => m.name)).toContain('Jardim do Lago');
+  });
+
+  it('palavra comum seguida de VERBO continua resolvendo (não é outra entidade)', async () => {
+    // A primeira versão da regra rejeitava "a Fratelli confirmou" porque
+    // "confirmou" não está no nome — rejeitar frase legítima é pior que o bug
+    // original. Só nome próprio depois da palavra indica outra entidade.
+    seed([{ id: 'c-fratelli', name: 'Gelateria Fratelli', slug: 'gelateria-fratelli' }]);
+    const r = await resolveClientsFromText('a Fratelli confirmou o layout');
+    expect(r.matches.map((m) => m.name)).toContain('Gelateria Fratelli');
+  });
+
+  it('nome composto de outro cliente não vaza pelo primeiro token', async () => {
+    seed([{ id: 'c-costa', name: 'Costa Azul', slug: 'costa-azul' }]);
+    // "Costa" sozinho não pode arrastar "Costa Azul" quando o texto diz outra coisa.
+    const r = await resolveClientsFromText('falei com a Costa Rica ontem');
+    expect(r.matches.map((m) => m.name)).not.toContain('Costa Azul');
+  });
+});

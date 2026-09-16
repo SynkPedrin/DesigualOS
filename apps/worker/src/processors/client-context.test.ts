@@ -117,3 +117,59 @@ describe('fonteDoPerfil', () => {
     expect(fonteDoPerfil(42)).toBe('outra');
   });
 });
+
+/**
+ * Terceira fonte: o que a equipe ensina no chat (client-fact.ts) entra como
+ * registro APRENDIDO. Chega como vários registros — um por aspecto — e precisa
+ * ser agrupado, senão cada fato ganharia cabeçalho próprio e o piso por fonte
+ * seria cobrado N vezes, espremendo o dossiê.
+ */
+describe('comporPerfil com registro aprendido', () => {
+  it('agrupa os fatos aprendidos sob um cabeçalho só', () => {
+    const p = comporPerfil([
+      { fonte: 'aprendizado', content: 'O decisor é a Marina.' },
+      { fonte: 'aprendizado', content: 'A praça é Birigui.' },
+      { fonte: 'dossie', content: 'Lista no ClickUp 901411764375.' },
+    ]);
+
+    expect((p!.match(/REGISTRO APRENDIDO/g) ?? []).length).toBe(1);
+    expect(p).toContain('Marina');
+    expect(p).toContain('Birigui');
+    expect(p).toContain('901411764375');
+  });
+
+  it('o aprendido vem por último: é a informação mais recente', () => {
+    const p = comporPerfil([
+      { fonte: 'aprendizado', content: 'Na verdade o decisor mudou.' },
+      { fonte: 'brain', content: 'Persona do funil.' },
+      { fonte: 'dossie', content: 'Histórico de campanha.' },
+    ]);
+    expect(p!.indexOf('REGISTRO CRIATIVO')).toBeLessThan(p!.indexOf('REGISTRO OPERACIONAL'));
+    expect(p!.indexOf('REGISTRO OPERACIONAL')).toBeLessThan(p!.indexOf('REGISTRO APRENDIDO'));
+  });
+
+  it('diz que o aprendido JÁ está gravado', () => {
+    // Regressão medida ao vivo: com o rótulo antigo o agente usava o dado e
+    // ainda pedia "registre formalmente no sistema", sendo que já estava em
+    // memória permanente.
+    const p = comporPerfil([{ fonte: 'aprendizado', content: 'O decisor é a Marina.' }]);
+    expect(p).toMatch(/JA GRAVADO|JÁ GRAVADO/);
+  });
+
+  it('classifica o subject do fato, que termina no aspecto e não na fonte', () => {
+    expect(fonteDoPerfil('cliente:c1:aprendizado:decisor')).toBe('aprendizado');
+    expect(fonteDoPerfil('cliente:c1:aprendizado:geral:fabrica-fecha-em-janeiro')).toBe('aprendizado');
+  });
+});
+
+describe('formatClientBlock mantém o registro vivo', () => {
+  it('manda pedir o que falta e explica como o dado vira permanente', () => {
+    const b = formatClientBlock(
+      { clientId: 'c1', clientName: 'Yak Sushibar', profile: 'Restaurante japonês. Público: [FALTA]', unresolvedMentions: [], ambiguous: [] },
+      57,
+    );
+    expect(b).toContain('REGISTRO É VIVO');
+    expect(b).toMatch(/anota que|registra que/i);
+    expect(b).toMatch(/Nunca preencha lacuna por dedução/i);
+  });
+});

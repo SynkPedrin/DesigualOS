@@ -31,6 +31,7 @@ export {
   classifyRetrievalDepth,
   depthPolicy,
   planTurnDepth,
+  extractOrchestratorContext,
   stripOrchestratorContext,
   CONTEXT_BLOCK_MARKER,
 } from './brain/depth.js';

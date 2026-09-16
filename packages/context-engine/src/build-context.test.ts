@@ -427,3 +427,29 @@ describe('formatContextForPrompt', () => {
     expect(formatted).toBe('');
   });
 });
+
+/**
+ * Isolamento entre clientes no bloco de contexto (regressão de 16/09/2026).
+ *
+ * Os aprendizados eram buscados só por agente: os 3 mais importantes do Otto
+ * entravam em TODO turno. Um episódio de avaliação sobre "campanha de
+ * aniversário de loja de tênis" entrou num pedido sobre a campanha Europa V, da
+ * Cosentino, e o modelo escreveu para o Top Tennis Club.
+ */
+describe('cross_client_knowledge_isolation no bloco de contexto', () => {
+  it('o aprendizado não carrega o enunciado de outro turno', () => {
+    const episodio =
+      'Objetivo: Entregar solução criativa: [EVAL] Otto, escreva 3 hooks para a campanha de aniversário de loja de tênis.. Estratégia vencedora: dispatch_reduzido. Tentativas: 2. Score: 1.';
+    const bloco = formatContextForPrompt({
+      userName: 'Tammy',
+      clientName: null,
+      clientToneOfVoice: null,
+      clientProfile: null,
+      projectFiles: [],
+      recentMessages: [],
+      recentLearnings: [episodio.replace(/^Objetivo:.*?(?=Estratégia vencedora:)/is, '').trim()],
+    });
+    expect(bloco).not.toMatch(/loja de t[êe]nis/i);
+    expect(bloco).toContain('Estratégia vencedora');
+  });
+});

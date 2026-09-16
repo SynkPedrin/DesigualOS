@@ -230,8 +230,19 @@ function matched(haystack: string, needles: string[]): string[] {
  * O nome capturado é bruto por desenho: quem resolve pro membro real do
  * ClickUp é a camada com acesso à API (operational-context.ts).
  */
-function detectPersonMention(flat: string): PersonMention | null {
-  const patterns: RegExp[] = [
+function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolean }): PersonMention | null {
+  /**
+   * Padrões que se sustentam SOZINHOS: a frase já é, em si, pergunta sobre
+   * pessoa, não precisa de palavra operacional junto. Sem separá-los, "quem é
+   * Esther?" nunca chegava aqui (a detecção só rodava com sinal operacional) e
+   * a mesma pessoa recebia resposta diferente conforme a frase.
+   */
+  const autoSuficientes: RegExp[] = [
+    /\bquem\s+(?:e|eh|seria)\s+(?:a|o)?\s*([a-z][a-z]*(?:\s+[a-z]+)?)\s*\??$/,
+    /\b(?:a|o)\s+([a-z][a-z]+)\s+(?:trabalha|atende|responde|cuida)\b/,
+  ];
+
+  const dependentesDeOperacional: RegExp[] = [
     // atribuída(s) à/ao/para + nome
     /atribuid[ao]s?\s+(?:a|à|ao|pro|pra|para)\s+([a-z][a-z ]{1,29})/,
     // tasks/tarefas do/da/de + nome
@@ -246,7 +257,12 @@ function detectPersonMention(flat: string): PersonMention | null {
     'hoje', 'amanha', 'ontem', 'agora', 'semana', 'mes', 'ano', 'task', 'tasks', 'tarefa', 'tarefas',
     'clickup', 'cliente', 'clientes', 'operacao', 'agencia', 'todos', 'todas', 'tudo', 'isso', 'essa',
     'ele', 'ela', 'eles', 'elas', 'voce', 'você', 'eu', 'nos', 'mim', 'alguem', 'ninguem',
+    'quem', 'responsavel', 'squad', 'time', 'equipe', 'pessoa', 'gente', 'aqui', 'esse', 'este',
   ]);
+  const patterns = opcoes.comSinalOperacional
+    ? [...autoSuficientes, ...dependentesDeOperacional]
+    : autoSuficientes;
+
   for (const pattern of patterns) {
     const match = flat.match(pattern);
     const name = match?.[1]?.trim().replace(/\s+/g, ' ');
@@ -346,7 +362,7 @@ export async function resolveOperationalScope(
   // PRECEDÊNCIA 2b — pergunta sobre PESSOA da equipe: atravessa todos os
   // clientes filtrando por responsável. "quantas tasks estão atribuídas à
   // Jamile?" não é pergunta de cliente nenhum.
-  const person = operational ? detectPersonMention(flat) : null;
+  const person = detectPersonMention(flat, { comSinalOperacional: operational });
   if (person) {
     signals.push(`pessoa:${person.name}`);
     return {

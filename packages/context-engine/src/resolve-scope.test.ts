@@ -161,3 +161,31 @@ describe('marcadores de priorização/análise disparam o caminho estruturado (�
     expect(s.briefing).toBe(true);
   });
 });
+
+/**
+ * Consistência de identidade de pessoa entre formulações (regressão do caso
+ * Esther, 16/09/2026): "demandas da Esther" resolvia como PERSON e respondia
+ * "não encontrei ninguém com esse nome", mas "quem é Esther?" caía em escopo de
+ * cliente e pedia "de qual cliente?". A operação leu isso como o agente
+ * esquecendo a pessoa entre conversas.
+ */
+describe('bento_resolves_known_person_consistently', () => {
+  it('"quem é X?" também é pergunta sobre pessoa', async () => {
+    for (const frase of ['Quem é Esther?', 'quem é a Esther', 'Quem é o Gui?']) {
+      const escopo = await resolveOperationalScope(frase);
+      expect(escopo.kind, frase).toBe('PERSON');
+      expect(escopo.person?.name, frase).toBeTruthy();
+    }
+  });
+
+  it('"demandas da X" continua sendo pergunta sobre pessoa', async () => {
+    const escopo = await resolveOperationalScope('Agora me diga as demandas da Esther.');
+    expect(escopo.kind).toBe('PERSON');
+    expect(escopo.person?.name).toContain('esther');
+  });
+
+  it('não confunde pergunta genérica com nome de pessoa', async () => {
+    const escopo = await resolveOperationalScope('Quem é o responsável?');
+    expect(escopo.person?.name).not.toBe('responsavel');
+  });
+});

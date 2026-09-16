@@ -33,15 +33,42 @@ O Otto node e o Bento não leem o repositório: leem a tabela `memories`, kind
 |---|---|---|---|
 | Criativo | `.claude/skills/otto/brains/<cliente>/BRAIN.md` | `cliente:<id>:brain` | `scripts/sync-brains.mts` |
 | Operacional | vault `brain-desigual/02-clientes/` | `cliente:<id>:dossie` | `scripts/sync-dossies.mts` |
+| Aprendido | o que a equipe ensina no chat | `cliente:<id>:aprendizado:<aspecto>` | automático, a cada turno |
 
 ```bash
 pnpm --filter @desigual-os/worker exec tsx scripts/sync-brains.mts --aplicar
 pnpm --filter @desigual-os/worker exec tsx scripts/sync-dossies.mts --raiz <vault> --aplicar
 ```
 
-Os dois são idempotentes: reimportar **atualiza** o registro, não empilha. Sem
-`--aplicar` é simulação. Editou um BRAIN.md ou um dossiê? Rode o importador, ou
-o agente continua com a versão velha.
+Os importadores são idempotentes: reimportar **atualiza** o registro, não
+empilha. Sem `--aplicar` é simulação. Editou um BRAIN.md ou um dossiê? Rode o
+importador, ou o agente continua com a versão velha.
+
+### Ensinar o agente durante o trabalho
+
+As duas primeiras fontes congelam entre importações, e toda ficha tem lacuna
+declarada. A terceira fonte fecha esse ciclo: o que for dito **com verbo de
+registro** vira conhecimento permanente na hora.
+
+> Anota que o decisor da Colormaq é a Marina.
+> Corrige que a praça da Elite agora é Birigui e Penápolis.
+
+Vale "anota", "registra", "corrige", "guarda", "atualiza", "lembra", "para
+constar". Sem um desses, nada é gravado — contar de passagem não é pedir para
+gravar, e dossiê errado é pior que dossiê vazio. Pergunta não conta: *"anota
+quem é o decisor?"* está pedindo o dado, não entregando.
+
+Regras que valem a pena conhecer:
+
+- **O nome citado manda.** "anota no brain da Colormaq" grava na Colormaq mesmo
+  com outro cliente selecionado no chat. Nome que não existe na carteira faz o
+  fato ser descartado, nunca gravado por aproximação.
+- **Corrigir substitui.** Fatos do mesmo aspecto (decisor, praça, público,
+  restrição...) se aposentam; o último vale. Fato solto, sem aspecto conhecido,
+  acumula em vez de apagar o anterior.
+- **A procedência fica visível.** O que foi ensinado no chat chega ao turno
+  rotulado como REGISTRO APRENDIDO, separado das fichas curadas, e por vir por
+  último corrige o que elas disserem.
 
 **O vault de dossiês não mora no repositório.** Ele tem ID de conta de mídia, ID
 de membro do ClickUp e dado comercial, e este repositório é público. Vale a mesma

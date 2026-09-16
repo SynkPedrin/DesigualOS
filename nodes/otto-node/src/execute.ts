@@ -16,6 +16,7 @@ import {
   planVideo,
   retrieveRelevantKnowledge,
   runCreativePipeline,
+  extractOrchestratorContext,
   stripOrchestratorContext,
   createWebSearchProviderFromEnv,
   type BrainHealth,
@@ -432,6 +433,19 @@ export async function executeTask(
     }
     const dnaSection = dna ? `\n\nDNA criativo do cliente:\n${formatDnaBlock(dna)}` : '';
 
+    // PRECEDÊNCIA DO CONTEXTO RESOLVIDO. O que o orquestrador manda (cliente do
+    // turno, campanha do turno, pessoas) é FATO consultado no banco e no
+    // ClickUp; o que sai do vault aqui é o trecho mais parecido com a frase.
+    // Enquanto o primeiro vinha só na mensagem do usuário e o segundo no system
+    // prompt, o palpite ganhava do fato: medido em 16/09/2026, com a campanha
+    // Europa V (Cosentino) resolvida e entregue, o node escreveu para Top
+    // Tennis Club porque foi isso que a busca trouxe. Agora o fato entra aqui,
+    // acima, e a regra de desempate é explícita.
+    const contextoResolvido = extractOrchestratorContext(request.message);
+    const escopoSection = contextoResolvido
+      ? `\n\nESCOPO RESOLVIDO DESTE TURNO (consultado nas fontes da operação, tem PRECEDÊNCIA sobre o Conhecimento do Brain abaixo; se o Brain apontar outro cliente ou outra campanha, o Brain está errado para este turno):\n${contextoResolvido}`
+      : '';
+
     // (c)+(d) Caminho de chat: prompt com contexto + conhecimento -> Ollama.
     if (!intent) {
       const attachmentsSection = formatAttachmentsBlock(request.attachments);
@@ -449,7 +463,7 @@ export async function executeTask(
           [
             {
               role: 'system',
-              content: `${CHAT_SYSTEM_PROMPT}${dnaSection}${attachmentsSection}\n\n${directive}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}`,
+              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${dnaSection}${attachmentsSection}\n\n${directive}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}`,
             },
             { role: 'user', content: request.message },
           ],
