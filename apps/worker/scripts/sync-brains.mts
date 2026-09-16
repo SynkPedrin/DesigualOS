@@ -15,29 +15,22 @@
 import '../src/env.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, schema } from '@desigual-os/database';
-import { isNull } from 'drizzle-orm';
 import { rememberFact } from '@desigual-os/orchestrator';
+// Regra de casamento compartilhada com sync-dossies.mts: duas copias
+// divergiriam na primeira correcao, e casar errado poe o dossie de um cliente
+// na ficha de outro.
+import { acharCliente, carregarClientes } from './lib/clientes.mjs';
 
 // Caminho relativo ao repo: o script roda em qualquer maquina/checkout.
 const RAIZ = new URL('../../../.claude/skills/otto/brains', import.meta.url).pathname;
-const dobra = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 const APLICAR = process.argv.includes('--aplicar');
 
 const brains = fs.readdirSync(RAIZ).filter(d => !['INDEX.md','_template'].includes(d) && fs.existsSync(path.join(RAIZ,d,'BRAIN.md')));
-const clientes = await db.select({ id: schema.clients.id, name: schema.clients.name, slug: schema.clients.slug }).from(schema.clients).where(isNull(schema.clients.deletedAt));
-
-function acharCliente(brain: string) {
-  const alvo = dobra(brain);
-  return clientes.find(c => dobra(c.name) === alvo || dobra(c.slug) === alvo)
-      ?? clientes.find(c => dobra(c.name).startsWith(alvo) || alvo.startsWith(dobra(c.name)))
-      // "por-do-sol" -> "Cond. Pôr do Sol": o nome do banco carrega prefixo.
-      ?? clientes.find(c => dobra(c.name).includes(alvo) || alvo.includes(dobra(c.slug)));
-}
+const clientes = await carregarClientes();
 
 let ok = 0, pulados = 0;
 for (const b of brains) {
-  const c = acharCliente(b);
+  const c = acharCliente([b], clientes);
   if (!c) { console.log(`  [sem cliente] ${b}`); pulados++; continue; }
   const conteudo = fs.readFileSync(path.join(RAIZ, b, 'BRAIN.md'), 'utf8').trim();
   if (conteudo.length < 200) { console.log(`  [vazio] ${b}`); pulados++; continue; }

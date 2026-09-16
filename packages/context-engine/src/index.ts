@@ -4,3 +4,6 @@ export * from './build-operational-context';
 export * from './resolve-client';
 export * from './resolve-scope';
 export * from './resolve-temporal';
+export * from './entity-matching';
+export * from './campaign-derivation';
+export * from './campaign-sync';

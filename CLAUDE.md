@@ -23,3 +23,27 @@ São sistemas separados, com memórias separadas. Documentação do node: `brain
 ## Fontes de informação de cliente
 
 Os brains foram migrados de `arquivos clientes/CLIENTES/` (dossiês e fichas) e dos `.md` de cliente na raiz. Essas fontes continuam sendo o registro operacional (pendências, ClickUp, contas de mídia); o brain é o registro **criativo**. Ao descobrir informação permanente de cliente, atualize o brain e ofereça registrar.
+
+### Como os dois registros chegam aos agentes
+
+O Otto node e o Bento não leem o repositório: leem a tabela `memories`, kind
+`client.profile`. Cada cliente tem até dois registros, que **não se substituem**:
+
+| Registro | Fonte | Subject | Importador |
+|---|---|---|---|
+| Criativo | `.claude/skills/otto/brains/<cliente>/BRAIN.md` | `cliente:<id>:brain` | `scripts/sync-brains.mts` |
+| Operacional | vault `brain-desigual/02-clientes/` | `cliente:<id>:dossie` | `scripts/sync-dossies.mts` |
+
+```bash
+pnpm --filter @desigual-os/worker exec tsx scripts/sync-brains.mts --aplicar
+pnpm --filter @desigual-os/worker exec tsx scripts/sync-dossies.mts --raiz <vault> --aplicar
+```
+
+Os dois são idempotentes: reimportar **atualiza** o registro, não empilha. Sem
+`--aplicar` é simulação. Editou um BRAIN.md ou um dossiê? Rode o importador, ou
+o agente continua com a versão velha.
+
+**O vault de dossiês não mora no repositório.** Ele tem ID de conta de mídia, ID
+de membro do ClickUp e dado comercial, e este repositório é público. Vale a mesma
+regra que o `.gitignore` já aplica a `arquivos clientes/` e `brain/`. Por isso o
+`--raiz` é obrigatório em vez de um caminho fixo.

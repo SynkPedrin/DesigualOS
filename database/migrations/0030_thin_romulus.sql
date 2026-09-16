@@ -1,0 +1,1 @@
+ALTER TABLE "campaigns" ADD COLUMN "recent_tasks" jsonb DEFAULT '[]'::jsonb NOT NULL;

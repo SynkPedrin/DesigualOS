@@ -37,9 +37,69 @@ export interface ClientTurnContext {
 
 // Os BRAIN.md dos clientes tem mediana ~2.8k e chegam a 12k. 2.400 cortava
 // o dossie no meio — justamente as secoes de posicionamento e restricoes, que
-// sao o que impede o modelo de inventar. 6.000 cobre a grande maioria inteiro
-// e ainda cabe no orcamento de prompt do node.
-const PERFIL_MAX_CHARS = 6000;
+// sao o que impede o modelo de inventar. 6.000 cobria uma fonte inteira; com
+// DUAS fontes por cliente (ver abaixo) o teto passa a valer para o conjunto.
+const PERFIL_MAX_CHARS = 9000;
+
+/**
+ * Um cliente tem mais de um registro, e eles NAO se substituem:
+ *   - brain  = registro criativo (posicionamento, persona, tom de voz);
+ *   - dossie = registro operacional (contrato, servicos, historico, lacunas).
+ * A consulta antiga lia `.limit(1)` sem `orderBy`. Enquanto so existia o brain
+ * isso funcionava por acidente; com as duas fontes o turno passaria a receber
+ * UMA DELAS ao acaso, e a que faltasse viraria exatamente a lacuna que o modelo
+ * preenche inventando. Por isso: le todas, ordena e rotula.
+ */
+const ORDEM_DAS_FONTES = ['brain', 'dossie'] as const;
+type FonteDePerfil = (typeof ORDEM_DAS_FONTES)[number] | 'outra';
+
+const ROTULO_DA_FONTE: Record<FonteDePerfil, string> = {
+  brain: 'REGISTRO CRIATIVO (posicionamento, publico, tom de voz)',
+  dossie: 'REGISTRO OPERACIONAL (contrato, servicos, historico, lacunas)',
+  outra: 'REGISTRO ADICIONAL',
+};
+
+/** Piso por fonte: uma fonte longa nunca zera a outra dentro do orcamento. */
+const MIN_CHARS_POR_FONTE = 2000;
+
+/** `cliente:<uuid>:brain` -> 'brain'. Subject desconhecido cai em 'outra'. */
+export function fonteDoPerfil(subject: unknown): FonteDePerfil {
+  const sufixo = typeof subject === 'string' ? subject.split(':').pop() ?? '' : '';
+  return (ORDEM_DAS_FONTES as readonly string[]).includes(sufixo) ? (sufixo as FonteDePerfil) : 'outra';
+}
+
+/**
+ * Junta as fontes num bloco unico, rotulado e dentro do orcamento. Reparte o
+ * espaco reservando o piso para as fontes ainda nao escritas, entao a ordem
+ * (criativo antes de operacional) nao faz a segunda chegar vazia.
+ */
+export function comporPerfil(
+  fontes: Array<{ fonte: FonteDePerfil; content: string }>,
+  orcamento = PERFIL_MAX_CHARS,
+): string | null {
+  const uteis = fontes.filter((f) => f.content.trim().length > 0);
+  if (uteis.length === 0) return null;
+
+  const ordenadas = [...uteis].sort((a, b) => indiceDaFonte(a.fonte) - indiceDaFonte(b.fonte));
+  const blocos: string[] = [];
+  let restante = orcamento;
+
+  ordenadas.forEach((f, i) => {
+    const aindaPorEscrever = ordenadas.length - i - 1;
+    const teto = Math.max(0, restante - MIN_CHARS_POR_FONTE * aindaPorEscrever);
+    const texto = f.content.trim().slice(0, teto);
+    if (texto.length === 0) return;
+    blocos.push(`[${ROTULO_DA_FONTE[f.fonte]}]\n${texto}`);
+    restante -= texto.length;
+  });
+
+  return blocos.length > 0 ? blocos.join('\n\n') : null;
+}
+
+function indiceDaFonte(f: FonteDePerfil): number {
+  const i = (ORDEM_DAS_FONTES as readonly string[]).indexOf(f);
+  return i === -1 ? ORDEM_DAS_FONTES.length : i;
+}
 
 /**
  * Resolve o cliente do turno. Precedência: cliente da execução (seletor do
@@ -85,8 +145,8 @@ export async function resolveClientTurnContext(params: {
 
   let profile: string | null = null;
   if (clientId) {
-    const [m] = await db
-      .select({ content: schema.memories.content })
+    const rows = await db
+      .select({ content: schema.memories.content, metadata: schema.memories.metadata })
       .from(schema.memories)
       .where(
         and(
@@ -95,9 +155,13 @@ export async function resolveClientTurnContext(params: {
           inArray(schema.memories.kind, ['client.profile']),
         ),
       )
-      .limit(1)
       .catch(() => []);
-    profile = m?.content?.slice(0, PERFIL_MAX_CHARS) ?? null;
+    profile = comporPerfil(
+      rows.map((r) => ({
+        fonte: fonteDoPerfil((r.metadata as { subject?: unknown } | null)?.subject),
+        content: r.content ?? '',
+      })),
+    );
   }
 
   return {

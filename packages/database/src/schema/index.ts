@@ -8,6 +8,7 @@ export * from './queue';
 export * from './tools';
 export * from './costs';
 export * from './knowledge';
+export * from './knowledge-plane';
 export * from './clickup';
 export * from './integrations';
 export * from './studio';
