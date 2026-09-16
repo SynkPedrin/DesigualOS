@@ -26,10 +26,16 @@ async function perguntar(page: import('@playwright/test').Page, texto: string, t
   await campo.fill(texto);
   await campo.press('Enter');
   await expect(page.getByText(texto, { exact: false }).first()).toBeVisible({ timeout: 20_000 });
-  // Espera a bolha do agente existir e parar de crescer.
+  // Espera a bolha do agente existir e ter resposta de verdade dentro.
+  //
+  // O primeiro assert aqui era /\S{40,}/, que exige 40 caracteres SEGUIDOS sem
+  // espaço: prosa nenhuma casa isso, e o teste ficava pendurado até o timeout
+  // mesmo com a resposta na tela. Medir o tamanho do texto é o que se queria.
   const bolhas = page.getByTestId('chat-assistant-bubble');
   await expect(bolhas.first()).toBeVisible({ timeout });
-  await expect(bolhas.first()).toContainText(/\S{40,}/, { timeout });
+  await expect
+    .poll(async () => (await bolhas.first().innerText()).trim().length, { timeout })
+    .toBeGreaterThan(40);
 }
 
 test.describe('Knowledge reliability — navegador real', () => {
@@ -66,9 +72,13 @@ test.describe('Knowledge reliability — navegador real', () => {
     await page.goto('/chat');
     // A Tammy falou "Jardim Europa 5"; a fonte escreve "Europa V" (Cosentino).
     await perguntar(page, 'Otto, crie uma legenda para a campanha de aniversário do Jardim Europa 5.');
-    const texto = await page.locator('main').innerText();
+    // Lê a RESPOSTA, não a página: o seletor de clientes lista "Jardim do Lago"
+    // como <option> e fazia a asserção falhar sozinha, com a resposta correta.
+    const resposta = await page.getByTestId('chat-assistant-bubble').first().innerText();
     // Não pode entregar a campanha de OUTRO cliente (foi o que aconteceu:
     // veio peça do Jardim do Lago, em Penápolis).
-    expect(texto).not.toMatch(/Penápolis|Jardim do Lago/i);
+    expect(resposta).not.toMatch(/Penápolis|Jardim do Lago/i);
+    // E precisa ser a campanha certa, do cliente certo.
+    expect(resposta).toMatch(/Europa|Cosentino/i);
   });
 });
