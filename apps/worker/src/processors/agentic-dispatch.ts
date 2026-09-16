@@ -19,7 +19,6 @@ import type { AgentJobData } from '@desigual-os/orchestrator';
 import {
   extractEpisodeCandidates,
   formatEpisodeBlock,
-  upsertBlackboard,
   janelaDoTexto,
   publishWsEvent,
   recallEpisodes,
@@ -366,15 +365,19 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     blocoEpisodios = formatEpisodeBlock(episodios, janela.rotulo);
   }
 
-  // BLACKBOARD: escopo e objetivo desta execução ficam legíveis para qualquer
-  // agente que entre depois, sem precisar redescobrir tudo.
-  void upsertBlackboard({
-    executionId: data.executionId,
-    clientId: clienteDoTurnoFinal?.clientId ?? clientId,
-    campaignId: campanhaDoTurno?.campanha?.id ?? null,
-    objective: data.message.slice(0, 500),
-    environment: ambiente,
-  }).catch(() => undefined);
+  // BLACKBOARD: NÃO é escrito aqui, de propósito.
+  //
+  // Medido em 16/09/2026: 27 blackboards gravados, ZERO com fatos e ZERO com
+  // saída de agente, e `lerBlackboard` sem nenhum chamador. O motivo é
+  // estrutural, não descuido: nesta arquitetura cada execução tem UM agente, e
+  // o contexto do outro domínio vem do A2A source-backed, que lê a fonte
+  // direto. Não há o segundo agente que entraria na mesma execução para ler o
+  // que o primeiro deixou.
+  //
+  // Escrever mesmo assim custa uma linha por turno e, pior, faz o componente
+  // parecer vivo numa auditoria futura. A tabela e as funções continuam no
+  // repositório como infraestrutura para execução multiagente de verdade,
+  // quando existir; o release não depende delas.
 
   const nowIso = new Date().toISOString();
   const evidence: Evidence[] = [];

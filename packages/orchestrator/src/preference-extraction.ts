@@ -33,7 +33,13 @@ export interface ExtractedPreference {
 }
 
 /** Aspecto -> termos que o denunciam. Ordem importa: o primeiro que casar vence. */
-const ASPECTOS: Array<{ aspect: string; re: RegExp }> = [
+/**
+ * Exportado para a consolidação diária: agrupar episódio por ASPECTO é o que
+ * separa "recorrência real" de "três feedbacks quaisquer". Dois pedidos sobre
+ * headline são o mesmo assunto; um sobre headline e um sobre paleta não são,
+ * por mais que ambos sejam feedback.
+ */
+export const ASPECTOS: Array<{ aspect: string; re: RegExp }> = [
   { aspect: 'headline', re: /\bheadlines?\b|\bt[íi]tulos?\b|\bchamadas?\b/i },
   { aspect: 'emoji', re: /\bemojis?\b/i },
   { aspect: 'tom-de-voz', re: /\btom de voz\b|\btom\b|\blinguagem\b|\bvoz da marca\b/i },
@@ -129,4 +135,9 @@ export function preferenceSubject(scopeId: string, aspect: string, scope: Prefer
 /** Texto que vai pro prompt e pra evidência. Curto e acionável. */
 export function preferenceContent(pref: ExtractedPreference): string {
   return `Preferência de ${pref.aspect}: ${pref.value}`;
+}
+
+/** Aspecto de um texto livre, usando a MESMA tabela da extração. */
+export function aspectoDoTexto(texto: string): string | null {
+  return ASPECTOS.find((a) => a.re.test(texto))?.aspect ?? null;
 }

@@ -117,6 +117,17 @@ export interface FatoDoBlackboard {
  * Estado compartilhado da execução. Uma linha por execução; os agentes somam
  * fatos e perguntas pendentes sem reescrever a identidade do escopo — quem
  * define cliente e campanha é a resolução de entidade, não o agente.
+ *
+ * NÃO ESTÁ EM USO no release atual, e isto é decisão consciente. Medido em
+ * 16/09/2026: 27 blackboards gravados, zero com fatos, zero com saída de
+ * agente, e nenhum chamador de `lerBlackboard`. A razão é estrutural: cada
+ * execução tem UM agente, e o contexto do outro domínio chega pelo A2A
+ * source-backed, que lê a fonte direto — não existe o segundo agente que
+ * entraria na mesma execução para ler o que o primeiro deixou.
+ *
+ * Fica como infraestrutura para execução multiagente real, quando houver.
+ * Manter a escrita ligada faria o componente parecer vivo numa auditoria
+ * futura, que é pior do que não tê-lo.
  */
 export async function upsertBlackboard(params: {
   executionId: string;

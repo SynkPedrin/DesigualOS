@@ -1,3 +1,5 @@
+import { db, schema } from '@desigual-os/database';
+import { gte, sql } from 'drizzle-orm';
 import type { Logger } from '@desigual-os/logging';
 
 /**
@@ -18,17 +20,32 @@ import type { Logger } from '@desigual-os/logging';
  * da memória durante o expediente. O custo é uma geração minúscula a cada 10
  * minutos.
  *
- * A GPU é compartilhada com Studio/ComfyUI/Flux, então o keeper NÃO fixa o
- * modelo para sempre: usa `keep_alive` com folga e só roda no horário de
- * trabalho, deixando a placa livre à noite para render.
+ * A GPU é compartilhada com Studio/ComfyUI/Flux, e o modelo ocupa 22,3 GB de um
+ * cartão de 24 GB — medido. Manter isso preso das 7h às 21h deixaria o Studio
+ * sem placa, o que troca um problema por outro pior.
+ *
+ * Por isso o keeper é POR DEMANDA: só aquece quando houve conversa recente com
+ * os agentes. Quem está trabalhando com o Bento e o Otto encontra o modelo
+ * quente; quando a equipe para de conversar e vai renderizar, o modelo expira
+ * sozinho e a VRAM volta para o Studio.
  */
 
 /** Janela em que vale a pena manter quente (hora local). */
 const INICIO_EXPEDIENTE = 7;
 const FIM_EXPEDIENTE = 21;
 
-/** Folga maior que o intervalo do job, para nunca haver janela fria entre pings. */
-const KEEP_ALIVE = '45m';
+/**
+ * Folga maior que o intervalo do job, para não haver janela fria entre pings,
+ * mas curta o bastante para a VRAM voltar ao Studio pouco depois que a equipe
+ * para de usar os agentes.
+ */
+const KEEP_ALIVE = '20m';
+
+/**
+ * Janela de ATIVIDADE que justifica manter 22 GB de VRAM ocupados. Sem alguém
+ * conversando com os agentes, aquecer é só tirar a placa de quem vai renderizar.
+ */
+const ATIVIDADE_RECENTE_MIN = 45;
 
 export interface ResultadoDoAquecimento {
   executou: boolean;
@@ -62,6 +79,10 @@ export async function keepInferenceWarm(logger: Logger, agora = new Date()): Pro
     return { executou: false, jaEstavaQuente: false, ttftMs: null, motivo: 'fora do expediente' };
   }
 
+  if (!(await houveAtividadeRecente(agora))) {
+    return { executou: false, jaEstavaQuente: false, ttftMs: null, motivo: 'sem conversa recente; VRAM fica com o Studio' };
+  }
+
   const quente = await modeloResidente(baseUrl, modelo);
   const t0 = performance.now();
 
@@ -92,4 +113,15 @@ export async function keepInferenceWarm(logger: Logger, agora = new Date()): Pro
     logger.info({ modelo, ttftMs }, '[inferencia] modelo estava FRIO e foi carregado pelo keeper');
   }
   return { executou: true, jaEstavaQuente: quente, ttftMs };
+}
+
+/** Alguém conversou com os agentes há pouco? É o que justifica ocupar a GPU. */
+async function houveAtividadeRecente(agora: Date): Promise<boolean> {
+  const desde = new Date(agora.getTime() - ATIVIDADE_RECENTE_MIN * 60_000);
+  const [r] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.executions)
+    .where(gte(schema.executions.createdAt, desde))
+    .catch(() => []);
+  return (r?.n ?? 0) > 0;
 }

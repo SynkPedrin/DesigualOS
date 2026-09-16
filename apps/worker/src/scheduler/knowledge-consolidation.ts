@@ -1,6 +1,7 @@
 import { db, schema } from '@desigual-os/database';
 import { and, eq, gte, isNull, sql } from 'drizzle-orm';
 import { sincronizarCampanhasDoCliente } from '@desigual-os/context-engine';
+import { aspectoDoTexto, rememberFact } from '@desigual-os/orchestrator';
 import type { Logger } from '@desigual-os/logging';
 import { buscarTasksDaLista } from '../processors/campaign-context.js';
 import { checkIntegrationHealth } from './integration-health.js';
@@ -94,30 +95,100 @@ export async function runKnowledgeConsolidation(
  */
 const REPETICOES_PARA_VIRAR_REGRA = 3;
 
+/**
+ * Episódio recorrente vira REGRA — de verdade, não como contagem.
+ *
+ * A primeira versão contava episódios por (cliente, tipo) e devolvia um número.
+ * Isso é o erro que a spec chama pelo nome: três feedbacks QUAISQUER não são
+ * uma preferência. Um pedido sobre headline e outro sobre paleta são dois
+ * assuntos, por mais que ambos sejam "feedback".
+ *
+ * Aqui o agrupamento é por ASPECTO (a mesma tabela que a extração de
+ * preferência usa), que é a aproximação barata e determinística de "mesma
+ * intenção". E exige recorrência REAL: três episódios em pelo menos dois dias
+ * distintos, para que uma rajada de correções numa única sessão não vire regra
+ * permanente do cliente.
+ *
+ * O que sai daqui é memória semântica com proveniência: o subject por aspecto
+ * dá supersessão de graça, e os source_refs apontam para os episódios que a
+ * sustentam — é o que permite responder "de onde tirou isso".
+ */
 async function consolidarEpisodios(logger: Logger): Promise<number> {
   const desde = new Date(Date.now() - 30 * 86_400_000);
-  const rows = await db
+  const episodios = await db
     .select({
+      id: schema.agentEpisodes.id,
       clientId: schema.agentEpisodes.clientId,
-      eventType: schema.agentEpisodes.eventType,
-      n: sql<number>`count(*)::int`,
+      summary: schema.agentEpisodes.summary,
+      occurredAt: schema.agentEpisodes.occurredAt,
+      environment: schema.agentEpisodes.environment,
     })
     .from(schema.agentEpisodes)
     .where(
       and(
         gte(schema.agentEpisodes.occurredAt, desde),
-        eq(schema.agentEpisodes.environment, 'production'),
         sql`${schema.agentEpisodes.eventType} in ('preference','feedback')`,
       ),
     )
-    .groupBy(schema.agentEpisodes.clientId, schema.agentEpisodes.eventType)
-    .catch(() => []);
+    .catch((erro: unknown) => {
+      logger.error({ erro }, '[consolidacao] leitura de episódios falhou');
+      return [];
+    });
 
-  const promovidos = rows.filter((r) => r.clientId && r.n >= REPETICOES_PARA_VIRAR_REGRA);
-  if (promovidos.length > 0) {
-    logger.info({ promovidos: promovidos.length }, '[consolidacao] padrões episódicos com força de regra');
+  type EpisodioDoGrupo = { id: string; clientId: string | null; summary: string; occurredAt: Date; environment: string };
+  /** (cliente|ambiente|aspecto) -> episódios que sustentam a regra. */
+  const grupos = new Map<string, { clientId: string; environment: string; aspecto: string; itens: EpisodioDoGrupo[] }>();
+  for (const e of episodios) {
+    if (!e.clientId) continue;
+    const aspecto = aspectoDoTexto(e.summary);
+    if (!aspecto) continue;
+    const chave = `${e.clientId}|${e.environment}|${aspecto}`;
+    const atual = grupos.get(chave);
+    if (atual) atual.itens.push(e);
+    else grupos.set(chave, { clientId: e.clientId, environment: e.environment, aspecto, itens: [e] });
   }
-  return promovidos.length;
+
+  let promovidos = 0;
+  for (const g of grupos.values()) {
+    if (g.itens.length < REPETICOES_PARA_VIRAR_REGRA) continue;
+    // Dias DISTINTOS: rajada numa sessão só é correção, não padrão.
+    const dias = new Set(g.itens.map((i) => i.occurredAt.toISOString().slice(0, 10)));
+    if (dias.size < 2) continue;
+
+    const maisRecente = [...g.itens].sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())[0]!;
+    const r = await rememberFact({
+      kind: 'client.preference',
+      clientId: g.clientId,
+      // A formulação mais recente é a que vale: é como a regra é dita hoje.
+      content: maisRecente.summary,
+      subject: `cliente:${g.clientId}:consolidado:${g.aspecto}`,
+      sourceType: 'agent',
+      sourceId: maisRecente.id,
+      // Recorrência aumenta a confiança, com teto: padrão observado é forte,
+      // não é certeza.
+      confidence: Math.min(0.95, 0.7 + g.itens.length * 0.05),
+      importance: 0.9,
+      environment: g.environment,
+      metadata: {
+        aspect: g.aspecto,
+        consolidado_de: g.itens.length,
+        dias_distintos: dias.size,
+        source_refs: g.itens.map((i) => `episode:${i.id}`).slice(0, 20),
+      },
+    }).catch((erro: unknown) => {
+      logger.warn({ erro, aspecto: g.aspecto }, '[consolidacao] falha ao promover regra');
+      return null;
+    });
+
+    if (r && r.status !== 'skipped') {
+      promovidos += 1;
+      logger.info(
+        { cliente: g.clientId, aspecto: g.aspecto, episodios: g.itens.length, dias: dias.size, status: r.status },
+        '[consolidacao] episódios recorrentes promovidos a regra do cliente',
+      );
+    }
+  }
+  return promovidos;
 }
 
 /** Cobertura, para o relatório e para o gate de release. */
