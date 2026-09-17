@@ -97,6 +97,25 @@ const GLOBAL_MARKERS = [
   'no total',
   'da carteira',
   'carteira inteira',
+  /**
+   * Como a agência pede de verdade. Medido em 17/09/2026 preparando a simulação
+   * de uso real: "me atualiza" e "o que tá pegando?" resolviam NONE, e sem
+   * escopo o agente não recebe dado operacional nenhum — então a pergunta mais
+   * comum do dia era a que menos funcionava.
+   *
+   * São frases INTEIRAS, não palavras soltas, e é isso que as torna seguras:
+   * "me atualiza" só aparece quando alguém quer o panorama. Palavra solta nesta
+   * lista é o erro que já custou 287 campanhas neste repositório.
+   */
+  'me atualiza',
+  'me atualize',
+  'me poe a par',
+  'ta pegando',
+  'esta pegando',
+  'como estamos',
+  'como que ta',
+  'status geral',
+  'panorama',
 ];
 
 /**

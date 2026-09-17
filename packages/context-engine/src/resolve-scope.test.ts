@@ -217,3 +217,67 @@ describe('pergunta operacional sem cliente é sobre a operação', () => {
     expect(e.kind).toBe('CLIENT');
   });
 });
+
+/**
+ * ESCOPO GLOBAL — a pergunta que a agência faz quando abre o sistema de manhã.
+ *
+ * Todas estas falhavam de um jeito específico e caro: em vez de responder sobre
+ * a operação, o agente devolvia "de qual cliente?" — pedindo justamente a
+ * informação que a pergunta dizia não querer.
+ */
+describe('escopo operacional global', () => {
+  it('which_deliveries_will_be_late_is_global', async () => {
+    expect((await resolveOperationalScope('Quais entregas vão atrasar?')).kind).toBe('GLOBAL');
+  });
+
+  it('who_is_overloaded_is_global', async () => {
+    expect((await resolveOperationalScope('Quem está sobrecarregado?')).kind).toBe('GLOBAL');
+  });
+
+  it('what_is_blocked_is_global', async () => {
+    expect((await resolveOperationalScope('O que está bloqueado?')).kind).toBe('GLOBAL');
+  });
+
+  it('what_needs_attention_today_is_global', async () => {
+    expect((await resolveOperationalScope('O que precisa de atenção hoje?')).kind).toBe('GLOBAL');
+  });
+
+  it('pergunta comparativa entre clientes é global', async () => {
+    expect((await resolveOperationalScope('Quais clientes têm mais tarefas paradas hoje?')).kind).toBe('GLOBAL');
+  });
+
+  it('priorização do dia é global', async () => {
+    expect(
+      (await resolveOperationalScope('Se eu só pudesse resolver três coisas hoje, quais seriam?')).kind,
+    ).toBe('GLOBAL');
+  });
+
+  it('client_specific_question_remains_client_scoped', async () => {
+    // Cliente da lista mockada deste arquivo. Contra o banco real, "Elite"
+    // resolve igual; aqui usar um nome fora do mock faria o teste medir o
+    // mock, não a regra.
+    expect((await resolveOperationalScope('Qual o status das tarefas da 3Net?')).kind).toBe('CLIENT');
+  });
+
+  it('pergunta sobre pessoa atravessa clientes sem virar global', async () => {
+    expect((await resolveOperationalScope('Quem é a Esther?')).kind).toBe('PERSON');
+  });
+});
+
+describe('como a agência pede de verdade', () => {
+  it('"me atualiza" é pedido de panorama, não conversa fiada', async () => {
+    expect((await resolveOperationalScope('me atualiza')).kind).toBe('GLOBAL');
+  });
+
+  it('"o que tá pegando?" também', async () => {
+    expect((await resolveOperationalScope('o que tá pegando?')).kind).toBe('GLOBAL');
+  });
+
+  it('ambiguous_non_operational_question_can_ask_for_scope: saudação não vira consulta à operação', async () => {
+    expect((await resolveOperationalScope('oi, tudo bem?')).kind).toBe('NONE');
+  });
+
+  it('pedido criativo não é pergunta operacional', async () => {
+    expect((await resolveOperationalScope('escreve uma legenda bonita')).kind).toBe('NONE');
+  });
+});
