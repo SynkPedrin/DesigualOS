@@ -18,6 +18,8 @@ import {
   runCreativePipeline,
   extractOrchestratorContext,
   stripOrchestratorContext,
+  contratoDeSaida,
+  diretivaDoContrato,
   createWebSearchProviderFromEnv,
   type BrainHealth,
   type BrandKit,
@@ -458,12 +460,22 @@ export async function executeTask(
         depth: depth.depth,
         hasClientMaterial: dna !== null,
       });
+      /**
+       * O CONTRATO vem do turno do usuário, sem o bloco do orquestrador: o
+       * contexto fala de tarefas, campanhas e posts, e deixá-lo entrar na
+       * detecção faria "me dá 3 títulos" virar pedido de legenda por causa de
+       * uma palavra que o usuário nem escreveu.
+       *
+       * Entra DEPOIS da diretiva de direção porque é mais específico que ela:
+       * a direção diz como pensar, o contrato diz o que entregar.
+       */
+      const contrato = diretivaDoContrato(contratoDeSaida(stripOrchestratorContext(request.message)));
       const answer = await measureLlm(() =>
         deps.llm.chat(
           [
             {
               role: 'system',
-              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${dnaSection}${attachmentsSection}\n\n${directive}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}`,
+              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}`,
             },
             { role: 'user', content: request.message },
           ],

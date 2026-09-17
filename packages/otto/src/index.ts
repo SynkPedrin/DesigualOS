@@ -84,6 +84,8 @@ export type {
 } from './creative/planner.js';
 
 export { buildDirectionDirective } from './creative/stance.js';
+export { contratoDeSaida, diretivaDoContrato } from './creative/output-contract.js';
+export type { ArtefatoPedido, ContratoDeSaida } from './creative/output-contract.js';
 export type { DirectionDirectiveInput } from './creative/stance.js';
 
 export { evaluateCreative } from './creative/quality.js';
