@@ -126,6 +126,28 @@ function estimateTokenUsage(
  * cada agente reusando o cérebro real do WhatsApp. O caminho genérico
  * `/execute` continua só pro Studio e pra futuros Node Agents.
  */
+/**
+ * TETO do que a gente manda no campo de contexto.
+ *
+ * Medido em 17/09/2026: o servidor do Bento cortava acima de 16 KB DERRUBANDO a
+ * conexão, e o cliente via só "fetch failed" — indistinguível de queda de rede.
+ * Três perguntas da bateria falhavam sempre, e eu cheguei a diagnosticar como
+ * instabilidade de tailnet. O limite de lá subiu e agora responde 413, mas o
+ * conserto de lá não nos dispensa do daqui: depender do teto alheio é esperar
+ * que o próximo serviço também tenha um, e que ele seja generoso.
+ *
+ * Corta declarando o corte. Contexto truncado em silêncio faz o agente
+ * responder com metade do dossiê achando que tem o dossiê inteiro.
+ */
+const TETO_DE_CONTEXTO = 60_000;
+
+export function limitarContexto(partes: Array<string | undefined>): string | undefined {
+  const texto = partes.filter((t) => Boolean(t && t.trim())).join('\n\n');
+  if (texto.length === 0) return undefined;
+  if (texto.length <= TETO_DE_CONTEXTO) return texto;
+  return `${texto.slice(0, TETO_DE_CONTEXTO)}\n\n[CONTEXTO TRUNCADO em ${TETO_DE_CONTEXTO} caracteres — havia ${texto.length}. O que veio depois deste ponto NÃO chegou até você; não conclua ausência a partir disso.]`;
+}
+
 export async function callBento(message: string, logger: Logger, operationalContext?: string): Promise<ExecuteResponse> {
   const url = process.env.BENTO_QA_URL ?? 'http://100.93.182.83:8791';
   const token = process.env.BENTO_QA_TOKEN;
@@ -977,7 +999,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
             // O contexto apartado entra pelo campo próprio, junto com o que já
             // viesse de operacional. Ver `aceitaContextoNaMensagem`: pro Bento,
             // contexto dentro da pergunta sequestra a intenção dele.
-            [operationalContext, contextoApartado].filter((t) => Boolean(t && t.trim())).join('\n\n') || undefined,
+            limitarContexto([operationalContext, contextoApartado]),
             clientFeedbackHistory,
           ),
       });

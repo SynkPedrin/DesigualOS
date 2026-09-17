@@ -366,3 +366,26 @@ describe('parseAgentLoopFlag (AGENT_LOOP_V2 por agente)', () => {
     expect(parseAgentLoopFlag('bento,fulano').size).toBe(1);
   });
 });
+
+describe('limitarContexto', () => {
+  it('junta as partes que existem e ignora vazio', async () => {
+    const { limitarContexto } = await import('./execute-job.js');
+    expect(limitarContexto(['a', undefined, '  ', 'b'])).toBe('a\n\nb');
+  }, 30_000);
+
+  it('sem nada pra mandar, não manda campo nenhum', async () => {
+    const { limitarContexto } = await import('./execute-job.js');
+    expect(limitarContexto([undefined, ''])).toBeUndefined();
+  }, 30_000);
+
+  it('corta acima do teto — o servidor do Bento derrubava a conexão em silêncio', async () => {
+    const { limitarContexto } = await import('./execute-job.js');
+    const saida = limitarContexto(['x'.repeat(80_000)])!;
+    expect(saida.length).toBeLessThan(80_000);
+  }, 30_000);
+
+  it('e DECLARA o corte: truncar calado faz o agente achar que tem o dossiê inteiro', async () => {
+    const { limitarContexto } = await import('./execute-job.js');
+    expect(limitarContexto(['x'.repeat(80_000)])).toMatch(/CONTEXTO TRUNCADO/);
+  }, 30_000);
+});
