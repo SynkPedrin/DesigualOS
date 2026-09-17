@@ -380,21 +380,66 @@ export async function recallFactualEpisodes(params: {
  * pergunta, e rotulado como conversa porque a proveniência importa: dizer
  * "ClickUp" para algo que a pessoa falou no chat é atribuição falsa.
  */
+/** Palavras de conteúdo do resumo, para decidir se dois registros falam da MESMA coisa. */
+function nucleoDoResumo(resumo: string): Set<string> {
+  return new Set(termosDeConsulta(resumo));
+}
+
+/**
+ * Dois episódios tratam do mesmo assunto? Exige DUAS palavras de conteúdo em
+ * comum, não uma: com uma só, "o decisor é X" e "a praça é Y" se tocariam por
+ * acaso e um fato válido seria marcado como substituído.
+ */
+function falamDoMesmo(a: Set<string>, b: Set<string>): boolean {
+  let comuns = 0;
+  for (const t of a) {
+    // Por RADICAL, não por igualdade: "decisor" e "decisora" são a mesma coisa
+    // pra quem pergunta, e comparar string exata fazia a correção do decisor
+    // passar como fato novo em vez de substituir o anterior.
+    for (const u of b) {
+      const menor = t.length <= u.length ? t : u;
+      const maior = t.length <= u.length ? u : t;
+      if (menor.length >= 5 && maior.startsWith(menor)) {
+        comuns += 1;
+        break;
+      }
+    }
+  }
+  return comuns >= 2;
+}
+
 export function formatFactualEpisodeBlock(episodios: EpisodioRecuperado[]): string {
   if (episodios.length === 0) return '';
+
+  /**
+   * RÓTULO EXPLÍCITO, não ordem.
+   *
+   * A primeira versão deste bloco entregava a lista do mais novo pro mais velho
+   * e mandava o modelo concluir que o primeiro valia. Na simulação de uso real
+   * de 17/09/2026 ele leu os dois registros do decisor da Colpar e devolveu
+   * "o decisor é Marcelo Ribeiro (informado por Fernanda Alves)" — misturou o
+   * fato aposentado com a pessoa do fato novo. Não é erro de leitura: é o que
+   * acontece quando a decisão de qual fato vale fica com quem está gerando
+   * texto. Agora a decisão é tomada aqui e viaja escrita.
+   */
+  const vistos: Array<{ nucleo: Set<string>; texto: string }> = [];
   const linhas = [
     'REGISTRO APRENDIDO NA CONVERSA (informado por quem trabalha aqui, com data):',
   ];
   for (const e of episodios) {
     const quando = e.occurredAt.toISOString().slice(0, 16).replace('T', ' ');
-    linhas.push(`- [${quando}] (${e.eventType}) ${e.summary}`);
+    const nucleo = nucleoDoResumo(e.summary);
+    const anterior = vistos.find((v) => falamDoMesmo(v.nucleo, nucleo));
+    const rotulo = anterior ? 'SUBSTITUÍDO' : 'ATUAL';
+    linhas.push(`- ${rotulo} [${quando}] (${e.eventType}) ${e.summary}`);
+    vistos.push({ nucleo, texto: e.summary });
   }
   linhas.push('');
   linhas.push(
     'Isto foi dito por alguém da equipe, não lido do ClickUp: ao citar, diga que foi informado na conversa, com a data.',
   );
   linhas.push(
-    'A lista está do MAIS RECENTE para o mais antigo. Se dois registros disserem coisas diferentes sobre a MESMA coisa, vale o mais recente; o anterior é histórico e não deve ser apresentado como atual.',
+    'Use APENAS o que está marcado ATUAL como verdade de hoje. O que está SUBSTITUÍDO já foi corrigido: não repita o nome, o número ou a decisão dele como se ainda valesse, nem misture os dois no mesmo enunciado.',
   );
   linhas.push(
     'Corrige ficha curada: onde isto contradisser o dossiê ou o brain, isto vale, porque é mais novo e veio de quem decide.',

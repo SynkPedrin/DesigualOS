@@ -157,14 +157,26 @@ describe('formatFactualEpisodeBlock', () => {
     expect(b).toMatch(/não lido do ClickUp/i);
   });
 
-  it('new_fact_supersedes_old_fact: instrui que o mais recente vale e o anterior é histórico', () => {
+  it('new_fact_supersedes_old_fact: rotula ATUAL e SUBSTITUÍDO, não confia na ordem', () => {
     const b = formatFactualEpisodeBlock([
-      ep('2026-09-17T10:00:00Z', 'Agora a decisora é Fernanda.'),
-      ep('2026-09-16T10:00:00Z', 'O decisor é Marcelo.'),
+      ep('2026-09-17T10:00:00Z', 'Agora a decisora da Colpar é Fernanda.'),
+      ep('2026-09-16T10:00:00Z', 'O decisor da Colpar é Marcelo.'),
     ]);
-    expect(b.indexOf('Fernanda')).toBeLessThan(b.indexOf('Marcelo'));
-    expect(b).toMatch(/vale o mais recente/i);
-    expect(b).toMatch(/não deve ser apresentado como atual/i);
+    expect(b).toMatch(/ATUAL \[2026-09-17.*Fernanda/);
+    expect(b).toMatch(/SUBSTITUÍDO \[2026-09-16.*Marcelo/);
+    expect(b).toMatch(/nem misture os dois no mesmo enunciado/i);
+  });
+
+  it('fato de OUTRO assunto não é marcado como substituído por acaso', () => {
+    const b = formatFactualEpisodeBlock([
+      ep('2026-09-17T10:00:00Z', 'A decisora da Colpar é Fernanda.'),
+      ep('2026-09-16T10:00:00Z', 'A praça principal da Colpar é Naviraí.'),
+    ]);
+    // Na LINHA do registro, não no bloco: o rodapé de instrução cita a palavra.
+    expect(b.split('\n').filter((l) => l.startsWith('- '))).toEqual(
+      expect.arrayContaining([expect.stringContaining('ATUAL')]),
+    );
+    expect(b.split('\n').filter((l) => l.startsWith('- ')).join('\n')).not.toMatch(/SUBSTITUÍDO/);
   });
 
   it('carrega a data de cada registro, senão não dá pra citar quando foi dito', () => {
