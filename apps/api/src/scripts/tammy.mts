@@ -18,6 +18,7 @@ import { dispatchChatMessage } from '@desigual-os/orchestrator';
 import { eq, sql } from 'drizzle-orm';
 import { writeFileSync } from 'node:fs';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context.js';
+import { agenteAceitaBlocoNaMensagem, operacionalPorCampoApartado } from '../chat/message-assembly.js';
 import { recusarEnsinoEmProducao } from './_guard-producao.js';
 
 const COSENTINO = '44be15e0-b8bd-4f44-916d-eedc5a84a0d5';
@@ -77,8 +78,11 @@ async function conversar(nome: string, turnos: Turno[]): Promise<Array<Turno & {
     const t0 = performance.now();
     const turno = await resolveOperationalTurn(t.fala, usuario as never);
     const bloco = turno.briefingBlock ?? formatOperationalContextForPrompt(turno.context);
-    const paraBento = t.agente === 'bento' ? (bloco ?? undefined) : undefined;
-    const mensagem = t.agente === 'bento' || !bloco ? t.fala : `${t.fala}\n\n---\n${bloco}`;
+    // As MESMAS regras da rota, importadas em vez de reescritas: harness que
+    // monta diferente da rota mede outro sistema (ver bateria.mts).
+    const apartado = operacionalPorCampoApartado(t.agente) ? (bloco ?? undefined) : undefined;
+    const mensagem =
+      bloco && !apartado && agenteAceitaBlocoNaMensagem(t.agente) ? `${t.fala}\n\n---\n${bloco}` : t.fala;
 
     // Nenhum harness ensina fato em produção: ver _guard-producao.ts.
     await recusarEnsinoEmProducao(t.fala, t.cliente);
@@ -98,7 +102,7 @@ async function conversar(nome: string, turnos: Turno[]): Promise<Array<Turno & {
         confidence: 1,
         source: 'manual',
       },
-      ...(paraBento ? { operationalContext: paraBento } : {}),
+      ...(apartado ? { operationalContext: apartado } : {}),
     });
 
     let status = '';

@@ -22,6 +22,7 @@ import { dispatchChatMessage } from '@desigual-os/orchestrator';
 import { eq, sql } from 'drizzle-orm';
 import { writeFileSync } from 'node:fs';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context.js';
+import { agenteAceitaBlocoNaMensagem, operacionalPorCampoApartado } from '../chat/message-assembly.js';
 import { recusarEnsinoEmProducao } from './_guard-producao.js';
 
 const CLIENTES = {
@@ -110,9 +111,20 @@ async function rodar(item: Item): Promise<Saida> {
   // rota POST /chat faz antes de despachar.
   const turno = await resolveOperationalTurn(item.pergunta, usuario as never);
   const blocoOperacional = turno.briefingBlock ?? formatOperationalContextForPrompt(turno.context);
-  const paraBento = item.agente === 'bento' ? (blocoOperacional ?? undefined) : undefined;
+  /**
+   * As MESMAS regras da rota, importadas em vez de reescritas aqui.
+   *
+   * Reescrever era o que este harness fazia até 17/09/2026, e envelheceu no
+   * mesmo dia em que a montagem mudou: o Otto passou a receber o dado
+   * operacional por campo apartado, o harness continuou colando na mensagem, e
+   * um medidor que monta diferente da rota mede outro sistema. É a mesma lição
+   * do cabeçalho deste arquivo, uma camada acima.
+   */
+  const apartado = operacionalPorCampoApartado(item.agente) ? (blocoOperacional ?? undefined) : undefined;
   const mensagem =
-    item.agente === 'bento' || !blocoOperacional ? item.pergunta : `${item.pergunta}\n\n---\n${blocoOperacional}`;
+    blocoOperacional && !apartado && agenteAceitaBlocoNaMensagem(item.agente)
+      ? `${item.pergunta}\n\n---\n${blocoOperacional}`
+      : item.pergunta;
 
   // Nenhum harness ensina fato em produção: ver _guard-producao.ts.
   await recusarEnsinoEmProducao(item.pergunta, item.cliente);
@@ -132,7 +144,7 @@ async function rodar(item: Item): Promise<Saida> {
       confidence: 1,
       source: 'manual',
     },
-    ...(paraBento ? { operationalContext: paraBento } : {}),
+    ...(apartado ? { operationalContext: apartado } : {}),
   });
 
   const base = {
