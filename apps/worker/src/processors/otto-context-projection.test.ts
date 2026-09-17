@@ -125,3 +125,37 @@ describe('observabilidade', () => {
     expect(r.lacunasDepois).toBeLessThan(r.lacunasAntes);
   });
 });
+
+/**
+ * ENCANAMENTO ESPALHADO. Derrubar a seção "## ClickUp" não bastou: os mesmos
+ * identificadores reaparecem dentro das seções de identidade, e o Otto seguiu
+ * citando "lista ID 901411764375" num pedido de títulos.
+ */
+const DOSSIE_COM_ENCANAMENTO = [
+  '## 1. Identificação',
+  '- **Segmento:** varejo de joias e moda',
+  '- **Lista no ClickUp:** `901411764375`',
+  '- Conta Meta: 1494696290724641',
+  '',
+  '### Sazonalidade',
+  'clickup_list_id: "901411764375"',
+  'Conta com **forte sazonalidade de datas comerciais**.',
+].join('\n');
+
+describe('encanamento operacional fora da seção de ClickUp', () => {
+  it('identificador de lista não chega ao turno criativo', () => {
+    const p = projetarBlocoDeCliente(DOSSIE_COM_ENCANAMENTO, 'CRIACAO');
+    expect(p).not.toMatch(/901411764375/);
+    expect(p).not.toMatch(/1494696290724641/);
+  });
+
+  it('mas a identidade e o insight de marca ficam — é deles que sai a peça', () => {
+    const p = projetarBlocoDeCliente(DOSSIE_COM_ENCANAMENTO, 'CRIACAO');
+    expect(p).toMatch(/varejo de joias e moda/);
+    expect(p).toMatch(/sazonalidade de datas comerciais/);
+  });
+
+  it('turno operacional continua vendo tudo', () => {
+    expect(projetarBlocoDeCliente(DOSSIE_COM_ENCANAMENTO, 'OPERACIONAL')).toContain('901411764375');
+  });
+});

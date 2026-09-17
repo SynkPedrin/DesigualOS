@@ -58,6 +58,22 @@ const SECOES_DE_LACUNA = /lacunas?/i;
 /** Marcação de ausência, nas duas grafias que o dossiê usa (com e sem crase). */
 const EH_LACUNA = /`?\[FALTA\]`?|a coletar|`?\[CONFIRMAR/i;
 
+/**
+ * ENCANAMENTO OPERACIONAL espalhado dentro das seções de identidade.
+ *
+ * Medido depois do primeiro corte: derrubar a seção "## ClickUp" inteira não
+ * bastou, porque os mesmos identificadores reaparecem em "## 1. Identificação"
+ * e em "### Sazonalidade" — `clickup_list_id`, "Lista no ClickUp", id de conta
+ * de mídia, contagem de tarefas. O Otto respondia citando "lista ID
+ * 901411764375" mesmo com a seção removida.
+ *
+ * Não dá pra resolver derrubando essas seções: é nelas que mora a identidade da
+ * marca, que é justamente o que o turno criativo precisa. O corte tem que ser
+ * por LINHA.
+ */
+const LINHA_DE_ENCANAMENTO =
+  /clickup_list_id|lista no clickup|registro no clickup|conta meta|account_id|\bid\s*[:=]?\s*`?\d{8,}|\d{10,}|tarefas?\s+(recentes?|abertas?|cr[ií]ticas?|capturadas?)|sincroniza[çc][ãa]o|sincronizado em/i;
+
 function ehCabecalho(linha: string): boolean {
   return /^#{1,3}\s+\S/.test(linha.trim());
 }
@@ -115,6 +131,10 @@ export function projetarBlocoDeCliente(texto: string, modo: ModoDoTurno): string
     // mesma ausência não informam melhor que uma frase, e ocupavam a maior
     // parte do texto que o modelo lia.
     .filter((l) => !EH_LACUNA.test(l))
+    // Identificador de lista, id de conta e contagem de tarefa não constroem
+    // peça nenhuma — e eram o material mais concreto que o modelo achava no
+    // prompt quando pediam títulos.
+    .filter((l) => !LINHA_DE_ENCANAMENTO.test(l))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
