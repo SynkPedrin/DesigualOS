@@ -126,6 +126,65 @@ checa(
 );
 checa('servicos_sob_supervisao', naoSupervisionados.length === 0, `sem supervisor=${naoSupervisionados.map((o) => `${o.entrada}:${o.pid}`).join(',')}`);
 
+
+/**
+ * TODO chamador de inferência de TEXTO passa pelo controle de admissão.
+ *
+ * Bypass é silencioso por natureza: quem fala direto com a placa responde
+ * normalmente, só que sem contar pra ninguém — e o limite global vira ficção
+ * sem nenhum erro aparecer. Por isso a checagem lista os chamadores conhecidos
+ * em vez de confiar que ninguém acrescentou um.
+ *
+ * ComfyUI (porta 8188) fica FORA de propósito: o gateway fala o protocolo do
+ * Ollama, não o do ComfyUI. Geração de imagem na RTX é limitação declarada, não
+ * omissão — o que protege aquele lado é o recuo do keeper.
+ */
+const GATEWAY = `${process.env.GPU_GATEWAY_HOST ?? '100.115.58.105'}:${process.env.GPU_GATEWAY_PORT ?? '11500'}`;
+const PLACA_DIRETA = /100\.107\.198\.50:11434/;
+
+function apontaPraPlaca(texto: string): boolean {
+  return PLACA_DIRETA.test(texto);
+}
+
+async function chamadoresDeInferencia(): Promise<{ nome: string; alvo: string; ok: boolean }[]> {
+  const out: { nome: string; alvo: string; ok: boolean }[] = [];
+
+  const saude = await fetch('http://100.70.73.74:4002/health', { signal: AbortSignal.timeout(10_000) })
+    .then((r) => r.json() as Promise<{ inference_backend?: string }>)
+    .catch(() => null);
+  const otto = saude?.inference_backend ?? 'inalcançável';
+  out.push({ nome: 'otto-node', alvo: otto, ok: otto.includes(GATEWAY) });
+
+  const copy = process.env.COPY_OLLAMA_URL ?? '(default)';
+  out.push({ nome: 'marketing-copy', alvo: copy, ok: !apontaPraPlaca(copy) });
+
+  // Hosts remotos: `ssh` com timeout curto. Não alcançar é FALHA, e não um
+  // "provavelmente tudo bem": um gate que ignora o que não conseguiu ver não é
+  // gate.
+  const remotos: Array<{ nome: string; comando: string }> = [
+    { nome: 'bento-qa', comando: "ssh -o BatchMode=yes -o ConnectTimeout=8 bento-desigual 'grep -h OLLAMA_URL ~/enxame/packages/bento-qa/bin/run-qa-server.sh'" },
+    { nome: 'enxame gpu-proxy', comando: "ssh -o BatchMode=yes -o ConnectTimeout=8 bento-desigual 'grep -h -E \"OLLAMA_HOST|OLLAMA_PORT\" ~/enxame/packages/gpu-proxy/scripts/run-agent.sh'" },
+  ];
+  for (const r of remotos) {
+    try {
+      const saidaRemota = execSync(`${r.comando} 2>/dev/null`, { encoding: 'utf8' }).trim();
+      const alvo = saidaRemota.replace(/\s+/g, ' ').slice(0, 80);
+      out.push({ nome: r.nome, alvo, ok: saidaRemota.length > 0 && !apontaPraPlaca(saidaRemota) });
+    } catch {
+      out.push({ nome: r.nome, alvo: 'inalcançável', ok: false });
+    }
+  }
+  return out;
+}
+
+const chamadores = await chamadoresDeInferencia();
+const furando = chamadores.filter((c) => !c.ok);
+checa(
+  'all_production_agent_inference_uses_admission_gateway',
+  furando.length === 0,
+  furando.map((c) => `${c.nome}->${c.alvo}`).join(' | '),
+);
+
 // SHA do node remoto contra o HEAD local.
 const head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
 const saude = await fetch('http://100.70.73.74:4002/health', { signal: AbortSignal.timeout(10_000) })
