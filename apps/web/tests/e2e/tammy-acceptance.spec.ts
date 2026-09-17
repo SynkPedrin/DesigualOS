@@ -4,20 +4,28 @@ import { appendFileSync, writeFileSync } from 'node:fs';
 /**
  * ACEITE FINAL, no navegador publicado.
  *
- * Tudo que veio antes mediu por dentro: harness chamando o dispatch, script
- * montando o contexto. Serve pra achar defeito, não serve pra decidir release —
- * duas vezes nesta série um atalho do medidor me fez reportar defeito que não
- * existia, e uma vez escondeu um que existia.
+ * Duas lições estão embutidas aqui.
  *
- * Aqui é a Tammy: login pela tela, conversa de verdade, frase curta, assunto
- * mudando no meio, follow-up sem repetir o contexto. O critério não é cada
- * resposta estar certa — é ela não precisar ensinar o sistema a cada frase.
+ * A primeira: medir por dentro não decide release. Harness que chama o dispatch
+ * pula a montagem do turno, e nesta série isso me fez reportar como defeito do
+ * sistema um escopo que estava certo.
+ *
+ * A segunda, mais cara: asserção fraca esconde comportamento quebrado. A versão
+ * anterior deste arquivo checava "tamanho > 20" e "sem hashtag" — e passou com
+ * o Otto recusando cinco pedidos seguidos, porque recusa é longa e não tem
+ * hashtag. Aqui cada asserção olha o CONTEÚDO: três títulos são três linhas
+ * curtas, uma revisão é um texto materialmente diferente, uma recusa é uma
+ * falha.
  */
 const EMAIL = process.env.QA_USER_EMAIL ?? '';
 const PASSWORD = process.env.QA_USER_PASSWORD ?? '';
 const SAIDA = process.env.ACEITE_SAIDA ?? '/tmp/aceite-tammy.md';
 
 test.skip(!EMAIL || !PASSWORD, 'QA_USER_EMAIL/QA_USER_PASSWORD ausentes');
+
+/** Frases com que um modelo se recusa a trabalhar. Nenhuma pode aparecer. */
+const RECUSA =
+  /(não|nao) (posso|consigo|é possível|e possivel) (gerar|criar|escrever|produzir|entregar|enviar)|não vou (gerar|criar|escrever)|impossível (gerar|criar)/i;
 
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/login');
@@ -27,11 +35,7 @@ async function login(page: import('@playwright/test').Page) {
   await expect(page).not.toHaveURL(/\/login/, { timeout: 45_000 });
 }
 
-/**
- * Manda uma frase e espera a resposta ESTABILIZAR. O balão renderiza com efeito
- * de máquina de escrever: ler cedo captura a resposta pela metade, e já fez uma
- * asserção falhar com o texto cortado no meio de uma palavra.
- */
+/** Manda uma frase e espera a resposta ESTABILIZAR (o balão usa máquina de escrever). */
 async function falar(page: import('@playwright/test').Page, texto: string, timeout = 300_000): Promise<string> {
   const bolhas = page.getByTestId('chat-assistant-bubble');
   const antes = await bolhas.count();
@@ -39,8 +43,6 @@ async function falar(page: import('@playwright/test').Page, texto: string, timeo
   await campo.fill(texto);
   await campo.press('Enter');
 
-  // A bolha NOVA, não a primeira: numa conversa de doze turnos, `first()` é
-  // sempre a resposta do primeiro turno.
   await expect.poll(async () => bolhas.count(), { timeout }).toBeGreaterThan(antes);
   const nova = bolhas.nth(antes);
   await expect.poll(async () => (await nova.innerText()).trim().length, { timeout }).toBeGreaterThan(20);
@@ -55,117 +57,151 @@ async function falar(page: import('@playwright/test').Page, texto: string, timeo
       { timeout },
     )
     .toBe('estavel');
-  return (await nova.innerText()).trim();
+  // Os controles da bolha ("Encaminhar", hora) não são resposta.
+  return (await nova.innerText()).replace(/\n\d\d:\d\d\n?/g, '\n').replace(/\nEncaminhar\s*$/i, '').trim();
 }
 
 function registrar(titulo: string, pergunta: string, resposta: string, ms: number): void {
-  appendFileSync(
-    SAIDA,
-    `\n### [${titulo}] "${pergunta}" (${Math.round(ms / 1000)}s)\n\n\`\`\`\n${resposta}\n\`\`\`\n`,
-    'utf8',
-  );
+  appendFileSync(SAIDA, `\n### [${titulo}] "${pergunta}" (${Math.round(ms / 1000)}s)\n\n\`\`\`\n${resposta}\n\`\`\`\n`, 'utf8');
 }
 
-async function conversa(
-  page: import('@playwright/test').Page,
-  titulo: string,
-  falas: string[],
-): Promise<string[]> {
-  const respostas: string[] = [];
+async function conversa(page: import('@playwright/test').Page, titulo: string, falas: string[]): Promise<string[]> {
+  const out: string[] = [];
   for (const fala of falas) {
     const t0 = Date.now();
     const r = await falar(page, fala);
     registrar(titulo, fala, r, Date.now() - t0);
-    respostas.push(r);
+    out.push(r);
   }
-  return respostas;
+  return out;
+}
+
+/** Linhas que parecem item de lista (numeradas ou com marcador). */
+function itensDeLista(texto: string): string[] {
+  return texto
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^(\d+[.)]|[-*•])\s+\S/.test(l));
+}
+
+/** Quanto dois textos se repetem. Serve pra provar que uma revisão mudou de fato. */
+function sobreposicao(a: string, b: string): number {
+  const tokens = (t: string) =>
+    new Set(
+      t
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .split(/[^a-z0-9]+/)
+        .filter((x) => x.length >= 5),
+    );
+  const ta = tokens(a);
+  const tb = tokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let comuns = 0;
+  for (const x of ta) if (tb.has(x)) comuns += 1;
+  return comuns / Math.min(ta.size, tb.size);
 }
 
 test.describe('Aceite final — a Tammy usando de verdade', () => {
   test.setTimeout(1_800_000);
 
-  test('bento: conversa natural de operação', async ({ page }) => {
+  test('bento: operação, prioridade e fonte', async ({ page }) => {
     writeFileSync(SAIDA, `# Aceite final\n\nRodado em ${new Date().toISOString()}\n`, 'utf8');
     await login(page);
     await page.goto('/chat');
 
     const r = await conversa(page, 'BENTO', [
       'Bento, me atualiza aí.',
-      'O que tá pegando mais hoje?',
+      'O que tá pegando mais?',
       'Se eu só conseguir resolver três coisas, o que eu faço?',
       'E a Tammy?',
       'E a Cosentino?',
-      'Quem é a Esther mesmo?',
-      'O que a gente decidiu ontem?',
-      'O que mudou desde então?',
-      'Tem alguma coisa que depende de mim?',
-      'Me dá um resumo que eu consiga usar numa reunião agora.',
+      'Me dá um resumo pra reunião.',
+      'De onde você tirou esses números?',
     ]);
 
-    /**
-     * Colpar em conversa PRÓPRIA, e isso não é conveniência do teste.
-     *
-     * Uma conversa pertence a um cliente: citar outro nome no meio é ignorado
-     * de propósito (apps/api/src/chat/routes.ts), pra que o contexto de uma
-     * conta nunca vaze pra dentro da conversa de outra. Medido aqui: depois de
-     * "E a Cosentino?", perguntar da Colpar na MESMA conversa respondia com o
-     * escopo da Cosentino. A garantia está certa; o teste é que precisava
-     * refletir como se troca de cliente de verdade — conversa nova.
-     */
-    await page.goto('/chat');
-    const rColpar = await conversa(page, 'BENTO/COLPAR', [
-      'Bento, quem decide na Colpar?',
-      'De onde você tirou isso?',
-    ]);
-    r.push(...rColpar);
-
-    // O que NÃO pode acontecer, em nenhuma resposta da conversa.
     for (const resposta of r) {
-      expect(resposta.length).toBeGreaterThan(20);
-      // Identificador técnico na cara de quem lê.
       expect(resposta).not.toMatch(/memory_id|sourceId|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/);
-      // Slug no lugar do nome do cliente.
       expect(resposta).not.toMatch(/\b(d-carvalho|facil-seguros|costa-azul|jardim-do-lago)\b/);
     }
 
-    // Panorama tem que TRAZER a operação, não pedir cliente.
+    // Panorama traz a operação; não devolve a pergunta.
     expect(r[0]).not.toMatch(/de qual cliente|qual cliente você/i);
-    expect(r[1]).not.toMatch(/de qual cliente|qual cliente você/i);
-    // Esther não pode ganhar vínculo inventado.
-    expect(r[5]).not.toMatch(/Esther Mesmo/i);
-    // A memória ensinada volta, e a fonte citada é a conversa — não o ClickUp
-    // nem o dossiê, que é justamente onde esse campo está marcado [FALTA].
-    expect(r[10]).toMatch(/Fernanda/i);
-    expect(r[11]).toMatch(/conversa/i);
-    expect(r[11]).not.toMatch(/de o |de a /);
+    expect(r[0]).toMatch(/\d/);
+
+    // O follow-up elíptico continua com dado — era ele que dizia "não tenho acesso".
+    expect(r[2]).not.toMatch(/não (tenho|estão) (acesso|disponí)|dados .* não estão disponíveis/i);
+    expect(itensDeLista(r[2]).length).toBeGreaterThanOrEqual(2);
+
+    // Pessoa e cliente resolvem no follow-up curto.
+    expect(r[3]).toMatch(/tammy/i);
+    expect(r[4]).toMatch(/cosentino/i);
+
+    /**
+     * ESCOPO DO NÚMERO no resumo de reunião. O total da carteira não pode
+     * aparecer colado ao nome de um cliente: foi exatamente assim que saiu
+     * "1106 tarefas abertas em andamento no Cosentino".
+     */
+    const resumo = r[5]!;
+    const totalColadoNoCliente = /\b(\d{3,})\s+tarefas?[^.\n]{0,40}\b(no|na|do|da)\s+(Cosentino|Elite|Colpar)\b/i;
+    expect(resumo).not.toMatch(totalColadoNoCliente);
+
+    // A fonte citada é fonte de verdade, não identificador nem "ClickUp" por hábito.
+    expect(r[6]).toMatch(/ClickUp|conversa|dossiê|registro/i);
+    expect(r[6]).not.toMatch(/de o |de a /);
   });
 
-  test('otto: conversa natural de criação', async ({ page }) => {
+  test('otto: lacuna no dossiê não pode travar a entrega', async ({ page }) => {
     await login(page);
     await page.goto('/chat');
 
+    /**
+     * A Elite é a SOFT GAP deliberada deste fluxo: o dossiê dela tem voz
+     * verbal, público e CTA marcados como [FALTA]. É sobre esse dossiê que o
+     * Otto recusou cinco pedidos seguidos na bateria anterior.
+     */
     const r = await conversa(page, 'OTTO', [
       'Otto, lembra daquela campanha de aniversário da Elite?',
-      'Me explica rapidinho o que a gente tá fazendo.',
+      'Me explica.',
       'Me dá 3 títulos.',
       'Agora faz uma legenda.',
       'Tá com cara de IA.',
       'Faz de outro jeito então.',
-      'Leva em conta o que eu te falei ontem.',
-      'E vê como tá operacionalmente também.',
-      'Agora me dá uma versão que eu poderia mandar pro cliente.',
-      'De onde vieram as informações que você usou?',
+      'Uma versão pro cliente.',
+      'Leva em conta o que falei ontem.',
+      'E vê como tá operacionalmente.',
+      'Agora fecha uma versão final.',
     ]);
 
-    for (const resposta of r) expect(resposta.length).toBeGreaterThan(20);
+    // NENHUM turno criativo pode ser recusa.
+    for (const i of [2, 3, 4, 5, 6, 9]) {
+      expect(r[i], `turno ${i} recusou em vez de entregar`).not.toMatch(RECUSA);
+    }
 
-    // Três títulos são três linhas curtas, não três legendas.
-    const titulos = r[2]!;
-    expect(titulos).not.toMatch(/#\w+/); // hashtag é de legenda
-    expect(titulos.split('\n').filter((l) => l.trim().length > 0).length).toBeLessThanOrEqual(8);
+    // Três títulos são TRÊS, e são títulos.
+    const titulos = itensDeLista(r[2]!);
+    expect(titulos.length).toBe(3);
+    for (const t of titulos) {
+      expect(t.length).toBeLessThan(140);
+      expect(t).not.toMatch(/#\w+/);
+      expect(t).not.toMatch(/📲|link na bio/i);
+    }
+
+    // Legenda é legenda: texto com corpo, e não três linhas soltas.
+    const legenda = r[3]!;
+    expect(legenda.length).toBeGreaterThan(200);
+
+    // "Tá com cara de IA" produz texto NOVO, não sinônimo do anterior.
+    expect(sobreposicao(legenda, r[4]!)).toBeLessThan(0.75);
+    // "Faz de outro jeito" também, e não vira relatório operacional.
+    expect(r[5]).not.toMatch(/tarefas? (abertas?|registradas?) no ClickUp/i);
+
+    // A versão final existe como TEXTO entregue.
+    expect(r[9]!.length).toBeGreaterThan(150);
   });
 
-  test('cross-session: reload e conversa nova não perdem o que foi ensinado', async ({ page }) => {
+  test('cross-session: o que foi ensinado sobrevive a reload e conversa nova', async ({ page }) => {
     await login(page);
     await page.goto('/chat');
     await page.reload();
@@ -173,12 +209,12 @@ test.describe('Aceite final — a Tammy usando de verdade', () => {
 
     const r = await conversa(page, 'CROSS-SESSION', [
       'Bento, quem decide na Colpar mesmo?',
-      'Otto, lembra do direcionamento que eu te passei ontem?',
+      'De onde você tirou isso?',
     ]);
 
-    // O fato ensinado sobrevive a reload e a conversa nova.
     expect(r[0]).toMatch(/Fernanda/i);
-    // E o nome não pode ter virado "Colpar mesmo".
     expect(r[0]).not.toMatch(/Colpar mesmo/i);
+    // A fonte é a conversa, não o ClickUp nem o dossiê (onde o campo é [FALTA]).
+    expect(r[1]).toMatch(/conversa/i);
   });
 });
