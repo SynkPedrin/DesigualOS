@@ -261,3 +261,143 @@ export function formatEpisodeBlock(episodios: EpisodioRecuperado[], rotulo: stri
   linhas.push('', 'Use isto como o que REALMENTE aconteceu. Se algo não está aqui, não aconteceu no registro.');
   return linhas.join('\n');
 }
+
+/**
+ * Tipos que carregam FATO EXPLÍCITO ensinado por gente. `question` fica de fora
+ * (quem pergunta não registra) e `delivery` também: entrega é evento, não
+ * afirmação sobre o mundo.
+ */
+const TIPOS_DE_FATO_EXPLICITO = ['decision', 'preference', 'operational_change', 'feedback'] as const;
+
+/**
+ * Palavras que não discriminam nada. Só função gramatical e verbo de pergunta —
+ * a lista é curta de propósito: uma lista longa de "palavras genéricas" já
+ * matou 287 campanhas reais neste repositório quando incluiu "dia".
+ */
+const PALAVRA_SEM_VALOR = new Set([
+  'quem', 'qual', 'quais', 'quando', 'onde', 'como', 'porque', 'quanto', 'quantos', 'quantas',
+  'para', 'pela', 'pelo', 'pelos', 'pelas', 'esse', 'essa', 'esses', 'essas', 'isso', 'aquilo',
+  'este', 'esta', 'estes', 'estas', 'sobre', 'entre', 'ainda', 'depois', 'antes', 'agora',
+  'nosso', 'nossa', 'seu', 'sua', 'meu', 'minha', 'dele', 'dela', 'mesmo', 'mesma',
+  'tem', 'tinha', 'ter', 'foi', 'era', 'ser', 'está', 'esta', 'estao', 'estão', 'sao', 'são',
+  'com', 'sem', 'que', 'dos', 'das', 'nos', 'nas', 'por', 'uma', 'uns', 'umas',
+  // Sem conteúdo nenhum: como termo de busca casariam com qualquer episódio.
+  // A lista para por aqui de propósito — palavra que descreve alguma coisa do
+  // negócio fica de fora dela, mesmo parecendo comum.
+  'tudo', 'nada', 'algo', 'coisa', 'favor', 'obrigado', 'obrigada',
+]);
+
+/**
+ * Termos pelos quais vale procurar um episódio. Sem isto, recall factual viraria
+ * "devolve os últimos episódios do cliente em todo turno" — que é despejo de
+ * histórico, não memória.
+ */
+export function termosDeConsulta(mensagem: string): string[] {
+  const t = mensagem
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ');
+  const vistos = new Set<string>();
+  const termos: string[] = [];
+  for (const palavra of t.split(/\s+/)) {
+    if (palavra.length < 4) continue;
+    if (PALAVRA_SEM_VALOR.has(palavra)) continue;
+    if (vistos.has(palavra)) continue;
+    vistos.add(palavra);
+    termos.push(palavra);
+    if (termos.length >= 6) break;
+  }
+  return termos;
+}
+
+/**
+ * RECALL FACTUAL — o que faltava.
+ *
+ * `recallEpisodes` acima responde "o que aconteceu na janela X". Isso sustenta
+ * "o que conversamos ontem", mas NÃO sustenta a pergunta que a equipe faz de
+ * verdade: "quem é o decisor da Colpar?". Essa pergunta não cita tempo, então a
+ * janela era nula e a consulta nunca acontecia — o fato ensinado minutos antes
+ * ficava no banco, inalcançável. Rastreado em 17/09/2026: a consulta ACHAVA o
+ * episódio; era o portão temporal que não deixava consultar.
+ *
+ * Aqui a chave é ENTIDADE + ESCOPO, não tempo. O que limita o resultado é a
+ * pergunta ter termos que casem com o episódio — turno que não pergunta nada
+ * relacionado não traz episódio nenhum.
+ *
+ * Não filtra por usuário de propósito: o que a equipe ensina é memória da
+ * AGÊNCIA, não caderno privado de quem digitou. Cliente e ambiente continuam
+ * filtrando duro, que é onde vazamento de verdade doeria.
+ */
+export async function recallFactualEpisodes(params: {
+  clientId?: string | null;
+  termos: string[];
+  environment?: string;
+  limit?: number;
+}): Promise<EpisodioRecuperado[]> {
+  if (params.termos.length === 0) return [];
+
+  const condicoes = [
+    eq(schema.agentEpisodes.environment, params.environment ?? 'production'),
+    sql`${schema.agentEpisodes.eventType} in ${TIPOS_DE_FATO_EXPLICITO}`,
+  ];
+  if (params.clientId) {
+    condicoes.push(
+      or(eq(schema.agentEpisodes.clientId, params.clientId), isNull(schema.agentEpisodes.clientId))!,
+    );
+  }
+  const casaAlgumTermo = or(
+    ...params.termos.map((termo) => sql`${schema.agentEpisodes.summary} ilike ${'%' + termo + '%'}`),
+  );
+  if (casaAlgumTermo) condicoes.push(casaAlgumTermo);
+
+  const rows = await db
+    .select({
+      occurredAt: schema.agentEpisodes.occurredAt,
+      eventType: schema.agentEpisodes.eventType,
+      summary: schema.agentEpisodes.summary,
+      clientId: schema.agentEpisodes.clientId,
+      agent: schema.agentEpisodes.agent,
+      sourceRefs: schema.agentEpisodes.sourceRefs,
+    })
+    .from(schema.agentEpisodes)
+    .where(and(...condicoes))
+    // MAIS RECENTE PRIMEIRO, e não por importância: aqui a pergunta é "o que
+    // vale HOJE". Quando dois registros falam da mesma coisa, o novo substitui
+    // o velho — ordenar por importância deixaria o fato aposentado na frente.
+    .orderBy(desc(schema.agentEpisodes.occurredAt))
+    .limit(params.limit ?? 6)
+    .catch((erro: unknown) => {
+      console.error('[episodic-memory] recall factual falhou', erro);
+      return [];
+    });
+
+  return rows.map((r) => ({ ...r, sourceRefs: r.sourceRefs ?? [] }));
+}
+
+/**
+ * Bloco do que foi ENSINADO. Separado do bloco temporal porque responde outra
+ * pergunta, e rotulado como conversa porque a proveniência importa: dizer
+ * "ClickUp" para algo que a pessoa falou no chat é atribuição falsa.
+ */
+export function formatFactualEpisodeBlock(episodios: EpisodioRecuperado[]): string {
+  if (episodios.length === 0) return '';
+  const linhas = [
+    'REGISTRO APRENDIDO NA CONVERSA (informado por quem trabalha aqui, com data):',
+  ];
+  for (const e of episodios) {
+    const quando = e.occurredAt.toISOString().slice(0, 16).replace('T', ' ');
+    linhas.push(`- [${quando}] (${e.eventType}) ${e.summary}`);
+  }
+  linhas.push('');
+  linhas.push(
+    'Isto foi dito por alguém da equipe, não lido do ClickUp: ao citar, diga que foi informado na conversa, com a data.',
+  );
+  linhas.push(
+    'A lista está do MAIS RECENTE para o mais antigo. Se dois registros disserem coisas diferentes sobre a MESMA coisa, vale o mais recente; o anterior é histórico e não deve ser apresentado como atual.',
+  );
+  linhas.push(
+    'Corrige ficha curada: onde isto contradisser o dossiê ou o brain, isto vale, porque é mais novo e veio de quem decide.',
+  );
+  return linhas.join('\n');
+}

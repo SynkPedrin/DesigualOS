@@ -30,6 +30,10 @@ const NOME_HUMANO: Record<FonteDeContexto, string> = {
   pessoas: 'registro de pessoas e relações, derivado do ClickUp',
   episodios: 'memória do que foi decidido em conversas anteriores, com data',
   preferencias: 'preferências consolidadas do cliente',
+  // Atribuição honesta importa aqui mais que em qualquer outra fonte: dizer
+  // "ClickUp" para algo que alguém falou no chat inventa uma autoridade que o
+  // fato não tem, e quem lê não consegue mais checar de onde veio.
+  aprendizado: 'informado por alguém da equipe na conversa, com data',
   outra: 'registro adicional',
 } as Record<FonteDeContexto, string>;
 

@@ -19,7 +19,10 @@ import type { AgentJobData } from '@desigual-os/orchestrator';
 import {
   extractEpisodeCandidates,
   formatEpisodeBlock,
+  formatFactualEpisodeBlock,
   janelaDoTexto,
+  recallFactualEpisodes,
+  termosDeConsulta,
   publishWsEvent,
   recallEpisodes,
   recallMemories,
@@ -370,6 +373,18 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     logger,
   }).catch(() => ({ bloco: '', chamadas: [] }));
 
+  /**
+   * DOIS MODOS DE RECALL, porque são duas perguntas diferentes.
+   *
+   * TEMPORAL responde "o que conversamos ontem": a janela é o filtro, e o
+   * resultado é o que aconteceu nela.
+   *
+   * FACTUAL responde "quem é o decisor da Colpar?": não cita tempo nenhum, e
+   * até 17/09/2026 essa pergunta não consultava episódio algum — a janela era
+   * nula e o `if` abaixo simplesmente não entrava. Rastreado com prova: o
+   * episódio estava gravado, a consulta o ACHAVA quando forçada, e o portão
+   * temporal é que não deixava consultar. Ensinar funcionava; lembrar não.
+   */
   const janela = janelaDoTexto(data.message);
   let blocoEpisodios = '';
   let episodiosDoTurno: Awaited<ReturnType<typeof recallEpisodes>> = [];
@@ -385,6 +400,20 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     episodiosDoTurno = episodios;
     blocoEpisodios = formatEpisodeBlock(episodios, janela.rotulo);
   }
+
+  const termosDoTurno = termosDeConsulta(data.message);
+  const episodiosFactuais = await recallFactualEpisodes({
+    clientId: clienteDoTurno?.clientId ?? clientId,
+    termos: termosDoTurno,
+    environment: ambiente,
+  }).catch(() => []);
+  // Sem dobrar o que o bloco temporal já trouxe: o mesmo episódio duas vezes no
+  // prompt só gasta orçamento e sugere ao modelo que houve dois registros.
+  const jaNoBlocoTemporal = new Set(episodiosDoTurno.map((e) => `${e.occurredAt.toISOString()}|${e.summary}`));
+  const factuaisNovos = episodiosFactuais.filter(
+    (e) => !jaNoBlocoTemporal.has(`${e.occurredAt.toISOString()}|${e.summary}`),
+  );
+  const blocoAprendizado = formatFactualEpisodeBlock(factuaisNovos);
 
   // BLACKBOARD: NÃO é escrito aqui, de propósito.
   //
@@ -472,6 +501,26 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       confidence: 0.9,
       retrievedAt: nowIso,
       summary: `[${e.occurredAt.toISOString().slice(0, 10)}] ${e.eventType}: ${e.summary}`,
+    });
+  }
+  /**
+   * O que foi ENSINADO também é evidência, senão o agente recebe o fato no
+   * prompt e o grounding o barra por falta de lastro — que é como uma resposta
+   * certa vira "não consegui montar uma resposta com fonte confiável".
+   *
+   * `source` diz CONVERSA, não ClickUp: atribuir ao ClickUp algo que uma pessoa
+   * falou no chat inventa uma autoridade que o fato não tem, e quem lê perde a
+   * chance de checar com quem falou.
+   */
+  for (const e of factuaisNovos) {
+    evidence.push({
+      type: 'memory',
+      source: 'conversation:learned',
+      sourceId: e.occurredAt.toISOString(),
+      ...(e.clientId ? { clientId: e.clientId } : {}),
+      confidence: 0.9,
+      retrievedAt: nowIso,
+      summary: `Informado na conversa em ${e.occurredAt.toISOString().slice(0, 10)} (${e.eventType}): ${e.summary}`,
     });
   }
   if (cruzado.bloco.length > 0) {
@@ -596,6 +645,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         { fonte: 'campanha', texto: cruzado.bloco },
         { fonte: 'episodios', texto: blocoEpisodios },
         { fonte: 'preferencias', texto: formatPreferenceBlock(preferencias) },
+        // Por último de propósito: o que a equipe ensinou é mais novo que a
+        // ficha curada e corrige o que vier antes. Ver ORDEM no assembler.
+        { fonte: 'aprendizado', texto: blocoAprendizado },
       ];
       let pack = assembleContext(blocos);
       // PROVENIÊNCIA: só quando perguntam. O bloco lista as fontes que de fato

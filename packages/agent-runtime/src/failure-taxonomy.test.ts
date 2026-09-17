@@ -74,3 +74,15 @@ describe('capacidade', () => {
     expect(m).not.toMatch(/reformul|tente outra pergunta/i);
   });
 });
+
+describe('agente ocupado', () => {
+  it('recusa por fila do próprio agente é capacidade, não raciocínio', () => {
+    expect(classificarFalha('ocupado respondendo outra pergunta, tenta em alguns segundos')).toBe(
+      'INFERENCE_CAPACITY_TIMEOUT',
+    );
+  });
+
+  it('e portanto não replaneja — replanejar contra fila é o que esgota o turno', () => {
+    expect(ehFalhaDeInfraestrutura(classificarFalha('ocupado respondendo outra pergunta'))).toBe(true);
+  });
+});

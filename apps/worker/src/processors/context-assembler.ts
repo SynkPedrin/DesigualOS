@@ -38,7 +38,9 @@ export type FonteDeContexto =
   | 'campanha'
   | 'pessoas'
   | 'episodios'
-  | 'preferencias';
+  | 'preferencias'
+  /** O que a equipe ENSINOU no chat. Ver ORDEM: entra por último de propósito. */
+  | 'aprendizado';
 
 export interface ProvenienciaDoBloco {
   /** 'clickup' | 'campaign.registry' | 'people.registry' | 'memory' | 'episode' | 'a2a' */
@@ -78,7 +80,22 @@ export interface RegistroDeEvidencia {
  * lido; depois a identidade resolvida (cliente, campanha, pessoas), que é fato
  * consultado; por último o que é preferência e histórico.
  */
-const ORDEM: FonteDeContexto[] = ['frescor', 'cliente', 'campanha', 'pessoas', 'episodios', 'preferencias'];
+const ORDEM: FonteDeContexto[] = [
+  'frescor',
+  'cliente',
+  'campanha',
+  'pessoas',
+  'episodios',
+  'preferencias',
+  /**
+   * `aprendizado` por ÚLTIMO, e isso não é rebaixamento: é o contrário. As
+   * fichas curadas congelam entre importações, e o que a equipe ensina no chat
+   * é mais novo que elas. Vindo depois, corrige o que vier antes — é a regra de
+   * produto que o CLAUDE.md já declara. O piso generoso abaixo garante que a
+   * correção não seja justamente a parte cortada pelo orçamento.
+   */
+  'aprendizado',
+];
 
 /** Piso por bloco: garante que nenhum seja zerado por um vizinho grande. */
 const PISO: Record<FonteDeContexto, number> = {
@@ -88,6 +105,7 @@ const PISO: Record<FonteDeContexto, number> = {
   pessoas: 600,
   episodios: 600,
   preferencias: 400,
+  aprendizado: 900,
 };
 
 /** Teto total do pacote. Medido contra o node com dossiê rico + campanha ativa. */

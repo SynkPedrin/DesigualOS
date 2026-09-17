@@ -70,11 +70,19 @@ if (!execucaoId) {
 const TETO_MS = 300_000;
 let ultimo = '';
 for (;;) {
-  const linhas = (await db.execute(sql`
-    select id, status from executions where execution_id = ${execucaoId}`)) as unknown as Array<{
-    id: string;
-    status: string;
-  }>;
+  /**
+   * O pooler do Supabase derruba conexão ociosa, e um turno de agente leva
+   * dezenas de segundos — o laço de polling comia ECONNRESET e o script morria
+   * reportando falha onde o sistema estava certo. Erro de transporte aqui é
+   * ruído do medidor: espera e tenta de novo.
+   */
+  const linhas = (await db
+    .execute(sql`select id, status from executions where execution_id = ${execucaoId}`)
+    .catch((erro: unknown) => {
+      const msg = erro instanceof Error ? erro.message : String(erro);
+      console.log(`  (conexão instável: ${msg.slice(0, 60)}; tentando de novo)`);
+      return [] as unknown[];
+    })) as unknown as Array<{ id: string; status: string }>;
   const l = linhas[0];
   if (l?.status && l.status !== ultimo) {
     ultimo = l.status;

@@ -49,6 +49,14 @@ export function classificarFalha(erro: string | null | undefined): TipoDeFalha {
   // mais informativo que "upstream 5xx" — diz que foi decisão de capacidade
   // nossa, não falha da placa.
   if (e.includes('inference_capacity_timeout')) return 'INFERENCE_CAPACITY_TIMEOUT';
+  /**
+   * O Bento atende uma pergunta por vez e recusa a segunda com "ocupado
+   * respondendo outra pergunta". Isso é CAPACIDADE, não defeito de raciocínio —
+   * mas caía em COGNITIVE, então o loop replanejava contra um serviço que só
+   * precisava de tempo, e terminava em replan_exhausted. Medido em 17/09/2026
+   * com duas perguntas seguidas ao mesmo agente.
+   */
+  if (/ocupado respondendo|já está respondendo|ja esta respondendo|\bbusy\b/.test(e)) return 'INFERENCE_CAPACITY_TIMEOUT';
   if (/\b(502|503|504|bad gateway|service unavailable|gateway time-?out)\b/.test(e)) return 'INFERENCE_UPSTREAM_5XX';
   if (/aborted due to timeout|abort(ed)?error|timeouterror|operation was aborted/.test(e)) return 'INFERENCE_CONNECTION_TIMEOUT';
   if (/\bnão respondeu em\b|\bdid not respond\b|\btimed? ?out\b|\btimeout\b/.test(e)) return 'INFERENCE_GENERATION_TIMEOUT';
