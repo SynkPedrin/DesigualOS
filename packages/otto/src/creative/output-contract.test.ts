@@ -4,6 +4,7 @@ import {
   contratoDeSaida,
   diretivaDoContrato,
   ehRevisaoEliptica,
+  exigeFrescorOperacional,
 } from './output-contract.js';
 
 describe('three_titles_returns_three_titles', () => {
@@ -141,5 +142,40 @@ describe('operational_context_does_not_override_creative_intent', () => {
 
   it('sem artefato anterior conhecido, não inventa contrato', () => {
     expect(blocoDeContinuacaoCriativa('indefinido')).toBe('');
+  });
+});
+
+/**
+ * FRESCOR. O aviso de sincronização atrasada é o primeiro bloco do contexto e
+ * vem em caixa alta. Protege turno operacional; num pedido criativo virou a
+ * resposta inteira — "me dá 3 títulos" voltou com "o dado está atrasado" e sem
+ * os títulos.
+ */
+describe('freshness_is_prioritized_for_operational_request', () => {
+  it('pergunta sobre estado atual EXIGE frescor', () => {
+    for (const q of [
+      'E vê como tá operacionalmente.',
+      'Qual o prazo disso?',
+      'O que está pendente?',
+      'Quem é o responsável?',
+      'O que mudou hoje?',
+    ]) {
+      expect(exigeFrescorOperacional(q), q).toBe(true);
+    }
+  });
+
+  it('pedido criativo puro NÃO exige', () => {
+    for (const q of ['Me dá 3 títulos.', 'Tá com cara de IA.', 'Faz de outro jeito então.', 'Cria uma direção visual.']) {
+      expect(exigeFrescorOperacional(q), q).toBe(false);
+    }
+  });
+
+  it('freshness_degraded_does_not_block_creative_request: pedido misto mantém o aviso', () => {
+    // "considerando o status atual, crie uma legenda" depende do agora.
+    expect(exigeFrescorOperacional('Considerando o status atual, crie uma legenda.')).toBe(true);
+  });
+
+  it('na dúvida fica o aviso: "uma versão pro cliente" não fala de operação', () => {
+    expect(exigeFrescorOperacional('Uma versão pro cliente.')).toBe(false);
   });
 });

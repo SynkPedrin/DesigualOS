@@ -89,6 +89,7 @@ export {
   contratoDeSaida,
   diretivaDoContrato,
   ehRevisaoEliptica,
+  exigeFrescorOperacional,
 } from './creative/output-contract.js';
 export type { ArtefatoPedido, ContratoDeSaida } from './creative/output-contract.js';
 export type { DirectionDirectiveInput } from './creative/stance.js';

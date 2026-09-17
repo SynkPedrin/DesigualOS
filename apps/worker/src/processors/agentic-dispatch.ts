@@ -44,7 +44,12 @@ import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto } from './context-assembler';
 import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
 import { montarProveniencia } from './response-provenance.js';
-import { blocoDeContinuacaoCriativa, contratoDeSaida, ehRevisaoEliptica } from '@desigual-os/otto';
+import {
+  blocoDeContinuacaoCriativa,
+  contratoDeSaida,
+  ehRevisaoEliptica,
+  exigeFrescorOperacional,
+} from '@desigual-os/otto';
 import { anexarFontes, formatProvenanceBlock } from './provenance-block';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
@@ -360,7 +365,19 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // FRESCOR DA FONTE. Quando o ClickUp está atrasado, o agente diz isso em vez
   // de responder como se estivesse em dia — foi o que faltou nos cinco dias em
   // que o webhook esteve morto e ninguém percebeu.
-  const blocoFrescor = await formatFreshnessWarning().catch(() => '');
+  /**
+   * O aviso de frescor entra no topo do contexto e em caixa alta. Num turno
+   * operacional isso é proteção: dado velho faz a pessoa agir errado. Num
+   * pedido criativo é ruído no lugar de maior prioridade — e ruído no topo
+   * vira resposta. Medido em 17/09/2026: "me dá 3 títulos", "tá com cara de
+   * IA" e "faz de outro jeito" voltaram todos abrindo com "o dado está
+   * atrasado", sem a peça.
+   *
+   * Só o Otto é afetado: o Bento é operacional por natureza e está passando.
+   */
+  const frescorBruto = await formatFreshnessWarning().catch(() => '');
+  const blocoFrescor =
+    data.agent === 'otto' && !exigeFrescorOperacional(data.message) ? '' : frescorBruto;
 
   // A2A: o domínio do OUTRO agente, quando o turno precisa dele. Registrado
   // como envelope tipado e atendido pela FONTE — nunca por um modelo chamando

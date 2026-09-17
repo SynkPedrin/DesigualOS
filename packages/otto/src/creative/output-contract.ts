@@ -168,3 +168,40 @@ export function blocoDeContinuacaoCriativa(artefatoAnterior: ArtefatoPedido): st
     'O texto reescrito vem primeiro. Comentário sobre a mudança, se houver, vai depois dele.',
   ].join('\n');
 }
+
+/**
+ * ESTE TURNO DEPENDE DO ESTADO ATUAL DA OPERAÇÃO?
+ *
+ * O aviso de frescor ("a sincronização com o ClickUp está atrasada") é o
+ * primeiro bloco do contexto e vem em caixa alta. Isso está certo quando a
+ * pergunta é sobre prazo, pendência ou responsável — ali um dado velho leva a
+ * pessoa a agir errado.
+ *
+ * Num pedido criativo é ruído, e ruído no topo vira resposta. Medido no
+ * navegador em 17/09/2026: "me dá 3 títulos", "tá com cara de IA" e "faz de
+ * outro jeito" voltaram todos abrindo com "o dado está atrasado, eventos foram
+ * perdidos" — e sem a peça. A integração degradada não impede escrever uma
+ * legenda; ela impede afirmar o que está aberto hoje.
+ *
+ * Na dúvida, TRUE: manter o aviso é o lado seguro. O que não pode é ele
+ * aparecer quando ninguém perguntou do estado da operação.
+ */
+const DEPENDE_DO_AGORA = [
+  /\boperacionalmente\b/i,
+  /\bstatus\b/i,
+  /\bprazos?\b/i,
+  /\bvence\b|\bvencem\b|\bvencendo\b/i,
+  /\bpendente|pend[êe]ncia/i,
+  /\batrasad/i,
+  /\brespons[áa]ve(l|is)\b/i,
+  /\bo que mudou\b/i,
+  /\bcomo (?:est[áa]|ta|anda)\b/i,
+  /\btarefas?\b|\btasks?\b/i,
+  /\bentregas?\b/i,
+  /\bagora\b|\bhoje\b|\bontem\b/i,
+  /\bclickup\b/i,
+];
+
+export function exigeFrescorOperacional(mensagem: string): boolean {
+  return DEPENDE_DO_AGORA.some((re) => re.test(mensagem ?? ''));
+}

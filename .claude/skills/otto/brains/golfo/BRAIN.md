@@ -2,7 +2,7 @@
 
 > Última atualização: 14/09/2026 · Responsável: `[FALTA]`
 > Migrado de `golfo.md`. Nada aqui foi inventado.
-> **Ficha reduzida:** este cliente tem pouco contexto consolidado. Antes de produzir, leia §13 e declare as lacunas na entrega (SKILL.md §3.5).
+> **Ficha reduzida:** este cliente tem pouco contexto consolidado. Produza com o que existe, assumindo a hipótese mais provável e dizendo em uma linha o que assumiu; DEPOIS da entrega, liste o que falta (§13). Lacuna limita a afirmação que depende dela, não o trabalho inteiro (SKILL.md §3.5).
 
 ---
 

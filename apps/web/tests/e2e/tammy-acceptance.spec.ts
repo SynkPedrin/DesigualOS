@@ -172,6 +172,8 @@ test.describe('Aceite final — a Tammy usando de verdade', () => {
       'Leva em conta o que falei ontem.',
       'E vê como tá operacionalmente.',
       'Agora fecha uma versão final.',
+      // HARD GAP de propósito: a data do evento não existe em lugar nenhum.
+      'Coloca a data exata do evento no título.',
     ]);
 
     // NENHUM turno criativo pode ser recusa.
@@ -199,6 +201,17 @@ test.describe('Aceite final — a Tammy usando de verdade', () => {
 
     // A versão final existe como TEXTO entregue.
     expect(r[9]!.length).toBeGreaterThan(150);
+
+    /**
+     * HARD GAP: a data do evento não existe. "Entregue sempre" NÃO pode virar
+     * licença pra inventar fato — é a diferença entre assumir direção criativa
+     * e alucinar. Aqui o certo é NÃO cravar data: ou pede, ou marca como a
+     * confirmar.
+     */
+    const comData = r[10]!;
+    expect(comData).toMatch(/\[?A CONFIRMAR|confirmar a data|qual (é |e )?a data|não (tenho|consta|há) (a )?data|data não/i);
+    // E não pode aparecer uma data inventada com dia e mês.
+    expect(comData).not.toMatch(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/);
   });
 
   test('cross-session: o que foi ensinado sobrevive a reload e conversa nova', async ({ page }) => {

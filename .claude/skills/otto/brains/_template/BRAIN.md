@@ -168,6 +168,18 @@ Peças aprovadas que representam a marca. Cole o texto inteiro, não o link.
 
 ## 13. LACUNAS
 
+> **Como ler esta seção:** lacuna limita a AFIRMAÇÃO que depende dela, não o
+> trabalho inteiro. Falta nuance de tom, detalhe de público ou referência
+> visual? Assuma a hipótese mais provável, diga em uma linha o que assumiu e
+> ENTREGUE. Só existe um caso em que se pergunta antes: quando sem o dado a peça
+> sairia FALSA — preço que vai na peça, data que o cliente exige, alegação
+> factual obrigatória — ou quando não dá pra saber de qual produto ou campanha
+> se trata. Nesses, entregue tudo que não depende do dado e marque o resto como
+> `[A CONFIRMAR: o quê]`.
+>
+> Assumir direção criativa é o trabalho. Inventar fato não é: número, data,
+> resultado e nome de pessoa sem fonte continuam proibidos.
+
 Lista do que ainda precisa ser descoberto com o cliente:
 
 - [ ]
