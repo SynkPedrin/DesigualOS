@@ -120,3 +120,51 @@ export function diretivaDoContrato(contrato: ContratoDeSaida): string {
   linhas.push('Comentário sobre as escolhas, se houver, vai num bloco ÚNICO depois da entrega — nunca no meio dela.');
   return linhas.join('\n');
 }
+
+/**
+ * REVISÃO ELÍPTICA: o pedido que só existe por causa da peça anterior.
+ *
+ * "Tá com cara de IA", "faz de outro jeito", "uma versão pro cliente", "não
+ * gostei" — nenhum nomeia artefato, e por isso `contratoDeSaida` devolve
+ * indefinido e o turno fica sem contrato. Medido no navegador em 17/09/2026:
+ * sem contrato, o modelo ia atrás do que o contexto tinha de mais concreto — a
+ * lista de tarefas do ClickUp — e respondia com relatório operacional a um
+ * pedido de reescrita.
+ *
+ * Contexto não é intenção. Quem pede "faz de outro jeito" está falando da peça,
+ * não da conta.
+ */
+const REVISAO_ELIPTICA = [
+  /\bcara de (?:ia|rob[ôo]|chatgpt)\b/i,
+  /\b(?:t[áa]|ficou|parece) gen[ée]rico\b/i,
+  /\bn[ãa]o gostei\b/i,
+  /\bfaz(?:er)? de outro jeito\b/i,
+  /\bde outro jeito\b/i,
+  /\boutra vers[ãa]o\b/i,
+  /\buma vers[ãa]o pro? cliente\b/i,
+  /\bvers[ãa]o final\b/i,
+  /\brefaz\b|\brefa[çc]a\b|\breescreve\b/i,
+  /\bmelhora\b.{0,20}\bisso\b/i,
+];
+
+export function ehRevisaoEliptica(mensagem: string): boolean {
+  const t = (mensagem ?? '').trim();
+  // Pedido longo traz briefing próprio; não é continuação da peça anterior.
+  if (t.length === 0 || t.length > 120) return false;
+  return REVISAO_ELIPTICA.some((re) => re.test(t));
+}
+
+/**
+ * Bloco que diz ao turno: isto continua a peça anterior. Entra no topo do
+ * contexto porque é o que decide o que entregar — e sem ele a resposta vira
+ * status de conta.
+ */
+export function blocoDeContinuacaoCriativa(artefatoAnterior: ArtefatoPedido): string {
+  if (artefatoAnterior === 'indefinido') return '';
+  return [
+    `CONTINUAÇÃO CRIATIVA: o turno anterior entregou ${artefatoAnterior}. Este pedido é sobre ELA.`,
+    `Entregue ${artefatoAnterior} de novo, reescrita — não um resumo, não um status da conta, não uma lista de tarefas.`,
+    'Se a crítica foi "genérico" ou "cara de IA", mude o ÂNGULO, não as palavras: outra tensão, outro ponto de entrada, outra imagem. Trocar sinônimo não é refazer.',
+    'O texto reescrito vem primeiro. Comentário sobre a mudança, se houver, vai depois dele.',
+  ].join('\n');
+}

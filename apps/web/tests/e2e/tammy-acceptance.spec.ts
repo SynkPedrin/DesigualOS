@@ -132,7 +132,7 @@ test.describe('Aceite final — a Tammy usando de verdade', () => {
 
     // O follow-up elíptico continua com dado — era ele que dizia "não tenho acesso".
     expect(r[2]).not.toMatch(/não (tenho|estão) (acesso|disponí)|dados .* não estão disponíveis/i);
-    expect(itensDeLista(r[2]).length).toBeGreaterThanOrEqual(2);
+    expect(itensDeLista(r[2]!).length).toBeGreaterThanOrEqual(2);
 
     // Pessoa e cliente resolvem no follow-up curto.
     expect(r[3]).toMatch(/tammy/i);

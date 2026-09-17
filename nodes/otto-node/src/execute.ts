@@ -236,6 +236,28 @@ REGRAS DE ENTREGA (10/09/2026, depois de teste com o time):
 5. Se o nome no pedido parecer erro de digitação de algo conhecido (ex: "Chiuna" por "China"), assuma o mais provável e diga em uma linha que assumiu.`;
 
 /**
+ * ÚLTIMA PALAVRA DO PROMPT, e a posição é o ponto.
+ *
+ * O bloco de conhecimento do Brain entra por último, e vários BRAIN.md trazem
+ * um aviso de ficha reduzida: "este cliente tem pouco contexto consolidado.
+ * ANTES DE PRODUZIR, declare as lacunas na entrega". A frase foi escrita pra
+ * lembrar de sinalizar o que falta; lida em último lugar, sobre um dossiê onde
+ * quase tudo é [FALTA], ela vira pré-condição — e o Otto passa a declarar
+ * lacunas NO LUGAR de entregar.
+ *
+ * Medido no navegador em 17/09/2026: "faz uma legenda" respondido com
+ * "não posso criar porque faltam os dados factuais essenciais", num turno em
+ * que a regra 4 deste mesmo prompt já autorizava entregar com
+ * [DADO A CONFIRMAR].
+ *
+ * A instrução certa já existe acima; o que faltava era ela ser a última coisa
+ * lida. Corrigir a redação dos BRAIN.md continua valendo — é dado da agência e
+ * não deveria dizer "antes de produzir" quando quer dizer "antes de publicar" —
+ * mas a entrega não pode depender disso.
+ */
+const FECHAMENTO_ENTREGA = `FECHAMENTO (vale sobre qualquer aviso de ficha reduzida ou lacuna acima): lacuna NÃO adia entrega. Se o dossiê estiver incompleto, assuma a hipótese mais provável, diga em UMA linha o que assumiu, e ENTREGUE a peça pedida. Marque o que precisa ser confirmado como [A CONFIRMAR: o quê] DENTRO da peça, e liste o que falta DEPOIS dela. Só existe um caso em que você pergunta em vez de entregar: quando sem o dado a peça sairia FALSA (preço, data, alegação factual) ou quando não dá pra saber de qual produto ou campanha se trata.`;
+
+/**
  * Latência por fase, pedida explicitamente pelo dono. Vai na metadata da
  * resposta E no log, inclusive no caminho de falha - turno que estourou é
  * exatamente quando se quer saber onde o tempo foi.
@@ -475,7 +497,7 @@ export async function executeTask(
           [
             {
               role: 'system',
-              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}`,
+              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}\n\n${FECHAMENTO_ENTREGA}`,
             },
             { role: 'user', content: request.message },
           ],

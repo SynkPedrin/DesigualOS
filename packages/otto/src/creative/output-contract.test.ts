@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { contratoDeSaida, diretivaDoContrato } from './output-contract.js';
+import {
+  blocoDeContinuacaoCriativa,
+  contratoDeSaida,
+  diretivaDoContrato,
+  ehRevisaoEliptica,
+} from './output-contract.js';
 
 describe('three_titles_returns_three_titles', () => {
   it('lê o artefato e a quantidade do pedido', () => {
@@ -87,5 +92,54 @@ describe('contrato ausente', () => {
 
   it('ignora acento: quem digita rápido não acentua', () => {
     expect(contratoDeSaida('me da 3 titulos').artefato).toBe('titulo');
+  });
+});
+
+/**
+ * REVISÃO ELÍPTICA. "Faz de outro jeito" não nomeia artefato, ficava sem
+ * contrato, e o modelo respondia com a coisa mais concreta do contexto — a
+ * lista de tarefas do ClickUp. Contexto não é intenção.
+ */
+describe('do_it_another_way_revises_previous_artifact', () => {
+  it('reconhece as formas que a equipe usa pra reprovar', () => {
+    for (const q of [
+      'Tá com cara de IA.',
+      'Faz de outro jeito então.',
+      'Não gostei.',
+      'Uma versão pro cliente.',
+      'Agora fecha uma versão final.',
+      'ficou genérico',
+    ]) {
+      expect(ehRevisaoEliptica(q), q).toBe(true);
+    }
+  });
+
+  it('briefing novo e longo não é continuação da peça anterior', () => {
+    expect(
+      ehRevisaoEliptica(
+        'Faz de outro jeito considerando que agora o público é outro, o objetivo mudou para captação e a campanha vai ao ar em dezembro',
+      ),
+    ).toBe(false);
+  });
+
+  it('pedido comum não vira revisão', () => {
+    expect(ehRevisaoEliptica('Me dá 3 títulos.')).toBe(false);
+  });
+});
+
+describe('operational_context_does_not_override_creative_intent', () => {
+  it('o bloco manda entregar a PEÇA, não status da conta', () => {
+    const b = blocoDeContinuacaoCriativa('legenda');
+    expect(b).toMatch(/Entregue legenda de novo, reescrita/);
+    expect(b).toMatch(/não um status da conta, não uma lista de tarefas/);
+  });
+
+  it('this_feels_like_ai_triggers_creative_self_critique: manda mudar o ângulo, não sinônimo', () => {
+    expect(blocoDeContinuacaoCriativa('legenda')).toMatch(/mude o ÂNGULO, não as palavras/);
+    expect(blocoDeContinuacaoCriativa('legenda')).toMatch(/Trocar sinônimo não é refazer/);
+  });
+
+  it('sem artefato anterior conhecido, não inventa contrato', () => {
+    expect(blocoDeContinuacaoCriativa('indefinido')).toBe('');
   });
 });

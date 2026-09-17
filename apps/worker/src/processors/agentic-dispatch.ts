@@ -14,7 +14,7 @@ import {
   type TaskClass,
 } from '@desigual-os/agent-runtime';
 import { db, schema } from '@desigual-os/database';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { AgentJobData } from '@desigual-os/orchestrator';
 import {
   extractEpisodeCandidates,
@@ -44,6 +44,7 @@ import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto } from './context-assembler';
 import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
 import { montarProveniencia } from './response-provenance.js';
+import { blocoDeContinuacaoCriativa, contratoDeSaida, ehRevisaoEliptica } from '@desigual-os/otto';
 import { anexarFontes, formatProvenanceBlock } from './provenance-block';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
@@ -402,6 +403,33 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     blocoEpisodios = formatEpisodeBlock(episodios, janela.rotulo);
   }
 
+  /**
+   * CONTINUAÇÃO CRIATIVA. "Tá com cara de IA", "faz de outro jeito", "uma
+   * versão pro cliente" não nomeiam artefato nenhum — então o turno ficava sem
+   * contrato de saída, e o modelo ia atrás do que o contexto tinha de mais
+   * concreto: a lista de tarefas do ClickUp. Medido no navegador em 17/09/2026,
+   * três pedidos de reescrita respondidos com relatório operacional.
+   *
+   * O artefato em jogo vem do turno ANTERIOR desta conversa. Contexto não é
+   * intenção: quem pede "faz de outro jeito" está falando da peça, não da conta.
+   */
+  let blocoContinuacao = '';
+  if (data.agent === 'otto' && data.conversationId && ehRevisaoEliptica(data.message)) {
+    const anteriores = (await db
+      .execute(sql`
+        select content from messages
+        where conversation_id = ${data.conversationId}::uuid and role = 'user'
+        order by created_at desc limit 4`)
+      .catch(() => [] as unknown[])) as unknown as Array<{ content: string }>;
+    for (const m of anteriores) {
+      const c = contratoDeSaida(m.content ?? '');
+      if (c.artefato !== 'indefinido') {
+        blocoContinuacao = blocoDeContinuacaoCriativa(c.artefato);
+        break;
+      }
+    }
+  }
+
   const termosDoTurno = termosDeConsulta(data.message);
   const episodiosFactuais = await recallFactualEpisodes({
     clientId: clienteDoTurno?.clientId ?? clientId,
@@ -637,6 +665,8 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       // modelo passa a prestar atenção no lugar errado — foi assim que um
       // aprendizado velho ancorou um pedido no cliente errado.
       const blocos: BlocoDeContexto[] = [
+        // Primeiro de todos: é o que decide O QUE entregar neste turno.
+        { fonte: 'frescor', texto: blocoContinuacao },
         { fonte: 'frescor', texto: blocoFrescor },
         { fonte: 'cliente', texto: blocoClienteFinal },
         { fonte: 'campanha', texto: blocoCampanha },
