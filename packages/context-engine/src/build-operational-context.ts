@@ -170,6 +170,28 @@ export async function buildOperationalContext(
   const linhas: string[] = [];
   linhas.push('DADOS AO VIVO DO CLICKUP (consultados agora, valem mais que qualquer memória sua):');
   const janela = scope.temporal ? ` (janela: ${scope.temporal.label.replace('-', ' ')})` : '';
+  /**
+   * ESCOPO DO NÚMERO, dito antes do número.
+   *
+   * O cabeçalho já trazia "em N cliente(s)", mas isso é uma consequência que o
+   * modelo precisa inferir. Quando o turno é GLOBAL e a conversa está aberta em
+   * um cliente, os dois chegam juntos e a inferência falha: medido no navegador
+   * em 17/09/2026, o resumo de reunião saiu como "1106 tarefas abertas em
+   * andamento no Cosentino" — o total da carteira inteira atribuído a uma conta,
+   * num texto feito pra ser levado a uma reunião.
+   *
+   * Dizer o escopo custa uma linha; o erro custa a confiança em todo número que
+   * o agente der depois.
+   */
+  const escopoDoNumero =
+    scope.kind === 'GLOBAL'
+      ? 'ESTES NÚMEROS SÃO DA OPERAÇÃO INTEIRA (todos os clientes somados). NUNCA atribua um total destes a um cliente específico: se for falar de um cliente, use só os itens listados sob o nome dele.'
+      : scope.kind === 'CLIENT' && scope.clients.length === 1
+        ? `ESTES NÚMEROS SÃO SOMENTE DE ${scope.clients[0]!.name.toUpperCase()}.`
+        : scope.kind === 'PERSON' && scope.person
+          ? `ESTES NÚMEROS SÃO SOMENTE DO QUE ESTÁ COM ${scope.person.name.toUpperCase()}, atravessando clientes.`
+          : null;
+  if (escopoDoNumero) linhas.push(escopoDoNumero);
   linhas.push(
     `${result.tasks.length} tarefa(s) aberta(s)${janela} em ${byClient.length} cliente(s), de ${listIds.length} cliente(s) consultado(s).`,
   );

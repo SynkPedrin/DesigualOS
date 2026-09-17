@@ -22,6 +22,7 @@ import { dispatchChatMessage } from '@desigual-os/orchestrator';
 import { eq, sql } from 'drizzle-orm';
 import { writeFileSync } from 'node:fs';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context.js';
+import { recusarEnsinoEmProducao } from './_guard-producao.js';
 
 const CLIENTES = {
   elite: '21b90202-1cfa-4aa1-93d6-53bac5dcfa72',
@@ -112,6 +113,9 @@ async function rodar(item: Item): Promise<Saida> {
   const paraBento = item.agente === 'bento' ? (blocoOperacional ?? undefined) : undefined;
   const mensagem =
     item.agente === 'bento' || !blocoOperacional ? item.pergunta : `${item.pergunta}\n\n---\n${blocoOperacional}`;
+
+  // Nenhum harness ensina fato em produção: ver _guard-producao.ts.
+  await recusarEnsinoEmProducao(item.pergunta, item.cliente);
 
   const r = await dispatchChatMessage({
     message: mensagem,

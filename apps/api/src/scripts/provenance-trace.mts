@@ -18,7 +18,22 @@ import { dispatchChatMessage } from '@desigual-os/orchestrator';
 import { eq, sql } from 'drizzle-orm';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context.js';
 
-const COLPAR = 'b246bcfe-89bb-4b70-ba04-9e1d2936c5da';
+/**
+ * CLIENTE DE QA, obrigatoriamente. A primeira versão deste arquivo apontava
+ * para a Colpar real e ensinou "o decisor é Marcelo Ribeiro" em produção,
+ * invertendo a verdade corrente do cliente. Trace não escreve no sistema que
+ * investiga.
+ */
+const [clienteQA] = await db
+  .select({ id: schema.clients.id, name: schema.clients.name })
+  .from(schema.clients)
+  .where(eq(schema.clients.environment, 'qa'))
+  .limit(1);
+if (!clienteQA) {
+  console.error('nenhum cliente com environment=qa; este trace NÃO roda em produção');
+  process.exit(1);
+}
+const COLPAR = clienteQA.id;
 
 const [usuario] = await db
   .select({ id: schema.users.id, email: schema.users.email, name: schema.users.name })

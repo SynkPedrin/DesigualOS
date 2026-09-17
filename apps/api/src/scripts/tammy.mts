@@ -18,6 +18,7 @@ import { dispatchChatMessage } from '@desigual-os/orchestrator';
 import { eq, sql } from 'drizzle-orm';
 import { writeFileSync } from 'node:fs';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context.js';
+import { recusarEnsinoEmProducao } from './_guard-producao.js';
 
 const COSENTINO = '44be15e0-b8bd-4f44-916d-eedc5a84a0d5';
 const COLPAR = 'b246bcfe-89bb-4b70-ba04-9e1d2936c5da';
@@ -78,6 +79,9 @@ async function conversar(nome: string, turnos: Turno[]): Promise<Array<Turno & {
     const bloco = turno.briefingBlock ?? formatOperationalContextForPrompt(turno.context);
     const paraBento = t.agente === 'bento' ? (bloco ?? undefined) : undefined;
     const mensagem = t.agente === 'bento' || !bloco ? t.fala : `${t.fala}\n\n---\n${bloco}`;
+
+    // Nenhum harness ensina fato em produção: ver _guard-producao.ts.
+    await recusarEnsinoEmProducao(t.fala, t.cliente);
 
     const r = await dispatchChatMessage({
       message: mensagem,

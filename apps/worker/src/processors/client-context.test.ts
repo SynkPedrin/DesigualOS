@@ -170,6 +170,51 @@ describe('formatClientBlock mantém o registro vivo', () => {
     );
     expect(b).toContain('REGISTRO É VIVO');
     expect(b).toMatch(/anota que|registra que/i);
-    expect(b).toMatch(/Nunca preencha lacuna por dedução/i);
+    // A proibição continua, agora restrita ao que de fato não se pode inventar:
+    // FATO. Decisão criativa o diretor assume e assina — era a redação ampla
+    // que fazia o agente parar de entregar diante de qualquer [FALTA].
+    expect(b).toMatch(/Nunca preencha lacuna FACTUAL por dedução/i);
+  });
+});
+
+/**
+ * LACUNA NÃO É PAREDE. A instrução anterior dizia que "declarar o que falta é
+ * resposta certa" — escrita contra invenção, lida como permissão pra não
+ * entregar. Medido no navegador em 17/09/2026: cinco pedidos criativos seguidos
+ * recusados sobre um dossiê cheio de [FALTA], o modelo citando a regra.
+ */
+describe('soft gap vs hard block', () => {
+  const ctx = {
+    clientId: 'c1',
+    clientName: 'Elite',
+    profile: 'Voz verbal: [FALTA]\nPúblico: [FALTA]\nCTA aprovado: a coletar',
+    ambiguous: [] as string[],
+  };
+
+  it('soft_missing_context_does_not_block_creative_output: manda assumir e entregar', () => {
+    const b = formatClientBlock(ctx as never, 50);
+    expect(b).toMatch(/LACUNA NÃO IMPEDE ENTREGA/);
+    expect(b).toMatch(/ASSUMA a hipótese mais provável/);
+    expect(b).toMatch(/ENTREGUE o que foi pedido/);
+  });
+
+  it('não sobrou a frase que autorizava parar', () => {
+    expect(formatClientBlock(ctx as never, 50)).not.toMatch(/Declarar o que falta é resposta certa/);
+  });
+
+  it('hard_missing_fact_can_block_only_when_required: o bloqueio fica nomeado e restrito', () => {
+    const b = formatClientBlock(ctx as never, 50);
+    expect(b).toMatch(/IMPEDE \(raro\)/);
+    expect(b).toMatch(/pre[çc]o que vai na pe[çc]a|alega[çc][ãa]o factual obrigat[óo]ria/);
+  });
+
+  it('a proibição de inventar FATO continua inteira', () => {
+    const b = formatClientBlock(ctx as never, 50);
+    expect(b).toMatch(/Nunca preencha lacuna FACTUAL/);
+    expect(b).toMatch(/n[úu]mero, resultado, hist[óo]rico e nome de pessoa sem fonte/);
+  });
+
+  it('e continua pedindo o que faltou DEPOIS da entrega, não no lugar dela', () => {
+    expect(formatClientBlock(ctx as never, 50)).toMatch(/Ao terminar a entrega, PEÇA o que faltou/);
   });
 });

@@ -106,6 +106,43 @@ function stripAccents(text: string): string {
  * alguém quer o panorama. Palavra solta aqui é o erro que já custou 287
  * campanhas neste repositório.
  */
+/**
+ * FOLLOW-UP ELÍPTICO: a frase que só faz sentido porque veio depois de outra.
+ *
+ * "Se eu só conseguir resolver três coisas, o que eu faço?" não tem uma palavra
+ * operacional sequer — nem tarefa, nem prazo, nem cliente. Resolvia NONE, a
+ * consulta ao ClickUp não acontecia, e o agente respondia "os dados não estão
+ * disponíveis neste turno" logo depois de ter mostrado a operação inteira.
+ * Medido no navegador em 17/09/2026.
+ *
+ * Conversa é stateful. Quem já viu o panorama não repete "considerando as
+ * tarefas, clientes e prioridades que você acabou de mostrar"; fala "e se eu só
+ * puder três?". São frases INTEIRAS, não palavras soltas, e só herdam quando o
+ * turno anterior era operacional — nunca inauguram escopo sozinhas.
+ */
+const ELIPTICOS = [
+  /^e\s/i,
+  /\bse eu s[óo]\b/i,
+  /\bs[óo] (?:der|desse|puder|conseguir)\b/i,
+  /\bo que (?:depende|precisa) de mim\b/i,
+  /\bdepende de mim\b/i,
+  /^(?:e\s+)?por qu[êe]\??$/i,
+  /^e (?:isso|isto|essa|esse)\b/i,
+  /\bquais? (?:seriam|s[ãa]o) (?:as|os)? ?(?:tr[êe]s|3)\b/i,
+  /\bo que eu fa[çc]o\b/i,
+];
+
+/**
+ * Frase curta que continua o assunto anterior em vez de abrir um novo. O teto
+ * de tamanho é o que separa "e a Tammy?" de um parágrafo que começa com "E":
+ * quem escreve três linhas está mudando de assunto, não complementando.
+ */
+export function ehFollowUpEliptico(mensagem: string): boolean {
+  const t = (mensagem ?? '').trim();
+  if (t.length === 0 || t.length > 90) return false;
+  return ELIPTICOS.some((re) => re.test(t));
+}
+
 const PANORAMA_MARKERS = [
   'me atualiza',
   'me atualize',
@@ -355,9 +392,16 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
  * @param now injetável pra teste; usado pela resolução temporal (§ relógio real, nunca
  *   data "sabida" pelo modelo)
  */
+/** O que sobrou do turno anterior, para o follow-up elíptico herdar. */
+export interface EstadoDoTurnoAnterior {
+  kind: ScopeKind;
+  operational: boolean;
+}
+
 export async function resolveOperationalScope(
   message: string,
   now: Date = new Date(),
+  anterior?: EstadoDoTurnoAnterior | null,
 ): Promise<OperationalScope> {
   const flat = stripAccents(message);
   const signals: string[] = [];
@@ -386,12 +430,21 @@ export async function resolveOperationalScope(
   const panoramaHits = matched(flat, PANORAMA_MARKERS);
   if (panoramaHits.length) signals.push(`panorama:${panoramaHits[0]}`);
 
+  /**
+   * HERANÇA, e só quando a frase é elíptica E o turno anterior era operacional.
+   * Não herda em turno que traz assunto próprio, e não inaugura escopo: sem
+   * turno anterior operacional, "se eu só puder três" continua sendo NONE.
+   */
+  const herdaDoAnterior = Boolean(anterior?.operational) && ehFollowUpEliptico(message);
+  if (herdaDoAnterior) signals.push('herdado:follow-up');
+
   const operational =
     operationalHits.length > 0 ||
     aggregateHits.length > 0 ||
     briefingHits.length > 0 ||
     // Pedir o panorama É pedir o estado da operação, mesmo sem dizer "tarefa".
     panoramaHits.length > 0 ||
+    herdaDoAnterior ||
     temporal !== null;
   const comparative = comparativeHits.length > 0;
   const briefing = briefingHits.length > 0;
@@ -503,7 +556,19 @@ export async function resolveOperationalScope(
   // "de qual cliente?" — que é exatamente o comportamento que o produto existe
   // para eliminar: quem pergunta sobre a operação não deveria ter que nomear
   // um cliente para receber resposta. Medido no navegador em 16/09/2026.
-  if (operational && (aggregateHits.length > 0 || temporal !== null || operationalHits.length > 0 || panoramaHits.length > 0)) {
+  /**
+   * `herdaDoAnterior` entra aqui também: sem isso o turno herdava a INTENÇÃO
+   * (operational=true) e mesmo assim não chegava a GLOBAL, porque esta condição
+   * exige sinal próprio — e uma frase elíptica, por definição, não tem.
+   */
+  if (
+    operational &&
+    (aggregateHits.length > 0 ||
+      temporal !== null ||
+      operationalHits.length > 0 ||
+      panoramaHits.length > 0 ||
+      (herdaDoAnterior && anterior?.kind === 'GLOBAL'))
+  ) {
     return {
       kind: 'GLOBAL',
       clients: [],

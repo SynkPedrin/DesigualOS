@@ -82,3 +82,54 @@ describe('ancoragem numérica por token inteiro', () => {
     expect(r.claims[0]?.evidenceIds).toContain('e');
   });
 });
+
+/**
+ * ESCOPO DO NÚMERO. O pior erro de número não é o valor errado: é o valor certo
+ * pendurado em quem não é dono dele. "1106 tarefas no Cosentino" passou por
+ * grounding porque 1106 estava na evidência — a evidência era da carteira toda.
+ */
+describe('escopo da evidência', () => {
+  const global = { id: 'g1', summary: '1106 tarefa(s) aberta(s) em 40 cliente(s)', escopo: { tipo: 'global' } as const };
+  const doCliente = {
+    id: 'c1',
+    summary: 'Cosentino: 205 tarefa(s) aberta(s)',
+    escopo: { tipo: 'cliente', nome: 'Cosentino' } as const,
+  };
+
+  it('global_task_count_cannot_be_attributed_to_client', () => {
+    const r = groundClaims('O Cosentino tem 1106 tarefas abertas.', [global], { clienteDoTurno: 'Cosentino' });
+    expect(r.claims[0]!.evidenceIds).toEqual([]);
+    expect(r.ungroundedFacts.length).toBeGreaterThan(0);
+  });
+
+  it('client_metric_requires_matching_client_id', () => {
+    const r = groundClaims('O Cosentino tem 205 tarefas abertas.', [doCliente], { clienteDoTurno: 'Cosentino' });
+    expect(r.claims[0]!.evidenceIds).toContain('c1');
+  });
+
+  it('global_evidence_cannot_ground_client_claim, mas ainda sustenta a afirmação GLOBAL', () => {
+    const r = groundClaims('A operação tem 1106 tarefas abertas.', [global], { clienteDoTurno: 'Cosentino' });
+    expect(r.claims[0]!.evidenceIds).toContain('g1');
+  });
+
+  it('same_numeric_value_different_scope_is_not_interchangeable', () => {
+    const mesmoNumeroGlobal = { ...global, summary: '205 tarefa(s) aberta(s) em 40 cliente(s)' };
+    const r = groundClaims('O Cosentino tem 205 tarefas abertas.', [mesmoNumeroGlobal], {
+      clienteDoTurno: 'Cosentino',
+    });
+    expect(r.claims[0]!.evidenceIds).toEqual([]);
+  });
+
+  it('evidência de OUTRO cliente não sustenta afirmação sobre este', () => {
+    const outro = { id: 'o1', summary: 'Elite: 1106 tarefas', escopo: { tipo: 'cliente', nome: 'Elite' } as const };
+    const r = groundClaims('O Cosentino tem 1106 tarefas abertas.', [outro], { clienteDoTurno: 'Cosentino' });
+    expect(r.claims[0]!.evidenceIds).toEqual([]);
+  });
+
+  it('sem escopo declarado, o comportamento antigo é preservado', () => {
+    const r = groundClaims('O Cosentino tem 205 tarefas abertas.', [{ id: 'x', summary: 'Cosentino 205 tarefas' }], {
+      clienteDoTurno: 'Cosentino',
+    });
+    expect(r.claims[0]!.evidenceIds).toContain('x');
+  });
+});

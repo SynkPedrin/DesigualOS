@@ -974,8 +974,30 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // CLAIM GROUNDING (§20-24): separa cada afirmação da resposta em
   // fato/inferência/recomendação e liga fato a evidência. Vai no trace pra o
   // grounding ser rastreável (fato não ancorado aparece explicitamente).
-  const evidenceRefs: EvidenceRef[] = state.evidence.map((e, i) => ({ id: e.sourceId ?? `ev${i}`, summary: e.summary }));
-  const grounding = completed && loop.answer ? groundClaims(loop.answer, evidenceRefs) : null;
+  /**
+   * ESCOPO viaja com a evidência. Sem ele o grounding compara só o valor, e o
+   * pior erro de número passa despercebido: o certo pendurado em quem não é
+   * dono dele. Medido em 17/09/2026, "1106 tarefas abertas no Cosentino" — 1106
+   * é o total da carteira inteira, e o número estava mesmo na evidência.
+   *
+   * O bloco operacional carrega o escopo no próprio texto (a linha "ESTES
+   * NÚMEROS SÃO..."), então dá pra ler dali sem inventar estrutura nova.
+   */
+  const evidenceRefs: EvidenceRef[] = state.evidence.map((e, i) => {
+    const id = e.sourceId ?? `ev${i}`;
+    if (e.source === 'clickup_operational') {
+      const global = /OPERA[ÇC][ÃA]O INTEIRA/i.test(data.operationalContext ?? '');
+      return { id, summary: e.summary, escopo: global ? ({ tipo: 'global' } as const) : ({ tipo: 'indefinido' } as const) };
+    }
+    if (e.clientId && clienteDoTurnoFinal?.clientId === e.clientId && clienteDoTurnoFinal.clientName) {
+      return { id, summary: e.summary, escopo: { tipo: 'cliente', nome: clienteDoTurnoFinal.clientName } as const };
+    }
+    return { id, summary: e.summary };
+  });
+  const grounding =
+    completed && loop.answer
+      ? groundClaims(loop.answer, evidenceRefs, { clienteDoTurno: clienteDoTurnoFinal?.clientName ?? null })
+      : null;
 
   // Outcome real por execução (seções 66-68).
   void db

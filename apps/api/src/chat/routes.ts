@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
@@ -242,6 +242,27 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         return { error: 'Failed to create conversation' };
       }
 
+      /**
+       * ESTADO DO TURNO ANTERIOR desta conversa, lido ANTES de inserir a
+       * mensagem nova (senão a "anterior" seria ela mesma).
+       *
+       * Conversa é stateful e a pessoa não repete o contexto: depois de ver o
+       * panorama ela pergunta "e se eu só puder três?". Sem isto, essa frase
+       * não tinha sinal operacional nenhum, a consulta ao ClickUp não
+       * acontecia, e a resposta era "os dados não estão disponíveis neste
+       * turno" — logo depois de o próprio agente ter mostrado a operação
+       * inteira. Medido no navegador em 17/09/2026.
+       */
+      const anteriores = (await db
+        .execute(
+          sql`select metadata from messages
+              where conversation_id = ${conversationId}::uuid and role = 'user'
+              order by created_at desc limit 1`,
+        )
+        .catch(() => [] as unknown[])) as unknown as Array<{ metadata: Record<string, unknown> | null }>;
+      const escopoAnterior =
+        (anteriores[0]?.metadata as { escopo?: { kind: string; operational: boolean } } | null)?.escopo ?? null;
+
       const [userMessage] = await db
         .insert(schema.messages)
         .values({
@@ -274,7 +295,12 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           projectId: effectiveProjectId,
           agent: decision.primary_agent,
         }),
-        resolveOperationalTurn(body.message, user),
+        resolveOperationalTurn(
+          body.message,
+          user,
+          new Date(),
+          escopoAnterior ? { kind: escopoAnterior.kind as never, operational: escopoAnterior.operational } : null,
+        ),
       ]);
       const contextBlock = formatContextForPrompt(context);
       // O Bento NÃO recebe o bloco de contexto, e isso é deliberado.
@@ -313,6 +339,22 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       // chutado. Ver packages/context-engine/src/resolve-scope.ts.
       // Briefing tem precedência sobre a lista crua: quando o pedido é "me monte um
       // briefing", mandar as duas coisas duplicaria o mesmo dado no prompt.
+      // O escopo resolvido fica GRAVADO no turno: é o que o próximo follow-up
+      // elíptico herda. Falha aqui não derruba o chat — perde-se a herança do
+      // turno seguinte, não a resposta deste.
+      if (userMessage?.id) {
+        void db
+          .update(schema.messages)
+          .set({
+            metadata: {
+              ...(userMessage.metadata ?? {}),
+              escopo: { kind: operationalTurn.scope.kind, operational: operationalTurn.scope.operational },
+            },
+          })
+          .where(eq(schema.messages.id, userMessage.id))
+          .catch(() => undefined);
+      }
+
       const operationalBlock =
         operationalTurn.briefingBlock ?? formatOperationalContextForPrompt(operationalTurn.context);
 

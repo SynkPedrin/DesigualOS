@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveOperationalScope } from './resolve-scope';
+import { ehFollowUpEliptico, resolveOperationalScope } from './resolve-scope';
 
 const mockClients = [
   { id: 'c-3net', name: '3Net', slug: '3net' },
@@ -352,5 +352,71 @@ describe('sufixo conversacional no nome', () => {
     const r = await resolveOperationalScope('Quem é o Zoroastro mesmo?');
     expect(r.kind).toBe('PERSON');
     expect(r.person?.name).toBe('zoroastro');
+  });
+});
+
+/**
+ * FOLLOW-UP ELÍPTICO. A frase que só faz sentido porque veio depois de outra.
+ * Sem herança, "se eu só conseguir resolver três coisas" resolvia NONE e o
+ * agente respondia "os dados não estão disponíveis" logo após ter mostrado a
+ * operação inteira.
+ */
+const GLOBAL_ANTERIOR = { kind: 'GLOBAL' as const, operational: true };
+const CRIATIVO_ANTERIOR = { kind: 'NONE' as const, operational: false };
+
+describe('carry-forward de follow-up', () => {
+  it('operational_overview_then_top_three_preserves_global_scope', async () => {
+    const r = await resolveOperationalScope(
+      'Se eu só conseguir resolver três coisas, o que eu faço?',
+      new Date(),
+      GLOBAL_ANTERIOR,
+    );
+    expect(r.operational).toBe(true);
+    expect(r.kind).toBe('GLOBAL');
+  });
+
+  it('operational_overview_then_what_depends_on_me_preserves_domain', async () => {
+    const r = await resolveOperationalScope('O que depende de mim?', new Date(), GLOBAL_ANTERIOR);
+    expect(r.operational).toBe(true);
+  });
+
+  it('creative_conversation_does_not_inherit_operational_intent', async () => {
+    const r = await resolveOperationalScope(
+      'Se eu só conseguir resolver três coisas, o que eu faço?',
+      new Date(),
+      CRIATIVO_ANTERIOR,
+    );
+    expect(r.operational).toBe(false);
+  });
+
+  it('new_conversation_does_not_inherit_unrelated_previous_chat_state: sem anterior, não inaugura escopo', async () => {
+    const r = await resolveOperationalScope('Se eu só conseguir resolver três coisas, o que eu faço?');
+    expect(r.operational).toBe(false);
+    expect(r.kind).toBe('NONE');
+  });
+
+  it('global_then_person_followup_resolves_person', async () => {
+    expect((await resolveOperationalScope('E a Tammy?', new Date(), GLOBAL_ANTERIOR)).kind).toBe('PERSON');
+  });
+
+  it('global_then_client_followup_resolves_client', async () => {
+    expect((await resolveOperationalScope('E a Cosentino?', new Date(), GLOBAL_ANTERIOR)).kind).toBe('CLIENT');
+  });
+
+  it('explicit_topic_change_overrides_previous_state', async () => {
+    const r = await resolveOperationalScope(
+      'Agora escreve uma legenda bonita pro Instagram',
+      new Date(),
+      GLOBAL_ANTERIOR,
+    );
+    expect(r.kind).not.toBe('GLOBAL');
+  });
+
+  it('parágrafo longo começando com "E" não é follow-up curto', () => {
+    expect(
+      ehFollowUpEliptico(
+        'E agora me explica com calma como a gente deveria dividir a verba entre os canais no fim do ano',
+      ),
+    ).toBe(false);
   });
 });

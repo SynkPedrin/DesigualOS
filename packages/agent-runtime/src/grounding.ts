@@ -19,9 +19,23 @@ export interface GroundedClaim {
   confidence: number;
 }
 
+/**
+ * De QUEM é o número que esta evidência carrega.
+ *
+ * Existe porque grounding que só compara valor deixa passar o pior erro de
+ * número que existe: o certo atribuído a quem não é. Medido em 17/09/2026 — o
+ * resumo de reunião saiu com "1106 tarefas abertas no Cosentino", sendo 1106 o
+ * total da carteira inteira. O número estava na evidência, então nada acusou.
+ */
+export type EscopoDaEvidencia =
+  | { tipo: 'global' }
+  | { tipo: 'cliente'; nome: string }
+  | { tipo: 'indefinido' };
+
 export interface EvidenceRef {
   id: string;
   summary: string;
+  escopo?: EscopoDaEvidencia;
 }
 
 export interface GroundingReport {
@@ -86,13 +100,37 @@ function numbersIn(text: string): Set<string> {
  * e o grounding não acusou nada. Palavra continua por substring de propósito
  * (plural, flexão): ali o falso positivo é barato, no número não é.
  */
-function linkEvidence(sentence: string, evidence: EvidenceRef[]): string[] {
+function linkEvidence(sentence: string, evidence: EvidenceRef[], clienteDoTurno?: string | null): string[] {
   const tokens = salientTokens(sentence);
   if (tokens.length === 0) return [];
   const numericos = tokens.filter((t) => /^\d/.test(t));
   const palavras = tokens.filter((t) => !/^\d/.test(t));
+
+  /**
+   * A afirmação está pendurando um NÚMERO num CLIENTE específico? É o caso em
+   * que escopo importa: "o Cosentino tem 1106 tarefas" e "a operação tem 1106
+   * tarefas" usam o mesmo número e só uma delas é verdade.
+   */
+  const frase = stripAccents(sentence).toLowerCase();
+  const cliente = clienteDoTurno ? stripAccents(clienteDoTurno).toLowerCase() : null;
+  const atribuiNumeroAoCliente = Boolean(cliente && numericos.length > 0 && frase.includes(cliente));
+
   const linked: string[] = [];
   for (const ev of evidence) {
+    // Evidência da operação inteira NÃO sustenta afirmação sobre um cliente.
+    // Preferir ficar sem lastro a lastrear com o número de outro escopo: sem
+    // lastro o fato cai como não ancorado e é barrado; com lastro errado ele
+    // passa como verificado.
+    if (atribuiNumeroAoCliente && ev.escopo?.tipo === 'global') continue;
+    // Evidência de OUTRO cliente também não.
+    if (
+      cliente &&
+      ev.escopo?.tipo === 'cliente' &&
+      stripAccents(ev.escopo.nome).toLowerCase() !== cliente &&
+      frase.includes(cliente)
+    ) {
+      continue;
+    }
     const evFlat = stripAccents(ev.summary).toLowerCase();
     const evNumeros = numbersIn(evFlat);
     const casou = palavras.some((t) => evFlat.includes(t)) || numericos.some((t) => evNumeros.has(t));
@@ -106,7 +144,11 @@ function linkEvidence(sentence: string, evidence: EvidenceRef[]): string[] {
  * alta só quando há evidência ligada; sem evidência ligada, é fato NÃO ancorado
  * (confiança baixa) — exatamente o que não pode ser afirmado com segurança (§24).
  */
-export function groundClaims(text: string, evidence: EvidenceRef[]): GroundingReport {
+export function groundClaims(
+  text: string,
+  evidence: EvidenceRef[],
+  opcoes?: { clienteDoTurno?: string | null },
+): GroundingReport {
   const claims: GroundedClaim[] = [];
   for (const sentence of splitClaims(text)) {
     const type = classifyClaimType(sentence);
@@ -115,7 +157,7 @@ export function groundClaims(text: string, evidence: EvidenceRef[]): GroundingRe
       claims.push({ text: sentence, type, evidenceIds: [], confidence: 0.6 });
       continue;
     }
-    const evidenceIds = linkEvidence(sentence, evidence);
+    const evidenceIds = linkEvidence(sentence, evidence, opcoes?.clienteDoTurno ?? null);
     if (type === 'inference') {
       claims.push({ text: sentence, type, evidenceIds, confidence: evidenceIds.length > 0 ? 0.6 : 0.4 });
       continue;

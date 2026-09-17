@@ -235,17 +235,35 @@ export function formatClientBlock(ctx: ClientTurnContext, totalClientes: number)
       'Trabalhe com o que o pedido trouxer e declare o que falta. NÃO invente ramo, produto ou público.',
     );
   }
-  // O registro é VIVO, e o agente precisa saber disso. Sem esta instrução ele
-  // trata a lacuna como parede: lista o que falta e encerra, e a resposta da
-  // equipe se perde no histórico do chat em vez de virar conhecimento. O que
-  // fecha o ciclo do outro lado é client-fact.ts, que grava o que for dito com
-  // verbo de registro.
+  /**
+   * LACUNA NÃO É PAREDE — e a versão anterior desta instrução virou uma.
+   *
+   * A última linha dizia "declarar o que falta é resposta certa". Escrita para
+   * impedir invenção, ela autorizava parar de trabalhar: num dossiê com muitos
+   * [FALTA], o modelo concluía que listar as lacunas ERA a resposta. Medido no
+   * navegador em 17/09/2026, cinco turnos seguidos: "me dá 3 títulos",
+   * "faz uma legenda", "uma versão pro cliente" — todos recusados, citando
+   * textualmente a regra. O Otto entregou conceito no primeiro turno e parou de
+   * produzir assim que as lacunas entraram na conversa.
+   *
+   * É o mesmo defeito que a regra do FUNIL já tinha tido (ver stance.ts): boa
+   * intenção escrita de um jeito que autoriza não entregar.
+   *
+   * A separação que resolve é entre LACUNA QUE IMPEDE e LACUNA QUE ATRAPALHA.
+   * Não dá pra escrever uma peça sobre um produto que ninguém sabe qual é; dá
+   * pra escrever sem conhecer a nuance do tom de voz, dizendo qual tom você
+   * assumiu. A primeira classe é rara; a segunda é a regra.
+   */
   linhas.push(
     '',
     'ESTE REGISTRO É VIVO, e mantê-lo é parte do seu trabalho:',
     '- O que estiver marcado como lacuna, [FALTA] ou "a coletar" é pergunta em aberto. Ao terminar a entrega, PEÇA o que faltou e diga por que aquilo muda o trabalho.',
     '- Quando a equipe responder, peça para registrar com "anota que..." ou "registra que...". Só assim vira conhecimento permanente; contado de passagem, se perde.',
-    '- Nunca preencha lacuna por dedução para parecer completo. Declarar o que falta é resposta certa; inventar é o erro mais caro que você pode cometer aqui.',
+    '',
+    'LACUNA NÃO IMPEDE ENTREGA. Separe os dois casos:',
+    '- ATRAPALHA (o normal): falta nuance de tom, detalhe de público, referência visual, informação secundária. ASSUMA a hipótese mais provável, diga em UMA linha o que assumiu, e ENTREGUE o que foi pedido. Listar a lacuna no lugar do trabalho não é honestidade, é não fazer o trabalho.',
+    '- IMPEDE (raro): sem o dado, o que você entregar seria FALSO ou inseguro — preço que vai na peça, data que o cliente exige, alegação factual obrigatória, ou não dá pra saber de qual produto/campanha se trata. Aí sim pergunte antes, e diga exatamente o que falta.',
+    '- Nunca preencha lacuna FACTUAL por dedução: número, resultado, histórico e nome de pessoa sem fonte continuam proibidos. Decisão criativa você assume e assina; fato você não inventa.',
   );
   return linhas.join('\n');
 }

@@ -5,6 +5,7 @@ import {
   buildOperationalContext,
   formatBriefingForPrompt,
   resolveOperationalScope,
+  type EstadoDoTurnoAnterior,
   type OperationalContext,
   type OperationalScope,
 } from '@desigual-os/context-engine';
@@ -92,8 +93,15 @@ export async function resolveOperationalTurn(
   message: string,
   principal: OperationalPrincipal,
   now: Date = new Date(),
+  /**
+   * Estado do turno anterior DESTA conversa. Sem ele, "se eu só conseguir
+   * resolver três coisas?" não tem uma palavra operacional e a consulta nunca
+   * acontece — o agente responde "os dados não estão disponíveis" logo depois
+   * de ter mostrado a operação inteira.
+   */
+  anterior?: EstadoDoTurnoAnterior | null,
 ): Promise<OperationalTurn> {
-  const scope = await resolveOperationalScope(message, now);
+  const scope = await resolveOperationalScope(message, now, anterior ?? null);
 
   if (!scope.operational || scope.kind === 'NONE' || scope.kind === 'AMBIGUOUS') {
     return { scope, context: { block: null, summary: null, failure: null }, briefingBlock: null };
