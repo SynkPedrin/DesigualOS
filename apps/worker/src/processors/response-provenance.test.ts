@@ -108,7 +108,7 @@ describe('multiple_claims_keep_individual_sources', () => {
       evidence: [evConversa],
       agente: 'bento',
     })!;
-    expect(responderFonteAnterior(prov)).toMatch(/^Isso veio de a conversa|^Isso veio de/);
+    expect(responderFonteAnterior(prov)).toMatch(/^Isso veio da conversa/);
     expect(responderFonteAnterior(prov)).not.toMatch(/Cada parte/);
   });
 });
@@ -135,5 +135,27 @@ describe('montarProveniencia', () => {
       agente: 'bento',
     })!;
     expect(Object.keys(prov.claims[0]!)).toEqual(['texto', 'fontes']);
+  });
+});
+
+describe('português da atribuição', () => {
+  it('contrai a preposição: "do dossiê", nunca "de o dossiê"', () => {
+    const prov = montarProveniencia({
+      claims: [{ text: 'X', evidence_ids: ['cli-1'] }],
+      evidence: [evDossie],
+      agente: 'bento',
+    })!;
+    const texto = responderFonteAnterior(prov);
+    expect(texto).toContain('do dossiê');
+    expect(texto).not.toContain('de o ');
+  });
+
+  it('e com fonte feminina: "da conversa"', () => {
+    const prov = montarProveniencia({
+      claims: [{ text: 'X', evidence_ids: ['2026-09-17T02:02:00.000Z'] }],
+      evidence: [evConversa],
+      agente: 'bento',
+    })!;
+    expect(responderFonteAnterior(prov)).toContain('da conversa');
   });
 });

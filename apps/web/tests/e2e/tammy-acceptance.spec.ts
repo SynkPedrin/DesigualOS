@@ -96,13 +96,28 @@ test.describe('Aceite final — a Tammy usando de verdade', () => {
       'E a Tammy?',
       'E a Cosentino?',
       'Quem é a Esther mesmo?',
-      'Quem decide na Colpar?',
-      'De onde você tirou isso?',
       'O que a gente decidiu ontem?',
       'O que mudou desde então?',
       'Tem alguma coisa que depende de mim?',
       'Me dá um resumo que eu consiga usar numa reunião agora.',
     ]);
+
+    /**
+     * Colpar em conversa PRÓPRIA, e isso não é conveniência do teste.
+     *
+     * Uma conversa pertence a um cliente: citar outro nome no meio é ignorado
+     * de propósito (apps/api/src/chat/routes.ts), pra que o contexto de uma
+     * conta nunca vaze pra dentro da conversa de outra. Medido aqui: depois de
+     * "E a Cosentino?", perguntar da Colpar na MESMA conversa respondia com o
+     * escopo da Cosentino. A garantia está certa; o teste é que precisava
+     * refletir como se troca de cliente de verdade — conversa nova.
+     */
+    await page.goto('/chat');
+    const rColpar = await conversa(page, 'BENTO/COLPAR', [
+      'Bento, quem decide na Colpar?',
+      'De onde você tirou isso?',
+    ]);
+    r.push(...rColpar);
 
     // O que NÃO pode acontecer, em nenhuma resposta da conversa.
     for (const resposta of r) {
@@ -118,8 +133,11 @@ test.describe('Aceite final — a Tammy usando de verdade', () => {
     expect(r[1]).not.toMatch(/de qual cliente|qual cliente você/i);
     // Esther não pode ganhar vínculo inventado.
     expect(r[5]).not.toMatch(/Esther Mesmo/i);
-    // A fonte da resposta anterior tem que ser a conversa, não o ClickUp.
-    expect(r[7]).toMatch(/conversa/i);
+    // A memória ensinada volta, e a fonte citada é a conversa — não o ClickUp
+    // nem o dossiê, que é justamente onde esse campo está marcado [FALTA].
+    expect(r[10]).toMatch(/Fernanda/i);
+    expect(r[11]).toMatch(/conversa/i);
+    expect(r[11]).not.toMatch(/de o |de a /);
   });
 
   test('otto: conversa natural de criação', async ({ page }) => {

@@ -148,21 +148,35 @@ export function responderFonteAnterior(prov: ProvenienciaDaResposta): string {
   const distintas = [...new Set(prov.claims.flatMap((c) => c.fontes))];
 
   if (prov.claims.length === 0) {
-    return `Isso veio de ${listar(prov.fontes)}.`;
+    return `Isso veio ${listar(prov.fontes)}.`;
   }
   if (distintas.length <= 1) {
-    return `Isso veio de ${listar(distintas.length > 0 ? distintas : prov.fontes)}.`;
+    return `Isso veio ${listar(distintas.length > 0 ? distintas : prov.fontes)}.`;
   }
 
   const linhas = ['Cada parte veio de um lugar:'];
   for (const c of prov.claims.slice(0, 4)) {
-    linhas.push(`- "${c.texto}" — ${listar(c.fontes)}.`);
+    linhas.push(`- "${c.texto}" — veio ${listar(c.fontes)}.`);
   }
   return linhas.join('\n');
 }
 
+/**
+ * Contrai a preposição com o artigo do rótulo. Sem isto saía "Isso veio de o
+ * dossiê do cliente" — português quebrado numa frase que a pessoa lê justamente
+ * quando está decidindo se confia na resposta.
+ */
+function comPreposicao(rotulo: string): string {
+  if (rotulo.startsWith('o ')) return `do ${rotulo.slice(2)}`;
+  if (rotulo.startsWith('a ')) return `da ${rotulo.slice(2)}`;
+  if (rotulo.startsWith('os ')) return `dos ${rotulo.slice(3)}`;
+  if (rotulo.startsWith('as ')) return `das ${rotulo.slice(3)}`;
+  return `de ${rotulo}`;
+}
+
 function listar(xs: string[]): string {
-  if (xs.length === 0) return 'fonte não registrada';
-  if (xs.length === 1) return xs[0]!;
-  return `${xs.slice(0, -1).join(', ')} e ${xs.at(-1)}`;
+  if (xs.length === 0) return 'de fonte não registrada';
+  const comArtigo = xs.map(comPreposicao);
+  if (comArtigo.length === 1) return comArtigo[0]!;
+  return `${comArtigo.slice(0, -1).join(', ')} e ${comArtigo.at(-1)}`;
 }
