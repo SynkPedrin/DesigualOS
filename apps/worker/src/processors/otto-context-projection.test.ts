@@ -111,8 +111,13 @@ describe('context_projection_does_not_break_a2a', () => {
     expect(projetarBlocoDeCliente(DOSSIE, 'MISTO')).toBe(DOSSIE);
   });
 
-  it('turno fora das categorias não é recortado — o padrão é não mexer', () => {
-    expect(projetarBlocoDeCliente(DOSSIE, 'OUTRO')).toBe(DOSSIE);
+  it('missing_context_does_not_poison_next_turn: turno OUTRO também é recortado', () => {
+    // "Me explica." cai em OUTRO. Sem recorte ele recebia o dossiê inteiro,
+    // respondia citando o id da lista, e os turnos seguintes repetiam o id
+    // lido no histórico — um turno sem recorte contaminava a conversa toda.
+    const p = projetarBlocoDeCliente(DOSSIE, 'OUTRO');
+    expect(p).not.toMatch(/## ClickUp/);
+    expect(p).toMatch(/varejo de joias e moda/);
   });
 });
 

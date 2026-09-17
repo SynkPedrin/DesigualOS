@@ -109,7 +109,20 @@ function camposFaltando(texto: string): string[] {
  */
 export function projetarBlocoDeCliente(texto: string, modo: ModoDoTurno): string {
   if (texto.length === 0) return texto;
-  if (modo === 'OPERACIONAL' || modo === 'MISTO' || modo === 'OUTRO') return texto;
+  /**
+   * OUTRO entra no recorte, e essa foi a correção que faltava.
+   *
+   * Deixar OUTRO sem projeção parecia o lado seguro — "na dúvida, não mexe".
+   * Medido: "Me explica." cai em OUTRO, recebia o dossiê inteiro com os
+   * identificadores de lista e conta, respondia citando "lista ID
+   * 901411764375", e os turnos SEGUINTES repetiam o ID lido no histórico da
+   * conversa. Um único turno sem recorte contaminava a conversa toda.
+   *
+   * Aqui só chega turno do Otto, e turno do Otto que não é operacional é
+   * conversa sobre a marca. O dossiê inteiro fica para OPERACIONAL e MISTO,
+   * que são os que de fato precisam do estado da conta.
+   */
+  if (modo === 'OPERACIONAL' || modo === 'MISTO') return texto;
 
   const linhas = texto.split('\n');
   const mantidas: string[] = [];
