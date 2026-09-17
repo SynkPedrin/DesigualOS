@@ -29,7 +29,12 @@ export interface SaudeDaIntegracao {
 }
 
 /** Consulta a saúde do webhook no próprio ClickUp: é ele quem suspende. */
-async function saudeNoClickUp(): Promise<{ suspenso: boolean; falhas: number; endpoint: string | null } | null> {
+async function saudeNoClickUp(): Promise<{
+  id: string | null;
+  suspenso: boolean;
+  falhas: number;
+  endpoint: string | null;
+} | null> {
   const apiKey = process.env.CLICKUP_API_KEY;
   const teamId = process.env.CLICKUP_TEAM_ID;
   if (!apiKey || !teamId) return null;
@@ -38,14 +43,76 @@ async function saudeNoClickUp(): Promise<{ suspenso: boolean; falhas: number; en
     signal: AbortSignal.timeout(15_000),
   }).catch(() => null);
   if (!r?.ok) return null;
-  const j = (await r.json().catch(() => null)) as { webhooks?: Array<{ endpoint?: string; health?: { status?: string; fail_count?: number } }> } | null;
+  const j = (await r.json().catch(() => null)) as {
+    webhooks?: Array<{ id?: string; endpoint?: string; health?: { status?: string; fail_count?: number } }>;
+  } | null;
   const w = j?.webhooks?.[0];
-  if (!w) return { suspenso: true, falhas: 0, endpoint: null };
+  if (!w) return { id: null, suspenso: true, falhas: 0, endpoint: null };
   return {
+    id: w.id ?? null,
     suspenso: (w.health?.status ?? '') !== 'active',
     falhas: Number(w.health?.fail_count ?? 0),
     endpoint: w.endpoint ?? null,
   };
+}
+
+/**
+ * RELIGAR o webhook sozinho.
+ *
+ * O ClickUp suspende depois de algumas entregas falhadas e NÃO volta por conta
+ * própria. O modo de falha é sempre o mesmo: a API reinicia, algumas entregas
+ * batem na janela de alguns segundos em que ela não responde, e o webhook fica
+ * suspenso — em silêncio. Aconteceu duas vezes em 16 e 17/09/2026; numa delas
+ * ficou cinco dias fora e ninguém percebeu, porque o sistema segue respondendo,
+ * só que com dado velho.
+ *
+ * Religar é seguro: não cria nem apaga nada, e só reativa o webhook que já
+ * existe, pro endpoint que já estava configurado. O que NÃO fazemos é religar
+ * às cegas — se o endpoint não responder, reativar só produziria a próxima
+ * suspensão, então primeiro conferimos que há alguém do outro lado.
+ */
+export async function religarWebhookParaTeste(
+  id: string,
+  endpoint: string,
+  logger: Logger,
+): Promise<'religado' | 'endpoint_fora' | 'falhou'> {
+  return religarWebhook(id, endpoint, logger);
+}
+
+async function religarWebhook(
+  id: string,
+  endpoint: string,
+  logger: Logger,
+): Promise<'religado' | 'endpoint_fora' | 'falhou'> {
+  const apiKey = process.env.CLICKUP_API_KEY;
+  if (!apiKey) return 'falhou';
+
+  // Um POST sem assinatura válida deve voltar 401: isso PROVA que há serviço
+  // atendendo e verificando. 000 ou 5xx significa que ninguém atende, e aí
+  // reativar é só agendar a próxima suspensão.
+  const sonda = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!sonda || sonda.status >= 500) {
+    logger.warn({ endpoint, status: sonda?.status ?? null }, '[integracao] endpoint fora; não vou reativar pra suspender de novo');
+    return 'endpoint_fora';
+  }
+
+  const r = await fetch(`https://api.clickup.com/api/v2/webhook/${id}`, {
+    method: 'PUT',
+    headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'active' }),
+    signal: AbortSignal.timeout(15_000),
+  }).catch(() => null);
+  if (!r?.ok) {
+    logger.error({ id, status: r?.status ?? null }, '[integracao] não consegui reativar o webhook');
+    return 'falhou';
+  }
+  logger.info({ id, endpoint }, '[integracao] webhook reativado automaticamente');
+  return 'religado';
 }
 
 export async function checkIntegrationHealth(logger: Logger): Promise<SaudeDaIntegracao> {
@@ -76,6 +143,19 @@ export async function checkIntegrationHealth(logger: Logger): Promise<SaudeDaInt
     // Suspenso é DOWN, não degradado: nada chega, e o ClickUp não volta sozinho.
     status = 'down';
     motivos.push(`webhook suspenso no ClickUp após ${noClickUp.falhas} falhas (endpoint: ${noClickUp.endpoint ?? 'ausente'})`);
+
+    // Detectar sem religar deixa o sistema com dado velho até alguém ler o
+    // alerta. Aqui ele se recupera sozinho do caso comum (API reiniciou), e
+    // continua gritando quando o problema é outro.
+    if (noClickUp.id && noClickUp.endpoint) {
+      const r = await religarWebhook(noClickUp.id, noClickUp.endpoint, logger).catch(() => 'falhou' as const);
+      if (r === 'religado') {
+        status = 'degraded';
+        motivos.push('reativado automaticamente; eventos da janela de suspensão foram PERDIDOS');
+      } else if (r === 'endpoint_fora') {
+        motivos.push('não reativei: o endpoint não está respondendo');
+      }
+    }
   }
 
   if (minutosSemEvento === null) {
