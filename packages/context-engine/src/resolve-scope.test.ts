@@ -314,3 +314,43 @@ describe('follow-up nu numa conversa', () => {
     expect((await resolveOperationalScope('e a campanha?')).kind).not.toBe('PERSON');
   });
 });
+
+/**
+ * PARTÍCULA DE CONVERSA no fim do nome. "Quem é a Esther mesmo?" fazia a busca
+ * procurar por "Esther Mesmo" no registro de pessoas — que não existe — e a
+ * pessoa ficava desconhecida por causa de uma palavra que nem era nome.
+ */
+describe('sufixo conversacional no nome', () => {
+  it('who_is_esther_mesmo_resolves_esther', async () => {
+    const r = await resolveOperationalScope('Quem é a Esther mesmo?');
+    expect(r.kind).toBe('PERSON');
+    expect(r.person?.name).toBe('esther');
+  });
+
+  it('quem_e_a_tammy_mesmo_resolves_tammy', async () => {
+    expect((await resolveOperationalScope('Quem é a Tammy mesmo?')).person?.name).toBe('tammy');
+  });
+
+  it('quem_e_matheus_afinal_resolves_matheus', async () => {
+    expect((await resolveOperationalScope('Quem é o Matheus afinal?')).person?.name).toBe('matheus');
+  });
+
+  it('real_name_suffix_is_not_removed_if_registry_matches: o nome inteiro é oferecido primeiro', async () => {
+    const r = await resolveOperationalScope('Quem é a Esther mesmo?');
+    // Quem consulta o registro tenta "esther mesmo" ANTES de aceitar "esther":
+    // se existisse alguém com esse nome, ela venceria.
+    expect(r.person?.candidatos?.[0]).toBe('esther mesmo');
+  });
+
+  it('nome de duas palavras sem partícula fica inteiro', async () => {
+    const r = await resolveOperationalScope('Quem é a Esther Silva?');
+    expect(r.person?.name).toBe('esther silva');
+    expect(r.person?.candidatos).toEqual(['esther silva']);
+  });
+
+  it('unknown_person_still_remains_unknown: partícula removida não inventa pessoa', async () => {
+    const r = await resolveOperationalScope('Quem é o Zoroastro mesmo?');
+    expect(r.kind).toBe('PERSON');
+    expect(r.person?.name).toBe('zoroastro');
+  });
+});

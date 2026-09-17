@@ -117,7 +117,23 @@ export async function resolveOperationalTurn(
   // ClickUp antes de consultar. Sem membro resolvido, a resposta honesta é
   // "não achei essa pessoa", nunca "de qual cliente?".
   if (scope.kind === 'PERSON' && scope.person) {
-    const member = await findMemberByName(config, scope.person.name).catch(() => null);
+    /**
+     * Tenta os candidatos do mais específico pro mais curto. É o que faz
+     * "Mesmo Silva" continuar sendo Mesmo Silva (o registro confirma o nome
+     * inteiro) e "Esther mesmo" virar Esther (o registro não conhece ninguém
+     * com aquele sobrenome, e aí a leitura de partícula é a certa).
+     *
+     * O registro decide. Aqui não se adivinha por lista de palavras.
+     */
+    const candidatos = scope.person.candidatos?.length ? scope.person.candidatos : [scope.person.name];
+    let member: Awaited<ReturnType<typeof findMemberByName>> = null;
+    for (const candidato of candidatos) {
+      member = await findMemberByName(config, candidato).catch(() => null);
+      if (member) {
+        scope.person.name = candidato;
+        break;
+      }
+    }
     if (!member) {
       return {
         scope,

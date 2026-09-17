@@ -43,6 +43,7 @@ import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaign
 import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto } from './context-assembler';
 import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
+import { montarProveniencia } from './response-provenance.js';
 import { anexarFontes, formatProvenanceBlock } from './provenance-block';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
@@ -1057,6 +1058,25 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         evidence_count: state.evidence.length,
         steps_observed: loop.observations.length,
         claims: grounding?.claims.map((c) => ({ type: c.type, confidence: c.confidence, evidence_ids: c.evidenceIds, text: c.text.slice(0, 160) })) ?? [],
+        /**
+         * PROVENIÊNCIA DA RESPOSTA, para o turno SEGUINTE poder responder "de
+         * onde você tirou isso?". Sem isto, a pergunta era respondida com as
+         * fontes do turno novo — que não são as que sustentaram a afirmação
+         * anterior, e foi assim que um fato da conversa virou "ClickUp".
+         *
+         * Só afirmação final e fonte. Nada do caminho até a conclusão.
+         */
+        provenance: montarProveniencia({
+          claims: grounding?.claims.map((c) => ({ text: c.text, evidence_ids: c.evidenceIds })) ?? [],
+          evidence: state.evidence.map((e) => ({
+            type: e.type,
+            source: e.source,
+            sourceId: e.sourceId ?? null,
+            summary: e.summary,
+            retrievedAt: e.retrievedAt,
+          })),
+          agente: data.agent,
+        }),
         ungrounded_facts: grounding?.ungroundedFacts.length ?? 0,
         // Ações estruturadas do turno autônomo: é o que prova, na auditoria,
         // que houve DECISÃO e EXECUÇÃO, e não só texto.

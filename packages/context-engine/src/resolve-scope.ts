@@ -43,6 +43,14 @@ export type ScopeKind =
  * acontece na camada que tem acesso à API, nunca por lista hardcoded aqui). */
 export interface PersonMention {
   name: string;
+  /**
+   * Candidatos em ordem de especificidade, do mais completo pro mais curto.
+   * Existe por causa de "quem é a Esther mesmo?": "mesmo" ali é partícula de
+   * conversa, mas "Mesmo" também pode ser sobrenome de gente de verdade. Quem
+   * tem acesso ao registro decide — aqui a gente entrega as duas leituras em
+   * vez de escolher no escuro.
+   */
+  candidatos: string[];
   confidence: number;
   /** Ids de membro do ClickUp resolvidos downstream (operational-context.ts). */
   memberIds?: number[];
@@ -307,11 +315,36 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
     ? [...autoSuficientes, ...dependentesDeOperacional]
     : autoSuficientes;
 
+  /**
+   * Partículas de conversa que grudam no fim do nome: "quem é a Esther MESMO?",
+   * "quem é o Matheus AFINAL?". Elas viravam parte do nome e a busca no
+   * registro procurava por "Esther Mesmo" — que não existe, então a pessoa
+   * ficava desconhecida por causa de uma palavra que nem era nome.
+   *
+   * Só valem no FIM e só quando sobra nome antes delas. Não é lista global de
+   * palavra proibida: "Mesmo Silva" continua passando inteiro, porque ali
+   * "mesmo" não está em posição de partícula.
+   */
+  const PARTICULA_FINAL = new Set(['mesmo', 'mesma', 'afinal', 'entao', 'então', 'ai', 'aí', 'hein', 'né', 'ne']);
+
+  function candidatosDe(nome: string): string[] {
+    const tokens = nome.split(' ').filter(Boolean);
+    if (tokens.length < 2) return [nome];
+    const ultimo = tokens.at(-1)!;
+    if (!PARTICULA_FINAL.has(ultimo)) return [nome];
+    // Mais específico primeiro: quem consulta o registro tenta o nome completo
+    // antes de aceitar a leitura de partícula.
+    return [nome, tokens.slice(0, -1).join(' ')];
+  }
+
   for (const pattern of patterns) {
     const match = flat.match(pattern);
     const name = match?.[1]?.trim().replace(/\s+/g, ' ');
     if (name && name.length >= 2 && !notPerson.has(name)) {
-      return { name, confidence: 0.75 };
+      const candidatos = candidatosDe(name);
+      // `name` é o que a resolução usa como padrão: a leitura SEM a partícula,
+      // que é a certa na esmagadora maioria das vezes.
+      return { name: candidatos.at(-1)!, candidatos, confidence: 0.75 };
     }
   }
   return null;

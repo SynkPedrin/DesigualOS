@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import {
@@ -32,6 +32,11 @@ import {
   AgentAskError,
   requestToolCall,
 } from '@desigual-os/tool-gateway';
+import {
+  ehPerguntaDeFonteAnterior,
+  responderFonteAnterior,
+  type ProvenienciaDaResposta,
+} from './response-provenance.js';
 import { stripBlockMarkers, stripMarkdownArtifacts, withPersonality, extractApprovalProposal } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
 import { dispatchWithAgentLoop } from './agentic-dispatch';
@@ -498,9 +503,43 @@ async function recordAssistantMessage(
   conversationId: string | null,
   agent: AgentName,
   content: string | null,
+  metadata?: Record<string, unknown>,
 ): Promise<void> {
   if (!conversationId || !content) return;
-  await db.insert(schema.messages).values({ conversationId, role: 'assistant', agent, content });
+  /**
+   * A metadata da resposta É gravada agora. Antes a coluna existia e ficava
+   * sempre vazia, então a pergunta seguinte ("de onde você tirou isso?") não
+   * tinha o que consultar e reconstruía a fonte do zero — chegando a outra.
+   * Guarda afirmação e fonte, nunca raciocínio.
+   */
+  await db
+    .insert(schema.messages)
+    .values({ conversationId, role: 'assistant', agent, content, ...(metadata ? { metadata } : {}) });
+}
+
+/**
+ * "De onde você tirou isso?" responde pelo REGISTRO da resposta anterior, não
+ * por uma busca nova. Busca nova produziria uma origem plausível e diferente da
+ * verdadeira — que é exatamente o defeito que isto conserta.
+ *
+ * Sem registro anterior, devolve null e o turno segue o caminho normal: melhor
+ * a resposta genérica de antes do que uma fonte inventada com confiança.
+ */
+async function responderComFonteDaRespostaAnterior(
+  conversationId: string | null,
+  message: string,
+): Promise<string | null> {
+  if (!conversationId || !ehPerguntaDeFonteAnterior(message)) return null;
+  const linhas = (await db
+    .execute(sql`
+      select metadata from messages
+      where conversation_id = ${conversationId}::uuid and role = 'assistant'
+      order by created_at desc limit 1`)
+    .catch(() => [] as unknown[])) as unknown as Array<{ metadata: Record<string, unknown> | null }>;
+  const agentic = (linhas[0]?.metadata as { agentic?: { provenance?: ProvenienciaDaResposta } } | null)?.agentic;
+  const prov = agentic?.provenance;
+  if (!prov) return null;
+  return responderFonteAnterior(prov);
 }
 
 /**
@@ -854,6 +893,36 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     };
   }
 
+  /**
+   * FONTE DA RESPOSTA ANTERIOR, antes de qualquer retrieval.
+   *
+   * "De onde você tirou isso?" não tem entidade pra buscar — o objeto dela é a
+   * frase que acabou de ser dita. Deixar o turno seguir o caminho normal fazia
+   * o agente montar a proveniência com as fontes do turno NOVO e apresentá-las
+   * como origem do fato antigo: um fato ensinado em conversa saía atribuído ao
+   * ClickUp, com toda a confiança do mundo.
+   *
+   * Responder pelo registro é o que garante que a fonte citada seja a que de
+   * fato sustentou a afirmação. Sem registro, devolve null e o turno segue como
+   * antes — resposta genérica é melhor que fonte inventada.
+   */
+  if (!guardedResult) {
+    const fonteAnterior = await responderComFonteDaRespostaAnterior(conversationId ?? null, message).catch(() => null);
+    if (fonteAnterior) {
+      logger.info({ executionId, agent }, '[proveniência] fonte lida do registro da resposta anterior');
+      guardedResult = {
+        execution_id: executionId,
+        agent,
+        status: 'completed',
+        answer: fonteAnterior,
+        sources: [],
+        tool_calls: [],
+        usage: { input_tokens: 0, output_tokens: 0 },
+        metadata: { fast_path: 'previous_turn_provenance' },
+      };
+    }
+  }
+
   const smallTalk = !guardedResult ? detectSmallTalk(message, agent) : null;
   if (smallTalk) {
     logger.info({ executionId, agent, kind: smallTalk.kind }, "[small-talk] resposta direta, sem retrieval");
@@ -1070,7 +1139,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
 
     await recordTokenUsage(executionDbId, result);
     await recordAuditLog(agent, executionId, result);
-    await recordAssistantMessage(conversationId, agent, result.answer);
+    await recordAssistantMessage(conversationId, agent, result.answer, result.metadata);
     // Sem isso, GET /executions/:id sempre devolvia steps: [] pro caminho de
     // agente único (só processWorkflowStep grava execution_steps) - o balão
     // do chat lê execution.steps.at(-1) e ficava vazio mesmo quando o agente
