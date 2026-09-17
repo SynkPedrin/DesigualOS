@@ -20,7 +20,11 @@ import {
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
 import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context';
-import { agenteAceitaBlocoNaMensagem, contextoEnvenenaBusca } from './message-assembly';
+import {
+  agenteAceitaBlocoNaMensagem,
+  contextoGeralVaiNaMensagem,
+  operacionalPorCampoApartado,
+} from './message-assembly';
 
 const AGENT_HINTS = ['AUTO', ...AGENT_NAMES.map((agent) => agent.toUpperCase())] as [
   string,
@@ -359,7 +363,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         operationalTurn.briefingBlock ?? formatOperationalContextForPrompt(operationalTurn.context);
 
       const partesDaMensagem = [body.message];
-      if (contextBlock && !contextoEnvenenaBusca(decision.primary_agent)) {
+      if (contextBlock && contextoGeralVaiNaMensagem(decision.primary_agent)) {
         partesDaMensagem.push(`---\nContexto:\n${contextBlock}`);
       }
       // O Bento agora tem CAMPO SEPARADO pro dado operacional (`operational_context` no
@@ -367,7 +371,15 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       // de ClickUp dele interceptar com "de qual cliente?" — medido: recusa em 23ms com 10
       // tarefas reais já em mãos. Os outros agentes não têm esse campo, então pra eles o
       // bloco continua indo anexado.
-      const operationalParaBento = decision.primary_agent === 'bento' ? (operationalBlock ?? undefined) : undefined;
+      //
+      // O Otto entrou no mesmo caminho em 17/09/2026, por outro motivo: no
+      // worker ele tem ContextPack projetado por intenção, e o bloco colado na
+      // mensagem entrava por fora dessa projeção. Vindo por campo, o dado ao
+      // vivo vira um bloco de fonte como os outros — chega no turno
+      // operacional e fica de fora do pedido criativo.
+      const operacionalApartado = operacionalPorCampoApartado(decision.primary_agent)
+        ? (operationalBlock ?? undefined)
+        : undefined;
       // O bloco operacional vai TAMBÉM pro Bento, ao contrário do bloco de contexto geral.
       // Motivo: o problema documentado do Bento é a consulta vetorial ser poluída por texto
       // genérico (nome de usuário, dossiê, histórico) que puxa documento errado do vault. O
@@ -384,7 +396,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       // briefing da <cliente em cache>, tive um problema técnico" e ignora a pergunta.
       // Só o Bento recebe o dado, e por CAMPO SEPARADO (operational_context).
       // Regra extraída para ./message-assembly.ts (testável; portão do Jarbas, Onda 0).
-      if (operationalBlock && !operationalParaBento && agenteAceitaBlocoNaMensagem(decision.primary_agent)) {
+      if (operationalBlock && !operacionalApartado && agenteAceitaBlocoNaMensagem(decision.primary_agent)) {
         partesDaMensagem.push(`---\n${operationalBlock}`);
       }
       const messageWithContext = partesDaMensagem.join('\n\n');
@@ -396,7 +408,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         conversationId,
         decision,
         ...(attachments.length ? { attachments } : {}),
-        ...(operationalParaBento ? { operationalContext: operationalParaBento } : {}),
+        ...(operacionalApartado ? { operationalContext: operacionalApartado } : {}),
       });
 
       if (result.status === 'unavailable') {

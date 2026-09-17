@@ -78,6 +78,27 @@ function ehCabecalho(linha: string): boolean {
   return /^#{1,3}\s+\S/.test(linha.trim());
 }
 
+/**
+ * Tira as linhas de encanamento de QUALQUER texto que volte ao prompt.
+ *
+ * Nasceu dentro da projeção do dossiê e saiu daqui pra fora por causa da peça
+ * anterior: no turno de revisão o dispatch remanda ao modelo a última resposta
+ * do próprio Otto, que é o que "tá com cara de IA" está criticando. Se essa
+ * resposta tiver citado id de lista ou contagem de tarefa, remandar o texto
+ * inteiro reintroduz exatamente o enquadramento que a projeção tinha tirado —
+ * a realimentação volta, só que pela porta de trás.
+ *
+ * O que interessa da peça anterior é o texto criativo. O encanamento não.
+ */
+export function semEncanamentoOperacional(texto: string): string {
+  return texto
+    .split('\n')
+    .filter((l) => !LINHA_DE_ENCANAMENTO.test(l))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** Campos marcados como ausentes, por nome, para caber numa linha. */
 function camposFaltando(texto: string): string[] {
   const nomes: string[] = [];
@@ -139,18 +160,13 @@ export function projetarBlocoDeCliente(texto: string, modo: ModoDoTurno): string
   }
 
   const faltando = camposFaltando(texto);
-  const recortado = mantidas
-    // Toda linha que existe só pra dizer "não sei" sai: 22 delas repetindo a
-    // mesma ausência não informam melhor que uma frase, e ocupavam a maior
-    // parte do texto que o modelo lia.
-    .filter((l) => !EH_LACUNA.test(l))
-    // Identificador de lista, id de conta e contagem de tarefa não constroem
-    // peça nenhuma — e eram o material mais concreto que o modelo achava no
-    // prompt quando pediam títulos.
-    .filter((l) => !LINHA_DE_ENCANAMENTO.test(l))
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  // Toda linha que existe só pra dizer "não sei" sai: 22 delas repetindo a
+  // mesma ausência não informam melhor que uma frase, e ocupavam a maior parte
+  // do texto que o modelo lia. Depois vai o encanamento — identificador de
+  // lista, id de conta e contagem de tarefa não constroem peça nenhuma, e eram
+  // o material mais concreto que o modelo achava no prompt quando pediam
+  // títulos.
+  const recortado = semEncanamentoOperacional(mantidas.filter((l) => !EH_LACUNA.test(l)).join('\n'));
 
   const resumoDeLacunas =
     faltando.length > 0

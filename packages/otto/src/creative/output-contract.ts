@@ -159,14 +159,30 @@ export function ehRevisaoEliptica(mensagem: string): boolean {
  * contexto porque é o que decide o que entregar — e sem ele a resposta vira
  * status de conta.
  */
-export function blocoDeContinuacaoCriativa(artefatoAnterior: ArtefatoPedido): string {
+export function blocoDeContinuacaoCriativa(artefatoAnterior: ArtefatoPedido, pecaAnterior?: string): string {
   if (artefatoAnterior === 'indefinido') return '';
-  return [
+  const linhas = [
     `CONTINUAÇÃO CRIATIVA: o turno anterior entregou ${artefatoAnterior}. Este pedido é sobre ELA.`,
+  ];
+  /**
+   * A PEÇA ANTERIOR, literal. Sem ela "tá com cara de IA" não tem o que
+   * reescrever — o modelo só sabe que houve uma legenda, não qual. Até
+   * 17/09/2026 esse texto chegava só pelo bloco de contexto que a API
+   * concatenava na mensagem, junto com dossiê e ClickUp; trazê-lo por aqui é o
+   * que permite fechar aquele caminho sem perder a continuidade.
+   *
+   * Cortada: o que importa pra reescrever é o ângulo e a abertura, não o texto
+   * inteiro ocupando o lugar do resto do contexto.
+   */
+  if (pecaAnterior && pecaAnterior.trim().length > 0) {
+    linhas.push('', 'O QUE VOCÊ ENTREGOU NO TURNO ANTERIOR (é isto que está sendo criticado):', pecaAnterior.trim().slice(0, 1200), '');
+  }
+  linhas.push(
     `Entregue ${artefatoAnterior} de novo, reescrita — não um resumo, não um status da conta, não uma lista de tarefas.`,
     'Se a crítica foi "genérico" ou "cara de IA", mude o ÂNGULO, não as palavras: outra tensão, outro ponto de entrada, outra imagem. Trocar sinônimo não é refazer.',
     'O texto reescrito vem primeiro. Comentário sobre a mudança, se houver, vai depois dele.',
-  ].join('\n');
+  );
+  return linhas.join('\n');
 }
 
 /**

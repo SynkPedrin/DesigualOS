@@ -146,6 +146,47 @@ describe('operational_context_does_not_override_creative_intent', () => {
 });
 
 /**
+ * CONTINUIDADE SEM O BLOCO DA API (17/09/2026).
+ *
+ * Até aqui a peça anterior só chegava ao Otto porque a API concatenava o
+ * histórico da conversa na mensagem — junto com o dossiê cru e a lista do
+ * ClickUp, por fora do projetor. Fechado aquele caminho, a peça precisa vir
+ * pela estrutura: o dispatch lê a última resposta do assistente e passa ela
+ * aqui. Sem isso, "tá com cara de IA" sabe que houve uma legenda e não sabe
+ * QUAL — não há o que reescrever.
+ */
+describe('otto_previous_artifact_survives_without_api_context_concat', () => {
+  const PECA = 'Setenta anos não se comemora com bolo. Se comemora com quem ainda está aqui.';
+
+  it('a peça anterior viaja literal no bloco de continuação', () => {
+    const b = blocoDeContinuacaoCriativa('legenda', PECA);
+    expect(b).toContain(PECA);
+    expect(b).toMatch(/O QUE VOCÊ ENTREGOU NO TURNO ANTERIOR/);
+  });
+
+  it('e o contrato de reescrita continua junto: é a peça que está sendo criticada', () => {
+    const b = blocoDeContinuacaoCriativa('legenda', PECA);
+    expect(b).toMatch(/Entregue legenda de novo, reescrita/);
+    expect(b).toMatch(/mude o ÂNGULO, não as palavras/);
+  });
+
+  it('peça longa é cortada, não despejada: continuidade não pode virar o novo contexto dominante', () => {
+    const b = blocoDeContinuacaoCriativa('legenda', 'a'.repeat(5_000));
+    expect(b.length).toBeLessThan(2_000);
+  });
+
+  it('sem peça anterior o bloco segue válido — só perde o texto de referência', () => {
+    const b = blocoDeContinuacaoCriativa('legenda');
+    expect(b).toMatch(/Entregue legenda de novo, reescrita/);
+    expect(b).not.toMatch(/O QUE VOCÊ ENTREGOU NO TURNO ANTERIOR/);
+  });
+
+  it('resposta anterior vazia não abre seção vazia', () => {
+    expect(blocoDeContinuacaoCriativa('legenda', '   ')).not.toMatch(/O QUE VOCÊ ENTREGOU/);
+  });
+});
+
+/**
  * FRESCOR. O aviso de sincronização atrasada é o primeiro bloco do contexto e
  * vem em caixa alta. Protege turno operacional; num pedido criativo virou a
  * resposta inteira — "me dá 3 títulos" voltou com "o dado está atrasado" e sem

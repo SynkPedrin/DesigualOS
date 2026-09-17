@@ -167,4 +167,39 @@ describe('buildOperationalContext', () => {
     expect(linhas[1]).toMatch(/Normal antes/);
     expect(linhas[2]).toMatch(/Normal depois/);
   });
+
+  /**
+   * O `prazo:` é data de entrega da tarefa. Numa tarefa chamada "Elite
+   * Aniversário 70 anos" ela fica a um passo de virar "a data do aniversário" —
+   * e é a única data concreta que o turno tem em mãos quando alguém pede "a
+   * data exata do evento". Entregar sempre não é licença pra cravar fato.
+   */
+  describe('task_deadline_is_not_event_date', () => {
+    it('o bloco declara que prazo de tarefa não é data de evento', async () => {
+      const d = deps({
+        queryTasks: vi.fn(async () => ({
+          tasks: [task({ name: 'Elite Aniversário 70 anos Setembro' })],
+          truncated: false,
+        })),
+      });
+      const r = await buildOperationalContext(scope(), d, NOW);
+      expect(r.block).toMatch(/PRAZO é data de entrega da TAREFA, nunca data de evento/);
+      expect(r.block).toMatch(/A CONFIRMAR/);
+    });
+
+    it('e o aviso vem ANTES da listagem, onde as datas aparecem', async () => {
+      const r = await buildOperationalContext(scope(), deps(), NOW);
+      const linhas = r.block!.split('\n');
+      const aviso = linhas.findIndex((l) => l.startsWith('PRAZO é data de entrega'));
+      const primeiraTarefa = linhas.findIndex((l) => l.startsWith('- '));
+      expect(aviso).toBeGreaterThan(-1);
+      expect(aviso).toBeLessThan(primeiraTarefa);
+    });
+
+    it('bloco sem tarefa nenhuma não carrega o aviso: não há prazo pra confundir', async () => {
+      const d = deps({ queryTasks: vi.fn(async () => ({ tasks: [], truncated: false })) });
+      const r = await buildOperationalContext(scope(), d, NOW);
+      expect(r.block).not.toMatch(/PRAZO é data de entrega/);
+    });
+  });
 });

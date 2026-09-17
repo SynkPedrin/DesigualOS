@@ -6,8 +6,8 @@ import type { AgentName } from '@desigual-os/types';
  * mesma que estava inline na rota; os comentários com a medição original
  * continuam em chat/routes.ts.
  *
- * As duas regras nasceram de incidentes medidos em produção (09/09 e
- * 10/09/2026):
+ * As regras nasceram de incidentes medidos em produção (09/09, 10/09 e
+ * 17/09/2026):
  *
  * - O bento-qa usa a mensagem INTEIRA como consulta vetorial. Bloco de
  *   contexto geral (usuário, dossiê, histórico) na mensagem degradava a busca
@@ -18,18 +18,55 @@ import type { AgentName } from '@desigual-os/types';
  *   operacional grande (nomes de cliente, "campanha", "relatório") dispara o
  *   edge case job_via_whatsapp, que responde com erro genérico e ignora a
  *   pergunta. Por isso o bloco operacional NUNCA vai na mensagem deles.
+ *
+ * - O Otto ganhou projeção de contexto no worker (por intenção: pedido
+ *   criativo não recebe lista de tarefa nem id de lista). Só que a API
+ *   concatenava OUTRA cópia do dossiê e do histórico na mensagem, por fora do
+ *   projetor. Medido em 17/09/2026 numa conversa real: 16 chars de pedido
+ *   contra 3913 chars de bloco não projetado, citando ClickUp e id de lista, e
+ *   com 6 linhas de RESPOSTAS ANTERIORES DO PRÓPRIO OTTO — uma resposta
+ *   operacional virava contexto operacional do turno seguinte e o
+ *   enquadramento se reforçava sozinho. Projetar num caminho enquanto o outro
+ *   despeja o texto cru não projeta nada.
+ *
+ * A regra que ficou: a MENSAGEM É A MENSAGEM DO USUÁRIO. Conhecimento chega
+ * por estrutura — o ContextPack que o worker monta (e projeta) e o campo
+ * apartado de dado operacional. Nada disso reduz o que o agente sabe; muda só
+ * por onde entra.
  */
 
-/** O bloco de contexto geral envenena a busca vetorial do bento-qa. */
-export function contextoEnvenenaBusca(agent: AgentName): boolean {
-  return agent === 'bento';
+/**
+ * Quem recebe o bloco de contexto GERAL (usuário, dossiê, histórico) colado na
+ * mensagem.
+ *
+ * Bento fora: envenena a busca vetorial dele. Otto fora: o worker já monta e
+ * PROJETA esse mesmo conhecimento, e a segunda cópia crua era o que anulava a
+ * projeção. Jarbas e Suzy continuam recebendo — eles não têm ContextPack no
+ * worker, e para eles esta é a única via.
+ */
+export function contextoGeralVaiNaMensagem(agent: AgentName): boolean {
+  return agent !== 'bento' && agent !== 'otto';
 }
 
 /**
  * Quem pode receber o bloco operacional do ClickUp ANEXADO na mensagem.
- * Bento recebe por campo separado (operational_context); Jarbas e Suzy nunca
- * recebem; só Otto e Studio aceitam na mensagem.
+ *
+ * Jarbas e Suzy nunca (edge case job_via_whatsapp). Bento e Otto recebem o
+ * mesmo dado por CAMPO SEPARADO — ver `operacionalPorCampoApartado`. Sobra o
+ * Studio, que não tem campo próprio.
  */
 export function agenteAceitaBlocoNaMensagem(agent: AgentName): boolean {
-  return agent === 'otto' || agent === 'studio';
+  return agent === 'studio';
+}
+
+/**
+ * Quem recebe o dado operacional por campo apartado, fora da mensagem.
+ *
+ * No Bento o campo vira `operational_context` no /ask. No Otto ele entra no
+ * ContextPack do worker como bloco de fonte, sujeito à mesma projeção por
+ * intenção que o resto: turno operacional recebe, pedido criativo não. É isto
+ * que permite tirar o bloco da mensagem sem o Otto perder o dado ao vivo.
+ */
+export function operacionalPorCampoApartado(agent: AgentName): boolean {
+  return agent === 'bento' || agent === 'otto';
 }

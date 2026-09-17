@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { classificarTurno, projetarBlocoDeCliente, relatarProjecao } from './otto-context-projection.js';
+import {
+  classificarTurno,
+  projetarBlocoDeCliente,
+  relatarProjecao,
+  semEncanamentoOperacional,
+} from './otto-context-projection.js';
 
 /**
  * O dossiê real da Elite, reduzido à mesma FORMA: identidade e marca curtas,
@@ -162,5 +167,39 @@ describe('encanamento operacional fora da seção de ClickUp', () => {
 
   it('turno operacional continua vendo tudo', () => {
     expect(projetarBlocoDeCliente(DOSSIE_COM_ENCANAMENTO, 'OPERACIONAL')).toContain('901411764375');
+  });
+});
+
+/**
+ * A PORTA DE TRÁS DA REALIMENTAÇÃO.
+ *
+ * Fechado o bloco cru da API, o turno de revisão passou a remandar ao modelo a
+ * última resposta do próprio Otto — é ela que "tá com cara de IA" está
+ * criticando. Se essa resposta tiver citado id de lista ou contagem de tarefa,
+ * remandar o texto inteiro traz de volta, pela porta de trás, exatamente o
+ * enquadramento que a projeção tinha tirado.
+ */
+describe('otto_api_context_does_not_reinject_previous_clickup_answer', () => {
+  const RESPOSTA_ANTERIOR = [
+    'Setenta anos não se comemora com bolo.',
+    'Registro no ClickUp: lista 901411764375, 12 tarefas abertas.',
+    'Se comemora com quem ainda está aqui.',
+  ].join('\n');
+
+  it('o encanamento sai da peça anterior antes de ela voltar ao prompt', () => {
+    const limpa = semEncanamentoOperacional(RESPOSTA_ANTERIOR);
+    expect(limpa).not.toMatch(/901411764375/);
+    expect(limpa).not.toMatch(/ClickUp/);
+  });
+
+  it('mas o texto criativo sobrevive inteiro — é o que está sendo reescrito', () => {
+    const limpa = semEncanamentoOperacional(RESPOSTA_ANTERIOR);
+    expect(limpa).toMatch(/Setenta anos não se comemora com bolo/);
+    expect(limpa).toMatch(/quem ainda está aqui/);
+  });
+
+  it('peça limpa atravessa sem mudança', () => {
+    const peca = 'Uma linha.\n\nOutra linha, com respiro.';
+    expect(semEncanamentoOperacional(peca)).toBe(peca);
   });
 });

@@ -50,7 +50,12 @@ import {
   ehRevisaoEliptica,
   exigeFrescorOperacional,
 } from '@desigual-os/otto';
-import { classificarTurno, projetarBlocoDeCliente, relatarProjecao } from './otto-context-projection.js';
+import {
+  classificarTurno,
+  projetarBlocoDeCliente,
+  relatarProjecao,
+  semEncanamentoOperacional,
+} from './otto-context-projection.js';
 import { anexarFontes, formatProvenanceBlock } from './provenance-block';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
@@ -190,8 +195,35 @@ export function operationalEvidenceSummary(operationalContext: string): string {
   return [todas[0], ...quantitativas].join(' ').slice(0, 600);
 }
 
+/**
+ * O dado operacional ao vivo pertence a este turno?
+ *
+ * Desde 17/09/2026 a API manda o bloco do ClickUp pro Otto por CAMPO APARTADO,
+ * em vez de colado na mensagem (ver apps/api/src/chat/message-assembly.ts). O
+ * campo chega em todo turno, porque a API resolve o escopo operacional sempre —
+ * mas "chegou" não é "vale pra este pedido". Num "me dá 3 títulos" a lista de
+ * tarefas era justamente o material mais concreto do prompt, e voltava como
+ * resposta.
+ *
+ * A decisão é a MESMA do projetor do dossiê, e de propósito: turno operacional
+ * ou misto recebe o estado da conta; criação e revisão não. Normalizar aqui,
+ * uma vez, faz o resto do caminho enxergar a mesma verdade — o que exige
+ * evidência, a checagem de contagem e o que entra no pacote.
+ *
+ * Vale só pro Otto. O Bento é operacional por natureza: pra ele o campo é o
+ * canal normal e nada muda.
+ */
+export function comContextoOperacionalDoTurno(data: AgentJobData): AgentJobData {
+  if (data.agent !== 'otto' || !data.operationalContext) return data;
+  const { modo } = classificarTurno(data.message);
+  if (modo === 'OPERACIONAL' || modo === 'MISTO') return data;
+  const { operationalContext: _foraDesteTurno, ...semOperacional } = data;
+  return semOperacional;
+}
+
 export async function dispatchWithAgentLoop(params: DispatchParams): Promise<ExecuteResponse> {
-  const { data, userId, clientId, logger, callAgent } = params;
+  const { userId, clientId, logger, callAgent } = params;
+  const data = comContextoOperacionalDoTurno(params.data);
   const taskClass: TaskClass = classifyTask(data.message, data.agent);
 
   let lastNodeMetadata: Record<string, unknown> | undefined;
@@ -396,6 +428,20 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   const blocoFrescor =
     data.agent === 'otto' && !exigeFrescorOperacional(data.message) ? '' : frescorBruto;
 
+  /**
+   * DADO OPERACIONAL AO VIVO do Otto, agora por dentro do pacote.
+   *
+   * Até 17/09/2026 este bloco vinha colado na mensagem pela API, junto com uma
+   * segunda cópia crua do dossiê e do histórico — por fora do projetor, que era
+   * o que anulava a projeção. Agora chega por campo apartado e entra aqui como
+   * bloco de fonte, sujeito à ordem e ao orçamento como qualquer outro.
+   *
+   * Já vem filtrado por turno (comContextoOperacionalDoTurno): num pedido
+   * criativo o campo nem chega até aqui. O Bento não passa por isto — pra ele o
+   * campo segue direto pro /ask, que é o canal próprio dele.
+   */
+  const blocoOperacionalDoTurno = data.agent === 'otto' ? (data.operationalContext ?? '') : '';
+
   // A2A: o domínio do OUTRO agente, quando o turno precisa dele. Registrado
   // como envelope tipado e atendido pela FONTE — nunca por um modelo chamando
   // o outro, que é o caminho de loop e de verdade inventada em consenso.
@@ -455,10 +501,27 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         where conversation_id = ${data.conversationId}::uuid and role = 'user'
         order by created_at desc limit 4`)
       .catch(() => [] as unknown[])) as unknown as Array<{ content: string }>;
+    /**
+     * A PEÇA anterior, não só o tipo dela: é o que "tá com cara de IA" está
+     * criticando, e sem o texto não há o que reescrever. Antes de 17/09/2026
+     * ela só chegava porque a API colava o histórico da conversa na mensagem;
+     * lida daqui, ela vem da estrutura e sem o resto do despejo.
+     *
+     * Passa pelo mesmo filtro de linha da projeção: se a resposta anterior
+     * tiver citado id de lista ou contagem de tarefa, remandar o texto cru
+     * reintroduziria o enquadramento operacional que a projeção tirou.
+     */
+    const respostas = (await db
+      .execute(sql`
+        select content from messages
+        where conversation_id = ${data.conversationId}::uuid and role = 'assistant'
+        order by created_at desc limit 1`)
+      .catch(() => [] as unknown[])) as unknown as Array<{ content: string }>;
+    const pecaAnterior = semEncanamentoOperacional(respostas[0]?.content ?? '');
     for (const m of anteriores) {
       const c = contratoDeSaida(m.content ?? '');
       if (c.artefato !== 'indefinido') {
-        blocoContinuacao = blocoDeContinuacaoCriativa(c.artefato);
+        blocoContinuacao = blocoDeContinuacaoCriativa(c.artefato, pecaAnterior);
         break;
       }
     }
@@ -703,6 +766,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         { fonte: 'frescor', texto: blocoContinuacao },
         { fonte: 'frescor', texto: blocoFrescor },
         { fonte: 'cliente', texto: blocoClienteFinal },
+        // O estado ao vivo da conta, quando o turno pede: fato consultado, na
+        // mesma faixa de autoridade do registro de campanha.
+        { fonte: 'campanha', texto: blocoOperacionalDoTurno },
         { fonte: 'campanha', texto: blocoCampanha },
         { fonte: 'pessoas', texto: blocoPessoas },
         // O bloco do outro domínio entra junto da campanha: é fato de fonte,

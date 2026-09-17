@@ -200,6 +200,20 @@ export async function buildOperationalContext(
   if (result.truncated) {
     linhas.push('ATENÇÃO: a consulta atingiu o teto de páginas — o número acima é um MÍNIMO, não o total. Diga isso se for citar quantidade.');
   }
+  /**
+   * PRAZO NÃO É DATA DE EVENTO.
+   *
+   * O `prazo:` de cada linha abaixo é a data de entrega da TAREFA no ClickUp —
+   * quando a peça precisa estar pronta. Numa tarefa chamada "Elite Aniversário
+   * 70 anos" essa data fica a um passo de virar "a data do aniversário", e é a
+   * única data concreta que o turno tem em mãos. Pedido de "coloca a data exata
+   * do evento" é exatamente o caso em que entregar sempre não pode virar
+   * licença pra cravar fato: a resposta certa é pedir a data ou marcá-la a
+   * confirmar.
+   */
+  linhas.push(
+    'PRAZO é data de entrega da TAREFA, nunca data de evento, de veiculação ou de campanha. Se pedirem a data de um evento e ela não estiver escrita em outro lugar, ela NÃO é conhecida: peça ou marque [A CONFIRMAR], não deduza de um prazo.',
+  );
   linhas.push('');
 
   for (const { clientName } of byClient) {
