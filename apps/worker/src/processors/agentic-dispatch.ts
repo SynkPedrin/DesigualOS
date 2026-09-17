@@ -50,6 +50,7 @@ import {
   ehRevisaoEliptica,
   exigeFrescorOperacional,
 } from '@desigual-os/otto';
+import { classificarTurno, projetarBlocoDeCliente, relatarProjecao } from './otto-context-projection.js';
 import { anexarFontes, formatProvenanceBlock } from './provenance-block';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
@@ -342,7 +343,23 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       executionClientId: campanhaDoTurno.campanha.clientId,
     }).catch(() => clienteDoTurno);
   }
-  const blocoClienteFinal = clienteDoTurnoFinal ? formatClientBlock(clienteDoTurnoFinal, totalClientes) : blocoCliente;
+  const blocoClienteBruto = clienteDoTurnoFinal ? formatClientBlock(clienteDoTurnoFinal, totalClientes) : blocoCliente;
+  /**
+   * PROJEÇÃO SÓ PRO OTTO. Medido: num "me dá 3 títulos" o dossiê chegava com
+   * 8211 chars contra 16 do pedido, e a maior seção dele eram 1642 chars de
+   * lista do ClickUp. Nome de tarefa virava o candidato a título mais saliente
+   * do prompt — e voltou como resposta. O conhecimento continua inteiro; o que
+   * muda é o recorte deste turno.
+   */
+  const turnoOtto = classificarTurno(data.message);
+  const blocoClienteFinal =
+    data.agent === 'otto' ? projetarBlocoDeCliente(blocoClienteBruto, turnoOtto.modo) : blocoClienteBruto;
+  if (data.agent === 'otto' && blocoClienteBruto.length > 0) {
+    logger.info(
+      { executionId: data.executionId, ...relatarProjecao(blocoClienteBruto, blocoClienteFinal, turnoOtto) },
+      '[projeção] contexto do turno recortado',
+    );
+  }
 
   const donoDaCampanha = campanhaDoTurno?.campanha ? await nomeDoCliente(campanhaDoTurno.campanha.clientId).catch(() => null) : null;
   const donosForaDoEscopo: Record<string, string> = {};

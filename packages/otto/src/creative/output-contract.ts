@@ -198,10 +198,21 @@ const DEPENDE_DO_AGORA = [
   /\bcomo (?:est[áa]|ta|anda)\b/i,
   /\btarefas?\b|\btasks?\b/i,
   /\bentregas?\b/i,
-  /\bagora\b|\bhoje\b|\bontem\b/i,
   /\bclickup\b/i,
 ];
 
+/**
+ * "Agora faz uma legenda" não pede estado da operação: ali "agora" é marcador
+ * de discurso, não referência temporal. Medido — com `agora` na lista acima, o
+ * turno virava MISTO e o contexto operacional voltava inteiro pro pedido
+ * criativo. Palavra de tempo só conta quando vem acompanhada de algo
+ * operacional de verdade.
+ */
+const TEMPO_SOZINHO = /\b(hoje|ontem|agora|amanh[ãa])\b/i;
+const COISA_OPERACIONAL = /\b(tarefas?|tasks?|entregas?|prazos?|pend[êe]ncias?|aprova[çc][ãa]o|status|atrasad)/i;
+
 export function exigeFrescorOperacional(mensagem: string): boolean {
-  return DEPENDE_DO_AGORA.some((re) => re.test(mensagem ?? ''));
+  const t = mensagem ?? '';
+  if (DEPENDE_DO_AGORA.some((re) => re.test(t))) return true;
+  return TEMPO_SOZINHO.test(t) && COISA_OPERACIONAL.test(t);
 }
