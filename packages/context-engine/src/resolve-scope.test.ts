@@ -281,3 +281,36 @@ describe('como a agência pede de verdade', () => {
     expect((await resolveOperationalScope('escreve uma legenda bonita')).kind).toBe('NONE');
   });
 });
+
+describe('panorama pede dado, não só escopo', () => {
+  it('"me atualiza" é operacional: sem isso o escopo era global e o dado vinha vazio', async () => {
+    const r = await resolveOperationalScope('me atualiza');
+    expect(r.kind).toBe('GLOBAL');
+    expect(r.operational).toBe(true);
+  });
+
+  it('"o que tá pegando?" idem', async () => {
+    const r = await resolveOperationalScope('o que tá pegando?');
+    expect(r.kind).toBe('GLOBAL');
+    expect(r.operational).toBe(true);
+  });
+
+  it('saudação continua fora: não é pedido de panorama', async () => {
+    const r = await resolveOperationalScope('oi, tudo bem?');
+    expect(r.operational).toBe(false);
+  });
+});
+
+describe('follow-up nu numa conversa', () => {
+  it('"e a Tammy?" é pergunta sobre PESSOA, não silêncio', async () => {
+    expect((await resolveOperationalScope('e a Tammy?')).kind).toBe('PERSON');
+  });
+
+  it('cliente conhecido continua ganhando: "e a Cosentino?" é CLIENT', async () => {
+    expect((await resolveOperationalScope('e a Cosentino?')).kind).toBe('CLIENT');
+  });
+
+  it('coisa não vira gente: "e a campanha?" não é PERSON', async () => {
+    expect((await resolveOperationalScope('e a campanha?')).kind).not.toBe('PERSON');
+  });
+});

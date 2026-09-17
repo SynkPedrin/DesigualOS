@@ -83,6 +83,33 @@ function stripAccents(text: string): string {
  * "todas as tasks da 3net" tem "todas" mas é escopo de cliente (ver precedência em
  * `resolveOperationalScope`).
  */
+/**
+ * Como a agência pede de verdade: "me atualiza", "o que tá pegando?".
+ *
+ * Lista PRÓPRIA, e não mais um item dentro de GLOBAL_MARKERS, porque estas
+ * frases precisam decidir DUAS coisas ao mesmo tempo — o escopo é a operação
+ * inteira E a intenção é operacional. Medido em 17/09/2026: com elas só no
+ * escopo, "me atualiza" resolvia GLOBAL e mesmo assim voltava sem dado nenhum,
+ * porque o `operational` abaixo continuava falso e a consulta ao ClickUp nunca
+ * acontecia. O agente então respondia "não recebi a lista" — que é pior que não
+ * entender a pergunta, porque parece problema de dado.
+ *
+ * São frases INTEIRAS, nunca palavras soltas: "me atualiza" só aparece quando
+ * alguém quer o panorama. Palavra solta aqui é o erro que já custou 287
+ * campanhas neste repositório.
+ */
+const PANORAMA_MARKERS = [
+  'me atualiza',
+  'me atualize',
+  'me poe a par',
+  'ta pegando',
+  'esta pegando',
+  'como estamos',
+  'como que ta',
+  'status geral',
+  'panorama',
+];
+
 const GLOBAL_MARKERS = [
   'todos os clientes',
   'todos clientes',
@@ -97,26 +124,9 @@ const GLOBAL_MARKERS = [
   'no total',
   'da carteira',
   'carteira inteira',
-  /**
-   * Como a agência pede de verdade. Medido em 17/09/2026 preparando a simulação
-   * de uso real: "me atualiza" e "o que tá pegando?" resolviam NONE, e sem
-   * escopo o agente não recebe dado operacional nenhum — então a pergunta mais
-   * comum do dia era a que menos funcionava.
-   *
-   * São frases INTEIRAS, não palavras soltas, e é isso que as torna seguras:
-   * "me atualiza" só aparece quando alguém quer o panorama. Palavra solta nesta
-   * lista é o erro que já custou 287 campanhas neste repositório.
-   */
-  'me atualiza',
-  'me atualize',
-  'me poe a par',
-  'ta pegando',
-  'esta pegando',
-  'como estamos',
-  'como que ta',
-  'status geral',
-  'panorama',
+  ...PANORAMA_MARKERS,
 ];
+
 
 /**
  * Pergunta que compara ENTIDADES entre si. Implica cross-client mesmo sem a palavra
@@ -259,6 +269,18 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
   const autoSuficientes: RegExp[] = [
     /\bquem\s+(?:e|eh|seria)\s+(?:a|o)?\s*([a-z][a-z]*(?:\s+[a-z]+)?)\s*\??$/,
     /\b(?:a|o)\s+([a-z][a-z]+)\s+(?:trabalha|atende|responde|cuida)\b/,
+    /**
+     * Follow-up nu: "e a Tammy?". É como se pergunta numa conversa que já está
+     * acontecendo, e era o buraco visível na simulação de uso real — resolvia
+     * NONE, o agente não recebia dado nenhum e respondia que não encontrou.
+     *
+     * Seguro por dois motivos: cliente conhecido é resolvido ANTES (precedência
+     * 2), então "e a Cosentino?" não chega aqui; e o nome que chega ainda é
+     * conferido contra os membros REAIS do ClickUp na camada que tem a API. Não
+     * achou ninguém com esse nome? A resposta honesta é dizer isso — que é
+     * melhor que o silêncio de antes.
+     */
+    /^e\s+(?:a|o)\s+([a-z][a-z]+)\s*\??$/,
   ];
 
   const dependentesDeOperacional: RegExp[] = [
@@ -277,6 +299,9 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
     'clickup', 'cliente', 'clientes', 'operacao', 'agencia', 'todos', 'todas', 'tudo', 'isso', 'essa',
     'ele', 'ela', 'eles', 'elas', 'voce', 'você', 'eu', 'nos', 'mim', 'alguem', 'ninguem',
     'quem', 'responsavel', 'squad', 'time', 'equipe', 'pessoa', 'gente', 'aqui', 'esse', 'este',
+    // Coisas, não gente: entram por causa do follow-up nu ("e a campanha?").
+    'campanha', 'campanhas', 'peca', 'peça', 'legenda', 'legendas', 'copy', 'briefing', 'proposta',
+    'reuniao', 'reunião', 'conta', 'contas', 'verba', 'midia', 'mídia', 'lista', 'listas',
   ]);
   const patterns = opcoes.comSinalOperacional
     ? [...autoSuficientes, ...dependentesDeOperacional]
@@ -325,7 +350,16 @@ export async function resolveOperationalScope(
 
   // Pedido de briefing é operacional por si: "me monte um briefing da 3net" não cita
   // task nem prazo, mas precisa de dado de operação pra ser respondido.
-  const operational = operationalHits.length > 0 || aggregateHits.length > 0 || briefingHits.length > 0 || temporal !== null;
+  const panoramaHits = matched(flat, PANORAMA_MARKERS);
+  if (panoramaHits.length) signals.push(`panorama:${panoramaHits[0]}`);
+
+  const operational =
+    operationalHits.length > 0 ||
+    aggregateHits.length > 0 ||
+    briefingHits.length > 0 ||
+    // Pedir o panorama É pedir o estado da operação, mesmo sem dizer "tarefa".
+    panoramaHits.length > 0 ||
+    temporal !== null;
   const comparative = comparativeHits.length > 0;
   const briefing = briefingHits.length > 0;
 
@@ -436,7 +470,7 @@ export async function resolveOperationalScope(
   // "de qual cliente?" — que é exatamente o comportamento que o produto existe
   // para eliminar: quem pergunta sobre a operação não deveria ter que nomear
   // um cliente para receber resposta. Medido no navegador em 16/09/2026.
-  if (operational && (aggregateHits.length > 0 || temporal !== null || operationalHits.length > 0)) {
+  if (operational && (aggregateHits.length > 0 || temporal !== null || operationalHits.length > 0 || panoramaHits.length > 0)) {
     return {
       kind: 'GLOBAL',
       clients: [],
