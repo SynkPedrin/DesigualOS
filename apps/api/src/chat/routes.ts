@@ -25,6 +25,7 @@ import {
   contextoGeralVaiNaMensagem,
   operacionalPorCampoApartado,
 } from './message-assembly';
+import { comContinuidadeDeAgente } from './agent-continuity';
 
 const AGENT_HINTS = ['AUTO', ...AGENT_NAMES.map((agent) => agent.toUpperCase())] as [
   string,
@@ -282,10 +283,28 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
-      const decision =
+      /**
+       * QUEM RESPONDEU POR ÚLTIMO nesta conversa. Sai da estrutura que já
+       * existe — `messages.agent` é gravado em toda resposta — e serve pra uma
+       * coisa só: não trocar de agente quando o turno não trouxe sinal nenhum.
+       * Ver ./agent-continuity.ts. Falha aqui não derruba o chat: perde-se a
+       * herança, que é o comportamento de antes.
+       */
+      const ultimas = (await db
+        .execute(
+          sql`select agent from messages
+              where conversation_id = ${conversationId}::uuid and role = 'assistant' and agent is not null
+              order by created_at desc limit 1`,
+        )
+        .catch(() => [] as unknown[])) as unknown as Array<{ agent: AgentName | null }>;
+      const agenteAnterior = ultimas[0]?.agent ?? null;
+
+      const decision = comContinuidadeDeAgente(
         body.agent_hint === 'AUTO'
           ? await route(body.message, request.log)
-          : manualDecision(body.agent_hint.toLowerCase() as AgentName);
+          : manualDecision(body.agent_hint.toLowerCase() as AgentName),
+        agenteAnterior,
+      );
 
       // As duas montagens são independentes (a de contexto lê o banco pela
       // decision; a operacional lê mensagem+usuário e às vezes o ClickUp).
