@@ -768,6 +768,7 @@ export async function tryBentoActionGuard(params: {
       tasks: resultados.map((r) => ({
         task_id: r.taskId,
         title: r.title,
+        idempotency_key: r.idempotencyKey,
         deliverable: r.deliverable,
         status: r.status,
         assignee: r.assigneeUsername,

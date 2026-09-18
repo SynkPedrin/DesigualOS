@@ -3,6 +3,7 @@ import {
   createTaskComment,
   findDuplicateTask,
   getTask,
+  normalizeTaskName,
   getTaskComments,
   getTaskListId,
   queryOperationTasks,
@@ -98,6 +99,12 @@ export interface CreateOutcome {
   blockedBy: CreateBlockReason | null;
   /** Candidatos quando o nome é ambíguo — a pergunta de desambiguação sai daqui. */
   candidates: string[];
+  /**
+   * A chave que decide se isto é a MESMA demanda de antes: título normalizado
+   * dentro da lista de destino. Vai pro trace porque, quando a Tammy reenvia
+   * "não foi, cria de novo", o que explica a decisão é ver a chave que casou.
+   */
+  idempotencyKey: string;
   briefingAttached: boolean;
   briefingVerified: boolean;
   /** Um resultado por material, com o que foi CONFIRMADO por leitura. */
@@ -133,9 +140,10 @@ export const defaultCreateDeps: CreateDeps = {
   readListId: getTaskListId,
 };
 
-function vazio(title: string, planned: PlannedTask): CreateOutcome {
+function vazio(title: string, planned: PlannedTask, listId: string): CreateOutcome {
   return {
     title,
+    idempotencyKey: `${listId}:${normalizeTaskName(title)}`,
     deliverable: planned.deliverable,
     status: 'failed',
     taskId: null,
@@ -168,7 +176,7 @@ export async function createOneTask(
   input: CreateOneInput,
   deps: CreateDeps = defaultCreateDeps,
 ): Promise<CreateOutcome> {
-  const out = vazio(input.title, input.planned);
+  const out = vazio(input.title, input.planned, listId);
   const record = (tool: string, input_summary: string, ok: boolean, error?: string) => {
     out.toolCalls.push({ tool, input_summary, ok, ...(error ? { error } : {}) });
   };

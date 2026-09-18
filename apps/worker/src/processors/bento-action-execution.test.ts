@@ -506,3 +506,29 @@ describe('canary allowlist', () => {
     expect(podeEscreverNoCanary('gui@x.org', env)).toBe(false);
   });
 });
+
+describe('observabilidade do canary', () => {
+  it('a chave de idempotência é lista + título normalizado', async () => {
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), deps());
+    expect(r.idempotencyKey).toBe('L1:criar layout das placas — d. carvalho');
+  });
+
+  it('a mesma demanda na MESMA lista tem a mesma chave, com caixa diferente', async () => {
+    const a = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), deps());
+    const b = await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ title: '  CRIAR LAYOUT DAS PLACAS — D. CARVALHO ' }), deps());
+    expect(b.idempotencyKey).toBe(a.idempotencyKey);
+  });
+
+  it('a mesma demanda em OUTRA lista é outra chave: cliente diferente, task diferente', async () => {
+    const a = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), deps());
+    const b = await createOneTask(CONFIG, 'L2', REQUESTER, entrada(), deps());
+    expect(b.idempotencyKey).not.toBe(a.idempotencyKey);
+  });
+
+  it('task bloqueada por pessoa também carrega a chave, pro trace explicar a decisão', async () => {
+    const d = deps({ resolveMember: vi.fn(async () => ({ status: 'not_found' as const, candidates: [] })) as unknown as CreateDeps['resolveMember'] });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), d);
+    expect(r.status).toBe('blocked');
+    expect(r.idempotencyKey).toContain('L1:');
+  });
+});
