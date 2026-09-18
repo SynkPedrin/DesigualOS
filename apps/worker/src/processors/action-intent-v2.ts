@@ -220,6 +220,23 @@ const BLOQUEADORES: Array<{ re: RegExp; rotulo: string }> = [
 const ANALISE =
   /\b(analis[ae]|analisar|analise|avali[ae]|avaliar|revis[ae]|revisar|diagnostic|o que voce acha|o que voces acham|me diga|me diz|me fala|sua opiniao|da uma olhada|de uma olhada|olha isso|veja isso|checa|confere|conferir|compara)\b/;
 
+/**
+ * LIBERAÇÃO — o "sinal verde" depois de um freio.
+ *
+ * Caso real do fluxo de trabalho: a pessoa segura ("não cria ainda, faz o
+ * briefing primeiro") e, dois turnos depois, libera ("agora pode criar"). Pela
+ * regra do infinitivo isso não era ordem — "criar" depois de "pode" parecia
+ * deliberação — e o pedido morria justamente no momento em que a pessoa tinha
+ * acabado de autorizar. Ela já disse não uma vez; ouvir "não" de novo quando
+ * disse sim é o pior jeito de perder confiança.
+ *
+ * O que separa liberação de pergunta é o ponto de interrogação: "pode criar?"
+ * consulta, "pode criar" manda. E `NEGACAO` continua vindo antes, então "ainda
+ * não pode criar" segue sendo freio.
+ */
+const LIBERACAO =
+  /\b(?:agora\s+)?(?:ja\s+)?(?:pode|podem|liberado|liberada|autorizado|autorizada|confirmado|confirmada)\s+(?:ja\s+)?(?:criar|lancar|abrir|separar|atribuir|registrar|adicionar|cadastrar|comentar|mandar|subir|seguir|tocar)\b|\b(?:pode|podem)\s+(?:ir|mandar ver|seguir em frente)\b/;
+
 /* ------------------------------------------------------------------ */
 /* SEGMENTAÇÃO                                                         */
 /* ------------------------------------------------------------------ */
@@ -293,6 +310,8 @@ function classifySegment(raw: { text: string; index: number; kind: Segment['kind
   const hasTarget = alvoOperacional || deictico;
 
   const declarativa = ATRIBUICAO_DECLARATIVA.test(f.normalized) && DESTINO_NOMEADO.test(semNomes);
+  // Liberação só vale como ordem em AFIRMAÇÃO: "pode criar?" é consulta.
+  const liberacao = LIBERACAO.test(f.normalized) && !raw.text.trim().endsWith('?');
 
   // Uma ORDEM precisa de: verbo em forma de ordem, alvo quando a família
   // exige, nenhuma negação e nenhum contexto não-executável. Citação e item de
@@ -311,6 +330,11 @@ function classifySegment(raw: { text: string; index: number; kind: Segment['kind
     if (declarativa) {
       acts = true;
       families.push('assign:declarativo');
+      imperative = true;
+    }
+    if (liberacao) {
+      acts = true;
+      families.push('create:liberacao');
       imperative = true;
     }
   }

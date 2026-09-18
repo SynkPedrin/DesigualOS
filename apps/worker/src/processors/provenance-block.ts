@@ -25,6 +25,9 @@ export function pedeProveniencia(mensagem: string): boolean {
 /** Como cada fonte do pacote se chama para um humano. */
 const NOME_HUMANO: Record<FonteDeContexto, string> = {
   frescor: 'estado de sincronização com o ClickUp',
+  // O diálogo recente entra no pacote pra resolver referência, mas NÃO
+  // sustenta fato: citá-lo como fonte seria o agente se citando.
+  dialogo: 'o que já foi dito nesta conversa',
   cliente: 'dossiê do cliente registrado no sistema',
   campanha: 'registro de campanhas, derivado das tarefas do ClickUp',
   pessoas: 'registro de pessoas e relações, derivado do ClickUp',

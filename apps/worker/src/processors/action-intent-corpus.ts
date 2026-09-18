@@ -25,7 +25,7 @@ export interface CorpusCase {
   expectedActions?: number;
 }
 
-export const CORPUS_VERSION = '2026-09-18.1';
+export const CORPUS_VERSION = '2026-09-18.2';
 
 /**
  * TAMMY — como a operação fala. Todas são ordens inequívocas: se o Bento não
@@ -55,6 +55,11 @@ Bento, tenho a solicitação acima. Preciso que separe a demanda e lance pro Gui
     expected: 'ACT',
     note: 'o caso real de 17/09: texto colado + ordem no último parágrafo',
   },
+  // LIBERAÇÃO: o sinal verde depois de um freio. A pessoa já disse "não cria
+  // ainda"; quando ela libera, ouvir "não" de novo é o pior jeito de perder
+  // confiança.
+  { id: 'T17', message: 'agora pode criar', expected: 'ACT', note: 'sinal verde depois de um freio' },
+  { id: 'T18', message: 'confirmado, pode lançar no ClickUp', expected: 'ACT', note: 'liberação explícita' },
 ];
 
 /**
@@ -133,6 +138,10 @@ Bento, o que você acha dessa demanda?`,
   { id: 'X28', message: 'me atualiza sobre a operação', expected: 'ANALYZE', note: 'atualizar EU é informação, não escrita' },
   { id: 'X29', message: 'atualiza pra mim o que tá rolando na D Carvalho', expected: 'ANALYZE', note: 'mesmo verbo, direção oposta' },
   { id: 'X30', message: 'Bento, me atualiza aí. O que tá pegando?', expected: 'ANALYZE', note: 'a frase exata do smoke que falhou' },
+  // O que separa liberação de consulta é o ponto de interrogação.
+  { id: 'X31', message: 'pode criar?', expected: 'ANALYZE', note: 'liberação em forma de PERGUNTA não libera' },
+  { id: 'X32', message: 'ainda não pode criar', expected: 'ANALYZE', note: 'negação vence liberação' },
+  { id: 'X33', message: 'a gente pode criar isso depois?', expected: 'ANALYZE', note: 'hipótese com pergunta' },
 ];
 
 /**

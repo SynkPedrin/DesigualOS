@@ -14,7 +14,7 @@ import {
   type TaskClass,
 } from '@desigual-os/agent-runtime';
 import { db, schema } from '@desigual-os/database';
-import { eq, sql } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import type { AgentJobData } from '@desigual-os/orchestrator';
 import {
   extractEpisodeCandidates,
@@ -57,6 +57,7 @@ import {
   semEncanamentoOperacional,
 } from './otto-context-projection.js';
 import { anexarFontes, formatProvenanceBlock } from './provenance-block';
+import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
 import { formatFreshnessWarning } from '../scheduler/integration-health';
@@ -422,6 +423,33 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     ? formatCampaignBlock(campanhaDoTurno, { campanhaDe: donoDaCampanha, foraDoEscopo: donosForaDoEscopo })
     : '';
 
+  /**
+   * DIÁLOGO RECENTE DESTA CONVERSA.
+   *
+   * Só esta `conversationId`: é o que garante que conversa de outro cliente,
+   * de outra sessão ou de outro usuário não cruze. Conversa nova simplesmente
+   * não tem turno anterior, então o bloco nasce vazio e não entra no pacote.
+   *
+   * Busca os últimos turnos e deixa o builder cortar — o orçamento é dele, e
+   * dele também é a limpeza do encanamento operacional pro agente criativo.
+   */
+  const turnosAnteriores: TurnoDeDialogo[] = data.conversationId
+    ? ((await db
+        .select({ role: schema.messages.role, agent: schema.messages.agent, content: schema.messages.content })
+        .from(schema.messages)
+        .where(eq(schema.messages.conversationId, data.conversationId))
+        .orderBy(desc(schema.messages.createdAt))
+        .limit(ORCAMENTO_DIALOGO.maxTurnos * 2)
+        .catch(() => [])) as Array<{ role: string; agent: string | null; content: string }>)
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .reverse()
+        // A mensagem ATUAL já é o `message` do turno; repeti-la no bloco só
+        // gastaria orçamento e faria o modelo ler o pedido duas vezes.
+        .filter((m) => !(m.role === 'user' && m.content.trim() === data.message.trim()))
+        .map((m) => ({ role: m.role as 'user' | 'assistant', agent: m.agent, content: m.content }))
+    : [];
+  const blocoDialogo = montarDialogoRecente(turnosAnteriores, data.agent);
+
   // PESSOAS CITADAS, com tipo de relação e evidência. Sem isto, "aparece numa
   // task" virava "responde pela conta" — o bug da Esther.
   const pessoasDoTurno = await resolvePersonTurnContext(data.message).catch(() => null);
@@ -784,6 +812,10 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         // Primeiro de todos: é o que decide O QUE entregar neste turno.
         { fonte: 'frescor', texto: blocoContinuacao },
         { fonte: 'frescor', texto: blocoFrescor },
+        // Logo depois do frescor: resolve o REFERENTE do turno. Marcado como
+        // NÃO evidenciável — é o que já foi dito, não uma fonte de fato; o
+        // agente citando a si mesmo seria pior que não citar nada.
+        { fonte: 'dialogo', texto: blocoDialogo, evidenciavel: false },
         { fonte: 'cliente', texto: blocoClienteFinal },
         // O estado ao vivo da conta, quando o turno pede: fato consultado, na
         // mesma faixa de autoridade do registro de campanha.

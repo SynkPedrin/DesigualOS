@@ -34,6 +34,12 @@
  */
 export type FonteDeContexto =
   | 'frescor'
+  /**
+   * O que acabou de ser dito nesta conversa. Vem logo depois do frescor porque
+   * é o que resolve o REFERENTE do turno ("o segundo", "essa versão") — sem
+   * ele o agente pede de volta um contexto que já existe. Nunca é evidência.
+   */
+  | 'dialogo'
   | 'cliente'
   | 'campanha'
   | 'pessoas'
@@ -82,6 +88,7 @@ export interface RegistroDeEvidencia {
  */
 const ORDEM: FonteDeContexto[] = [
   'frescor',
+  'dialogo',
   'cliente',
   'campanha',
   'pessoas',
@@ -100,6 +107,9 @@ const ORDEM: FonteDeContexto[] = [
 /** Piso por bloco: garante que nenhum seja zerado por um vizinho grande. */
 const PISO: Record<FonteDeContexto, number> = {
   frescor: 400,
+  // Menor que o piso do dossiê de propósito: o diálogo resolve referência, não
+  // reescreve o enquadramento do turno.
+  dialogo: 1_200,
   cliente: 2_500,
   campanha: 1_500,
   pessoas: 600,
