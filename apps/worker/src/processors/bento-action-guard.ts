@@ -78,6 +78,14 @@ interface ConversationContext {
   lastPersonName: string | null;
   /** Material mandado em turnos anteriores — "o print que mandei", "o arquivo acima". */
   previousAttachments: TaskAttachment[];
+  /**
+   * Conteúdo do último turno do usuário ANTES deste. "Tenho a solicitação
+   * acima" é o jeito normal de a operação trabalhar: a demanda vem colada
+   * numa mensagem, a ordem na seguinte. Sem recuperar esse texto, a task
+   * nascia com o briefing dizendo "tenho a solicitação acima" — a meta-
+   * instrução no lugar do trabalho (medido na task QA 86bc34xtt).
+   */
+  solicitacaoAnterior: string | null;
 }
 
 function extractPersonName(message: string): string | null {
@@ -185,7 +193,7 @@ function endOfDay(date: Date): Date {
 }
 
 async function loadConversationContext(conversationId: string | null): Promise<ConversationContext> {
-  if (!conversationId) return { lastTaskId: null, lastTaskName: null, lastPersonName: null, previousAttachments: [] };
+  if (!conversationId) return { lastTaskId: null, lastTaskName: null, lastPersonName: null, previousAttachments: [], solicitacaoAnterior: null };
   const recent = await db
     .select({
       role: schema.messages.role,
@@ -203,6 +211,10 @@ async function loadConversationContext(conversationId: string | null): Promise<C
   let lastTaskId: string | null = null;
   let lastTaskName: string | null = null;
   let lastPersonName: string | null = null;
+  // A mensagem ATUAL já está gravada quando o guard roda: a solicitação
+  // anterior é a primeira mensagem de usuário que não é ela.
+  let solicitacaoAnterior: string | null = null;
+  let achouAMensagemAtual = false;
   /**
    * "tenho a solicitação acima" quase sempre vem com o material num turno
    * ANTERIOR. Sem ler os anexos das mensagens recentes, a task nascia sem a
@@ -228,8 +240,18 @@ async function loadConversationContext(conversationId: string | null): Promise<C
     if (!lastPersonName && message.role === 'user') {
       lastPersonName = extractPersonName(message.content);
     }
+    if (message.role === 'user') {
+      // Pula a primeira mensagem de usuário da lista (a mais recente = a
+      // atual) e guarda a anterior. Comparar por identidade de conteúdo é
+      // frágil; a ordem desc por createdAt garante que a primeira é a atual.
+      if (!achouAMensagemAtual) {
+        achouAMensagemAtual = true;
+      } else if (!solicitacaoAnterior) {
+        solicitacaoAnterior = message.content;
+      }
+    }
   }
-  return { lastTaskId, lastTaskName, lastPersonName, previousAttachments };
+  return { lastTaskId, lastTaskName, lastPersonName, previousAttachments, solicitacaoAnterior };
 }
 
 /**
@@ -646,14 +668,30 @@ export async function tryBentoActionGuard(params: {
   // uma. Uma mensagem pode despachar dois entregáveis pra duas pessoas; tratar
   // isso como uma criação só era entregar metade e relatar tudo.
   const clientName = alvo.clientName ?? params.clientName ?? null;
+
+  /**
+   * "TENHO A SOLICITAÇÃO ACIMA" — o trabalho está no turno ANTERIOR.
+   *
+   * Quando o pedido referencia o que veio antes, o texto da solicitação entra
+   * junto no plano e no briefing. Sem isto a task nascia carregando a meta-
+   * instrução ("tenho a solicitação acima...") no lugar da demanda — o
+   * designer abria a task e não encontrava as quatro placas.
+   */
+  const referenciaAnterior =
+    /\b(solicita[cç][aã]o|pedido|demanda|material|arquivo|print|imagem|texto|briefing)?\s*(acima|anterior)|\b(mandei|enviei|encaminhei|colei) (antes|acima|aqui)/i.test(params.message);
+  const fonteDoPedido =
+    referenciaAnterior && context.solicitacaoAnterior
+      ? `${params.message}\n\n[Solicitação anterior]\n${context.solicitacaoAnterior}`
+      : params.message;
+
   // O cliente já foi resolvido contra a carteira; passar o nome impede que ele
   // seja lido como responsável ("separa pro Gui na Clinica Teste Fase 7").
-  const plano = buildOperationalActionPlan(params.message, { excludeNames: [clientName, params.clientName] });
+  const plano = buildOperationalActionPlan(fonteDoPedido, { excludeNames: [clientName, params.clientName] });
 
   // BRIEFING: obrigatório quando há material colado pra organizar. É o que
   // transforma "separa a demanda" em instrução executável dentro da task, em
   // vez de um título solto que manda a pessoa voltar no chat.
-  const querBriefing = intent.wantsBriefing || plano.items.length > 0 || plano.splitRequested || resumoDoPedido(params.message).length > 180;
+  const querBriefing = intent.wantsBriefing || plano.items.length > 0 || plano.splitRequested || resumoDoPedido(fonteDoPedido).length > 180;
 
   /**
    * O material do turno ATUAL manda; o dos turnos anteriores entra em seguida
@@ -706,7 +744,7 @@ export async function tryBentoActionGuard(params: {
   if (querBriefing) {
     const contexto = await retrieveBriefingContext({
       clientId: alvo.clientId ?? params.clientId ?? null,
-      requestText: params.message,
+      requestText: fonteDoPedido,
       taskId: null,
       config,
     }).catch(() => ({ facts: [], references: [], sourcesConsulted: [] as string[] }));
@@ -726,7 +764,7 @@ export async function tryBentoActionGuard(params: {
         requestedBy: params.userName,
         dueDateLabel: prazoLabel,
         assignee: entrada.planned.assigneeName,
-        requestSummary: resumoDoPedido(params.message),
+        requestSummary: resumoDoPedido(fonteDoPedido),
       });
       briefingEvaluation = evaluateBriefing(composto, { clientName });
       entrada.briefing = [composto.markdown, blocoDePendencias(plano.items, plano.pendencies)].filter(Boolean).join('\n\n');

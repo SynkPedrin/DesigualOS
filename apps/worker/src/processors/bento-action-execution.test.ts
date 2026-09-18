@@ -573,3 +573,24 @@ describe('idempotência tem JANELA, não é eterna', () => {
     expect(d.createTask).not.toHaveBeenCalled();
   });
 });
+
+describe('solicitação anterior alimenta a demanda', () => {
+  it('itens e pendências vêm do turno anterior quando o pedido referencia "acima"', () => {
+    const anterior = 'O cliente pediu 4 totens:\n- Totem "Entrada Norte"\n- Totem "Saída Sul"\nO MIV eu encaminho depois.';
+    const ordem = 'Bento, tenho a solicitação acima. Separa e lança pro Gui a criação do layout.';
+    const combinado = `${ordem}\n\n[Solicitação anterior]\n${anterior}`;
+    const p = buildOperationalActionPlan(combinado);
+    // Os itens da solicitação aparecem no plano…
+    expect(p.items.length).toBeGreaterThanOrEqual(2);
+    // …a pendência do MIV é registrada…
+    expect(p.pendencies.length).toBeGreaterThan(0);
+    // …e a ordem continua mandando pro Gui.
+    expect(p.tasks.every((t) => t.assigneeName === 'Gui')).toBe(true);
+  });
+
+  it('sem referência a "acima", nada muda: o plano lê só a mensagem', () => {
+    const p = buildOperationalActionPlan('cria isso pro Gui');
+    expect(p.tasks).toHaveLength(1);
+    expect(p.pendencies).toEqual([]);
+  });
+});
