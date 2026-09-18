@@ -216,6 +216,19 @@ export async function buildOperationalContext(
   );
   linhas.push('');
 
+  /**
+   * TETO POR CLIENTE no panorama multi-cliente. Sem ele, o panorama GLOBAL da
+   * carteira despejava TODAS as 1124 tasks abertas — 133KB, 1212 linhas — e o
+   * bento-qa recusava o corpo (HTTP 413, limite de 128KB medido em produção
+   * em 18/09/2026: "me atualiza aí" falhava em 65ms, sem resposta nenhuma).
+   *
+   * 12 por cliente já é mais do que um panorama precisa: o bloco serve pra
+   * "o que tá pegando", não pra inventário. O total por cliente continua no
+   * cabeçalho do grupo, então o número certo nunca se perde — só a listagem
+   * é resumida, e o resumo é declarado.
+   */
+  const TETO_POR_CLIENTE = scope.kind === 'GLOBAL' || scope.kind === 'MULTI_CLIENT' ? 12 : Number.MAX_SAFE_INTEGER;
+
   for (const { clientName } of byClient) {
     const tasks = [...porCliente.get(clientName)!].sort((a, b) => {
       const pa = PRIORITY_ORDER[a.priority ?? 'normal'] ?? 2;
@@ -224,7 +237,11 @@ export async function buildOperationalContext(
       return (a.dueDate ?? Number.MAX_SAFE_INTEGER) - (b.dueDate ?? Number.MAX_SAFE_INTEGER);
     });
     linhas.push(`${clientName} (${tasks.length}):`);
-    for (const t of tasks) {
+    const mostradas = tasks.slice(0, TETO_POR_CLIENTE);
+    if (mostradas.length < tasks.length) {
+      linhas.push(`(mostrando as ${mostradas.length} mais urgentes de ${tasks.length} — prioridade e prazo primeiro)`);
+    }
+    for (const t of mostradas) {
       const partes = [
         `- ${t.name}`,
         `status: ${t.status ?? 'sem status'}`,

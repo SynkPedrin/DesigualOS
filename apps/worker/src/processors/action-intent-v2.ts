@@ -209,6 +209,11 @@ const BLOQUEADORES: Array<{ re: RegExp; rotulo: string }> = [
   { re: /\b(quem|qual|quais|quanto|quantos|quantas|quando|onde)\b.*\?/, rotulo: 'pergunta factual' },
   { re: /\b(deveria|deveriam|deveriamos|devemos|podemos|poderia|vale a pena|faz sentido|acha que|acham que)\b/, rotulo: 'deliberação' },
   { re: /\b(pediu|pedira|solicitou|mandou dizer|falou)\s+(pra|para|que)\b/, rotulo: 'relato de pedido de terceiro' },
+  // "me atualiza", "me informa", "traz pra mim" — o alvo da ação é o FALANTE:
+  // é pedido de informação, não escrita. Medido em 18/09/2026: "me atualiza
+  // aí" classificou como UPDATE e quase criou task num panorama da operação.
+  { re: /\b(me|nos)\s+(atualiz|inform|conta|conte|mostra|mostre|resume|resuma|traz|traga|explica|explique|detalh)/, rotulo: 'pedido de informação ao falante' },
+  { re: /\b(atualiza|atualize|informa|informe|conta|conte|mostra|mostre|resume|resuma|traz|traga|explica|explique)\s+(pra|para)\s+(mim|nos|nós|a gente)\b/, rotulo: 'pedido de informação ao falante' },
 ];
 
 /** Pedido explícito de análise — não bloqueia por si só, mas pesa. */
@@ -280,11 +285,12 @@ function classifySegment(raw: { text: string; index: number; kind: Segment['kind
     }
   }
 
-  const hasTarget =
-    f.tokens.some((t) => ALVO_OPERACIONAL.has(t)) ||
-    DESTINO_NOMEADO.test(semNomes) ||
-    // "cria isso", "separa essas" — o dêitico aponta pro que foi dito antes.
-    /\b(isso|isto|essa|esse|essas|esses|aquilo|aquela|la|ai)\b/.test(f.normalized);
+  // "isso/essa" apontam pro que foi dito antes e valem alvo. "aí/lá" são
+  // LOCATIVOS ("me atualiza aí" = "me atualiza, por favor") — tratá-los como
+  // referente fez um pedido de panorama virar ordem de escrita.
+  const deictico = /\b(isso|isto|essa|esse|essas|esses|aquilo|aquela)\b/.test(f.normalized);
+  const alvoOperacional = f.tokens.some((t) => ALVO_OPERACIONAL.has(t)) || DESTINO_NOMEADO.test(semNomes);
+  const hasTarget = alvoOperacional || deictico;
 
   const declarativa = ATRIBUICAO_DECLARATIVA.test(f.normalized) && DESTINO_NOMEADO.test(semNomes);
 
@@ -294,7 +300,14 @@ function classifySegment(raw: { text: string; index: number; kind: Segment['kind
   let acts = false;
   if (raw.kind === 'normal' && negations.length === 0 && blockers.length === 0) {
     const familiaOrdem = FAMILIAS.find((fam) => families.includes(fam.nome));
-    if (familiaOrdem) acts = !familiaOrdem.exigeAlvo || hasTarget;
+    if (familiaOrdem) {
+      // UPDATE e MAKE são ambíguos demais com um dêitico: "me atualiza aí"
+      // não é "atualiza a task". Essas famílias exigem objeto operacional ou
+      // destino nomeado de verdade — o dêitico só basta pra CREATE/ROUTE,
+      // onde "cria isso" é o jeito normal de pedir.
+      const alvoForte = familiaOrdem.nome === 'update' || familiaOrdem.nome === 'make' ? alvoOperacional : hasTarget;
+      acts = !familiaOrdem.exigeAlvo || alvoForte;
+    }
     if (declarativa) {
       acts = true;
       families.push('assign:declarativo');

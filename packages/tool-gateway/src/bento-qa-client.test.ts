@@ -71,3 +71,45 @@ describe('askBentoQA — escolha de campo (answer vs texto)', () => {
     expect(r.citations).toEqual([{ n: 3, path: '03_Equipe/jarbas-de-andrade-persona.md' }]);
   });
 });
+
+/**
+ * Regressão do 413 medido em produção (18/09/2026): o panorama GLOBAL da
+ * carteira (133KB, 1124 tasks) passava do limite de 128KB do bento-qa e a
+ * pergunta "me atualiza aí" morria sem resposta.
+ */
+describe('teto do corpo (HTTP 413 do serviço real)', () => {
+  it('contexto gigante é truncado ANTES de enviar, com marcação honesta', async () => {
+    let bytesEnviados = 0;
+    let corpoEnviado = '';
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      corpoEnviado = String(init?.body ?? '');
+      bytesEnviados = Buffer.byteLength(corpoEnviado);
+      return new Response(JSON.stringify({ status: 'ok', answer: 'resposta', citations: [{ n: 1, path: 'x' }] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { askBentoQA, BENTO_QA_BODY_LIMIT_BYTES } = await import('./bento-qa-client');
+      await askBentoQA({ url: 'http://x', token: 't' }, 'me atualiza aí', 'DADOS\n' + 'task\n'.repeat(40_000));
+      expect(bytesEnviados).toBeLessThanOrEqual(BENTO_QA_BODY_LIMIT_BYTES + 100);
+      expect(corpoEnviado).toContain('CONTEXTO TRUNCADO');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('contexto pequeno passa intacto', async () => {
+    let corpoEnviado = '';
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      corpoEnviado = String(init?.body ?? '');
+      return new Response(JSON.stringify({ status: 'ok', answer: 'r', citations: [{ n: 1, path: 'x' }] }), { status: 200 });
+    }));
+    try {
+      const { askBentoQA } = await import('./bento-qa-client');
+      await askBentoQA({ url: 'http://x', token: 't' }, 'pergunta', 'contexto pequeno');
+      expect(corpoEnviado).toContain('contexto pequeno');
+      expect(corpoEnviado).not.toContain('CONTEXTO TRUNCADO');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

@@ -127,6 +127,12 @@ Bento, o que você acha dessa demanda?`,
   },
   { id: 'X25', message: 'quando se encerra o contrato da DCarvalho?', expected: 'ANALYZE', note: 'consulta factual' },
   { id: 'X26', message: 'quem é o atendimento responsável pela conta da D Carvalho?', expected: 'ANALYZE', note: 'consulta de pessoa' },
+  // Regressão medida em 18/09/2026: a V2.0 lia "atualiza" + "aí" como ordem de
+  // escrita e tentou CRIAR task num panorama. "aí/lá" são locativos.
+  { id: 'X27', message: 'Bento, me atualiza aí.', expected: 'ANALYZE', note: '"atualiza aí" é pedido de panorama, não UPDATE' },
+  { id: 'X28', message: 'me atualiza sobre a operação', expected: 'ANALYZE', note: 'atualizar EU é informação, não escrita' },
+  { id: 'X29', message: 'atualiza pra mim o que tá rolando na D Carvalho', expected: 'ANALYZE', note: 'mesmo verbo, direção oposta' },
+  { id: 'X30', message: 'Bento, me atualiza aí. O que tá pegando?', expected: 'ANALYZE', note: 'a frase exata do smoke que falhou' },
 ];
 
 /**
