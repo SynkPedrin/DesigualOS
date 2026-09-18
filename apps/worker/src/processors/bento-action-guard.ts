@@ -23,7 +23,9 @@ import { classifyDeliveryType, composeBriefing } from './briefing-composer';
 import { evaluateBriefing } from './briefing-quality';
 import { retrieveBriefingContext } from './briefing-retrieval';
 import { classifyActionIntent } from './action-intent';
-import { buildOperationalTitle, resolveWriteTarget } from './write-target';
+import { buildDeliverableTitle, buildOperationalTitle, resolveWriteTarget } from './write-target';
+import { buildOperationalActionPlan } from './operational-action-plan';
+import { createManyTasks, type CreateOneInput, type CreateOutcome } from './multi-create-executor';
 
 /**
  * BENTO ACTION GUARD (14/09/2026).
@@ -133,6 +135,21 @@ function classifyIntent(message: string): GuardIntent {
   return { kind: 'none' };
 }
 
+/** Intenção de criação montada dos mesmos extratores, sem exigir o verbo "criar". */
+function criacaoPadrao(message: string): GuardIntent {
+  return {
+    kind: 'create',
+    taskName: extractTaskName(message) ?? '',
+    personName: extractPersonName(message),
+    dueDate: DUE_TOMORROW.test(message)
+      ? endOfDay(addDays(new Date(), 1)).getTime()
+      : DUE_TODAY.test(message)
+        ? endOfDay(new Date()).getTime()
+        : null,
+    wantsBriefing: BRIEFING_ASK.test(message) || ATTACH_ASK.test(message),
+  };
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
@@ -234,6 +251,32 @@ export async function tryBentoActionGuard(params: {
   // PORTÃO 1 — ANÁLISE NÃO É ESCRITA. Classificação determinística ANTES de
   // qualquer ferramenta. Caso real: pedido de análise virou task na hora.
   const acao = classifyActionIntent(message);
+
+  // HARD DENY. Concluir/fechar trabalho humano não é uma permissão que alguém
+  // possa ligar: o Bento não sabe se o designer terminou o layout, e um status
+  // "pronto" que ninguém verificou faz a operação inteira planejar em cima de
+  // uma mentira. A recusa é curta, diz o que ELE pode fazer e para por aí.
+  if (acao.kind === 'FORBIDDEN_ACTION') {
+    logger.info(
+      { intent_classification: acao.kind, write_authorized: false, write_reason: acao.reason },
+      '[guard] ação proibida: concluir/fechar trabalho humano'
+    );
+    return guardResponse({
+      ok: true,
+      toolCalls: [],
+      answer:
+        'Não marco trabalho de pessoa como concluído — não tenho como saber se ficou pronto, e um status errado aí atrapalha todo mundo que planeja em cima dele. ' +
+        'Quem entregou pode fechar, ou você me confirma e eu registro num comentário. Organizar, comentar, atribuir e criar demanda eu faço na hora.',
+      metadata: {
+        guard: 'bento-action',
+        action: 'denied_forbidden',
+        intent_classification: acao.kind,
+        write_authorized: false,
+        write_reason: acao.reason,
+      },
+    });
+  }
+
   if (!acao.writeAuthorized) {
     logger.info(
       { intent_classification: acao.kind, write_authorized: false, write_reason: acao.reason },
@@ -243,7 +286,18 @@ export async function tryBentoActionGuard(params: {
     return null;
   }
 
-  const intent = classifyIntent(message);
+  /**
+   * A classificação fina só escolhe ENTRE as formas de escrita; o portão 1 já
+   * decidiu QUE é escrita. Quando ela não reconhece a forma, o default é
+   * CRIAR — e isso é o oposto de um regex solto, porque nada chega aqui sem
+   * ordem explícita.
+   *
+   * Sem esta linha, metade do vocabulário real da operação morria no segundo
+   * classificador depois de passar no primeiro: "separa essa demanda", "faz o
+   * briefing", "lança isso no ClickUp" e "essa fica pra Sofia" todas voltavam
+   * `none` e o turno virava análise de novo — o mesmo sintoma, um andar abaixo.
+   */
+  const intent = classifyIntent(message).kind === 'none' ? criacaoPadrao(message) : classifyIntent(message);
   // §6: pedido que ANALISA e manda criar entrega a análise dentro da task — o
   // briefing é onde o resultado da análise vira instrução executável. Sem isso
   // a task nasce sem o contexto que acabou de ser levantado.
@@ -390,8 +444,8 @@ export async function tryBentoActionGuard(params: {
     return null;
   }
 
-  // -------- CREATE --------
-  // A ORDEM aqui é a regra: resolver cliente -> gerar título operacional ->
+  // -------- CREATE (uma ou várias) --------
+  // A ORDEM aqui é a regra: resolver cliente -> planejar as tasks -> titular ->
   // só então criar. Antes, o nome vinha da mensagem crua e era checado antes
   // de existir cliente resolvido — foi assim que nasceu a task chamada
   // "Peças que você confia, você tem" na lista errada.
@@ -407,8 +461,7 @@ export async function tryBentoActionGuard(params: {
   if (alvo.status === 'unknown_client' || alvo.status === 'ambiguous_client' || alvo.status === 'missing_list') {
     const pergunta =
       alvo.status === 'ambiguous_client'
-        ? `Não consegui identificar com segurança a lista do cliente: mais de um cliente casa com o que você escreveu (${alvo.candidates.join(
-)}). Me diz qual é que eu crio lá.`
+        ? `Não consegui identificar com segurança a lista do cliente: mais de um cliente casa com o que você escreveu (${alvo.candidates.join(', ')}). Me diz qual é que eu crio lá.`
         : alvo.status === 'missing_list'
           ? `Não criei a task: ${alvo.reason}. Vincule a lista do ClickUp a esse cliente que eu crio em seguida.`
           : `Não consegui identificar com segurança a lista do cliente citado. Não criei a task pra não colocar no lugar errado. Me diz qual cliente da carteira é esse.`;
@@ -448,246 +501,256 @@ export async function tryBentoActionGuard(params: {
     });
   }
 
-  // TÍTULO OPERACIONAL: diz o que precisa ser FEITO. Copiar a mensagem crua
-  // foi o que gerou a task chamada "Peças que você confia, você tem" — que é
-  // o nome da campanha, não do trabalho.
-  const tituloOperacional = buildOperationalTitle({
-    message: params.message,
-    explicitName: intent.taskName || null,
-    clientName: alvo.clientName,
-  });
-  intent.taskName = tituloOperacional;
-  if (!intent.taskName || intent.taskName.trim().length < 6) {
+  // PLANO DE AÇÃO: quantas tasks o pedido realmente contém, e de quem é cada
+  // uma. Uma mensagem pode despachar dois entregáveis pra duas pessoas; tratar
+  // isso como uma criação só era entregar metade e relatar tudo.
+  const plano = buildOperationalActionPlan(params.message);
+  const clientName = alvo.clientName ?? params.clientName ?? null;
+
+  // BRIEFING: obrigatório quando há material colado pra organizar. É o que
+  // transforma "separa a demanda" em instrução executável dentro da task, em
+  // vez de um título solto que manda a pessoa voltar no chat.
+  const querBriefing = intent.wantsBriefing || plano.items.length > 0 || plano.splitRequested || resumoDoPedido(params.message).length > 180;
+
+  const entradas: CreateOneInput[] = [];
+  for (const t of plano.tasks) {
+    const titulo =
+      t.deliverable !== null
+        ? buildDeliverableTitle({ deliverable: t.deliverable, items: plano.items, clientName })
+        : buildOperationalTitle({ message: params.message, explicitName: intent.taskName || null, clientName });
+    if (titulo.trim().length < 6) continue;
+    entradas.push({
+      planned: t,
+      title: titulo,
+      briefing: null,
+      description: descricaoDaTask({
+        requesterName: params.userName,
+        excerpt: t.excerpt,
+        items: plano.items,
+        pendencies: plano.pendencies,
+      }),
+      dueDate: intent.dueDate,
+    });
+  }
+
+  if (entradas.length === 0) {
     return guardResponse({
       ok: true,
       toolCalls,
-      answer: 'Não consegui montar um título operacional claro pra essa task. Me diz em uma frase o que precisa ser feito que eu crio.',
+      answer: 'Não consegui montar um título operacional claro pra essa demanda. Me diz em uma frase o que precisa ser feito que eu crio.',
       metadata: { guard: 'bento-action', reason: 'titulo_insuficiente', write_authorized: false },
     });
   }
 
-  // IDEMPOTÊNCIA (seção 33): antes de criar, procura uma task com o MESMO nome
-  // já aberta na lista. Cobre o retry após timeout (o create anterior pode ter
-  // gravado) e o guard rodando duas vezes, sem duplicar. Falha de consulta não
-  // bloqueia a criação — só perde a proteção nesse turno.
-  const existentes = await queryOperationTasks(config, { listIds: [listId], includeClosed: false })
-    .then((page) => page.tasks)
-    .catch(() => []);
-  const duplicada = findDuplicateTask(existentes, intent.taskName);
-  if (duplicada) {
-    record('clickup.idempotency_hit', `duplicata evitada: ${duplicada.id}`, true);
-    return guardResponse({
-      ok: true,
-      toolCalls,
-      answer:
-        `Já existe uma task com esse nome nessa lista: "${duplicada.name}" ` +
-        `(https://app.clickup.com/t/${duplicada.id}). Não criei outra pra não duplicar. ` +
-        'Se você quer mesmo uma segunda task, me diga um nome diferente.',
-      metadata: { guard: 'bento-action', action: 'create_idempotent_hit', task_id: duplicada.id },
-    });
-  }
+  // BRIEFING POR FATO (não por template): recupera contexto real do cliente,
+  // monta a estrutura do TIPO de entrega e DECLARA o que falta. O template
+  // fixo anterior anexava "Executar a entrega descrita no título desta task" —
+  // passava no read-back e era inútil pra quem ia executar.
+  let briefingEvaluation: ReturnType<typeof evaluateBriefing> | null = null;
+  let briefingSources: string[] = [];
+  if (querBriefing) {
+    const contexto = await retrieveBriefingContext({
+      clientId: alvo.clientId ?? params.clientId ?? null,
+      requestText: params.message,
+      taskId: null,
+      config,
+    }).catch(() => ({ facts: [], references: [], sourcesConsulted: [] as string[] }));
+    briefingSources = contexto.sourcesConsulted;
+    const prazoLabel = intent.dueDate
+      ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(intent.dueDate))
+      : null;
 
-  try {
-    const created = await createAttributedTask(config, {
-      listId,
-      name: intent.taskName,
-      description: `Criada via chat por ${params.userName}.`,
-      requesterName: params.userName,
-      requesterClickUpEmail: params.userClickUpEmail,
-      ...(intent.dueDate ? { dueDate: intent.dueDate } : {}),
-    });
-    record('clickup.create_task', intent.taskName, true);
-
-    let assigneeLabel: string | null = null;
-    let assigneeMemberId: number | null = null;
-    if (intent.personName) {
-      const member = await findMemberByName(config, intent.personName).catch(() => null);
-      if (member) {
-        await updateTask(config, created.id, { addAssignees: [member.id] });
-        record('clickup.update_task', `assign ${member.username}`, true);
-        assigneeLabel = member.username;
-        assigneeMemberId = member.id;
-      }
-    }
-
-    let briefingAttached = false;
-    let briefingEvaluation: ReturnType<typeof evaluateBriefing> | null = null;
-    let briefingSources: string[] = [];
-    let briefingRevisions = 0;
-    if (intent.wantsBriefing) {
-      // BRIEFING POR FATO (não por template): recupera contexto real do
-      // cliente, monta a estrutura do TIPO de entrega e declara o que falta.
-      // O template fixo anterior anexava "Executar a entrega descrita no
-      // título desta task" — passava no read-back e era inútil pra quem ia
-      // executar.
-      const deliveryType = classifyDeliveryType(params.message, intent.taskName);
-      const contexto = await retrieveBriefingContext({
-        clientId: params.clientId ?? null,
-        requestText: params.message,
-        taskId: created.id,
-        config,
-      }).catch(() => ({ facts: [], references: [], sourcesConsulted: [] as string[] }));
-      briefingSources = contexto.sourcesConsulted;
-
-      const prazoLabel = intent.dueDate
-        ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(intent.dueDate))
-        : null;
-      let composto = composeBriefing({
-        taskName: intent.taskName,
-        clientName: params.clientName ?? null,
+    for (const entrada of entradas) {
+      const deliveryType = classifyDeliveryType(params.message, entrada.title);
+      const composto = composeBriefing({
+        taskName: entrada.title,
+        clientName,
         deliveryType,
         facts: contexto.facts,
         references: contexto.references,
         requestedBy: params.userName,
         dueDateLabel: prazoLabel,
-        assignee: assigneeLabel,
+        assignee: entrada.planned.assigneeName,
         requestSummary: resumoDoPedido(params.message),
       });
-      briefingEvaluation = evaluateBriefing(composto, { clientName: params.clientName ?? null });
-
-      // AUTO-REVISÃO: só quando há matéria-prima e o problema é redação.
-      if (!briefingEvaluation.executable && briefingEvaluation.recommendation === 'revise') {
-        briefingRevisions += 1;
-        const extra = await params
-          .briefingWriter(
-            `Complete o briefing da task "${intent.taskName}". Responda SÓ com linhas "Campo: valor" para o que você souber de fato sobre: objetivo, público, oferta, mensagem principal, entregáveis, critérios de aprovação. Não invente: omita o campo que não souber.`,
-          )
-          .catch(() => null);
-        if (extra) {
-          const { extractLabeledFacts, mergeFacts } = await import('./briefing-facts');
-          const novosFatos = mergeFacts(contexto.facts, extractLabeledFacts(extra, 'complemento do agente'));
-          composto = composeBriefing({
-            taskName: intent.taskName,
-            clientName: params.clientName ?? null,
-            deliveryType,
-            facts: novosFatos,
-            references: contexto.references,
-            requestedBy: params.userName,
-            dueDateLabel: prazoLabel,
-            assignee: assigneeLabel,
-            requestSummary: resumoDoPedido(params.message),
-          });
-          briefingEvaluation = evaluateBriefing(composto, { clientName: params.clientName ?? null });
-        }
-      }
-
-      const briefing: string = composto.markdown;
-      record(
-        'guard.briefing_quality',
-        `tipo=${deliveryType} score=${briefingEvaluation.score} executável=${briefingEvaluation.executable} rec=${briefingEvaluation.recommendation}`,
-        briefingEvaluation.executable,
-      );
-      // briefingInvalido sempre deixa `briefing` preenchido (fallback ou texto válido).
-      const briefingFinal = briefing ?? '';
-      if (!briefingFinal) {
-        record('guard.briefing_skip', 'sem conteúdo válido pra anexar', false);
-      } else {
-        await createTaskComment(config, created.id, briefingFinal);
-        record('clickup.create_comment', `briefing -> ${created.id}`, true);
-        briefingAttached = true;
-      }
+      briefingEvaluation = evaluateBriefing(composto, { clientName });
+      entrada.briefing = [composto.markdown, blocoDePendencias(plano.items, plano.pendencies)].filter(Boolean).join('\n\n');
+      record('guard.briefing_quality', `tipo=${deliveryType} score=${briefingEvaluation.score} executável=${briefingEvaluation.executable}`, briefingEvaluation.executable);
     }
-
-    // READ-BACK (seções 32, 59): relê a task criada e confere nome, responsável,
-    // prazo e (quando houve briefing) a presença do comentário, ANTES de dizer
-    // "validada". É o que torna o recibo uma afirmação verificada, não uma
-    // promessa que confia na resposta do POST.
-    const expected: ExpectedTaskState = {
-      name: intent.taskName,
-      ...(assigneeMemberId != null ? { assigneeIds: [assigneeMemberId] } : {}),
-      ...(intent.dueDate ? { dueDate: intent.dueDate, dueDateGranularity: 'day' as const } : {}),
-    };
-    const verif = await readBackVerify(config, created.id, expected);
-    // ASSERÇÃO DE LISTA (pós-create): a task nasceu MESMO na lista do cliente
-    // resolvido? Sem isto o recibo dizia "criada" sem saber onde.
-    let listaConfere = true;
-    try {
-      const listaReal = await getTaskListId(config, created.id);
-      listaConfere = listaReal === listId;
-      record('clickup.assert_list', `lista ${listaReal} esperada ${listId}`, listaConfere);
-    } catch {
-      listaConfere = false;
-      record('clickup.assert_list', 'não consegui reler a lista da task', false);
-    }
-    record('clickup.get_task', `read-back ${created.id}`, verif?.ok ?? false, verif == null ? 'não consegui reler' : verif.mismatches.join('; ') || undefined);
-
-    let commentVerified = false;
-    if (briefingAttached) {
-      const comments = await getTaskComments(config, created.id).catch(() => []);
-      commentVerified = comments.length > 0;
-      record('clickup.get_comments', `read-back comments ${created.id}`, commentVerified);
-    }
-
-    const header =
-      verif == null
-        ? 'Task criada no ClickUp (não consegui reler pra confirmar os campos):'
-        : verif.ok
-          ? `Task criada e VERIFICADA no ClickUp (reli a task e confirmei: ${verif.checked.join(', ')}):`
-          : 'Task criada no ClickUp, mas a verificação por leitura apontou divergência:';
-    const lines = [
-      header,
-      `"${intent.taskName}"`,
-      `Link: ${created.url}`,
-      assigneeLabel ? `Responsável: ${assigneeLabel}` : null,
-      intent.dueDate ? `Prazo: ${new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(intent.dueDate))}` : null,
-      briefingAttached
-        ? commentVerified
-          ? 'Briefing: anexado e confirmado como comentário na task'
-          : 'Briefing: enviado, mas não consegui reconfirmar por leitura'
-        : null,
-      verif && !verif.ok ? `ATENÇÃO: ${verif.mismatches.join('; ')}` : null,
-    ].filter(Boolean);
-
-    return guardResponse({
-      ok: true,
-      toolCalls,
-      answer: lines.join('\n'),
-      metadata: {
-        guard: 'bento-action',
-        action: 'create_task',
-        task_id: created.id,
-        // Observabilidade do portão (§13): dá pra auditar POR QUE a escrita
-        // foi autorizada e ONDE ela caiu.
-        intent_classification: acao.kind,
-        write_authorized: true,
-        write_reason: acao.reason,
-        analysis_required_first: acao.requiresAnalysisFirst,
-        client_resolution: alvo.status,
-        resolved_client_id: alvo.clientId,
-        resolved_clickup_list_id: listId,
-        list_assertion_ok: listaConfere,
-        title_source: intent.taskName === tituloOperacional ? 'operational' : 'explicit',
-        assignee: assigneeLabel,
-        briefing_attached: briefingAttached,
-        // Qualidade do briefing no trace: anexar não é entregar, e sem isto
-        // a auditoria não distingue briefing executável de texto de enfeite.
-        ...(briefingEvaluation
-          ? {
-              briefing_quality: {
-                executable: briefingEvaluation.executable,
-                score: briefingEvaluation.score,
-                recommendation: briefingEvaluation.recommendation,
-                missing_critical: briefingEvaluation.missingCritical,
-                generic_sections: briefingEvaluation.genericSections,
-                dimensions: briefingEvaluation.dimensions,
-                sources_consulted: briefingSources,
-                revisions: briefingRevisions,
-              },
-            }
-          : {}),
-        verified: verif?.ok ?? false,
-        verification_mismatches: verif?.mismatches ?? [],
-        comment_verified: commentVerified,
-      },
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    record('clickup.create_task', intent.taskName, false, detail);
-    return guardResponse({
-      ok: false,
-      toolCalls,
-      answer: `Não consegui criar a task no ClickUp: ${detail}`,
-      metadata: { guard: 'bento-action', action: 'create_task' },
-    });
   }
+
+  const resultados = await createManyTasks(
+    config,
+    listId,
+    { name: params.userName, clickUpEmail: params.userClickUpEmail },
+    entradas,
+  );
+  for (const r of resultados) {
+    for (const tc of r.toolCalls) record(tc.tool, tc.input_summary, tc.ok, tc.error);
+  }
+
+  const criadas = resultados.filter((r) => r.status === 'created');
+  const duplicadas = resultados.filter((r) => r.status === 'duplicate');
+  const bloqueadas = resultados.filter((r) => r.status === 'blocked');
+  const falhas = resultados.filter((r) => r.status === 'failed');
+
+  logger.info(
+    {
+      intent_classification: acao.kind,
+      action_plan_count: entradas.length,
+      client_resolution: alvo.status,
+      resolved_client_id: alvo.clientId,
+      resolved_clickup_list_id: listId,
+      created: criadas.length,
+      duplicate: duplicadas.length,
+      blocked: bloqueadas.length,
+      failed: falhas.length,
+      readback_ok: criadas.filter((r) => r.verified).length,
+    },
+    '[guard] ciclo de criação concluído',
+  );
+
+  return guardResponse({
+    // Só é falha quando NADA saiu. Uma de duas criadas é execução parcial, e a
+    // resposta conta as duas coisas — o que existe e o que ficou pendente.
+    ok: criadas.length > 0 || duplicadas.length > 0 || bloqueadas.length > 0,
+    toolCalls,
+    answer: reciboHumano({ resultados, clientName, pendencies: plano.pendencies }),
+    metadata: {
+      guard: 'bento-action',
+      action: 'create_tasks',
+      intent_classification: acao.kind,
+      write_authorized: true,
+      write_reason: acao.reason,
+      analysis_required_first: acao.requiresAnalysisFirst,
+      client_resolution: alvo.status,
+      resolved_client_id: alvo.clientId,
+      resolved_clickup_list_id: listId,
+      action_plan_count: entradas.length,
+      split_requested: plano.splitRequested,
+      pendencies: plano.pendencies,
+      tasks: resultados.map((r) => ({
+        task_id: r.taskId,
+        title: r.title,
+        deliverable: r.deliverable,
+        status: r.status,
+        assignee: r.assigneeUsername,
+        assignee_requested: r.assigneeName,
+        blocked_by: r.blockedBy,
+        candidates: r.candidates,
+        verified: r.verified,
+        list_assertion_ok: r.listAsserted,
+        briefing_attached: r.briefingAttached,
+        briefing_verified: r.briefingVerified,
+        mismatches: r.mismatches,
+        error: r.error,
+      })),
+      ...(briefingEvaluation
+        ? {
+            briefing_quality: {
+              executable: briefingEvaluation.executable,
+              score: briefingEvaluation.score,
+              recommendation: briefingEvaluation.recommendation,
+              missing_critical: briefingEvaluation.missingCritical,
+              sources_consulted: briefingSources,
+            },
+          }
+        : {}),
+    },
+  });
+}
+
+/** Descrição da task: a situação que originou a demanda, os itens e o que falta. */
+function descricaoDaTask(params: {
+  requesterName: string;
+  excerpt: string;
+  items: string[];
+  pendencies: string[];
+}): string {
+  const linhas = [`Criada via chat por ${params.requesterName}.`, '', `Pedido: ${params.excerpt}`];
+  if (params.items.length > 0) {
+    linhas.push('', 'Itens da solicitação:', ...params.items.map((i) => `- ${i}`));
+  }
+  if (params.pendencies.length > 0) {
+    linhas.push('', 'PENDÊNCIAS (não bloqueiam a organização da demanda):', ...params.pendencies.map((p) => `- ${p}`));
+  }
+  return linhas.join('\n');
+}
+
+/**
+ * Bloco de pendência do briefing. Existe separado do briefing padrão porque a
+ * pendência é o que muda o comportamento de quem executa: a pessoa precisa
+ * saber que pode começar e o que ainda vai chegar.
+ */
+function blocoDePendencias(items: string[], pendencies: string[]): string {
+  if (items.length === 0 && pendencies.length === 0) return '';
+  const linhas: string[] = [];
+  if (items.length > 0) linhas.push('## Itens da solicitação', ...items.map((i) => `- ${i}`));
+  if (pendencies.length > 0) {
+    linhas.push('', '## Pendências', ...pendencies.map((p) => `- ${p}`), '', 'A demanda pode ser organizada e iniciada; a execução final depende do material acima.');
+  }
+  return linhas.join('\n');
+}
+
+/**
+ * RECIBO EM PORTUGUÊS. Diz o que existe no ClickUp e o que ficou pendente, sem
+ * expor id de lista, id de execução ou nome de ferramenta. O que a pessoa
+ * precisa saber é o que foi feito e o que depende dela.
+ */
+function reciboHumano(params: {
+  resultados: CreateOutcome[];
+  clientName: string | null;
+  pendencies: string[];
+}): string {
+  const { resultados, clientName } = params;
+  const criadas = resultados.filter((r) => r.status === 'created');
+  const duplicadas = resultados.filter((r) => r.status === 'duplicate');
+  const bloqueadas = resultados.filter((r) => r.status === 'blocked');
+  const falhas = resultados.filter((r) => r.status === 'failed');
+  const onde = clientName ? ` na ${clientName}` : '';
+  const linhas: string[] = [];
+
+  if (criadas.length > 0) {
+    const verificadas = criadas.filter((r) => r.verified);
+    linhas.push(
+      verificadas.length === criadas.length
+        ? `Separei a demanda e criei ${criadas.length === 1 ? 'a task' : `${criadas.length} tasks`}${onde}. Reli cada uma no ClickUp pra confirmar:`
+        : `Criei ${criadas.length === 1 ? 'a task' : `${criadas.length} tasks`}${onde}, mas a releitura apontou divergência em ${criadas.length - verificadas.length}:`,
+    );
+    for (const r of criadas) {
+      const dono = r.assigneeUsername ? ` — responsável: ${r.assigneeUsername}` : ' — sem responsável definido';
+      const brief = r.briefingAttached ? (r.briefingVerified ? ', com briefing anexado' : ', briefing enviado mas não reconfirmado') : '';
+      const ressalva = r.verified ? '' : ` (ATENÇÃO: ${r.mismatches.join('; ')})`;
+      linhas.push(`- "${r.title}"${dono}${brief}${ressalva}\n  ${r.url}`);
+    }
+  }
+
+  if (duplicadas.length > 0) {
+    linhas.push('', 'Já existia e eu não dupliquei:');
+    for (const r of duplicadas) linhas.push(`- "${r.title}" — ${r.url}`);
+  }
+
+  if (bloqueadas.length > 0) {
+    linhas.push('', 'Não criei estas, e o motivo é só um:');
+    for (const r of bloqueadas) {
+      if (r.blockedBy === 'PERSON_AMBIGUOUS') {
+        linhas.push(`- "${r.title}": "${r.assigneeName}" casa com mais de uma pessoa (${r.candidates.join(', ')}). Me diz qual delas é que eu crio.`);
+      } else if (r.blockedBy === 'PERSON_NOT_FOUND') {
+        linhas.push(`- "${r.title}": não encontrei "${r.assigneeName}" entre os membros do ClickUp. O briefing já está pronto; preciso só saber quem recebe.`);
+      } else {
+        linhas.push(`- "${r.title}": ${r.error ?? 'bloqueada'}`);
+      }
+    }
+  }
+
+  if (falhas.length > 0) {
+    linhas.push('', 'O ClickUp recusou a operação nestas, e eu não alterei nada lá:');
+    for (const r of falhas) linhas.push(`- "${r.title}": ${r.error ?? 'falha na escrita'}`);
+  }
+
+  if (params.pendencies.length > 0 && criadas.length > 0) {
+    linhas.push('', `Deixei sinalizado na task o que ainda falta: ${params.pendencies.join('; ')}.`);
+  }
+
+  return linhas.join('\n');
 }

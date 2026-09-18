@@ -138,6 +138,25 @@ export function operationalDataRetrieved(data: AgentJobData): boolean {
   return Boolean(ctx && MARCADORES_DADO_AO_VIVO.some((m) => ctx.includes(m)));
 }
 
+/**
+ * A resposta AFIRMA ter escrito no ClickUp?
+ *
+ * Só primeira pessoa no passado/presente perfeito ("criei", "atribuí", "já
+ * lancei") conta. "Posso criar", "vou criar" e "seria bom criar" não são
+ * afirmações de fato — são oferta e opinião, e barrar essas viraria replan em
+ * todo turno operacional.
+ */
+export function afirmaTerEscrito(texto: string): boolean {
+  const flat = texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return /\b(criei|cadastrei|registrei|abri|atribui|designei|deleguei|lancei|adicionei|comentei|anexei|atualizei|movi)\b/.test(flat)
+    || /\b(task|tarefa|demanda|card|comentario)s?\s+(criad|atribuid|lancad|registrad|atualizad)/.test(flat);
+}
+
+/** Alguma ferramenta de ESCRITA no ClickUp voltou com sucesso neste turno? */
+export function houveEscritaBemSucedida(toolCalls: Array<{ tool: string; ok: boolean }>): boolean {
+  return toolCalls.some((t) => t.ok && /^clickup\.(create_task|update_task|create_comment|attach|move)/.test(t.tool));
+}
+
 /** Plano curto de recuperação (estratégia reduzida): reconsulta o agente e reavalia. */
 function reducedPlan(objective: string): AgentPlan {
   return {
@@ -879,6 +898,17 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       return { ok: false, observation: `contagem inconsistente com o dado ao vivo: ${contagem.reason}`, recoverable: true };
     }
 
+    // DIZER QUE CRIOU É UM FATO VERIFICÁVEL, e o mais caro de errar: quem lê
+    // "criei a task" para de cobrar. Se nenhuma ferramenta de escrita
+    // devolveu sucesso neste turno, a afirmação não tem como ser verdade.
+    if (afirmaTerEscrito(texto) && !houveEscritaBemSucedida(state.toolCalls)) {
+      return {
+        ok: false,
+        observation: 'a resposta afirma ter criado/alterado algo no ClickUp, mas nenhuma escrita foi executada e confirmada neste turno',
+        recoverable: true,
+      };
+    }
+
     const refs: EvidenceRef[] = state.evidence.map((e, i) => ({ id: e.sourceId ?? `ev${i}`, summary: e.summary }));
     const relatorio = groundClaims(texto, refs);
     const numericosSemAncora = relatorio.ungroundedFacts.filter((c) => /\d/.test(c.text));
@@ -994,13 +1024,41 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     };
   };
 
+  /**
+   * O passo `tool` do plano de escrita, quando o runtime NÃO tem executor.
+   *
+   * Achado no trace de produção de 17/09/2026 (execução real da Tammy): o
+   * plano trazia o passo "executar a escrita no ClickUp via tool-gateway", ele
+   * terminava `completed`, e a única tool chamada no turno inteiro era
+   * `agent:bento`. O passo de escrita estava ligado ao handler de ANÁLISE:
+   * pedia-se uma escrita, chamava-se o modelo, e o texto que voltava dava o
+   * passo por cumprido. O turno fechou com `success_criteria_met` e score 1.0
+   * sem nada ter sido criado.
+   *
+   * Aqui o passo continua deixando o node responder (a pessoa recebe a leitura
+   * da demanda), mas o trace passa a registrar a verdade: nenhuma escrita
+   * ocorreu. O verify é quem impede a resposta de afirmar o contrário.
+   */
+  const escritaNaoExecutadaHandler: StepHandler = async (ctx) => {
+    const r = await analyzeHandler(ctx);
+    return {
+      ...r,
+      observation: `${r.observation}\n[runtime] nenhuma escrita foi executada neste caminho: o pedido de escrita é executado pelo guard antes do dispatch.`,
+      toolCalls: [...(r.toolCalls ?? []), { tool: 'clickup.write', input_summary: 'não executada por este caminho', ok: false, duration_ms: 0, error: 'sem executor de escrita no dispatch agêntico' }],
+    };
+  };
+
   const hooks: StepLoopHooks = {
     handlers: {
       retrieve: retrieveHandler,
       analyze: analyzeHandler,
       // No plano autônomo o passo `tool` é EXECUÇÃO DE AÇÃO; nos demais
       // continua sendo a inteligência do node (comportamento preservado).
-      tool: sinais.autonomous ? actionHandler : analyzeHandler,
+      // Escrita AUTÔNOMA tem executor de verdade (actionHandler). Escrita
+      // pedida em linguagem natural é executada pelo guard ANTES do dispatch;
+      // se o turno chegou aqui, nenhuma escrita vai acontecer neste caminho —
+      // e o passo precisa DIZER isso, em vez de ser satisfeito por texto.
+      tool: sinais.autonomous ? actionHandler : sinais.writeIntent ? escritaNaoExecutadaHandler : analyzeHandler,
       verify: verifyHandler,
       evaluate: evaluateHandler,
     },

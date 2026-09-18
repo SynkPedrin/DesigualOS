@@ -29,6 +29,60 @@ function dobra(texto: string): string {
   return texto.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
+/**
+ * Nome de cliente como a operação REALMENTE escreve.
+ *
+ * Na carteira o cliente é "D. Carvalho". A Tammy escreve "D Carvalho" e
+ * "DCarvalho" — as duas formas aparecem nos chats reais de 15 e 17/09/2026.
+ * O casamento era literal sobre o nome cadastrado, então "na lista da D
+ * Carvalho" devolvia `no_client_referenced`: a única entidade que a mensagem
+ * declarava em voz alta era jogada fora por causa de um ponto final.
+ *
+ * Três chaves por cliente, da mais conservadora pra mais tolerante:
+ *   1. o nome normalizado (acento/caixa);
+ *   2. sem pontuação, espaços colapsados  — "d carvalho";
+ *   3. sem espaço nenhum                  — "dcarvalho".
+ * A chave 3 só vale a partir de 5 caracteres, pra um nome curto não casar
+ * dentro de outra palavra.
+ */
+export function chavesDoCliente(nome: string): string[] {
+  const base = dobra(nome).trim();
+  const semPontuacao = base.replace(/[.,'’-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const semEspaco = semPontuacao.replace(/\s+/g, '');
+  const chaves = [base, semPontuacao];
+  // A chave sem espaço só existe pra nome COMPOSTO ("D. Carvalho" ->
+  // "dcarvalho"). Gerá-la pra nome de palavra única não acrescenta nada e só
+  // abriria espaço pra casar dentro de outra palavra.
+  if (semEspaco.length >= 5 && semEspaco !== semPontuacao) chaves.push(semEspaco);
+  return [...new Set(chaves.filter((c) => c.length >= 3))];
+}
+
+/** O texto da mensagem nas mesmas três formas, pra comparar chave com chave. */
+function formasDaMensagem(message: string): { comEspaco: string; semEspaco: string } {
+  const comEspaco = dobra(message).replace(/[.,'’-]/g, ' ').replace(/\s+/g, ' ');
+  return { comEspaco, semEspaco: comEspaco.replace(/\s+/g, '') };
+}
+
+function escaparRegex(texto: string): string {
+  return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A mensagem cita este cliente, em qualquer das formas que a equipe usa? */
+export function mensagemCitaCliente(message: string, nomeDoCliente: string): boolean {
+  const { comEspaco, semEspaco } = formasDaMensagem(message);
+  return chavesDoCliente(nomeDoCliente).some((chave) => {
+    // Na forma sem espaço não existe fronteira pra cobrar — a mensagem inteira
+    // virou uma palavra só. O piso de 5 caracteres e a exigência de nome
+    // composto é o que segura o falso positivo aqui.
+    if (!chave.includes(' ')) {
+      if (new RegExp(`(^|[^a-z0-9])${escaparRegex(chave)}([^a-z0-9]|$)`).test(comEspaco)) return true;
+      return chave.length >= 5 && semEspaco.includes(chave);
+    }
+    // Fronteira explícita: sem isto "3net" casaria dentro de "13netos".
+    return new RegExp(`(^|[^a-z0-9])${escaparRegex(chave)}([^a-z0-9]|$)`).test(comEspaco);
+  });
+}
+
 /** Palavras que nunca são nome de cliente, pra não casar lixo. */
 const RUIDO = new Set(['task', 'tarefa', 'campanha', 'cliente', 'time', 'equipe', 'hoje', 'amanha', 'isso', 'aquilo']);
 
@@ -67,13 +121,13 @@ export async function resolveWriteTarget(params: {
   //    errado quando o texto cita outro.
   const citado = extractCitedClient(params.message);
   if (citado) {
-    const alvoCitado = dobra(citado);
-    const exatos = clientes.filter((c) => dobra(c.name) === alvoCitado);
+    const alvoCitado = chavesDoCliente(citado)[1] ?? dobra(citado);
+    const exatos = clientes.filter((c) => chavesDoCliente(c.name).includes(alvoCitado));
     if (exatos.length === 1) return finalizar(exatos[0]!, `cliente citado na mensagem: ${exatos[0]!.name}`);
 
     // Parciais: quem contém o que foi citado. Mais de um = ambíguo de verdade
     // ("Colpar QA" com Alpha e Beta na carteira).
-    const parciais = clientes.filter((c) => dobra(c.name).includes(alvoCitado));
+    const parciais = clientes.filter((c) => chavesDoCliente(c.name).some((k) => k.includes(alvoCitado)));
     if (parciais.length === 1) return finalizar(parciais[0]!, `cliente citado na mensagem: ${parciais[0]!.name}`);
     if (parciais.length > 1) {
       return {
@@ -96,11 +150,10 @@ export async function resolveWriteTarget(params: {
 
   // 3. Nome de cliente solto no texto, sem a palavra "cliente". MAIS ESPECÍFICO
   //    vence: "Colpar QA" contém "Colpar", e quem escreveu quis o primeiro.
-  const flat = dobra(params.message);
   const encontrados = clientes.filter((c) => {
     const nome = dobra(c.name).trim();
     if (nome.length < 3 || RUIDO.has(nome)) return false;
-    return new RegExp(`(^|[^a-z0-9])${nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(flat);
+    return mensagemCitaCliente(params.message, c.name);
   });
   if (encontrados.length === 0) {
     return { status: 'no_client_referenced', clientId: null, clientName: null, listId: null, candidates: [], reason: 'nenhum cliente citado na mensagem' };
@@ -120,6 +173,37 @@ export async function resolveWriteTarget(params: {
   }
   return finalizar(topo, `cliente identificado na mensagem: ${topo.name}`);
 }
+/**
+ * TÍTULO DE UMA TASK DE ENTREGÁVEL: "Criar layout das placas — D. Carvalho".
+ *
+ * Quando o pedido nomeia o entregável (layout, texto, vídeo), o título sai
+ * dele, e não do verbo genérico. O ASSUNTO vem dos itens enumerados na
+ * solicitação colada — no caso real, quatro linhas começando com "Placa", que
+ * viram "placas". É o que faz a task dizer o trabalho sem precisar abrir o
+ * briefing.
+ */
+export function buildDeliverableTitle(params: {
+  deliverable: string;
+  items: string[];
+  clientName: string | null;
+}): string {
+  const assunto = assuntoDosItens(params.items);
+  const sufixo = params.clientName ? ` — ${params.clientName}` : '';
+  return `Criar ${params.deliverable}${assunto ? ` das ${assunto}` : ''}${sufixo}`.slice(0, 120);
+}
+
+/** Substantivo comum às linhas enumeradas ("Placa X", "Placa Y" -> "placas"). */
+function assuntoDosItens(items: string[]): string | null {
+  if (items.length === 0) return null;
+  const primeiras = items.map((i) => dobra(i).split(/\s+/)[0] ?? '').filter((w) => w.length >= 4);
+  if (primeiras.length === 0) return null;
+  const cabeca = primeiras[0]!;
+  // Só vira assunto se a MAIORIA das linhas começa igual — senão é uma lista
+  // heterogênea e um rótulo único mentiria sobre o que tem dentro.
+  if (primeiras.filter((w) => w === cabeca).length * 2 <= primeiras.length) return null;
+  return cabeca.endsWith('s') ? cabeca : `${cabeca}s`;
+}
+
 /**
  * TÍTULO OPERACIONAL: responde "o que precisa ser feito", não repete o que a
  * pessoa escreveu. Copiar a mensagem crua foi o que produziu a task chamada

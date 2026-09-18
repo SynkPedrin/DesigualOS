@@ -95,6 +95,42 @@ function normalizePersonName(text: string): string {
  * exato > prefixo de nome completo > nome contido. Sem match único, devolve
  * null em vez de chutar (a camada de cima decide como perguntar).
  */
+export type MemberResolution =
+  | { status: 'resolved'; member: ClickUpMember; matchedBy: 'full' | 'first_name' | 'prefix' | 'contained' }
+  | { status: 'ambiguous'; candidates: ClickUpMember[] }
+  | { status: 'not_found'; candidates: [] };
+
+/**
+ * Igual ao findMemberByName, mas DIZ POR QUE não resolveu.
+ *
+ * "não achei" e "achei três" pedem respostas diferentes de quem está
+ * conversando: a primeira é um nome errado, a segunda é uma escolha. Colapsar
+ * as duas em `null` obrigava a camada de cima a inventar uma pergunta só, e
+ * era o que sobrava quando a Tammy escrevia "pro Gui" — ou o Bento seguia sem
+ * responsável, ou pedia de novo o que ela já tinha dito.
+ */
+export async function resolveMemberByName(config: ClickUpConfig, name: string): Promise<MemberResolution> {
+  const members = await getTeamMembers(config);
+  const wanted = normalizePersonName(name);
+  if (!wanted) return { status: 'not_found', candidates: [] };
+
+  const niveis: Array<{ matchedBy: 'full' | 'first_name' | 'prefix' | 'contained'; hits: ClickUpMember[] }> = [
+    { matchedBy: 'full', hits: members.filter((m) => normalizePersonName(m.username) === wanted) },
+    { matchedBy: 'first_name', hits: members.filter((m) => normalizePersonName(m.username).split(' ')[0] === wanted.split(' ')[0]) },
+    { matchedBy: 'prefix', hits: members.filter((m) => normalizePersonName(m.username).startsWith(wanted)) },
+    { matchedBy: 'contained', hits: members.filter((m) => normalizePersonName(m.username).includes(wanted)) },
+  ];
+
+  // O nível mais específico que encontrou ALGUMA coisa decide. Se ele achou
+  // exatamente um, resolveu; se achou vários, é ambíguo de verdade — descer
+  // pro nível seguinte só aumentaria o conjunto.
+  for (const nivel of niveis) {
+    if (nivel.hits.length === 1) return { status: 'resolved', member: nivel.hits[0]!, matchedBy: nivel.matchedBy };
+    if (nivel.hits.length > 1) return { status: 'ambiguous', candidates: nivel.hits };
+  }
+  return { status: 'not_found', candidates: [] };
+}
+
 export async function findMemberByName(config: ClickUpConfig, name: string): Promise<ClickUpMember | null> {
   const members = await getTeamMembers(config);
   const wanted = normalizePersonName(name);
