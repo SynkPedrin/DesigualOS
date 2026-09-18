@@ -85,18 +85,27 @@ async function falar(page: import('@playwright/test').Page, texto: string, timeo
   }
   await expect.poll(async () => bolhas.count(), { timeout }).toBeGreaterThan(antes);
   const nova = bolhas.nth(antes);
-  await expect.poll(async () => (await nova.innerText()).trim().length, { timeout }).toBeGreaterThan(10);
+  /**
+   * Mede o CONTEÚDO, sem o rodapé da bolha. Medido em 18/09/2026: a bolha
+   * streamou a resposta inteira e depois remontou mostrando só o horário
+   * ("16:48"); a estabilidade medida no texto cru viu 5 caracteres parados e
+   * deu por encerrado — a asserção seguinte recebeu um timestamp. Produto
+   * certo, régua errada: horário não é resposta.
+   */
+  const conteudo = async () =>
+    (await nova.innerText()).replace(/\n?\d\d:\d\d\n?/g, '').replace(/\n?Encaminhar\s*$/i, '').trim();
+  await expect.poll(async () => (await conteudo()).length, { timeout }).toBeGreaterThan(20);
   await expect
     .poll(
       async () => {
-        const a = (await nova.innerText()).trim().length;
+        const a = await conteudo();
         await page.waitForTimeout(1500);
-        return a === (await nova.innerText()).trim().length ? 'estavel' : 'crescendo';
+        return a === (await conteudo()) ? 'estavel' : 'crescendo';
       },
       { timeout },
     )
     .toBe('estavel');
-  const r = (await nova.innerText()).replace(/\n\d\d:\d\d\n?/g, '\n').replace(/\nEncaminhar\s*$/i, '').trim();
+  const r = await conteudo();
   appendFileSync(SAIDA, `\n### "${texto.replace(/\s+/g, ' ').slice(0, 110)}"\n\n\`\`\`\n${r}\n\`\`\`\n`, 'utf8');
   return r;
 }

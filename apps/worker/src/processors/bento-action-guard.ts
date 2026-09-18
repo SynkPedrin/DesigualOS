@@ -23,6 +23,7 @@ import { classifyDeliveryType, composeBriefing } from './briefing-composer';
 import { evaluateBriefing } from './briefing-quality';
 import { retrieveBriefingContext } from './briefing-retrieval';
 import { classifyActionIntent } from './action-intent';
+import { classifyActionIntentV2 } from './action-intent-v2';
 import { buildDeliverableTitle, buildItemTitle, buildOperationalTitle, resolveWriteTarget } from './write-target';
 import { buildOperationalActionPlan } from './operational-action-plan';
 import { createManyTasks, type CreateOneInput, type CreateOutcome, type TaskAttachment } from './multi-create-executor';
@@ -336,7 +337,8 @@ export function podeEscreverNoCanary(email: string | null, env: NodeJS.ProcessEn
  * chat, que é exatamente o defeito de 15/09 voltando por outra porta.
  *
  * Uma ordem operacional descreve o que FAZER com a demanda; ela não é a
- * demanda. Só texto que não é ordem vira material.
+ * demanda. E meta-conversa sobre a ação ("não cria ainda", perguntas) também
+ * não é. Só texto que é o trabalho em si vira material.
  */
 export function ehMaterialDeDemanda(texto: string): boolean {
   const limpo = texto.trim();
@@ -344,7 +346,30 @@ export function ehMaterialDeDemanda(texto: string): boolean {
   // Uma solicitação colada tem corpo; um aceno tem quinze caracteres.
   if (limpo.length < 40) return false;
   if (/\b(acima|anterior)\b/i.test(limpo) && limpo.length < 200) return false;
-  return !classifyActionIntent(limpo).writeAuthorized;
+  // Pergunta é pedido de resposta ("como está a operação?"), não descrição de
+  // demanda — inclusive quando a pergunta vem no meio e o texto não termina
+  // em "?".
+  if (limpo.endsWith('?')) return false;
+  /**
+   * A régua não pode ser só "não autoriza escrita". Medido no aceite
+   * (18/09/2026): o turno "Bento, não cria nada ainda, só analisa" tem
+   * writeAuthorized=false — entrou como material, virou item do plano e virou
+   * task CRIADA com a frase da negação no título. Fala SOBRE a ação (negada
+   * ou restrita) é meta-conversa com o agente, não é o trabalho.
+   *
+   * No outro sentido: a solicitação do cliente ("Chegou uma solicitação nova:
+   * precisamos de um roteiro...") descreve o trabalho e é material, mesmo
+   * quando o texto traz vocabulário operacional.
+   */
+  const v2 = classifyActionIntentV2(limpo);
+  if (v2.writeAuthorized) return false;
+  if (v2.negations.length > 0 && v2.signals.length > 0) return false;
+  // Pedido de análise/panorama dirigido ao agente ("me conta", "como está",
+  // "me explica") é conversa, não demanda — mesmo sem "?" no fim.
+  if (v2.signals.length === 0 && /\b(me conta|me explica|me diz|me mostra|me fala|como est[aá]|como t[aá])\b/i.test(limpo)) {
+    return false;
+  }
+  return true;
 }
 
 export function getClickUpConfigOrNull(): ClickUpConfig | null {

@@ -90,6 +90,30 @@ function hasToken(f: TextForms, ...palavras: string[]): boolean {
   return palavras.some((p) => f.tokens.includes(p));
 }
 
+/**
+ * Substantivo não é imperativo, e quem desambigua é o determinante.
+ *
+ * Medido no aceite pelo frontend (18/09/2026): a solicitação real da cliente
+ * "...seguindo o padrão visual da marca" foi classificada como ORDEM DE
+ * ESCRITA, porque "marca" está na família update ("marca isso pro Gui"). Mas
+ * "da marca" fala DA MARCA — artigo antes vira nome, não verbo. O mesmo vale
+ * pra "a troca de óleo" (substantivo) contra "troca o título" (ordem).
+ *
+ * Sem esse filtro a solicitação da cliente era descartada como material e a
+ * conversa em volta virava conteúdo da task — foi assim que nasceram tasks
+ * chamadas "Criar Bento, não cria nada ainda, só analisa...".
+ */
+const SUBSTANTIVO_AMBIGUO = new Set(['marca', 'troca']);
+const DETERMINANTE = new Set([
+  'a', 'o', 'da', 'do', 'na', 'no', 'uma', 'um',
+  'essa', 'esse', 'esta', 'este', 'nossa', 'nosso', 'sua', 'seu', 'minha', 'meu',
+]);
+
+/** Tokens válidos pra casar FORMAS DE ORDEM: substantivo com artigo não ordena. */
+function tokensDeOrdem(tokens: string[]): string[] {
+  return tokens.filter((t, i) => !(SUBSTANTIVO_AMBIGUO.has(t) && i > 0 && DETERMINANTE.has(tokens[i - 1]!)));
+}
+
 /* ------------------------------------------------------------------ */
 /* LÉXICO — famílias semânticas, não dezenas de regex soltas           */
 /* ------------------------------------------------------------------ */
@@ -293,8 +317,9 @@ function classifySegment(raw: { text: string; index: number; kind: Segment['kind
 
   const families: string[] = [];
   let imperative = false;
+  const fOrdem: TextForms = { ...f, tokens: tokensDeOrdem(f.tokens) };
   for (const fam of FAMILIAS) {
-    if (hasToken(f, ...fam.ordem)) {
+    if (hasToken(fOrdem, ...fam.ordem)) {
       families.push(fam.nome);
       imperative = true;
     } else if (hasToken(f, ...fam.naoOrdem)) {

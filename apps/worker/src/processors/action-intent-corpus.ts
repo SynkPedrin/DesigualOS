@@ -25,7 +25,7 @@ export interface CorpusCase {
   expectedActions?: number;
 }
 
-export const CORPUS_VERSION = '2026-09-18.2';
+export const CORPUS_VERSION = '2026-09-18.3';
 
 /**
  * TAMMY — como a operação fala. Todas são ordens inequívocas: se o Bento não
@@ -142,6 +142,12 @@ Bento, o que você acha dessa demanda?`,
   { id: 'X31', message: 'pode criar?', expected: 'ANALYZE', note: 'liberação em forma de PERGUNTA não libera' },
   { id: 'X32', message: 'ainda não pode criar', expected: 'ANALYZE', note: 'negação vence liberação' },
   { id: 'X33', message: 'a gente pode criar isso depois?', expected: 'ANALYZE', note: 'hipótese com pergunta' },
+  // Substantivo não é imperativo: quem desambigua é o artigo. Medido no
+  // aceite de 18/09 — a solicitação real da cliente virou ordem por causa
+  // de "da marca".
+  { id: 'X34', message: 'Chegou uma solicitação nova do cliente: precisamos de um roteiro de sinalização para a recepção, seguindo o padrão visual da marca.', expected: 'ANALYZE', note: '"da marca" é substantivo, não o verbo "marca!"' },
+  { id: 'X35', message: 'a troca de óleo ficou ótima, o cliente elogiou', expected: 'ANALYZE', note: '"a troca de óleo" é substantivo' },
+  { id: 'X36', message: 'me conta como ficou o padrão visual da marca nova', expected: 'ANALYZE', note: 'pergunta + substantivo ambíguo' },
 ];
 
 /**
@@ -161,6 +167,8 @@ export const NATURAL_CASES: CorpusCase[] = [
   { id: 'N10', message: 'troca o responsável pro Gui', expected: 'ACT', note: '"troca"' },
   { id: 'N11', message: 'e essa aqui, deixa com o Gui', expected: 'ACT', note: 'ordem no meio da frase' },
   { id: 'N12', message: 'beleza, então cria pro Gui', expected: 'ACT', note: 'marcador de discurso antes' },
+  { id: 'N13', message: 'marca essa task pro Gui revisar', expected: 'ACT', note: '"marca" sem artigo É o verbo — continua ordem' },
+  { id: 'N14', message: 'troca o responsável dessa demanda pra Jamile', expected: 'ACT', note: '"troca" imperativo continua ordem' },
 ];
 
 /**

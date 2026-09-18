@@ -671,3 +671,21 @@ describe('a "solicitação acima" é material, nunca outra ordem', () => {
     expect(ehMaterialDeDemanda('era a solicitação acima mesmo')).toBe(false);
   });
 });
+
+describe('meta-conversa não é material (regressão 18/09, segunda forma)', () => {
+  it.each([
+    'Bento, não cria nada ainda, só analisa essa demanda da Clinica Teste Fase 7.',
+    'Bento, como está a operação da Clinica Teste Fase 7? Me conta o panorama geral.',
+  ])('negação/pergunta NÃO vira material: %s', (m) => {
+    expect(ehMaterialDeDemanda(m)).toBe(false);
+  });
+
+  it('a solicitação do cliente vira material MESMO com vocabulário operacional', () => {
+    // "da marca" é substantivo; o texto descreve o trabalho — é o pedido.
+    expect(
+      ehMaterialDeDemanda(
+        'Chegou uma solicitação nova do cliente: precisamos de um roteiro de sinalização para a recepção, seguindo o padrão visual da marca.',
+      ),
+    ).toBe(true);
+  });
+});
