@@ -18,6 +18,8 @@ import {
   runCreativePipeline,
   extractOrchestratorContext,
   stripOrchestratorContext,
+  classificarTurno,
+  resolverReferente,
   contratoDeSaida,
   diretivaDoContrato,
   createWebSearchProviderFromEnv,
@@ -98,6 +100,20 @@ export function createDefaultDeps(config: OttoNodeConfig): OttoNodeDeps {
  * enfileirar no Studio - a fonte autoritativa é o banco, não o prompt.
  */
 const CLIENT_REF_PREFIX = 'client:';
+
+/**
+ * Nome do cliente dentro do bloco de contexto do orquestrador.
+ *
+ * O worker escreve o dossiê com o nome do cliente resolvido na primeira linha
+ * do bloco ("CLIENTE DO TURNO: Elite" / "DOSSIÊ DO CLIENTE: Elite"). É esse
+ * nome — não o id, que não viaja no protocolo — que fecha a cerca de material
+ * de cliente no vault.
+ */
+export function extrairClienteDoContexto(contexto: string): string | null {
+  const m = /(?:CLIENTE DO TURNO|DOSSI[ÊE] DO CLIENTE|CLIENTE)\s*:\s*([^\n(|]{2,60})/i.exec(contexto);
+  const bruto = m?.[1]?.trim();
+  return bruto && bruto.length >= 2 ? bruto : null;
+}
 
 function extractClientId(contextRefs: string[]): string | null {
   const ref = contextRefs.find((value) => value.startsWith(CLIENT_REF_PREFIX));
@@ -426,19 +442,64 @@ export async function executeTask(
     // fora do ar NÃO derruba o turno - o Otto fica "criativo mas cego"
     // (visível no /health) e responde sem a camada de conhecimento, com o
     // fato logado.
+    /**
+     * PORTA DO VAULT (18/09/2026).
+     *
+     * Duas correções na mesma linha, porque as duas produziam o mesmo sintoma:
+     * "me explica o segundo" respondido com o tom de voz da APAE.
+     *
+     * 1. A QUERY era `request.message` INTEIRA — com o pacote de contexto que
+     *    o worker cola depois do marcador. Três palavras de pedido contra
+     *    centenas de palavras de dossiê: quem decidia o resultado da busca
+     *    lexical era o ruído. A detecção de intenção e a profundidade já
+     *    cortavam esse bloco; o retrieval era o único que ainda não.
+     *
+     * 2. O VAULT RODAVA SEMPRE. Para um follow-up cujo referente está na
+     *    conversa, conhecimento externo não preenche lacuna nenhuma — ele
+     *    compete com a resposta certa. RAG existe pra completar o que falta,
+     *    não pra decidir o que "o segundo" significa.
+     */
+    /**
+     * O cliente do turno vem do ESCOPO RESOLVIDO pelo orquestrador — fato
+     * consultado no banco, não palpite lexical. É ele que fecha a cerca do
+     * vault; sem ele, só conhecimento geral entra.
+     */
+    const contextoDoOrquestrador = extractOrchestratorContext(request.message) ?? '';
+    const clientSlug = extrairClienteDoContexto(contextoDoOrquestrador);
+    const dialogoRecente = contextoDoOrquestrador;
+    const turno = classificarTurno(request.message, /CONVERSA RECENTE/i.test(dialogoRecente));
+    const diretivaDeReferente = resolverReferente(dialogoRecente, turno);
+
     const retrievalStartedAt = performance.now();
     let knowledge: RetrievedKnowledge[] = [];
     try {
-      const query = [request.message, ...request.context_refs].join('\n');
-      knowledge = deps.retrieveKnowledge(query, {
-        maxDocs: policy.maxDocs,
-        snippetLength: policy.snippetLength,
-        includeStudioBrain: policy.includeStudioBrain,
-      });
-      sources.push(...knowledge.map((entry) => entry.doc.path));
+      if (turno.precisaVault) {
+        // Só o TURNO do usuário + refs. O bloco do orquestrador fica de fora.
+        const query = [stripOrchestratorContext(request.message), ...request.context_refs].join('\n');
+        knowledge = deps.retrieveKnowledge(query, {
+          maxDocs: policy.maxDocs,
+          snippetLength: policy.snippetLength,
+          includeStudioBrain: policy.includeStudioBrain,
+          clientSlug,
+        });
+        sources.push(...knowledge.map((entry) => entry.doc.path));
+      }
     } catch (error) {
       logger.warn({ error }, '[OTTO:retrieval] Brain ilegível; seguindo sem conhecimento');
     }
+    logger.info(
+      {
+        classe_do_turno: turno.classe,
+        vault_consultado: turno.precisaVault,
+        motivo: turno.motivo,
+        ordinal: turno.ordinal,
+        referente_resolvido: diretivaDeReferente !== null,
+        client_slug: clientSlug ?? null,
+        docs: knowledge.length,
+        execution_id: request.execution_id,
+      },
+      '[OTTO:retrieval] porta do vault',
+    );
     retrievalMs = since(retrievalStartedAt);
     logger.info(
       { docs: knowledge.length, paths: sources, depth: depth.depth, retrieval_ms: retrievalMs },
@@ -469,6 +530,14 @@ export async function executeTask(
     const escopoSection = contextoResolvido
       ? `\n\nESCOPO RESOLVIDO DESTE TURNO (consultado nas fontes da operação, tem PRECEDÊNCIA sobre o Conhecimento do Brain abaixo; se o Brain apontar outro cliente ou outra campanha, o Brain está errado para este turno):\n${contextoResolvido}`
       : '';
+    /**
+     * A diretiva de referente é CURTA e só existe quando o código já resolveu
+     * qual item é. Não é instrução genérica de "use o histórico" — é o texto
+     * do item, para o modelo não ter o que adivinhar nem onde procurar.
+     */
+    const referenteSection = diretivaDeReferente
+      ? `\n\nREFERÊNCIA DESTE TURNO (resolvida na conversa recente, tem PRECEDÊNCIA sobre qualquer fonte recuperada):\n${diretivaDeReferente}`
+      : '';
 
     // (c)+(d) Caminho de chat: prompt com contexto + conhecimento -> Ollama.
     if (!intent) {
@@ -497,7 +566,7 @@ export async function executeTask(
           [
             {
               role: 'system',
-              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}\n\n${FECHAMENTO_ENTREGA}`,
+              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${referenteSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}\n\n${FECHAMENTO_ENTREGA}`,
             },
             { role: 'user', content: request.message },
           ],

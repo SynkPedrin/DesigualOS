@@ -36,6 +36,9 @@ export {
   CONTEXT_BLOCK_MARKER,
 } from './brain/depth.js';
 export type { DepthDecision, DepthPolicy, RetrievalDepth, TurnDepthPlan } from './brain/depth.js';
+export { classificarTurno, itensDaLista, resolverReferente } from './brain/referential.js';
+export type { ClasseDeTurno, TurnoClassificado } from './brain/referential.js';
+export { documentoPermitido, donoDoDocumento } from './brain/retrieval.js';
 
 export {
   artDirectionSchema,

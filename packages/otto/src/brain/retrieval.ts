@@ -311,6 +311,62 @@ export interface RetrieveOptions {
    * cópia dos docs em memória).
    */
   includeStudioBrain?: boolean;
+  /**
+   * CERCA DE CLIENTE. Quando o turno é de um cliente resolvido, documento de
+   * OUTRO cliente não é elegível — nem com a maior pontuação lexical.
+   *
+   * Por que isso precisa existir: o vault é um corpo único e a busca é
+   * lexical, então "tom de voz" casa igualmente bem no material de qualquer
+   * cliente. Medido pelo frontend em 18/09/2026: num turno sobre a Elite o
+   * Otto passou a descrever o tom de voz e a persona da APAE. O README do
+   * próprio módulo já registrava o mesmo padrão em 10/09 (headline de pizzaria
+   * voltando com padrão de marca de outro cliente) e a correção de então foi
+   * parcial: desligou o STUDIO-BRAIN em turno raso, o que reduz a chance mas
+   * não fecha a porta.
+   *
+   * Similaridade é palpite; cliente resolvido pelo orquestrador é fato. Fato
+   * filtra palpite, nunca o contrário.
+   *
+   * `null`/ausente = turno sem cliente: vale o conhecimento geral, e só ele —
+   * material de cliente nenhum entra por falta de dono.
+   */
+  clientSlug?: string | null;
+}
+
+/**
+ * Pastas do vault que guardam material DE CLIENTE. Um doc aqui dentro pertence
+ * a alguém, e só esse alguém pode recebê-lo.
+ */
+const RAIZES_DE_CLIENTE = ['STUDIO-BRAIN/06_CLIENTS', 'STUDIO-BRAIN/07_PROJECTS', 'clientes', 'CLIENTES'];
+
+/** O doc é material de cliente? Se for, devolve o segmento que identifica o dono. */
+export function donoDoDocumento(path: string): string | null {
+  for (const raiz of RAIZES_DE_CLIENTE) {
+    if (!path.startsWith(`${raiz}/`)) continue;
+    const resto = path.slice(raiz.length + 1);
+    const dono = resto.split('/')[0];
+    if (dono) return normalize(dono);
+  }
+  return null;
+}
+
+/**
+ * Este documento pode ir para um turno deste cliente?
+ *
+ * Três respostas, e a do meio é a que importa:
+ *   - não é material de cliente  -> sim, é conhecimento geral;
+ *   - é de OUTRO cliente         -> NÃO, em nenhuma hipótese;
+ *   - turno sem cliente resolvido -> só conhecimento geral.
+ */
+export function documentoPermitido(path: string, clientSlug: string | null | undefined): boolean {
+  const dono = donoDoDocumento(path);
+  if (dono === null) return true;
+  if (!clientSlug) return false;
+  const alvo = normalize(clientSlug);
+  // Comparação por contenção nos dois sentidos: a pasta pode ser "elite" e o
+  // slug "elite-construtora", ou o inverso. Igualdade estrita descartaria
+  // material legítimo do próprio dono.
+  return dono === alvo || dono.includes(alvo) || alvo.includes(dono);
 }
 
 /** Um doc pertence ao subvault do Studio quando seu path começa na raiz dele. */
@@ -336,7 +392,10 @@ export function retrieveRelevantKnowledge(
   const terms = tokenize(query);
   if (terms.length === 0) return [];
 
-  const candidates = includeStudioBrain ? index.docs : index.docs.filter((doc) => !isStudioBrainDoc(doc));
+  const semStudio = includeStudioBrain ? index.docs : index.docs.filter((doc) => !isStudioBrainDoc(doc));
+  // A cerca de cliente é aplicada ANTES da pontuação: documento fora do
+  // cliente do turno não concorre, então não há como ele vencer por score.
+  const candidates = semStudio.filter((doc) => documentoPermitido(doc.path, opts.clientSlug));
 
   const scored = candidates.map((doc) => {
     let score = 0;

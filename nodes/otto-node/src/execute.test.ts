@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CONTEXT_BLOCK_MARKER } from '@desigual-os/otto';
 import {
   OttoLLMError,
   carouselPlanSchema,
@@ -346,9 +347,18 @@ describe('profundidade adaptativa do turno', () => {
 
     // Sem o corte, o "reposicionamento" do contexto levaria o turno pra DEEP.
     expect(body.metadata.retrieval.depth).toBe('fast');
-    // Mas a QUERY do retrieval segue usando a mensagem inteira: contexto é
-    // termo de busca legítimo, só não é sinal de profundidade.
-    expect(calls[0]!.query).toContain('reposicionamento');
+    /**
+     * A asserção aqui era o OPOSTO, e vinha com a justificativa "contexto é
+     * termo de busca legítimo". A produção provou que não é: com o bloco
+     * inteiro na query, um pedido de três palavras competia com centenas de
+     * palavras de dossiê, e num turno da Elite o vault devolveu o tom de voz
+     * da APAE (medido pelo frontend publicado em 18/09/2026).
+     *
+     * Contexto resolvido pelo orquestrador é FATO e entra no prompt com
+     * precedência declarada. Ele não é, e nunca foi, uma consulta de busca.
+     */
+    expect(calls[0]!.query).not.toContain('reposicionamento');
+    expect(calls[0]!.query).toContain('headline');
 
     await app.close();
   });
@@ -860,5 +870,82 @@ describe('POST /execute — loop criativo (pipeline + pesquisa + qualidade)', ()
     expect(pipeline.gaps).not.toContain('creative_history');
 
     await app.close();
+  });
+});
+
+/**
+ * FASE 13 — o node não pode ir ao vault pra descobrir o que "o segundo"
+ * significa. Este arquivo mede exatamente isso: quantas vezes o retrieval foi
+ * chamado, e com qual query.
+ */
+describe('follow-up referencial não consulta o vault', () => {
+  const DIALOGO = [
+    'CONVERSA RECENTE (para resolver referências; não é fonte de fato):',
+    'Usuário: Me dá 3 títulos.',
+    'Otto: 1 Título A',
+    '2 Título B',
+    '3 Título C',
+  ].join('\n');
+
+  function mensagemComContexto(turno: string, contexto = DIALOGO): string {
+    return `${turno}${CONTEXT_BLOCK_MARKER}${contexto}`;
+  }
+
+  it('"me explica o segundo" -> ZERO chamadas ao vault', async () => {
+    const chamadas: Array<{ query: string; options: unknown }> = [];
+    const deps = makeDeps({ chat: async () => 'O Título B fala de ...' }, brainDir, chamadas as never);
+    const app = buildTestApp(deps);
+    const { statusCode } = await execute(app, {
+      execution_id: 'EXE-REF-1',
+      message: mensagemComContexto('me explica o segundo.'),
+      context_refs: [],
+    });
+    await app.close();
+    expect(statusCode).toBe(200);
+    expect(chamadas, `vault foi consultado: ${JSON.stringify(chamadas.map((c) => c.query.slice(0, 60)))}`).toHaveLength(0);
+  });
+
+  it('pedido NOVO continua consultando o vault — e com a query LIMPA', async () => {
+    const chamadas: Array<{ query: string; options: unknown }> = [];
+    const deps = makeDeps({ chat: async () => '1 A\n2 B\n3 C' }, brainDir, chamadas as never);
+    const app = buildTestApp(deps);
+    await execute(app, {
+      execution_id: 'EXE-REF-2',
+      message: mensagemComContexto('me dá 3 títulos sobre funil de demanda'),
+      context_refs: [],
+    });
+    await app.close();
+    expect(chamadas).toHaveLength(1);
+    // A query NÃO pode carregar o bloco do orquestrador: era isso que fazia o
+    // dossiê de outro cliente decidir a busca lexical.
+    expect(chamadas[0]!.query).toContain('funil de demanda');
+    expect(chamadas[0]!.query).not.toContain('CONVERSA RECENTE');
+    expect(chamadas[0]!.query).not.toContain('Título B');
+  });
+
+  it('referencial QUE PEDE FATO ainda consulta o vault', async () => {
+    const chamadas: Array<{ query: string; options: unknown }> = [];
+    const deps = makeDeps({ chat: async () => 'resposta' }, brainDir, chamadas as never);
+    const app = buildTestApp(deps);
+    await execute(app, {
+      execution_id: 'EXE-REF-3',
+      message: mensagemComContexto('me explica o segundo à luz do posicionamento da marca'),
+      context_refs: [],
+    });
+    await app.close();
+    expect(chamadas).toHaveLength(1);
+  });
+
+  it('o cliente resolvido viaja como cerca para o retrieval', async () => {
+    const chamadas: Array<{ query: string; options: { clientSlug?: string | null } }> = [];
+    const deps = makeDeps({ chat: async () => 'resposta' }, brainDir, chamadas as never);
+    const app = buildTestApp(deps);
+    await execute(app, {
+      execution_id: 'EXE-REF-4',
+      message: mensagemComContexto('me dá 3 títulos sobre funil', 'CLIENTE DO TURNO: Elite\nDossiê...'),
+      context_refs: [],
+    });
+    await app.close();
+    expect(chamadas[0]!.options.clientSlug).toBe('Elite');
   });
 });
