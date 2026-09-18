@@ -475,6 +475,9 @@ importers:
       '@desigual-os/database':
         specifier: workspace:*
         version: link:../database
+      '@desigual-os/types':
+        specifier: workspace:*
+        version: link:../types
       drizzle-orm:
         specifier: ^0.33.0
         version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
