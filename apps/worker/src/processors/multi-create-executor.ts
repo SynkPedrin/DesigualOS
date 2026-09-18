@@ -8,6 +8,7 @@ import {
   queryOperationTasks,
   resolveMemberByName,
   updateTask,
+  uploadTaskAttachment,
   verifyTaskState,
   WriteScopeError,
   type ClickUpConfig,
@@ -33,6 +34,15 @@ import type { PlannedTask } from './operational-action-plan';
  * cliente não resolvido, escopo de escrita fechado.
  */
 
+/** Material que a solicitante mandou junto do pedido (print, PDF, referência). */
+export interface TaskAttachment {
+  url: string;
+  filename: string;
+  contentType: string | null;
+  /** true quando veio de uma mensagem ANTERIOR ("o print que mandei"). */
+  fromPreviousTurn?: boolean;
+}
+
 export interface CreateOneInput {
   planned: PlannedTask;
   title: string;
@@ -40,6 +50,37 @@ export interface CreateOneInput {
   briefing: string | null;
   description: string;
   dueDate: number | null;
+  /** Anexos da solicitação. SEMPRE viram referência; upload é best-effort. */
+  attachments?: TaskAttachment[];
+}
+
+/**
+ * O que aconteceu com CADA material — e a diferença importa na hora de falar.
+ * `referenced` = o link está no corpo da task, conferido por leitura.
+ * `uploaded`   = o arquivo está anexado no ClickUp, conferido por leitura.
+ * Dizer "anexei" quando só houve link é mentir sobre o que a pessoa vai
+ * encontrar quando abrir a task.
+ */
+export interface AttachmentOutcome {
+  filename: string;
+  url: string;
+  referenced: boolean;
+  uploaded: boolean;
+  error: string | null;
+}
+
+/**
+ * BLOCO DE REFERÊNCIAS. Vai no corpo da task porque é lá que quem executa
+ * procura o material — e porque é texto, sobrevive a qualquer falha de upload.
+ */
+export function blocoDeReferencias(attachments: TaskAttachment[]): string {
+  if (attachments.length === 0) return '';
+  const linhas = ['REFERÊNCIAS / MATERIAIS'];
+  for (const a of attachments) {
+    const origem = a.fromPreviousTurn ? ' (enviado na solicitação anterior)' : '';
+    linhas.push(`- ${a.filename}${origem} — ${a.url}`);
+  }
+  return linhas.join('\n');
 }
 
 export type CreateBlockReason = 'PERSON_NOT_FOUND' | 'PERSON_AMBIGUOUS';
@@ -59,6 +100,8 @@ export interface CreateOutcome {
   candidates: string[];
   briefingAttached: boolean;
   briefingVerified: boolean;
+  /** Um resultado por material, com o que foi CONFIRMADO por leitura. */
+  attachments: AttachmentOutcome[];
   verified: boolean;
   listAsserted: boolean;
   mismatches: string[];
@@ -72,6 +115,7 @@ export interface CreateDeps {
   createTask: typeof createAttributedTask;
   assign: typeof updateTask;
   comment: typeof createTaskComment;
+  uploadAttachment: typeof uploadTaskAttachment;
   readTask: typeof getTask;
   readComments: typeof getTaskComments;
   readListId: typeof getTaskListId;
@@ -83,6 +127,7 @@ export const defaultCreateDeps: CreateDeps = {
   createTask: createAttributedTask,
   assign: updateTask,
   comment: createTaskComment,
+  uploadAttachment: uploadTaskAttachment,
   readTask: getTask,
   readComments: getTaskComments,
   readListId: getTaskListId,
@@ -102,6 +147,7 @@ function vazio(title: string, planned: PlannedTask): CreateOutcome {
     candidates: [],
     briefingAttached: false,
     briefingVerified: false,
+    attachments: [],
     verified: false,
     listAsserted: false,
     mismatches: [],
@@ -168,11 +214,15 @@ export async function createOneTask(
       return out;
     }
 
-    // 3. CRIA.
+    // 3. CRIA. O bloco de REFERÊNCIAS entra no corpo já na criação: é texto,
+    // então sobrevive a qualquer falha de upload e é o que garante que o
+    // material nunca se perde entre o chat e a task.
+    const anexos = input.attachments ?? [];
+    const referencias = blocoDeReferencias(anexos);
     const created = await deps.createTask(config, {
       listId,
       name: input.title,
-      description: input.description,
+      description: [input.description, referencias].filter((p) => p && p.length > 0).join('\n\n'),
       requesterName: requester.name,
       requesterClickUpEmail: requester.clickUpEmail,
       ...(input.dueDate ? { dueDate: input.dueDate } : {}),
@@ -194,7 +244,22 @@ export async function createOneTask(
       out.briefingAttached = true;
     }
 
-    // 6. READ-BACK. A partir daqui nada é afirmado sem leitura.
+    // 6. ANEXO DE VERDADE — best-effort, reusando o upload que já existe no
+    // gateway. Falhar aqui NÃO é falha da task: a referência já está no corpo
+    // e a pessoa chega no material do mesmo jeito. O que não pode acontecer é
+    // o recibo dizer "anexei" por causa de uma tentativa.
+    out.attachments = anexos.map((a) => ({ filename: a.filename, url: a.url, referenced: false, uploaded: false, error: null }));
+    for (const alvo of out.attachments) {
+      try {
+        await deps.uploadAttachment(config, created.id, alvo.url, alvo.filename);
+        record('clickup.attach_file', alvo.filename, true);
+      } catch (error) {
+        alvo.error = error instanceof Error ? error.message : String(error);
+        record('clickup.attach_file', alvo.filename, false, alvo.error);
+      }
+    }
+
+    // 7. READ-BACK. A partir daqui nada é afirmado sem leitura.
     const expected: ExpectedTaskState = {
       name: input.title,
       ...(out.assigneeId != null ? { assigneeIds: [out.assigneeId] } : {}),
@@ -202,7 +267,15 @@ export async function createOneTask(
     };
     let verif: TaskVerification | null = null;
     try {
-      verif = verifyTaskState(await deps.readTask(config, created.id), expected);
+      const relida = await deps.readTask(config, created.id);
+      verif = verifyTaskState(relida, expected);
+      // O que a task REALMENTE tem: link no corpo e/ou arquivo anexado. É
+      // daqui, e só daqui, que sai a frase do recibo sobre material.
+      for (const alvo of out.attachments) {
+        alvo.referenced = relida.description.includes(alvo.url);
+        alvo.uploaded = relida.attachments.some((x) => (x.title ?? '') === alvo.filename);
+      }
+      record('clickup.readback_attachments', `${out.attachments.filter((a) => a.referenced).length} referência(s), ${out.attachments.filter((a) => a.uploaded).length} anexo(s)`, true);
     } catch (error) {
       record('clickup.get_task', `read-back ${created.id}`, false, error instanceof Error ? error.message : String(error));
     }

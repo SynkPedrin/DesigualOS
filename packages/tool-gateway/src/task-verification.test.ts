@@ -9,6 +9,8 @@ const base: TaskDetail = {
   dueDate: 1_000_000,
   listId: 'L1',
   assignees: [{ id: 42, username: 'pedro' }],
+  description: '',
+  attachments: [],
 };
 
 describe('normalizeTaskName', () => {

@@ -366,6 +366,16 @@ const taskDetailSchema = z.object({
     .array(z.object({ id: z.number(), username: z.string().nullish() }))
     .optional()
     .default([]),
+  // Descrição e anexos entram pra que o read-back consiga CONFERIR material
+  // de referência. Sem eles não havia como distinguir "o link está na task"
+  // de "eu acho que coloquei o link na task" — e essa distinção é a única
+  // coisa que separa um recibo de uma promessa.
+  description: z.string().nullish(),
+  text_content: z.string().nullish(),
+  attachments: z
+    .array(z.object({ id: z.string().nullish(), title: z.string().nullish(), url: z.string().nullish() }))
+    .optional()
+    .default([]),
 });
 
 export interface TaskDetail {
@@ -375,6 +385,10 @@ export interface TaskDetail {
   dueDate: number | null;
   listId: string | null;
   assignees: Array<{ id: number; username: string | null }>;
+  /** Corpo da task — é onde o bloco de REFERÊNCIAS/MATERIAIS é conferido. */
+  description: string;
+  /** Anexos REAIS na task (upload que o ClickUp aceitou), nunca links. */
+  attachments: Array<{ id: string | null; title: string | null; url: string | null }>;
 }
 
 /**
@@ -399,6 +413,8 @@ export async function getTask(config: ClickUpConfig, taskId: string): Promise<Ta
     dueDate: due != null && Number.isFinite(due) ? due : null,
     listId: raw.list?.id ?? null,
     assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),
+    description: raw.description ?? raw.text_content ?? '',
+    attachments: (raw.attachments ?? []).map((a) => ({ id: a.id ?? null, title: a.title ?? null, url: a.url ?? null })),
   };
 }
 

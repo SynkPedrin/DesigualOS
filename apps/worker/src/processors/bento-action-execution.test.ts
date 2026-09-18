@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { classifyActionIntent } from './action-intent';
 import { buildOperationalActionPlan } from './operational-action-plan';
 import { chavesDoCliente, mensagemCitaCliente } from './write-target';
-import { createOneTask, createManyTasks, type CreateDeps, type CreateOneInput } from './multi-create-executor';
+import { blocoDeReferencias, createOneTask, createManyTasks, type CreateDeps, type CreateOneInput, type TaskAttachment } from './multi-create-executor';
+import { bentoWriteAllowlist, podeEscreverNoCanary } from './bento-action-guard';
 import { afirmaTerEscrito, houveEscritaBemSucedida } from './agentic-dispatch';
 import type { PlannedTask } from './operational-action-plan';
 
@@ -214,7 +215,8 @@ function deps(over: Partial<CreateDeps> = {}): CreateDeps {
     createTask: vi.fn(async () => ({ id: 'abc123', url: 'https://app.clickup.com/t/abc123', assigned: false })),
     assign: vi.fn(async () => undefined),
     comment: vi.fn(async () => ({ id: 'c1' })),
-    readTask: vi.fn(async () => ({ id: 'abc123', name: 'Criar layout das placas — D. Carvalho', status: 'aberto', assignees: [{ id: 7, username: 'Gui Silva' }], dueDate: null })),
+    readTask: vi.fn(async () => ({ id: 'abc123', name: 'Criar layout das placas — D. Carvalho', status: 'aberto', assignees: [{ id: 7, username: 'Gui Silva' }], dueDate: null, description: '', attachments: [] })),
+    uploadAttachment: vi.fn(async () => ({ id: 'att1' })),
     readComments: vi.fn(async () => [{ id: 'c1', text: 'briefing' }]),
     readListId: vi.fn(async () => 'L1'),
     ...over,
@@ -364,5 +366,143 @@ describe('texto colado não vira ordem', () => {
     'ontem eu criei uma task pro Gui e ele já entregou',
   ])('%s -> consulta, nunca escrita', (m) => {
     expect(classifyActionIntent(m).writeAuthorized).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FASE 1 — CONTINUIDADE DE ANEXO.
+// A Tammy manda print. O arquivo chegava na mensagem e morria ali: a task
+// nascia sem o único material que o designer precisava abrir.
+// ---------------------------------------------------------------------------
+
+const PRINT: TaskAttachment = {
+  url: 'https://storage.example/chat-uploads/1789672634699-Captura.png',
+  filename: 'Captura de Tela 2026-09-17.png',
+  contentType: 'image/png',
+};
+const MIV: TaskAttachment = { url: 'https://storage.example/miv.pdf', filename: 'MIV.pdf', contentType: 'application/pdf' };
+
+/** Task relida que reflete o corpo escrito e os anexos que o ClickUp aceitou. */
+function readTaskCom(descricao: string, anexos: Array<{ title: string }> = []) {
+  return vi.fn(async () => ({
+    id: 'abc123',
+    name: 'Criar layout das placas — D. Carvalho',
+    status: 'aberto',
+    assignees: [{ id: 7, username: 'Gui Silva' }],
+    dueDate: null,
+    description: descricao,
+    attachments: anexos.map((a) => ({ id: 'x', title: a.title, url: 'u' })),
+  })) as unknown as CreateDeps['readTask'];
+}
+
+describe('attachment_url_is_present_in_description_or_comment', () => {
+  it('o bloco de referências nomeia arquivo e URL', () => {
+    const bloco = blocoDeReferencias([PRINT, MIV]);
+    expect(bloco).toContain('REFERÊNCIAS / MATERIAIS');
+    expect(bloco).toContain(PRINT.url);
+    expect(bloco).toContain(MIV.filename);
+  });
+
+  it('material de turno anterior é marcado como tal', () => {
+    expect(blocoDeReferencias([{ ...PRINT, fromPreviousTurn: true }])).toContain('enviado na solicitação anterior');
+  });
+
+  it('a descrição da task criada carrega a URL', async () => {
+    const d = deps();
+    await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ attachments: [PRINT] }), d);
+    const body = (d.createTask as ReturnType<typeof vi.fn>).mock.calls[0]![1] as { description: string };
+    expect(body.description).toContain(PRINT.url);
+  });
+});
+
+describe('previous_attachment_is_preserved_in_created_task', () => {
+  it('anexo do turno anterior chega na task', async () => {
+    const anterior: TaskAttachment = { ...PRINT, fromPreviousTurn: true };
+    const d = deps({ readTask: readTaskCom(`x\n\n${blocoDeReferencias([anterior])}`) });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ attachments: [anterior] }), d);
+    expect(r.attachments[0]!.referenced).toBe(true);
+  });
+});
+
+describe('multiple_attachments_are_preserved', () => {
+  it('os dois materiais aparecem e são conferidos um a um', async () => {
+    const d = deps({ readTask: readTaskCom(blocoDeReferencias([PRINT, MIV]), [{ title: PRINT.filename }, { title: MIV.filename }]) });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ attachments: [PRINT, MIV] }), d);
+    expect(r.attachments).toHaveLength(2);
+    expect(r.attachments.every((a) => a.referenced && a.uploaded)).toBe(true);
+  });
+});
+
+describe('missing_attachment_does_not_block_create', () => {
+  it('pedido sem material nenhum cria normalmente', async () => {
+    const d = deps();
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), d);
+    expect(r.status).toBe('created');
+    expect(r.attachments).toEqual([]);
+    expect(d.uploadAttachment).not.toHaveBeenCalled();
+  });
+});
+
+describe('broken_attachment_reference_does_not_claim_upload', () => {
+  it('upload falhou mas a referência ficou: uploaded=false, referenced=true', async () => {
+    const d = deps({
+      uploadAttachment: vi.fn(async () => { throw new Error('Download do anexo falhou (404)'); }) as unknown as CreateDeps['uploadAttachment'],
+      readTask: readTaskCom(blocoDeReferencias([PRINT])),
+    });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ attachments: [PRINT] }), d);
+    expect(r.status).toBe('created');
+    expect(r.attachments[0]!.uploaded).toBe(false);
+    expect(r.attachments[0]!.referenced).toBe(true);
+    expect(r.attachments[0]!.error).toContain('404');
+  });
+
+  it('upload que o ClickUp não confirma na releitura NÃO conta como anexo', async () => {
+    // O POST "deu certo", mas a task relida não tem o anexo. O que vale é a leitura.
+    const d = deps({ readTask: readTaskCom(blocoDeReferencias([PRINT]), []) });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ attachments: [PRINT] }), d);
+    expect(r.attachments[0]!.uploaded).toBe(false);
+  });
+});
+
+describe('attachment_reference_survives_readback', () => {
+  it('corpo sem a URL NÃO é dado como referenciado', async () => {
+    const d = deps({ readTask: readTaskCom('descrição sem nenhum link') });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ attachments: [PRINT] }), d);
+    expect(r.attachments[0]!.referenced).toBe(false);
+  });
+
+  it('read-back que falha não inventa referência nem anexo', async () => {
+    const d = deps({ readTask: vi.fn(async () => { throw new Error('502'); }) as unknown as CreateDeps['readTask'] });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada({ attachments: [PRINT] }), d);
+    expect(r.attachments[0]!.referenced).toBe(false);
+    expect(r.attachments[0]!.uploaded).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FASE 7 — ALLOWLIST DO CANARY.
+// ---------------------------------------------------------------------------
+
+describe('canary allowlist', () => {
+  it('sem allowlist, todo mundo escreve (comportamento normal do produto)', () => {
+    expect(bentoWriteAllowlist({})).toEqual(new Set());
+    expect(podeEscreverNoCanary('qualquer@x.com', {})).toBe(true);
+  });
+
+  it('com allowlist, só quem está nela escreve', () => {
+    const env = { BENTO_WRITE_ALLOWLIST: 'tammy@institutoalmada.org' };
+    expect(podeEscreverNoCanary('tammy@institutoalmada.org', env)).toBe(true);
+    expect(podeEscreverNoCanary('TAMMY@InstitutoAlmada.org', env)).toBe(true);
+    expect(podeEscreverNoCanary('outra@institutoalmada.org', env)).toBe(false);
+  });
+
+  it('usuário sem e-mail nunca passa por uma allowlist ativa', () => {
+    expect(podeEscreverNoCanary(null, { BENTO_WRITE_ALLOWLIST: 'tammy@institutoalmada.org' })).toBe(false);
+  });
+
+  it('allowlist aceita mais de um e-mail (expansão gradual)', () => {
+    const env = { BENTO_WRITE_ALLOWLIST: 'tammy@x.org, pedro@x.org ' };
+    expect(podeEscreverNoCanary('pedro@x.org', env)).toBe(true);
+    expect(podeEscreverNoCanary('gui@x.org', env)).toBe(false);
   });
 });

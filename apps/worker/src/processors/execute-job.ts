@@ -961,9 +961,13 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       conversationId: conversationId ?? null,
       userName: jobUser?.name ?? jobUser?.email ?? 'usuário',
       userClickUpEmail: jobUser?.clickupEmail ?? null,
+      userEmail: jobUser?.email ?? null,
       agencyListId: agencyClient[0]?.clickupListId ?? null,
       clientId: runningExecution?.clientId ?? null,
       clientName: clienteDaExecucao?.name ?? null,
+      // O material do turno chega aqui pelo mesmo caminho que vai pro node.
+      // Sem repassar, a task nascia sem o print que originou a demanda.
+      attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
       briefingWriter: async (prompt) => {
         const brief = await callBento(prompt, logger);
         return brief.status === 'completed' ? brief.answer : null;

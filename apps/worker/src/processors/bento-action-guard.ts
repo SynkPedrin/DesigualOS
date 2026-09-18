@@ -25,7 +25,7 @@ import { retrieveBriefingContext } from './briefing-retrieval';
 import { classifyActionIntent } from './action-intent';
 import { buildDeliverableTitle, buildOperationalTitle, resolveWriteTarget } from './write-target';
 import { buildOperationalActionPlan } from './operational-action-plan';
-import { createManyTasks, type CreateOneInput, type CreateOutcome } from './multi-create-executor';
+import { createManyTasks, type CreateOneInput, type CreateOutcome, type TaskAttachment } from './multi-create-executor';
 
 /**
  * BENTO ACTION GUARD (14/09/2026).
@@ -76,6 +76,8 @@ interface ConversationContext {
   lastTaskId: string | null;
   lastTaskName: string | null;
   lastPersonName: string | null;
+  /** Material mandado em turnos anteriores — "o print que mandei", "o arquivo acima". */
+  previousAttachments: TaskAttachment[];
 }
 
 function extractPersonName(message: string): string | null {
@@ -163,9 +165,16 @@ function endOfDay(date: Date): Date {
 }
 
 async function loadConversationContext(conversationId: string | null): Promise<ConversationContext> {
-  if (!conversationId) return { lastTaskId: null, lastTaskName: null, lastPersonName: null };
+  if (!conversationId) return { lastTaskId: null, lastTaskName: null, lastPersonName: null, previousAttachments: [] };
   const recent = await db
-    .select({ role: schema.messages.role, content: schema.messages.content })
+    .select({
+      role: schema.messages.role,
+      content: schema.messages.content,
+      attachmentUrl: schema.messages.attachmentUrl,
+      attachmentType: schema.messages.attachmentType,
+      attachmentFilename: schema.messages.attachmentFilename,
+      metadata: schema.messages.metadata,
+    })
     .from(schema.messages)
     .where(eq(schema.messages.conversationId, conversationId))
     .orderBy(desc(schema.messages.createdAt))
@@ -174,6 +183,19 @@ async function loadConversationContext(conversationId: string | null): Promise<C
   let lastTaskId: string | null = null;
   let lastTaskName: string | null = null;
   let lastPersonName: string | null = null;
+  /**
+   * "tenho a solicitação acima" quase sempre vem com o material num turno
+   * ANTERIOR. Sem ler os anexos das mensagens recentes, a task nascia sem a
+   * única coisa que o designer precisava abrir — e o chat virava o lugar onde
+   * o arquivo mora, que é exatamente o que uma task deveria evitar.
+   */
+  const previousAttachments: TaskAttachment[] = [];
+  for (const message of recent) {
+    if (message.role !== 'user') continue;
+    for (const a of anexosDaMensagem(message)) {
+      if (!previousAttachments.some((x) => x.url === a.url)) previousAttachments.push({ ...a, fromPreviousTurn: true });
+    }
+  }
   for (const message of recent) {
     if (!lastTaskId && message.role === 'assistant') {
       const urls = [...message.content.matchAll(TASK_URL)];
@@ -187,7 +209,77 @@ async function loadConversationContext(conversationId: string | null): Promise<C
       lastPersonName = extractPersonName(message.content);
     }
   }
-  return { lastTaskId, lastTaskName, lastPersonName };
+  return { lastTaskId, lastTaskName, lastPersonName, previousAttachments };
+}
+
+/**
+ * Anexos de uma linha de `messages`. A rota do chat grava o PRIMEIRO anexo nas
+ * colunas dedicadas e a lista completa em `metadata.attachments` (ver
+ * apps/api/src/chat/routes.ts) — ler os dois é o que evita perder o segundo
+ * arquivo de uma solicitação com print e PDF juntos.
+ */
+function anexosDaMensagem(row: {
+  attachmentUrl: string | null;
+  attachmentType: string | null;
+  attachmentFilename: string | null;
+  metadata: Record<string, unknown>;
+}): TaskAttachment[] {
+  const achados: TaskAttachment[] = [];
+  const lista = Array.isArray(row.metadata?.attachments) ? (row.metadata.attachments as unknown[]) : [];
+  for (const item of lista) {
+    if (typeof item !== 'object' || item === null) continue;
+    const a = item as { url?: unknown; filename?: unknown; contentType?: unknown };
+    if (typeof a.url !== 'string' || a.url.length === 0) continue;
+    achados.push({
+      url: a.url,
+      filename: typeof a.filename === 'string' && a.filename ? a.filename : nomeDaUrl(a.url),
+      contentType: typeof a.contentType === 'string' ? a.contentType : null,
+    });
+  }
+  if (achados.length === 0 && row.attachmentUrl) {
+    achados.push({
+      url: row.attachmentUrl,
+      filename: row.attachmentFilename ?? nomeDaUrl(row.attachmentUrl),
+      contentType: row.attachmentType,
+    });
+  }
+  return achados;
+}
+
+function nomeDaUrl(url: string): string {
+  const bruto = url.split('?')[0]?.split('/').pop() ?? 'arquivo';
+  try {
+    return decodeURIComponent(bruto) || 'arquivo';
+  } catch {
+    return bruto || 'arquivo';
+  }
+}
+
+/**
+ * ALLOWLIST DO CANARY — quem pode disparar escrita nesta fase.
+ *
+ * Mora aqui, e não na cerca, porque é o guard que sabe QUEM está falando; a
+ * cerca só enxerga lista de ClickUp. São coisas diferentes e complementares:
+ * o kill switch desliga pra todo mundo de uma vez, o allowlist limita o raio
+ * de explosão enquanto a coisa está ligada.
+ *
+ *   BENTO_WRITE_ALLOWLIST=tammy@institutoalmada.org
+ *
+ * Vazio/unset = todo mundo que já tem `clickup:write` escreve, que é o
+ * comportamento normal do produto. Durante a homologação, uma linha na env
+ * limita a uma pessoa — e tirar a linha é a expansão pra equipe.
+ */
+export function bentoWriteAllowlist(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  const raw = env.BENTO_WRITE_ALLOWLIST?.trim();
+  if (!raw) return new Set();
+  return new Set(raw.split(',').map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0));
+}
+
+/** O turno desta pessoa pode escrever no canary? Sem allowlist, todos podem. */
+export function podeEscreverNoCanary(email: string | null, env: NodeJS.ProcessEnv = process.env): boolean {
+  const lista = bentoWriteAllowlist(env);
+  if (lista.size === 0) return true;
+  return email !== null && lista.has(email.toLowerCase());
 }
 
 export function getClickUpConfigOrNull(): ClickUpConfig | null {
@@ -239,11 +331,15 @@ export async function tryBentoActionGuard(params: {
   conversationId: string | null;
   userName: string;
   userClickUpEmail: string | null;
+  /** E-mail de login — é a chave do allowlist do canary. */
+  userEmail?: string | null;
   agencyListId: string | null;
   briefingWriter: (prompt: string) => Promise<string | null>;
   /** Cliente da execução, quando houver: é a chave do retrieval do briefing. */
   clientId?: string | null;
   clientName?: string | null;
+  /** Anexos do turno ATUAL (o print/PDF que veio junto do pedido). */
+  attachments?: TaskAttachment[];
   logger: Logger;
 }): Promise<ExecuteResponse | null> {
   const { message, conversationId, logger } = params;
@@ -284,6 +380,31 @@ export async function tryBentoActionGuard(params: {
     );
     // null = segue pro agente, que ANALISA e responde. Nenhuma escrita aqui.
     return null;
+  }
+
+  // PORTÃO DO CANARY. Vem ANTES de qualquer ferramenta: quem está fora da
+  // homologação não dispara nem a consulta de membros do ClickUp. E a recusa é
+  // explícita — deixar cair no caminho de análise faria a pessoa achar que o
+  // Bento não entendeu, quando ele entendeu e está proibido.
+  if (!podeEscreverNoCanary(params.userEmail ?? null)) {
+    logger.info(
+      { intent_classification: acao.kind, write_authorized: false, write_reason: 'fora do allowlist do canary', user_email: params.userEmail ?? null },
+      '[guard] escrita bloqueada: usuário fora do canary'
+    );
+    return guardResponse({
+      ok: true,
+      toolCalls: [],
+      answer:
+        'Entendi o pedido, mas criar e alterar task no ClickUp ainda está liberado só pra homologação — não vou escrever por enquanto. ' +
+        'Posso organizar a demanda, montar o briefing e te dizer exatamente o que lançar. Quem libera isso pra todo mundo é o Pedro.',
+      metadata: {
+        guard: 'bento-action',
+        action: 'blocked_canary',
+        intent_classification: acao.kind,
+        write_authorized: false,
+        write_reason: 'usuário fora de BENTO_WRITE_ALLOWLIST',
+      },
+    });
   }
 
   /**
@@ -512,6 +633,16 @@ export async function tryBentoActionGuard(params: {
   // vez de um título solto que manda a pessoa voltar no chat.
   const querBriefing = intent.wantsBriefing || plano.items.length > 0 || plano.splitRequested || resumoDoPedido(params.message).length > 180;
 
+  /**
+   * O material do turno ATUAL manda; o dos turnos anteriores entra em seguida
+   * e marcado como tal, porque "a solicitação acima" é literalmente o caso da
+   * Tammy. Deduplicado por URL: o mesmo print reenviado não vira duas linhas.
+   */
+  const anexosDoPedido: TaskAttachment[] = [];
+  for (const a of [...(params.attachments ?? []), ...context.previousAttachments]) {
+    if (!anexosDoPedido.some((x) => x.url === a.url)) anexosDoPedido.push(a);
+  }
+
   const entradas: CreateOneInput[] = [];
   for (const t of plano.tasks) {
     const titulo =
@@ -530,6 +661,7 @@ export async function tryBentoActionGuard(params: {
         pendencies: plano.pendencies,
       }),
       dueDate: intent.dueDate,
+      attachments: anexosDoPedido,
     });
   }
 
@@ -606,6 +738,9 @@ export async function tryBentoActionGuard(params: {
       blocked: bloqueadas.length,
       failed: falhas.length,
       readback_ok: criadas.filter((r) => r.verified).length,
+      attachments_in_request: anexosDoPedido.length,
+      attachments_referenced: criadas.reduce((n, r) => n + r.attachments.filter((a) => a.referenced).length, 0),
+      attachments_uploaded: criadas.reduce((n, r) => n + r.attachments.filter((a) => a.uploaded).length, 0),
     },
     '[guard] ciclo de criação concluído',
   );
@@ -629,6 +764,7 @@ export async function tryBentoActionGuard(params: {
       action_plan_count: entradas.length,
       split_requested: plano.splitRequested,
       pendencies: plano.pendencies,
+      attachments_in_request: anexosDoPedido.length,
       tasks: resultados.map((r) => ({
         task_id: r.taskId,
         title: r.title,
@@ -642,6 +778,7 @@ export async function tryBentoActionGuard(params: {
         list_assertion_ok: r.listAsserted,
         briefing_attached: r.briefingAttached,
         briefing_verified: r.briefingVerified,
+        attachments: r.attachments.map((a) => ({ filename: a.filename, referenced: a.referenced, uploaded: a.uploaded, error: a.error })),
         mismatches: r.mismatches,
         error: r.error,
       })),
@@ -693,6 +830,35 @@ function blocoDePendencias(items: string[], pendencies: string[]): string {
 }
 
 /**
+ * A FRASE SOBRE O MATERIAL sai do estado VERIFICADO, nunca da tentativa.
+ *
+ * "anexei o arquivo" e "incluí a referência ao arquivo" descrevem coisas
+ * diferentes: na primeira a pessoa abre a task e o arquivo está lá; na segunda
+ * ela abre e encontra um link. Confundir as duas faz alguém procurar no lugar
+ * errado e concluir que o Bento mentiu — que é o que teria acontecido se a
+ * frase saísse do fato de termos TENTADO o upload.
+ */
+function fraseDoMaterial(r: CreateOutcome): string | null {
+  if (r.attachments.length === 0) return null;
+  const anexados = r.attachments.filter((a) => a.uploaded);
+  const referenciados = r.attachments.filter((a) => !a.uploaded && a.referenced);
+  const perdidos = r.attachments.filter((a) => !a.uploaded && !a.referenced);
+  const partes: string[] = [];
+  if (anexados.length > 0) {
+    partes.push(`anexei ${anexados.length === 1 ? 'o arquivo' : `${anexados.length} arquivos`} (${anexados.map((a) => a.filename).join(', ')})`);
+  }
+  if (referenciados.length > 0) {
+    partes.push(
+      `incluí ${referenciados.length === 1 ? 'a referência ao arquivo' : `as referências aos ${referenciados.length} arquivos`} na task (${referenciados.map((a) => a.filename).join(', ')})`,
+    );
+  }
+  if (perdidos.length > 0) {
+    partes.push(`NÃO consegui levar ${perdidos.map((a) => a.filename).join(', ')} — confere no chat e me manda de novo`);
+  }
+  return partes.length > 0 ? `Material: ${partes.join('; ')}.` : null;
+}
+
+/**
  * RECIBO EM PORTUGUÊS. Diz o que existe no ClickUp e o que ficou pendente, sem
  * expor id de lista, id de execução ou nome de ferramenta. O que a pessoa
  * precisa saber é o que foi feito e o que depende dela.
@@ -722,6 +888,8 @@ function reciboHumano(params: {
       const brief = r.briefingAttached ? (r.briefingVerified ? ', com briefing anexado' : ', briefing enviado mas não reconfirmado') : '';
       const ressalva = r.verified ? '' : ` (ATENÇÃO: ${r.mismatches.join('; ')})`;
       linhas.push(`- "${r.title}"${dono}${brief}${ressalva}\n  ${r.url}`);
+      const material = fraseDoMaterial(r);
+      if (material) linhas.push(`  ${material}`);
     }
   }
 

@@ -29,6 +29,40 @@ export class WriteScopeError extends Error {
 }
 
 /**
+ * KILL SWITCH — volta o Bento para READ ONLY em um passo.
+ *
+ * Mora aqui, e não no guard, pela MESMA razão que a cerca de lista: uma trava
+ * de emergência que dá pra contornar não é uma trava. As seis funções de
+ * escrita do ClickUp passam por `assertListInScope`/`assertTaskInScope`, então
+ * desligar aqui desliga todas — guard, loop agêntico, rota HTTP e automação.
+ *
+ * LIGADO por default: unset não muda nada, que é o comportamento esperado de
+ * qualquer ambiente que já existe. Desligar é explícito:
+ *
+ *   BENTO_WRITE_ENABLED=false  + restart do worker
+ *
+ * Rollback do canary é isso, e só isso. Não precisa de deploy, revert nem
+ * migração — o que importa numa emergência é o número de passos.
+ */
+const DESLIGADO = new Set(['false', '0', 'off', 'no', 'nao', 'não']);
+
+export function bentoWriteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.BENTO_WRITE_ENABLED?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return true;
+  return !DESLIGADO.has(raw);
+}
+
+/** Barra qualquer escrita quando o kill switch está desligado. */
+export function assertWriteEnabled(env: NodeJS.ProcessEnv = process.env): void {
+  if (bentoWriteEnabled(env)) return;
+  throw new WriteScopeError(
+    'Escrita DESLIGADA: BENTO_WRITE_ENABLED está off. Nenhuma alteração foi feita no ClickUp.',
+    null,
+    'kill-switch',
+  );
+}
+
+/**
  * Lista única permitida pra escrita, ou null (sem cerca).
  * CLICKUP_TEST_LIST_ID é aceito como alias porque é o nome que o operador
  * usa no .env do gate; a cerca liga com qualquer um dos dois.
@@ -40,6 +74,7 @@ export function getWriteScopeListId(env: NodeJS.ProcessEnv = process.env): strin
 
 /** Cria/edita numa lista conhecida: barra quando não é a permitida. */
 export function assertListInScope(listId: string, env: NodeJS.ProcessEnv = process.env): void {
+  assertWriteEnabled(env);
   const escopo = getWriteScopeListId(env);
   if (!escopo) return;
   if (listId !== escopo) {
@@ -64,6 +99,7 @@ export async function assertTaskInScope(
   taskId: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  assertWriteEnabled(env);
   const escopo = getWriteScopeListId(env);
   if (!escopo) return;
   let listId: string;

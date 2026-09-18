@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WriteScopeError, assertListInScope, assertTaskInScope, getWriteScopeListId } from './write-scope';
+import { WriteScopeError, assertListInScope, assertTaskInScope, bentoWriteEnabled, getWriteScopeListId } from './write-scope';
 
 /**
  * A cerca precisa falhar FECHADA: qualquer dúvida sobre onde a escrita cai
@@ -83,5 +83,35 @@ describe('assertTaskInScope', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+/**
+ * KILL SWITCH. A prova que importa não é "a função existe": é que as MESMAS
+ * chamadas que passam com a chave ligada falham com ela desligada, sem tocar
+ * em mais nada da configuração.
+ */
+describe('kill switch (BENTO_WRITE_ENABLED)', () => {
+  it('unset = ligado: o comportamento de hoje não muda', () => {
+    expect(bentoWriteEnabled({})).toBe(true);
+    expect(() => assertListInScope(CLIENTE, {})).not.toThrow();
+  });
+
+  it.each(['false', '0', 'off', 'no', 'FALSE', ' Off '])('%s desliga a escrita', (valor) => {
+    expect(bentoWriteEnabled({ BENTO_WRITE_ENABLED: valor })).toBe(false);
+    expect(() => assertListInScope(QA, { BENTO_WRITE_ENABLED: valor, CLICKUP_TEST_LIST_ID: QA })).toThrow(WriteScopeError);
+  });
+
+  it.each(['true', '1', 'on', ''])('%s mantém a escrita ligada', (valor) => {
+    expect(bentoWriteEnabled({ BENTO_WRITE_ENABLED: valor })).toBe(true);
+  });
+
+  it('desligado barra ATÉ a lista de QA: é kill switch, não cerca de escopo', () => {
+    expect(() => assertListInScope(QA, { BENTO_WRITE_ENABLED: 'false', CLICKUP_TEST_LIST_ID: QA })).toThrow(/DESLIGADA/);
+  });
+
+  it('desligado barra escrita endereçada por task, sem nem consultar o ClickUp', async () => {
+    const config = { apiKey: 'k', teamId: 't' } as Parameters<typeof assertTaskInScope>[0];
+    await expect(assertTaskInScope(config, 'task-1', { BENTO_WRITE_ENABLED: 'off' })).rejects.toThrow(WriteScopeError);
   });
 });
