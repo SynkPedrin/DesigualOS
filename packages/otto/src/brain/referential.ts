@@ -133,22 +133,45 @@ export function classificarTurno(message: string, temDialogoRecente: boolean): T
 /**
  * Itens de uma lista escrita pelo Otto.
  *
- * Ele alterna três formatos reais, e os três precisam funcionar: "2 Título",
- * "2. Título" e um cabeçalho "Post 2"/"Título 2" com o conteúdo na linha
- * seguinte. Depender do modelo para contar "o segundo" seria trocar uma
- * estrutura que existe por um palpite.
+ * Ele alterna formatos reais, e todos precisam funcionar: "2 Título",
+ * "2. Título", cabeçalho "Post 2"/"Título 2" com o conteúdo na linha
+ * seguinte, e a peça conceito — "Conceito: ..." + "Variação A:"/"Variação B:".
+ * Depender do modelo para contar "o segundo" seria trocar uma estrutura que
+ * existe por um palpite — e foi exatamente o que aconteceu em 18/09/2026:
+ * sem formato reconhecido, a diretiva ficou genérica e o modelo INVENTOU um
+ * título que não existia na resposta anterior.
+ *
+ * Na peça conceito, a ordem do documento é a ordem dos itens: o Conceito é o
+ * primeiro, Variação A o segundo, B o terceiro. É assim que um humano lê a
+ * peça, e é assim que "o segundo" resolve.
  */
 export function itensDaLista(texto: string): string[] {
   // "Otto: 1 Alfa" — o rótulo de quem falou fica no MESMO parágrafo do
-  // primeiro item. Sem tirá-lo, o item 1 sumia e "o segundo" apontava pro
-  // terceiro: o erro mais caro possível num resolvedor de ordinal.
-  // Rótulo de quem falou ("Otto: 1 Alfa"): UMA palavra colada nos dois-pontos,
-  // seguida de conteúdo. Exigir isso é o que impede o padrão de comer um
-  // cabeçalho legítimo como "Título 1:" — que é um item, não um locutor.
-  const linhas = texto.split('\n').map((l) => l.trim().replace(/^[A-ZÁ-Ú][\wÀ-ÿ]*:\s+(?=\S)/, ''));
+  // primeiro item. Rótulo = UMA palavra colada nos dois-pontos seguida de
+  // conteúdo; exigir isso impede comer um cabeçalho legítimo ("Título 1:").
+  // "Conceito:" e "Variação A:" são rótulos DE ITEM, não de locutor — por
+  // isso são tratados antes, nas próprias regras abaixo.
+  const linhas = texto.split('\n').map((l) => {
+    const t = l.trim();
+    if (/^(conceito|varia[çc][ãa]o)\b/i.test(t)) return t;
+    return t.replace(/^[A-ZÁ-Ú][\wÀ-ÿ]*:\s+(?=\S)/, '');
+  });
   const itens: string[] = [];
   for (let i = 0; i < linhas.length; i += 1) {
     const l = linhas[i]!;
+    // Peça conceito: "Conceito: "texto"" — o primeiro item da peça.
+    const conceito = /^conceito:\s*["“]?(.+?)["”]?\s*$/i.exec(l);
+    if (conceito?.[1] && conceito[1].length > 3) {
+      itens.push(conceito[1].trim());
+      continue;
+    }
+    // "Variação A: texto" — letra vira ordinal (A=2º item se veio depois do
+    // Conceito, pela ordem do documento).
+    const variacao = /^varia[çc][ãa]o\s+[a-e]\s*[:.)-]\s*(.+)$/i.exec(l);
+    if (variacao?.[1]) {
+      itens.push(variacao[1].trim());
+      continue;
+    }
     if (/^(post|op[cç][aã]o|t[ií]tulo|vers[aã]o|alternativa)\s*\d+\s*[:.)-]?$/i.test(l)) {
       const prox = linhas.slice(i + 1).find((x) => x.length > 0);
       if (prox) itens.push(prox);
@@ -169,9 +192,13 @@ export function resolverReferente(dialogoRecente: string, turno: TurnoClassifica
   if (turno.classe !== 'REFERENCIAL' && turno.classe !== 'CONTINUACAO_CRIATIVA') return null;
   if (!dialogoRecente.trim()) return null;
 
-  // O último bloco do assistente é onde o artefato mora.
+  // O último bloco do assistente é onde o artefato mora. Locutor é QUEM FALA
+  // no bloco de diálogo — "Usuário:" ou o nome do agente — nunca qualquer
+  // palavra com dois-pontos: "Conceito:" e "Variação A:" são itens DENTRO da
+  // fala, e tratá-los como locutor fatiava a fala no meio (medido em 18/09).
   const linhas = dialogoRecente.split('\n');
-  const inicioUltimaFala = linhas.map((l, i) => ({ l, i })).filter((x) => /^[A-ZÁ-Ú][\wÀ-ÿ]*:/.test(x.l)).pop()?.i ?? 0;
+  const ehLocutor = /^(Usuário|Otto|Bento|Jarbas|Suzy):/;
+  const inicioUltimaFala = linhas.map((l, i) => ({ l, i })).filter((x) => ehLocutor.test(x.l)).pop()?.i ?? 0;
   const ultimaFala = linhas.slice(inicioUltimaFala).join('\n');
 
   if (turno.ordinal !== null) {

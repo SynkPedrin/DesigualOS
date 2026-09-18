@@ -189,3 +189,42 @@ describe('reference_resolution_does_not_make_claim_factual', () => {
     expect(t.precisaVault).toBe(true);
   });
 });
+
+/**
+ * REGRESSÃO 18/09/2026 (segunda forma): o Otto respondeu "me dá 3 títulos"
+ * com uma peça conceito (Conceito + Variação A/B). O parser não reconhecia o
+ * formato, a diretiva ficou genérica e o modelo INVENTOU um título ("A elite
+ * não pede licença") que não existia na resposta anterior. Referente tem que
+ * ser o que foi escrito, nunca um palpite.
+ */
+describe('peça conceito: Conceito + Variação A/B são itens ordenados', () => {
+  const PECA_REAL = `Conceito: "A elite não espera o mundo mudar. Ela o força a girar."
+Por que funciona: Ataca a objeção de passividade.
+Hook: "Eles disseram que era impossível."
+Variação A: Muda o hook para "O luxo não é dinheiro. É tempo." Testa a dor de falta de tempo.
+Variação B: Muda o hook para "Eles têm o capital. Você tem o quê?" Testa abordagem provocativa.`;
+
+  it('extrai os três itens na ordem do documento', () => {
+    const itens = itensDaLista(PECA_REAL);
+    expect(itens).toHaveLength(3);
+    expect(itens[0]).toContain('A elite não espera o mundo mudar');
+    expect(itens[1]).toContain('O luxo não é dinheiro');
+    expect(itens[2]).toContain('Eles têm o capital');
+  });
+
+  it('"o segundo" resolve o texto REAL da Variação A', () => {
+    const dialogo = `Usuário: me dá 3 títulos\nOtto: ${PECA_REAL.replace(/\n/g, '\n')}`;
+    const t = classificarTurno('me explica o segundo.', true);
+    const d = resolverReferente(dialogo, t)!;
+    expect(d).toContain('O luxo não é dinheiro');
+    // O referente é texto escrito, não palpite: a diretiva carrega o item.
+    expect(d).toContain('O item 2');
+  });
+
+  it('o rótulo "Conceito:" não é comido como locutor', () => {
+    // Se o strip de locutor comesse "Conceito:", o item 1 sumia e "o segundo"
+    // apontava pra Variação B — o mesmo erro caro de ordinal de antes.
+    const itens = itensDaLista(`Otto: \nConceito: "Título principal"\nVariação A: alternativa um`);
+    expect(itens[0]).toContain('Título principal');
+  });
+});
