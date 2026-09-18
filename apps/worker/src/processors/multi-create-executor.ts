@@ -205,15 +205,22 @@ export async function createOneTask(
       out.assigneeUsername = membro.member.username;
     }
 
-    // 2. IDEMPOTÊNCIA. Cobre o retry depois de timeout (o create anterior pode
-    // ter gravado) e o mesmo pedido enviado duas vezes — que foi exatamente o
-    // que a Tammy fez: três mensagens idênticas em 17/09. Falha de consulta
-    // não impede criar; só perde a proteção neste turno.
+    // 2. IDEMPOTÊNCIA COM JANELA. Cobre o retry depois de timeout e a mesma
+    // demanda reenviada em sequência — o caso real foram três envios em 73
+    // minutos. FORA da janela, o mesmo título é uma demanda NOVA: "cria o
+    // layout pro Gui" hoje e amanhã são trabalhos diferentes, e barrar o
+    // segundo por causa do nome é o bug que a bateria de aceite pegou em
+    // 18/09/2026 (dedup contra task de ontem bloqueou uma demanda legítima).
+    // Task sem createdAt legível não entra na proteção: fail-open pra demanda
+    // legítima, e o retry real sempre tem createdAt.
+    const JANELA_IDEMPOTENCIA_MS = 2 * 60 * 60 * 1000;
+    const agora = Date.now();
     const existentes = await deps
       .listTasks(config, { listIds: [listId], includeClosed: false })
       .then((page) => page.tasks)
       .catch(() => []);
-    const duplicada = findDuplicateTask(existentes, input.title);
+    const recentes = existentes.filter((t) => t.createdAt !== null && agora - t.createdAt < JANELA_IDEMPOTENCIA_MS);
+    const duplicada = findDuplicateTask(recentes, input.title);
     if (duplicada) {
       record('clickup.idempotency_hit', duplicada.id, true);
       out.status = 'duplicate';

@@ -270,7 +270,7 @@ describe('create_task_requires_readback', () => {
 describe('create_task_is_idempotent', () => {
   it('task com o mesmo nome já aberta na lista NÃO duplica', async () => {
     const d = deps({
-      listTasks: vi.fn(async () => ({ tasks: [{ id: 'ja1', name: 'Criar layout das placas — D. Carvalho' }] })) as unknown as CreateDeps['listTasks'],
+      listTasks: vi.fn(async () => ({ tasks: [{ id: 'ja1', name: 'Criar layout das placas — D. Carvalho', createdAt: Date.now() - 60_000 }] })) as unknown as CreateDeps['listTasks'],
     });
     const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), d);
     expect(r.status).toBe('duplicate');
@@ -547,5 +547,29 @@ describe('observabilidade do canary', () => {
     const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), d);
     expect(r.status).toBe('blocked');
     expect(r.idempotencyKey).toContain('L1:');
+  });
+});
+
+describe('idempotência tem JANELA, não é eterna', () => {
+  it('mesmo título criado HORAS atrás é demanda nova, não duplicata', async () => {
+    const d = deps({
+      listTasks: vi.fn(async () => ({
+        tasks: [{ id: 'velha', name: 'Criar layout das placas — D. Carvalho', createdAt: Date.now() - 26 * 60 * 60 * 1000 }],
+      })) as unknown as CreateDeps['listTasks'],
+    });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), d);
+    expect(r.status).toBe('created');
+    expect(d.createTask).toHaveBeenCalled();
+  });
+
+  it('mesmo título criado AGORA é duplicata (retry/reenvio)', async () => {
+    const d = deps({
+      listTasks: vi.fn(async () => ({
+        tasks: [{ id: 'nova', name: 'Criar layout das placas — D. Carvalho', createdAt: Date.now() - 10 * 60 * 1000 }],
+      })) as unknown as CreateDeps['listTasks'],
+    });
+    const r = await createOneTask(CONFIG, 'L1', REQUESTER, entrada(), d);
+    expect(r.status).toBe('duplicate');
+    expect(d.createTask).not.toHaveBeenCalled();
   });
 });
