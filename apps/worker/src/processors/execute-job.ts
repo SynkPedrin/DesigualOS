@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import {
@@ -22,6 +22,7 @@ import {
   recordLearning,
   recallMemories,
   type AgentJobData,
+  touchConversation,
 } from '@desigual-os/orchestrator';
 import type { AgentName } from '@desigual-os/types';
 import { AGENT_NAMES, stripEmDashes } from '@desigual-os/types';
@@ -39,7 +40,8 @@ import {
 } from './response-provenance.js';
 import { stripBlockMarkers, stripMarkdownArtifacts, withPersonality, extractApprovalProposal } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
-import { dispatchWithAgentLoop } from './agentic-dispatch';
+import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
+import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard } from './bento-action-guard';
 import { detectSmallTalk } from './small-talk';
 import { registrarConhecimentoDoTurno } from './knowledge-statement';
@@ -515,6 +517,7 @@ async function recordAssistantMessage(
   await db
     .insert(schema.messages)
     .values({ conversationId, role: 'assistant', agent, content, ...(metadata ? { metadata } : {}) });
+  await touchConversation(conversationId);
 }
 
 /**
@@ -1077,10 +1080,43 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
           ),
       });
     } else {
+      /**
+       * CAMINHO DIRETO (loop desligado) — o diálogo recente precisa ir mesmo
+       * assim.
+       *
+       * Medido no aceite pelo frontend em 18/09/2026: AGENT_LOOP_V2 está
+       * desligada em produção, então o turno NÃO passa pelo dispatch agêntico
+       * que monta o ContextPack — e o bloco CONVERSA RECENTE nunca chegava ao
+       * node. O Otto respondia "Sem contexto sobre 'o segundo'" tendo acabado
+       * de escrever os três títulos.
+       *
+       * Aqui vai SÓ o diálogo (limitado, sanitizado, mesma conversa) — nunca o
+       * dossiê: o despejo operacional na mensagem continua proibido, porque foi
+       * ele que envenenou o pedido criativo em 17/09.
+       */
+      let mensagemComDialogo = message;
+      if (aceitaContextoNaMensagem(agent) && conversationId) {
+        const turnos = (await db
+          .select({ role: schema.messages.role, agent: schema.messages.agent, content: schema.messages.content })
+          .from(schema.messages)
+          .where(eq(schema.messages.conversationId, conversationId))
+          .orderBy(desc(schema.messages.createdAt))
+          .limit(ORCAMENTO_DIALOGO.maxTurnos * 2)
+          .catch(() => [])) as Array<{ role: string; agent: string | null; content: string }>;
+        const dialogo = montarDialogoRecente(
+          turnos
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .reverse()
+            .filter((m) => !(m.role === 'user' && m.content.trim() === message.trim()))
+            .map((m) => ({ role: m.role as TurnoDeDialogo['role'], agent: m.agent, content: m.content })),
+          agent,
+        );
+        if (dialogo) mensagemComDialogo = `${message}\n\n---\nContexto:\n${dialogo}`;
+      }
       result = await callNode(
         agent,
         executionId,
-        message,
+        mensagemComDialogo,
         contextRefs,
         logger,
         conversationId ?? undefined,
