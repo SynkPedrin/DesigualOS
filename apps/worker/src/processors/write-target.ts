@@ -189,7 +189,29 @@ export function buildDeliverableTitle(params: {
 }): string {
   const assunto = assuntoDosItens(params.items);
   const sufixo = params.clientName ? ` — ${params.clientName}` : '';
-  return `Criar ${params.deliverable}${assunto ? ` das ${assunto}` : ''}${sufixo}`.slice(0, 120);
+  // "Criar placas das placas" é o que sai quando o entregável e o assunto são
+  // a mesma coisa. Nesse caso o entregável já diz tudo.
+  const qualificador = assunto && dobra(assunto) !== dobra(params.deliverable) ? ` das ${assunto}` : '';
+  return `Criar ${params.deliverable}${qualificador}${sufixo}`.slice(0, 120);
+}
+
+/**
+ * TÍTULO DE UMA TASK DE ITEM: o item É o trabalho.
+ *
+ * Quando o pedido enumerou "Placa Estacione de Ré", o título da task é isso —
+ * não "Criar placas (1 de 4)". Quem abre o ClickUp precisa saber qual das
+ * quatro é a sua sem abrir nenhuma.
+ */
+export function buildItemTitle(params: { item: string; clientName: string | null }): string {
+  // Já vem nomeado como trabalho ("Placa X", "Layout Y")? Então só qualifica.
+  // Aspas são delimitador da citação, não parte do nome: sem tirar TODAS,
+  // sobrava a aspa de abertura no meio do título (`Placa "Estacione de Ré`).
+  const limpo = params.item.replace(/["“”'‘’]/g, '').replace(/\s+/g, ' ').trim();
+  const flat = dobra(limpo);
+  const jaTemSubstantivo = /^(placa|pe[cç]a|layout|arte|video|post|banner|card|criativo|roteiro|texto|copy|reels|stories)/.test(flat);
+  const titulo = jaTemSubstantivo ? limpo : `Criar ${limpo}`;
+  const sufixo = params.clientName ? ` — ${params.clientName}` : '';
+  return `${titulo}${sufixo}`.slice(0, 120);
 }
 
 /** Substantivo comum às linhas enumeradas ("Placa X", "Placa Y" -> "placas"). */

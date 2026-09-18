@@ -48,7 +48,24 @@ describe('explicit_create_request_generates_action_plan', () => {
   it('create_task_intent_does_not_become_analysis', () => {
     const plano = buildOperationalActionPlan(CASO_REAL);
     expect(plano.tasks.length).toBeGreaterThanOrEqual(1);
-    expect(plano.tasks[0]!.deliverable).toBe('layout');
+  });
+
+  /**
+   * MUDANÇA DE COMPORTAMENTO (Action Intent V2): a solicitação enumera quatro
+   * placas, então o plano tem QUATRO demandas, não uma chamada "placas".
+   * Uma task só pelas quatro esconde progresso parcial, impede dividir entre
+   * pessoas e faz uma placa travada travar as outras três.
+   */
+  it('as quatro placas do caso real viram quatro ações', () => {
+    const plano = buildOperationalActionPlan(CASO_REAL);
+    expect(plano.tasks).toHaveLength(4);
+    expect(plano.tasks.every((t) => t.assigneeName === 'Gui')).toBe(true);
+    expect(plano.tasks.map((t) => t.item)).toEqual([
+      'Placa “Estacione de Ré”',
+      'Placa “Estacionamento Clientes”',
+      'Placa “Estacionamento Diretoria”',
+      'Placa de orientação em formato de mapa, utilizando como base o mapa encaminhado em arquivo.',
+    ]);
   });
 });
 
@@ -157,10 +174,10 @@ describe('missing_asset_does_not_block_task_creation', () => {
     expect(p.pendencies.length).toBeGreaterThan(0);
   });
 
-  it('o caso real declara pendência de material e mesmo assim planeja a task', () => {
+  it('o caso real declara pendência de material e mesmo assim planeja as tasks', () => {
     const p = buildOperationalActionPlan(CASO_REAL);
     expect(p.pendencies.length).toBeGreaterThan(0);
-    expect(p.tasks).toHaveLength(1);
+    expect(p.tasks).toHaveLength(4);
     expect(p.items.length).toBe(4);
   });
 });

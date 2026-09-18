@@ -23,7 +23,7 @@ import { classifyDeliveryType, composeBriefing } from './briefing-composer';
 import { evaluateBriefing } from './briefing-quality';
 import { retrieveBriefingContext } from './briefing-retrieval';
 import { classifyActionIntent } from './action-intent';
-import { buildDeliverableTitle, buildOperationalTitle, resolveWriteTarget } from './write-target';
+import { buildDeliverableTitle, buildItemTitle, buildOperationalTitle, resolveWriteTarget } from './write-target';
 import { buildOperationalActionPlan } from './operational-action-plan';
 import { createManyTasks, type CreateOneInput, type CreateOutcome, type TaskAttachment } from './multi-create-executor';
 
@@ -135,6 +135,26 @@ function classifyIntent(message: string): GuardIntent {
     };
   }
   return { kind: 'none' };
+}
+
+/**
+ * MULTI-WRITE fica atrás de flag própria enquanto a V2 está em validação.
+ *
+ * O parser passou a enxergar N demandas numa mensagem; o executor já sabia
+ * criar N. Mas "entendeu certo no corpus" e "pode criar quatro tasks na conta
+ * de um cliente" são decisões diferentes, e a segunda merece uma chave
+ * separada — errar em escala é pior do que errar uma vez.
+ *
+ *   BENTO_MULTI_ACTION_WRITE=true  -> executa o plano inteiro
+ *   ausente/false                  -> mostra o plano e NÃO escreve nada
+ *
+ * DESLIGADA por default nesta fase, a pedido do release. Plano de uma task só
+ * não é afetado: a chave só pesa quando há mais de uma.
+ */
+const LIGADO = new Set(['true', '1', 'on', 'yes', 'sim']);
+
+export function multiActionWriteHabilitado(env: NodeJS.ProcessEnv = process.env): boolean {
+  return LIGADO.has((env.BENTO_MULTI_ACTION_WRITE ?? '').trim().toLowerCase());
 }
 
 /** Intenção de criação montada dos mesmos extratores, sem exigir o verbo "criar". */
@@ -625,8 +645,10 @@ export async function tryBentoActionGuard(params: {
   // PLANO DE AÇÃO: quantas tasks o pedido realmente contém, e de quem é cada
   // uma. Uma mensagem pode despachar dois entregáveis pra duas pessoas; tratar
   // isso como uma criação só era entregar metade e relatar tudo.
-  const plano = buildOperationalActionPlan(params.message);
   const clientName = alvo.clientName ?? params.clientName ?? null;
+  // O cliente já foi resolvido contra a carteira; passar o nome impede que ele
+  // seja lido como responsável ("separa pro Gui na Clinica Teste Fase 7").
+  const plano = buildOperationalActionPlan(params.message, { excludeNames: [clientName, params.clientName] });
 
   // BRIEFING: obrigatório quando há material colado pra organizar. É o que
   // transforma "separa a demanda" em instrução executável dentro da task, em
@@ -645,8 +667,9 @@ export async function tryBentoActionGuard(params: {
 
   const entradas: CreateOneInput[] = [];
   for (const t of plano.tasks) {
-    const titulo =
-      t.deliverable !== null
+    const titulo = t.item
+      ? buildItemTitle({ item: t.item, clientName })
+      : t.deliverable !== null
         ? buildDeliverableTitle({ deliverable: t.deliverable, items: plano.items, clientName })
         : buildOperationalTitle({ message: params.message, explicitName: intent.taskName || null, clientName });
     if (titulo.trim().length < 6) continue;
@@ -709,6 +732,41 @@ export async function tryBentoActionGuard(params: {
       entrada.briefing = [composto.markdown, blocoDePendencias(plano.items, plano.pendencies)].filter(Boolean).join('\n\n');
       record('guard.briefing_quality', `tipo=${deliveryType} score=${briefingEvaluation.score} executável=${briefingEvaluation.executable}`, briefingEvaluation.executable);
     }
+  }
+
+  // PORTÃO DO MULTI-WRITE. Entre planejar e executar N escritas existe uma
+  // decisão de risco que não é a mesma de entender a frase.
+  if (entradas.length > 1 && !multiActionWriteHabilitado()) {
+    const lista = entradas
+      .map((e) => `- "${e.title}"${e.planned.assigneeName ? ` — ${e.planned.assigneeName}` : ' — sem responsável indicado'}`)
+      .join('\n');
+    logger.info(
+      { intent_classification: acao.kind, action_plan_count: entradas.length, write_authorized: false, write_reason: 'multi-write desabilitado' },
+      '[guard] plano multi-ação montado, execução represada por flag',
+    );
+    return guardResponse({
+      ok: true,
+      toolCalls,
+      answer:
+        `Entendi ${entradas.length} demandas nesse pedido${clientName ? ` pra ${clientName}` : ''}:\n${lista}\n\n` +
+        'Criar várias de uma vez ainda está em validação, então não lancei nada. Me confirma que eu crio, ou me diz qual delas você quer primeiro.',
+      metadata: {
+        guard: 'bento-action',
+        action: 'multi_action_plan_only',
+        intent_classification: acao.kind,
+        write_authorized: false,
+        write_reason: 'BENTO_MULTI_ACTION_WRITE desligado',
+        action_plan_count: entradas.length,
+        attachments_in_request: anexosDoPedido.length,
+        tasks: entradas.map((e) => ({
+          title: e.title,
+          deliverable: e.planned.deliverable,
+          item: e.planned.item ?? null,
+          assignee_requested: e.planned.assigneeName,
+          status: 'planned',
+        })),
+      },
+    });
   }
 
   const resultados = await createManyTasks(

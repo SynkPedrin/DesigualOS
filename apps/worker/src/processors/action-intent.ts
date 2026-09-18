@@ -18,6 +18,8 @@
  * de o modelo estar num dia bom.
  */
 
+import { classifyActionIntentV2, type ActionIntentV2 } from './action-intent-v2';
+
 export type ActionIntentClass =
   | 'READ_ONLY'
   | 'ANALYSIS'
@@ -139,7 +141,7 @@ export function trechoDeInstrucao(turno: string): string {
 /**
  * Classifica a intenção do turno. Determinístico: mesma frase, mesma classe.
  */
-export function classifyActionIntent(message: string): ActionIntent {
+export function classifyActionIntentLegacy(message: string): ActionIntent {
   // Só o turno do usuário: o bloco de contexto do Orchestrator vem depois do
   // marcador e traz texto de terceiros que não é pedido de ninguém.
   const turno = message.split(/\n-{3,}\n/)[0] ?? message;
@@ -235,4 +237,118 @@ export function classifyActionIntent(message: string): ActionIntent {
     reason: 'pergunta ou conversa sem intenção de escrita',
     requiresAnalysisFirst: false,
   };
+}
+
+/* ================================================================== */
+/* ROTEAMENTO V1 / V2                                                  */
+/* ================================================================== */
+
+/**
+ * `classifyActionIntent` é o único ponto que o resto do sistema chama. Qual
+ * motor responde é decidido aqui, por flag, pra que o rollback seja env +
+ * restart — e não revert.
+ *
+ *   BENTO_ACTION_INTENT_V2=false  -> volta pro classificador V1
+ *
+ * LIGADA por default: a V1 autoriza escrita em "não cria ainda", medido no
+ * corpus. Deixar o padrão no motor que erra pra escrita seria escolher o pior
+ * lado da assimetria.
+ *
+ * O contrato de saída é o MESMO (kind/writeAuthorized/reason), então nada a
+ * jusante muda — guard, parser e executor seguem iguais. O que a V2 acrescenta
+ * (sourceSpan, confidence, segmentos) sai por `classifyActionIntentDetalhado`,
+ * pro trace e pro shadow.
+ */
+const DESLIGADO = new Set(['false', '0', 'off', 'no', 'nao']);
+
+export function intentV2Habilitado(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.BENTO_ACTION_INTENT_V2?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return true;
+  return !DESLIGADO.has(raw);
+}
+
+/** Traduz o resultado da V2 pro contrato que o guard já consome. */
+export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
+  const turno = message.split(/\n-{3,}\n/)[0] ?? message;
+  // Nome entre aspas é rótulo, não instrução: sem tirar, a task chamada
+  // "Revisar peças" fazia o pedido parecer um pedido de revisão.
+  const flat = dobra(turno.replace(/["“'][^"”']{3,120}["”']/g, ' '));
+  // Sem o `\\b` final: "analis" é PREFIXO de "analisa"/"analise", e cobrar
+  // fronteira ali fazia o pedido de análise mais comum da operação não casar.
+  const requiresAnalysisFirst = /\b(analis|avali|revis|diagnostic|me diga|me diz|me fala|da uma olhada|de uma olhada|olha isso|veja isso)/.test(flat);
+  const deliberacao = v2.segments.some((s) => s.signals.blockers.includes('deliberação'));
+
+  /**
+   * HARD DENY é política, não leitura de frase — então não depende de a V2 ter
+   * reconhecido família nenhuma. O que ele exige é que seja de fato um PEDIDO:
+   * com negação ("não fecha isso") ou deliberação ("devemos fechar?") não há
+   * o que recusar, e recusar ali seria responder uma pergunta com um sermão.
+   */
+  if (CONCLUSAO_HUMANA.test(flat) && v2.negations.length === 0 && !deliberacao) {
+    return {
+      kind: 'FORBIDDEN_ACTION',
+      writeAuthorized: false,
+      reason: 'concluir/fechar trabalho humano está fora do que o Bento pode fazer',
+      requiresAnalysisFirst: false,
+    };
+  }
+
+  if (v2.intent === 'ACT') {
+    // MANDATO DE AUTONOMIA tem caminho próprio no planner (decidir -> agir ->
+    // verificar). Perder essa distinção transformaria "resolva o que puder"
+    // numa escrita pontual qualquer.
+    const autonomo = v2.signals.includes('autonomous');
+    return {
+      kind: autonomo ? 'AUTONOMOUS_ACTION' : 'ACTION_REQUEST',
+      writeAuthorized: true,
+      reason: `ordem reconhecida (${v2.signals.join(', ') || 'sem família'}) em "${(v2.sourceSpan ?? '').slice(0, 60)}"`,
+      requiresAnalysisFirst: autonomo ? true : requiresAnalysisFirst,
+    };
+  }
+
+  if (v2.intent === 'AMBIGUOUS') {
+    return {
+      kind: 'SUGGESTION',
+      writeAuthorized: false,
+      reason: 'pedido ambíguo: a única ordem está numa pergunta; não escrevo no palpite',
+      requiresAnalysisFirst,
+    };
+  }
+
+  if (v2.negations.length > 0) {
+    return {
+      kind: 'READ_ONLY',
+      writeAuthorized: false,
+      reason: `escrita negada no próprio pedido (${v2.negations.join('; ')})`,
+      requiresAnalysisFirst,
+    };
+  }
+
+  // Deliberação ("devemos criar?") é uma classe própria: não é ordem, mas
+  // também não é uma conversa qualquer — é uma pergunta sobre escrever.
+  if (deliberacao) {
+    return {
+      kind: 'SUGGESTION',
+      writeAuthorized: false,
+      reason: 'pergunta se a ação deve ser feita, não é ordem de execução',
+      requiresAnalysisFirst,
+    };
+  }
+
+  return {
+    kind: requiresAnalysisFirst ? 'ANALYSIS' : 'READ_ONLY',
+    writeAuthorized: false,
+    reason: 'sem ordem de escrita no turno',
+    requiresAnalysisFirst,
+  };
+}
+
+/** Resultado completo da V2, pro trace e pro shadow mode. */
+export function classifyActionIntentDetalhado(message: string): ActionIntentV2 {
+  return classifyActionIntentV2(message);
+}
+
+export function classifyActionIntent(message: string, env: NodeJS.ProcessEnv = process.env): ActionIntent {
+  if (!intentV2Habilitado(env)) return classifyActionIntentLegacy(message);
+  return adaptarV2(classifyActionIntentV2(message), message);
 }
