@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { classifyActionIntent } from './action-intent';
 import { buildOperationalActionPlan } from './operational-action-plan';
 import { buildOperationalTitle, chavesDoCliente, mensagemCitaCliente } from './write-target';
+import { ehMaterialDeDemanda } from './bento-action-guard';
 import { blocoDeReferencias, createOneTask, createManyTasks, type CreateDeps, type CreateOneInput, type TaskAttachment } from './multi-create-executor';
 import { bentoWriteAllowlist, podeEscreverNoCanary } from './bento-action-guard';
 import { afirmaTerEscrito, houveEscritaBemSucedida } from './agentic-dispatch';
@@ -632,5 +633,41 @@ describe('título carrega o trabalho, não a meta-instrução', () => {
     const a = buildOperationalTitle({ message: `${META}\n\n[Solicitação anterior]\nPrecisamos de um cartaz.`, explicitName: null, clientName: 'X' });
     const b = buildOperationalTitle({ message: `${META}\n\n[Solicitação anterior]\nPrecisamos de um folder.`, explicitName: null, clientName: 'X' });
     expect(a).not.toBe(b);
+  });
+});
+
+/**
+ * REGRESSÃO DA ESCRITA DUPLICADA (aceite pelo frontend, 18/09/2026).
+ *
+ * A Tammy repetiu o mesmo pedido. Na segunda vez a mensagem anterior já era a
+ * própria ordem, ela entrou como "solicitação acima", e a task nasceu chamada
+ * "Criar Bento, tenho a solicitação acima. Separa e lança pro Gui...". Título
+ * diferente do primeiro => idempotência não reconheceu => DUAS tasks para uma
+ * demanda só (86bc36nvw na lista QA).
+ */
+describe('a "solicitação acima" é material, nunca outra ordem', () => {
+  it.each([
+    'Bento, tenho a solicitação acima. Separa e lança pro Gui na Clinica Teste Fase 7.',
+    'separa isso pro Gui',
+    'cria essa demanda pra Jamile',
+    'joga na lista da D Carvalho',
+  ])('ordem NÃO vira material: %s', (m) => {
+    expect(ehMaterialDeDemanda(m)).toBe(false);
+  });
+
+  it.each([
+    'Precisamos de um cartaz de sinalização para a recepção, seguindo o padrão visual da marca.',
+    'O cliente pediu quatro placas novas para o estacionamento e mandou o MIV em anexo.',
+  ])('conteúdo de demanda vira material: %s', (m) => {
+    expect(ehMaterialDeDemanda(m)).toBe(true);
+  });
+
+  it('texto curto não vira material', () => {
+    expect(ehMaterialDeDemanda('ok')).toBe(false);
+    expect(ehMaterialDeDemanda('valeu, obrigada')).toBe(false);
+  });
+
+  it('referência curta ao que veio antes não é o material em si', () => {
+    expect(ehMaterialDeDemanda('era a solicitação acima mesmo')).toBe(false);
   });
 });

@@ -246,7 +246,7 @@ async function loadConversationContext(conversationId: string | null): Promise<C
       // frágil; a ordem desc por createdAt garante que a primeira é a atual.
       if (!achouAMensagemAtual) {
         achouAMensagemAtual = true;
-      } else if (!solicitacaoAnterior) {
+      } else if (!solicitacaoAnterior && ehMaterialDeDemanda(message.content)) {
         solicitacaoAnterior = message.content;
       }
     }
@@ -322,6 +322,29 @@ export function podeEscreverNoCanary(email: string | null, env: NodeJS.ProcessEn
   const lista = bentoWriteAllowlist(env);
   if (lista.size === 0) return true;
   return email !== null && lista.has(email.toLowerCase());
+}
+
+/**
+ * A "solicitação acima" é MATERIAL, nunca outra ordem.
+ *
+ * Medido no aceite pelo frontend (18/09/2026): a Tammy repetiu o mesmo pedido
+ * duas vezes. Na segunda, a mensagem anterior já era a própria ordem ("Bento,
+ * tenho a solicitação acima..."), ela entrou como material, e o título saiu
+ * "Criar Bento, tenho a solicitação acima. Separa e lança pro Gui...". Título
+ * diferente do primeiro, então a idempotência não reconheceu a demanda e uma
+ * SEGUNDA task nasceu (86bc36nvw) — uma duplicata com nome de mensagem de
+ * chat, que é exatamente o defeito de 15/09 voltando por outra porta.
+ *
+ * Uma ordem operacional descreve o que FAZER com a demanda; ela não é a
+ * demanda. Só texto que não é ordem vira material.
+ */
+export function ehMaterialDeDemanda(texto: string): boolean {
+  const limpo = texto.trim();
+  // Piso de tamanho: "valeu, obrigada" não é ordem e também não é a demanda.
+  // Uma solicitação colada tem corpo; um aceno tem quinze caracteres.
+  if (limpo.length < 40) return false;
+  if (/\b(acima|anterior)\b/i.test(limpo) && limpo.length < 200) return false;
+  return !classifyActionIntent(limpo).writeAuthorized;
 }
 
 export function getClickUpConfigOrNull(): ClickUpConfig | null {
