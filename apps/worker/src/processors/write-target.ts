@@ -231,6 +231,47 @@ function assuntoDosItens(items: string[]): string | null {
  * pessoa escreveu. Copiar a mensagem crua foi o que produziu a task chamada
  * "Peças que você confia, você tem" — que é o nome da CAMPANHA, não do trabalho.
  */
+/**
+ * O QUE é o trabalho, lido do próprio pedido.
+ *
+ * Antes existiam três saídas: "peças da campanha", "campanha" e "demanda".
+ * Qualquer pedido fora desses três virava "Executar demanda — Cliente" — e
+ * isso tem uma consequência que só apareceu no aceite pelo frontend: como a
+ * idempotência usa o TÍTULO como chave, dois pedidos diferentes ("cartaz da
+ * recepção" e "folder de julho") colidiam no mesmo título genérico e o segundo
+ * era barrado como duplicata. O título ruim não era só feio: bloqueava
+ * trabalho legítimo em silêncio.
+ *
+ * A lista é o vocabulário de entrega da agência. O primeiro que aparecer no
+ * texto vence, porque é assim que a pessoa enuncia a demanda.
+ */
+const SUBSTANTIVOS_DE_TRABALHO: Array<[RegExp, string]> = [
+  [/\bcartaz(es)?\b/, 'cartaz'],
+  [/\bplacas?\b/, 'placas'],
+  [/\bbanners?\b/, 'banner'],
+  [/\b(folder|flyer|panfleto)s?\b/, 'folder'],
+  [/\bcat[aá]logos?\b/, 'catálogo'],
+  [/\bapresenta[cç][aã]o|\bdeck\b/, 'apresentação'],
+  [/\blanding ?page|\blp\b|\bsite\b/, 'landing page'],
+  [/\b(v[ií]deos?|reels?|stories)\b/, 'vídeo'],
+  [/\bcarross[eé]l|\bcarrossel\b/, 'carrossel'],
+  [/\bposts?\b/, 'post'],
+  [/\blayouts?\b/, 'layout'],
+  [/\b(identidade visual|logo(tipo)?|marca)\b/, 'identidade visual'],
+  [/\broteiros?\b/, 'roteiro'],
+  [/\b(legenda|copy|texto)s?\b/, 'texto'],
+  [/\b(e-?mail|newsletter)s?\b/, 'e-mail'],
+  [/\bbriefings?\b/, 'briefing'],
+  [/\bpe[çc]as?\b/, 'peças da campanha'],
+  [/\bcampanha\b/, 'campanha'],
+];
+
+function substantivoDoTrabalho(flat: string): string | null {
+  const achados = SUBSTANTIVOS_DE_TRABALHO.map(([re, rotulo]) => ({ rotulo, at: flat.search(re) })).filter((x) => x.at >= 0);
+  if (achados.length === 0) return null;
+  return achados.sort((a, b) => a.at - b.at)[0]!.rotulo;
+}
+
 export function buildOperationalTitle(params: {
   message: string;
   explicitName: string | null;
@@ -254,13 +295,7 @@ export function buildOperationalTitle(params: {
 
   // Objeto do trabalho: o que está entre aspas (campanha/peça) ou o substantivo.
   const entreAspas = /["“']([^"”']{3,80})["”']/.exec(turno)?.[1]?.trim() ?? null;
-  const objeto = entreAspas
-    ? `campanha ${entreAspas}`
-    : /\bpe[çc]as?\b/.test(flat)
-      ? 'peças da campanha'
-      : /\bcampanha\b/.test(flat)
-        ? 'campanha'
-        : 'demanda';
+  const objeto = entreAspas ? `campanha ${entreAspas}` : substantivoDoTrabalho(flat) ?? 'demanda';
 
   const sufixo = params.clientName ? ` — ${params.clientName}` : '';
   return `${acao} ${objeto}${sufixo}`.slice(0, 120);

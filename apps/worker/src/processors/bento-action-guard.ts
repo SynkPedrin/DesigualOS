@@ -709,7 +709,15 @@ export async function tryBentoActionGuard(params: {
       ? buildItemTitle({ item: t.item, clientName })
       : t.deliverable !== null
         ? buildDeliverableTitle({ deliverable: t.deliverable, items: plano.items, clientName })
-        : buildOperationalTitle({ message: params.message, explicitName: intent.taskName || null, clientName });
+        : buildOperationalTitle({
+            // `fonteDoPedido`, não `params.message`: o plano e o briefing já
+            // liam a solicitação anterior, mas o TÍTULO continuava lendo só a
+            // meta-instrução ("tenho a solicitação acima") — e por isso saía
+            // genérico e colidia na idempotência com outra demanda qualquer.
+            message: fonteDoPedido,
+            explicitName: intent.taskName || null,
+            clientName,
+          });
     if (titulo.trim().length < 6) continue;
     entradas.push({
       planned: t,

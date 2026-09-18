@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { classifyActionIntent } from './action-intent';
 import { buildOperationalActionPlan } from './operational-action-plan';
-import { chavesDoCliente, mensagemCitaCliente } from './write-target';
+import { buildOperationalTitle, chavesDoCliente, mensagemCitaCliente } from './write-target';
 import { blocoDeReferencias, createOneTask, createManyTasks, type CreateDeps, type CreateOneInput, type TaskAttachment } from './multi-create-executor';
 import { bentoWriteAllowlist, podeEscreverNoCanary } from './bento-action-guard';
 import { afirmaTerEscrito, houveEscritaBemSucedida } from './agentic-dispatch';
@@ -592,5 +592,45 @@ describe('solicitação anterior alimenta a demanda', () => {
     const p = buildOperationalActionPlan('cria isso pro Gui');
     expect(p.tasks).toHaveLength(1);
     expect(p.pendencies).toEqual([]);
+  });
+});
+
+/**
+ * REGRESSÃO DO ACEITE PELO FRONTEND (18/09/2026).
+ *
+ * "Bento, tenho a solicitação acima. Separa e lança pro Gui" produzia o título
+ * "Executar demanda — Cliente" para QUALQUER demanda. Como a idempotência usa
+ * o título como chave, o cartaz de uma rodada e o folder da seguinte colidiam
+ * e o segundo era barrado como duplicata — trabalho legítimo bloqueado em
+ * silêncio, medido na lista QA.
+ */
+describe('título carrega o trabalho, não a meta-instrução', () => {
+  const META = 'Bento, tenho a solicitação acima. Separa e lança pro Gui na Clinica Teste Fase 7.';
+
+  it('sozinha, a meta-instrução ainda cai no genérico', () => {
+    const t = buildOperationalTitle({ message: META, explicitName: null, clientName: 'Clinica Teste Fase 7' });
+    expect(t).toContain('demanda');
+  });
+
+  it.each([
+    ['cartaz de sinalização para a recepção', 'cartaz'],
+    ['um folder de julho para a campanha', 'folder'],
+    ['o banner da home', 'banner'],
+    ['uma apresentação comercial', 'apresentação'],
+    ['a landing page do lançamento', 'landing page'],
+  ])('com a solicitação anterior "%s" o título diz %s', (pedido, esperado) => {
+    const t = buildOperationalTitle({
+      message: `${META}\n\n[Solicitação anterior]\nPrecisamos de ${pedido}.`,
+      explicitName: null,
+      clientName: 'Clinica Teste Fase 7',
+    });
+    expect(t).toContain(esperado);
+    expect(t).toContain('Clinica Teste Fase 7');
+  });
+
+  it('demandas DIFERENTES geram títulos diferentes — é o que impede a colisão de dedup', () => {
+    const a = buildOperationalTitle({ message: `${META}\n\n[Solicitação anterior]\nPrecisamos de um cartaz.`, explicitName: null, clientName: 'X' });
+    const b = buildOperationalTitle({ message: `${META}\n\n[Solicitação anterior]\nPrecisamos de um folder.`, explicitName: null, clientName: 'X' });
+    expect(a).not.toBe(b);
   });
 });
