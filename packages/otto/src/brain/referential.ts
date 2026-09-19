@@ -156,6 +156,28 @@ export function itensDaLista(texto: string): string[] {
     if (/^(conceito|varia[çc][ãa]o)\b/i.test(t)) return t;
     return t.replace(/^[A-ZÁ-Ú][\wÀ-ÿ]*:\s+(?=\S)/, '');
   });
+
+  /**
+   * DUAS PASSAGENS, porque os formatos convivem. Medido em 18/09/2026: a
+   * resposta veio com preâmbulo de conceito (Conceito + Variação A/B) E a
+   * lista numerada de títulos logo abaixo. Ler em ordem de documento fez o
+   * "segundo" apontar pra Variação A — mas quem pediu "3 títulos" e depois
+   * diz "o segundo" está falando da LISTA, não do preâmbulo. Enumeração
+   * explícita ganha; conceito/variações só viram itens quando não há lista.
+   */
+  const fortes: string[] = [];
+  for (let i = 0; i < linhas.length; i += 1) {
+    const l = linhas[i]!;
+    if (/^(post|op[cç][aã]o|t[ií]tulo|vers[aã]o|alternativa)\s*\d+\s*[:.)-]?$/i.test(l)) {
+      const prox = linhas.slice(i + 1).find((x) => x.length > 0);
+      if (prox) fortes.push(prox);
+      continue;
+    }
+    const inline = /^(?:\d+\s*[.)-]?|[-*•])\s+(\S.*)$/.exec(l);
+    if (inline?.[1]) fortes.push(inline[1].trim());
+  }
+  if (fortes.length >= 2) return fortes;
+
   const itens: string[] = [];
   for (let i = 0; i < linhas.length; i += 1) {
     const l = linhas[i]!;
@@ -165,22 +187,14 @@ export function itensDaLista(texto: string): string[] {
       itens.push(conceito[1].trim());
       continue;
     }
-    // "Variação A: texto" — letra vira ordinal (A=2º item se veio depois do
-    // Conceito, pela ordem do documento).
+    // "Variação A: texto" — letra vira ordinal pela ordem do documento.
     const variacao = /^varia[çc][ãa]o\s+[a-e]\s*[:.)-]\s*(.+)$/i.exec(l);
     if (variacao?.[1]) {
       itens.push(variacao[1].trim());
       continue;
     }
-    if (/^(post|op[cç][aã]o|t[ií]tulo|vers[aã]o|alternativa)\s*\d+\s*[:.)-]?$/i.test(l)) {
-      const prox = linhas.slice(i + 1).find((x) => x.length > 0);
-      if (prox) itens.push(prox);
-      continue;
-    }
-    const inline = /^(?:\d+\s*[.)-]?|[-*•])\s+(\S.*)$/.exec(l);
-    if (inline?.[1]) itens.push(inline[1].trim());
   }
-  return itens;
+  return itens.length > 0 ? itens : fortes;
 }
 
 /**

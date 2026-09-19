@@ -228,3 +228,38 @@ Variação B: Muda o hook para "Eles têm o capital. Você tem o quê?" Testa ab
     expect(itens[0]).toContain('Título principal');
   });
 });
+
+/**
+ * REGRESSÃO 18/09/2026 (terceira forma): a resposta veio com preâmbulo de
+ * conceito (Conceito + Variação A/B) E a lista numerada de títulos abaixo.
+ * Ler em ordem de documento faz "o segundo" apontar pra Variação A — mas
+ * quem pediu "3 títulos" e diz "o segundo" fala da LISTA.
+ */
+describe('lista numerada ganha do preâmbulo de conceito', () => {
+  const RESPOSTA_REAL = `Conceito: A elite não é um lugar que se conquista, é um filtro que se impõe ao mundo.
+Por que funciona: Assumi etapa de topo e público que busca pertencimento.
+Variação A: Foco no conceito de "filtro" para testar a objeção de exclusividade.
+Variação B: Foco no conceito de "imposição" para testar a autoridade da marca.
+
+1. Quem não aguenta, sai sozinho.
+2. O padrão que você não vê é o que te define.
+3. Elite não se pede. Se impõe.`;
+
+  it('os itens são os títulos numerados, não o preâmbulo', () => {
+    const itens = itensDaLista(RESPOSTA_REAL);
+    expect(itens).toHaveLength(3);
+    expect(itens[1]).toBe('O padrão que você não vê é o que te define.');
+  });
+
+  it('"o segundo" resolve o título numerado', () => {
+    const t = classificarTurno('me explica o segundo.', true);
+    const d = resolverReferente(`Otto: ${RESPOSTA_REAL}`, t)!;
+    expect(d).toContain('O padrão que você não vê é o que te define');
+  });
+
+  it('sem lista numerada, a peça conceito continua sendo o conjunto', () => {
+    const itens = itensDaLista('Conceito: "Título principal aqui"\nVariação A: alternativa um\nVariação B: alternativa dois');
+    expect(itens).toHaveLength(3);
+    expect(itens[1]).toBe('alternativa um');
+  });
+});

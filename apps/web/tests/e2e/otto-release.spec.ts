@@ -72,7 +72,12 @@ async function falar(page: import('@playwright/test').Page, texto: string, timeo
  * correta do Post 2 dizia "postura/confiança", zero palavras do título).
  */
 function itensDaLista(texto: string): string[] {
-  // Cabeçalho "Post N" / "Título N" / "Versão N": o item é o parágrafo inteiro.
+  /**
+   * Mesma precedência do resolvedor do node: quando a resposta traz
+   * preâmbulo de conceito E lista numerada, "o segundo" é da LISTA.
+   * Medido em 18/09 — ler em ordem de documento apontava pra Variação A.
+   */
+  // Passagem 1 — enumeração explícita: cabeçalho "Post N" ou numerada/bullet.
   const paragrafos = texto.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   const comCabecalho = paragrafos.filter((p) => /^(post|op[çc][ãa]o|t[ií]tulo|vers[ãa]o|alternativa)\s*\d+\s*[:.)-]?\s*$/im.test(p.split('\n')[0]!.trim()));
   if (comCabecalho.length >= 2) {
@@ -81,36 +86,31 @@ function itensDaLista(texto: string): string[] {
 
   const linhas = texto.split('\n').map((l) => {
     const t = l.trim();
-    // "Conceito:" e "Variação A:" são rótulos DE ITEM, não de locutor —
-    // mesma regra do resolvedor do node, pra medir o mesmo conjunto.
     if (/^(conceito|varia[çc][ãa]o)\b/i.test(t)) return t;
     return t.replace(/^[A-ZÁ-Ú][\wÀ-ÿ]*:\s+(?=\S)/, '');
   });
+  const fortes: string[] = [];
+  for (const l of linhas) {
+    const inline = /^(?:\d+\s*[.)-]?|[-*•])\s+(\S.*)$/.exec(l);
+    if (inline?.[1]) fortes.push(inline[1].trim());
+  }
+  if (fortes.length >= 2) return fortes;
+
+  // Passagem 2 — peça conceito sem lista: Conceito + Variação A/B.
   const itens: string[] = [];
-  for (let i = 0; i < linhas.length; i += 1) {
-    const l = linhas[i]!;
-    // Peça conceito: "Conceito: "texto"" é o primeiro item da peça.
+  for (const l of linhas) {
     const conceito = /^conceito:\s*["“]?(.+?)["”]?\s*$/i.exec(l);
     if (conceito?.[1] && conceito[1].length > 3) {
       itens.push(conceito[1].trim());
       continue;
     }
-    if (/^(post|op[çc][ãa]o|t[ií]tulo|vers[ãa]o|alternativa)\s*\d+\s*[:.)-]?$/i.test(l)) {
-      const prox = linhas.slice(i + 1).find((x) => x.length > 0);
-      if (prox) itens.push(prox);
-      continue;
-    }
-    // Formato letrado que o Otto usa em peça conceito: "Variação A: ...".
-    // A ordem do documento é a ordem dos itens.
     const letra = /^varia[çc][ãa]o\s+([a-e])\s*[:.)-]\s*(.+)$/i.exec(l);
     if (letra?.[1]) {
       itens.push(letra[1].trim());
       continue;
     }
-    const inline = /^(?:\d+\s*[.)-]?|[-*•])\s+(\S.*)$/.exec(l);
-    if (inline?.[1]) itens.push(inline[1].trim());
   }
-  return itens;
+  return itens.length > 0 ? itens : fortes;
 }
 
 /** Fração de palavras de conteúdo de `a` presentes em `b`. */
