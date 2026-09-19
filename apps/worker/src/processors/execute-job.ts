@@ -22,7 +22,6 @@ import {
   recordLearning,
   recallMemories,
   type AgentJobData,
-  touchConversation,
 } from '@desigual-os/orchestrator';
 import type { AgentName } from '@desigual-os/types';
 import { AGENT_NAMES, stripEmDashes } from '@desigual-os/types';
@@ -517,7 +516,6 @@ async function recordAssistantMessage(
   await db
     .insert(schema.messages)
     .values({ conversationId, role: 'assistant', agent, content, ...(metadata ? { metadata } : {}) });
-  await touchConversation(conversationId);
 }
 
 /**
