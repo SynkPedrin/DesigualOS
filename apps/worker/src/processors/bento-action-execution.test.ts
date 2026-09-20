@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { classifyActionIntent } from './action-intent';
 import { buildOperationalActionPlan } from './operational-action-plan';
 import { buildOperationalTitle, chavesDoCliente, mensagemCitaCliente } from './write-target';
+import { buildOperationalActionPlan } from './operational-action-plan';
 import { ehMaterialDeDemanda } from './bento-action-guard';
 import { blocoDeReferencias, createOneTask, createManyTasks, type CreateDeps, type CreateOneInput, type TaskAttachment } from './multi-create-executor';
 import { bentoWriteAllowlist, podeEscreverNoCanary } from './bento-action-guard';
@@ -687,5 +688,33 @@ describe('meta-conversa não é material (regressão 18/09, segunda forma)', () 
         'Chegou uma solicitação nova do cliente: precisamos de um roteiro de sinalização para a recepção, seguindo o padrão visual da marca.',
       ),
     ).toBe(true);
+  });
+});
+
+/**
+ * REGRESSÃO DO GATE DE ANEXO (19/09/2026): "usa o arquivo acima no briefing e
+ * cria a demanda pro Gui" criou a task SEM responsável (86bc3n42j). O bloco
+ * [Solicitação anterior] começava com "Bento," e o trechoDeInstrucao mantinha
+ * só ele — a cláusula da ordem, que carregava o Gui, sumia do plano.
+ */
+describe('o material não engole a ordem (regressão 19/09, gate de anexo)', () => {
+  it('o assignee da ordem sobrevive ao bloco [Solicitação anterior]', () => {
+    const fonte =
+      'usa o arquivo acima no briefing e cria a demanda pro Gui.\n\n' +
+      '[Solicitação anterior]\n' +
+      'Bento, chegou essa referência em anexo. É material pra uma peça nova da Clinica Teste Fase 7.';
+    const plano = buildOperationalActionPlan(fonte, { excludeNames: ['Clinica Teste Fase 7'] });
+    expect(plano.tasks).toHaveLength(1);
+    expect(plano.tasks[0]!.assigneeName).toBe('Gui');
+  });
+
+  it('o caso real da Tammy (solicitação acima com vocativo) não muda', () => {
+    const fonte =
+      'Bento, tenho a solicitação acima. Separa e lança pro Gui na Clinica Teste Fase 7.\n\n' +
+      '[Solicitação anterior]\n' +
+      'Precisamos de um cartaz de sinalização para a recepção, seguindo o padrão visual da marca.';
+    const plano = buildOperationalActionPlan(fonte, { excludeNames: ['Clinica Teste Fase 7'] });
+    expect(plano.tasks).toHaveLength(1);
+    expect(plano.tasks[0]!.assigneeName).toBe('Gui');
   });
 });

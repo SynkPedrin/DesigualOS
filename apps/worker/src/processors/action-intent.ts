@@ -134,8 +134,22 @@ const ENDERECA_AGENTE = /\b(bento|otto|jarbas|suzy)\b/i;
 export function trechoDeInstrucao(turno: string): string {
   const paragrafos = turno.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 0);
   if (paragrafos.length <= 1) return turno;
-  const enderecados = paragrafos.filter((p) => ENDERECA_AGENTE.test(p));
-  return enderecados.length > 0 ? enderecados.join('\n') : turno;
+  /**
+   * O bloco "[Solicitação anterior]" é MATERIAL, nunca instrução.
+   *
+   * Medido no gate de anexo (19/09/2026): o guard monta a fonte do pedido como
+   * "ordem\n\n[Solicitação anterior]\n<material>". A ordem era "usa o arquivo
+   * acima no briefing e cria a demanda pro Gui" — sem vocativo — e o material
+   * começava com "Bento, chegou essa referência...". O filtro de endereçamento
+   * manteve SÓ o material, e a cláusula que carregava o Gui sumiu do plano: a
+   * task nasceu sem responsável num pedido que nomeava o responsável. Regra
+   * simétrica à de 15/09: material informa O QUÊ, a ordem diz O QUE FAZER e
+   * PRA QUEM — e nunca se misturam.
+   */
+  const semMaterial = paragrafos.filter((p) => !/^\[\s*Solicita[cç][aã]o anterior\]/i.test(p));
+  if (semMaterial.length === 0) return turno;
+  const enderecados = semMaterial.filter((p) => ENDERECA_AGENTE.test(p));
+  return enderecados.length > 0 ? enderecados.join('\n') : semMaterial.join('\n');
 }
 
 /**
