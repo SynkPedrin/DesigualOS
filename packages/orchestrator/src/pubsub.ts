@@ -1,7 +1,33 @@
 import { createLogger } from '@desigual-os/logging';
 import { getRedisConnection } from './queues';
 
-const CHANNEL = 'desigual-os:ws-events';
+/**
+ * P1-07 (release readiness audit, 22/09/2026): Redis PUB/SUB não respeita o
+ * número de banco (`SELECT`/DB da URL) — é global no servidor Redis inteiro,
+ * ao contrário de toda outra chave (BullMQ, cache). QA aponta pra
+ * `redis://localhost:6380/1`, produção pra DB 0, e mesmo assim os dois
+ * publicavam no MESMO canal fixo `desigual-os:ws-events` — evento de teste
+ * chegava na UI de produção de verdade (E18).
+ *
+ * O número de banco já é a fronteira que este projeto usa hoje pra separar
+ * QA de produção (mesma REDIS_URL, DB diferente) — reaproveitar esse mesmo
+ * número no NOME do canal fecha o isolamento sem inventar variável de
+ * ambiente nova nem configuração paralela que possa divergir da real.
+ */
+export function redisNamespace(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const db = parsed.pathname.replace(/^\//, '');
+    return db && /^\d+$/.test(db) ? `db${db}` : 'db0';
+  } catch {
+    return 'db0';
+  }
+}
+
+export function wsEventsChannel(): string {
+  return `desigual-os:${redisNamespace(process.env.REDIS_URL ?? 'redis://localhost:6379')}:ws-events`;
+}
+
 const logger = createLogger({ service: 'orchestrator-pubsub' });
 
 export interface WsEvent {
@@ -28,10 +54,11 @@ export interface WsEvent {
  * o evento de um processo pro outro sem acoplar os dois.
  */
 export async function publishWsEvent(event: WsEvent): Promise<void> {
-  await getRedisConnection().publish(CHANNEL, JSON.stringify(event));
+  await getRedisConnection().publish(wsEventsChannel(), JSON.stringify(event));
 }
 
 export function subscribeToWsEvents(onEvent: (event: WsEvent) => void): () => void {
+  const channel = wsEventsChannel();
   const subscriber = getRedisConnection().duplicate();
   // Sem isso, um erro de conexão nesse socket duplicado (Redis reiniciando,
   // rede instável) virava uma exceção não tratada e derrubava o processo
@@ -41,7 +68,7 @@ export function subscribeToWsEvents(onEvent: (event: WsEvent) => void): () => vo
   subscriber.on('error', (error) => {
     logger.error({ error }, 'Redis subscriber error');
   });
-  subscriber.subscribe(CHANNEL).catch((error: unknown) => {
+  subscriber.subscribe(channel).catch((error: unknown) => {
     logger.error({ error }, 'Failed to subscribe to WS events channel');
   });
   subscriber.on('message', (_channel, message) => {
@@ -53,7 +80,7 @@ export function subscribeToWsEvents(onEvent: (event: WsEvent) => void): () => vo
   });
 
   return () => {
-    void subscriber.unsubscribe(CHANNEL);
+    void subscriber.unsubscribe(channel);
     void subscriber.quit();
   };
 }
