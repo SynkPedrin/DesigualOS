@@ -4,7 +4,7 @@ Branch: `otto-elite-quality`
 Base SHA: `53f0804` (main, at worktree creation — a separate master session had
 substantial uncommitted work on `main` at the same time; this worktree never
 touched that checkout)
-Commit: see `git log otto-elite-quality` after this handoff is committed
+Commit: `93055e1aa68f92be27d211ffbbfc4feed2e4315c`
 
 ## Scope note (read this first)
 
