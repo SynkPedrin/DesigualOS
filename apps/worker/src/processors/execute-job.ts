@@ -812,7 +812,7 @@ async function publishMessageDelta(params: {
   const { conversationId, executionId, agent, delta, done } = params;
   if (!conversationId || !delta) return;
   const [meta] = await db
-    .select({ userId: schema.conversations.userId, visibility: schema.conversations.visibility })
+    .select({ userId: schema.conversations.userId, visibility: schema.conversations.visibility, clientId: schema.conversations.clientId })
     .from(schema.conversations)
     .where(eq(schema.conversations.id, conversationId));
   if (!meta) return;
@@ -826,6 +826,11 @@ async function publishMessageDelta(params: {
       done,
       owner_user_id: meta.userId,
       visibility: meta.visibility,
+      // P0-02 (22/09/2026): sem isto, o handler de /ws não tinha como saber
+      // a QUE ORGANIZAÇÃO uma conversa "pública" pertence — ela ia pra
+      // TODA conexão aberta, inclusive de outra organização. Mesmo dado que
+      // já escopa GET /conversations.
+      client_id: meta.clientId,
     },
   });
 }
