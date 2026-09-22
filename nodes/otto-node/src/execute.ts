@@ -25,6 +25,7 @@ import {
   createWebSearchProviderFromEnv,
   type BrainHealth,
   type BrandKit,
+  type CarouselPlan,
   type CreativeDNA,
   type CreativeFeedback,
   type DepthPolicy,
@@ -36,6 +37,7 @@ import {
   type RetrieveOptions,
   type StudioJobType,
   type TurnDepthPlan,
+  type VideoPlan,
 } from '@desigual-os/otto';
 import type { OttoNodeConfig } from './config.js';
 import { runtimeState } from './state.js';
@@ -367,15 +369,51 @@ function formatResearchBlock(research: { performed: boolean; summary: string; fi
   return `\n\nPesquisa externa REAL feita para este turno (use como base factual; cite só o que está aqui):\n${research.summary}\nFontes:\n${fontes}`;
 }
 
+/**
+ * Roteiro cena a cena pro chat, quando o vídeo é FALADO (tem spoken_line em
+ * pelo menos uma cena). Sem isto, "roteiro de Reels" devolvia só conceito e
+ * copy resumidos — a direção de câmera e a fala completa ficavam presas em
+ * metadata.video_plan, que o Orchestrator lê pra fila do Studio, mas quem
+ * pediu o roteiro num chat nunca vê. Regressão real: Jardim Europa V
+ * (Cosentino), 22/09/2026 — resposta chegou sem roteiro executável.
+ */
+function formatVideoScript(video: VideoPlan): string {
+  const temFala = video.scenes.some((scene) => scene.spoken_line);
+  if (!temFala) return '';
+  const cenas = video.scenes
+    .map((scene, index) => {
+      const linhas = [`Cena ${index + 1}${scene.duration_seconds ? ` (${scene.duration_seconds}s)` : ''}:`];
+      linhas.push(`Visual: ${scene.subject_movement}, ${scene.environment}.`);
+      if (scene.spoken_line) linhas.push(`Fala: "${scene.spoken_line}"`);
+      if (scene.on_screen_text) linhas.push(`Texto na tela: ${scene.on_screen_text}`);
+      return linhas.join('\n');
+    })
+    .join('\n\n');
+  const overlays = video.text_overlays.length > 0 ? `\n\nTextos na tela (gerais): ${video.text_overlays.join(' / ')}` : '';
+  return `\n\nRoteiro:\n\n${cenas}${overlays}\n\nCTA: ${video.cta}`;
+}
+
 /** Resumo legível do plano pro chat: a metadata carrega o JSON completo. */
-function formatPlanAnswer(planConcept: string, planCopy: string, jobType: StudioJobType): string {
-  return [
-    `Conceito: ${planConcept}`,
-    '',
-    `Copy: ${planCopy}`,
-    '',
-    `Spec de produção (${jobType}) gerada e anexada a esta resposta; o Orchestrator transforma em job do Studio.`,
-  ].join('\n');
+function formatPlanAnswer(
+  planConcept: string,
+  planCopy: string,
+  jobType: StudioJobType,
+  videoPlan?: VideoPlan,
+  carouselPlan?: CarouselPlan,
+): string {
+  const script = videoPlan ? formatVideoScript(videoPlan) : '';
+  const carrossel = carouselPlan
+    ? `\n\n${carouselPlan.slides
+        .map((slide) => `Slide ${slide.index}: ${slide.copy}`)
+        .join('\n')}`
+    : '';
+  return [`Conceito: ${planConcept}`, `Legenda: ${planCopy}`]
+    .join('\n\n')
+    .concat(
+      script,
+      carrossel,
+      `\n\nSpec de produção (${jobType}) gerada e anexada a esta resposta; o Orchestrator transforma em job do Studio.`,
+    );
 }
 
 export async function executeTask(
@@ -560,7 +598,24 @@ export async function executeTask(
        * Entra DEPOIS da diretiva de direção porque é mais específico que ela:
        * a direção diz como pensar, o contrato diz o que entregar.
        */
-      const contrato = diretivaDoContrato(contratoDeSaida(stripOrchestratorContext(request.message)));
+      const contratoEstrutura = contratoDeSaida(stripOrchestratorContext(request.message));
+      const contrato = diretivaDoContrato(contratoEstrutura);
+      /**
+       * TETO DE GERAÇÃO por entregável. O padrão de chat (1000 tokens,
+       * ollama-provider.ts) foi calibrado pra uma resposta só; um roteiro
+       * de Reels sozinho (hook + shot a shot + direção + CTA) já aperta
+       * esse teto, e um pedido com mais de um entregável (ex: roteiro +
+       * legenda, o caso real da regressão Jardim Europa V) dobra o texto
+       * esperado. Sem folga aqui, ou a peça sai cortada, ou o modelo
+       * economiza detalhe pra caber — os dois são o mesmo sintoma de
+       * "roteiro fraco" visto na operação.
+       */
+      const numPredict =
+        contratoEstrutura.adicionais && contratoEstrutura.adicionais.length > 0
+          ? 2_400
+          : contratoEstrutura.artefato === 'roteiro'
+            ? 1_800
+            : undefined;
       const answer = await measureLlm(() =>
         deps.llm.chat(
           [
@@ -570,7 +625,7 @@ export async function executeTask(
             },
             { role: 'user', content: request.message },
           ],
-          { temperature: 0.7, suppressThinking: policy.suppressThinking },
+          { temperature: 0.7, suppressThinking: policy.suppressThinking, ...(numPredict ? { numPredict } : {}) },
         ),
       );
       const timings: PhaseTimings = {
@@ -757,7 +812,9 @@ export async function executeTask(
       execution_id: request.execution_id,
       agent: config.AGENT_NAME,
       status: 'completed',
-      answer: [fidelityWarning, formatPlanAnswer(plan.concept, plan.copy, intent)].filter(Boolean).join('\n\n'),
+      answer: [fidelityWarning, formatPlanAnswer(plan.concept, plan.copy, intent, videoPlan, carouselPlan)]
+        .filter(Boolean)
+        .join('\n\n'),
       sources,
       tool_calls: [],
       usage: { input_tokens: 0, output_tokens: 0 },

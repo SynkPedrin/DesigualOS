@@ -217,6 +217,78 @@ describe('POST /execute', () => {
     await app.close();
   });
 
+  /**
+   * REGRESSÃO REAL: Jardim Europa V (Cosentino), 22/09/2026. "Roteiro para
+   * Reels explicando uma data de abertura + legenda" cai no caminho de
+   * PRODUÇÃO (a palavra 'reels' basta pra detectProductionIntent), que
+   * historicamente devolvia só "Conceito + Copy" resumidos: a fala completa
+   * cena a cena ficava presa em metadata.video_plan, invisível pra quem
+   * pediu o roteiro no chat. O fix: spoken_line no VideoPlan + formatação
+   * do roteiro completo na resposta visível.
+   */
+  it('roteiro de reels FALADO devolve o roteiro completo na resposta, não só conceito+copy', async () => {
+    const videoFixture = {
+      concept: 'Abertura sem fila',
+      duration: 15,
+      aspect_ratio: '9:16',
+      scenes: [
+        {
+          camera_movement: 'estático',
+          subject_movement: 'corretor caminha até a fachada',
+          environment: 'stand de vendas Jardim Europa V',
+          lighting: 'luz natural de fim de tarde',
+          transition: 'corte seco',
+          pacing: 'direto',
+          duration_seconds: 5,
+          spoken_line: 'Dia 24 de setembro abre a venda do Jardim Europa V.',
+          on_screen_text: '24/09 — Abertura',
+        },
+        {
+          camera_movement: 'estático',
+          subject_movement: 'atendente recebe visitante',
+          environment: 'recepção do stand',
+          lighting: 'luz interna quente',
+          transition: 'corte seco',
+          pacing: 'direto',
+          duration_seconds: 5,
+          spoken_line: 'Atendimento ágil, sem necessidade de cadastro antes.',
+        },
+      ],
+      sound_direction: 'trilha leve, sem locução em off',
+      text_overlays: [],
+      cta: 'Garanta seu horário',
+      generation_prompts: ['sales stand facade, golden hour', 'reception desk, warm light'],
+    };
+
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            return Promise.resolve(videoFixture);
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-jardim-europa',
+      message:
+        'Otto, preciso que crie o conteudo para um reels da Cosentino informando a abertura de vendas do ' +
+        'Jardim Europa V dia 24 de setembro, com roteiro, sugestao de imagem para as telas e legenda.',
+    });
+
+    expect(body.metadata.intent).toBe('reels');
+    expect(body.answer).toContain('Dia 24 de setembro abre a venda');
+    expect(body.answer).toContain('Fala:');
+    expect(body.answer).toContain('Atendimento ágil, sem necessidade de cadastro antes.');
+    expect(body.answer).toContain('CTA: Garanta seu horário');
+    expect(body.answer).toContain('Legenda:');
+
+    await app.close();
+  });
+
   it('falha do LLM sobe como erro estruturado, nunca resposta simulada', async () => {
     const app = buildTestApp(
       makeDeps(

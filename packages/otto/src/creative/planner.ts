@@ -164,9 +164,11 @@ Padrão de produção: editorial publicitário com detalhe fotográfico, não sl
 - Preserve poros, cabelo/pelos, trama dos tecidos, reflexos e sombras de contato; não invente peças, identidade, logo ou modelo de produto. Referências reais têm prioridade sobre imaginação.
 - Textos e logos exatos pertencem à composição gráfica, não peça ao gerador de vídeo para redesenhá-los. Não afirme que houve aprovação visual automática.
 - Cuts são cortes de montagem entre takes. sound_direction descreve ambiente/SFX; trilha contínua, locução e tipografia exigem finalização separada.
+- SE o briefing pede um vídeo INFORMATIVO — alguém explicando algo, anunciando uma data, um processo, uma condição de atendimento, e não só um b-roll mudo — preencha spoken_line em CADA cena com a fala exata daquele take, em português, na ordem em que vai ser gravada/locutada. Sem spoken_line, quem recebe o plano tem direção de câmera e nenhuma palavra do que dizer, e o roteiro não é executável. Preencha também on_screen_text quando aquela cena tiver texto próprio na tela (data, preço, condição), além do que já vai em text_overlays.
+- Se o vídeo for puramente visual (b-roll, produto sem locução), deixe spoken_line de fora — não invente fala que ninguém pediu.
 
 Gere com estas chaves:
-{"concept": string, "duration": number (segundos), "aspect_ratio": string (ex: "9:16"), "scenes": [{"duration_seconds": number, "image_prompt": string, "shot_type": "portrait"|"wide"|"detail"|"action"|"environment"|"closing", "continuity": string, "camera_movement": string, "subject_movement": string, "environment": string, "lighting": string, "transition": string, "pacing": string}], "sound_direction": string, "text_overlays": string[], "cta": string, "generation_prompts": string[] (inglês, um por cena)}`;
+{"concept": string, "duration": number (segundos), "aspect_ratio": string (ex: "9:16"), "scenes": [{"duration_seconds": number, "image_prompt": string, "shot_type": "portrait"|"wide"|"detail"|"action"|"environment"|"closing", "continuity": string, "camera_movement": string, "subject_movement": string, "environment": string, "lighting": string, "transition": string, "pacing": string, "spoken_line": string (opcional, português), "on_screen_text": string (opcional, português)}], "sound_direction": string, "text_overlays": string[], "cta": string, "generation_prompts": string[] (inglês, um por cena)}`;
 
   const user = `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`;
 

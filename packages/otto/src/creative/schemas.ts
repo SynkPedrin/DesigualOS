@@ -128,6 +128,18 @@ export const videoSceneSchema = z.object({
   lighting: z.string().min(1),
   transition: z.string().min(1),
   pacing: z.string().min(1),
+  /**
+   * FALA/NARRAÇÃO desta cena, palavra por palavra, na ordem de gravação.
+   * Opcional porque nem todo vídeo é falado (b-roll puro de produto não
+   * tem). Mas quando o briefing pede um roteiro informativo — alguém
+   * explicando um anúncio, uma data, um processo — é ISTO que falta sem
+   * este campo: o plano tinha direção de câmera e luz, e nenhuma linha do
+   * que a pessoa diz. Sem ele, "roteiro de Reels" produzia storyboard de
+   * geração de imagem, não um roteiro que alguém consegue gravar lendo.
+   */
+  spoken_line: z.string().min(1).optional(),
+  /** Texto que aparece NA TELA nesta cena (legenda embutida, não a legenda do post). */
+  on_screen_text: z.string().min(1).optional(),
 });
 
 export const videoPlanSchema = z.object({

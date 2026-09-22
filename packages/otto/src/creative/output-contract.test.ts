@@ -67,6 +67,51 @@ describe('script_request_returns_script', () => {
   });
 });
 
+/**
+ * REGRESSÃO REAL: Jardim Europa V (Cosentino), 22/09/2026.
+ *
+ * "roteiro ... sugestão de imagem para as telas e uma legenda complementar
+ * bem escrita" pede DOIS entregáveis nomeados (roteiro e legenda) no mesmo
+ * turno. A versão anterior de contratoDeSaida via só 'roteiro' (primeiro
+ * match) e diretivaDoContrato mandava "entregue roteiro, e só isso" —
+ * contradizendo a REGRA 2 do CHAT_SYSTEM_PROMPT (entregar todos os
+ * entregáveis pedidos) e vencendo ela, porque o contrato "vale sobre
+ * qualquer regra de formato acima". Isso apagava a legenda pedida.
+ */
+describe('multi_deliverable_request_returns_all_named_deliverables', () => {
+  const PEDIDO =
+    'Quero um roteiro com uma sequência de frases bem elaboradas para o vídeo explicando o que irá acontecer, ' +
+    'sugestão de imagem para as telas e uma legenda complementar bem escrita.';
+
+  it('reconhece roteiro como principal e legenda como adicional, conectada por "e"', () => {
+    // quantidade:1 vem de "uma sequência de frases" — quantidadeDe não é
+    // ancorada ao artefato, quirk pré-existente e fora do escopo deste fix.
+    expect(contratoDeSaida(PEDIDO)).toEqual({
+      artefato: 'roteiro',
+      quantidade: 1,
+      adicionais: ['legenda'],
+    });
+  });
+
+  it('a diretiva manda entregar os DOIS, não travar num só', () => {
+    const d = diretivaDoContrato(contratoDeSaida(PEDIDO));
+    expect(d).toMatch(/MAIS DE UM entregável/);
+    expect(d).toMatch(/roteiro, legenda/);
+    expect(d).toMatch(/Entregue TODOS/);
+    expect(d).not.toMatch(/e só isso/);
+  });
+
+  it('cada adicional ganha a própria forma final, não a do principal', () => {
+    const d = diretivaDoContrato(contratoDeSaida(PEDIDO));
+    expect(d).toMatch(/Forma final de roteiro: marcação de tempo/);
+    expect(d).toMatch(/Forma final de legenda:.*hashtags na última linha/);
+  });
+
+  it('sinônimo solto do MESMO entregável continua sem adicional (regressão do fix anterior)', () => {
+    expect(contratoDeSaida('roteiro pro post de Reels')).toEqual({ artefato: 'roteiro', quantidade: null });
+  });
+});
+
 describe('prompt_request_returns_prompt', () => {
   it('prompt de imagem é prompt', () => {
     expect(contratoDeSaida('me dá um prompt de imagem pra capa').artefato).toBe('prompt');

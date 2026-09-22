@@ -31,6 +31,12 @@ export interface ContratoDeSaida {
   artefato: ArtefatoPedido;
   /** Quantas peças. Null quando o pedido não diz. */
   quantidade: number | null;
+  /**
+   * Outros artefatos pedidos NO MESMO turno, além do principal. Só existe
+   * quando o pedido nomeia um segundo artefato explicitamente conectado ao
+   * primeiro ("... e uma legenda ...") — ver `artefatosAdicionais`.
+   */
+  adicionais?: Array<Exclude<ArtefatoPedido, 'indefinido'>>;
 }
 
 const NUMERO_POR_EXTENSO: Record<string, number> = {
@@ -42,7 +48,7 @@ const NUMERO_POR_EXTENSO: Record<string, number> = {
  * Ordem importa: o mais específico primeiro. "roteiro de Reels" é roteiro,
  * ainda que a palavra Reels apareça perto de "post" no mesmo briefing.
  */
-const FORMAS: Array<{ artefato: ArtefatoPedido; re: RegExp }> = [
+const FORMAS: Array<{ artefato: Exclude<ArtefatoPedido, 'indefinido'>; re: RegExp }> = [
   { artefato: 'roteiro', re: /\b(roteiros?|scripts?|storyboards?)\b/ },
   { artefato: 'prompt', re: /\bprompts?\b/ },
   { artefato: 'email', re: /\b(e-?mails?|newsletters?|disparos?)\b/ },
@@ -72,11 +78,48 @@ function quantidadeDe(texto: string): number | null {
   return null;
 }
 
+/**
+ * SEGUNDO ENTREGÁVEL, quando o pedido nomeia um explicitamente — não pela
+ * simples presença de uma segunda palavra da lista FORMAS (isso reabriria o
+ * bug que "roteiro vence post na mesma frase" corrigiu: "roteiro pro post de
+ * Reels" tem 'post', mas é sinônimo solto do MESMO roteiro, não um segundo
+ * pedido).
+ *
+ * O sinal de segundo pedido é a conjunção: "... e uma legenda ...", "...
+ * além de um título ...". Sem conector, é ruído do mesmo entregável.
+ *
+ * Bug real medido (regressão Jardim Europa V, 22/09/2026): "quero um
+ * roteiro ... e uma legenda complementar bem escrita" tinha os dois
+ * entregáveis pedidos de forma explícita e conectada, e a versão anterior
+ * desta função devolvia só 'roteiro', com uma diretiva que dizia "entregue
+ * roteiro, e só isso" — contradizendo a REGRA 2 do CHAT_SYSTEM_PROMPT
+ * (entregar todos os entregáveis pedidos) e sobrepondo ela, já que o
+ * contrato "vale sobre qualquer regra de formato acima".
+ */
+function artefatosAdicionais(
+  textoNormalizado: string,
+  principal: ArtefatoPedido,
+): Array<Exclude<ArtefatoPedido, 'indefinido'>> {
+  const encontrados: Array<Exclude<ArtefatoPedido, 'indefinido'>> = [];
+  for (const forma of FORMAS) {
+    if (forma.artefato === principal) continue;
+    const corpo = forma.re.source.replace(/^\\b/, '').replace(/\\b$/, '');
+    const conectado = new RegExp(`\\b(?:e|al[ée]m de)\\s+(?:um|uma|o|a)?\\s*${corpo}`);
+    if (conectado.test(textoNormalizado)) encontrados.push(forma.artefato);
+  }
+  return encontrados;
+}
+
 export function contratoDeSaida(mensagem: string): ContratoDeSaida {
   const t = normalizar(mensagem ?? '');
   const forma = FORMAS.find((f) => f.re.test(t));
   if (!forma) return { artefato: 'indefinido', quantidade: null };
-  return { artefato: forma.artefato, quantidade: quantidadeDe(t) };
+  const adicionais = artefatosAdicionais(t, forma.artefato);
+  return {
+    artefato: forma.artefato,
+    quantidade: quantidadeDe(t),
+    ...(adicionais.length > 0 ? { adicionais } : {}),
+  };
 }
 
 /**
@@ -101,21 +144,34 @@ const FORMA_FINAL: Record<Exclude<ArtefatoPedido, 'indefinido'>, string> = {
  */
 export function diretivaDoContrato(contrato: ContratoDeSaida): string {
   if (contrato.artefato === 'indefinido') return '';
-  const forma = FORMA_FINAL[contrato.artefato];
+  const artefatoPrincipal = contrato.artefato;
+  const forma = FORMA_FINAL[artefatoPrincipal];
   const quantos = contrato.quantidade;
+  const adicionais = contrato.adicionais ?? [];
 
-  const linhas = [
-    'CONTRATO DE SAÍDA DESTE TURNO (vale sobre qualquer regra de formato acima):',
-    quantos
-      ? `Foi pedido: ${quantos} ${contrato.artefato}(s). Entregue exatamente ${quantos}, numerados.`
-      : `Foi pedido: ${contrato.artefato}. Entregue ${contrato.artefato}, e só isso.`,
-    `Forma final: ${forma}`,
-  ];
+  const linhas = ['CONTRATO DE SAÍDA DESTE TURNO (vale sobre qualquer regra de formato acima):'];
 
-  if (contrato.artefato === 'titulo' || contrato.artefato === 'headline') {
+  if (adicionais.length > 0) {
+    // Mais de um entregável nomeado no mesmo pedido: a REGRA 2 do prompt de
+    // chat já manda entregar todos, e o contrato não pode contradizer isso
+    // travando num artefato só. Cada um ganha a própria forma final.
+    const todos: Array<Exclude<ArtefatoPedido, 'indefinido'>> = [artefatoPrincipal, ...adicionais];
     linhas.push(
-      'NÃO devolva legenda, post completo, carrossel nem roteiro. Entregar mais do que foi pedido não é generosidade: quem recebeu vai ter que garimpar a linha que queria dentro do texto.',
+      `Foi pedido MAIS DE UM entregável: ${todos.join(', ')}. Entregue TODOS, cada um com seu próprio título — entregar só um deles é não entregar o pedido.`,
+      ...todos.map((a) => `Forma final de ${a}: ${FORMA_FINAL[a]}`),
     );
+  } else {
+    linhas.push(
+      quantos
+        ? `Foi pedido: ${quantos} ${contrato.artefato}(s). Entregue exatamente ${quantos}, numerados.`
+        : `Foi pedido: ${contrato.artefato}. Entregue ${contrato.artefato}, e só isso.`,
+      `Forma final: ${forma}`,
+    );
+    if (contrato.artefato === 'titulo' || contrato.artefato === 'headline') {
+      linhas.push(
+        'NÃO devolva legenda, post completo, carrossel nem roteiro. Entregar mais do que foi pedido não é generosidade: quem recebeu vai ter que garimpar a linha que queria dentro do texto.',
+      );
+    }
   }
   linhas.push('Comentário sobre as escolhas, se houver, vai num bloco ÚNICO depois da entrega — nunca no meio dela.');
   return linhas.join('\n');
