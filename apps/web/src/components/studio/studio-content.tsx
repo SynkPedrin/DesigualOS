@@ -104,6 +104,18 @@ function HeroBackground() {
  * StudioModal popup (the everyday entry point from the sidebar/command palette). */
 export function StudioContent({ boundedHeight = false }: { boundedHeight?: boolean }) {
   const [activeTab, setActiveTab] = useState<'galeria' | 'canva'>('galeria');
+  /**
+   * Editor do Canva aberto = a tela vira workspace.
+   *
+   * Medido no navegador (17/09/2026) antes desta mudança: hero + abas +
+   * heading empurravam o artboard para y=480 num viewport de 1280x720 e
+   * sobravam 259x324 px de canvas. Enquanto o editor está aberto, o hero e o
+   * seletor de modo saem do fluxo e a coluna inteira vira flex-1/min-h-0 -
+   * é o que dá altura real para o editor, sem `position: fixed` e sem
+   * número mágico.
+   */
+  const [canvaEditorOpen, setCanvaEditorOpen] = useState(false);
+  const modoEditor = activeTab === 'canva' && canvaEditorOpen;
   const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
   // Vem da notificação de job concluído ("/studio?asset=<id>"): a galeria
   // abre essa peça direto. Lido de window.location em vez de useSearchParams
@@ -210,9 +222,9 @@ export function StudioContent({ boundedHeight = false }: { boundedHeight?: boole
   const studioNode = health?.nodes.find((n) => n.agent === 'studio');
 
   return (
-    <div ref={rootRef} className={cn(boundedHeight && 'flex h-full min-h-0 flex-col')}>
+    <div ref={rootRef} className={cn((boundedHeight || modoEditor) && 'flex h-full min-h-0 flex-1 flex-col')}>
       {/* Hero */}
-      <header className="relative mb-8 shrink-0 overflow-hidden rounded-xl border border-grafite-elevado bg-grafite">
+      <header className={cn('relative mb-8 shrink-0 overflow-hidden rounded-xl border border-grafite-elevado bg-grafite', modoEditor && 'hidden')}>
         <HeroBackground />
         <div className="relative flex flex-wrap items-end justify-between gap-4 p-6 md:p-8">
           <div>
@@ -239,7 +251,7 @@ export function StudioContent({ boundedHeight = false }: { boundedHeight?: boole
       {/* Galeria x Canva: mesmo padrão do toggle grade/lista da própria
        * Galeria (role="group" + aria-pressed), não um componente de tabs
        * genérico - não existe um no design system ainda. */}
-      <div role="group" aria-label="Modo do Studio" className="mb-5 flex shrink-0 gap-1 rounded-lg border border-grafite-elevado bg-grafite p-1">
+      <div role="group" aria-label="Modo do Studio" className={cn('mb-5 flex shrink-0 gap-1 rounded-lg border border-grafite-elevado bg-grafite p-1', modoEditor && 'hidden')}>
         {(['galeria', 'canva'] as const).map((tab) => (
           <button
             key={tab}
@@ -257,8 +269,8 @@ export function StudioContent({ boundedHeight = false }: { boundedHeight?: boole
       </div>
 
       {activeTab === 'canva' && (
-        <div className={cn(boundedHeight && 'min-h-0 flex-1 overflow-hidden')}>
-          <CanvaTab />
+        <div className={cn((boundedHeight || modoEditor) && 'flex min-h-0 flex-1 flex-col overflow-hidden')}>
+          <CanvaTab onEditorOpenChange={setCanvaEditorOpen} />
         </div>
       )}
 

@@ -255,6 +255,10 @@ export function CanvaDocumentGrid({ clientId, onOpen }: { clientId: string; onOp
             >
               <button
                 type="button"
+                // A miniatura é o alvo de abrir; sem nome acessível ela era um
+                // botão mudo (e impossível de endereçar em teste).
+                aria-label={`Abrir ${doc.name}`}
+                data-canva-doc={doc.id}
                 onClick={() => onOpen(doc.id)}
                 className="flex aspect-square w-full items-center justify-center bg-grafite"
                 style={{ aspectRatio: `${doc.width} / ${doc.height}` }}

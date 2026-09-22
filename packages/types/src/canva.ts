@@ -42,6 +42,16 @@ export interface CanvaObjectBase {
   /** `undefined` = 'normal' (compositing padrão) - mantido opcional pra não
    * inflar todo objeto já salvo antes desta feature existir. */
   blendMode?: CanvaBlendMode | undefined;
+  /**
+   * Nome dado pelo usuário à camada. `undefined` = usa o rótulo derivado do
+   * conteúdo (ver `layerLabel` na sidebar), que é o comportamento de todo
+   * documento criado antes desta feature - por isso opcional, sem migração.
+   *
+   * Existe no OBJETO e não só na UI porque o pedido é que o nome sobreviva a
+   * recarregar a página: sem campo persistido, "renomear camada" seria um
+   * rótulo que some no F5.
+   */
+  name?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
 }
 
@@ -109,6 +119,7 @@ export interface CanvaTextObject extends CanvaObjectBase {
   lineHeight: number;
   underline: boolean;
   uppercase: boolean;
+  shadow?: boolean | undefined;
 }
 
 export interface CanvaShapeObject extends CanvaObjectBase {
@@ -197,6 +208,13 @@ export interface CanvaDocumentWire {
   height: number;
   thumbnail_url: string | null;
   pages: CanvaPage[];
+  /**
+   * Concorrência otimista (§53). Vai de volta em todo PATCH e é o que o editor
+   * reenvia na gravação seguinte: se o banco já estiver noutra versão, alguém
+   * salvou nesse meio-tempo e a API responde 409 em vez de deixar um sobrescrever
+   * o outro em silêncio. Ver studio_canvas_documents.version.
+   */
+  version: number;
   created_at: string;
   updated_at: string;
 }

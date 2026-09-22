@@ -1,21 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import type { CanvaDocument } from '@/lib/api/contracts';
 import type { CanvaPage } from '@desigual-os/types';
 import { useCanvaEditor } from '@/hooks/use-canva-editor';
 import { useUpdateCanvaDocument } from '@/hooks/use-canva-documents';
+import { ApiRequestError } from '@/lib/api/client';
 import { useUploadStudioReference } from '@/hooks/use-studio-jobs';
 import { CanvaTopbar } from './canva-topbar';
 import { CanvaSidebar } from './canva-sidebar';
+import { CanvaToolRail } from './canva-tool-rail';
+import { CanvaToolOptions } from './canva-tool-options';
+import { CanvaStatusBar } from './canva-status-bar';
 import { CanvasStage } from './canvas-stage';
-import { FloatingToolbar } from './floating-toolbar';
+import { PropertiesPanel } from './properties/properties-panel';
+import { useBrandKit } from '@/hooks/use-brand-kit';
 import { PagesBar } from './pages-bar';
 import { BackgroundModal } from './background-modal';
 import { CropOverlay, type CropFrame } from './crop-overlay';
 import { removeImageBackground } from '@/lib/canva/background-removal';
 import { useCanvaRecentUploadsStore } from '@/stores/canva-recent-uploads-store';
+import { criarAutosave, type AutosaveStatus } from '@/lib/canva/autosave';
 import { toast } from '@/stores/toast-store';
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
@@ -35,9 +41,25 @@ export function CanvaWorkspace({
   onBack: () => void;
 }) {
   const updateDocument = useUpdateCanvaDocument(document.id);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingPagesRef = useRef<CanvaPage[] | null>(null);
+  // Brand Kit do cliente alimenta o seletor de cor do painel (mesma fonte que
+  // a aba Marca já usa - não é uma segunda lista de cores).
+  const { data: brandKit } = useBrandKit(document.clientId);
+
+  /**
+   * Redimensiona a PRANCHETA, não o conteúdo.
+   *
+   * Reescalar objetos junto seria uma decisão de arte tomada pelo editor;
+   * aqui o documento muda de tamanho e cada objeto fica exatamente onde
+   * estava - quem ficar fora continua existindo e pode ser reposicionado.
+   */
+  const redimensionarDocumento = useCallback(
+    (width: number, height: number) => {
+      if (width === document.width && height === document.height) return;
+      updateDocument.mutate({ width, height });
+    },
+    [updateDocument, document.width, document.height],
+  );
+  const [saveStatus, setSaveStatus] = useState<AutosaveStatus>('idle');
   const lastThumbnailAtRef = useRef(0);
   const replaceFileInputRef = useRef<HTMLInputElement>(null);
   const [backgroundModalOpen, setBackgroundModalOpen] = useState(false);
@@ -59,50 +81,76 @@ export function CanvaWorkspace({
     [uploadReference, addRecentUpload],
   );
 
-  const flushSave = useCallback(() => {
-    if (!pendingPagesRef.current) return;
-    const pages = pendingPagesRef.current;
-    pendingPagesRef.current = null;
-    setSaveStatus('saving');
-    updateDocument.mutate(
-      { pages },
-      {
-        onSuccess: () => {
-          setSaveStatus('saved');
+  // Ref pra o autosave (criado uma vez só) poder chamar sempre a versão mais
+  // recente de `updateThumbnail` e de `updateDocument`, sem recriar o
+  // agendador a cada render - mesmo padrão de `onChangeRef` em
+  // use-canva-editor.ts. Referenciar `.current` aqui é seguro mesmo
+  // declarado antes: só roda de verdade bem depois (debounce/unmount).
+  const updateThumbnailRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
+  const gravarPaginasRef = useRef<(pages: CanvaPage[], keepalive: boolean) => Promise<void>>(async () => {});
+  gravarPaginasRef.current = async (pages, keepalive) => {
+    await updateDocument.mutateAsync({ pages, keepalive });
+  };
+
+  /**
+   * Um agendador de salvamento só, criado uma vez por documento aberto.
+   *
+   * Ver o comentário de lib/canva/autosave.ts: o "reorder que voltava atrás
+   * no F5" não era o reorder, era esta camada. O status agora acompanha o
+   * estado real (uma alteração pendente NUNCA aparece como "Salvo") e o
+   * pendente é gravado no descarregamento da página, em vez de morrer junto
+   * com o timer.
+   */
+  const autosave = useMemo(
+    () =>
+      criarAutosave<CanvaPage[]>({
+        debounceMs: AUTOSAVE_DEBOUNCE_MS,
+        salvar: async (pages, { keepalive }) => {
+          await gravarPaginasRef.current(pages, keepalive);
           void updateThumbnailRef.current();
         },
-        onError: () => {
-          setSaveStatus('idle');
-          toast('Não conseguimos salvar as últimas alterações. Tente novamente.', 'error');
-        },
-      },
-    );
-  }, [updateDocument]);
-
-  // Ref pra `flushSave` (useCallback estável, só depende de `updateDocument`)
-  // poder chamar sempre a versão mais recente de `updateThumbnail` (definida
-  // mais abaixo, depois de `editor` existir) sem precisar entrar nas deps -
-  // mesmo padrão de `onChangeRef` em use-canva-editor.ts. Referenciar
-  // `updateThumbnailRef.current` aqui dentro é seguro mesmo declarado antes:
-  // esta função só roda de verdade bem depois (autosave/unmount), quando o
-  // ref já foi atribuído lá embaixo.
-  const updateThumbnailRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
-
-  const handleChange = useCallback(
-    (pages: CanvaPage[]) => {
-      pendingPagesRef.current = pages;
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = setTimeout(flushSave, AUTOSAVE_DEBOUNCE_MS);
-    },
-    [flushSave],
+        onStatus: setSaveStatus,
+        // 409 é um desfecho DIFERENTE de falha de rede e precisa de outra
+        // instrução: outra pessoa salvou este mesmo design enquanto esta aba
+        // editava (o workspace do cliente é compartilhado pela equipe). Mandar
+        // "tente novamente" aqui seria pedir um laço que nunca fecha - a
+        // versão local continua velha, então toda tentativa recebe 409 de
+        // volta. Quem precisa agir é a pessoa, recarregando antes de seguir.
+        onErro: (erro) =>
+          toast(
+            erro instanceof ApiRequestError && erro.status === 409
+              ? 'Outra pessoa salvou este design enquanto você editava. Recarregue a página para ver a versão atual antes de continuar.'
+              : 'Não conseguimos salvar as últimas alterações. Tente novamente.',
+            'error',
+          ),
+      }),
+    [],
   );
 
+  const handleChange = useCallback((pages: CanvaPage[]) => autosave.agendar(pages), [autosave]);
+
+  /**
+   * Grava o pendente antes da aba sumir.
+   *
+   * `pagehide` é o único evento que dispara de forma confiável em F5, fechar
+   * aba e navegação no iOS; `visibilitychange` cobre o caso de trocar de aba
+   * e nunca mais voltar. `keepalive` faz o navegador terminar o envio mesmo
+   * depois que o documento morreu - sem ele, a requisição é cancelada no meio
+   * e a edição se perde exatamente como antes.
+   */
   useEffect(() => {
+    // `document` aqui é a PROP deste componente (o desenho), não o do DOM.
+    const dom = globalThis.document;
+    const aoSair = () => { void autosave.flush({ keepalive: true }); };
+    const aoEsconder = () => { if (dom.visibilityState === 'hidden') aoSair(); };
+    window.addEventListener('pagehide', aoSair);
+    dom.addEventListener('visibilitychange', aoEsconder);
     return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      flushSave();
+      window.removeEventListener('pagehide', aoSair);
+      dom.removeEventListener('visibilitychange', aoEsconder);
+      void autosave.encerrar();
     };
-  }, []);
+  }, [autosave]);
 
   const editor = useCanvaEditor(document.pages, document.width, document.height, handleChange, uploadImageFile);
 
@@ -156,11 +204,6 @@ export function CanvaWorkspace({
     void updateThumbnailRef.current(true);
   }, [editor.isReady]);
 
-  function handleWheelZoom(deltaY: number, _clientX: number, _clientY: number) {
-    const next = editor.zoom - deltaY * 0.001;
-    editor.setZoom(Math.min(4, Math.max(0.1, next)));
-  }
-
   function handleOpenCrop() {
     const frame = editor.getActiveImageFrame();
     if (!frame) {
@@ -213,15 +256,18 @@ export function CanvaWorkspace({
       <CanvaTopbar
         editor={editor}
         documentName={document.name}
-        saveStatus={saveStatus}
+        documentWidth={document.width}
+        documentHeight={document.height}
         onBack={onBack}
         onRenameDocument={(name) => updateDocument.mutate({ name })}
       />
 
       <div className="flex min-h-0 flex-1">
+        <CanvaToolRail editor={editor} />
         <CanvaSidebar clientId={document.clientId} editor={editor} onOpenDocument={onOpenDocument} />
 
         <div className="relative flex min-h-0 flex-1 flex-col">
+          <CanvaToolOptions editor={editor} />
           <CanvasStage
             containerRef={editor.containerRef}
             canvasElRef={editor.canvasElRef}
@@ -229,7 +275,10 @@ export function CanvaWorkspace({
             documentHeight={document.height}
             zoom={editor.zoom}
             guides={editor.guides}
-            onWheelZoom={handleWheelZoom}
+            onZoomChange={editor.setZoom}
+            onViewportChange={editor.recalcPointerOffset}
+            activeTool={editor.activeTool}
+            eraserWidth={editor.eraserWidth}
             onDropFile={(file) => void editor.addImageFromFile(file)}
             onDropUrl={(url) => void editor.addImageFromSrc(url)}
             overlay={
@@ -247,22 +296,6 @@ export function CanvaWorkspace({
             }
           />
 
-          {!cropFrame && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
-              <div className="pointer-events-auto">
-                <FloatingToolbar
-                  editor={editor}
-                  clientId={document.clientId}
-                  onOpenBackground={() => setBackgroundModalOpen(true)}
-                  onReplaceImage={() => replaceFileInputRef.current?.click()}
-                  onOpenCrop={handleOpenCrop}
-                  onRemoveBackground={() => void handleRemoveBackground()}
-                  removingBackground={removingBackground}
-                />
-              </div>
-            </div>
-          )}
-
           <input
             ref={replaceFileInputRef}
             type="file"
@@ -276,9 +309,25 @@ export function CanvaWorkspace({
             }}
           />
         </div>
+
+        <PropertiesPanel
+          editor={editor}
+          documentWidth={document.width}
+          documentHeight={document.height}
+          onResize={redimensionarDocumento}
+          brandColors={brandKit?.colors ?? []}
+          brandFonts={brandKit?.fonts ?? []}
+          onOpenBackground={() => setBackgroundModalOpen(true)}
+          onReplaceImage={() => replaceFileInputRef.current?.click()}
+          onOpenCrop={handleOpenCrop}
+          onRemoveBackground={() => void handleRemoveBackground()}
+          removingBackground={removingBackground}
+        />
       </div>
 
       <PagesBar editor={editor} documentWidth={document.width} documentHeight={document.height} />
+
+      <CanvaStatusBar editor={editor} saveStatus={saveStatus} documentWidth={document.width} documentHeight={document.height} />
 
       <AnimatePresence>
         {backgroundModalOpen && <BackgroundModal editor={editor} onClose={() => setBackgroundModalOpen(false)} />}

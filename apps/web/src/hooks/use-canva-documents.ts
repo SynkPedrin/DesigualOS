@@ -54,23 +54,61 @@ export function useCreateCanvaDocument() {
   });
 }
 
+/**
+ * `keepalive` tem teto de 64KB de corpo em todo navegador. Um desenho com
+ * muitas camadas passa disso fácil, e aí a requisição falha INTEIRA em vez de
+ * sobreviver ao descarregamento - pior que não pedir keepalive. Abaixo do
+ * teto (com folga) o envio sobrevive ao F5; acima, vai como requisição comum
+ * e tem a chance que o navegador der.
+ */
+const TETO_KEEPALIVE_BYTES = 60_000;
+
+function podeUsarKeepalive(patch: { keepalive?: boolean; pages?: CanvaPage[] }): boolean {
+  if (!patch.keepalive) return false;
+  if (!patch.pages) return true;
+  return new Blob([JSON.stringify(patch.pages)]).size <= TETO_KEEPALIVE_BYTES;
+}
+
 /** Autosave chama isto - sempre parcial, com debounce feito por quem chama (ver canva-editor.tsx). */
 export function useUpdateCanvaDocument(documentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (patch: { name?: string; width?: number; height?: number; thumbnailUrl?: string | null; pages?: CanvaPage[] }) =>
-      mapCanvaDocument(
+    mutationFn: async (patch: {
+      name?: string;
+      width?: number;
+      height?: number;
+      thumbnailUrl?: string | null;
+      pages?: CanvaPage[];
+      /** Salvamento disparado no descarregamento da página: pede ao navegador
+       * para terminar o envio mesmo depois que o documento morreu. Sem isto a
+       * requisição é cancelada no meio e a última edição se perde (ver o
+       * comentário de lib/canva/autosave.ts). */
+      keepalive?: boolean;
+    }) => {
+      // Concorrência otimista (§53). O workspace de um cliente é compartilhado
+      // pela equipe toda, e este autosave grava o documento INTEIRO a cada
+      // 1,5s - dois colaboradores com o mesmo design aberto se sobrescreviam
+      // em silêncio, sem erro e sem forma de recuperar. Mandando a versão que
+      // temos em mãos, o servidor recusa (409) em vez de apagar o trabalho do
+      // outro. A versão sai do cache porque é lá que mora o último estado
+      // confirmado PELO SERVIDOR - toda resposta de PATCH/GET a atualiza logo
+      // abaixo, em onSuccess.
+      const conhecido = queryClient.getQueryData<CanvaDocument>(DOC_KEY(documentId));
+      return mapCanvaDocument(
         await apiFetch<CanvaDocumentWire>(`/studio/canvas-documents/${documentId}`, {
           method: 'PATCH',
+          keepalive: podeUsarKeepalive(patch),
           body: JSON.stringify({
             ...(patch.name !== undefined ? { name: patch.name } : {}),
             ...(patch.width !== undefined ? { width: patch.width } : {}),
             ...(patch.height !== undefined ? { height: patch.height } : {}),
             ...(patch.thumbnailUrl !== undefined ? { thumbnail_url: patch.thumbnailUrl } : {}),
             ...(patch.pages !== undefined ? { pages: patch.pages } : {}),
+            ...(conhecido ? { version: conhecido.version } : {}),
           }),
         }),
-      ),
+      );
+    },
     onSuccess: (doc) => {
       queryClient.setQueryData(DOC_KEY(documentId), doc);
       // Achado real (2026-09-11, "o Canva tá todo travado"): isto invalidava

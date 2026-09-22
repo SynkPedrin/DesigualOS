@@ -43,6 +43,9 @@ const OBJECT_TYPE_ICONS: Record<CanvaObject['type'], typeof Square> = {
 };
 
 function layerLabel(object: CanvaObject): string {
+  // Nome dado pelo usuário manda; sem ele, cai no rótulo derivado do conteúdo
+  // (que é o comportamento de todo documento anterior a esta feature).
+  if (object.name && object.name.trim().length > 0) return object.name;
   if (object.type === 'text') return object.text.trim() || 'Texto vazio';
   if (object.type === 'shape') return `Forma - ${object.shape}`;
   if (object.type === 'group') return 'Grupo';
@@ -69,6 +72,16 @@ const RAIL_ITEMS: { key: PanelKey; label: string; icon: typeof Square }[] = [
   { key: 'projetos', label: 'Projetos', icon: FolderOpen },
 ];
 
+/** Nome legível de cada forma - os botões são só ícone, então sem isto eles
+ * não têm nome acessível nenhum (nem para leitor de tela, nem para teste). */
+const SHAPE_LABELS: Record<CanvaShapeKind, string> = {
+  rect: 'Retângulo',
+  ellipse: 'Elipse',
+  triangle: 'Triângulo',
+  line: 'Linha',
+  star: 'Estrela',
+};
+
 function ElementsPanel({ editor }: { editor: UseCanvaEditorResult }) {
   return (
     <div className="grid grid-cols-3 gap-2 p-3">
@@ -78,6 +91,8 @@ function ElementsPanel({ editor }: { editor: UseCanvaEditorResult }) {
           <button
             key={shape}
             type="button"
+            aria-label={SHAPE_LABELS[shape]}
+            title={SHAPE_LABELS[shape]}
             onClick={() => editor.addShape(shape)}
             className="flex aspect-square flex-col items-center justify-center gap-1.5 rounded-lg border border-grafite-elevado bg-carbono text-nevoa transition-colors hover:border-roxo-eletrico/60 hover:text-branco-cru"
           >
@@ -254,6 +269,8 @@ function BrandPanel({ clientId, editor }: { clientId: string; editor: UseCanvaEd
  * seleção, olho (visibilidade) e cadeado (bloqueio) por item, e setas pra
  * reordenar sem precisar selecionar o objeto no canvas primeiro. */
 function LayersPanel({ editor }: { editor: UseCanvaEditorResult }) {
+  const [renomeando, setRenomeando] = useState<string | null>(null);
+  const [arrastando, setArrastando] = useState<number | null>(null);
   const objects = editor.activePage?.objects ?? [];
   const ordered = [...objects].sort((a, b) => b.zIndex - a.zIndex);
 
@@ -269,20 +286,58 @@ function LayersPanel({ editor }: { editor: UseCanvaEditorResult }) {
         return (
           <div
             key={object.id}
+            // A linha É o estado de seleção do objeto: expor isso como dado
+            // (e não só como cor de borda) dá semântica pra leitor de tela e
+            // um sinal estável pra teste, em vez de depender de classe CSS.
+            data-canva-layer={object.id}
+            aria-selected={selected}
+            // Reordenar arrastando: o índice aqui é o VISUAL (topo primeiro);
+            // o editor converte para ordem de pilha e reatribui zIndex.
+            draggable={renomeando !== object.id}
+            onDragStart={() => setArrastando(index)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (arrastando !== null && arrastando !== index) editor.reorderObject(arrastando, index);
+              setArrastando(null);
+            }}
+            onDragEnd={() => setArrastando(null)}
             className={cn(
               'group flex items-center gap-1.5 rounded-md border px-1.5 py-1.5 transition-colors',
               selected ? 'border-roxo-eletrico bg-roxo-eletrico/10' : 'border-transparent hover:bg-grafite-elevado',
             )}
           >
-            <button
-              type="button"
-              onClick={() => editor.selectObjectById(object.id)}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              title="Selecionar"
-            >
-              <Icon size={14} className="shrink-0 text-nevoa" />
-              <span className="truncate text-xs text-branco-cru">{layerLabel(object)}</span>
-            </button>
+            {renomeando === object.id ? (
+              <input
+                autoFocus
+                defaultValue={layerLabel(object)}
+                aria-label="Nome da camada"
+                onBlur={(event) => {
+                  editor.renameObject(object.id, event.target.value);
+                  setRenomeando(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    editor.renameObject(object.id, event.currentTarget.value);
+                    setRenomeando(null);
+                  }
+                  // Escape cancela: sai sem gravar, mantendo o nome anterior.
+                  if (event.key === 'Escape') setRenomeando(null);
+                  event.stopPropagation();
+                }}
+                className="min-w-0 flex-1 rounded border border-roxo-eletrico bg-carbono px-1.5 py-0.5 text-xs text-branco-cru outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => editor.selectObjectById(object.id)}
+                onDoubleClick={() => setRenomeando(object.id)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                title="Selecionar (duplo clique para renomear)"
+              >
+                <Icon size={14} className="shrink-0 text-nevoa" />
+                <span className="truncate text-xs text-branco-cru">{layerLabel(object)}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => editor.setObjectVisible(object.id, !object.visible)}

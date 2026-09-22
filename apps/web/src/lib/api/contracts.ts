@@ -1912,6 +1912,8 @@ export interface CanvaDocument {
   height: number;
   thumbnailUrl: string | null;
   pages: CanvaPage[];
+  /** Ver CanvaDocumentWire.version: token de concorrência otimista. */
+  version: number;
   createdAt: ISODateString;
   updatedAt: ISODateString;
 }
@@ -1926,6 +1928,7 @@ export function mapCanvaDocument(wire: CanvaDocumentWire): CanvaDocument {
     height: wire.height,
     thumbnailUrl: wire.thumbnail_url,
     pages: wire.pages,
+    version: wire.version,
     createdAt: wire.created_at,
     updatedAt: wire.updated_at,
   };

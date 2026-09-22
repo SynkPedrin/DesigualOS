@@ -3,24 +3,27 @@
 import { useState } from 'react';
 import { ArrowLeft, ChevronDown, Download, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import type { UseCanvaEditorResult } from '@/hooks/use-canva-editor';
-import { downloadBlob, downloadBlobsAsZip } from '@/lib/canva/export';
+import { blobToDataUrl, dataUrlToPdfBlob, downloadBlob, downloadBlobsAsZip, mergeDataUrlsToPdfBlob } from '@/lib/canva/export';
 import { toast } from '@/stores/toast-store';
 import { cn } from '@/lib/utils';
 
 type ExportFormat = 'png' | 'jpeg' | 'webp';
 
-/** Barra superior: nome do documento, status de autosave, zoom, undo/redo, exportar, voltar. */
+/** Barra superior: nome do documento, zoom, undo/redo, exportar, voltar.
+ * O status de salvamento mora na barra de status do rodapé (CanvaStatusBar). */
 export function CanvaTopbar({
   editor,
   documentName,
+  documentWidth,
+  documentHeight,
   onRenameDocument,
-  saveStatus,
   onBack,
 }: {
   editor: UseCanvaEditorResult;
   documentName: string;
+  documentWidth: number;
+  documentHeight: number;
   onRenameDocument: (name: string) => void;
-  saveStatus: 'idle' | 'saving' | 'saved';
   onBack: () => void;
 }) {
   const [exportOpen, setExportOpen] = useState(false);
@@ -48,6 +51,28 @@ export function CanvaTopbar({
     }
   }
 
+  async function handleExportPdf(allPages: boolean) {
+    setExportOpen(false);
+    setExporting(true);
+    try {
+      if (allPages && editor.pages.length > 1) {
+        const files = await editor.exportAllPages('png', 2);
+        const dataUrls = await Promise.all(files.map((f) => blobToDataUrl(f.blob)));
+        const pdfBlob = mergeDataUrlsToPdfBlob(dataUrls, documentWidth * 2, documentHeight * 2);
+        downloadBlob(pdfBlob, `${documentName || 'design'}.pdf`);
+      } else {
+        const dataUrl = editor.exportActivePageDataUrl('png', 2);
+        const pdfBlob = dataUrlToPdfBlob(dataUrl, documentWidth * 2, documentHeight * 2);
+        downloadBlob(pdfBlob, `${documentName || 'design'}.pdf`);
+      }
+      toast('Exportação concluída.', 'success');
+    } catch {
+      toast('Não foi possível exportar. Tente de novo.', 'error');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="flex shrink-0 items-center justify-between gap-3 border-b border-grafite-elevado bg-grafite px-4 py-2.5">
       <div className="flex min-w-0 items-center gap-3">
@@ -55,9 +80,11 @@ export function CanvaTopbar({
           type="button"
           onClick={onBack}
           aria-label="Voltar"
-          className="flex size-8 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
+          title="Voltar ao Studio"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru"
         >
           <ArrowLeft size={16} />
+          <span className="text-xs">Studio</span>
         </button>
         <input
           value={name}
@@ -68,9 +95,9 @@ export function CanvaTopbar({
           }}
           className="min-w-0 max-w-[220px] truncate rounded-md bg-transparent px-2 py-1 text-sm font-medium text-branco-cru focus:bg-carbono focus:outline-none"
         />
-        <span className="shrink-0 font-mono text-[10px] text-nevoa">
-          {saveStatus === 'saving' ? 'Salvando...' : saveStatus === 'saved' ? 'Salvo' : ''}
-        </span>
+        {/* O status de salvamento (data-canva-save-status) mora na barra de
+            status do rodapé (canva-status-bar.tsx) desde o BLOCO 1 do Canva
+            V3 - mantido o MESMO atributo pros testes E2E existentes. */}
       </div>
 
       <div className="flex items-center gap-1">
@@ -190,6 +217,16 @@ export function CanvaTopbar({
                   </div>
                 </div>
               ))}
+              <div className="flex items-center justify-between px-2 py-1">
+                <span className="text-xs text-branco-cru uppercase">pdf</span>
+                <button
+                  type="button"
+                  onClick={() => void handleExportPdf(false)}
+                  className="rounded border border-grafite-elevado px-1.5 py-0.5 text-[10px] text-nevoa transition-colors hover:border-roxo-eletrico/60 hover:text-branco-cru"
+                >
+                  Baixar
+                </button>
+              </div>
               {editor.pages.length > 1 && (
                 <>
                   <div className="my-1 border-t border-grafite-elevado" />
@@ -199,6 +236,13 @@ export function CanvaTopbar({
                     className="block w-full rounded-md px-2 py-1.5 text-left text-xs text-branco-cru transition-colors hover:bg-grafite-elevado"
                   >
                     Exportar todas as {editor.pages.length} páginas (.zip)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleExportPdf(true)}
+                    className="block w-full rounded-md px-2 py-1.5 text-left text-xs text-branco-cru transition-colors hover:bg-grafite-elevado"
+                  >
+                    Exportar todas as {editor.pages.length} páginas (.pdf)
                   </button>
                 </>
               )}

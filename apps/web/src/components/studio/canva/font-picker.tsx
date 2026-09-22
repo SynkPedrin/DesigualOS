@@ -84,9 +84,13 @@ function FontRow({
 export function FontPicker({
   onSelect,
   onClose,
+  inline = false,
 }: {
   onSelect: (fontId: string, family: string) => void;
   onClose: () => void;
+  /** Renderiza como bloco normal do fluxo (usado na sidebar), em vez do
+   * popover posicionado que abre pra cima. */
+  inline?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<FontCategory | null>(null);
@@ -126,7 +130,16 @@ export function FontPicker({
     <div
       role="dialog"
       aria-label="Pesquisar fontes"
-      className="absolute bottom-full left-1/2 mb-2 flex h-96 w-72 -translate-x-1/2 flex-col rounded-lg border border-grafite-elevado bg-grafite shadow-elevated"
+      className={cn(
+        'flex flex-col rounded-lg border border-grafite-elevado bg-grafite shadow-elevated',
+        // `inline`: parte do fluxo normal do painel (sidebar), nunca some por
+        // trás da borda do container - achado real (2026-09-22): a variante
+        // `absolute bottom-full` (abre pra CIMA, ancorada numa toolbar
+        // flutuante que hoje não existe mais) ficava coberta/cortada quando
+        // o gatilho estava perto do fim da tela. `false` mantém o
+        // posicionamento antigo só onde ainda for necessário.
+        inline ? 'relative mt-1.5 h-72 w-full' : 'absolute bottom-full left-1/2 mb-2 h-96 w-72 -translate-x-1/2',
+      )}
     >
       <div className="space-y-2 border-b border-grafite-elevado p-2.5">
         <div className="relative">

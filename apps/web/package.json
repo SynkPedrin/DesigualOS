@@ -26,6 +26,7 @@
     "echarts": "^6.1.0",
     "fabric": "^6.5.4",
     "framer-motion": "^13.1.1",
+    "jspdf": "^4.2.1",
     "jszip": "^3.10.1",
     "lightweight-charts": "^5.2.1",
     "lucide-react": "^1.39.0",

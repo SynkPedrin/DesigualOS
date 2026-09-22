@@ -148,6 +148,21 @@ export const studioCanvasDocuments = pgTable(
     /** Renderizado sob demanda (thumbnail da página 1) no autosave; não é a fonte de verdade. */
     thumbnailUrl: text('thumbnail_url'),
     pages: jsonb('pages').$type<CanvaPage[]>().notNull().default([]),
+    /**
+     * Concorrência otimista (§53 da auditoria de prontidão, 18/09/2026).
+     *
+     * O editor autossalva o documento INTEIRO a cada 1,5s, e o workspace de um
+     * cliente é compartilhado pela equipe toda (ver lib/access.ts). Sem esta
+     * coluna, dois colaboradores com o mesmo design aberto se sobrescreviam em
+     * silêncio: o último PATCH a chegar apagava tudo que o outro fez, sem erro,
+     * sem aviso e sem forma de recuperar - `pages` é o documento inteiro, não
+     * um diff.
+     *
+     * Cada gravação bem-sucedida incrementa. Quem envia uma versão diferente da
+     * que está no banco recebe 409 com o estado atual, em vez de destruir o
+     * trabalho de outra pessoa.
+     */
+    version: integer('version').notNull().default(1),
     ...timestampColumns,
   },
   (table) => ({

@@ -62,6 +62,31 @@ export function isManaged(object: FabricObject): object is FabricObjectWithMeta 
   return typeof (object as Partial<FabricMeta>).canvaId === 'string';
 }
 
+/**
+ * As propriedades NOSSAS que precisam sobreviver dentro de um grupo
+ * serializado.
+ *
+ * `toObject()` do Fabric só grava as propriedades que ele conhece; tudo que é
+ * nosso some, inclusive nos FILHOS do grupo (Group.toObject repassa esta lista
+ * a cada filho via `__serializeObjects`, fabric 6.9.1).
+ *
+ * Sem esta lista, o defeito medido no Gate 2.2 (18/09/2026): agrupar, salvar,
+ * F5 e desagrupar devolvia ZERO camadas. Os filhos voltavam do
+ * `Group.fromObject` sem `canvaId`, `isManaged` os rejeitava, e
+ * `flushActivePageFromCanvas` os descartava do documento — eles continuavam
+ * VISÍVEIS na artboard e sumiam do `page.objects`, então o autosave seguinte
+ * apagava três objetos que a pessoa estava vendo na tela. O contraste que
+ * isolou a causa está em tests/e2e/canva-group.spec.ts: desagrupar na mesma
+ * sessão sempre funcionou; só quebrava depois do recarregamento.
+ *
+ * O `as` é necessário e honesto: o Fabric tipa este parâmetro como a união das
+ * chaves que ELE conhece, e estas três são estranhas a ele por construção —
+ * em tempo de execução ele copia verbatim qualquer chave listada.
+ */
+const PROPS_NOSSAS_NO_GRUPO = ['canvaId', 'canvaType', 'canvaShapeKind'] as unknown as Parameters<
+  Group['toObject']
+>[0];
+
 function baseFabricProps(obj: CanvaObjectBase) {
   return {
     left: obj.x,
@@ -368,6 +393,7 @@ export async function instantiateFabricObject(obj: CanvaObject): Promise<FabricO
       charSpacing: obj.letterSpacing,
       lineHeight: obj.lineHeight,
       underline: obj.underline,
+      shadow: obj.shadow ? new Shadow('rgba(0,0,0,0.35) 2px 4px 12px') : null,
     });
   } else if (obj.type === 'shape') {
     fabricObject = createShapeFabricObject(obj);
@@ -489,7 +515,11 @@ export function buildFallbackExisting(object: FabricObjectWithMeta): CanvaObject
   // group: `toObject()` nativo do Fabric é uma reconstrução MELHOR do que
   // qualquer `fabricData` velho poderia ser (reflete o estado ao vivo).
   const group = object as unknown as Group;
-  return { ...base, type: 'group', fabricData: group.toObject() as unknown as Record<string, unknown> };
+  return {
+    ...base,
+    type: 'group',
+    fabricData: group.toObject(PROPS_NOSSAS_NO_GRUPO) as unknown as Record<string, unknown>,
+  };
 }
 
 /** Direção inversa: lê o estado atual de uma instância Fabric de volta pro formato portável.
@@ -515,6 +545,13 @@ export function readCanvaObject(object: FabricObjectWithMeta, existing: CanvaObj
     zIndex,
     blendMode: compositeToBlendMode(object.globalCompositeOperation),
     metadata: existing.metadata,
+    // `name` (nome da camada dado pelo usuário) só existe no NOSSO modelo -
+    // não há propriedade equivalente no objeto Fabric. Por isso vem de
+    // `existing`, igual a `metadata`. Sem esta linha, qualquer commit
+    // posterior à renomeação relia o canvas e apagava o nome: medido em
+    // 17/09/2026 que renomear para "CTA Background" voltava a "Forma - rect"
+    // depois do F5.
+    name: existing.name,
   };
 
   if (existing.type === 'image') {

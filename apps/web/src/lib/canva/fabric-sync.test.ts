@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import type { CanvaObject } from '@desigual-os/types';
 import { Ellipse, Polygon, Triangle } from 'fabric';
 import {
   blendModeToComposite,
   buildClipShape,
   buildCssFilterString,
   buildFallbackExisting,
+  readCanvaObject,
   clipShapeKindOf,
   cloneCanvaObject,
   compositeToBlendMode,
@@ -410,5 +412,44 @@ describe('clipShapeKindOf', () => {
     expect(clipShapeKindOf(buildClipShape('ellipse', 100, 100))).toBe('ellipse');
     expect(clipShapeKindOf(buildClipShape('triangle', 100, 100))).toBe('triangle');
     expect(clipShapeKindOf(buildClipShape('star', 100, 100))).toBe('star');
+  });
+});
+
+describe('readCanvaObject - nome da camada', () => {
+  /**
+   * Regressão medida em 17/09/2026: renomear uma camada para "CTA Background"
+   * aparecia na UI e voltava para "Forma - rect" depois do F5. `name` só
+   * existe no NOSSO modelo (não há equivalente no objeto Fabric), então
+   * qualquer releitura do canvas precisa trazê-lo de `existing` - igual a
+   * `metadata`.
+   */
+  it('preserva o nome vindo do objeto existente', () => {
+    const existing = {
+      id: 'obj-1', type: 'shape', shape: 'rect', fill: '#000000',
+      x: 0, y: 0, width: 10, height: 10, scaleX: 1, scaleY: 1, rotation: 0,
+      opacity: 1, locked: false, visible: true, zIndex: 0, name: 'CTA Background',
+    } as unknown as CanvaObject;
+    const fabricObject = {
+      canvaId: 'obj-1', canvaType: 'shape', left: 5, top: 5, width: 10, height: 10,
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, selectable: true, visible: true,
+      fill: '#000000', type: 'rect',
+    } as unknown as Parameters<typeof readCanvaObject>[0];
+
+    expect(readCanvaObject(fabricObject, existing, 0).name).toBe('CTA Background');
+  });
+
+  it('sem nome no existente, não inventa nome', () => {
+    const existing = {
+      id: 'obj-2', type: 'shape', shape: 'rect', fill: '#000000',
+      x: 0, y: 0, width: 10, height: 10, scaleX: 1, scaleY: 1, rotation: 0,
+      opacity: 1, locked: false, visible: true, zIndex: 0,
+    } as unknown as CanvaObject;
+    const fabricObject = {
+      canvaId: 'obj-2', canvaType: 'shape', left: 0, top: 0, width: 10, height: 10,
+      scaleX: 1, scaleY: 1, angle: 0, opacity: 1, selectable: true, visible: true,
+      fill: '#000000', type: 'rect',
+    } as unknown as Parameters<typeof readCanvaObject>[0];
+
+    expect(readCanvaObject(fabricObject, existing, 0).name).toBeUndefined();
   });
 });

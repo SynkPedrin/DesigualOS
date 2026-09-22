@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useClients } from '@/hooks/use-clients';
+import { cn } from '@/lib/utils';
 import { CanvaEditor } from './canva-editor';
 
 /**
@@ -10,13 +11,25 @@ import { CanvaEditor } from './canva-editor';
  * servidor. Seletor de cliente próprio, independente do filtro da Galeria -
  * documentos do Canva são sempre por cliente (sem "todos" pro master aqui).
  */
-export default function CanvaTab() {
+export default function CanvaTab({ onEditorOpenChange }: { onEditorOpenChange?: (open: boolean) => void } = {}) {
   const { data: clients } = useClients();
   const [clientId, setClientId] = useState('');
+  const [editorOpen, setEditorOpen] = useState(false);
+
+  const handleEditorOpenChange = useCallback(
+    (open: boolean) => {
+      setEditorOpen(open);
+      onEditorOpenChange?.(open);
+    },
+    [onEditorOpenChange],
+  );
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
+    <div className={cn('flex min-h-0 flex-col', editorOpen ? 'h-full' : 'space-y-3')}>
+      {/* Com o editor aberto, o cabeçalho e o seletor saem de cena: o cliente
+        * do documento já está definido e essa faixa só roubava altura útil do
+        * artboard. Voltar ao grid traz os dois de volta. */}
+      <div className={cn('flex shrink-0 items-center justify-between', editorOpen && 'hidden')}>
         <h2 className="font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Canva</h2>
         <select
           value={clientId}
@@ -33,7 +46,7 @@ export default function CanvaTab() {
         </select>
       </div>
 
-      <CanvaEditor clientId={clientId || null} />
+      <CanvaEditor clientId={clientId || null} onEditorOpenChange={handleEditorOpenChange} />
     </div>
   );
 }

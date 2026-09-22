@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { CANVA_BLEND_MODES, type CanvaPage } from '@desigual-os/types';
 import { hasPermission } from '@desigual-os/auth';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { hasClientAccess } from '../lib/access';
+import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
 
 /**
  * Postgres 23503 = foreign_key_violation. Achado real (2026-09-10): criar um
@@ -47,6 +48,12 @@ const objectBaseSchema = z.object({
   visible: z.boolean(),
   zIndex: z.number(),
   blendMode: z.enum(CANVA_BLEND_MODES).optional(),
+  // Nome da camada dado pelo usuário. Sem este campo o zod DESCARTA a
+  // propriedade em silêncio ao validar o PATCH: medido em 17/09/2026 que
+  // renomear aparecia na tela e sumia no F5, porque o front enviava o nome e
+  // o servidor gravava o objeto sem ele. Schema de runtime precisa
+  // acompanhar o tipo (packages/types/src/canva.ts).
+  name: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -131,12 +138,31 @@ const createDocumentSchema = z.object({
   height: z.number().int().positive(),
 });
 
-const updateDocumentSchema = z.object({
+/**
+ * Exportado para teste. O schema de runtime é o ponto onde o documento do
+ * usuário pode perder informação em SILÊNCIO - o zod descarta propriedade
+ * desconhecida sem erro nenhum, então um campo que falte aqui vira "aparece
+ * na tela e some no F5" (aconteceu com `name` da camada, medido em
+ * 17/09/2026). Deixar isto testável é mais barato que descobrir de novo pelo
+ * navegador.
+ */
+export const updateDocumentSchema = z.object({
   name: z.string().min(1).optional(),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
   thumbnail_url: z.string().url().nullable().optional(),
   pages: z.array(pageSchema).optional(),
+  /**
+   * Concorrência otimista (§53). A versão que o cliente acredita estar
+   * editando. Quando vem, a gravação só acontece se o banco ainda estiver
+   * nela - senão outra pessoa salvou nesse meio-tempo e a resposta é 409 com
+   * o estado atual, em vez de apagar o trabalho dela.
+   *
+   * Opcional por compatibilidade: cliente antigo (ou script) que não manda
+   * versão continua funcionando como antes, com último-a-escrever-vence. O
+   * editor manda sempre - ver useUpdateCanvaDocument em use-canva-documents.ts.
+   */
+  version: z.number().int().positive().optional(),
 });
 
 function toWire(row: typeof schema.studioCanvasDocuments.$inferSelect) {
@@ -149,6 +175,7 @@ function toWire(row: typeof schema.studioCanvasDocuments.$inferSelect) {
     height: row.height,
     thumbnail_url: row.thumbnailUrl,
     pages: row.pages,
+    version: row.version,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
   };
@@ -218,6 +245,45 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
         return { error: 'No access granted to this client' };
       }
 
+      /**
+       * Dedup de intenção duplicada (§12 e Teste 16 da auditoria de
+       * prontidão, 18/09/2026). Medido ao vivo contra a API real: CINCO POSTs
+       * simultâneos e idênticos de "novo design" criaram CINCO documentos,
+       * todos 201. As outras três criações com efeito colateral do sistema
+       * (chat, job do Studio, task do ClickUp) já tinham esta proteção desde
+       * 11/09; esta ficou de fora.
+       *
+       * Não é destrutivo como uma task duplicada no ClickUp, mas é sujeira que
+       * só a pessoa consegue limpar, um a um, na grade de designs dela.
+       *
+       * Mesma janela curta das outras: clique duplo e retry de rede caem
+       * dentro; criar dois designs iguais de propósito, depois dos 15s, segue
+       * possível.
+       */
+      const idemKey = idempotencyKey('canvas-doc', [
+        request.authUser.id,
+        body.client_id,
+        body.project_id ?? '',
+        body.name,
+        String(body.width),
+        String(body.height),
+      ]);
+      const existing = await claimIdempotency(idemKey);
+      if (existing !== null) {
+        if (existing !== 'pending') {
+          try {
+            reply.code(201);
+            return JSON.parse(existing) as unknown;
+          } catch {
+            // valor corrompido: cai no 409 abaixo
+          }
+        }
+        reply.code(409);
+        return { error: 'Este design já está sendo criado. Aguarde um instante.' };
+      }
+
+      try {
+
       // Primeira página já vem pronta (fundo branco) - documento nunca nasce sem nenhuma
       // página, evitando um estado intermediário que a UI teria que tratar como especial.
       const firstPage: CanvaPage = {
@@ -243,10 +309,12 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
           .returning();
       } catch (error) {
         if (isForeignKeyViolation(error, 'client_id')) {
+          await releaseIdempotency(idemKey);
           reply.code(400);
           return { error: 'Este cliente não foi encontrado. Atualize a página e tente de novo.' };
         }
         if (isForeignKeyViolation(error, 'project_id')) {
+          await releaseIdempotency(idemKey);
           reply.code(400);
           return { error: 'Este projeto não foi encontrado. Atualize a página e tente de novo.' };
         }
@@ -254,12 +322,21 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
       }
 
       if (!doc) {
+        // Liberar a chave é o que permite o retry legítimo: sem isso a pessoa
+        // ficaria 15s sem conseguir tentar de novo depois de uma falha nossa.
+        await releaseIdempotency(idemKey);
         reply.code(500);
         return { error: 'Failed to create canvas document' };
       }
 
+      const criado = toWire(doc);
+      await fulfillIdempotency(idemKey, JSON.stringify(criado));
       reply.code(201);
-      return toWire(doc);
+      return criado;
+      } catch (error) {
+        await releaseIdempotency(idemKey);
+        throw error;
+      }
     },
   );
 
@@ -300,6 +377,9 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
       if (body.height !== undefined) patch.height = body.height;
       if (body.thumbnail_url !== undefined) patch.thumbnailUrl = body.thumbnail_url;
       if (body.pages !== undefined) patch.pages = body.pages;
+      // Toda gravação avança a versão, inclusive a de cliente que não mandou
+      // `version`: senão quem MANDA ficaria cego pro que esse cliente escreveu.
+      patch.version = sql`${schema.studioCanvasDocuments.version} + 1` as unknown as number;
 
       // Esta é a rota mais chamada do editor (o autosave bate aqui a cada
       // 1,5s de edição). Fazia SELECT + UPDATE em série = duas idas ao
@@ -312,14 +392,43 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
       // requirePermission acima. ATENÇÃO: se algum dia voltar escopo de
       // acesso por pessoa, este atalho tem que ser desfeito - autorizar
       // DEPOIS de escrever não autoriza nada.
+      //
+      // A condição de versão (quando enviada) vai no mesmo UPDATE: continua
+      // sendo UMA ida ao banco, e o `returning` vazio já é a própria detecção
+      // do conflito. Ler antes pra comparar reabriria a corrida que isto fecha.
       const [updated] = await db
         .update(schema.studioCanvasDocuments)
         .set(patch)
-        .where(eq(schema.studioCanvasDocuments.id, request.params.id))
+        .where(
+          body.version === undefined
+            ? eq(schema.studioCanvasDocuments.id, request.params.id)
+            : and(
+                eq(schema.studioCanvasDocuments.id, request.params.id),
+                eq(schema.studioCanvasDocuments.version, body.version),
+              ),
+        )
         .returning();
+
       if (!updated) {
-        reply.code(404);
-        return { error: `Canvas document '${request.params.id}' not found` };
+        // Nada gravado: ou o documento não existe, ou a versão não bate. São
+        // respostas diferentes - 404 manda o editor fechar, 409 manda ele
+        // reconciliar - e distinguir custa uma consulta que só acontece no
+        // caminho de erro.
+        const [atual] = await db
+          .select()
+          .from(schema.studioCanvasDocuments)
+          .where(eq(schema.studioCanvasDocuments.id, request.params.id));
+        if (!atual) {
+          reply.code(404);
+          return { error: `Canvas document '${request.params.id}' not found` };
+        }
+        reply.code(409);
+        return {
+          error:
+            'Outra pessoa salvou este design enquanto você editava. Recarregue para ver a versão atual antes de continuar - salvar por cima apagaria o trabalho dela.',
+          conflict: true,
+          document: toWire(atual),
+        };
       }
       return toWire(updated);
     },
@@ -402,7 +511,14 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
       // fila. `returning` resolve o 404 e a exclusão de uma vez só.
       const deleted = await db
         .delete(schema.studioCanvasDocuments)
-        .where(eq(schema.studioCanvasDocuments.id, request.params.id))
+        .where(
+          isMaster
+            ? eq(schema.studioCanvasDocuments.id, request.params.id)
+            : and(
+                eq(schema.studioCanvasDocuments.id, request.params.id),
+                eq(schema.studioCanvasDocuments.ownerId, request.authUser.id),
+              ),
+        )
         .returning({ id: schema.studioCanvasDocuments.id });
       if (deleted.length === 0) {
         reply.code(404);
