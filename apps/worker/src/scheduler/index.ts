@@ -7,6 +7,7 @@ import { checkIntegrationHealth } from './integration-health.js';
 import { runKnowledgeConsolidation } from './knowledge-consolidation.js';
 import { keepInferenceWarm } from './inference-warmth.js';
 import { expireStaleStudioJobs } from './studio-queue-timeout.js';
+import { expireStaleExecutions } from './execution-timeout.js';
 
 const QUEUE_NAME = 'daily-digest';
 const logger = createLogger({ service: 'worker:scheduler' });
@@ -22,7 +23,22 @@ const logger = createLogger({ service: 'worker:scheduler' });
  * e criativo rejeitado perdem o valor se só forem notados no dia seguinte.
  */
 export function setupDailyJobs(): Worker {
-  const queue = new Queue(QUEUE_NAME, { connection: getRedisConnection() });
+  /**
+   * Teto de retenção, igual ao das filas de agente (DEFAULT_JOB_OPTIONS em
+   * packages/orchestrator/src/queues.ts). Esta fila ficou de fora quando
+   * aquele teto foi criado, e ela é a que MAIS gera histórico: são sete jobs
+   * repetíveis, um deles de minuto em minuto. Medido em 18/09/2026, ao
+   * diagnosticar outra coisa: 1.911 `completed` e 226 `failed` acumulados no
+   * Redis, sem limite nenhum.
+   *
+   * `failed` com teto maior porque é o que se consulta pra diagnosticar - foi
+   * exatamente essa lista que revelou que o vigia de execuções estava
+   * quebrando a cada 2 minutos.
+   */
+  const queue = new Queue(QUEUE_NAME, {
+    connection: getRedisConnection(),
+    defaultJobOptions: { removeOnComplete: 100, removeOnFail: 500 },
+  });
 
   // Antes eram `void queue.add(...)`: se o Redis estivesse lento/fora do
   // ar bem no boot, a rejeição não tinha handler nenhum (unhandled
@@ -52,6 +68,11 @@ export function setupDailyJobs(): Worker {
     // frontend mostrou "gerando" o tempo todo. De minuto em minuto porque
     // o valor aqui é justamente a pessoa descobrir rápido.
     queue.add('studio-queue-timeout', {}, { repeat: { pattern: '* * * * *' }, jobId: 'studio-queue-timeout' }),
+    // TIMEOUT DE EXECUÇÃO DE AGENTE a cada 2 min. Achado real (18/09/2026):
+    // doze execuções presas em `queued`/`running`, a mais antiga havia 326
+    // horas, porque worker que morre no meio do job não escreve desfecho
+    // nenhum. O chat mostrava "pensando" pra sempre. Ver execution-timeout.ts.
+    queue.add('execution-timeout', {}, { repeat: { pattern: '*/2 * * * *' }, jobId: 'execution-timeout' }),
   ])
     .then(() => logger.info('Scheduler armado (checklist 18:00, resumo 08:00, eventos 5min, saude da integracao 15min, consolidacao 03:00)'))
     .catch((error: unknown) => logger.error({ error }, 'Failed to register daily digest repeatable jobs'));
@@ -73,6 +94,8 @@ export function setupDailyJobs(): Worker {
         await runKnowledgeConsolidation(logger, { somenteClientesComMudanca: true });
       } else if (job.name === 'studio-queue-timeout') {
         await expireStaleStudioJobs(logger);
+      } else if (job.name === 'execution-timeout') {
+        await expireStaleExecutions(logger);
       }
     },
     { connection: getRedisConnection() },
