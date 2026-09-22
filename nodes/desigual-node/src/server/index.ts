@@ -5,6 +5,7 @@ import {
   nodeHealthResponseSchema,
   nodeStatusResponseSchema,
 } from '@desigual-os/node-protocol';
+import { getReleaseInfo } from '@desigual-os/logging';
 import type { NodeConfig } from '../config.js';
 import { executeTask } from '../execute.js';
 import { requireNodeSecret } from '../security/index.js';
@@ -30,6 +31,7 @@ export function buildServer(config: NodeConfig): FastifyInstance {
       status: 'ok',
       node_id: config.NODE_ID,
       timestamp: new Date().toISOString(),
+      release_sha: getReleaseInfo().release_sha,
     });
   });
 

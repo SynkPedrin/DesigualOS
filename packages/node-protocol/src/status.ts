@@ -10,6 +10,9 @@ export const nodeHealthResponseSchema = z.object({
   status: z.literal('ok'),
   node_id: z.string(),
   timestamp: z.string(),
+  // P1-04 (release readiness audit, 22/09/2026): prova de qual commit o node
+  // está rodando de verdade, mesmo formato do /health da API central.
+  release_sha: z.string(),
 });
 
 export type NodeHealthResponse = z.infer<typeof nodeHealthResponseSchema>;

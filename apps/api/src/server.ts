@@ -6,7 +6,8 @@ import multipartPlugin from '@fastify/multipart';
 import rateLimitPlugin from '@fastify/rate-limit';
 import helmetPlugin from '@fastify/helmet';
 import { z } from 'zod';
-import { createLogger, redactTokenFromUrl } from '@desigual-os/logging';
+import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/logging';
+import { getSchemaVersion } from '@desigual-os/database';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
 import { startHealthCheckRetention, startHealthSweep } from './health/scheduler';
@@ -55,6 +56,10 @@ const healthResponseSchema = z.object({
   status: z.literal('ok'),
   service: z.literal('desigual-os-api'),
   timestamp: z.string(),
+  release_sha: z.string(),
+  build_time: z.string(),
+  environment: z.string(),
+  schema_version: z.string(),
 });
 
 // Fastify usa seu próprio logger interno (pino) para logs de request/response.
@@ -125,10 +130,16 @@ app.setErrorHandler((error, _request, reply) => {
 });
 
 app.get('/health', async () => {
+  // P1-04 (auditoria de release readiness, 22/09/2026): sem isto não dava
+  // pra provar QUAL commit está rodando de verdade depois de um deploy, nem
+  // comparar entre web/API/worker/nodes (Phase 11 da missão de release).
+  const release = getReleaseInfo();
   return healthResponseSchema.parse({
     status: 'ok',
     service: 'desigual-os-api',
     timestamp: new Date().toISOString(),
+    ...release,
+    schema_version: getSchemaVersion(),
   });
 });
 

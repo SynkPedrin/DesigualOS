@@ -1,4 +1,5 @@
 import { AGENT_NAMES } from '@desigual-os/types';
+import { getReleaseInfo } from '@desigual-os/logging';
 import { getAgentQueue, getRedisConnection, queueNameForAgent } from './queues';
 import { AUTOMATIONS_QUEUE_NAME, getAutomationsQueue } from './automation-queue';
 
@@ -43,6 +44,8 @@ export interface BatimentoDoWorker {
   startedAt: string;
   beatAt: string;
   version: string | null;
+  /** P1-04: SHA do commit que este worker está rodando de verdade (Phase 11 da missão de release). */
+  releaseSha: string;
 }
 
 /**
@@ -59,6 +62,7 @@ export function startWorkerHeartbeat(): () => void {
       startedAt,
       beatAt: new Date().toISOString(),
       version: process.env.npm_package_version ?? null,
+      releaseSha: getReleaseInfo().release_sha,
     };
     try {
       await redis.set(CHAVE_BATIMENTO, JSON.stringify(payload), 'EX', BATIMENTO_TTL_S);
@@ -95,6 +99,8 @@ export interface SaudeDoWorker {
   online: boolean;
   pid: number | null;
   startedAt: string | null;
+  /** P1-04: SHA do commit que o worker vivo está rodando (null quando não há batimento). */
+  releaseSha: string | null;
   lastBeatAt: string | null;
   segundosDesdeUltimoBatimento: number | null;
   /** Soma de `aguardando` em todas as filas. É o que dói pro usuário: pedido parado. */
@@ -165,6 +171,7 @@ export async function readWorkerHealth(): Promise<SaudeDoWorker> {
     online,
     pid: batimento?.pid ?? null,
     startedAt: batimento?.startedAt ?? null,
+    releaseSha: batimento?.releaseSha ?? null,
     lastBeatAt: batimento?.beatAt ?? null,
     segundosDesdeUltimoBatimento: msDesde === null ? null : Math.round(msDesde / 1000),
     jobsAguardando,

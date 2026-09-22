@@ -76,3 +76,5 @@ const TOKEN_QUERY_PARAM = /([?&]token=)[^&\s]+/gi;
 export function redactTokenFromUrl(url: string): string {
   return url.replace(TOKEN_QUERY_PARAM, '$1[REDACTED]');
 }
+
+export { getReleaseInfo, type ReleaseInfo } from './release-info.js';

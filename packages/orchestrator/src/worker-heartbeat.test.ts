@@ -32,12 +32,13 @@ vi.mock('./automation-queue', () => ({
 
 const { readWorkerHealth, BATIMENTO_LIMITE_MS, FILA_ALTA } = await import('./worker-heartbeat');
 
-function batimento(msAtras: number): string {
+function batimento(msAtras: number, releaseSha = 'abc1234'): string {
   return JSON.stringify({
     pid: 4242,
     startedAt: new Date(Date.now() - 600_000).toISOString(),
     beatAt: new Date(Date.now() - msAtras).toISOString(),
     version: null,
+    releaseSha,
   });
 }
 
@@ -103,5 +104,21 @@ describe('readWorkerHealth', () => {
     redis.get.mockResolvedValue('{isso não é json');
     const s = await readWorkerHealth();
     expect(s.online).toBe(false);
+  });
+
+  /**
+   * P1-04 (release readiness audit, 22/09/2026): sem isto não dava pra provar
+   * QUAL commit o worker estava rodando de verdade depois de um deploy.
+   */
+  it('releaseSha do batimento chega em SaudeDoWorker', async () => {
+    redis.get.mockResolvedValue(batimento(3_000, 'deadbeef'));
+    const s = await readWorkerHealth();
+    expect(s.releaseSha).toBe('deadbeef');
+  });
+
+  it('sem batimento, releaseSha é null, não string vazia nem inventado', async () => {
+    redis.get.mockResolvedValue(null);
+    const s = await readWorkerHealth();
+    expect(s.releaseSha).toBeNull();
   });
 });

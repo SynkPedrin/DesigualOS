@@ -3,6 +3,7 @@ import { desc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { NODE_STATUSES } from '@desigual-os/types';
 import { syncAgents, getProbeTargets, readWorkerHealth } from '@desigual-os/orchestrator';
+import { getReleaseInfo } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { separarRegistrosAposentados } from './retired-nodes';
 
@@ -85,6 +86,11 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
     const worker = await readWorkerHealth();
 
     return {
+      // P1-04 (release readiness audit, 22/09/2026): "não é possível
+      // certificar equivalência entre web, API, worker e nodes" — este é o
+      // lugar único pra comparar release_sha de API e worker lado a lado
+      // (worker.release_sha abaixo) depois de um deploy.
+      api_release: getReleaseInfo(),
       total_nodes: total,
       summary,
       // Curinga: nenhum node degraded/warning/offline conta como "tudo saudável" — e agora o
@@ -97,6 +103,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
         online: worker.online,
         pid: worker.pid,
         started_at: worker.startedAt,
+        release_sha: worker.releaseSha,
         last_heartbeat_at: worker.lastBeatAt,
         seconds_since_heartbeat: worker.segundosDesdeUltimoBatimento,
         jobs_waiting: worker.jobsAguardando,
