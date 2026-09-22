@@ -38,6 +38,18 @@ export interface ActionIntent {
   reason: string;
   /** O pedido também pede análise antes de agir? */
   requiresAnalysisFirst: boolean;
+  /**
+   * O PRÓPRIO turno negou escrita explicitamente ("não cria", "sem alterar
+   * nada") — distinto de "nenhuma ordem reconhecida" (kind também vira
+   * READ_ONLY nos dois casos, mas só aqui a pessoa disse "não" de verdade).
+   * Achado real (22/09/2026, E2E de release): quando o guard devolve null
+   * por falta de autorização, o turno segue pro agente remoto — que tem
+   * ferramenta de escrita autônoma e PODE criar mesmo sem o guard ter
+   * autorizado, porque nada além do PROMPT lembra o agente da negação. Este
+   * campo é o sinal estruturado que o caller usa pra decidir se o agente
+   * remoto pode receber ferramenta de escrita neste turno.
+   */
+  negated: boolean;
 }
 
 function dobra(texto: string): string {
@@ -190,6 +202,7 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
       writeAuthorized: false,
       reason: 'pergunta se a ação deve ser feita (infinitivo após modal), não é ordem de execução',
       requiresAnalysisFirst: temAnalise,
+      negated: false,
     };
   }
 
@@ -201,6 +214,7 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
       writeAuthorized: false,
       reason: 'concluir/fechar trabalho humano está fora do que o Bento pode fazer',
       requiresAnalysisFirst: false,
+      negated: false,
     };
   }
 
@@ -210,6 +224,7 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
       writeAuthorized: true,
       reason: 'usuário pediu explicitamente para resolver/executar',
       requiresAnalysisFirst: true,
+      negated: false,
     };
   }
 
@@ -224,6 +239,7 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
       writeAuthorized: true,
       reason: temAnalise ? `${comoFoiPedido}, precedida de análise` : comoFoiPedido,
       requiresAnalysisFirst: temAnalise,
+      negated: false,
     };
   }
 
@@ -233,6 +249,7 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
       writeAuthorized: false,
       reason: 'pedido de análise/opinião sem ordem de execução',
       requiresAnalysisFirst: true,
+      negated: false,
     };
   }
 
@@ -242,6 +259,7 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
       writeAuthorized: false,
       reason: 'pedido de plano/recomendação sem ordem de execução',
       requiresAnalysisFirst: true,
+      negated: false,
     };
   }
 
@@ -250,6 +268,7 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
     writeAuthorized: false,
     reason: 'pergunta ou conversa sem intenção de escrita',
     requiresAnalysisFirst: false,
+    negated: false,
   };
 }
 
@@ -304,6 +323,7 @@ export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
       writeAuthorized: false,
       reason: 'concluir/fechar trabalho humano está fora do que o Bento pode fazer',
       requiresAnalysisFirst: false,
+      negated: false,
     };
   }
 
@@ -317,6 +337,7 @@ export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
       writeAuthorized: true,
       reason: `ordem reconhecida (${v2.signals.join(', ') || 'sem família'}) em "${(v2.sourceSpan ?? '').slice(0, 60)}"`,
       requiresAnalysisFirst: autonomo ? true : requiresAnalysisFirst,
+      negated: false,
     };
   }
 
@@ -326,6 +347,7 @@ export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
       writeAuthorized: false,
       reason: 'pedido ambíguo: a única ordem está numa pergunta; não escrevo no palpite',
       requiresAnalysisFirst,
+      negated: false,
     };
   }
 
@@ -335,6 +357,7 @@ export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
       writeAuthorized: false,
       reason: `escrita negada no próprio pedido (${v2.negations.join('; ')})`,
       requiresAnalysisFirst,
+      negated: true,
     };
   }
 
@@ -346,6 +369,7 @@ export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
       writeAuthorized: false,
       reason: 'pergunta se a ação deve ser feita, não é ordem de execução',
       requiresAnalysisFirst,
+      negated: false,
     };
   }
 
@@ -354,6 +378,7 @@ export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
     writeAuthorized: false,
     reason: 'sem ordem de escrita no turno',
     requiresAnalysisFirst,
+    negated: false,
   };
 }
 

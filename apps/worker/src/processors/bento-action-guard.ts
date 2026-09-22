@@ -788,6 +788,37 @@ export async function tryBentoActionGuard(params: {
     });
   }
 
+  /**
+   * NEGAÇÃO EXPLÍCITA nunca pode seguir pro agente remoto. Achado real no
+   * E2E de release (22/09/2026): "Analisa a Cliente Teste 7, mas não cria
+   * nem altera nenhuma task." — o guard corretamente recusava a ESCREVER
+   * (acao.writeAuthorized=false) e devolvia null, "seguindo pra análise".
+   * Mas o agente remoto tem ferramenta de escrita autônoma própria, e NADA
+   * além do PROMPT lembrava ele da negação — ele criou a task mesmo assim,
+   * de verdade, numa lista real ("Agência Desigual"), sob um bot próprio
+   * ("Bento Desigual"). "Unknown operation = no mutation" não bastava aqui:
+   * a operação nem era desconhecida, era EXPLICITAMENTE PROIBIDA pela
+   * própria pessoa, e mesmo assim o sistema escreveu.
+   *
+   * A defesa não pode ser "lembrar o agente remoto melhor" (prompt não é
+   * capability gate — é o mesmo princípio do P1-08 da auditoria, pra
+   * Jarbas/Suzy). Tem que ser estrutural: quando a NEGAÇÃO é do próprio
+   * verbo (não "operação não reconhecida"), o guard responde aqui mesmo,
+   * sem tool nenhuma — nunca despacha pro node que TEM ferramenta.
+   */
+  if (acao.negated) {
+    logger.info(
+      { intent_classification: acao.kind, write_authorized: false, write_reason: acao.reason },
+      '[guard] escrita negada explicitamente no pedido; respondendo sem despachar pro agente remoto'
+    );
+    return guardResponse({
+      ok: true,
+      toolCalls: [],
+      answer: 'Entendido — não criei nem alterei nada no ClickUp, como pedido.',
+      metadata: { guard: 'bento-action', action: 'negated_no_dispatch', intent_classification: acao.kind, write_authorized: false, write_reason: acao.reason },
+    });
+  }
+
   if (!acao.writeAuthorized) {
     logger.info(
       { intent_classification: acao.kind, write_authorized: false, write_reason: acao.reason },

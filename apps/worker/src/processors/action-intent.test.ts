@@ -108,3 +108,39 @@ describe('case-insensitive: a ordem vale com qualquer caixa', () => {
     expect(i.writeAuthorized).toBe(true);
   });
 });
+
+/**
+ * NEGATED — achado real no E2E de release (22/09/2026): "Analisa a Cliente
+ * Teste 7, mas não cria nem altera nenhuma task." tinha writeAuthorized=
+ * false corretamente (o guard recusava ESCREVER), mas devolvia null, o
+ * turno seguia pro agente remoto, e o agente remoto — que tem ferramenta
+ * de escrita autônoma própria — criou a task mesmo assim, de verdade,
+ * ignorando a negação (prompt não é capability gate). `negated` é o sinal
+ * estruturado que faz o guard responder DIRETO, sem despachar pro node,
+ * quando a negação é do PRÓPRIO pedido — distinto de "nenhuma ordem
+ * reconhecida", onde seguir pra análise continua seguro.
+ */
+describe('negated — negação explícita do próprio pedido, distinto de "sem ordem nenhuma"', () => {
+  it.each([
+    'Analisa a Cliente Teste 7, mas não cria nem altera nenhuma task.',
+    'não cria ainda',
+    'só analisa, não cria task',
+    'nem cria nem atribui, só me fala',
+  ])('%s -> negated=true', (m) => {
+    const i = classifyActionIntent(m);
+    expect(i.writeAuthorized).toBe(false);
+    expect(i.negated).toBe(true);
+  });
+
+  it.each(['como está a operação?', 'bom dia', 'quantas tasks vencem hoje?'])('%s -> negated=false (não há negação, só não há ordem)', (m) => {
+    const i = classifyActionIntent(m);
+    expect(i.writeAuthorized).toBe(false);
+    expect(i.negated).toBe(false);
+  });
+
+  it('ordem de escrita de verdade tem negated=false', () => {
+    const i = classifyActionIntent('cria uma task pro Pedro');
+    expect(i.writeAuthorized).toBe(true);
+    expect(i.negated).toBe(false);
+  });
+});
