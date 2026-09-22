@@ -48,6 +48,24 @@ export function detectKnowledgeStatement(
   if (/\b(crie|cria|escrev[ae]|mont[ae]|list[ae]|faz|faça|gera|gere|analis[ae]|revis[ae]|me (d[êe]|manda|mostra))\b/i.test(texto)) {
     return null;
   }
+  /**
+   * COMANDO OPERACIONAL sobre uma task específica não é registro de
+   * conhecimento — achado real no E2E de release (22/09/2026): "troca o
+   * título dessa task pra 'X'" e "muda a prioridade dessa task pra alta"
+   * não tinham verbo nenhum na exclusão acima ("troca"/"muda" são comuns
+   * demais pra excluir sozinhos — quebraria o próprio caso que este arquivo
+   * existe pra resolver, "decidimos que a comunicação vai mudar..."). O que
+   * distingue os dois é o ALVO: comando operacional cita um CAMPO da task
+   * (título/prioridade/comentário/status/prazo/responsável) JUNTO com uma
+   * palavra de referência à task ("essa"/"dessa"/"nessa" task) — quem só
+   * está ensinando um fato não faz as duas coisas ao mesmo tempo. Isso
+   * corre ANTES do guard determinístico do Bento (linha ~1032 de
+   * execute-job.ts); sem esta exclusão, o comando nunca chegava lá — o
+   * turno virava "Registrado: ..." e a task real nunca era tocada.
+   */
+  if (/\b(t[íi]tulo|prioridade|coment[áa]rio|status|prazo|respons[áa]vel)\b/i.test(texto) && /(essa|dessa|nessa|aquela)\s+(task|tarefa|demanda)\b/i.test(texto)) {
+    return null;
+  }
 
   const candidatos: CandidatoAEpisodio[] = extractEpisodeCandidates(texto);
   if (candidatos.length === 0) return null;

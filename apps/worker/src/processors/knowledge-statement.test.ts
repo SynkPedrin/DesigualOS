@@ -65,4 +65,27 @@ describe('detectKnowledgeStatement', () => {
     expect(detectKnowledgeStatement('Ficou genérico.', 'Cliente Teste 7')).not.toBeNull();
     expect(detectKnowledgeStatement('Agora gostei.', 'Cliente Teste 7')).not.toBeNull();
   });
+
+  /**
+   * Achado real no E2E de release (22/09/2026, gate de CRUD contra "Cliente
+   * Teste 7"): "troca o título dessa task pra 'X'" e "muda a prioridade
+   * dessa task pra alta" não têm verbo de pedido reconhecido acima ("troca"/
+   * "muda" são comuns demais pra excluir sozinhos, quebrariam o próprio caso
+   * "Decidimos que a comunicação vai mudar..."), então CAÍAM aqui e viravam
+   * "Registrado: ..." — o comando nunca chegava no guard determinístico do
+   * Bento (execute-job.ts chama esta função ANTES de tryBentoActionGuard). O
+   * que distingue os dois: comando operacional cita um CAMPO da task junto
+   * com referência à task ("dessa task"); quem só ensina um fato não faz as
+   * duas coisas ao mesmo tempo.
+   */
+  it('comando operacional sobre uma task ("dessa task" + campo) não é registro — precisa chegar no guard', () => {
+    expect(detectKnowledgeStatement("troca o título dessa task pra 'Novo nome'", null)).toBeNull();
+    expect(detectKnowledgeStatement('muda a prioridade dessa task pra alta', null)).toBeNull();
+    expect(detectKnowledgeStatement("adiciona um comentário nessa task dizendo 'ok'", null)).toBeNull();
+  });
+
+  it('mas "decidimos que" sem referência a uma task específica continua registrando (o caso original preservado)', () => {
+    const r = detectKnowledgeStatement('Decidimos que a prioridade agora é o cliente Cosentino.', null);
+    expect(r).not.toBeNull();
+  });
 });
