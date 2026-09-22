@@ -87,3 +87,12 @@ apps/*/src/scripts/_*
 apps/*/scripts/_*
 nodes/*/scripts/_*
 packages/*/src/_*
+
+# Saída gerada de scripts de QA/operação (scripts/qa/operation-turn.mjs etc.):
+# trace de execução real, sensível o bastante pra sair com permissão 0600 no
+# próprio script — nunca versionar.
+artifacts/
+
+# Pacote de sync do checkout pra outra máquina (script de deploy manual);
+# artefato binário grande, nunca código.
+.desigualos-src-sync.tgz

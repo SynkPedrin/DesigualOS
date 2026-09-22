@@ -104,7 +104,20 @@ function sobreposicao(a: string, b: string): number {
 }
 
 test.describe('Aceite final — a Tammy usando de verdade', () => {
-  test.setTimeout(1_800_000);
+  /**
+   * ORÇAMENTO DE RELÓGIO, não de paciência.
+   *
+   * Eram 30 minutos, calibrados quando cada turno voltava em ~60s. Em
+   * 17/09/2026, com a RTX degradada depois de um flap no tailnet, cada resposta
+   * passou a levar 250-266s — e o fluxo de 11 turnos morreu no turno 9, com
+   * todos os nove tendo respondido corretamente. Cortar o teste por relógio
+   * reprova a máquina, não o comportamento, e some justamente com os dois
+   * turnos finais (versão final e segurança factual da data).
+   *
+   * O teto POR RESPOSTA continua em 300s: se um turno individual travar, ele
+   * ainda falha. O que cresce é só o espaço pra onze deles caberem.
+   */
+  test.setTimeout(3_600_000);
 
   test('bento: operação, prioridade e fonte', async ({ page }) => {
     writeFileSync(SAIDA, `# Aceite final\n\nRodado em ${new Date().toISOString()}\n`, 'utf8');
