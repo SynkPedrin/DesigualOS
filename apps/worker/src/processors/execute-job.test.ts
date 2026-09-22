@@ -365,6 +365,13 @@ describe('parseAgentLoopFlag (AGENT_LOOP_V2 por agente)', () => {
     const { parseAgentLoopFlag } = await import('./execute-job.js');
     expect(parseAgentLoopFlag('bento,fulano').size).toBe(1);
   });
+
+  it('aceita flags granulares e permite desligar um agente mesmo com legado global', async () => {
+    const { agentLoopEnabledFor } = await import('./execute-job.js');
+    expect(agentLoopEnabledFor('bento', { AGENT_LOOP_BENTO_V2: 'true', AGENT_LOOP_V2: 'false' })).toBe(true);
+    expect(agentLoopEnabledFor('otto', { AGENT_LOOP_OTTO_V2: 'false', AGENT_LOOP_V2: 'true' })).toBe(false);
+    expect(agentLoopEnabledFor('jarbas', { AGENT_LOOP_JARBAS_V2: 'true', AGENT_LOOP_V2: 'true' })).toBe(false);
+  });
 });
 
 describe('limitarContexto', () => {

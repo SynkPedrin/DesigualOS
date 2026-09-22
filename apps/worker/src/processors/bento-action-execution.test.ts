@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { classifyActionIntent } from './action-intent';
 import { buildOperationalActionPlan } from './operational-action-plan';
 import { buildOperationalTitle, chavesDoCliente, mensagemCitaCliente } from './write-target';
-import { buildOperationalActionPlan } from './operational-action-plan';
 import { ehMaterialDeDemanda } from './bento-action-guard';
 import { blocoDeReferencias, createOneTask, createManyTasks, type CreateDeps, type CreateOneInput, type TaskAttachment } from './multi-create-executor';
 import { bentoWriteAllowlist, podeEscreverNoCanary } from './bento-action-guard';

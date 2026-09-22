@@ -156,3 +156,34 @@ export async function createAndEnqueueExecution(
 
   return { executionId: execution.executionId, status: 'queued', agent: decision.primary_agent };
 }
+
+/**
+ * Marca a conversa como mexida agora.
+ *
+ * `conversations.updated_at` só mudava quando a PRÓPRIA linha era alterada
+ * (renomear, mover de projeto, trocar visibilidade). Mensagem nova é INSERT em
+ * outra tabela, então a conversa mais ativa do dia continuava com a data da
+ * última vez que alguém a renomeou. Medido no banco real em 18/09/2026: 543 de
+ * 663 conversas (82%) com `updated_at` mais velho que a própria última
+ * mensagem, a pior por 15 dias.
+ *
+ * Isso não é cosmético: GET /conversations ordena por `updated_at desc` e corta
+ * em 50. Uma conversa usada hoje podia cair fora da barra lateral inteira
+ * enquanto uma abandonada há semanas ficava no topo só por ter sido renomeada.
+ *
+ * Chamado por todo caminho que grava mensagem (POST /chat, resposta do agente,
+ * automação, aprovação de tool call). Falha aqui não pode derrubar a gravação
+ * da mensagem - a mensagem é o dado, a ordenação é a conveniência -, mas
+ * também não é engolida: vai pro log com o id da conversa.
+ */
+export async function touchConversation(conversationId: string | null): Promise<void> {
+  if (!conversationId) return;
+  try {
+    await db
+      .update(schema.conversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(schema.conversations.id, conversationId));
+  } catch (error) {
+    logger.warn({ error, conversationId }, 'Falha ao atualizar updated_at da conversa');
+  }
+}

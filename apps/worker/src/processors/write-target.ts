@@ -1,5 +1,5 @@
 import { db, schema } from '@desigual-os/database';
-import { isNull } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 
 /**
  * write-target.ts — RESOLVER O CLIENTE ANTES DE ESCREVER.
@@ -101,13 +101,14 @@ export function extractCitedClient(message: string): string | null {
 
 export async function resolveWriteTarget(params: {
   message: string;
+  organizationId?: string;
   /** Cliente já vinculado à execução (seletor do chat). */
   executionClientId?: string | null;
 }): Promise<WriteTarget> {
   const clientes = await db
     .select({ id: schema.clients.id, name: schema.clients.name, listId: schema.clients.clickupListId })
     .from(schema.clients)
-    .where(isNull(schema.clients.deletedAt))
+    .where(and(isNull(schema.clients.deletedAt), params.organizationId ? eq(schema.clients.organizationId, params.organizationId) : undefined))
     .catch(() => [] as Array<{ id: string; name: string; listId: string | null }>);
 
   const finalizar = (c: { id: string; name: string; listId: string | null }, motivo: string): WriteTarget =>

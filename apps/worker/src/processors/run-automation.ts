@@ -1,8 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
+import { hasPermission, loadUserAccess } from '@desigual-os/auth';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import { buildContext, formatContextForPrompt } from '@desigual-os/context-engine';
-import { dispatchChatMessage, type AutomationJobData } from '@desigual-os/orchestrator';
+import { dispatchChatMessage, touchConversation, type AutomationJobData } from '@desigual-os/orchestrator';
 import type { RouterDecision } from '@desigual-os/router';
 import type { AgentName } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
@@ -49,6 +50,34 @@ export async function processAutomationJob(
     return;
   }
 
+  // Queue payloads identify a record; authority is reloaded when it runs.
+  // A revoked membership must not leave an old schedule able to act.
+  const [member] = automation.organizationId ? await db
+    .select({ id: schema.organizationMembers.id })
+    .from(schema.organizationMembers)
+    .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
+    .where(and(eq(schema.organizationMembers.organizationId, automation.organizationId),
+      eq(schema.organizationMembers.userId, automation.createdBy),
+      eq(schema.users.active, true), isNull(schema.users.deletedAt))) : [];
+  const access = member ? await loadUserAccess(automation.createdBy) : null;
+  let authorized = Boolean(member && access && hasPermission(access.permissions, 'chat', 'write'));
+  if (authorized && automation.clientId) {
+    const [client] = await db.select({ id: schema.clients.id }).from(schema.clients)
+      .where(and(eq(schema.clients.id, automation.clientId), eq(schema.clients.organizationId, automation.organizationId!), isNull(schema.clients.deletedAt)));
+    authorized = Boolean(client);
+  }
+  if (authorized && automation.conversationId) {
+    const [conversation] = await db.select({ id: schema.conversations.id }).from(schema.conversations)
+      .where(and(eq(schema.conversations.id, automation.conversationId), eq(schema.conversations.userId, automation.createdBy),
+        automation.clientId ? eq(schema.conversations.clientId, automation.clientId) : isNull(schema.conversations.clientId)));
+    authorized = Boolean(conversation);
+  }
+  if (!authorized) {
+    await db.insert(schema.automationRuns).values({ automationId: automation.id, status: 'failed', error: 'Automation authorization revoked or inconsistent resource scope', completedAt: new Date() });
+    logger.warn({ automationId, organizationId: automation.organizationId }, 'Automation authorization denied');
+    return;
+  }
+
   let conversationId = automation.conversationId;
   if (!conversationId) {
     // Defensivo: normalmente já existe desde a criação (POST /automations), mas nada
@@ -74,6 +103,7 @@ export async function processAutomationJob(
     await db
       .insert(schema.messages)
       .values({ conversationId, role: 'user', content: automation.prompt });
+    await touchConversation(conversationId);
   }
 
   // Mesmo enriquecimento de contexto do POST /chat (chat/routes.ts): sem
