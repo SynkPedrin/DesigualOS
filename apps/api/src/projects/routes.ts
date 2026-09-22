@@ -1,9 +1,24 @@
 import type { FastifyInstance } from 'fastify';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { requireAuth, requirePermission } from '../auth/middleware';
+import { requireAuth, requirePermission, type AuthenticatedUser } from '../auth/middleware';
 import { deleteUserFile, uploadUserFile } from '../lib/storage';
+import { tenantSharingScope } from '../lib/access';
+
+/**
+ * P0-02 (auditoria de release readiness, 22/09/2026): mesma falha estrutural
+ * de `/conversations`/`/executions` — "compartilhado com a equipe" presumia
+ * UMA organização só. Projeto com cliente herda a organização do cliente;
+ * projeto sem cliente (deck/material solto da agência) é escopado por quem
+ * criou, igual à regra que já existe pra conversa sem cliente.
+ */
+async function canAccessProject(user: AuthenticatedUser, project: { clientId: string | null; createdBy: string }): Promise<boolean> {
+  if (user.roles.includes('master')) return true;
+  if (project.createdBy === user.id) return true;
+  const scope = await tenantSharingScope(user.id);
+  return project.clientId ? scope.allowedClientIds.includes(project.clientId) : scope.teammateUserIds.includes(project.createdBy);
+}
 
 const PROJECT_FILE_KINDS = ['identidade_visual', 'briefing', 'referencia'] as const;
 const projectFileKindSchema = z.enum(PROJECT_FILE_KINDS);
@@ -57,14 +72,29 @@ function serializeProjectFile(row: typeof schema.projectFiles.$inferSelect) {
 }
 
 /**
- * Projetos do Chat (a seção "Projetos" da sidebar, estilo Claude): estrutura de
- * organização compartilhada pela equipe inteira - qualquer colaborador vê todos
- * os projetos e qualquer um com chat:write cria/edita. A privacidade mora nas
- * CONVERSAS (visibility em conversations), não no projeto.
+ * Projetos do Chat (a seção "Projetos" da sidebar, estilo Claude): estrutura
+ * compartilhada por quem está na MESMA organização — qualquer colaborador da
+ * organização vê os projetos dela e, com chat:write, cria/edita/apaga. A
+ * privacidade fina mora nas CONVERSAS (visibility em conversations), não no
+ * projeto; o escopo aqui é só a fronteira de organização (P0-02, 22/09/2026).
  */
 export async function registerProjectRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/projects', { preHandler: requireAuth }, async () => {
-    const rows = await db.select().from(schema.projects).orderBy(asc(schema.projects.name));
+  app.get('/projects', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const isMaster = user.roles.includes('master');
+    const scope = isMaster ? null : await tenantSharingScope(user.id);
+    const scopeCondition =
+      scope === null
+        ? undefined
+        : or(
+            scope.allowedClientIds.length > 0 ? inArray(schema.projects.clientId, scope.allowedClientIds) : undefined,
+            and(isNull(schema.projects.clientId), inArray(schema.projects.createdBy, scope.teammateUserIds)),
+          );
+    const rows = await db.select().from(schema.projects).where(scopeCondition).orderBy(asc(schema.projects.name));
     return { projects: rows.map(toWire) };
   });
 
@@ -96,7 +126,22 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
     '/projects/:id',
     { preHandler: [requireAuth, requirePermission('chat', 'write')] },
     async (request, reply) => {
+      const user = request.authUser;
+      if (!user) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
       const body = updateProjectSchema.parse(request.body);
+
+      const [existing] = await db.select({ clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+      if (!existing) {
+        reply.code(404);
+        return { error: `Project '${request.params.id}' not found` };
+      }
+      if (!(await canAccessProject(user, existing))) {
+        reply.code(404);
+        return { error: `Project '${request.params.id}' not found` };
+      }
 
       if (body.client_id) {
         const [client] = await db.select({ id: schema.clients.id }).from(schema.clients).where(eq(schema.clients.id, body.client_id));
@@ -129,8 +174,17 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
     '/projects/:id',
     { preHandler: [requireAuth, requirePermission('chat', 'write')] },
     async (request, reply) => {
-      const [project] = await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+      const user = request.authUser;
+      if (!user) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
+      const [project] = await db.select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
       if (!project) {
+        reply.code(404);
+        return { error: `Project '${request.params.id}' not found` };
+      }
+      if (!(await canAccessProject(user, project))) {
         reply.code(404);
         return { error: `Project '${request.params.id}' not found` };
       }
@@ -157,10 +211,14 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       }
 
       const [project] = await db
-        .select({ id: schema.projects.id, clientId: schema.projects.clientId })
+        .select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy })
         .from(schema.projects)
         .where(eq(schema.projects.id, request.params.id));
       if (!project) {
+        reply.code(404);
+        return { error: `Project '${request.params.id}' not found` };
+      }
+      if (!(await canAccessProject(user, project))) {
         reply.code(404);
         return { error: `Project '${request.params.id}' not found` };
       }
@@ -213,8 +271,17 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
   // A listagem NÃO devolve text_content (pode ter até 50k chars); o chat lê a
   // coluna direto do banco na hora de montar o contexto.
   app.get<{ Params: { id: string } }>('/projects/:id/files', { preHandler: requireAuth }, async (request, reply) => {
-    const [project] = await db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const [project] = await db.select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
     if (!project) {
+      reply.code(404);
+      return { error: `Project '${request.params.id}' not found` };
+    }
+    if (!(await canAccessProject(user, project))) {
       reply.code(404);
       return { error: `Project '${request.params.id}' not found` };
     }
@@ -231,6 +298,16 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
     '/projects/:id/files/:fileId',
     { preHandler: [requireAuth, requirePermission('chat', 'write')] },
     async (request, reply) => {
+      const user = request.authUser;
+      if (!user) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
+      const [project] = await db.select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+      if (!project || !(await canAccessProject(user, project))) {
+        reply.code(404);
+        return { error: `Project file '${request.params.fileId}' not found` };
+      }
       const [fileRow] = await db
         .select()
         .from(schema.projectFiles)

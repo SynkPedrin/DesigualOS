@@ -11,8 +11,9 @@ import {
   AgentAskError,
   type ClickUpConfig,
 } from '@desigual-os/tool-gateway';
-import { AGENT_TIMEOUT_MS, publishWsEvent } from '@desigual-os/orchestrator';
+import { AGENT_TIMEOUT_MS, publishWsEvent, touchConversation } from '@desigual-os/orchestrator';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { tenantSharingScope } from '../lib/access';
 
 const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise<void>> = {
   'clickup.delete_task': async (input) => {
@@ -120,6 +121,7 @@ async function sendApprovalConfirmation(
           agent,
           content: confirmationAnswer,
         });
+      await touchConversation(sessionId);
       await publishWsEvent({
         type: 'execution.completed',
         payload: { agent, status: 'completed', conversation_id: sessionId },
@@ -145,8 +147,16 @@ export async function registerToolCallRoutes(app: FastifyInstance): Promise<void
   app.get(
     '/tool-calls',
     { preHandler: [requireAuth, requirePermission('tool_calls', 'read')] },
-    async () => {
-      const pending = await listPendingToolCalls();
+    async (request, reply) => {
+      const user = request.authUser;
+      if (!user) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
+      // P0-02 (22/09/2026): fila de aprovação era global entre organizações.
+      const isMaster = user.roles.includes('master');
+      const scope = isMaster ? null : { allowedClientIds: (await tenantSharingScope(user.id)).allowedClientIds };
+      const pending = await listPendingToolCalls(scope);
       return {
         tool_calls: pending.map((call) => ({
           id: call.id,
@@ -166,6 +176,29 @@ export async function registerToolCallRoutes(app: FastifyInstance): Promise<void
       if (!request.authUser) {
         reply.code(401);
         return { error: 'Not authenticated' };
+      }
+
+      /**
+       * P0-02 (22/09/2026): `approveToolCall` (tool-gateway) não valida
+       * tenant — quem tivesse a permissão `tool_calls:approve` podia
+       * aprovar (e disparar a execução de) uma chamada de QUALQUER
+       * organização, só sabendo o id. Mesmo escopo de `GET /tool-calls`
+       * acima: master aprova qualquer uma; os demais só aprovam chamada cuja
+       * execução pertence a um cliente da própria organização. 404, não
+       * 403, pra não revelar que a chamada existe fora do escopo.
+       */
+      if (!request.authUser.roles.includes('master')) {
+        const [pendingRow] = await db
+          .select({ clientId: schema.executions.clientId })
+          .from(schema.toolCalls)
+          .leftJoin(schema.executions, eq(schema.executions.id, schema.toolCalls.executionId))
+          .where(eq(schema.toolCalls.id, request.params.id));
+        const scope = await tenantSharingScope(request.authUser.id);
+        const inScope = pendingRow?.clientId != null && scope.allowedClientIds.includes(pendingRow.clientId);
+        if (!inScope) {
+          reply.code(404);
+          return { error: `Tool call '${request.params.id}' not found` };
+        }
       }
 
       let approved;

@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { AgentName } from '@desigual-os/types';
 
@@ -106,11 +106,36 @@ export interface PendingToolCall {
   createdAt: Date;
 }
 
-export async function listPendingToolCalls(): Promise<PendingToolCall[]> {
+/**
+ * P0-02 (auditoria de release readiness, 22/09/2026): a fila de aprovação
+ * lia TODA chamada pendente, de qualquer organização — `GET /tool-calls`
+ * (apps/api/src/tool-calls/routes.ts) não tinha filtro nenhum. `tool_calls`
+ * não tem `organizationId` próprio (herda de `executions.clientId`), então o
+ * escopo é feito pelo JOIN: `allowedClientIds` restringe a chamadas cuja
+ * execução pertence a um cliente da organização de quem pede; chamada sem
+ * execução ou sem cliente (agência, não um cliente específico) só aparece
+ * pra quem passa `null` (master) — não dá pra provar o tenant dela, então o
+ * padrão seguro é NÃO mostrar, nunca mostrar por adivinhação.
+ */
+export async function listPendingToolCalls(scope: { allowedClientIds: string[] } | null = null): Promise<PendingToolCall[]> {
+  if (scope !== null && scope.allowedClientIds.length === 0) return [];
   const rows = await db
-    .select()
+    .select({
+      id: schema.toolCalls.id,
+      agent: schema.toolCalls.agent,
+      tool: schema.toolCalls.tool,
+      input: schema.toolCalls.input,
+      createdAt: schema.toolCalls.createdAt,
+    })
     .from(schema.toolCalls)
-    .where(and(eq(schema.toolCalls.requiresApproval, true), isNull(schema.toolCalls.approvedBy)));
+    .leftJoin(schema.executions, eq(schema.executions.id, schema.toolCalls.executionId))
+    .where(
+      and(
+        eq(schema.toolCalls.requiresApproval, true),
+        isNull(schema.toolCalls.approvedBy),
+        scope === null ? undefined : inArray(schema.executions.clientId, scope.allowedClientIds),
+      ),
+    );
 
   return rows.map((row) => ({ id: row.id, agent: row.agent, tool: row.tool, input: row.input, createdAt: row.createdAt }));
 }

@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
+import { tenantSharingScope } from '../lib/access';
 
 const searchQuerySchema = z.object({ q: z.string().min(1).max(100) });
 
@@ -59,10 +60,27 @@ function folded(value: PgColumn | string): SQL {
  * o volume atual da agência (dezenas de registros).
  */
 export async function registerSearchRoutes(app: FastifyInstance): Promise<void> {
-  app.get<{ Querystring: { q: string } }>('/search', { preHandler: requireAuth }, async (request) => {
+  app.get<{ Querystring: { q: string } }>('/search', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
     const { q } = searchQuerySchema.parse(request.query);
     const pattern = `%${escapeLikePattern(q)}%`;
     const useFuzzy = q.trim().length >= FUZZY_MIN_LENGTH;
+
+    /**
+     * P0-02 (auditoria de release readiness, 22/09/2026): `/search` lia
+     * usuário/cliente de QUALQUER organização, sem filtro nenhum — mesma
+     * falha estrutural já fechada em `/conversations`/`/executions`. Master
+     * mantém o alcance amplo que já tinha; demais usuários só encontram
+     * colega de organização e cliente da própria organização.
+     */
+    const isMaster = user.roles.includes('master');
+    const scope = isMaster ? null : await tenantSharingScope(user.id);
+    const userScopeCondition = scope === null ? undefined : scope.teammateUserIds.length > 0 ? inArray(schema.users.id, scope.teammateUserIds) : sql`false`;
+    const clientScopeCondition = scope === null ? undefined : scope.allowedClientIds.length > 0 ? inArray(schema.clients.id, scope.allowedClientIds) : sql`false`;
 
     /** Casa por substring (ignorando acento) em qualquer uma das colunas. */
     const substringMatch = (...columns: PgColumn[]): SQL =>
@@ -86,7 +104,7 @@ export async function registerSearchRoutes(app: FastifyInstance): Promise<void> 
       db
         .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, avatarUrl: schema.users.avatarUrl })
         .from(schema.users)
-        .where(and(isNull(schema.users.deletedAt), matches(schema.users.name, schema.users.name)))
+        .where(and(isNull(schema.users.deletedAt), matches(schema.users.name, schema.users.name), userScopeCondition))
         .orderBy(ranked(schema.users.name, schema.users.name))
         .limit(10),
       db
@@ -94,7 +112,7 @@ export async function registerSearchRoutes(app: FastifyInstance): Promise<void> 
         .from(schema.clients)
         // Slug também: quem cola o slug do ClickUp ("abitte-urbanismo")
         // estava recebendo "nenhum resultado" com o cliente na frente.
-        .where(and(isNull(schema.clients.deletedAt), matches(schema.clients.name, schema.clients.name, schema.clients.slug)))
+        .where(and(isNull(schema.clients.deletedAt), matches(schema.clients.name, schema.clients.name, schema.clients.slug), clientScopeCondition))
         .orderBy(ranked(schema.clients.name, schema.clients.name, schema.clients.slug))
         .limit(10),
       db
