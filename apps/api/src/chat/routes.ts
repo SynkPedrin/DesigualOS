@@ -9,7 +9,7 @@ import {
   resolveDefaultProjectForClient,
 } from '@desigual-os/context-engine';
 import { route, type RouterDecision } from '@desigual-os/router';
-import { dispatchChatMessage } from '@desigual-os/orchestrator';
+import { dispatchChatMessage, touchConversation } from '@desigual-os/orchestrator';
 import {
   AGENT_NAMES,
   STUDIO_BRAND_PLACEMENTS,
@@ -282,6 +282,10 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           metadata: attachments.length ? { attachments } : {},
         })
         .returning();
+
+      // Mensagem nova envelhece a conversa: sem isto ela não sobe na barra
+      // lateral (ordenada por updated_at). Ver touchConversation.
+      await touchConversation(conversationId);
 
       /**
        * QUEM RESPONDEU POR ÚLTIMO nesta conversa. Sai da estrutura que já

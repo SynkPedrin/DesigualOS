@@ -48,7 +48,13 @@ export const directMessageThreadPrefs = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     favoritedAt: timestamp('favorited_at', { withTimezone: true }),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    // `$onUpdate` pelo mesmo motivo de `timestampColumns` (ver _shared.ts):
+    // `defaultNow()` sozinho só vale no INSERT, e esta tabela é atualizada
+    // sempre pelo mesmo caminho (favoritar/arquivar conversa).
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.userId, table.partnerId] }),

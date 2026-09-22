@@ -1,9 +1,11 @@
 import { jsonb, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, softDeleteColumn, timestampColumns } from './_shared';
 import { users } from './identity';
+import { organizations } from './organizations';
 
 export const clients = pgTable('clients', {
   ...idColumn,
+  organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'set null' }),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   status: text('status').notNull().default('active'),

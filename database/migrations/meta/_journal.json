@@ -239,6 +239,34 @@
       "when": 1789580300805,
       "tag": "0033_black_ulik",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1789751487908,
+      "tag": "0034_sharp_spencer_smythe",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1789752000000,
+      "tag": "0035_tenant_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1789994500000,
+      "tag": "0036_protect_tenant_memberships",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1789995000000,
+      "tag": "0037_restrict_public_data_api",
+      "breakpoints": true
     }
   ]
 }

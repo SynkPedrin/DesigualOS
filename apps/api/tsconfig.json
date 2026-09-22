@@ -4,5 +4,9 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/scripts/_*.ts",
+    "src/scripts/_*.mts"
+  ]
 }

@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
-import { and, count, desc, eq, gte, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { registerAutomationJob, removeAutomationJob, runAutomationNow } from '@desigual-os/orchestrator';
 import { AGENT_NAMES, type AgentName } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 
 const agentNameSchema = z.enum([...AGENT_NAMES] as [AgentName, ...AgentName[]]);
 
@@ -52,15 +53,25 @@ function serializeAutomation(row: typeof schema.automations.$inferSelect) {
  * qualquer automação, não só as próprias.
  */
 export async function registerAutomationRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/automations', { preHandler: requireAuth }, async () => {
-    const rows = await db.select().from(schema.automations).orderBy(desc(schema.automations.createdAt));
+  app.addHook('preHandler', async (request, reply) => {
+    await requireAuth(request, reply);
+    if (!reply.sent) await requireTenant(request, reply);
+  });
+  app.get('/automations', async (request, reply) => {
+    if (!request.authUser) { reply.code(401); return { error: 'Not authenticated' }; }
+    const rows = await db.select().from(schema.automations)
+      .where(eq(schema.automations.organizationId, request.tenantContext!.organizationId))
+      .orderBy(desc(schema.automations.createdAt));
     return { automations: rows.map(serializeAutomation) };
   });
 
   // Registrada antes das rotas com :id para não disputar matching com
   // /automations/:id/... (Fastify dá prioridade a rota estática, mas assim
   // a intenção fica explícita).
-  app.get('/automations/metrics', { preHandler: requireAuth }, async () => {
+  app.get('/automations/metrics', async (request) => {
+    const tenantFilter = eq(schema.automations.organizationId, request.tenantContext!.organizationId);
+    const runFilter = inArray(schema.automationRuns.automationId,
+      db.select({ id: schema.automations.id }).from(schema.automations).where(tenantFilter));
     const DAY_MS = 24 * 60 * 60 * 1000;
     const now = new Date();
     // Janelas "hoje/ontem/mês" seguem o timezone do servidor, como combinado.
@@ -73,7 +84,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     const fourteenDaysAgo = new Date(now.getTime() - 14 * DAY_MS);
 
     async function countRuns(from: Date, to?: Date): Promise<number> {
-      const conditions = [gte(schema.automationRuns.startedAt, from)];
+      const conditions = [runFilter, gte(schema.automationRuns.startedAt, from)];
       if (to) {
         conditions.push(lt(schema.automationRuns.startedAt, to));
       }
@@ -85,7 +96,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     }
 
     async function successRate(from: Date, to?: Date): Promise<number | null> {
-      const conditions = [gte(schema.automationRuns.startedAt, from)];
+      const conditions = [runFilter, gte(schema.automationRuns.startedAt, from)];
       if (to) {
         conditions.push(lt(schema.automationRuns.startedAt, to));
       }
@@ -103,13 +114,13 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     const [activeRow] = await db
       .select({ value: count() })
       .from(schema.automations)
-      .where(eq(schema.automations.enabled, true));
+      .where(and(tenantFilter, eq(schema.automations.enabled, true)));
     const activeCount = activeRow?.value ?? 0;
 
     const [createdMonthRow] = await db
       .select({ value: count() })
       .from(schema.automations)
-      .where(gte(schema.automations.createdAt, startOfMonth));
+      .where(and(tenantFilter, gte(schema.automations.createdAt, startOfMonth)));
     const createdThisMonth = createdMonthRow?.value ?? 0;
 
     const runsToday = await countRuns(startOfToday);
@@ -124,7 +135,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     const [anyEstimated] = await db
       .select({ id: schema.automations.id })
       .from(schema.automations)
-      .where(isNotNull(schema.automations.estimatedMinutesSaved))
+      .where(and(tenantFilter, isNotNull(schema.automations.estimatedMinutesSaved)))
       .limit(1);
     let timeSavedMinutes: number | null = null;
     if (anyEstimated) {
@@ -132,7 +143,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         .select({ total: sql<number>`coalesce(sum(${schema.automations.estimatedMinutesSaved}), 0)::int` })
         .from(schema.automationRuns)
         .innerJoin(schema.automations, eq(schema.automationRuns.automationId, schema.automations.id))
-        .where(gte(schema.automationRuns.startedAt, startOfMonth));
+        .where(and(tenantFilter, gte(schema.automationRuns.startedAt, startOfMonth)));
       timeSavedMinutes = Number(sumRow?.total ?? 0);
     }
 
@@ -159,6 +170,11 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         return { error: 'Not authenticated' };
       }
 
+      const tenant = request.tenantContext!;
+      if (body.client_id && !(await clientBelongsToTenant(body.client_id, tenant.organizationId))) {
+        reply.code(403); return { error: 'Client is outside your organization' };
+      }
+
       const [conversation] = await db
         .insert(schema.conversations)
         .values({ userId: user.id, clientId: body.client_id ?? null, title: `Automação: ${body.name}` })
@@ -167,6 +183,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       const [automation] = await db
         .insert(schema.automations)
         .values({
+          organizationId: tenant.organizationId,
           name: body.name,
           createdBy: user.id,
           agent: body.agent,
@@ -207,6 +224,12 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (!existing) {
         reply.code(404);
         return { error: `Automation '${request.params.id}' not found` };
+      }
+      if (existing.organizationId !== request.tenantContext!.organizationId) {
+        reply.code(403); return { error: 'Automation is outside your organization' };
+      }
+      if (body.client_id && !(await clientBelongsToTenant(body.client_id, request.tenantContext!.organizationId))) {
+        reply.code(403); return { error: 'Client is outside your organization' };
       }
 
       const nextEnabled = body.enabled ?? existing.enabled;
@@ -255,12 +278,15 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     { preHandler: [requireAuth, requirePermission('chat', 'write')] },
     async (request, reply) => {
       const [existing] = await db
-        .select({ id: schema.automations.id })
+        .select({ id: schema.automations.id, organizationId: schema.automations.organizationId })
         .from(schema.automations)
         .where(eq(schema.automations.id, request.params.id));
       if (!existing) {
         reply.code(404);
         return { error: `Automation '${request.params.id}' not found` };
+      }
+      if (existing.organizationId !== request.tenantContext!.organizationId) {
+        reply.code(403); return { error: 'Automation is outside your organization' };
       }
 
       await runAutomationNow(existing.id);
@@ -279,6 +305,9 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         reply.code(404);
         return { error: `Automation '${request.params.id}' not found` };
       }
+      if (existing.organizationId !== request.tenantContext!.organizationId) {
+        reply.code(403); return { error: 'Automation is outside your organization' };
+      }
 
       await removeAutomationJob(existing.id, existing.schedule);
       await db.delete(schema.automations).where(eq(schema.automations.id, existing.id));
@@ -296,6 +325,12 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (!automation) {
         reply.code(404);
         return { error: `Automation '${request.params.id}' not found` };
+      }
+
+      if (!request.authUser) { reply.code(401); return { error: 'Not authenticated' }; }
+      const [scoped] = await db.select({ organizationId: schema.automations.organizationId }).from(schema.automations).where(eq(schema.automations.id, request.params.id));
+      if (!scoped || scoped.organizationId !== request.tenantContext!.organizationId) {
+        reply.code(403); return { error: 'Automation is outside your organization' };
       }
 
       const rows = await db

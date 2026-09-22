@@ -4,6 +4,7 @@ import { agentNameEnum } from './enums';
 import { clients } from './clients';
 import { conversations } from './conversation';
 import { users } from './identity';
+import { organizations } from './organizations';
 
 /**
  * Automação agendada criada pelo usuário (pedido do usuário, 2026-09-03:
@@ -21,6 +22,7 @@ export const automations = pgTable(
   'automations',
   {
     ...idColumn,
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     createdBy: uuid('created_by')
       .notNull()
@@ -38,6 +40,7 @@ export const automations = pgTable(
   },
   (table) => ({
     createdByIdx: index('automations_created_by_idx').on(table.createdBy),
+    organizationIdx: index('automations_organization_id_idx').on(table.organizationId),
   }),
 );
 

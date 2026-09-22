@@ -16,7 +16,7 @@ import {
   STUDIO_STYLES,
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
-import { hasClientAccess } from '../lib/access';
+import { hasClientAccess, canActOnStudioEntity } from '../lib/access';
 import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
 import { deleteStudioAssetFile, uploadUserFile } from '../lib/storage';
 import { recordOttoFeedbackLearning } from './otto-learnings';
@@ -525,10 +525,9 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       return { error: `Studio asset '${request.params.id}' not found` };
     }
 
-    const isMaster = request.authUser.roles.includes('master');
-    const canWriteForClient =
-      hasPermission(request.authUser.permissions, 'studio', 'write') && (await hasClientAccess(request.authUser, asset.clientId));
-    if (!isMaster && !canWriteForClient) {
+    if (!canActOnStudioEntity(request.authUser, asset.userId, {
+      hasStudioWrite: hasPermission(request.authUser.permissions, 'studio', 'write'),
+    })) {
       reply.code(403);
       return { error: 'No access granted to this asset' };
     }
@@ -634,11 +633,12 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     }
 
     // Mesmo critério do DELETE: dono, master ou studio:write no cliente.
-    const isMaster = request.authUser.roles.includes('master');
-    const isOwner = job.requestedBy !== null && job.requestedBy === request.authUser.id;
-    const canWriteForClient =
-      hasPermission(request.authUser.permissions, 'studio', 'write') && (await hasClientAccess(request.authUser, job.clientId));
-    if (!isMaster && !isOwner && !canWriteForClient) {
+    // Posse real: cancelar/apagar job dos outros gasta GPU alheia e destrói
+    // arquivo. Ver canActOnStudioEntity para o porquê de não usar
+    // hasClientAccess aqui.
+    if (!canActOnStudioEntity(request.authUser, job.requestedBy, {
+      hasStudioWrite: hasPermission(request.authUser.permissions, 'studio', 'write'),
+    })) {
       reply.code(403);
       return { error: 'No access granted to this job' };
     }
@@ -684,11 +684,12 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       return { error: `Studio job '${request.params.id}' not found` };
     }
 
-    const isMaster = request.authUser.roles.includes('master');
-    const isOwner = job.requestedBy !== null && job.requestedBy === request.authUser.id;
-    const canWriteForClient =
-      hasPermission(request.authUser.permissions, 'studio', 'write') && (await hasClientAccess(request.authUser, job.clientId));
-    if (!isMaster && !isOwner && !canWriteForClient) {
+    // Posse real: cancelar/apagar job dos outros gasta GPU alheia e destrói
+    // arquivo. Ver canActOnStudioEntity para o porquê de não usar
+    // hasClientAccess aqui.
+    if (!canActOnStudioEntity(request.authUser, job.requestedBy, {
+      hasStudioWrite: hasPermission(request.authUser.permissions, 'studio', 'write'),
+    })) {
       reply.code(403);
       return { error: 'No access granted to this job' };
     }
@@ -800,10 +801,13 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
         return { error: `Studio asset '${request.params.id}' not found` };
       }
 
-      // Mesmo critério do DELETE /studio/assets/:id: studio:write no geral +
-      // acesso ao cliente dono do asset (master passa direto).
+      // Mesmo critério do DELETE /studio/assets/:id: o veredito entra no
+      // aprendizado do Otto em nome de quem criou a peça, então não pode ser
+      // emitido por terceiro.
       const isMaster = request.authUser.roles.includes('master');
-      if (!isMaster && !(await hasClientAccess(request.authUser, asset.clientId))) {
+      if (!canActOnStudioEntity(request.authUser, asset.userId, {
+        hasStudioWrite: hasPermission(request.authUser.permissions, 'studio', 'write'),
+      })) {
         reply.code(403);
         return { error: 'No access granted to this asset' };
       }

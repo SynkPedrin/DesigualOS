@@ -7,6 +7,7 @@ import type { ClickUpTaskSummary } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { hasClientAccess } from '../lib/access';
+import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 import { resolveClickUpAccess } from '../integrations/access';
 
 const logger = createLogger({ service: 'clients' });
@@ -79,7 +80,17 @@ const grantAccessSchema = z.object({
 });
 
 export async function registerClientRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/clients', { preHandler: [requireAuth, requirePermission('clients', 'read')] }, async () => {
+  app.addHook('preHandler', async (request, reply) => {
+    await requireAuth(request, reply);
+    if (reply.sent) return;
+    await requireTenant(request, reply);
+    if (reply.sent) return;
+    const { id } = request.params as { id?: string };
+    if (id && !(await clientBelongsToTenant(id, request.tenantContext!.organizationId))) {
+      reply.code(404).send({ error: 'Client not found' });
+    }
+  });
+  app.get('/clients', { preHandler: [requireAuth, requirePermission('clients', 'read')] }, async (request) => {
     const rows = await db
       .select({
         id: schema.clients.id,
@@ -89,6 +100,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         clickupListId: schema.clients.clickupListId,
       })
       .from(schema.clients)
+      .where(eq(schema.clients.organizationId, request.tenantContext!.organizationId))
       .orderBy(desc(schema.clients.createdAt));
 
     // A listagem precisa do vínculo também: sem isso o card na tela de
@@ -113,7 +125,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
     async (request, reply) => {
       const body = createClientSchema.parse(request.body);
 
-      const [client] = await db.insert(schema.clients).values(body).onConflictDoNothing({ target: schema.clients.slug }).returning();
+      const [client] = await db.insert(schema.clients).values({ ...body, organizationId: request.tenantContext!.organizationId }).onConflictDoNothing({ target: schema.clients.slug }).returning();
 
       if (!client) {
         reply.code(409);
@@ -230,7 +242,9 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         return { error: `Client '${clientId}' not found` };
       }
 
-      const [targetUser] = await db.select().from(schema.users).where(eq(schema.users.email, body.email));
+      const [targetUser] = await db.select({ id: schema.users.id }).from(schema.users)
+        .innerJoin(schema.organizationMembers, eq(schema.organizationMembers.userId, schema.users.id))
+        .where(and(eq(schema.users.email, body.email), eq(schema.organizationMembers.organizationId, request.tenantContext!.organizationId)));
       if (!targetUser) {
         reply.code(404);
         return { error: `No Desigual OS account found for '${body.email}'. Use POST /admin/invite first to create one.` };

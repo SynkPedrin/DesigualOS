@@ -19,3 +19,4 @@ export * from './observability';
 export * from './messaging';
 export * from './automations';
 export * from './agent-runtime';
+export * from './organizations';
