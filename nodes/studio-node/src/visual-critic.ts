@@ -1,5 +1,30 @@
 import { z } from 'zod';
+import sharp from 'sharp';
 import { runVisualQA, VisualQAUnavailableError } from './visual-qa';
+
+/**
+ * O crítico não precisa do PNG inteiro.
+ *
+ * Achado real (16/09/2026, job STU-MU4JNHW41060D7): o final QA manda DUAS
+ * imagens na mesma chamada e, com o PNG de 2048px do upscale somado ao
+ * original, o Ollama respondeu **HTTP 400** e o passo inteiro caiu. Um PNG
+ * de 2048x2048 vira ~13MB em base64; dois estouram o limite de corpo.
+ *
+ * Reduzir para 1024px em JPEG não perde nada do que importa aqui: o modelo
+ * reamostra a imagem para uma resolução muito menor antes de olhar, e o que
+ * se avalia (mão fundida, rosto torto, halo de sharpen) continua visível.
+ * Também corta memória e tempo de transferência - a máquina do crítico é a
+ * mesma que roda o resto do worker.
+ */
+const CRITIC_MAX_DIMENSION = 1024;
+
+async function paraOCritico(bytes: Buffer): Promise<Buffer> {
+  return sharp(bytes)
+    .rotate() // respeita EXIF antes de redimensionar
+    .resize(CRITIC_MAX_DIMENSION, CRITIC_MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 88 })
+    .toBuffer();
+}
 
 /**
  * Visual Critic — a crítica estruturada de uma imagem JÁ gerada.
@@ -193,11 +218,12 @@ async function critiqueViaOllama(input: CriticInput, config: CriticConfig): Prom
     .filter(Boolean)
     .join('; ');
 
+  const reduzida = await paraOCritico(input.imageBytes);
   const body = {
     model: config.ollamaModel,
     system: CRITIC_SYSTEM_PROMPT,
     prompt: `Original briefing: "${input.briefing}"${criticalNote ? `\nConstraints: ${criticalNote}.` : ''}\nEvaluate the attached generated image against it.`,
-    images: [input.imageBytes.toString('base64')],
+    images: [reduzida.toString('base64')],
     stream: false,
     // Medido: com think=true o modelo gasta todo o orçamento de tokens no
     // canal de raciocínio e devolve `response` VAZIO (14,6s desperdiçados,
@@ -367,11 +393,12 @@ export async function critiqueUpscale(
   config: CriticConfig,
 ): Promise<UpscaleQAResult> {
   const startedAt = Date.now();
+  const [antes, depois] = await Promise.all([paraOCritico(input.before), paraOCritico(input.after)]);
   const body = {
     model: config.ollamaModel,
     system: UPSCALE_QA_SYSTEM,
     prompt: `Original briefing: "${input.briefing}"\nFirst image = BEFORE upscale. Second image = AFTER upscale. Did the upscale damage it?`,
-    images: [input.before.toString('base64'), input.after.toString('base64')],
+    images: [antes.toString('base64'), depois.toString('base64')],
     stream: false,
     think: false,
     format: UPSCALE_QA_FORMAT,
@@ -411,4 +438,167 @@ export function decideKeepUpscaled(qa: z.infer<typeof upscaleQASchema>): boolean
     qa.logo_product_intact >= UPSCALE_QA_MIN.logo &&
     qa.oversharpen_free >= UPSCALE_QA_MIN.oversharpen
   );
+}
+
+/* ==========================================================================
+ * CRITIC V2 — localiza o defeito, e só pontua o que existe na imagem.
+ * ========================================================================== */
+
+/**
+ * Diferenças para o critic da fase 1, ambas vindas de erro medido:
+ *
+ * 1. Recebe a RUBRICA (ver rubric.ts) e pontua `null` no que não se aplica.
+ *    Antes o schema exigia `anatomy` sempre, e o modelo inventava nota numa
+ *    foto de produto sem gente - foi assim que uma peça boa foi reprovada.
+ *
+ * 2. Devolve `region` normalizada por defeito. Sem coordenada não existe
+ *    máscara, e sem máscara "correção local" degenera em regerar tudo.
+ */
+const issueV2Schema = z.object({
+  type: z.string(),
+  severity: z.enum(['low', 'medium', 'high']),
+  description: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  region: z
+    .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
+    .nullable(),
+});
+
+const criticV2Schema = z.object({
+  scores: z.record(z.union([z.number(), z.null()])),
+  issues: z.array(issueV2Schema),
+  overall_confidence: z.number().min(0).max(1),
+});
+
+export type CriticV2Issue = z.infer<typeof issueV2Schema>;
+export type CriticV2Result = z.infer<typeof criticV2Schema> & { model: string; latencyMs: number };
+
+const CRITIC_V2_FORMAT = {
+  type: 'object',
+  properties: {
+    scores: { type: 'object', additionalProperties: { type: ['number', 'null'] } },
+    issues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string' },
+          severity: { type: 'string', enum: ['low', 'medium', 'high'] },
+          description: { type: 'string' },
+          confidence: { type: 'number' },
+          region: {
+            type: ['object', 'null'],
+            properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } },
+            required: ['x', 'y', 'width', 'height'],
+          },
+        },
+        required: ['type', 'severity', 'description', 'confidence', 'region'],
+      },
+    },
+    overall_confidence: { type: 'number' },
+  },
+  required: ['scores', 'issues', 'overall_confidence'],
+} as const;
+
+const CRITIC_V2_SYSTEM = [
+  'You are a rigorous visual QA critic for AI-generated (Flux) commercial imagery.',
+  'The image IS AI-generated - never claim it is a real photograph.',
+  'Score ONLY the applicable criteria you are given, 0-10, and return null for every criterion listed as not applicable.',
+  'Never invent a score for something that is not visible in the image.',
+  'For every concrete defect you can see, return an issue with a NORMALIZED bounding box:',
+  'x,y = top-left corner as fractions of width/height (0..1); width,height = size as fractions (0..1).',
+  'The box must tightly contain the defect and stay inside the image (x+width <= 1, y+height <= 1).',
+  'Use region null only when the defect is genuinely global (e.g. overall composition).',
+  'Be harsh: typical Flux output scores 6-8.',
+].join(' ');
+
+export async function critiqueImageV2(
+  input: { imageBytes: Buffer; briefing: string; rubricPrompt: string },
+  config: CriticConfig,
+): Promise<CriticV2Result> {
+  const reduzida = await paraOCritico(input.imageBytes);
+  const startedAt = Date.now();
+  const body = {
+    model: config.ollamaModel,
+    system: CRITIC_V2_SYSTEM,
+    prompt: `Original briefing: "${input.briefing}"\n${input.rubricPrompt}\nEvaluate the attached generated image.`,
+    images: [reduzida.toString('base64')],
+    stream: false,
+    think: false,
+    format: CRITIC_V2_FORMAT,
+    options: { temperature: 0, num_predict: 1200 },
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(`${config.ollamaUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+  } catch (error) {
+    throw new CriticUnavailableError(`critic v2 não alcançou ${config.ollamaUrl}: ${String(error)}`);
+  }
+  if (!response.ok) throw new CriticUnavailableError(`critic v2: Ollama respondeu ${response.status}`);
+  const payload = (await response.json()) as { response?: string };
+  if (!payload.response) throw new CriticUnavailableError('critic v2 devolveu resposta vazia');
+
+  return { ...criticV2Schema.parse(JSON.parse(payload.response)), model: config.ollamaModel, latencyMs: Date.now() - startedAt };
+}
+
+/** Classifica conteúdo da imagem (ver content-classifier.ts). */
+export async function classifyContent(
+  input: { imageBytes: Buffer; briefing: string },
+  config: CriticConfig,
+  deps: { systemPrompt: string; format: unknown },
+): Promise<{ raw: unknown; latencyMs: number }> {
+  const reduzida = await paraOCritico(input.imageBytes);
+  const startedAt = Date.now();
+  const body = {
+    model: config.ollamaModel,
+    system: deps.systemPrompt,
+    prompt: `The briefing asked for: "${input.briefing}". Now inventory what is ACTUALLY visible in the attached image.`,
+    images: [reduzida.toString('base64')],
+    stream: false,
+    think: false,
+    format: deps.format,
+    options: { temperature: 0, num_predict: 500 },
+  };
+  const response = await fetch(`${config.ollamaUrl}/api/generate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(config.timeoutMs),
+  }).catch((e) => { throw new CriticUnavailableError(`classificador não alcançou ${config.ollamaUrl}: ${String(e)}`); });
+  if (!response.ok) throw new CriticUnavailableError(`classificador: Ollama respondeu ${response.status}`);
+  const payload = (await response.json()) as { response?: string };
+  if (!payload.response) throw new CriticUnavailableError('classificador devolveu resposta vazia');
+  return { raw: JSON.parse(payload.response), latencyMs: Date.now() - startedAt };
+}
+
+/** Comparação pareada A x B (ver pairwise.ts para a regra de decisão). */
+export async function comparePair(
+  input: { a: Buffer; b: Buffer; prompt: string },
+  config: CriticConfig,
+  deps: { systemPrompt: string; format: unknown },
+): Promise<{ raw: unknown; latencyMs: number }> {
+  const [ra, rb] = await Promise.all([paraOCritico(input.a), paraOCritico(input.b)]);
+  const startedAt = Date.now();
+  const body = {
+    model: config.ollamaModel,
+    system: deps.systemPrompt,
+    prompt: input.prompt,
+    images: [ra.toString('base64'), rb.toString('base64')],
+    stream: false,
+    think: false,
+    format: deps.format,
+    options: { temperature: 0, num_predict: 900 },
+  };
+  const response = await fetch(`${config.ollamaUrl}/api/generate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(config.timeoutMs),
+  }).catch((e) => { throw new CriticUnavailableError(`pairwise não alcançou ${config.ollamaUrl}: ${String(e)}`); });
+  if (!response.ok) throw new CriticUnavailableError(`pairwise: Ollama respondeu ${response.status}`);
+  const payload = (await response.json()) as { response?: string };
+  if (!payload.response) throw new CriticUnavailableError('pairwise devolveu resposta vazia');
+  return { raw: JSON.parse(payload.response), latencyMs: Date.now() - startedAt };
 }

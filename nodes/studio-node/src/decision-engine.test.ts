@@ -32,6 +32,20 @@ describe('decideQuality', () => {
     expect(decision.failedDimensions).toContain('composition');
   });
 
+  /**
+   * REGRESSÃO do caso real: anatomy=4 com hands=10 e face=10 numa foto de
+   * produto. O agregado sozinho é ruído do crítico e não pode reprovar.
+   */
+  it('não reprova por anatomy agregado quando hands e face passam', () => {
+    const decision = decideQuality(ctx({ critic: critic({ anatomy: 4, hands: 10, face: 10, overall_score: 7.5, artifact_score: 7 }) }));
+    expect(decision.action).toBe('approve');
+  });
+
+  it('reprova por anatomy quando uma das concretas também falha', () => {
+    const decision = decideQuality(ctx({ critic: critic({ anatomy: 4, hands: 3, face: 9 }) }));
+    expect(decision.failedDimensions).toContain('anatomy');
+  });
+
   it('manda corrigir localmente quando só mão/rosto reprovam', () => {
     const decision = decideQuality(ctx({ critic: critic({ hands: 4, anatomy: 4 }) }));
     expect(decision.action).toBe('local_edit');
@@ -114,6 +128,36 @@ describe('selectBestCandidate', () => {
     expect(best.payload).toBe('limpa');
   });
 
+  /**
+   * REGRESSÃO do caso real STU-MU4GK4TT4B396E: três tentativas empatadas em
+   * overall (7,5) e artifact (8); o desempate por recência entregou a
+   * tentativa com mãos destruídas (hands=3, defeito `high`) em vez da
+   * limpa (hands=10, sem defeito grave).
+   */
+  it('com nota empatada, escolhe a que tem MENOS dano concreto, não a mais nova', () => {
+    const limpa = critic({ overall_score: 7.5, artifact_score: 8, hands: 10, face: 10, problems: [] });
+    const quebrada = critic({
+      overall_score: 7.5, artifact_score: 8, hands: 3, face: 10,
+      problems: [{ region: 'hands', severity: 'high', description: 'dedos fundidos' }],
+    });
+    const best = selectBestCandidate([
+      { attempt: 1, critic: limpa, payload: 'limpa' },
+      { attempt: 2, critic: quebrada, payload: 'quebrada' },
+      { attempt: 3, critic: quebrada, payload: 'quebrada-3' },
+    ]);
+    expect(best.payload).toBe('limpa');
+  });
+
+  it('empate total em dano ainda desempata por mão/rosto melhor', () => {
+    const pior = critic({ overall_score: 8, artifact_score: 8, hands: 4, face: 9, problems: [] });
+    const melhor = critic({ overall_score: 8, artifact_score: 8, hands: 9, face: 9, problems: [] });
+    const best = selectBestCandidate([
+      { attempt: 1, critic: pior, payload: 'pior' },
+      { attempt: 2, critic: melhor, payload: 'melhor' },
+    ]);
+    expect(best.payload).toBe('melhor');
+  });
+
   it('falha alto quando não há candidato (nunca devolve undefined silencioso)', () => {
     expect(() => selectBestCandidate([])).toThrow(/nenhuma tentativa/);
   });
@@ -127,11 +171,35 @@ describe('buildCorrectionDirective', () => {
     expect(directive).toMatch(/fused fingers/);
   });
 
+  /**
+   * REGRESSÃO do caso real STU-MU4GK4TT4B396E (16/09/2026). A tentativa 1
+   * reprovava só por `anatomy` e a diretiva saía VAZIA - o loop regerava
+   * com o mesmo prompt e seed nova, e o sorteio inseriu mãos deformadas
+   * numa peça que não tinha mão. Diretiva vazia nunca mais pode virar
+   * rerroll.
+   */
+  it('devolve null quando não há correção dirigida possível', () => {
+    const c = critic({
+      overall_score: 7.5, anatomy: 4, hands: 10, face: 10, artifact_score: 7,
+      problems: [{ region: 'background', severity: 'low', description: 'fundo escuro' }],
+    });
+    const decision = decideQuality(ctx({ critic: c }));
+    expect(buildCorrectionDirective(decision, c)).toBeNull();
+  });
+
+  it('a região body agora produz orientação real (antes ficava sem texto)', () => {
+    const c = critic({ anatomy: 3, hands: 3, problems: [] });
+    const d = decideQuality(ctx({ critic: c }));
+    const dir = buildCorrectionDirective(d, c);
+    expect(dir).not.toBeNull();
+    expect(dir!.length).toBeGreaterThan(10);
+  });
+
   it('fica curto - prompt de correção longo dilui o briefing original', () => {
     const c = critic({
       hands: 2, face: 2, composition: 2, prompt_alignment: 2,
       problems: Array.from({ length: 8 }, (_, i) => ({ region: 'hands' as const, severity: 'high' as const, description: `defeito muito longo número ${i} `.repeat(20) })),
     });
-    expect(buildCorrectionDirective(decideQuality(ctx({ critic: c })), c).length).toBeLessThan(700);
+    expect(buildCorrectionDirective(decideQuality(ctx({ critic: c })), c)!.length).toBeLessThan(700);
   });
 });

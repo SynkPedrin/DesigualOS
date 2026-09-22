@@ -82,9 +82,17 @@ function failedDimensions(critic: CriticResult, t: QualityThresholds, ctx: Decis
   if (critic.artifact_score < t.artifact) failed.push('artifact');
   if (critic.prompt_alignment < t.promptAlignment) failed.push('prompt_alignment');
   if (critic.composition < t.composition) failed.push('composition');
-  if (critic.anatomy < t.region) failed.push('anatomy');
   if (critic.hands < t.region) failed.push('hands');
   if (critic.face < t.region) failed.push('face');
+  // `anatomy` é AGREGADO; `hands` e `face` são concretos. Medido ao vivo
+  // (job STU-MU4GK4TT4B396E, 16/09/2026): numa foto de produto cuja única
+  // anatomia visível era um tornozelo correto, o crítico deu
+  // anatomy=4.0 junto de hands=10 e face=10 - contradizendo as próprias
+  // subnotas. Esse falso negativo reprovou uma peça boa e disparou uma
+  // "correção" que introduziu mãos deformadas numa imagem que não tinha
+  // mão nenhuma (tentativa 2: hands=3, face=0). Quando as duas dimensões
+  // concretas passam, a agregada sozinha é ruído e não reprova.
+  if (critic.anatomy < t.region && (critic.hands < t.region || critic.face < t.region)) failed.push('anatomy');
   // Identidade/produto só entram quando o job disse que importam: cobrar
   // fidelidade de produto numa paisagem reprova imagem boa à toa.
   if (ctx.identityCritical && critic.face < t.identity) failed.push('identity');
@@ -175,6 +183,11 @@ export interface Candidate<T> {
   payload: T;
 }
 
+/** Peso do dano visível: um defeito `high` numa região que o cliente olha primeiro pesa mais que três `low` no fundo. */
+function severityWeight(candidate: Candidate<unknown>): number {
+  return candidate.critic.problems.reduce((total, problem) => total + (problem.severity === 'high' ? 4 : problem.severity === 'medium' ? 2 : 1), 0);
+}
+
 export function selectBestCandidate<T>(candidates: Candidate<T>[]): Candidate<T> {
   if (candidates.length === 0) throw new Error('selectBestCandidate: nenhuma tentativa registrada');
   return candidates.reduce((best, candidate) => {
@@ -184,6 +197,27 @@ export function selectBestCandidate<T>(candidates: Candidate<T>[]): Candidate<T>
     if (candidate.critic.artifact_score !== best.critic.artifact_score) {
       return candidate.critic.artifact_score > best.critic.artifact_score ? candidate : best;
     }
+    /**
+     * Medido ao vivo (job STU-MU4GK4TT4B396E, 16/09/2026): as três
+     * tentativas empataram em overall (7,5) E em artifact (8), e o
+     * desempate por "tentativa mais nova" escolheu a tentativa 3 - que
+     * tinha hands=3 e um defeito `high` de dedos fundidos - em cima da
+     * tentativa 1, que tinha hands=10 e nenhum defeito grave. Entregou a
+     * PIOR das três.
+     *
+     * Com nota igual, quem tem menos dano concreto ganha. Recência só
+     * desempata o que continuar empatado depois disso.
+     */
+    const danoCandidato = severityWeight(candidate);
+    const danoMelhor = severityWeight(best);
+    if (danoCandidato !== danoMelhor) return danoCandidato < danoMelhor ? candidate : best;
+
+    // Mão e rosto são o que o olho encontra primeiro; com o resto igual,
+    // a peça com a mão melhor é a entregável.
+    const minCandidato = Math.min(candidate.critic.hands, candidate.critic.face);
+    const minMelhor = Math.min(best.critic.hands, best.critic.face);
+    if (minCandidato !== minMelhor) return minCandidato > minMelhor ? candidate : best;
+
     return candidate.attempt > best.attempt ? candidate : best;
   });
 }
@@ -194,18 +228,35 @@ export function selectBestCandidate<T>(candidates: Candidate<T>[]): Candidate<T>
  * prompt original e o FLUX.2 passa a perseguir o texto da crítica em vez da
  * peça pedida.
  */
-export function buildCorrectionDirective(decision: QualityDecision, critic: CriticResult): string {
+export function buildCorrectionDirective(decision: QualityDecision, critic: CriticResult): string | null {
   const severe = critic.problems
-    .filter((problem) => problem.severity === 'high')
+    .filter((problem) => problem.severity === 'high' || problem.severity === 'medium')
     .slice(0, 3)
     .map((problem) => problem.description.replace(/\s+/g, ' ').trim().slice(0, 140));
 
   const focus: string[] = [];
   if (decision.targetRegions.includes('hands')) focus.push('anatomically correct hands with five clearly separated fingers');
   if (decision.targetRegions.includes('face')) focus.push('a sharp, natural, symmetric face with realistic skin texture');
+  if (decision.targetRegions.includes('body')) focus.push('correct human body proportions and natural limb anatomy');
   if (decision.failedDimensions.includes('composition')) focus.push('a cleaner, more deliberate commercial composition');
   if (decision.failedDimensions.includes('prompt_alignment')) focus.push('strict adherence to the original briefing');
+  if (decision.failedDimensions.includes('artifact')) focus.push('clean edges and surfaces without generation artifacts');
 
   const parts = [focus.length > 0 ? `Render ${focus.join(', ')}.` : '', severe.length > 0 ? `Avoid: ${severe.join('; ')}.` : ''];
-  return parts.filter(Boolean).join(' ');
+  const directive = parts.filter(Boolean).join(' ').trim();
+
+  /**
+   * `null` = NÃO existe correção acionável.
+   *
+   * Medido ao vivo (job STU-MU4GK4TT4B396E, 16/09/2026): a tentativa 1
+   * reprovou só por `anatomy`, a região alvo virou 'body' (que não tinha
+   * texto de foco) e nenhum problema era 'high' - a diretiva saiu VAZIA.
+   * O loop então regerou com o MESMO prompt e só a seed nova: não é
+   * correção dirigida, é sorteio. E o sorteio piorou a peça (a tentativa 2
+   * inseriu mãos deformadas numa imagem que não tinha mão).
+   *
+   * Devolver null faz o loop parar e entregar o melhor candidato em vez de
+   * gastar GPU num rerroll cego que pode regredir.
+   */
+  return directive.length > 0 ? directive : null;
 }

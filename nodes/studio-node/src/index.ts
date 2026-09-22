@@ -934,6 +934,30 @@ const metricsServer = startMetricsServer();
 
 logger.info({ nodeId: config.NODE_ID }, 'Studio Node worker listening');
 
+/**
+ * Morte silenciosa é um P0 de operação, não um detalhe de debug.
+ *
+ * Achado real (16/09/2026): este processo saiu com código 1 DUAS vezes no
+ * meio de uma geração sem escrever uma linha de log - o job ficou preso em
+ * `rendering` e só voltou quando o lock do BullMQ expirou, 25 minutos
+ * depois. Sem estes dois handlers não há como saber se foi exceção do
+ * código, promessa sem catch ou pressão de memória da máquina; o operador
+ * só vê o Studio "parar". O log sai ANTES do exit, com o motivo.
+ *
+ * Não tenta continuar depois de uma exceção não tratada: estado
+ * indeterminado num worker que gasta GPU é pior que reiniciar limpo. Quem
+ * reinicia é o supervisor (launchd/systemd, ver README).
+ */
+process.on('uncaughtException', (error) => {
+  logger.error({ error, stack: error.stack }, 'Worker morreu por exceção não tratada');
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason: reason instanceof Error ? reason.message : String(reason), stack: reason instanceof Error ? reason.stack : undefined },
+    'Worker morreu por promessa rejeitada sem catch');
+  process.exit(1);
+});
+
 const shutdown = () =>
   void worker.close().then(() => {
     metricsServer.close();

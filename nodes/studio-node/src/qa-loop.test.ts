@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import sharp from 'sharp';
 import { runQualityLoop, QaLoopCancelledError, type QaAttemptOutput } from './qa-loop';
 import type { CriticConfig } from './visual-critic';
 
@@ -19,6 +20,14 @@ function ollamaReply(scores: Record<string, unknown>) {
   } as unknown as Response;
 }
 
+/**
+ * Imagem REAL (mínima). O crítico reduz a imagem com sharp antes de enviar
+ * (ver visual-critic.ts), então um Buffer de texto falso não serve mais -
+ * sharp rejeita com "unsupported image format". Gerar 8x8 aqui mantém o
+ * teste sem rede e sem GPU, exercitando o caminho de verdade.
+ */
+const pixel = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 10, g: 10, b: 10 } } }).jpeg().toBuffer();
+
 function baseParams(overrides: Partial<Parameters<typeof runQualityLoop>[0]> = {}) {
   return {
     briefing: 'tênis preto em superfície molhada',
@@ -28,7 +37,7 @@ function baseParams(overrides: Partial<Parameters<typeof runQualityLoop>[0]> = {
     productCritical: false,
     criticConfig,
     generate: vi.fn(async (attempt: number): Promise<QaAttemptOutput> => ({
-      bytes: Buffer.from(`img-${attempt}`),
+      bytes: pixel,
       generation: { seed: attempt },
     })),
     onStage: vi.fn(async () => {}),

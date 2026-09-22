@@ -146,7 +146,19 @@ export async function runQualityLoop<T extends QaAttemptOutput>(params: QaLoopPa
     }
     if (decision.action === 'accept_best') break;
 
-    correctionDirective = buildCorrectionDirective(decision, critic);
+    const proximaDiretiva = buildCorrectionDirective(decision, critic);
+    if (proximaDiretiva === null) {
+      // Sem correção acionável, regerar é sorteio, não conserto - e sorteio
+      // pode PIORAR (medido: tentativa 2 introduziu mãos deformadas numa
+      // peça que não tinha mão). Para aqui e entrega o melhor candidato.
+      finalDecision = {
+        ...decision,
+        action: 'accept_best',
+        reason: `${decision.reason} Sem correção dirigida possível a partir do laudo - entregando o melhor candidato em vez de regerar às cegas.`,
+      };
+      break;
+    }
+    correctionDirective = proximaDiretiva;
   }
 
   // Saiu por teto de tentativas: o melhor candidato vence, não o último.

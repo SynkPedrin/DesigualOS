@@ -38,6 +38,23 @@ const configSchema = z.object({
     .default('false')
     .transform((value) => value === 'true' || value === '1'),
 
+  /**
+   * Flags separadas (fase 3). A flag única anterior ligava quatro coisas de
+   * uma vez, e a fase 2 mostrou que elas têm valor MUITO diferente: a
+   * crítica e o upscale se provaram úteis; a correção automática não - ela
+   * nunca produziu tentativa melhor e num caso piorou a peça.
+   *
+   * Por isso `STUDIO_AUTO_CORRECTION` nasce **desligada** e só liga quando
+   * esta fase provar ganho. As outras herdam o valor de
+   * `STUDIO_AUTONOMOUS_QA` quando não forem declaradas, pra que quem já
+   * tinha a flag antiga ligada continue com o mesmo comportamento útil
+   * (crítica + upscale) sem editar `.env`.
+   */
+  STUDIO_VISUAL_QA: z.string().optional(),
+  STUDIO_AUTO_UPSCALE: z.string().optional(),
+  STUDIO_AUTO_CORRECTION: z.string().optional(),
+  STUDIO_PAIRWISE_VALIDATION: z.string().optional(),
+
   /** Teto de tentativas por peça. 3 é o valor do plano; 1 desliga o loop mantendo a crítica (útil pra só coletar score). */
   STUDIO_QA_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(3),
 
@@ -60,12 +77,54 @@ const configSchema = z.object({
   CRITIC_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
-export type StudioNodeConfig = z.infer<typeof configSchema>;
+export type StudioNodeConfig = z.infer<typeof configSchema> & {
+  flags: StudioFlags;
+};
+
+export interface StudioFlags {
+  /** Critica a peça gerada e grava o laudo. */
+  visualQA: boolean;
+  /** Upscale + final QA depois de APROVADA. */
+  autoUpscale: boolean;
+  /** Tenta corrigir defeito detectado. Desligada por padrão (ver config acima). */
+  autoCorrection: boolean;
+  /** Exige comparação A×B antes de substituir a imagem original. */
+  pairwiseValidation: boolean;
+}
+
+function flag(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value === '') return fallback;
+  return value === 'true' || value === '1';
+}
+
+/**
+ * Exportada para teste: a matriz de compatibilidade é a parte que pode
+ * quebrar em silêncio numa migração de flag.
+ */
+export function resolveFlags(env: {
+  STUDIO_AUTONOMOUS_QA: boolean;
+  STUDIO_VISUAL_QA?: string | undefined;
+  STUDIO_AUTO_UPSCALE?: string | undefined;
+  STUDIO_AUTO_CORRECTION?: string | undefined;
+  STUDIO_PAIRWISE_VALIDATION?: string | undefined;
+}): StudioFlags {
+  const legado = env.STUDIO_AUTONOMOUS_QA;
+  return {
+    visualQA: flag(env.STUDIO_VISUAL_QA, legado),
+    autoUpscale: flag(env.STUDIO_AUTO_UPSCALE, legado),
+    // NUNCA herda do legado: a correção automática é justamente o que a
+    // fase 2 reprovou. Ligar exige declaração explícita.
+    autoCorrection: flag(env.STUDIO_AUTO_CORRECTION, false),
+    // Padrão LIGADO mesmo sem o legado: se houver correção, comparar antes
+    // de substituir é obrigatório, não opcional.
+    pairwiseValidation: flag(env.STUDIO_PAIRWISE_VALIDATION, true),
+  };
+}
 
 export function loadConfig(): StudioNodeConfig {
   const parsed = configSchema.safeParse(process.env);
   if (!parsed.success) {
     throw new Error(`Invalid studio-node configuration: ${parsed.error.message}`);
   }
-  return parsed.data;
+  return { ...parsed.data, flags: resolveFlags(parsed.data) };
 }
