@@ -831,6 +831,43 @@ describe('POST /execute — loop criativo (pipeline + pesquisa + qualidade)', ()
     await app.close();
   });
 
+  /**
+   * REGRESSÃO REAL: baseline ao vivo (22/09/2026, Otto Elite Phase 2) —
+   * "legenda" e "pode usar emojis na legenda" chegavam SEM efeito no plano
+   * de produção porque createCreativePlan tinha um prompt próprio que nunca
+   * recebia contratoDeSaida nem sabia que emoji tinha sido autorizado. A
+   * legenda gerada saiu sem hashtag e sem emoji.
+   */
+  it('caminho de produção recebe o contrato de saída e a autorização de emoji no prompt do planner', async () => {
+    let userPrompt = '';
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) {
+              const list = messages as { role: string; content: string }[];
+              userPrompt = list.find((message) => message.role === 'user')?.content ?? '';
+              return Promise.resolve(creativePlanFixture);
+            }
+            return Promise.resolve({ ...makeCarouselFixture() });
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    await execute(app, {
+      execution_id: 'exe-contrato-producao',
+      message: 'Crie um carrossel e uma legenda para o cliente, pode usar emojis na legenda.',
+    });
+
+    expect(userPrompt).toMatch(/O campo "copy" precisa seguir este contrato/);
+    expect(userPrompt).toMatch(/hashtags na última linha/);
+    expect(userPrompt).toMatch(/O pedido autoriza emojis/);
+
+    await app.close();
+  });
+
   it('sem provider configurado a pesquisa NÃO acontece e isso fica declarado', async () => {
     const app = buildTestApp(
       makeDeps(

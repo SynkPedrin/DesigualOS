@@ -671,6 +671,21 @@ export async function executeTask(
       search: () => Promise.reject(new Error('pesquisa externa não configurada (OTTO_SEARCH_PROVIDER/OTTO_SEARCH_API_KEY ausentes)')),
     };
 
+    /**
+     * CONTRATO DE SAÍDA no caminho de produção também.
+     *
+     * `contratoDeSaida`/`diretivaDoContrato` só eram usados no chat (linha
+     * ~563). createCreativePlan tem seu PRÓPRIO prompt (CREATIVE_DIRECTOR_PREAMBLE,
+     * pensado pra geração de imagem) e nunca recebia essa diretiva — então o
+     * campo `copy` saía sem a forma de legenda de verdade (hashtags, bloco de
+     * CTA) mesmo quando o pedido nomeava "legenda" explicitamente. Medido ao
+     * vivo em 22/09/2026 (Otto Elite Phase 2, baseline reels Jardim Europa V):
+     * a legenda gerada não tinha hashtag nenhuma e ignorou "pode usar emojis
+     * na legenda", porque nada no prompt do planner sabia que isso foi pedido.
+     */
+    const contratoProducao = diretivaDoContrato(contratoDeSaida(stripOrchestratorContext(request.message)));
+    const pedeEmoji = /\bemojis?\b/i.test(stripOrchestratorContext(request.message));
+
     // A geração é o passo INJETADO do pipeline: o planner real do Otto, com o
     // bloco de pesquisa e a nota de revisão quando o gate reprovou a anterior.
     const pipeline = await runCreativePipeline(
@@ -688,6 +703,8 @@ export async function executeTask(
                   clientContext: [
                     dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
                     formatResearchBlock(research),
+                    contratoProducao ? `O campo "copy" precisa seguir este contrato:\n${contratoProducao}` : '',
+                    pedeEmoji ? 'O pedido autoriza emojis: use com naturalidade no campo "copy", sem exagerar.' : '',
                   ]
                     .filter(Boolean)
                     .join('\n'),

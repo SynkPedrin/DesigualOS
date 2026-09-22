@@ -50,6 +50,26 @@ describe('creativePlanSchema', () => {
     const broken = { ...validPlan, quality_criteria: [] };
     expect(creativePlanSchema.safeParse(broken).success).toBe(false);
   });
+
+  /**
+   * REGRESSÃO REAL: baseline ao vivo (22/09/2026, Otto Elite Phase 2) —
+   * qwen3.5:4b mandou "references": "nenhuma" (string) em vez de [], e como
+   * chatJson só corrige uma vez, isso derrubava o turno inteiro por um campo
+   * que, sem referência de verdade, é só uma lista vazia.
+   */
+  it('tolera references vindo como string (nenhuma/none/vazio vira lista vazia, texto real vira item único)', () => {
+    const semReferencia = creativePlanSchema.safeParse({ ...validPlan, references: 'nenhuma' });
+    expect(semReferencia.success).toBe(true);
+    if (semReferencia.success) expect(semReferencia.data.references).toEqual([]);
+
+    const stringVazia = creativePlanSchema.safeParse({ ...validPlan, references: '' });
+    expect(stringVazia.success).toBe(true);
+    if (stringVazia.success) expect(stringVazia.data.references).toEqual([]);
+
+    const referenciaReal = creativePlanSchema.safeParse({ ...validPlan, references: 'campanha anterior do cliente' });
+    expect(referenciaReal.success).toBe(true);
+    if (referenciaReal.success) expect(referenciaReal.data.references).toEqual(['campanha anterior do cliente']);
+  });
 });
 
 describe('carouselPlanSchema', () => {
@@ -122,6 +142,89 @@ describe('videoPlanSchema', () => {
       generation_prompts: ['x'],
     });
     expect(result.success).toBe(false);
+  });
+
+  /**
+   * REGRESSÃO REAL: baseline ao vivo contra qwen3.5:4b (22/09/2026, Otto
+   * Elite Phase 2) — o modelo manda spoken_line/on_screen_text/continuity/
+   * image_prompt como "" em cenas onde não se aplica, em vez de omitir a
+   * chave. Antes deste fix isso derrubava o turno inteiro (chatJson só
+   * corrige uma vez): "" tinha que valer como ausente, não como presente e
+   * inválido.
+   */
+  it('trata string vazia como ausente em campos opcionais (spoken_line, on_screen_text, continuity, image_prompt)', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'Abertura sem fila',
+      duration: 10,
+      aspect_ratio: '9:16',
+      scenes: [
+        {
+          camera_movement: 'estático',
+          subject_movement: 'corretor caminha até a fachada',
+          environment: 'stand de vendas',
+          lighting: 'luz natural',
+          transition: 'corte seco',
+          pacing: 'direto',
+          duration_seconds: 5,
+          spoken_line: 'Dia 24 de setembro abre a venda.',
+          on_screen_text: '',
+          continuity: '',
+          image_prompt: '',
+        },
+        {
+          camera_movement: 'estático',
+          subject_movement: 'atendente recebe visitante',
+          environment: 'recepção',
+          lighting: 'luz interna',
+          transition: 'corte seco',
+          pacing: 'direto',
+          duration_seconds: 5,
+          spoken_line: '',
+          on_screen_text: 'Sem cadastro',
+        },
+      ],
+      sound_direction: 'trilha leve',
+      text_overlays: [],
+      cta: 'Garanta seu horário',
+      generation_prompts: ['sales stand facade', 'reception desk'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.scenes[0]!.spoken_line).toBe('Dia 24 de setembro abre a venda.');
+    expect(result.data.scenes[0]!.on_screen_text).toBeUndefined();
+    expect(result.data.scenes[1]!.spoken_line).toBeUndefined();
+    expect(result.data.scenes[1]!.on_screen_text).toBe('Sem cadastro');
+  });
+
+  /**
+   * REGRESSÃO REAL: mesma sessão de baseline — qwen3.5:4b consistentemente
+   * erra a soma exata dos takes por 1-2s mesmo com cada duration_seconds
+   * plausível, e a validação antiga REJEITAVA o plano inteiro por isso.
+   * `duration` agora é derivada da soma, não cobrada do modelo.
+   */
+  it('deriva duration da soma dos takes em vez de exigir que o modelo acerte a soma', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'Abertura sem fila',
+      duration: 8, // o modelo "chutou" 8; a soma real das cenas é 10
+      aspect_ratio: '9:16',
+      scenes: [
+        {
+          camera_movement: 'estático', subject_movement: 'a', environment: 'b', lighting: 'c',
+          transition: 'd', pacing: 'e', duration_seconds: 5,
+        },
+        {
+          camera_movement: 'estático', subject_movement: 'a', environment: 'b', lighting: 'c',
+          transition: 'd', pacing: 'e', duration_seconds: 5,
+        },
+      ],
+      sound_direction: 'trilha leve',
+      text_overlays: [],
+      cta: 'Garanta seu horário',
+      generation_prompts: ['a', 'b'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.duration).toBe(10);
   });
 });
 

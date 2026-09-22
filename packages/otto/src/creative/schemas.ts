@@ -12,6 +12,24 @@ import {
  * converte pra camelCase se precisar.
  */
 
+/**
+ * Lista de referências que TOLERA o modelo respondendo string em vez de
+ * array quando não há referência nenhuma. Medido ao vivo em 22/09/2026 (Otto
+ * Elite Phase 2, baseline reels Jardim Europa V): qwen3.5:4b mandou
+ * `"references": "nenhuma"` (ou similar) em vez de `[]`, e como chatJson só
+ * corrige uma vez, isso derrubou o turno inteiro por um campo que, sem
+ * referência real anexada, é só uma lista vazia.
+ */
+const referencesField = z.preprocess((value) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || /^(nenhuma?|none|n\/a|sem referências?)$/i.test(trimmed)) return [];
+    return [trimmed];
+  }
+  return value;
+}, z.array(z.string()).default([]));
+
 // ---------------------------------------------------------------------------
 // Direção de arte: o bloco que impede prompt genérico. Cada campo é uma
 // decisão que um diretor de arte humano tomaria antes de abrir o Midjourney.
@@ -66,7 +84,7 @@ export const creativePlanSchema = z.object({
   narrative: z.string().min(1),
   copy: z.string().min(1),
   art_direction: artDirectionSchema,
-  references: z.array(z.string()).default([]),
+  references: referencesField,
   reference_strategy: z.array(referenceStrategySchema).default([]),
   real_world_fidelity: realWorldFidelitySchema.default({ requires_reference: false }),
   image_prompt: z.string().min(1),
@@ -117,11 +135,30 @@ export const carouselPlanSchema = z.object({
 // Vídeo/reels: cena a cena com direção de câmera e ritmo, não um "promptão".
 // ---------------------------------------------------------------------------
 
+/**
+ * String opcional que TOLERA "" como "ausente".
+ *
+ * Medido ao vivo em 22/09/2026 (Otto Elite Phase 2, baseline real contra
+ * qwen3.5:4b): pedido para o modelo "deixar de fora" um campo opcional
+ * quando não se aplica não significa que ele omite a chave — ele manda
+ * spoken_line: "" pra cena que não fala. z.string().min(1).optional() trata
+ * "" como PRESENTE E INVÁLIDO (não como ausente), e como chatJson só tem UMA
+ * tentativa de correção antes de desistir (ollama-provider.ts), isso derrubou
+ * o turno inteiro depois de 252s — pior que o stub antigo, que pelo menos
+ * respondia. O pipeline não pode ficar mais frágil por causa de um campo que
+ * existe pra ser opcional.
+ */
+const optionalString = () =>
+  z.preprocess(
+    (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
+    z.string().min(1).optional(),
+  );
+
 export const videoSceneSchema = z.object({
   duration_seconds: z.number().min(1).max(5).optional(),
-  image_prompt: z.string().min(1).optional(),
+  image_prompt: optionalString(),
   shot_type: z.enum(['portrait', 'wide', 'detail', 'action', 'environment', 'closing']).optional(),
-  continuity: z.string().min(1).optional(),
+  continuity: optionalString(),
   camera_movement: z.string().min(1),
   subject_movement: z.string().min(1),
   environment: z.string().min(1),
@@ -137,9 +174,9 @@ export const videoSceneSchema = z.object({
    * que a pessoa diz. Sem ele, "roteiro de Reels" produzia storyboard de
    * geração de imagem, não um roteiro que alguém consegue gravar lendo.
    */
-  spoken_line: z.string().min(1).optional(),
+  spoken_line: optionalString(),
   /** Texto que aparece NA TELA nesta cena (legenda embutida, não a legenda do post). */
-  on_screen_text: z.string().min(1).optional(),
+  on_screen_text: optionalString(),
 });
 
 export const videoPlanSchema = z.object({
@@ -155,10 +192,23 @@ export const videoPlanSchema = z.object({
   if (plan.generation_prompts.length !== plan.scenes.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['generation_prompts'], message: 'Cada cena precisa de um prompt de movimento.' });
   }
-  if (plan.scenes.every((scene) => scene.duration_seconds !== undefined)) {
-    const sum = plan.scenes.reduce((total, scene) => total + scene.duration_seconds!, 0);
-    if (Math.abs(sum - plan.duration) > 0.05) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['duration'], message: 'A duração deve ser a soma dos takes.' });
-  }
+}).transform((plan) => {
+  /**
+   * `duration` era EXIGIDA bater com a soma dos takes, e rejeitada se não
+   * batesse. Medido ao vivo em 22/09/2026 contra qwen3.5:4b (Otto Elite
+   * Phase 2): o modelo consistentemente erra essa soma por 1-2 segundos
+   * mesmo com os takes corretos - é aritmética redundante que o modelo já
+   * expôs no dado primário (duration_seconds por cena), e cobrar consistência
+   * exata dela é cobrar do modelo o que o código já pode calcular sozinho.
+   * Com chatJson tendo só UMA correção antes de desistir, isso derrubava o
+   * turno inteiro por um campo derivado. Agora `duration` é DERIVADA da soma
+   * das cenas quando todas a declaram, em vez de validada contra o número que
+   * o modelo chutou.
+   */
+  const todasComDuracao = plan.scenes.every((scene) => scene.duration_seconds !== undefined);
+  if (!todasComDuracao) return plan;
+  const soma = plan.scenes.reduce((total, scene) => total + scene.duration_seconds!, 0);
+  return { ...plan, duration: soma };
 });
 
 // ---------------------------------------------------------------------------
