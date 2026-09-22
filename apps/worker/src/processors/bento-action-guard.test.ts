@@ -260,6 +260,22 @@ describe('P0-01: UPDATE nunca vira CREATE — unknown operation = no mutation', 
       if (decisao.kind === 'intent') expect(decisao.intent.kind).toBe('create');
     });
 
+    /**
+     * REGRESSÃO REAL encontrada no E2E de release (22/09/2026, gate de
+     * ambiguidade): "atualiza aquela task" numa conversa NOVA (sem
+     * lastTaskId nenhum) criava uma task chamada "Executar demanda" —
+     * mesma classe de bug do P0-01 original, pelo lado SEM histórico. O
+     * que distingue de "essa fica pra Sofia" (linha acima, que CONTINUA
+     * criando corretamente): aqui a pessoa cita "task"/"tarefa" de forma
+     * EXPLÍCITA, não "essa"/"isso" genérico — é ela dizendo que um recurso
+     * já existe, mesmo sem o Bento ter visto nenhum nesta conversa.
+     */
+    it('"aquela task"/"essa tarefa" EXPLÍCITA, mesmo SEM task anterior na conversa, pede esclarecimento — nunca cria', async () => {
+      const { decideFallbackIntent } = await import('./bento-action-guard.js');
+      expect(decideFallbackIntent('atualiza aquela task', null).kind).toBe('ask_clarification');
+      expect(decideFallbackIntent('mexe nessa tarefa de novo', null).kind).toBe('ask_clarification');
+    });
+
     it('com task anterior na conversa E palavra de referência, verbo não reconhecido pede esclarecimento', async () => {
       const { decideFallbackIntent } = await import('./bento-action-guard.js');
       const decisao = decideFallbackIntent('faz aquele troço na task', 'task-123');

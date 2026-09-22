@@ -349,9 +349,25 @@ export type FallbackDecision =
  * Pede esclarecimento em vez de criar uma task nova com o texto do pedido
  * como nome (era exatamente esse o bug: "altere essa task para o status
  * 'pronto'" virava uma task chamada "pronto").
+ *
+ * REGRESSÃO REAL encontrada no E2E de release (22/09/2026, gate de
+ * ambiguidade): "atualiza aquela task" numa conversa NOVA (sem
+ * `lastTaskId` nenhum) criava uma task chamada "Executar demanda" — o
+ * mesmo bug estrutural do P0-01, só que pelo lado SEM histórico. A regra
+ * acima só protegia quando `lastTaskId` já existia; aqui não existia
+ * task nenhuma na conversa, mas a mensagem CITA EXPLICITAMENTE "task"/
+ * "tarefa" (não "essa"/"isso" genérico, que legitimamente significa "essa
+ * DEMANDA que estou discutindo" — ver "essa fica pra Sofia" abaixo).
+ * "aquela task"/"essa tarefa" é a pessoa dizendo que um recurso já
+ * existe, mesmo que o Bento não tenha visto nenhum nesta conversa — a
+ * honestidade aqui é perguntar QUAL task, nunca inventar uma criando do
+ * zero com o texto do pedido como nome.
  */
+const EXPLICIT_TASK_REFERENCE = /\b(essa|aquela|esta|nessa|nesta|essas|aquelas|estas)\s+(task|tarefa)s?\b/i;
+
 export function decideFallbackIntent(message: string, lastTaskId: string | null): FallbackDecision {
   if (lastTaskId && REFERENCE_WORDS.test(message)) return { kind: 'ask_clarification' };
+  if (EXPLICIT_TASK_REFERENCE.test(message)) return { kind: 'ask_clarification' };
   return { kind: 'intent', intent: criacaoPadrao(message) };
 }
 
