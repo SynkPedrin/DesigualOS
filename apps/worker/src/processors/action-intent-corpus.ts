@@ -25,7 +25,7 @@ export interface CorpusCase {
   expectedActions?: number;
 }
 
-export const CORPUS_VERSION = '2026-09-18.3';
+export const CORPUS_VERSION = '2026-09-22.4';
 
 /**
  * TAMMY — como a operação fala. Todas são ordens inequívocas: se o Bento não
@@ -60,6 +60,13 @@ Bento, tenho a solicitação acima. Preciso que separe a demanda e lance pro Gui
   // confiança.
   { id: 'T17', message: 'agora pode criar', expected: 'ACT', note: 'sinal verde depois de um freio' },
   { id: 'T18', message: 'confirmado, pode lançar no ClickUp', expected: 'ACT', note: 'liberação explícita' },
+  // DELETE (mission linguistic matrix, 22/09/2026): sem a família 'delete',
+  // estas caíam em writeAuthorized=false e iam pro agente remoto em vez do
+  // guard, que é quem sabe pedir confirmação explícita antes de apagar.
+  { id: 'T19', message: 'apaga essa task', expected: 'ACT', note: 'pedido de exclusão, forma direta' },
+  { id: 'T20', message: 'deleta essa demanda', expected: 'ACT', note: 'sinônimo de apagar' },
+  { id: 'T21', message: 'exclui a task do Pedro', expected: 'ACT', note: 'exclusão com alvo nomeado' },
+  { id: 'T22', message: 'remove essa task, foi criada errada', expected: 'ACT', note: 'exclusão com justificativa' },
 ];
 
 /**
@@ -148,6 +155,9 @@ Bento, o que você acha dessa demanda?`,
   { id: 'X34', message: 'Chegou uma solicitação nova do cliente: precisamos de um roteiro de sinalização para a recepção, seguindo o padrão visual da marca.', expected: 'ANALYZE', note: '"da marca" é substantivo, não o verbo "marca!"' },
   { id: 'X35', message: 'a troca de óleo ficou ótima, o cliente elogiou', expected: 'ANALYZE', note: '"a troca de óleo" é substantivo' },
   { id: 'X36', message: 'me conta como ficou o padrão visual da marca nova', expected: 'ANALYZE', note: 'pergunta + substantivo ambíguo' },
+  // DELETE: negação vence, igual a qualquer outra família (22/09/2026).
+  { id: 'X37', message: 'não apaga essa task ainda', expected: 'ANALYZE', note: 'negação sobre exclusão' },
+  { id: 'X38', message: 'ontem eu deletei uma task por engano', expected: 'ANALYZE', note: 'passado, primeira pessoa' },
 ];
 
 /**

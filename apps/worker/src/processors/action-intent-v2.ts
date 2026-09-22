@@ -156,6 +156,16 @@ const FAMILIAS: Familia[] = [
     exigeAlvo: true,
   },
   {
+    // DELETE (mission linguistic matrix, 22/09/2026): sem esta família,
+    // "apaga essa task"/"exclui essa demanda" caía em writeAuthorized=false
+    // e ia pro agente remoto em vez do guard — que é quem sabe pedir
+    // confirmação explícita antes de apagar de verdade.
+    nome: 'delete',
+    ordem: ['apaga', 'apague', 'deleta', 'delete', 'exclui', 'exclua', 'remove', 'remova'],
+    naoOrdem: ['apagar', 'apagou', 'apaguei', 'deletar', 'deletou', 'deletei', 'excluir', 'excluiu', 'excluí', 'remover', 'removeu', 'removi', 'apagado', 'deletado', 'excluido', 'excluído', 'removido'],
+    exigeAlvo: true,
+  },
+  {
     // AUTONOMIA: "organize a operação e resolva o que puder". Não é uma
     // escrita pontual, é um mandato — e o planner adaptativo tem um caminho
     // próprio pra ele. Sem esta família, o mandato virava conversa.
@@ -211,7 +221,7 @@ const ATRIBUICAO_DECLARATIVA =
  * faria" nega a escrita e deixa a análise viva.
  */
 const NEGACAO: Array<{ re: RegExp; rotulo: string }> = [
-  { re: /\b(nao|nunca|jamais)\s+(?:se\s+)?(?:\w+\s+){0,2}?(cria|crie|separa|separe|lanca|lance|abre|abra|mexe|mexa|atribui|atribua|coloca|coloque|poe|ponha|manda|mande|joga|jogue|bota|bote|adiciona|adicione|muda|mude|altera|altere|faz|faca|monta|monte|precisa|precisamos)\b/, rotulo: 'negação direta do verbo' },
+  { re: /\b(nao|nunca|jamais)\s+(?:se\s+)?(?:\w+\s+){0,2}?(cria|crie|separa|separe|lanca|lance|abre|abra|mexe|mexa|atribui|atribua|coloca|coloque|poe|ponha|manda|mande|joga|jogue|bota|bote|adiciona|adicione|muda|mude|altera|altere|faz|faca|monta|monte|precisa|precisamos|apaga|apague|deleta|delete|exclui|exclua|remove|remova)\b/, rotulo: 'negação direta do verbo' },
   { re: /\bnem\s+\w+\s+nem\s+\w+/, rotulo: 'dupla negação (nem ... nem ...)' },
   { re: /\bsem\s+(criar|cria|lancar|lancando|abrir|separar|atribuir|mexer|alterar|adicionar|comentar)\b/, rotulo: 'restrição "sem + verbo"' },
   { re: /\b(so|somente|apenas)\s+(analis|avali|revis|olh|le|le\b|verific|confer|me\s+(diz|diga|fala|fale))/, rotulo: 'restrição "só analisa"' },

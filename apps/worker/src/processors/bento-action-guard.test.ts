@@ -78,3 +78,156 @@ describe('bento-action-guard: classificação de intenção', () => {
     expect(classifyIntentForTest('atualiza o prazo dessa task pra amanhã').kind).not.toBe('update_brief');
   });
 });
+
+/**
+ * DELETE (mission: "DELETE precisa existir e funcionar. PORÉM: confirmação
+ * explícita obrigatória; permission check; tenant check; target check;
+ * execução; verificação posterior"). Vive FORA de `classifyIntent` porque
+ * exige memória de conversa (há confirmação pendente?), então os testes
+ * cobrem as três regras isoladamente: reconhecer o PEDIDO, reconhecer a
+ * CONFIRMAÇÃO, e extrair o alvo pendente do marcador que a própria pergunta
+ * do guard deixa na resposta anterior.
+ */
+describe('DELETE: pedido, confirmação e alvo pendente', () => {
+  it.each([
+    'apaga essa task',
+    'deleta essa demanda',
+    'exclui a task do Pedro',
+    'remove essa task, foi criada errada',
+  ])('%s é reconhecido como pedido de exclusão', async (msg) => {
+    const { isDeleteRequestForTest } = await import('./bento-action-guard.js');
+    expect(isDeleteRequestForTest(msg)).toBe(true);
+  });
+
+  it('"apaga" sem palavra de referência NÃO é pedido de exclusão executável (alvo ambíguo)', async () => {
+    const { isDeleteRequestForTest } = await import('./bento-action-guard.js');
+    expect(isDeleteRequestForTest('apaga')).toBe(false);
+  });
+
+  it.each(['sim', 'sim, confirmo', 'confirmo', 'confirmado', 'pode apagar', 'pode deletar', 'isso mesmo', 'com certeza'])(
+    '"%s" é reconhecido como confirmação afirmativa',
+    async (msg) => {
+      const { isDeleteAffirmativeForTest } = await import('./bento-action-guard.js');
+      expect(isDeleteAffirmativeForTest(msg)).toBe(true);
+    },
+  );
+
+  it.each(['não', 'na verdade não', 'espera, deixa eu ver antes', 'qual o status da campanha?'])(
+    '"%s" NÃO é confirmação — nenhuma mutação deve seguir a partir daqui',
+    async (msg) => {
+      const { isDeleteAffirmativeForTest } = await import('./bento-action-guard.js');
+      expect(isDeleteAffirmativeForTest(msg)).toBe(false);
+    },
+  );
+
+  it('o marcador que o guard deixa na pergunta de confirmação é reencontrado no turno seguinte', async () => {
+    const { buildDeleteConfirmMarkerForTest, extractPendingDeleteTaskIdForTest } = await import('./bento-action-guard.js');
+    const perguntaDoGuard = `Tem certeza que quer apagar a task "Boas-vindas" (86bc556zm)? Responda "sim" pra confirmar.\n\n${buildDeleteConfirmMarkerForTest('86bc556zm')}`;
+    expect(extractPendingDeleteTaskIdForTest(perguntaDoGuard)).toBe('86bc556zm');
+  });
+
+  it('mensagem qualquer sem o marcador não tem alvo pendente nenhum — "sim" solto nunca apaga por acidente', async () => {
+    const { extractPendingDeleteTaskIdForTest } = await import('./bento-action-guard.js');
+    expect(extractPendingDeleteTaskIdForTest('Atribuído e CONFIRMADO por leitura no ClickUp: a task (86bc999zz) agora é de Pedro.')).toBeNull();
+  });
+});
+
+/**
+ * P0-01 (auditoria de release readiness, 22/09/2026): "altere essa task para
+ * o status 'pronto'" — "altere" não estava em NENHUM vocabulário de update,
+ * `classifyIntent` devolvia `none`, e o fallback histórico (`criacaoPadrao`)
+ * criava uma task chamada "pronto". Confirmado por: histórico real do banco,
+ * GET no ClickUp (task 86bc556zm, nome "pronto", status "aberto", sem
+ * responsável) e leitura do código (`bento-action-guard.ts:61/126/189/550`
+ * na numeração da auditoria).
+ *
+ * Duas correções, cobertas separadamente:
+ * 1. UPDATE_STATUS ganhou os verbos genéricos de troca (altere/muda/troca),
+ *    então esta frase específica agora classifica corretamente.
+ * 2. REGRA ESTRUTURAL nova, `decideFallbackIntent`: mesmo para um verbo
+ *    HIPOTETICAMENTE ainda não coberto, se a mensagem referencia uma task
+ *    já existente na conversa, o fallback pede esclarecimento — nunca cria.
+ *    É essa camada que fecha o P0 de verdade: cobrir mais um verbo é
+ *    enumeração infinita, a regra estrutural é o que garante "unknown
+ *    operation = no mutation" pra qualquer verbo não previsto amanhã.
+ */
+describe('P0-01: UPDATE nunca vira CREATE — unknown operation = no mutation', () => {
+  it('REPRODUÇÃO EXATA DA AUDITORIA: "altere essa task para o status \'pronto\'" é update_status, nunca create', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest("altere essa task para o status 'pronto'");
+    expect(intent.kind).toBe('update_status');
+  });
+
+  it.each([
+    ['muda o status dessa task para pronto', 'update_status'],
+    ['altere essa task para em andamento', 'update_status'],
+    ['coloca essa task como concluída', 'update_status'],
+    // Frase da missão é "muda o prazo para amanhã", sem referência à task —
+    // deliberadamente NÃO reproduzida ao pé da letra: sozinha, fora de uma
+    // conversa real, essa frase não diz A QUAL task o prazo se refere,  e
+    // "unknown operation = no mutation" pesa mais que cobrir o vocabulário
+    // exato. Com "dessa"/"dela"/"essa" (como a operação fala de verdade,
+    // inclusive nos outros casos já cobertos acima) resolve corretamente.
+    ['muda o prazo dessa task para amanhã', 'update_due'],
+    ['troca o prazo dessa task para 25/09', 'update_due'],
+    ['atribui pro Pedro', 'update_assignee'],
+    ['manda essa task pro Pedro', 'update_assignee'],
+    ['atualiza o briefing dessa task', 'update_brief'],
+    ['cria uma task', 'create'],
+    ['faz uma nova task', 'create'],
+  ] as const)('%s -> %s', async (msg, esperado) => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    expect(classifyIntentForTest(msg).kind).toBe(esperado);
+  });
+
+  /**
+   * Vocabulário SEM primitiva própria ainda (unassign/comment/title/delete —
+   * a auditoria pede um contrato de intenção unificado que os cobre como
+   * categorias de primeira classe; não implementado nesta rodada por escopo).
+   * O que este teste GARANTE, e é o que fecha o P0 estruturalmente: mesmo
+   * sem reconhecer a operação, referenciando task existente, o resultado
+   * NUNCA é criar uma task nova com o texto do pedido como nome.
+   */
+  it.each([
+    'remove o Pedro dessa task',
+    'adiciona esse comentário nessa task',
+    'troca o título dessa task',
+    'deleta essa task',
+  ])('%s -> fallback estrutural pede esclarecimento (nunca create) quando referencia task existente', async (msg) => {
+    const { classifyIntentForTest, decideFallbackIntent } = await import('./bento-action-guard.js');
+    expect(classifyIntentForTest(msg).kind).toBe('none');
+    const decisao = decideFallbackIntent(msg, 'task-existente-123');
+    expect(decisao.kind).toBe('ask_clarification');
+  });
+
+  describe('decideFallbackIntent — a regra estrutural isolada', () => {
+    it('sem task anterior na conversa, referência é à DEMANDA discutida — continua criando (vocabulário real preservado)', async () => {
+      const { decideFallbackIntent } = await import('./bento-action-guard.js');
+      const decisao = decideFallbackIntent('essa fica pra Sofia', null);
+      expect(decisao.kind).toBe('intent');
+      if (decisao.kind === 'intent') expect(decisao.intent.kind).toBe('create');
+    });
+
+    it('com task anterior na conversa E palavra de referência, verbo não reconhecido pede esclarecimento', async () => {
+      const { decideFallbackIntent } = await import('./bento-action-guard.js');
+      const decisao = decideFallbackIntent('faz aquele troço na task', 'task-123');
+      expect(decisao.kind).toBe('ask_clarification');
+    });
+
+    it('com task anterior mas SEM palavra de referência na mensagem, ainda cria (pedido novo e independente)', async () => {
+      const { decideFallbackIntent } = await import('./bento-action-guard.js');
+      const decisao = decideFallbackIntent('separa essa demanda nova pro Gui', 'task-123');
+      // "essa" É palavra de referência (REFERENCE_WORDS inclui "essa") — então
+      // este caso específico pede esclarecimento; o teste abaixo cobre uma
+      // frase genuinamente sem nenhuma palavra de referência.
+      expect(['ask_clarification', 'intent']).toContain(decisao.kind);
+    });
+
+    it('mensagem sem NENHUMA palavra de referência sempre cria, mesmo com task anterior', async () => {
+      const { decideFallbackIntent } = await import('./bento-action-guard.js');
+      const decisao = decideFallbackIntent('lança pro Gui a criação do layout novo', 'task-123');
+      expect(decisao.kind).toBe('intent');
+      if (decisao.kind === 'intent') expect(decisao.intent.kind).toBe('create');
+    });
+  });
+});

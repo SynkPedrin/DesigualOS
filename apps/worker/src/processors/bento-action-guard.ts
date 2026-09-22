@@ -1,17 +1,11 @@
 import { desc, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
-  createAttributedTask,
-  createTaskComment,
-  findDuplicateTask,
+  deleteTask,
   findMemberByName,
   getTask,
-  getTaskComments,
-  getTaskListId,
   listStatusesForTask,
-  queryOperationTasks,
   updateTask,
-  getWriteScopeListId,
   verifyTaskState,
   type ClickUpConfig,
   type ExpectedTaskState,
@@ -58,9 +52,28 @@ function resumoDoPedido(message: string): string {
 // qualquer pessoa escreve) NÃO casava, o guard devolvia null e o pedido caía
 // no agente remoto — que criava a task sem resolver cliente, sem título
 // operacional e sem read-back. Era esse o caminho do bug relatado.
-const UPDATE_ASSIGNEE = /(atribu|designa|delega|passa|coloca)/i;
-const UPDATE_DUE = /(muda|reagend|adi(a|ar|e)|remarca|passa)\b.*(prazo|vencimento|data|hoje|amanh|sexta|\d{1,2}\/\d{1,2})/i;
-const UPDATE_STATUS = /(marc(ar|a|que)|conclu(i|ir|ida)|finaliz(a|ar)|fech(a|ar))\b.*(conclu|pront|revis|feito)/i;
+/**
+ * "manda essa task pro Pedro" — vocabulário real que faltava (mission
+ * linguistic matrix, 22/09/2026). "coloca"/"passa" são AMBÍGUOS com status
+ * ("coloca como concluída") — resolvido checando UPDATE_STATUS primeiro no
+ * classifyIntent (ela exige palavra de status junto, então só vence quando
+ * é de status de verdade).
+ */
+const UPDATE_ASSIGNEE = /(atribu|designa|delega|passa|coloca|manda)/i;
+const UPDATE_DUE = /(muda|reagend|adi(a|ar|e)|remarca|passa|troc(a|ar|ue))\b.*(prazo|vencimento|data|hoje|amanh|sexta|\d{1,2}\/\d{1,2})/i;
+/** "troca o prazo pra 25/09" / "pra 25/09/2026" — data explícita, não só hoje/amanhã. */
+const DUE_EXPLICIT_DATE = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/;
+/**
+ * P0-01 (auditoria 22/09/2026): "altere essa task para o status 'pronto'"
+ * usava "altere", fora do vocabulário original (marcar/concluir/finalizar/
+ * fechar) — caía em `criacaoPadrao` e nascia uma task chamada "pronto".
+ * Ampliado com os verbos genéricos de troca já usados em UPDATE_DUE/
+ * UPDATE_ASSIGNEE ("altere/altera/muda/troca/coloca"), exigindo — como
+ * antes — uma palavra de status do outro lado pra não confundir com
+ * qualquer outra troca (prazo, responsável).
+ */
+const UPDATE_STATUS =
+  /(marc(ar|a|que)|conclu(i|ir|ida)|finaliz(a|ar)|fech(a|ar)|alter(e|a|ar)|mud(a|e|ar)|troc(a|ar|ue)|coloc(a|ar|ue)|pass(a|ar|e))\b.*(conclu|pront|revis|feito|andamento|aberto|to\s*do|doing|progress|fazendo)/i;
 /**
  * "atualize/edite/complemente o BRIEFING/descrição dessa task" — achado real
  * (21/09/2026): sem esta categoria, `classifyIntent` devolvia 'none' e
@@ -79,6 +92,18 @@ const ATTACH_ASK = /(anex(e|a|ar)|anexo|attach)\b/i;
 const TASK_URL = /app\.clickup\.com\/t\/([a-z0-9]+)/gi;
 const DUE_TODAY = /(hoje|pra hoje|pro hoje)/i;
 const DUE_TOMORROW = /(amanh|pra amanh)/i;
+/**
+ * DELETE (mission linguistic matrix, 22/09/2026): "apaga essa task"/"exclui
+ * essa demanda". Exige palavra de referência — sem ela, "apaga" sozinho é
+ * demais pra agir sobre algo (mesma régua de UPDATE_DUE/UPDATE_BRIEF acima).
+ */
+const DELETE_REQUEST = /(delet|apag|remov|exclu)[a-z]*\b/i;
+/** Marcador auto-contido no texto da própria pergunta de confirmação — não
+ * depende de link ClickUp existir na mensagem, então funciona mesmo quando
+ * `readBackVerify`/`lastTaskId` não encontrou URL nenhuma no histórico. */
+const DELETE_CONFIRM_MARKER = 'CONFIRMAÇÃO PARA APAGAR';
+const DELETE_CONFIRM_TASK_ID = /CONFIRMAÇÃO PARA APAGAR \(id:([a-z0-9]+)\)/i;
+const DELETE_AFFIRMATIVE = /^\s*(sim|confirmo|confirmado|pode (apagar|deletar|excluir)|isso mesmo|com certeza)\b/i;
 
 type GuardIntent =
   | { kind: 'update_assignee'; personName: string }
@@ -95,6 +120,13 @@ interface ConversationContext {
   lastPersonName: string | null;
   /** Material mandado em turnos anteriores — "o print que mandei", "o arquivo acima". */
   previousAttachments: TaskAttachment[];
+  /**
+   * Task aguardando confirmação de exclusão: só é setado quando a mensagem
+   * mais recente do ASSISTENTE (a pergunta que o próprio guard fez) contém o
+   * marcador `DELETE_CONFIRM_MARKER`. Delete real exige duas voltas: pedir,
+   * confirmar — nunca apaga no mesmo turno do pedido.
+   */
+  pendingDeleteTaskId: string | null;
   /**
    * Conteúdo do último turno do usuário ANTES deste. "Tenho a solicitação
    * acima" é o jeito normal de a operação trabalhar: a demanda vem colada
@@ -123,10 +155,37 @@ export function classifyIntentForTest(message: string): GuardIntent {
   return classifyIntent(message);
 }
 
+/** DELETE é tratado FORA de `classifyIntent` (precisa do contexto da
+ * conversa pra saber se já há confirmação pendente) — estes três helpers
+ * testam as três regras isoladamente, sem precisar montar banco/ClickUp. */
+export function isDeleteRequestForTest(message: string): boolean {
+  return DELETE_REQUEST.test(message) && REFERENCE_WORDS.test(message);
+}
+export function isDeleteAffirmativeForTest(message: string): boolean {
+  return DELETE_AFFIRMATIVE.test(message.trim());
+}
+export function extractPendingDeleteTaskIdForTest(lastAssistantMessage: string): string | null {
+  return lastAssistantMessage.match(DELETE_CONFIRM_TASK_ID)?.[1] ?? null;
+}
+export function buildDeleteConfirmMarkerForTest(taskId: string): string {
+  return `${DELETE_CONFIRM_MARKER} (id:${taskId})`;
+}
+
 function classifyIntent(message: string): GuardIntent {
   const hasReference = REFERENCE_WORDS.test(message);
   const person = extractPersonName(message);
 
+  /**
+   * STATUS checado ANTES de ASSIGNEE (22/09/2026, matriz linguística da
+   * missão): "coloca"/"passa" são verbos AMBÍGUOS entre os dois — "coloca
+   * essa task como concluída" (status) vs "coloca pro Pedro" (assignee).
+   * UPDATE_STATUS exige uma palavra de status junto ("como concluída",
+   * "em andamento"...), então só vence quando é status de verdade; sem essa
+   * palavra, cai corretamente em ASSIGNEE mais abaixo.
+   */
+  if (UPDATE_STATUS.test(message) && hasReference) {
+    return { kind: 'update_status', statusHint: message };
+  }
   if (!CREATE_TASK.test(message) && UPDATE_ASSIGNEE.test(message) && (person || hasReference)) {
     // "atribua a ele": o "ele" é a pessoa do TURNO ANTERIOR, resolvida no contexto.
     return { kind: 'update_assignee', personName: person ?? '' };
@@ -139,10 +198,26 @@ function classifyIntent(message: string): GuardIntent {
     if (DUE_TODAY.test(message)) {
       return { kind: 'update_due', dueDate: endOfDay(now).getTime() };
     }
+    // "troca o prazo pra 25/09" — data explícita, achado da matriz
+    // linguística (22/09/2026): só hoje/amanhã eram reconhecidos.
+    const explicita = message.match(DUE_EXPLICIT_DATE);
+    if (explicita) {
+      const dia = Number(explicita[1]);
+      const mes = Number(explicita[2]);
+      const anoInformado = explicita[3] ? Number(explicita[3]) : null;
+      if (dia >= 1 && dia <= 31 && mes >= 1 && mes <= 12) {
+        // Sem ano: assume o ano corrente, ou o próximo se a data já passou —
+        // ninguém pede prazo pro passado. Explícito nunca é ambíguo pra trás.
+        let ano = anoInformado ?? now.getFullYear();
+        let candidato = endOfDay(new Date(ano, mes - 1, dia));
+        if (!anoInformado && candidato.getTime() < now.getTime()) {
+          ano += 1;
+          candidato = endOfDay(new Date(ano, mes - 1, dia));
+        }
+        return { kind: 'update_due', dueDate: candidato.getTime() };
+      }
+    }
     return { kind: 'none' };
-  }
-  if (UPDATE_STATUS.test(message) && hasReference) {
-    return { kind: 'update_status', statusHint: message };
   }
   if (UPDATE_BRIEF.test(message) && hasReference) {
     return { kind: 'update_brief', addition: message };
@@ -200,6 +275,32 @@ function criacaoPadrao(message: string): GuardIntent {
   };
 }
 
+export type FallbackDecision =
+  | { kind: 'ask_clarification' }
+  | { kind: 'intent'; intent: GuardIntent };
+
+/**
+ * P0-01 (auditoria de release readiness, 22/09/2026): decide o que fazer
+ * quando `classifyIntent` não reconheceu NENHUMA forma de escrita
+ * (`kind: 'none'`). Extraída de `tryBentoActionGuard` pra ser testável sem
+ * precisar montar banco/ClickUp — é literalmente o coração do P0.
+ *
+ * REGRA GLOBAL: UNKNOWN OPERATION = NO MUTATION. Só cai em `criacaoPadrao`
+ * (cria mesmo sem verbo "criar" reconhecido — vocabulário real como "separa
+ * essa demanda"/"essa fica pra Sofia") quando a mensagem NÃO está se
+ * referindo a uma task que já existe nesta conversa. Existindo
+ * `lastTaskId` E a mensagem usando palavra de referência ("essa
+ * task"/"ela"/"a anterior"...), a única leitura seria "aja sobre a task que
+ * já existe" — e como nenhum verbo reconhecido bateu, agir seria adivinhar.
+ * Pede esclarecimento em vez de criar uma task nova com o texto do pedido
+ * como nome (era exatamente esse o bug: "altere essa task para o status
+ * 'pronto'" virava uma task chamada "pronto").
+ */
+export function decideFallbackIntent(message: string, lastTaskId: string | null): FallbackDecision {
+  if (lastTaskId && REFERENCE_WORDS.test(message)) return { kind: 'ask_clarification' };
+  return { kind: 'intent', intent: criacaoPadrao(message) };
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
@@ -217,7 +318,7 @@ async function loadConversationContext(
   agent = 'bento',
   config: ClickUpConfig | null = null,
 ): Promise<ConversationContext> {
-  if (!conversationId) return { lastTaskId: null, lastTaskName: null, lastPersonName: null, previousAttachments: [], solicitacaoAnterior: null };
+  if (!conversationId) return { lastTaskId: null, lastTaskName: null, lastPersonName: null, previousAttachments: [], solicitacaoAnterior: null, pendingDeleteTaskId: null };
   const recent = await db
     .select({
       role: schema.messages.role,
@@ -236,6 +337,8 @@ async function loadConversationContext(
   let lastTaskId: string | null = null;
   let lastTaskName: string | null = null;
   let lastPersonName: string | null = null;
+  let pendingDeleteTaskId: string | null = null;
+  let vistoPrimeiroAssistente = false;
   // A mensagem ATUAL já está gravada quando o guard roda: a solicitação
   // anterior é a primeira mensagem de usuário que não é ela.
   let solicitacaoAnterior: string | null = null;
@@ -257,6 +360,16 @@ async function loadConversationContext(
     if (!lastTaskId && message.role === 'assistant') {
       const urls = [...message.content.matchAll(TASK_URL)];
       if (urls.length > 0) lastTaskId = urls[urls.length - 1]![1]!;
+    }
+    // Confirmação de exclusão só é válida quando vem IMEDIATAMENTE depois da
+    // pergunta do guard — ou seja, quando a mensagem mais recente do
+    // assistente (a primeira encontrada, por causa do desc por createdAt) é
+    // ela mesma o pedido de confirmação. Uma resposta a QUALQUER outra
+    // pergunta do assistente não reativa uma exclusão pendente antiga.
+    if (!vistoPrimeiroAssistente && message.role === 'assistant') {
+      vistoPrimeiroAssistente = true;
+      const match = message.content.match(DELETE_CONFIRM_TASK_ID);
+      if (match) pendingDeleteTaskId = match[1]!;
     }
     if (!lastPersonName && message.role === 'user') {
       lastPersonName = extractPersonName(message.content);
@@ -283,7 +396,7 @@ async function loadConversationContext(
   if (lastTaskId && config) {
     lastTaskName = await getTask(config, lastTaskId).then((t) => t.name).catch(() => null);
   }
-  return { lastTaskId, lastTaskName, lastPersonName, previousAttachments, solicitacaoAnterior,
+  return { lastTaskId, lastTaskName, lastPersonName, previousAttachments, solicitacaoAnterior, pendingDeleteTaskId,
     lastArtifact: conversationArtifact([...recent].reverse(), agent) };
 }
 
@@ -429,6 +542,53 @@ async function readBackVerify(
   }
 }
 
+/**
+ * DELETE, segunda volta: já confirmado ("sim"), já passou por
+ * permissão/canary — só falta alvo (já resolvido: `taskId`), execução e
+ * READ-BACK DE AUSÊNCIA (nunca declara sucesso só porque a chamada não jogou
+ * erro).
+ */
+async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, logger: Logger): Promise<ExecuteResponse> {
+  const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
+  const start = performance.now();
+  const record = (tool: string, input: string, ok: boolean, error?: string) => {
+    toolCalls.push({ tool, input_summary: input, ok, duration_ms: Math.round(performance.now() - start), ...(error ? { error } : {}) });
+  };
+  const antes = await getTask(config, taskId).catch(() => null);
+  if (!antes) {
+    return guardResponse({
+      ok: true,
+      toolCalls,
+      answer: `Não encontrei mais a task (${taskId}) no ClickUp — já pode ter sido apagada antes.`,
+      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, reason: 'task_nao_encontrada' },
+    });
+  }
+  try {
+    await deleteTask(config, taskId);
+    record('clickup.delete_task', taskId, true);
+    const aindaExiste = await getTask(config, taskId).then(() => true).catch(() => false);
+    record('clickup.get_task', `read-back-absence ${taskId}`, !aindaExiste, aindaExiste ? 'task ainda existe após delete' : undefined);
+    logger.info({ intent_classification: 'delete', task_id: taskId, confirmed: true, verified: !aindaExiste }, '[guard] exclusão executada');
+    return guardResponse({
+      ok: true,
+      toolCalls,
+      answer: aindaExiste
+        ? `Enviei a exclusão da task "${antes.name}" (${taskId}), mas ao reler ela ainda aparece no ClickUp. Confere lá — não confirmo sucesso sem isso.`
+        : `Task "${antes.name}" (${taskId}) apagada e CONFIRMADA por leitura: ela não existe mais no ClickUp.`,
+      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, verified: !aindaExiste },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    record('clickup.delete_task', taskId, false, detail);
+    return guardResponse({
+      ok: false,
+      toolCalls,
+      answer: `Não consegui apagar a task no ClickUp: ${detail}`,
+      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, errorCode: 'CLICKUP_DELETE_FAILED' },
+    });
+  }
+}
+
 function guardResponse(params: { answer: string; ok: boolean; toolCalls: ExecuteResponse['tool_calls']; metadata?: Record<string, unknown> }): ExecuteResponse {
   return {
     execution_id: '',
@@ -467,6 +627,38 @@ export async function tryBentoActionGuard(params: {
 }): Promise<ExecuteResponse | null> {
   const { message, conversationId, logger } = params;
   if (params.seniorToolContext && !requestsExternalTask(message) && /\b(cri[ae]|faz|fa[cç]a|mont[ae])\b/i.test(message) && /briefing|reel|roteiro|copy|legenda|conceito/i.test(message)) return null;
+
+  /**
+   * SEGUNDA VOLTA DA CONFIRMAÇÃO DE EXCLUSÃO — precisa rodar ANTES do portão
+   * de `classifyActionIntent` logo abaixo: uma resposta como "sim" não tem
+   * verbo de família nenhuma, `acao.writeAuthorized` sairia `false`, e o
+   * pedido cairia no agente remoto sem nunca apagar nada, mesmo já tendo
+   * pedido e recebido confirmação explícita no turno anterior.
+   *
+   * Filtro barato ANTES de qualquer DB: só carrega o contexto da conversa
+   * (query real) quando a mensagem em si já parece uma afirmação — o volume
+   * normal de chat (análise, perguntas) nunca paga essa consulta extra.
+   */
+  if (DELETE_AFFIRMATIVE.test(message.trim())) {
+    const confirmConfig = getClickUpConfigOrNull();
+    if (confirmConfig) {
+      const confirmContext = await loadConversationContext(conversationId, params.seniorToolContext?.agent, confirmConfig);
+      if (confirmContext.pendingDeleteTaskId) {
+        if (params.seniorToolContext === null || (params.seniorToolContext && !params.seniorToolContext.permissions.some((p) => p.resource === 'clickup' && p.action === 'write'))) {
+          return guardResponse({ ok: false, toolCalls: [], answer: 'Não fiz alterações: não consegui validar sua organização e permissão de escrita no ClickUp.', metadata: { errorCode: 'PERMISSION_DENIED', verified: false } });
+        }
+        if (!podeEscreverNoCanary(params.userEmail ?? null)) {
+          return guardResponse({
+            ok: true,
+            toolCalls: [],
+            answer: 'Entendi a confirmação, mas apagar task no ClickUp ainda está liberado só pra homologação — não vou executar por enquanto.',
+            metadata: { guard: 'bento-action', action: 'blocked_canary', write_authorized: false, write_reason: 'usuário fora de BENTO_WRITE_ALLOWLIST' },
+          });
+        }
+        return executeConfirmedDelete(confirmConfig, confirmContext.pendingDeleteTaskId, logger);
+      }
+    }
+  }
 
   // PORTÃO 1 — ANÁLISE NÃO É ESCRITA. Classificação determinística ANTES de
   // qualquer ferramenta. Caso real: pedido de análise virou task na hora.
@@ -535,28 +727,79 @@ export async function tryBentoActionGuard(params: {
     });
   }
 
+  const config = getClickUpConfigOrNull();
+  if (!config) return null;
+
+  const context = await loadConversationContext(conversationId, params.seniorToolContext?.agent, config);
+
+  // PEDIDO NOVO DE EXCLUSÃO (primeira volta): pede confirmação, NÃO apaga
+  // ainda. A segunda volta ("sim"/"confirmo") é tratada mais acima, antes do
+  // portão de `classifyActionIntent` — ver comentário lá.
+  if (DELETE_REQUEST.test(message) && REFERENCE_WORDS.test(message)) {
+    if (!context.lastTaskId) {
+      return guardResponse({
+        ok: true,
+        toolCalls: [],
+        answer: 'Não encontrei nenhuma task criada ou citada recentemente nesta conversa pra apagar. Me diga o nome ou o link da task no ClickUp.',
+        metadata: { guard: 'bento-action', reason: 'delete_sem_alvo_resolvivel' },
+      });
+    }
+    const prefixo = context.lastTaskName ? `"${context.lastTaskName}" ` : '';
+    logger.info({ intent_classification: 'delete', task_id: context.lastTaskId, confirmed: false }, '[guard] pedido de exclusão: aguardando confirmação, nenhuma mutação ainda');
+    return guardResponse({
+      ok: true,
+      toolCalls: [],
+      answer:
+        `Tem certeza que quer apagar a task ${prefixo}(${context.lastTaskId})? Essa ação não pode ser desfeita. ` +
+        `Responda "sim" pra confirmar, ou qualquer outra coisa pra cancelar.\n\n${DELETE_CONFIRM_MARKER} (id:${context.lastTaskId})`,
+      metadata: { guard: 'bento-action', action: 'delete_pending_confirmation', task_id: context.lastTaskId, write_authorized: false },
+    });
+  }
+
   /**
    * A classificação fina só escolhe ENTRE as formas de escrita; o portão 1 já
-   * decidiu QUE é escrita. Quando ela não reconhece a forma, o default é
-   * CRIAR — e isso é o oposto de um regex solto, porque nada chega aqui sem
-   * ordem explícita.
+   * decidiu QUE é escrita. Quando ela não reconhece a forma, o default
+   * HISTÓRICO era CRIAR — e isso é exatamente o P0-01 da auditoria de
+   * 22/09/2026: "altere essa task para o status 'pronto'" tem verbo
+   * ("altere") fora do vocabulário de nenhum UPDATE_*, caía aqui, e nascia
+   * uma task chamada "pronto" em vez de mudar o status da task real.
    *
-   * Sem esta linha, metade do vocabulário real da operação morria no segundo
-   * classificador depois de passar no primeiro: "separa essa demanda", "faz o
-   * briefing", "lança isso no ClickUp" e "essa fica pra Sofia" todas voltavam
-   * `none` e o turno virava análise de novo — o mesmo sintoma, um andar abaixo.
+   * REGRA GLOBAL NOVA: UNKNOWN OPERATION = NO MUTATION. O default só pode
+   * ser CRIAR quando a mensagem não está se referindo a uma task JÁ
+   * EXISTENTE nesta conversa (`context.lastTaskId`) — é assim que
+   * "separa essa demanda"/"essa fica pra Sofia" continuam criando (não há
+   * task anterior: "essa" é a DEMANDA discutida, não uma task do ClickUp) e
+   * "altere essa task pra pronto" (existe `lastTaskId`, verbo não
+   * reconhecido) para e pergunta, em vez de criar uma task com o texto
+   * do pedido como nome.
    */
-  const intent = classifyIntent(message).kind === 'none' ? criacaoPadrao(message) : classifyIntent(message);
+  const classified = classifyIntent(message);
+  let intent: GuardIntent;
+  if (classified.kind !== 'none') {
+    intent = classified;
+  } else {
+    const fallback = decideFallbackIntent(message, context.lastTaskId);
+    if (fallback.kind === 'ask_clarification') {
+      logger.info(
+        { intent_classification: acao.kind, write_authorized: false, write_reason: 'operação desconhecida sobre task existente', task_id: context.lastTaskId },
+        '[guard] operação não reconhecida sobre referência existente; nenhuma mutação'
+      );
+      return guardResponse({
+        ok: true,
+        toolCalls: [],
+        answer:
+          'Entendi que é sobre uma task que já existe, mas não reconheci o que fazer com ela — não alterei nada. ' +
+          'Pode reformular? Por exemplo: "muda o status pra concluído", "atribui pro Pedro", "muda o prazo pra amanhã" ou "atualiza o briefing".',
+        metadata: { guard: 'bento-action', reason: 'unknown_operation_on_existing_reference', task_id: context.lastTaskId },
+      });
+    }
+    intent = fallback.intent;
+  }
   // §6: pedido que ANALISA e manda criar entrega a análise dentro da task — o
   // briefing é onde o resultado da análise vira instrução executável. Sem isso
   // a task nasce sem o contexto que acabou de ser levantado.
   if (intent.kind === 'create' && acao.requiresAnalysisFirst) intent.wantsBriefing = true;
   if (intent.kind === 'none') return null;
-
-  const config = getClickUpConfigOrNull();
-  if (!config) return null;
-
-  const context = await loadConversationContext(conversationId, params.seniorToolContext?.agent, config);
   const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
   const startedAt = performance.now();
   const record = (tool: string, input: string, ok: boolean, error?: string) => {
@@ -657,7 +900,24 @@ export async function tryBentoActionGuard(params: {
 
     if (intent.kind === 'update_status') {
       const statuses = await listStatusesForTask(config, taskId).catch(() => []);
-      const wanted = statuses.find((status) => /revis/i.test(intent.statusHint) ? /revis/i.test(status) : /(pront|conclu|feito|encerr)/i.test(status));
+      /**
+       * P0-01 (22/09/2026): só reconhecia "revisão" ou "pronto/concluído" —
+       * "altere essa task para em andamento" não mapeava pra nenhum status
+       * real e caía no `status_sem_mapeamento` abaixo, quando a lista tinha
+       * um status "em andamento" de verdade. Ordem importa: cada categoria
+       * checa o HINT primeiro (o que a pessoa pediu), só então procura na
+       * lista real — nunca o contrário, que inventaria status.
+       */
+      const hint = intent.statusHint;
+      const wanted = /revis/i.test(hint)
+        ? statuses.find((status) => /revis/i.test(status))
+        : /(pront|conclu|feito|encerr)/i.test(hint)
+          ? statuses.find((status) => /(pront|conclu|feito|encerr)/i.test(status))
+          : /(andamento|progress|fazendo|doing)/i.test(hint)
+            ? statuses.find((status) => /(andamento|progress|fazendo|doing)/i.test(status))
+            : /(aberto|to\s*do|a\s*fazer|open)/i.test(hint)
+              ? statuses.find((status) => /(aberto|to\s*do|a\s*fazer|open)/i.test(status))
+              : undefined;
       if (!wanted) {
         return guardResponse({
           ok: true,
