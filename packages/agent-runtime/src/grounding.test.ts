@@ -81,6 +81,25 @@ describe('ancoragem numérica por token inteiro', () => {
     const r = groundClaims('As entregas da Cosentino estão paradas.', [{ id: 'e', summary: 'Cosentino: 3 entregas abertas' }]);
     expect(r.claims[0]?.evidenceIds).toContain('e');
   });
+
+  /**
+   * P1-03 (release readiness audit, 22/09/2026): "999 diante de 3 recebe
+   * confiança 0,9" — a afirmação e a evidência compartilhavam a palavra
+   * "atraso", e isso sozinho lastreava o número errado. Palavra em comum
+   * nunca pode confirmar um VALOR que a evidência não confirma.
+   */
+  it('número errado não ancora só porque a frase compartilha outra palavra com a evidência (999 vs 3)', () => {
+    const ev = [{ id: 'op', summary: 'Cosentino: 3 tarefas em atraso' }];
+    const r = groundClaims('A Cosentino tem 999 tarefas em atraso.', ev);
+    expect(r.ungroundedFacts).toHaveLength(1);
+    expect(r.claims[0]?.confidence).toBeLessThan(0.9);
+  });
+
+  it('mesmo caso, mas com o número CERTO, ancora normalmente', () => {
+    const ev = [{ id: 'op', summary: 'Cosentino: 3 tarefas em atraso' }];
+    const r = groundClaims('A Cosentino tem 3 tarefas em atraso.', ev);
+    expect(r.ungroundedFacts).toHaveLength(0);
+  });
 });
 
 /**

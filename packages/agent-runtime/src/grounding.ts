@@ -133,7 +133,16 @@ function linkEvidence(sentence: string, evidence: EvidenceRef[], clienteDoTurno?
     }
     const evFlat = stripAccents(ev.summary).toLowerCase();
     const evNumeros = numbersIn(evFlat);
-    const casou = palavras.some((t) => evFlat.includes(t)) || numericos.some((t) => evNumeros.has(t));
+    /**
+     * P1-03 (release readiness audit, 22/09/2026): "999" contra evidência com
+     * "3" recebia confiança 0,9 porque a afirmação também compartilhava uma
+     * PALAVRA com a evidência (ex.: "atraso") — o OR original deixava
+     * qualquer palavra em comum lastrear um número que a evidência nunca
+     * confirmou. Quando a afirmação TEM número, só o número pode lastrear;
+     * palavra em comum sozinha não é prova de valor. Afirmação sem número
+     * nenhum continua usando o match por palavra, como sempre.
+     */
+    const casou = numericos.length > 0 ? numericos.some((t) => evNumeros.has(t)) : palavras.some((t) => evFlat.includes(t));
     if (casou) linked.push(ev.id);
   }
   return linked;
