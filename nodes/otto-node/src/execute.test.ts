@@ -8,9 +8,11 @@ import {
   carouselPlanSchema,
   checkBrainHealth,
   creativePlanSchema,
+  criticEvaluationSchema,
   loadBrainIndex,
   productionSpecSchema,
   retrieveRelevantKnowledge,
+  type CriticEvaluation,
   type OttoLLMProvider,
   type ResearchProvider,
   type RetrieveOptions,
@@ -76,7 +78,29 @@ interface FakeProviderBehavior {
   /** `opts` recebe o OttoChatOptions do turno (temperature, suppressThinking). */
   chat?: (messages: unknown, opts?: unknown) => Promise<string>;
   chatJson?: (schema: unknown, messages: unknown, opts?: unknown) => Promise<unknown>;
+  /**
+   * Resposta do critic (Otto Elite Phase 2) quando o teste quer exercer o
+   * critic especificamente. Sem isto, `makeDeps` intercepta
+   * `criticEvaluationSchema` ANTES de chegar em `behavior.chatJson` e devolve
+   * aprovação alta — testes que não são sobre o critic (a maioria) não
+   * precisam saber que ele existe pra continuar passando.
+   */
+  critic?: (messages: unknown) => Promise<unknown>;
 }
+
+/** Aprovação alta: passa o gate (overall 90, nenhuma dimensão crítica < 8, nenhum entregável faltando). */
+const CRITIC_APPROVES: CriticEvaluation = {
+  scores: {
+    strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
+    brand_fit: 9, copy: 9, retention: 9, platform_fit: 9, executability: 9,
+  },
+  flags: {
+    missing_deliverables: [], genericity: false, unsupported_claims: [],
+    weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+    ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+  },
+  reasoning: 'fixture de teste: aprovado por padrão',
+};
 
 /** Registro do que o pipeline pediu ao retrieval, pra checar a profundidade. */
 interface RetrievalCall {
@@ -96,10 +120,14 @@ function makeDeps(
   const llm = {
     chat: (messages: unknown, opts?: unknown) =>
       behavior.chat ? behavior.chat(messages, opts) : Promise.reject(new OttoLLMError('chat not expected')),
-    chatJson: (messages: unknown, schema: unknown, opts?: unknown) =>
-      behavior.chatJson
+    chatJson: (messages: unknown, schema: unknown, opts?: unknown) => {
+      if (schema === criticEvaluationSchema) {
+        return behavior.critic ? behavior.critic(messages) : Promise.resolve(CRITIC_APPROVES);
+      }
+      return behavior.chatJson
         ? behavior.chatJson(schema, messages, opts)
-        : Promise.reject(new OttoLLMError('chatJson not expected')),
+        : Promise.reject(new OttoLLMError('chatJson not expected'));
+    },
     healthCheck: () =>
       Promise.resolve({ status: 'ok', detail: 'fake', model: 'mistral', baseUrl: 'http://localhost:11434' }),
   } as unknown as OttoLLMProvider;
@@ -977,6 +1005,180 @@ describe('POST /execute — loop criativo (pipeline + pesquisa + qualidade)', ()
     // Com brand kit e histórico reais, as lacunas de marca e histórico somem.
     expect(pipeline.gaps).not.toContain('brand_context');
     expect(pipeline.gaps).not.toContain('creative_history');
+
+    await app.close();
+  });
+});
+
+/**
+ * CRITIC + REWRITE (Otto Elite Phase 2, Fase 2 — Fases 9-15 do brief): o
+ * primeiro draft de reels/vídeo/carrossel não é entregue sem passar por uma
+ * avaliação estruturada; se reprovar, o Otto reescreve UMA vez com a nota do
+ * critic antes de responder.
+ */
+describe('critic + rewrite (Otto Elite Phase 2)', () => {
+  it('critic aprova de primeira: uma reescrita não acontece, metadata.critic registra a aprovação', async () => {
+    let creativePlanCalls = 0;
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) {
+              creativePlanCalls += 1;
+              return Promise.resolve(creativePlanFixture);
+            }
+            if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+            return Promise.reject(new OttoLLMError('schema inesperado'));
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-critic-aprova',
+      message: 'Crie um carrossel sobre o funil de demanda pro cliente',
+    });
+
+    expect(body.status).toBe('completed');
+    expect(creativePlanCalls).toBe(1); // sem reescrita
+    expect(body.metadata.critic).toMatchObject({ enabled: true, passed: true, rewrites: 0 });
+
+    await app.close();
+  });
+
+  it('critic reprova (entregável faltando) e o Otto reescreve UMA vez com a nota do critic no briefing', async () => {
+    let creativePlanCalls = 0;
+    const briefingsRecebidos: string[] = [];
+    let criticCalls = 0;
+
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) {
+              creativePlanCalls += 1;
+              const list = messages as { role: string; content: string }[];
+              briefingsRecebidos.push(list.find((m) => m.role === 'user')?.content ?? '');
+              return Promise.resolve(creativePlanFixture);
+            }
+            if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+            return Promise.reject(new OttoLLMError('schema inesperado'));
+          },
+          critic: () => {
+            criticCalls += 1;
+            // Primeira chamada reprova (falta legenda); segunda (pós-reescrita) aprova.
+            if (criticCalls === 1) {
+              return Promise.resolve({
+                scores: {
+                  strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
+                  brand_fit: 9, copy: 9, retention: 9, platform_fit: 9, executability: 9,
+                },
+                flags: {
+                  missing_deliverables: ['legenda'], genericity: false, unsupported_claims: [],
+                  weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                  ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+                },
+                reasoning: 'faltou a legenda pedida',
+              });
+            }
+            return Promise.resolve({
+              scores: {
+                strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
+                brand_fit: 9, copy: 9, retention: 9, platform_fit: 9, executability: 9,
+              },
+              flags: {
+                missing_deliverables: [], genericity: false, unsupported_claims: [],
+                weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+              },
+              reasoning: 'agora está completo',
+            });
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-critic-reprova',
+      message: 'Crie um carrossel e uma legenda pro cliente',
+    });
+
+    expect(body.status).toBe('completed');
+    expect(criticCalls).toBe(2); // avaliação inicial + reavaliação pós-reescrita
+    expect(creativePlanCalls).toBe(2); // geração inicial + UMA reescrita, não duas
+    expect(briefingsRecebidos[1]).toMatch(/REVISÃO DO CRITIC OBRIGATÓRIA/);
+    expect(briefingsRecebidos[1]).toMatch(/faltou a legenda pedida/);
+    expect(body.metadata.critic).toMatchObject({ enabled: true, passed: true, rewrites: 1 });
+
+    await app.close();
+  });
+
+  it('critic reprova e continua reprovando após a reescrita: entrega mesmo assim, mas metadata.critic.passed fica false (nunca trava o turno)', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+            return Promise.reject(new OttoLLMError('schema inesperado'));
+          },
+          critic: () =>
+            Promise.resolve({
+              scores: {
+                strategy: 5, concept: 5, hook: 5, specificity: 5, originality: 5,
+                brand_fit: 5, copy: 5, retention: 5, platform_fit: 5, executability: 5,
+              },
+              flags: {
+                missing_deliverables: [], genericity: true, unsupported_claims: [],
+                weak_hook: true, weak_concept: true, bad_cta: false, bad_platform_fit: false,
+                ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+              },
+              reasoning: 'fraco em tudo',
+            }),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-critic-persistente',
+      message: 'Crie um carrossel pro cliente',
+    });
+
+    // Entrega mesmo reprovado: NUNCA travar o turno por causa do critic — o
+    // mesmo princípio do loop anti-genérico (creative-pipeline.ts), que
+    // também entrega após esgotar revisões em vez de devolver erro.
+    expect(body.status).toBe('completed');
+    expect(body.metadata.critic).toMatchObject({ enabled: true, passed: false, rewrites: 1 });
+
+    await app.close();
+  });
+
+  it('critic NÃO roda pra job type image/upscale (o entregável é a imagem, não o texto)', async () => {
+    let criticCalls = 0;
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => (schema === creativePlanSchema ? Promise.resolve(creativePlanFixture) : Promise.reject(new OttoLLMError('x'))),
+          critic: () => {
+            criticCalls += 1;
+            return Promise.resolve(CRITIC_APPROVES);
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-critic-image',
+      message: 'Crie uma imagem pro cliente',
+    });
+
+    expect(body.status).toBe('completed');
+    expect(criticCalls).toBe(0);
+    expect(body.metadata.critic).toEqual({ enabled: false });
 
     await app.close();
   });

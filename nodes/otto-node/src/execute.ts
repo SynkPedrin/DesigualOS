@@ -23,6 +23,9 @@ import {
   contratoDeSaida,
   diretivaDoContrato,
   createWebSearchProviderFromEnv,
+  critiqueDeliverable,
+  passesCriticGate,
+  formatCriticRevisionNote,
   type BrainHealth,
   type BrandKit,
   type CarouselPlan,
@@ -683,71 +686,199 @@ export async function executeTask(
      * a legenda gerada não tinha hashtag nenhuma e ignorou "pode usar emojis
      * na legenda", porque nada no prompt do planner sabia que isso foi pedido.
      */
-    const contratoProducao = diretivaDoContrato(contratoDeSaida(stripOrchestratorContext(request.message)));
+    const contratoEstruturaProducao = contratoDeSaida(stripOrchestratorContext(request.message));
+    const contratoProducao = diretivaDoContrato(contratoEstruturaProducao);
     const pedeEmoji = /\bemojis?\b/i.test(stripOrchestratorContext(request.message));
+    const entregaveisPedidos = contratoEstruturaProducao.artefato === 'indefinido'
+      ? []
+      : [contratoEstruturaProducao.artefato, ...(contratoEstruturaProducao.adicionais ?? [])];
+    // `intent` já foi narrowed pro early-return do chat (!intent) acima, mas
+    // essa narrowing não atravessa a fronteira de `produce()` (função aninhada
+    // declarada depois) — TS trata o closure como podendo ver o tipo largo de
+    // novo. `jobType` fixa o valor não-nulo pro resto do bloco de produção.
+    const jobType: StudioJobType = intent;
 
-    // A geração é o passo INJETADO do pipeline: o planner real do Otto, com o
-    // bloco de pesquisa e a nota de revisão quando o gate reprovou a anterior.
-    const pipeline = await runCreativePipeline(
-      {
-        researchProvider,
-        generator: {
-          generate: async ({ research, revisionNote }) => {
-            const generated = await measureLlm(() =>
-              createCreativePlan(
-                { llm: deps.llm },
-                {
-                  briefing: revisionNote ? `${request.message}\n\nREVISÃO OBRIGATÓRIA: ${revisionNote}` : request.message,
-                  knowledge,
-                  referenceAssets: request.attachments,
-                  clientContext: [
-                    dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
-                    formatResearchBlock(research),
-                    contratoProducao ? `O campo "copy" precisa seguir este contrato:\n${contratoProducao}` : '',
-                    pedeEmoji ? 'O pedido autoriza emojis: use com naturalidade no campo "copy", sem exagerar.' : '',
-                  ]
-                    .filter(Boolean)
-                    .join('\n'),
-                },
-              ),
-            );
-            return { copy: generated.copy, concept: generated.concept, plan: generated };
+    /**
+     * `produce()` isola geração + shaping (carrossel/vídeo) + spec + resposta
+     * renderizada por trás de uma função, pra o CRITIC (abaixo) poder chamar
+     * de novo com uma nota de reescrita SEM duplicar a sequência inteira. O
+     * loop anti-genérico de `runCreativePipeline` continua existindo dentro
+     * desta função — ele julga só a copy (heurística determinística, barata);
+     * o critic julga o ENTREGÁVEL INTEIRO renderizado (LLM, mais caro), e por
+     * isso vive FORA, como uma segunda porta sobre a primeira.
+     */
+    async function produce(effectiveMessage: string) {
+      const pipeline = await runCreativePipeline(
+        {
+          researchProvider,
+          generator: {
+            generate: async ({ research, revisionNote }) => {
+              const generated = await measureLlm(() =>
+                createCreativePlan(
+                  { llm: deps.llm },
+                  {
+                    briefing: revisionNote ? `${effectiveMessage}\n\nREVISÃO OBRIGATÓRIA: ${revisionNote}` : effectiveMessage,
+                    knowledge,
+                    referenceAssets: request.attachments,
+                    clientContext: [
+                      dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
+                      formatResearchBlock(research),
+                      contratoProducao ? `O campo "copy" precisa seguir este contrato:\n${contratoProducao}` : '',
+                      pedeEmoji ? 'O pedido autoriza emojis: use com naturalidade no campo "copy", sem exagerar.' : '',
+                    ]
+                      .filter(Boolean)
+                      .join('\n'),
+                  },
+                ),
+              );
+              return { copy: generated.copy, concept: generated.concept, plan: generated };
+            },
           },
         },
-      },
-      stateInput,
-      // Sem brandTerms de propósito: o único identificador de cliente que o
-      // node tem aqui é o UUID do context_ref, e UUID não aparece em copy
-      // nenhuma — passá-lo como "termo de marca" só produziria uma âncora que
-      // jamais casa. Sem ele, assessCreativeCopy decide por clichê + âncora
-      // concreta (número), que é o sinal que de fato existe neste ponto.
-      {},
-    );
-
-    if (!pipeline.output) {
-      throw new Error('pipeline criativo não produziu peça');
-    }
-    const plan = pipeline.output.plan as Awaited<ReturnType<typeof createCreativePlan>>;
-
-    logger.info(
-      {
-        concept: plan.concept,
-        job_type: intent,
-        llm_ms: llmMs,
-        gaps: pipeline.readiness.gaps,
-        research_performed: pipeline.research.performed,
-        research_sources: pipeline.research.findings.length,
-        quality_passed: pipeline.qualityPassed,
-        revisions: pipeline.revisions,
-      },
-      '[OTTO:creative] loop criativo concluído',
-    );
-    if (pipeline.readiness.requiresResearch && !pipeline.research.performed) {
-      logger.warn(
-        { execution_id: request.execution_id },
-        '[OTTO:research] o objetivo pedia dado atual e a pesquisa NÃO aconteceu; a peça sai sem base de mercado',
+        stateInput,
+        // Sem brandTerms de propósito: o único identificador de cliente que o
+        // node tem aqui é o UUID do context_ref, e UUID não aparece em copy
+        // nenhuma — passá-lo como "termo de marca" só produziria uma âncora que
+        // jamais casa. Sem ele, assessCreativeCopy decide por clichê + âncora
+        // concreta (número), que é o sinal que de fato existe neste ponto.
+        {},
       );
+
+      if (!pipeline.output) {
+        throw new Error('pipeline criativo não produziu peça');
+      }
+      const plan = pipeline.output.plan as Awaited<ReturnType<typeof createCreativePlan>>;
+
+      logger.info(
+        {
+          concept: plan.concept,
+          job_type: jobType,
+          llm_ms: llmMs,
+          gaps: pipeline.readiness.gaps,
+          research_performed: pipeline.research.performed,
+          research_sources: pipeline.research.findings.length,
+          quality_passed: pipeline.qualityPassed,
+          revisions: pipeline.revisions,
+        },
+        '[OTTO:creative] loop criativo concluído',
+      );
+      if (pipeline.readiness.requiresResearch && !pipeline.research.performed) {
+        logger.warn(
+          { execution_id: request.execution_id },
+          '[OTTO:research] o objetivo pedia dado atual e a pesquisa NÃO aconteceu; a peça sai sem base de mercado',
+        );
+      }
+
+      // Sequencial por DEPENDÊNCIA REAL, não por descuido: planCarousel e
+      // planVideo recebem o CreativePlan pronto como entrada (o JSON do plano é
+      // o user prompt deles), então não há Promise.all possível aqui sem
+      // planejar o carrossel a partir de um plano que ainda não existe. Os dois
+      // ifs também são mutuamente exclusivos por jobType.
+      let carouselPlan;
+      let videoPlan;
+      if (jobType === 'carousel') {
+        carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan));
+        logger.info({ slides: carouselPlan.slide_count, llm_ms: llmMs }, '[OTTO:plan] carrossel planejado');
+      }
+      if (jobType === 'video' || jobType === 'reels') {
+        videoPlan = await measureLlm(() => planVideo({ llm: deps.llm }, plan));
+        logger.info({ scenes: videoPlan.scenes.length, llm_ms: llmMs }, '[OTTO:plan] vídeo planejado');
+      }
+
+      const clientId = refClientId ?? plan.client;
+      const spec = buildProductionSpec(plan, {
+        clientId,
+        jobType,
+        ...(carouselPlan ? { carouselPlan } : {}),
+        ...(videoPlan ? { videoPlan, aspectRatio: videoPlan.aspect_ratio } : {}),
+        referenceAssets: request.attachments,
+        metadata: { execution_id: request.execution_id },
+      });
+      logger.info({ job_type: spec.job_type, depth: depth.depth }, '[OTTO:spec] spec de produção pronta pro handoff');
+
+      // Gate de fidelidade real (ver checkRealWorldFidelity): se o briefing
+      // pede um produto/marca/pessoa/local REAL sem referência fiel anexada,
+      // a pessoa vê isso ANTES de esperar o job do Studio terminar, não depois.
+      const fidelityWarning =
+        typeof spec.metadata.fidelity_warning === 'string' ? spec.metadata.fidelity_warning : null;
+      if (fidelityWarning) {
+        logger.warn({ execution_id: request.execution_id }, '[OTTO:fidelity] briefing sem referência fiel pra entidade real');
+      }
+
+      const answer = [fidelityWarning, formatPlanAnswer(plan.concept, plan.copy, jobType, videoPlan, carouselPlan)]
+        .filter(Boolean)
+        .join('\n\n');
+
+      return { pipeline, plan, carouselPlan, videoPlan, spec, fidelityWarning, answer };
     }
+
+    let result = await produce(request.message);
+
+    /**
+     * CRITIC + REWRITE (Otto Elite Phase 2, Fase 2 — Fases 9-15 do brief):
+     * o primeiro draft NÃO é o produto final pra reels/vídeo/carrossel — os
+     * formatos onde a rubrica (hook, retenção, roteiro executável) mais
+     * importa e onde o baseline ao vivo desta sessão mediu 59/100.
+     *
+     * NÃO roda pra 'image'/'upscale': a peça principal ali é a imagem em si
+     * (renderizada depois pelo Studio), e o texto que o critic julgaria
+     * (copy/legenda) já passa pelo mesmo contrato de saída acima sem o custo
+     * de outra chamada de LLM inteira.
+     *
+     * MAX 1 reescrita, não os 2 do brief: cada chamada de createCreativePlan
+     * já mede 200-350s nesta máquina (CPU-only, ver OTTO_ELITE_HANDOFF.md).
+     * Duas reescritas completas poderiam levar um turno a 15+ minutos, o que
+     * o próprio brief (Fase 35-36) trata como inaceitável. Documentado como
+     * risco conhecido, não resolvido silenciosamente.
+     */
+    const CRITIC_ENABLED_INTENTS: StudioJobType[] = ['reels', 'video', 'carousel'];
+    const criticHabilitado = CRITIC_ENABLED_INTENTS.includes(jobType);
+    let criticEvaluation: Awaited<ReturnType<typeof critiqueDeliverable>> | null = null;
+    let criticGate: ReturnType<typeof passesCriticGate> | null = null;
+    let criticRewrites = 0;
+
+    if (criticHabilitado) {
+      criticEvaluation = await measureLlm(() =>
+        critiqueDeliverable(
+          { llm: deps.llm },
+          {
+            briefing: stripOrchestratorContext(request.message),
+            renderedAnswer: result.answer,
+            requestedDeliverables: entregaveisPedidos,
+          },
+        ),
+      );
+      criticGate = passesCriticGate(criticEvaluation);
+      logger.info(
+        { overall: criticGate.overall, passed: criticGate.passed, reasons: criticGate.reasons },
+        '[OTTO:critic] avaliação do entregável renderizado',
+      );
+
+      if (!criticGate.passed) {
+        const revisionNote = formatCriticRevisionNote(criticEvaluation, criticGate);
+        const augmentedMessage = `${request.message}\n\nREVISÃO DO CRITIC OBRIGATÓRIA:\n${revisionNote}`;
+        result = await produce(augmentedMessage);
+        criticRewrites = 1;
+
+        criticEvaluation = await measureLlm(() =>
+          critiqueDeliverable(
+            { llm: deps.llm },
+            {
+              briefing: stripOrchestratorContext(request.message),
+              renderedAnswer: result.answer,
+              requestedDeliverables: entregaveisPedidos,
+            },
+          ),
+        );
+        criticGate = passesCriticGate(criticEvaluation);
+        logger.info(
+          { overall: criticGate.overall, passed: criticGate.passed, reasons: criticGate.reasons },
+          '[OTTO:critic] avaliação após reescrita',
+        );
+      }
+    }
+
+    const { pipeline, plan, carouselPlan, videoPlan, spec, answer } = result;
 
     const metadata: Record<string, unknown> = {
       intent,
@@ -774,36 +905,22 @@ export async function executeTask(
         trace: pipeline.trace,
       },
       ...(dna ? { creative_dna: dna } : {}),
+      ...(carouselPlan ? { carousel_plan: carouselPlan } : {}),
+      ...(videoPlan ? { video_plan: videoPlan } : {}),
+      production_spec: spec,
+      ...(criticEvaluation && criticGate
+        ? {
+            critic: {
+              enabled: true,
+              evaluation: criticEvaluation,
+              overall: criticGate.overall,
+              passed: criticGate.passed,
+              reasons: criticGate.reasons,
+              rewrites: criticRewrites,
+            },
+          }
+        : { critic: { enabled: false } }),
     };
-
-    // Sequencial por DEPENDÊNCIA REAL, não por descuido: planCarousel e
-    // planVideo recebem o CreativePlan pronto como entrada (o JSON do plano é
-    // o user prompt deles), então não há Promise.all possível aqui sem
-    // planejar o carrossel a partir de um plano que ainda não existe. Os dois
-    // ifs também são mutuamente exclusivos por jobType.
-    let carouselPlan;
-    let videoPlan;
-    if (intent === 'carousel') {
-      carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan));
-      metadata.carousel_plan = carouselPlan;
-      logger.info({ slides: carouselPlan.slide_count, llm_ms: llmMs }, '[OTTO:plan] carrossel planejado');
-    }
-    if (intent === 'video' || intent === 'reels') {
-      videoPlan = await measureLlm(() => planVideo({ llm: deps.llm }, plan));
-      metadata.video_plan = videoPlan;
-      logger.info({ scenes: videoPlan.scenes.length, llm_ms: llmMs }, '[OTTO:plan] vídeo planejado');
-    }
-
-    const clientId = refClientId ?? plan.client;
-    const spec = buildProductionSpec(plan, {
-      clientId,
-      jobType: intent,
-      ...(carouselPlan ? { carouselPlan } : {}),
-      ...(videoPlan ? { videoPlan, aspectRatio: videoPlan.aspect_ratio } : {}),
-      referenceAssets: request.attachments,
-      metadata: { execution_id: request.execution_id },
-    });
-    metadata.production_spec = spec;
     const timings: PhaseTimings = {
       classify_ms: classifyMs,
       retrieval_ms: retrievalMs,
@@ -811,27 +928,12 @@ export async function executeTask(
       total_ms: since(startedAt),
     };
     metadata.timings = timings;
-    logger.info(
-      { job_type: spec.job_type, ...timings, depth: depth.depth },
-      '[OTTO:spec] spec de produção pronta pro handoff',
-    );
-
-    // Gate de fidelidade real (ver checkRealWorldFidelity): se o briefing
-    // pede um produto/marca/pessoa/local REAL sem referência fiel anexada,
-    // a pessoa vê isso ANTES de esperar o job do Studio terminar, não depois.
-    const fidelityWarning =
-      typeof spec.metadata.fidelity_warning === 'string' ? spec.metadata.fidelity_warning : null;
-    if (fidelityWarning) {
-      logger.warn({ execution_id: request.execution_id }, '[OTTO:fidelity] briefing sem referência fiel pra entidade real');
-    }
 
     return {
       execution_id: request.execution_id,
       agent: config.AGENT_NAME,
       status: 'completed',
-      answer: [fidelityWarning, formatPlanAnswer(plan.concept, plan.copy, intent, videoPlan, carouselPlan)]
-        .filter(Boolean)
-        .join('\n\n'),
+      answer,
       sources,
       tool_calls: [],
       usage: { input_tokens: 0, output_tokens: 0 },

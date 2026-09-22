@@ -47,6 +47,9 @@ export {
   carouselSlideSchema,
   creativeFeedbackSchema,
   creativePlanSchema,
+  criticEvaluationSchema,
+  criticFlagsSchema,
+  criticScoresSchema,
   productionSpecSchema,
   qualityCriteriaSchema,
   qualityEvaluationSchema,
@@ -63,6 +66,9 @@ export type {
   CarouselSlide,
   CreativeFeedback,
   CreativePlan,
+  CriticEvaluation,
+  CriticFlags,
+  CriticScores,
   ProductionSpec,
   QualityCriteria,
   QualityEvaluation,
@@ -146,3 +152,11 @@ export type { WebSearchVendor, WebSearchConfig } from './research/web-search-pro
 export type { SourceQuality, ResearchSource, ResearchFinding, ResearchProvider, ResearchEvidence, ResearchResult } from './research/research.js';
 export { runCreativePipeline } from './creative/creative-pipeline.js';
 export type { CreativeOutput, CreativeGenerator, CreativePipelineResult, CreativePipelineDeps } from './creative/creative-pipeline.js';
+
+export {
+  critiqueDeliverable,
+  deriveCriticOverall,
+  passesCriticGate,
+  formatCriticRevisionNote,
+} from './creative/critic.js';
+export type { CriticDeps, CriticInput, CriticGateResult } from './creative/critic.js';

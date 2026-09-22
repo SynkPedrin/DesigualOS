@@ -291,6 +291,57 @@ export const qualityEvaluationSchema = z.object({
   reasoning: z.string().min(1),
 });
 
+// ---------------------------------------------------------------------------
+// Critic estruturado (Otto Elite Phase 2, Fase 2) — avalia o ENTREGÁVEL
+// RENDERIZADO (o texto que o humano vai ler), não o asset de imagem
+// (isso já existe em qualityEvaluationSchema/evaluateCreative). Dimensões
+// são chaves FIXAS, não um record livre: um record livre deixa o modelo
+// inventar, renomear ou omitir dimensão, e o gate (Fase 13) precisa de
+// todas as dez presentes pra decidir.
+// ---------------------------------------------------------------------------
+
+export const criticScoresSchema = z.object({
+  strategy: z.number().min(0).max(10),
+  concept: z.number().min(0).max(10),
+  hook: z.number().min(0).max(10),
+  specificity: z.number().min(0).max(10),
+  originality: z.number().min(0).max(10),
+  brand_fit: z.number().min(0).max(10),
+  copy: z.number().min(0).max(10),
+  retention: z.number().min(0).max(10),
+  platform_fit: z.number().min(0).max(10),
+  executability: z.number().min(0).max(10),
+});
+
+export const criticFlagsSchema = z.object({
+  missing_deliverables: z.array(z.string()).default([]),
+  genericity: z.boolean().default(false),
+  unsupported_claims: z.array(z.string()).default([]),
+  weak_hook: z.boolean().default(false),
+  weak_concept: z.boolean().default(false),
+  bad_cta: z.boolean().default(false),
+  bad_platform_fit: z.boolean().default(false),
+  ai_slop: z.boolean().default(false),
+  over_explanation: z.boolean().default(false),
+  missing_production_direction: z.boolean().default(false),
+  brand_mismatch: z.boolean().default(false),
+});
+
+/**
+ * `overall` NÃO vem do modelo. Lição do bug de `duration` (mesma sessão,
+ * commit 375f7ba): pedir pro modelo somar/derivar um número a partir de
+ * outros campos que ele mesmo gerou é pedir aritmética que ele erra de
+ * forma consistente. O overall é a MÉDIA dos dez scores, calculada em
+ * código depois do parse (ver `deriveCriticOverall` em critic.ts) — o
+ * schema só aceita o que o LLM sabe fazer bem: julgar cada dimensão
+ * isoladamente.
+ */
+export const criticEvaluationSchema = z.object({
+  scores: criticScoresSchema,
+  flags: criticFlagsSchema,
+  reasoning: z.string().min(1),
+});
+
 export type ArtDirection = z.infer<typeof artDirectionSchema>;
 export type QualityCriteria = z.infer<typeof qualityCriteriaSchema>;
 export type ReferenceStrategy = z.infer<typeof referenceStrategySchema>;
@@ -306,3 +357,6 @@ export type StudioJobType = z.infer<typeof studioJobTypeSchema>;
 export type ProductionSpec = z.infer<typeof productionSpecSchema>;
 export type QualityIssue = z.infer<typeof qualityIssueSchema>;
 export type QualityEvaluation = z.infer<typeof qualityEvaluationSchema>;
+export type CriticScores = z.infer<typeof criticScoresSchema>;
+export type CriticFlags = z.infer<typeof criticFlagsSchema>;
+export type CriticEvaluation = z.infer<typeof criticEvaluationSchema>;
