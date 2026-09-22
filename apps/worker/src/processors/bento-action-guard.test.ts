@@ -175,15 +175,25 @@ describe('P0-01: UPDATE nunca vira CREATE — unknown operation = no mutation', 
     ['atualiza o briefing dessa task', 'update_brief'],
     ['cria uma task', 'create'],
     ['faz uma nova task', 'create'],
+    // CRUD gate da missão de release (22/09/2026): title/priority/comment
+    // ganharam primitiva própria — achado real no E2E contra "Cliente Teste
+    // 7" (gate exige PASS pros três, não só "não cria por engano").
+    ["troca o título dessa task pra 'Novo nome real'", 'update_title'],
+    ['muda a prioridade dessa task para alta', 'update_priority'],
+    ["adiciona um comentário nessa task dizendo 'confirmado pelo QA'", 'comment'],
   ] as const)('%s -> %s', async (msg, esperado) => {
     const { classifyIntentForTest } = await import('./bento-action-guard.js');
     expect(classifyIntentForTest(msg).kind).toBe(esperado);
   });
 
   /**
-   * Vocabulário SEM primitiva própria ainda (unassign/comment/title/delete —
-   * a auditoria pede um contrato de intenção unificado que os cobre como
-   * categorias de primeira classe; não implementado nesta rodada por escopo).
+   * Vocabulário SEM primitiva própria ainda (unassign — a auditoria pede um
+   * contrato de intenção unificado que o cobre como categoria de primeira
+   * classe; não implementado nesta rodada por escopo). title/comment sem
+   * TEXTO NOVO especificado (a pessoa não disse qual título/comentário)
+   * também caem aqui — não há o que executar, então pedir esclarecimento é
+   * a única leitura honesta, nunca inventar um valor.
+   *
    * O que este teste GARANTE, e é o que fecha o P0 estruturalmente: mesmo
    * sem reconhecer a operação, referenciando task existente, o resultado
    * NUNCA é criar uma task nova com o texto do pedido como nome.

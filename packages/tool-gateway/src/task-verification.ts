@@ -35,6 +35,8 @@ export interface ExpectedTaskState {
    * instrução NOVA entrou, em vez de só checar que a task ainda existe.
    */
   descriptionContains?: string[];
+  /** 1=urgent, 2=high, 3=normal, 4=low; null = espera SEM prioridade definida. */
+  priority?: 1 | 2 | 3 | 4 | null;
 }
 
 export interface TaskVerification {
@@ -115,6 +117,13 @@ export function verifyTaskState(actual: TaskDetail, expected: ExpectedTaskState)
     checked.push('status');
     if ((actual.status ?? '').toLowerCase().trim() !== expected.status.toLowerCase().trim()) {
       mismatches.push(`status esperado "${expected.status}", mas a task está como "${actual.status ?? 'sem status'}"`);
+    }
+  }
+
+  if (expected.priority !== undefined) {
+    checked.push('prioridade');
+    if (actual.priority !== expected.priority) {
+      mismatches.push(`prioridade esperada ${expected.priority ?? 'nenhuma'}, mas a task está com ${actual.priority ?? 'nenhuma'}`);
     }
   }
 

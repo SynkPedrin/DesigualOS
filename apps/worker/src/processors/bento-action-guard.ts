@@ -1,9 +1,11 @@
 import { desc, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
+  createTaskComment,
   deleteTask,
   findMemberByName,
   getTask,
+  getTaskComments,
   listStatusesForTask,
   updateTask,
   verifyTaskState,
@@ -85,6 +87,18 @@ const UPDATE_STATUS =
  * briefing/descrição — sem isso "atualiza o prazo" também cairia aqui.
  */
 const UPDATE_BRIEF = /(atualiz|edit|complement|revis|acrescent|adicion)[a-z]*\b.*(briefing|brief|descri[çc][ãa]o)/i;
+/**
+ * UPDATE_TITLE/UPDATE_PRIORITY/COMMENT (mission CRUD gate, 22/09/2026):
+ * vocabulário sem primitiva própria ainda — caíam em `decideFallbackIntent`
+ * (pede esclarecimento, nunca cria; seguro, mas não executa a ação de
+ * verdade). Mesma régua de UPDATE_BRIEF: verbo de troca genérico só conta
+ * quando acompanhado da palavra do CAMPO específico, senão "muda X" vira
+ * ambíguo demais com update_status/update_due/update_assignee.
+ */
+const UPDATE_TITLE = /(troc|mud|alter|renom|revis)[a-z]*\b.*(t[íi]tulo|nome)\b/i;
+const UPDATE_PRIORITY = /(muda|troc|alter|coloc|defin|ajust)[a-z]*\b.*priorid/i;
+const PRIORITY_WORD_TO_VALUE: Record<string, 1 | 2 | 3 | 4> = { urgente: 1, urgent: 1, alta: 2, high: 2, normal: 3, media: 3, média: 3, baixa: 4, low: 4 };
+const COMMENT_REQUEST = /(adicion|coloc|deix|escrev|manda|posta)[a-z]*\b.*coment[áa]rio/i;
 const CREATE_TASK = /(cri(e|a|ar)|adicione?|nova (task|tarefa)|nova task|nova tarefa)\b/i;
 const REFERENCE_WORDS = /(essa|aquela|a task|a tarefa|esta task|esta tarefa|ela|ele|isso|dela|dele|nesta|nessa|a anterior)\b/i;
 const BRIEFING_ASK = /(briefing|brief)\b/i;
@@ -110,6 +124,9 @@ type GuardIntent =
   | { kind: 'update_due'; dueDate: number }
   | { kind: 'update_status'; statusHint: string }
   | { kind: 'update_brief'; addition: string }
+  | { kind: 'update_title'; newTitle: string }
+  | { kind: 'update_priority'; priority: 1 | 2 | 3 | 4 }
+  | { kind: 'comment'; text: string }
   | { kind: 'create'; taskName: string; personName: string | null; dueDate: number | null; wantsBriefing: boolean }
   | { kind: 'none' };
 
@@ -149,6 +166,28 @@ function extractTaskName(message: string): string | null {
   if (quoted) return quoted[1]!.trim();
   const named = message.match(/(?:chamad[ao]|nomead[ao]|com (?:o )?nome|nome:?)\s+(.{3,120}?)(?:[.,;]|$)/i);
   return named?.[1]?.trim() ?? null;
+}
+
+/** "troca o título pra 'X'" / "troca o título pra X" — aspas OU texto livre após "pra/para". */
+function extractNewTitle(message: string): string | null {
+  const quoted = message.match(/["“]([^"”]{2,120})["”]/);
+  if (quoted) return quoted[1]!.trim();
+  const livre = message.match(/(?:t[íi]tulo|nome)\b.*?(?:pra|para|pro)\s+(.{2,120}?)(?:[.!?]|$)/i);
+  return livre?.[1]?.trim() ?? null;
+}
+
+/** Mapeia a PALAVRA de prioridade citada (não a lista real do ClickUp — prioridade é sempre a mesma escala 1-4, ao contrário de status). */
+function extractPriorityValue(message: string): 1 | 2 | 3 | 4 | null {
+  const palavra = Object.keys(PRIORITY_WORD_TO_VALUE).find((p) => new RegExp(`\\b${p}\\b`, 'i').test(message));
+  return palavra ? PRIORITY_WORD_TO_VALUE[palavra]! : null;
+}
+
+/** "adiciona um comentário dizendo/com 'X'" — aspas OU texto livre após dizendo/com/que diz. */
+function extractCommentText(message: string): string | null {
+  const quoted = message.match(/["“]([^"”]{1,500})["”]/);
+  if (quoted) return quoted[1]!.trim();
+  const livre = message.match(/(?:dizendo|que diz|com o texto|com|:)\s+(.{1,500})$/i);
+  return livre?.[1]?.trim() ?? null;
 }
 
 export function classifyIntentForTest(message: string): GuardIntent {
@@ -221,6 +260,21 @@ function classifyIntent(message: string): GuardIntent {
   }
   if (UPDATE_BRIEF.test(message) && hasReference) {
     return { kind: 'update_brief', addition: message };
+  }
+  if (UPDATE_TITLE.test(message) && hasReference) {
+    const newTitle = extractNewTitle(message);
+    if (newTitle) return { kind: 'update_title', newTitle };
+    return { kind: 'none' };
+  }
+  if (UPDATE_PRIORITY.test(message) && hasReference) {
+    const priority = extractPriorityValue(message);
+    if (priority) return { kind: 'update_priority', priority };
+    return { kind: 'none' };
+  }
+  if (COMMENT_REQUEST.test(message) && hasReference) {
+    const text = extractCommentText(message);
+    if (text) return { kind: 'comment', text };
+    return { kind: 'none' };
   }
   if (CREATE_TASK.test(message)) {
     const taskName = extractTaskName(message);
@@ -1007,6 +1061,84 @@ export async function tryBentoActionGuard(params: {
         const detail = error instanceof Error ? error.message : String(error);
         record('clickup.update_task', `brief -> ${taskId}`, false, detail);
         return guardResponse({ ok: false, toolCalls, answer: `Não consegui atualizar o briefing no ClickUp: ${detail}`, metadata: { guard: 'bento-action', action: 'update_brief', task_id: taskId, errorCode: 'CLICKUP_UPDATE_FAILED' } });
+      }
+    }
+
+    if (intent.kind === 'update_title') {
+      try {
+        await updateTask(config, taskId, { name: intent.newTitle });
+        record('clickup.update_task', `title -> "${intent.newTitle}" -> ${taskId}`, true);
+        const verif = await readBackVerify(config, taskId, { name: intent.newTitle });
+        record('clickup.get_task', `read-back ${taskId}`, verif?.ok ?? false, verif == null ? 'não consegui reler' : verif.mismatches.join('; ') || undefined);
+        return guardResponse({
+          ok: true,
+          toolCalls,
+          answer:
+            verif == null
+              ? `Mudei o título da task (${taskId}) para "${intent.newTitle}", mas não consegui reler pra confirmar. Confere no ClickUp.`
+              : verif.ok
+                ? `Título alterado e CONFIRMADO por leitura no ClickUp: a task (${taskId}) agora se chama "${intent.newTitle}".`
+                : `Enviei a mudança de título da task (${taskId}), mas ao reler a verificação apontou: ${verif.mismatches.join('; ')}.`,
+          metadata: { guard: 'bento-action', action: 'update_title', task_id: taskId, new_title: intent.newTitle, verified: verif?.ok ?? false },
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        record('clickup.update_task', `title -> ${taskId}`, false, detail);
+        return guardResponse({ ok: false, toolCalls, answer: `Não consegui mudar o título no ClickUp: ${detail}`, metadata: { guard: 'bento-action', action: 'update_title', task_id: taskId, errorCode: 'CLICKUP_UPDATE_FAILED' } });
+      }
+    }
+
+    if (intent.kind === 'update_priority') {
+      const PRIORITY_LABEL: Record<1 | 2 | 3 | 4, string> = { 1: 'urgente', 2: 'alta', 3: 'normal', 4: 'baixa' };
+      try {
+        await updateTask(config, taskId, { priority: intent.priority });
+        record('clickup.update_task', `priority ${intent.priority} -> ${taskId}`, true);
+        const prefixo = context.lastTaskName ? `"${context.lastTaskName}" ` : '';
+        const verif = await readBackVerify(config, taskId, { priority: intent.priority });
+        record('clickup.get_task', `read-back ${taskId}`, verif?.ok ?? false, verif == null ? 'não consegui reler' : verif.mismatches.join('; ') || undefined);
+        return guardResponse({
+          ok: true,
+          toolCalls,
+          answer:
+            verif == null
+              ? `Mudei a prioridade da task ${prefixo}(${taskId}) para ${PRIORITY_LABEL[intent.priority]}, mas não consegui reler pra confirmar. Confere no ClickUp.`
+              : verif.ok
+                ? `Prioridade alterada e CONFIRMADA por leitura no ClickUp: a task ${prefixo}(${taskId}) está como ${PRIORITY_LABEL[intent.priority]}.`
+                : `Enviei a mudança de prioridade da task ${prefixo}(${taskId}), mas ao reler a verificação apontou: ${verif.mismatches.join('; ')}.`,
+          metadata: { guard: 'bento-action', action: 'update_priority', task_id: taskId, priority: intent.priority, verified: verif?.ok ?? false },
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        record('clickup.update_task', `priority -> ${taskId}`, false, detail);
+        return guardResponse({ ok: false, toolCalls, answer: `Não consegui mudar a prioridade no ClickUp: ${detail}`, metadata: { guard: 'bento-action', action: 'update_priority', task_id: taskId, errorCode: 'CLICKUP_UPDATE_FAILED' } });
+      }
+    }
+
+    /**
+     * COMMENT: comentário é ADITIVO por natureza (o próprio ClickUp nunca
+     * sobrescreve comentário anterior), então o read-back aqui confirma
+     * PRESENÇA na lista de comentários — não precisa reler a task inteira.
+     */
+    if (intent.kind === 'comment') {
+      try {
+        const criado = await createTaskComment(config, taskId, intent.text);
+        record('clickup.create_comment', `+${intent.text.length}c -> ${taskId}`, true);
+        const prefixo = context.lastTaskName ? `"${context.lastTaskName}" ` : '';
+        const comentarios = await getTaskComments(config, taskId).catch(() => []);
+        const presente = comentarios.some((c) => c.id === criado.id) || comentarios.some((c) => c.text.includes(intent.text));
+        record('clickup.get_task_comments', `read-back ${taskId}`, presente, presente ? undefined : 'comentário não apareceu na releitura');
+        return guardResponse({
+          ok: true,
+          toolCalls,
+          answer: presente
+            ? `Comentário adicionado e CONFIRMADO por leitura no ClickUp na task ${prefixo}(${taskId}).`
+            : `Enviei o comentário na task ${prefixo}(${taskId}), mas não consegui confirmar por leitura que ele apareceu. Confere no ClickUp.`,
+          metadata: { guard: 'bento-action', action: 'comment', task_id: taskId, comment_id: criado.id, verified: presente },
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        record('clickup.create_comment', `-> ${taskId}`, false, detail);
+        return guardResponse({ ok: false, toolCalls, answer: `Não consegui comentar no ClickUp: ${detail}`, metadata: { guard: 'bento-action', action: 'comment', task_id: taskId, errorCode: 'CLICKUP_UPDATE_FAILED' } });
       }
     }
     return null;

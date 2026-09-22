@@ -413,6 +413,9 @@ const taskDetailSchema = z.object({
   id: z.string(),
   name: z.string(),
   status: z.object({ status: z.string() }).nullish(),
+  // ClickUp devolve prioridade como objeto ({ priority: "1", ... }) ou null
+  // (sem prioridade definida) — nunca o número solto.
+  priority: z.object({ priority: z.coerce.number().int().min(1).max(4) }).nullish(),
   due_date: z.union([z.string(), z.number(), z.null()]).optional(),
   list: z.object({ id: z.string() }).nullish(),
   assignees: z
@@ -435,6 +438,8 @@ export interface TaskDetail {
   id: string;
   name: string;
   status: string | null;
+  /** 1=urgent, 2=high, 3=normal, 4=low (escala do ClickUp); null = sem prioridade definida. */
+  priority: 1 | 2 | 3 | 4 | null;
   dueDate: number | null;
   listId: string | null;
   assignees: Array<{ id: number; username: string | null }>;
@@ -463,6 +468,7 @@ export async function getTask(config: ClickUpConfig, taskId: string): Promise<Ta
     id: raw.id,
     name: raw.name,
     status: raw.status?.status ?? null,
+    priority: (raw.priority?.priority as 1 | 2 | 3 | 4 | undefined) ?? null,
     dueDate: due != null && Number.isFinite(due) ? due : null,
     listId: raw.list?.id ?? null,
     assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),

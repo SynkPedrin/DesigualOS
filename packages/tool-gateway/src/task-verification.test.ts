@@ -6,6 +6,7 @@ const base: TaskDetail = {
   id: '1',
   name: 'Pedro Gabriel - Boas-vindas',
   status: 'aberto',
+  priority: null,
   dueDate: 1_000_000,
   listId: 'L1',
   assignees: [{ id: 42, username: 'pedro' }],
