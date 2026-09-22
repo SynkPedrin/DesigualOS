@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { and, desc, eq, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
@@ -91,7 +92,12 @@ export async function registerMessageRoutes(app: FastifyInstance): Promise<void>
       content = typeof contentField === 'string' && contentField.length > 0 ? contentField : undefined;
 
       const buffer = await file.toBuffer();
-      const path = `messages/${senderId}/${Date.now()}-${sanitizeFilename(file.filename)}`;
+      // P0-02/E21 (release readiness audit, 22/09/2026): o bucket é público
+      // (URL funciona sem sessão); Date.now() sozinho é um timestamp em
+      // milissegundos, força-bruteável em segundos por quem souber a janela
+      // aproximada do upload. randomUUID() torna o path praticamente
+      // inadivinhável — mesmo padrão já usado em studio/routes.ts.
+      const path = `messages/${senderId}/${Date.now()}-${randomUUID()}-${sanitizeFilename(file.filename)}`;
       const uploaded = await uploadUserFile(path, buffer, file.mimetype);
       attachment = { url: uploaded.url, type: file.mimetype, filename: file.filename };
     } else {

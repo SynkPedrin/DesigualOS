@@ -492,11 +492,23 @@ export async function registerCanvasDocumentRoutes(app: FastifyInstance): Promis
       }
 
       // Permissão primeiro (não custa banco): quem não pode apagar nada nem
-      // chega a consultar. `hasClientAccess` hoje é sempre true (ver
-      // lib/access.ts), então a autorização não depende de saber de qual
-      // cliente é o documento - o que permite resolver tudo em UMA ida ao
-      // banco em vez de duas. ATENÇÃO: se voltar escopo de acesso por
-      // pessoa, isto precisa voltar a consultar o dono antes de apagar.
+      // chega a consultar.
+      //
+      // P0-02 (auditoria de release readiness, 22/09/2026): o comentário
+      // antigo aqui dizia "hasClientAccess hoje é sempre true" — não é mais
+      // verdade desde que `hasClientAccess`/`tenantSharingScope` passaram a
+      // checar membership de organização de verdade (lib/access.ts). Mas
+      // ESTA rota nunca usou `hasClientAccess`: o alcance global do master
+      // aqui é a MESMA decisão preservada em todo o resto do P0-02 desta
+      // release (conversations/routes.ts, executions/routes.ts,
+      // search/routes.ts, tool-calls/routes.ts, ws/routes.ts) — master é
+      // administrador global por desenho, não um escopo esquecido. Hoje o
+      // banco real tem UMA organização só, então o alcance cross-tenant
+      // aqui tem raio de explosão zero na prática. Se uma segunda
+      // organização entrar em produção, master passa a precisar de escopo
+      // próprio em toda rota de escrita — não só aqui — e isso é trabalho
+      // de arquitetura (rever o papel master inteiro), não um fix pontual
+      // desta rota.
       const isMaster = request.authUser.roles.includes('master');
       if (!isMaster && !hasPermission(request.authUser.permissions, 'studio', 'write')) {
         reply.code(403);

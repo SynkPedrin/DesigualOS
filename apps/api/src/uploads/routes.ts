@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { requireAuth } from '../auth/middleware';
 import { uploadUserFile } from '../lib/storage';
 
@@ -52,7 +53,9 @@ export async function registerUploadRoutes(app: FastifyInstance): Promise<void> 
       return { error: 'Arquivo maior que 25MB.' };
     }
 
-    const path = `chat-uploads/${user.id}/${Date.now()}-${sanitizeFilename(file.filename)}`;
+    // P0-02/E21 (release readiness audit, 22/09/2026): bucket público, path
+    // precisa de aleatoriedade real — Date.now() é força-bruteável.
+    const path = `chat-uploads/${user.id}/${Date.now()}-${randomUUID()}-${sanitizeFilename(file.filename)}`;
     const uploaded = await uploadUserFile(path, buffer, file.mimetype);
 
     reply.code(201);

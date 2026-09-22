@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
@@ -238,7 +239,9 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       }
 
       const buffer = await file.toBuffer();
-      const path = `${project.clientId ?? 'sem-cliente'}/${project.id}/${Date.now()}-${sanitizeFilename(file.filename)}`;
+      // P0-02/E21 (release readiness audit, 22/09/2026): bucket público,
+      // path precisa de aleatoriedade real — Date.now() é força-bruteável.
+      const path = `${project.clientId ?? 'sem-cliente'}/${project.id}/${Date.now()}-${randomUUID()}-${sanitizeFilename(file.filename)}`;
       const uploaded = await uploadUserFile(path, buffer, file.mimetype);
 
       const textContent = isTextFile(file.mimetype, file.filename)
