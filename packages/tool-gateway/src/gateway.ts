@@ -152,6 +152,20 @@ export interface ApprovedToolCall {
  * a ação de verdade (o Gateway não sabe como executar cada tool, só
  * controla o acesso). Falha se já foi aprovada ou não precisa de aprovação.
  */
+/**
+ * P1-06 (release readiness audit, 22/09/2026): a versão anterior fazia
+ * SELECT (lê `approvedAt`) e só DEPOIS de checar `null` disparava o UPDATE —
+ * duas aprovações concorrentes (dois masters clicando quase junto, ou um
+ * duplo-clique) podiam as DUAS passar pelo `if (toolCall.approvedAt)` antes
+ * de qualquer UPDATE commitar, e as DUAS seguiam pra executar a ação
+ * crítica (deletar task, aprovar budget de Meta Ads, publicar no
+ * Instagram) — exatamente o tipo de ação que não se desfaz.
+ *
+ * O CLAIM agora é o próprio UPDATE: `WHERE approved_at IS NULL` faz do
+ * Postgres o árbitro da corrida, não do código. Só uma das duas requests
+ * concorrentes recebe uma linha de volta; a outra recebe zero linhas e sabe,
+ * sem novo SELECT, que perdeu a corrida — nunca as duas seguem adiante.
+ */
 export async function approveToolCall(toolCallId: string, approvedByUserId: string): Promise<ApprovedToolCall> {
   const [toolCall] = await db.select().from(schema.toolCalls).where(eq(schema.toolCalls.id, toolCallId));
   if (!toolCall) {
@@ -160,11 +174,15 @@ export async function approveToolCall(toolCallId: string, approvedByUserId: stri
   if (!toolCall.requiresApproval) {
     throw new Error(`Tool call '${toolCallId}' does not require approval`);
   }
-  if (toolCall.approvedAt) {
+
+  const [claimed] = await db
+    .update(schema.toolCalls)
+    .set({ approvedBy: approvedByUserId, approvedAt: new Date() })
+    .where(and(eq(schema.toolCalls.id, toolCallId), isNull(schema.toolCalls.approvedAt)))
+    .returning();
+  if (!claimed) {
     throw new Error(`Tool call '${toolCallId}' was already approved`);
   }
 
-  await db.update(schema.toolCalls).set({ approvedBy: approvedByUserId, approvedAt: new Date() }).where(eq(schema.toolCalls.id, toolCallId));
-
-  return { id: toolCall.id, agent: toolCall.agent, tool: toolCall.tool, input: toolCall.input };
+  return { id: claimed.id, agent: claimed.agent, tool: claimed.tool, input: claimed.input };
 }

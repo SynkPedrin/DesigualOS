@@ -4,18 +4,31 @@ import { eq } from 'drizzle-orm';
 import {
   approveToolCall,
   deleteTask,
+  getTask,
   listPendingToolCalls,
   recordToolResult,
   updateTask,
+  verifyTaskState,
   askAgent,
   AgentAskError,
   type ClickUpConfig,
+  type ExpectedTaskState,
 } from '@desigual-os/tool-gateway';
 import { AGENT_TIMEOUT_MS, publishWsEvent, touchConversation } from '@desigual-os/orchestrator';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { tenantSharingScope } from '../lib/access';
 
-const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise<void>> = {
+/**
+ * P1-06 (release readiness audit, 22/09/2026): delete/update aprovados
+ * retornavam 'completed' só porque a chamada ao ClickUp não jogou erro —
+ * nenhum read-back confirmava que a mudança REALMENTE aconteceu. Mesmo
+ * princípio já aplicado no guard do Bento (readBackVerify): reler depois de
+ * escrever, e um executor que não consegue confirmar lança erro em vez de
+ * deixar o caller declarar sucesso não verificado.
+ */
+type ExecutorResult = { verified: boolean; detail?: string } | void;
+
+const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise<ExecutorResult>> = {
   'clickup.delete_task': async (input) => {
     const taskId = input.task_id;
     if (typeof taskId !== 'string') {
@@ -26,6 +39,9 @@ const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise
       throw new Error('CLICKUP_API_KEY/CLICKUP_TEAM_ID not configured on the Orchestrator');
     }
     await deleteTask(config, taskId);
+    const aindaExiste = await getTask(config, taskId).then(() => true).catch(() => false);
+    if (aindaExiste) throw new Error(`Task ${taskId} ainda existe no ClickUp depois do delete — não confirmo sucesso sem read-back.`);
+    return { verified: true, detail: 'read-back confirmou ausência' };
   },
   // BL-01: edição de task aprovada executa de fato o PUT no ClickUp. O
   // input carrega os campos validados pelo updateTaskSchema da rota PATCH.
@@ -39,13 +55,25 @@ const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise
       throw new Error('CLICKUP_API_KEY/CLICKUP_TEAM_ID not configured on the Orchestrator');
     }
     const fields = (input.fields ?? {}) as Record<string, unknown>;
-    await updateTask(config, taskId, {
+    const patch = {
       ...(typeof fields.name === 'string' ? { name: fields.name } : {}),
       ...(typeof fields.description === 'string' ? { description: fields.description } : {}),
       ...(typeof fields.status === 'string' ? { status: fields.status } : {}),
       ...(typeof fields.priority === 'number' ? { priority: fields.priority as 1 | 2 | 3 | 4 } : {}),
       ...(fields.due_date === null || typeof fields.due_date === 'number' ? { dueDate: fields.due_date } : {}),
-    });
+    };
+    await updateTask(config, taskId, patch);
+    const expected: ExpectedTaskState = {
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.status !== undefined ? { status: patch.status } : {}),
+      ...(patch.dueDate !== undefined ? { dueDate: patch.dueDate, dueDateGranularity: 'day' as const } : {}),
+    };
+    if (Object.keys(expected).length === 0) return { verified: true, detail: 'sem campo read-back-verificável no patch' };
+    const relida = await getTask(config, taskId).catch(() => null);
+    if (!relida) throw new Error(`Não consegui reler a task ${taskId} depois do update — não confirmo sucesso sem read-back.`);
+    const verification = verifyTaskState(relida, expected);
+    if (!verification.ok) throw new Error(`Update enviado, mas o read-back não confirma: ${verification.mismatches.join('; ')}`);
+    return { verified: true, detail: 'read-back confirmou os campos alterados' };
   },
   // Executor da aprovação humana real de Jarbas (budget de Meta Ads) e Suzy
   // (publicação no Instagram) - ver o lado que INTERCEPTA a proposta em
@@ -224,8 +252,8 @@ export async function registerToolCallRoutes(app: FastifyInstance): Promise<void
       }
 
       try {
-        await executor(approved.input);
-        await recordToolResult(approved.id, 'completed', { executed_by: request.authUser.id });
+        const outcome = await executor(approved.input);
+        await recordToolResult(approved.id, 'completed', { executed_by: request.authUser.id, ...(outcome ? { verified: outcome.verified, verification_detail: outcome.detail } : {}) });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await recordToolResult(approved.id, 'failed', null, message);
