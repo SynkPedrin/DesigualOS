@@ -104,9 +104,25 @@ export async function createVerifiedSeniorTask(
   // caller received its response. Resolve that window before creating again.
   // The list is already tenant-bound by the caller and the exact title is the
   // idempotency key for this senior operation.
-  const existing = await queryOperationTasks(config, { listIds: [params.listId], includeClosed: false })
-    .then((page) => findDuplicateTask(page.tasks, params.name))
-    .catch(() => null);
+  //
+  // P1-01 (release readiness audit, 22/09/2026): a versão anterior tratava
+  // FALHA da própria checagem de duplicata (`.catch(() => null)`) como
+  // "nenhuma duplicata encontrada" — um timeout/rate-limit no ClickUp virava
+  // silenciosamente uma SEGUNDA task real. "RECONCILE FIRST" antes de
+  // repetir cegamente: sem conseguir provar que não existe duplicata, o
+  // caller recebe um erro retryable, nunca uma criação no escuro.
+  let existing: ReturnType<typeof findDuplicateTask>;
+  try {
+    const page = await queryOperationTasks(config, { listIds: [params.listId], includeClosed: false });
+    existing = findDuplicateTask(page.tasks, params.name);
+  } catch (error) {
+    return {
+      success: false,
+      errorCode: 'write_failed',
+      message: `Não consegui checar duplicata antes de criar: ${error instanceof Error ? error.message : String(error)}`,
+      retryable: true,
+    };
+  }
   if (existing) {
     const actual = await getTask(config, existing.id);
     const expected: ExpectedTaskState = { name: params.name, ...(assignee ? { assigneeIds: [assignee.id] } : {}), ...(params.expected ?? {}) };
