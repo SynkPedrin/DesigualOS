@@ -9,6 +9,45 @@ const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
 // porque os call sites (rotas da API) só propagam error.message.
 const CLICKUP_FETCH_TIMEOUT_MS = 20_000;
 
+/**
+ * P1-09 (release readiness audit, 22/09/2026): `uploadTaskAttachment`
+ * recebia `fileUrl` direto de `z.string().url()` (apps/api/src/clickup/
+ * routes.ts) e fazia fetch nele sem restrição nenhuma de destino — SSRF
+ * clássico: um usuário autenticado podia apontar pra `http://169.254.169.254/
+ * latest/meta-data/...` (endpoint de metadata de nuvem), `http://localhost:
+ * <porta-interna>`, ou qualquer serviço da rede interna, e o backend baixava
+ * e reenviava o conteúdo como se fosse o anexo do usuário.
+ *
+ * Anexo real deste sistema SEMPRE vem do nosso próprio Storage
+ * (`<SUPABASE_URL>/storage/v1/object/public/<bucket>/...`, ver
+ * apps/api/src/lib/storage.ts) — nunca de um host arbitrário que o cliente
+ * escolha. Em vez de tentar enumerar toda faixa de IP privada/link-local/
+ * metadata (frágil: sempre falta uma), a correção restringe a ORIGEM ao
+ * único host que este sistema efetivamente usa. Fail-closed: sem
+ * SUPABASE_URL configurada, nenhum anexo passa.
+ */
+export function assertSafeAttachmentUrl(fileUrl: string, env: NodeJS.ProcessEnv = process.env): void {
+  const supabaseUrl = env.SUPABASE_URL;
+  if (!supabaseUrl) {
+    throw new Error('SUPABASE_URL not configured — attachment download refused (no trusted origin to allow)');
+  }
+  let parsed: URL;
+  let allowedOrigin: URL;
+  try {
+    parsed = new URL(fileUrl);
+    allowedOrigin = new URL(supabaseUrl);
+  } catch {
+    throw new Error('Invalid attachment URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Attachment URL must be https');
+  }
+  const allowedPrefix = '/storage/v1/object/public/';
+  if (parsed.origin !== allowedOrigin.origin || !parsed.pathname.startsWith(allowedPrefix)) {
+    throw new Error('Attachment URL is not from an authorized storage bucket');
+  }
+}
+
 async function fetchClickUp(url: string | URL, init: RequestInit = {}): Promise<Response> {
   try {
     return await fetch(url, { ...init, signal: AbortSignal.timeout(CLICKUP_FETCH_TIMEOUT_MS) });
@@ -264,13 +303,27 @@ export async function listStatusesForTask(config: ClickUpConfig, taskId: string)
  * pública); baixamos e reenviamos como multipart pro POST oficial de
  * attachment. Nunca confirma sem o 200 da API.
  */
+/** Teto de download do anexo (P1-09): consumo de memória por usuário autorizado é o outro lado do SSRF. */
+const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+
 export async function uploadTaskAttachment(config: ClickUpConfig, taskId: string, fileUrl: string, filename: string): Promise<{ id: string | null }> {
   await assertTaskInScope(config, taskId);
-  const fileResponse = await fetchClickUp(fileUrl);
+  assertSafeAttachmentUrl(fileUrl);
+  // `redirect: 'error'` (não o "follow" padrão do fetch): a origem já foi
+  // validada acima, mas um redirect seguido às cegas contornaria essa
+  // validação inteira — o host de destino real seria outro, nunca checado.
+  const fileResponse = await fetchClickUp(fileUrl, { redirect: 'error' });
   if (!fileResponse.ok) {
     throw new Error(`Download do anexo falhou (${fileResponse.status})`);
   }
+  const declaredLength = Number(fileResponse.headers.get('content-length') ?? '');
+  if (Number.isFinite(declaredLength) && declaredLength > ATTACHMENT_MAX_BYTES) {
+    throw new Error(`Anexo maior que o limite permitido (${ATTACHMENT_MAX_BYTES} bytes)`);
+  }
   const buffer = Buffer.from(await fileResponse.arrayBuffer());
+  if (buffer.byteLength > ATTACHMENT_MAX_BYTES) {
+    throw new Error(`Anexo maior que o limite permitido (${ATTACHMENT_MAX_BYTES} bytes)`);
+  }
   const form = new FormData();
   form.append('attachment', new Blob([buffer]), filename);
 

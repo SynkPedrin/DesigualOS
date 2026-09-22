@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createTask, getTeamMembers } from './clickup-client';
+import { assertSafeAttachmentUrl, createTask, getTeamMembers, uploadTaskAttachment } from './clickup-client';
 
 /**
  * Cobertura do timeout de rede adicionado na auditoria de production
@@ -61,5 +61,61 @@ describe('timeout de rede nos fetches do ClickUp', () => {
       }),
     );
     await expect(getTeamMembers(CONFIG)).rejects.toThrow('fetch failed');
+  });
+});
+
+/**
+ * P1-09 (release readiness audit, 22/09/2026): `uploadTaskAttachment`
+ * recebia `fileUrl` de `z.string().url()` (validação de FORMATO, não de
+ * DESTINO) e baixava de onde quer que apontasse — SSRF clássico: metadata de
+ * nuvem, localhost, serviço interno. Anexo real deste sistema só existe no
+ * nosso próprio Storage; a correção restringe a origem a isso.
+ */
+describe('assertSafeAttachmentUrl — SSRF: anexo só do nosso Storage', () => {
+  const env = { SUPABASE_URL: 'https://xyzcompany.supabase.co' } as NodeJS.ProcessEnv;
+
+  it('aceita URL do nosso bucket público de storage', () => {
+    expect(() => assertSafeAttachmentUrl('https://xyzcompany.supabase.co/storage/v1/object/public/user-uploads/foo.png', env)).not.toThrow();
+  });
+
+  it.each([
+    ['metadata de nuvem (AWS/GCP)', 'https://169.254.169.254/latest/meta-data/iam/security-credentials/'],
+    ['localhost', 'https://localhost:5432/admin'],
+    ['IP privado (rede interna)', 'https://10.0.0.5/internal-api'],
+    ['outro host qualquer, mesmo https', 'https://attacker.example.com/payload'],
+    ['nosso host mas fora do prefixo de storage público', 'https://xyzcompany.supabase.co/rest/v1/users'],
+    ['nosso host mas com bucket certo NA QUERY, não no path (bypass tentando enganar startsWith)', 'https://attacker.example.com/x?u=https://xyzcompany.supabase.co/storage/v1/object/public/'],
+  ])('rejeita %s', (_label, url) => {
+    expect(() => assertSafeAttachmentUrl(url, env)).toThrow();
+  });
+
+  it('rejeita http:// mesmo que fosse o host certo — só https', () => {
+    expect(() => assertSafeAttachmentUrl('http://xyzcompany.supabase.co/storage/v1/object/public/user-uploads/foo.png', env)).toThrow(/https/);
+  });
+
+  it('sem SUPABASE_URL configurada, falha fechado — nada passa', () => {
+    expect(() => assertSafeAttachmentUrl('https://xyzcompany.supabase.co/storage/v1/object/public/user-uploads/foo.png', {} as NodeJS.ProcessEnv)).toThrow(/SUPABASE_URL/);
+  });
+
+  it('URL malformada não derruba o processo, só rejeita', () => {
+    expect(() => assertSafeAttachmentUrl('não é uma url', env)).toThrow();
+  });
+});
+
+describe('uploadTaskAttachment recusa SSRF antes de qualquer fetch', () => {
+  const CONFIG_ATTACH = { apiKey: 'pk_fake', teamId: 'T1' };
+
+  it('URL fora do Storage nunca chega a fazer fetch nenhum', async () => {
+    const original = process.env.SUPABASE_URL;
+    process.env.SUPABASE_URL = 'https://xyzcompany.supabase.co';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await expect(uploadTaskAttachment(CONFIG_ATTACH, 'task-1', 'https://169.254.169.254/latest/meta-data/', 'x.png')).rejects.toThrow();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      if (original === undefined) delete process.env.SUPABASE_URL;
+      else process.env.SUPABASE_URL = original;
+    }
   });
 });
