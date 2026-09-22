@@ -1,19 +1,42 @@
 import type { FastifyInstance } from 'fastify';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
+import { tenantSharingScope } from '../lib/access';
 
 export async function registerExecutionRoutes(app: FastifyInstance): Promise<void> {
-  app.get<{ Querystring: { client_id?: string } }>('/executions', { preHandler: requireAuth }, async (request) => {
+  app.get<{ Querystring: { client_id?: string } }>('/executions', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
     // Chat compartilhado (2026-09-03, mesma decisão de /conversations): execution é o que
     // alimenta "conversas ativas" no dashboard de Agentes - sem isso ficava inconsistente
     // com conversas/mensagens já públicas, e colaborador via a própria atividade zerada.
     const clientFilter = request.query.client_id ? eq(schema.executions.clientId, request.query.client_id) : undefined;
 
+    /**
+     * P0-02 (22/09/2026): sem filtro nenhum de organização — qualquer
+     * colaborador autenticado lia a execução de QUALQUER organização.
+     * Mesmo escopo de `GET /conversations`: cliente precisa estar na
+     * organização de quem pede; sem cliente, o dono precisa compartilhar
+     * organização com quem pede. Master mantém o alcance que já tinha.
+     */
+    const isMaster = user.roles.includes('master');
+    const scope = isMaster ? null : await tenantSharingScope(user.id);
+    const tenantScopeCondition =
+      scope === null
+        ? undefined
+        : or(
+            scope.allowedClientIds.length > 0 ? inArray(schema.executions.clientId, scope.allowedClientIds) : undefined,
+            and(isNull(schema.executions.clientId), inArray(schema.executions.userId, scope.teammateUserIds)),
+          );
+
     const rows = await db
       .select()
       .from(schema.executions)
-      .where(clientFilter)
+      .where(and(clientFilter, tenantScopeCondition))
       .orderBy(desc(schema.executions.createdAt))
       .limit(50);
 
@@ -34,12 +57,28 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
   });
 
   app.get<{ Params: { id: string } }>('/executions/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
     const [execution] = await db.select().from(schema.executions).where(eq(schema.executions.executionId, request.params.id));
     if (!execution) {
       reply.code(404);
       return { error: `Execution '${request.params.id}' not found` };
     }
-    // Chat compartilhado: sem dono exclusivo, mesmo raciocínio do GET /executions acima.
+    // Chat compartilhado: sem dono exclusivo, mesmo raciocínio do GET /executions acima —
+    // mas escopado à organização (P0-02, 22/09/2026), não mais global.
+    if (!user.roles.includes('master') && execution.userId !== user.id) {
+      const scope = await tenantSharingScope(user.id);
+      const inScope = execution.clientId
+        ? scope.allowedClientIds.includes(execution.clientId)
+        : scope.teammateUserIds.includes(execution.userId);
+      if (!inScope) {
+        reply.code(404);
+        return { error: `Execution '${request.params.id}' not found` };
+      }
+    }
 
     const steps = await db
       .select()

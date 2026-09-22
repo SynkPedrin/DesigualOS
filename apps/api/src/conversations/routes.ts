@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { AGENT_NAMES, CONVERSATION_VISIBILITIES, type AgentName } from '@desigual-os/types';
 import { requireAuth, type AuthenticatedUser } from '../auth/middleware';
+import { canReadConversationInOrg, tenantSharingScope } from '../lib/access';
 
 type ConversationRow = typeof schema.conversations.$inferSelect;
 
@@ -59,6 +60,24 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     }
 
     const isMaster = user.roles.includes('master');
+    // P0-02 (22/09/2026): "público" era global entre organizações — um
+    // colaborador de qualquer org lia conversa pública de QUALQUER outra.
+    // Escopa "compartilhado" pra DENTRO da própria organização: cliente
+    // precisa estar na organização de quem pede; sem cliente, o dono
+    // precisa compartilhar organização com quem pede. Master mantém o
+    // alcance amplo que já tinha (suporte cross-tenant, decisão existente
+    // — não ampliada nem revogada aqui).
+    const scope = isMaster ? null : await tenantSharingScope(user.id);
+    const publicInScope =
+      scope === null
+        ? eq(schema.conversations.visibility, 'public')
+        : and(
+            eq(schema.conversations.visibility, 'public'),
+            or(
+              scope.allowedClientIds.length > 0 ? inArray(schema.conversations.clientId, scope.allowedClientIds) : undefined,
+              and(isNull(schema.conversations.clientId), inArray(schema.conversations.userId, scope.teammateUserIds)),
+            ),
+          );
     const rows = await db
       .select()
       .from(schema.conversations)
@@ -71,7 +90,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
             : projectFilter
               ? eq(schema.conversations.projectId, projectFilter)
               : undefined,
-          isMaster ? undefined : or(eq(schema.conversations.visibility, 'public'), eq(schema.conversations.userId, user.id)),
+          isMaster ? undefined : or(publicInScope, eq(schema.conversations.userId, user.id)),
         ),
       )
       .orderBy(desc(schema.conversations.updatedAt))
@@ -152,7 +171,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       reply.code(404);
       return { error: `Conversation '${request.params.id}' not found` };
     }
-    if (!canReadConversation(user, conversation)) {
+    if (!(await canReadConversationInOrg(user, conversation))) {
       reply.code(403);
       return { error: 'This conversation is private' };
     }
@@ -183,7 +202,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
         reply.code(404);
         return { error: `Conversation '${request.params.id}' not found` };
       }
-      if (!canReadConversation(user, conversation)) {
+      if (!(await canReadConversationInOrg(user, conversation))) {
         reply.code(403);
         return { error: 'This conversation is private' };
       }
