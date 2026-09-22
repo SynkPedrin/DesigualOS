@@ -2,7 +2,14 @@ services:
   redis:
     image: redis:7-alpine
     container_name: desigual-os-redis
-    restart: unless-stopped
+    # `always`, não `unless-stopped`: no desligamento do macOS o Docker Desktop
+    # para os containers, e o `unless-stopped` lê isso como parada deliberada -
+    # o Redis não voltava no boot seguinte. Incidente real de 18/09/2026: a
+    # máquina reiniciou às 19:41 e o Redis ficou 13h fora sem ninguém notar.
+    # Sem Redis o worker não consome fila nenhuma (chat não despacha) e a API
+    # fica num laço de ECONNREFUSED no pubsub. Os containers do projeto vizinho
+    # na mesma máquina usam `always` e voltaram sozinhos no mesmo boot.
+    restart: always
     ports:
       # REDIS_HOST_PORT permite trocar a porta exposta no host quando 6379
       # já está em uso por outro projeto na máquina (definir em .env, nunca aqui).

@@ -29,7 +29,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar />
-          <main className="flex-1 overflow-y-auto">
+          <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             <AnimatePresence mode="wait">
               <motion.div
                 key={pathname}
@@ -37,7 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.25, ease: 'easeOut' }}
-                className="mx-auto w-full px-8 py-8"
+                className="mx-auto flex min-h-full w-full flex-col px-8 py-8"
               >
                 {children}
               </motion.div>

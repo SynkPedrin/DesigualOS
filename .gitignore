@@ -75,3 +75,15 @@ Brain-Marketing/brain-desigual-ia-labs.md
 .tools/
 Claude outputs/
 vault-clientes/
+
+# Sondas descartáveis (convenção do underscore inicial): script escrito pra
+# responder UMA pergunta durante uma investigação e jogado fora depois. Sem
+# isto, qualquer rascunho com um `any` solto deixava `pnpm typecheck` vermelho
+# pro repositório inteiro - o portão de release passava a acusar sujeira de
+# bancada em vez de defeito de produto (medido em 18/09/2026: 15 erros de
+# typecheck, TODOS em rascunho, nenhum em código de produção). Script pra
+# ficar não leva underscore e continua coberto pelo typecheck e pelo git.
+apps/*/src/scripts/_*
+apps/*/scripts/_*
+nodes/*/scripts/_*
+packages/*/src/_*
