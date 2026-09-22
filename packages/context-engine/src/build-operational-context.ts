@@ -1,5 +1,6 @@
 import type { OperationalScope } from './resolve-scope';
 import { zonedDayStart } from './resolve-temporal';
+import { textoExternoSeguro } from './texto-externo';
 
 /**
  * build-operational-context.ts — transforma o escopo resolvido em DADO REAL de operação,
@@ -236,17 +237,23 @@ export async function buildOperationalContext(
       if (pa !== pb) return pa - pb;
       return (a.dueDate ?? Number.MAX_SAFE_INTEGER) - (b.dueDate ?? Number.MAX_SAFE_INTEGER);
     });
-    linhas.push(`${clientName} (${tasks.length}):`);
+    linhas.push(`${textoExternoSeguro(clientName, 80) || 'cliente sem nome'} (${tasks.length}):`);
     const mostradas = tasks.slice(0, TETO_POR_CLIENTE);
     if (mostradas.length < tasks.length) {
       linhas.push(`(mostrando as ${mostradas.length} mais urgentes de ${tasks.length} — prioridade e prazo primeiro)`);
     }
     for (const t of mostradas) {
+      // Tudo aqui é texto que veio do ClickUp, ou seja, de fora: sem
+      // `textoExternoSeguro` uma quebra de linha no nome da tarefa forja uma
+      // linha nova neste mesmo bloco, indistinguível de dado que nós
+      // consultamos. Ver texto-externo.ts.
       const partes = [
-        `- ${t.name}`,
-        `status: ${t.status ?? 'sem status'}`,
+        `- ${textoExternoSeguro(t.name) || 'sem nome'}`,
+        `status: ${textoExternoSeguro(t.status) || 'sem status'}`,
         `prazo: ${formatDueDate(t.dueDate)}`,
-        t.assignees.length ? `resp: ${t.assignees.join(', ')}` : 'resp: ninguém',
+        t.assignees.length
+          ? `resp: ${t.assignees.map((a) => textoExternoSeguro(a, 60)).filter(Boolean).join(', ') || 'ninguém'}`
+          : 'resp: ninguém',
       ];
       if (t.priority) partes.push(`prioridade: ${t.priority}`);
       if (t.dueDate !== null && t.dueDate < inicioDeHoje && !concluida(t)) partes.push('ATRASADA');

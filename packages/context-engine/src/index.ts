@@ -7,3 +7,4 @@ export * from './resolve-temporal';
 export * from './entity-matching';
 export * from './campaign-derivation';
 export * from './campaign-sync';
+export * from './texto-externo';
