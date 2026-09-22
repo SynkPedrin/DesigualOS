@@ -8,3 +8,4 @@ export * from './webhook';
 export * from './clickup-operation';
 export * from './task-verification';
 export * from './write-scope';
+export * from './senior-operation';

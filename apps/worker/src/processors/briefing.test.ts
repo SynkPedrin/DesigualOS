@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { classifyDeliveryType, sectionsFor } from './briefing-schema';
 import { extractLabeledFacts, mergeFacts } from './briefing-facts';
-import { composeBriefing } from './briefing-composer';
+import { composeBriefing, pendingCriticalFields } from './briefing-composer';
 import { evaluateBriefing } from './briefing-quality';
 
 /**
@@ -192,5 +192,110 @@ describe('porta anti-genérico do briefing', () => {
     });
     const ev = evaluateBriefing(b, { clientName: 'Nexa Fit' });
     expect(['revise', 'ask_user', 'retrieve_more_context']).toContain(ev.recommendation);
+  });
+});
+
+/**
+ * BENTO_PRESERVES_USER_BRIEF_CONTENT — regressão do bug real medido em
+ * 21/09/2026: a task "Executar briefing — Cliente Teste 7" saiu do pedido
+ *
+ *   "Bento, crie uma task para o Pedro Gabriel com um briefing de
+ *    boas-vindas ao Desigual OS, parabenizando ele pelo esforço."
+ *
+ * com objetivo/entregáveis/aprovação em [CONFIRMAR] — a mensagem de
+ * boas-vindas pedida nunca apareceu na task, embora estivesse escrita, em
+ * prosa, no próprio pedido.
+ *
+ * Causa raiz: `retrieveBriefingContext` só lê fato no formato "Rótulo:
+ * valor" (via `extractLabeledFacts`); pedido em prosa não tem essa forma e
+ * os campos saem MISSING mesmo respondidos. O guard corrige perguntando ao
+ * LLM SÓ pelos campos pendentes, SÓ a partir do pedido, e devolvendo no
+ * mesmo formato "campo: valor" — que estes testes simulam aqui sem mockar
+ * o guard inteiro, exercitando a mesma composição (`pendingCriticalFields`
+ * -> `extractLabeledFacts` -> `mergeFacts` -> `composeBriefing`) que
+ * `bento-action-guard.ts` roda de verdade.
+ */
+describe('BENTO_PRESERVES_USER_BRIEF_CONTENT', () => {
+  const PEDIDO =
+    'Bento, crie uma task para o Pedro Gabriel com um briefing de boas-vindas ao Desigual OS, parabenizando ele pelo esforço. Use o Cliente Teste 7.';
+
+  const inputSemFatos = {
+    taskName: 'Executar briefing — Cliente Teste 7',
+    clientName: 'Cliente Teste 7',
+    deliveryType: 'generic' as const,
+    facts: [] as never[],
+    references: [] as string[],
+    requestedBy: 'QA Bot',
+    dueDateLabel: null,
+    assignee: 'Pedro Gabriel',
+    requestSummary: PEDIDO,
+  };
+
+  it('sem interpretar o pedido, objetivo/entregáveis/aprovação ficam MISSING (reproduz o bug)', () => {
+    const gaps = pendingCriticalFields(inputSemFatos);
+    const chaves = gaps.map((g) => g.key);
+    expect(chaves).toContain('objetivo');
+    expect(chaves).toContain('entregaveis');
+    expect(chaves).toContain('aprovacao');
+
+    // "Situação" ecoa o pedido cru (comportamento correto e preexistente) —
+    // o bug não é a ausência da frase no markdown, é ela não virar OBJETIVO/
+    // ENTREGÁVEL/APROVAÇÃO: por isso a task real saía com os três em
+    // [CONFIRMAR] apesar do pedido estar, literalmente, ali do lado.
+    const b = composeBriefing(inputSemFatos);
+    expect(b.missing).toContain('Objetivo principal');
+    expect(b.missing).toContain('Peças/arquivos esperados');
+    expect(b.missing).toContain('O que define que está pronto');
+  });
+
+  it('depois de interpretar o pedido (mesmo pipeline do guard), o conteúdo semântico sobrevive', () => {
+    const gaps = pendingCriticalFields(inputSemFatos);
+    // Simula a resposta do LLM ao prompt do guard: só os campos pendentes,
+    // só o que o pedido determina, no formato "chave: valor".
+    const respostaSimuladaDoLLM = [
+      'objetivo: dar boas-vindas a Pedro Gabriel ao Desigual OS e reconhecer o esforço dele',
+      'entregaveis: mensagem de boas-vindas e reconhecimento enviada a Pedro Gabriel',
+      'aprovacao: Pedro Gabriel recebeu e leu a mensagem',
+    ].join('\n');
+    expect(gaps.map((g) => g.key)).toEqual(expect.arrayContaining(['objetivo', 'entregaveis', 'aprovacao']));
+
+    const interpretados = extractLabeledFacts(respostaSimuladaDoLLM, 'pedido do usuário (interpretado)');
+    expect(interpretados.map((f) => f.field)).toEqual(expect.arrayContaining(['objetivo', 'entregaveis', 'aprovacao']));
+
+    const b = composeBriefing({ ...inputSemFatos, facts: mergeFacts(inputSemFatos.facts, interpretados) });
+    expect(b.markdown).toMatch(/boas.?vindas/i);
+    expect(b.markdown).toMatch(/desigual os/i);
+    expect(b.markdown).toMatch(/esfor[çc]o|reconhec/i);
+    // Situação (o pedido cru) continua presente — nada foi REMOVIDO, só preenchido.
+    expect(b.markdown).toContain(PEDIDO);
+    // Cliente e responsável, resolvidos por fato do turno, continuam corretos.
+    expect(b.markdown).toContain('Cliente Teste 7');
+    expect(b.markdown).toContain('Pedro Gabriel');
+    // Nenhum dos três campos que o pedido determinava pode sobrar como pendência.
+    expect(b.missing).not.toContain('Objetivo principal');
+    expect(b.missing).not.toContain('Peças/arquivos esperados');
+    expect(b.missing).not.toContain('O que define que está pronto');
+  });
+
+  it('GUARD NÃO SOBRESCREVE: fato já resolvido (ex: por comentário real da task) vence sobre a interpretação do LLM', () => {
+    const fatoJaResolvido = [{ field: 'objetivo', value: 'objetivo real vindo do comentário da task', source: 'comentário da task' }];
+    const interpretados = extractLabeledFacts('objetivo: um objetivo inventado que não deveria aparecer', 'pedido do usuário (interpretado)');
+    // mergeFacts: primeiro grupo vence — o fato já resolvido tem que vir ANTES.
+    const b = composeBriefing({ ...inputSemFatos, facts: mergeFacts(fatoJaResolvido, interpretados) });
+    expect(b.markdown).toContain('objetivo real vindo do comentário da task');
+    expect(b.markdown).not.toContain('um objetivo inventado');
+  });
+
+  it('MISSING DATA GENUÍNA: campo que o pedido de fato não determina continua [CONFIRMAR], só ELE', () => {
+    // O LLM não devolve linha pra "aprovacao" porque o pedido não fala disso.
+    const respostaParcial = ['objetivo: dar boas-vindas a Pedro Gabriel ao Desigual OS'].join('\n');
+    const interpretados = extractLabeledFacts(respostaParcial, 'pedido do usuário (interpretado)');
+    const b = composeBriefing({ ...inputSemFatos, facts: mergeFacts(inputSemFatos.facts, interpretados) });
+    expect(b.markdown).toMatch(/boas.?vindas/i);
+    // aprovação e entregáveis continuam pendentes — SÓ eles, não o briefing inteiro.
+    expect(b.missing).toContain('O que define que está pronto');
+    expect(b.missing).toContain('Peças/arquivos esperados');
+    expect(b.missing).not.toContain('Objetivo principal');
+    expect(b.markdown).toContain('PENDENTE DE CONFIRMAÇÃO');
   });
 });

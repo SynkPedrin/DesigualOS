@@ -81,6 +81,25 @@ function renderSecao(secao: BriefingSection, input: ComposeInput, missing: strin
   return [`## ${secao.title}`, ...linhas, ''];
 }
 
+/**
+ * Campos CRÍTICOS que este pedido específico ainda não resolve — nem por
+ * fato especial do turno (cliente, prazo...) nem por fato recuperado
+ * (`input.facts`). É a mesma checagem que `composeBriefing` faz por dentro,
+ * exposta ANTES de montar o markdown, pra quem chama (o guard) poder tentar
+ * preencher a lacuna com o próprio pedido antes de aceitar [CONFIRMAR] —
+ * sem regenerar o briefing inteiro, só os campos que faltam de verdade.
+ */
+export function pendingCriticalFields(input: ComposeInput): Array<{ key: string; label: string }> {
+  const pendentes: Array<{ key: string; label: string }> = [];
+  for (const secao of sectionsFor(input.deliveryType)) {
+    for (const campo of secao.fields) {
+      if (!campo.critical) continue;
+      if (!valorDoCampo(input, campo.key)) pendentes.push({ key: campo.key, label: campo.label });
+    }
+  }
+  return pendentes;
+}
+
 export function composeBriefing(input: ComposeInput): ComposedBriefing {
   const missing: string[] = [];
   const missingCritical: string[] = [];

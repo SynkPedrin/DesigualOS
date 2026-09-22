@@ -11,6 +11,8 @@ import {
   updateTask,
   uploadTaskAttachment,
   verifyTaskState,
+  createVerifiedSeniorTask,
+  type SeniorToolContext,
   WriteScopeError,
   type ClickUpConfig,
   type ExpectedTaskState,
@@ -175,6 +177,7 @@ export async function createOneTask(
   requester: { name: string; clickUpEmail: string | null },
   input: CreateOneInput,
   deps: CreateDeps = defaultCreateDeps,
+  seniorContext?: SeniorToolContext,
 ): Promise<CreateOutcome> {
   const out = vazio(input.title, input.planned, listId);
   const record = (tool: string, input_summary: string, ok: boolean, error?: string) => {
@@ -221,7 +224,7 @@ export async function createOneTask(
       .catch(() => []);
     const recentes = existentes.filter((t) => t.createdAt !== null && agora - t.createdAt < JANELA_IDEMPOTENCIA_MS);
     const duplicada = findDuplicateTask(recentes, input.title);
-    if (duplicada) {
+    if (duplicada && !seniorContext) {
       record('clickup.idempotency_hit', duplicada.id, true);
       out.status = 'duplicate';
       out.taskId = duplicada.id;
@@ -234,26 +237,59 @@ export async function createOneTask(
     // material nunca se perde entre o chat e a task.
     const anexos = input.attachments ?? [];
     const referencias = blocoDeReferencias(anexos);
-    const created = await deps.createTask(config, {
-      listId,
-      name: input.title,
-      description: [input.description, referencias].filter((p) => p && p.length > 0).join('\n\n'),
-      requesterName: requester.name,
-      requesterClickUpEmail: requester.clickUpEmail,
-      ...(input.dueDate ? { dueDate: input.dueDate } : {}),
-    });
-    record('clickup.create_task', input.title, true);
+    let created: { id: string; url: string };
+    if (seniorContext) {
+      const senior = await createVerifiedSeniorTask(config, seniorContext, {
+        listId,
+        name: input.title,
+        description: [input.description, input.briefing, referencias].filter((p) => p && p.length > 0).join('\n\n'),
+        ...(out.assigneeUsername ? { assigneeName: out.assigneeUsername } : {}),
+        ...(input.dueDate ? { dueDate: input.dueDate, expected: { dueDate: input.dueDate, dueDateGranularity: 'day' } } : {}),
+      });
+      if (!senior.success) {
+        out.status = 'failed';
+        out.error = senior.message;
+        record('clickup.create_verified_senior_task', input.title, false, senior.message);
+        return out;
+      }
+      created = { id: senior.resourceId, url: senior.resourceUrl };
+      out.briefingAttached = Boolean(input.briefing);
+      out.briefingVerified = Boolean(input.briefing && senior.data.description.includes(input.briefing));
+      record('clickup.create_verified_senior_task', input.title, true);
+      // A primitiva já resolveu idempotência por dentro (mesma lista, mesmo
+      // nome) — `wasExisting` diz se ela CRIOU ou só CONFIRMOU algo que já
+      // estava lá. Sem checar isso aqui, toda confirmação saía com
+      // status='created' e a resposta pro usuário dizia "criei a task" para
+      // uma task que já existia há horas (achado real, 21/09/2026).
+      if (senior.wasExisting) {
+        out.status = 'duplicate';
+        out.taskId = created.id;
+        out.url = created.url;
+        record('clickup.idempotency_hit', created.id, true);
+        return out;
+      }
+    } else {
+      created = await deps.createTask(config, {
+        listId,
+        name: input.title,
+        description: [input.description, referencias].filter((p) => p && p.length > 0).join('\n\n'),
+        requesterName: requester.name,
+        requesterClickUpEmail: requester.clickUpEmail,
+        ...(input.dueDate ? { dueDate: input.dueDate } : {}),
+      });
+      record('clickup.create_task', input.title, true);
+    }
     out.taskId = created.id;
     out.url = created.url;
 
     // 4. ATRIBUI.
-    if (out.assigneeId != null) {
+    if (out.assigneeId != null && !seniorContext) {
       await deps.assign(config, created.id, { addAssignees: [out.assigneeId] });
       record('clickup.update_task', `assign ${out.assigneeUsername}`, true);
     }
 
     // 5. BRIEFING como comentário.
-    if (input.briefing && input.briefing.trim().length > 0) {
+    if (!seniorContext && input.briefing && input.briefing.trim().length > 0) {
       await deps.comment(config, created.id, input.briefing);
       record('clickup.create_comment', `briefing -> ${created.id}`, true);
       out.briefingAttached = true;
@@ -309,7 +345,7 @@ export async function createOneTask(
       record('clickup.assert_list', 'não consegui reler a lista da task', false);
     }
 
-    if (out.briefingAttached) {
+    if (out.briefingAttached && !seniorContext) {
       const comentarios = await deps.readComments(config, created.id).catch(() => []);
       out.briefingVerified = comentarios.length > 0;
       record('clickup.get_comments', `read-back comments ${created.id}`, out.briefingVerified);
@@ -345,10 +381,11 @@ export async function createManyTasks(
   requester: { name: string; clickUpEmail: string | null },
   inputs: CreateOneInput[],
   deps: CreateDeps = defaultCreateDeps,
+  seniorContext?: SeniorToolContext,
 ): Promise<CreateOutcome[]> {
   const outcomes: CreateOutcome[] = [];
   for (const input of inputs) {
-    outcomes.push(await createOneTask(config, listId, requester, input, deps));
+    outcomes.push(await createOneTask(config, listId, requester, input, deps, seniorContext));
   }
   return outcomes;
 }

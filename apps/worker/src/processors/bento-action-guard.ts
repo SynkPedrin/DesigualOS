@@ -19,7 +19,8 @@ import {
 } from '@desigual-os/tool-gateway';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
 import type { Logger } from '@desigual-os/logging';
-import { classifyDeliveryType, composeBriefing } from './briefing-composer';
+import { classifyDeliveryType, composeBriefing, pendingCriticalFields } from './briefing-composer';
+import { extractLabeledFacts, mergeFacts } from './briefing-facts';
 import { evaluateBriefing } from './briefing-quality';
 import { retrieveBriefingContext } from './briefing-retrieval';
 import { classifyActionIntent } from './action-intent';
@@ -27,6 +28,8 @@ import { classifyActionIntentV2 } from './action-intent-v2';
 import { buildDeliverableTitle, buildItemTitle, buildOperationalTitle, resolveWriteTarget } from './write-target';
 import { buildOperationalActionPlan } from './operational-action-plan';
 import { createManyTasks, type CreateOneInput, type CreateOutcome, type TaskAttachment } from './multi-create-executor';
+import type { SeniorToolContext } from '@desigual-os/tool-gateway';
+import { conversationArtifact, requestsExternalTask } from './conversation-artifact';
 
 /**
  * BENTO ACTION GUARD (14/09/2026).
@@ -58,6 +61,17 @@ function resumoDoPedido(message: string): string {
 const UPDATE_ASSIGNEE = /(atribu|designa|delega|passa|coloca)/i;
 const UPDATE_DUE = /(muda|reagend|adi(a|ar|e)|remarca|passa)\b.*(prazo|vencimento|data|hoje|amanh|sexta|\d{1,2}\/\d{1,2})/i;
 const UPDATE_STATUS = /(marc(ar|a|que)|conclu(i|ir|ida)|finaliz(a|ar)|fech(a|ar))\b.*(conclu|pront|revis|feito)/i;
+/**
+ * "atualize/edite/complemente o BRIEFING/descrição dessa task" — achado real
+ * (21/09/2026): sem esta categoria, `classifyIntent` devolvia 'none' e
+ * `criacaoPadrao` (linha ~525) tratava isso como CREATE, gerando uma SEGUNDA
+ * task idêntica em vez de editar a existente (BENTO_CREATE_NOT_UPDATE).
+ * Precisa vir ANTES de `CREATE_TASK` na ordem de checagem: "adicionando" não
+ * casa com `adicione?` (falta o `e` final antes de "ando"), mas o verbo
+ * "atualiz" sozinho não é ambíguo o bastante pra dispensar exigir menção a
+ * briefing/descrição — sem isso "atualiza o prazo" também cairia aqui.
+ */
+const UPDATE_BRIEF = /(atualiz|edit|complement|revis|acrescent|adicion)[a-z]*\b.*(briefing|brief|descri[çc][ãa]o)/i;
 const CREATE_TASK = /(cri(e|a|ar)|adicione?|nova (task|tarefa)|nova task|nova tarefa)\b/i;
 const REFERENCE_WORDS = /(essa|aquela|a task|a tarefa|esta task|esta tarefa|ela|ele|isso|dela|dele|nesta|nessa|a anterior)\b/i;
 const BRIEFING_ASK = /(briefing|brief)\b/i;
@@ -70,10 +84,12 @@ type GuardIntent =
   | { kind: 'update_assignee'; personName: string }
   | { kind: 'update_due'; dueDate: number }
   | { kind: 'update_status'; statusHint: string }
+  | { kind: 'update_brief'; addition: string }
   | { kind: 'create'; taskName: string; personName: string | null; dueDate: number | null; wantsBriefing: boolean }
   | { kind: 'none' };
 
 interface ConversationContext {
+  lastArtifact?: string | null;
   lastTaskId: string | null;
   lastTaskName: string | null;
   lastPersonName: string | null;
@@ -111,7 +127,7 @@ function classifyIntent(message: string): GuardIntent {
   const hasReference = REFERENCE_WORDS.test(message);
   const person = extractPersonName(message);
 
-  if (UPDATE_ASSIGNEE.test(message) && (person || hasReference)) {
+  if (!CREATE_TASK.test(message) && UPDATE_ASSIGNEE.test(message) && (person || hasReference)) {
     // "atribua a ele": o "ele" é a pessoa do TURNO ANTERIOR, resolvida no contexto.
     return { kind: 'update_assignee', personName: person ?? '' };
   }
@@ -127,6 +143,9 @@ function classifyIntent(message: string): GuardIntent {
   }
   if (UPDATE_STATUS.test(message) && hasReference) {
     return { kind: 'update_status', statusHint: message };
+  }
+  if (UPDATE_BRIEF.test(message) && hasReference) {
+    return { kind: 'update_brief', addition: message };
   }
   if (CREATE_TASK.test(message)) {
     const taskName = extractTaskName(message);
@@ -193,11 +212,16 @@ function endOfDay(date: Date): Date {
   return end;
 }
 
-async function loadConversationContext(conversationId: string | null): Promise<ConversationContext> {
+async function loadConversationContext(
+  conversationId: string | null,
+  agent = 'bento',
+  config: ClickUpConfig | null = null,
+): Promise<ConversationContext> {
   if (!conversationId) return { lastTaskId: null, lastTaskName: null, lastPersonName: null, previousAttachments: [], solicitacaoAnterior: null };
   const recent = await db
     .select({
       role: schema.messages.role,
+      agent: schema.messages.agent,
       content: schema.messages.content,
       attachmentUrl: schema.messages.attachmentUrl,
       attachmentType: schema.messages.attachmentType,
@@ -207,7 +231,7 @@ async function loadConversationContext(conversationId: string | null): Promise<C
     .from(schema.messages)
     .where(eq(schema.messages.conversationId, conversationId))
     .orderBy(desc(schema.messages.createdAt))
-    .limit(8);
+    .limit(40);
 
   let lastTaskId: string | null = null;
   let lastTaskName: string | null = null;
@@ -232,11 +256,7 @@ async function loadConversationContext(conversationId: string | null): Promise<C
   for (const message of recent) {
     if (!lastTaskId && message.role === 'assistant') {
       const urls = [...message.content.matchAll(TASK_URL)];
-      if (urls.length > 0) {
-        lastTaskId = urls[urls.length - 1]![1]!;
-        const named = message.content.match(/task\s+["“]?([^"”\n]{3,80})["”]?\s+(?:na lista|no ClickUp|criada)/i);
-        lastTaskName = named?.[1]?.trim() ?? null;
-      }
+      if (urls.length > 0) lastTaskId = urls[urls.length - 1]![1]!;
     }
     if (!lastPersonName && message.role === 'user') {
       lastPersonName = extractPersonName(message.content);
@@ -252,7 +272,19 @@ async function loadConversationContext(conversationId: string | null): Promise<C
       }
     }
   }
-  return { lastTaskId, lastTaskName, lastPersonName, previousAttachments, solicitacaoAnterior };
+  /**
+   * NOME REAL, não fragmento da fala do agente. Achado real (21/09/2026): o
+   * regex antigo lia o nome da task de dentro da PRÓPRIA resposta do Bento
+   * ("Separei a demanda e criei a task na Cliente Teste 7. Reli cada uma...")
+   * e pegava "na Cliente Teste 7. Reli cada uma" como se fosse o título —
+   * lixo que ia direto pro prefixo de toda resposta de update seguinte. A
+   * ÚNICA fonte confiável do nome de um recurso é o próprio recurso.
+   */
+  if (lastTaskId && config) {
+    lastTaskName = await getTask(config, lastTaskId).then((t) => t.name).catch(() => null);
+  }
+  return { lastTaskId, lastTaskName, lastPersonName, previousAttachments, solicitacaoAnterior,
+    lastArtifact: conversationArtifact([...recent].reverse(), agent) };
 }
 
 /**
@@ -423,6 +455,7 @@ export async function tryBentoActionGuard(params: {
   userClickUpEmail: string | null;
   /** E-mail de login — é a chave do allowlist do canary. */
   userEmail?: string | null;
+  seniorToolContext?: SeniorToolContext | null;
   agencyListId: string | null;
   briefingWriter: (prompt: string) => Promise<string | null>;
   /** Cliente da execução, quando houver: é a chave do retrieval do briefing. */
@@ -433,6 +466,7 @@ export async function tryBentoActionGuard(params: {
   logger: Logger;
 }): Promise<ExecuteResponse | null> {
   const { message, conversationId, logger } = params;
+  if (params.seniorToolContext && !requestsExternalTask(message) && /\b(cri[ae]|faz|fa[cç]a|mont[ae])\b/i.test(message) && /briefing|reel|roteiro|copy|legenda|conceito/i.test(message)) return null;
 
   // PORTÃO 1 — ANÁLISE NÃO É ESCRITA. Classificação determinística ANTES de
   // qualquer ferramenta. Caso real: pedido de análise virou task na hora.
@@ -470,6 +504,10 @@ export async function tryBentoActionGuard(params: {
     );
     // null = segue pro agente, que ANALISA e responde. Nenhuma escrita aqui.
     return null;
+  }
+
+  if (params.seniorToolContext === null || (params.seniorToolContext && !params.seniorToolContext.permissions.some(p => p.resource === 'clickup' && p.action === 'write'))) {
+    return guardResponse({ ok: false, toolCalls: [], answer: 'Não fiz alterações: não consegui validar sua organização e permissão de escrita no ClickUp.', metadata: { errorCode: 'PERMISSION_DENIED', verified: false } });
   }
 
   // PORTÃO DO CANARY. Vem ANTES de qualquer ferramenta: quem está fora da
@@ -518,7 +556,7 @@ export async function tryBentoActionGuard(params: {
   const config = getClickUpConfigOrNull();
   if (!config) return null;
 
-  const context = await loadConversationContext(conversationId);
+  const context = await loadConversationContext(conversationId, params.seniorToolContext?.agent, config);
   const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
   const startedAt = performance.now();
   const record = (tool: string, input: string, ok: boolean, error?: string) => {
@@ -652,6 +690,53 @@ export async function tryBentoActionGuard(params: {
         return guardResponse({ ok: false, toolCalls, answer: `Não consegui mudar o status no ClickUp: ${detail}` });
       }
     }
+
+    /**
+     * UPDATE_BRIEF (BENTO_CREATE_NOT_UPDATE): NUNCA regenerar a descrição do
+     * zero — ler a REAL primeiro (fonte de verdade é o ClickUp, não o que
+     * ficou na memória da conversa), acrescentar, nunca substituir. Read-back
+     * confirma as DUAS coisas: o conteúdo anterior sobreviveu e a instrução
+     * nova entrou — task nova nenhuma nasce nesse fluxo.
+     */
+    if (intent.kind === 'update_brief') {
+      const atual = await getTask(config, taskId).catch(() => null);
+      if (!atual) {
+        return guardResponse({
+          ok: false,
+          toolCalls,
+          answer: `Não consegui reler a task (${taskId}) pra atualizar o briefing com segurança. Não alterei nada.`,
+          metadata: { guard: 'bento-action', action: 'update_brief', task_id: taskId, errorCode: 'CLICKUP_UPDATE_FAILED' },
+        });
+      }
+      const acrescimo = `\n\n## ATUALIZAÇÃO\n${intent.addition}`;
+      const descricaoNova = `${atual.description}${acrescimo}`;
+      try {
+        await updateTask(config, taskId, { description: descricaoNova });
+        record('clickup.update_task', `brief +${intent.addition.length}c -> ${taskId}`, true);
+        const prefixo = context.lastTaskName ? `"${context.lastTaskName}" ` : '';
+        // READ-BACK: confirma que o conteúdo ANTERIOR sobreviveu (não é um
+        // briefing novo do zero) E que a instrução nova está lá.
+        const verif = await readBackVerify(config, taskId, {
+          descriptionContains: [atual.description.slice(0, 200), intent.addition],
+        });
+        record('clickup.get_task', `read-back ${taskId}`, verif?.ok ?? false, verif == null ? 'não consegui reler' : verif.mismatches.join('; ') || undefined);
+        return guardResponse({
+          ok: true,
+          toolCalls,
+          answer:
+            verif == null
+              ? `Atualizei o briefing da task ${prefixo}(${taskId}), mas não consegui reler pra confirmar. Confere no ClickUp.`
+              : verif.ok
+                ? `Briefing atualizado e CONFIRMADO por leitura no ClickUp: a task ${prefixo}(${taskId}) manteve o conteúdo anterior e ganhou a instrução nova.`
+                : `Enviei a atualização do briefing na task ${prefixo}(${taskId}), mas ao reler a verificação apontou: ${verif.mismatches.join('; ')}.`,
+          metadata: { guard: 'bento-action', action: 'update_brief', task_id: taskId, verified: verif?.ok ?? false },
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        record('clickup.update_task', `brief -> ${taskId}`, false, detail);
+        return guardResponse({ ok: false, toolCalls, answer: `Não consegui atualizar o briefing no ClickUp: ${detail}`, metadata: { guard: 'bento-action', action: 'update_brief', task_id: taskId, errorCode: 'CLICKUP_UPDATE_FAILED' } });
+      }
+    }
     return null;
   }
 
@@ -667,6 +752,7 @@ export async function tryBentoActionGuard(params: {
   const alvo = await resolveWriteTarget({
     message: params.message,
     executionClientId: params.clientId ?? null,
+    ...(params.seniorToolContext ? { organizationId: params.seniorToolContext.organizationId } : {}),
   });
 
   if (alvo.status === 'unknown_client' || alvo.status === 'ambiguous_client' || alvo.status === 'missing_list') {
@@ -740,6 +826,8 @@ export async function tryBentoActionGuard(params: {
   // transforma "separa a demanda" em instrução executável dentro da task, em
   // vez de um título solto que manda a pessoa voltar no chat.
   const querBriefing = intent.wantsBriefing || plano.items.length > 0 || plano.splitRequested || resumoDoPedido(fonteDoPedido).length > 180;
+  const artifact = /\bisso\b|essa|aprovad|agora gostei|agora ficou bom|cria (?:a|uma) task/i.test(message)
+    ? context.lastArtifact : null;
 
   /**
    * O material do turno ATUAL manda; o dos turnos anteriores entra em seguida
@@ -797,7 +885,7 @@ export async function tryBentoActionGuard(params: {
   // passava no read-back e era inútil pra quem ia executar.
   let briefingEvaluation: ReturnType<typeof evaluateBriefing> | null = null;
   let briefingSources: string[] = [];
-  if (querBriefing) {
+  if (querBriefing || params.seniorToolContext) {
     const contexto = await retrieveBriefingContext({
       clientId: alvo.clientId ?? params.clientId ?? null,
       requestText: fonteDoPedido,
@@ -811,7 +899,7 @@ export async function tryBentoActionGuard(params: {
 
     for (const entrada of entradas) {
       const deliveryType = classifyDeliveryType(params.message, entrada.title);
-      const composto = composeBriefing({
+      const composeInput = {
         taskName: entrada.title,
         clientName,
         deliveryType,
@@ -821,9 +909,70 @@ export async function tryBentoActionGuard(params: {
         dueDateLabel: prazoLabel,
         assignee: entrada.planned.assigneeName,
         requestSummary: resumoDoPedido(fonteDoPedido),
-      });
+      };
+      let composto = composeBriefing(composeInput);
+
+      /**
+       * LACUNA REAL vs LACUNA DE FORMATO. `retrieveBriefingContext` só lê fato
+       * de texto no formato "Rótulo: valor" (dossiê, comentário) — um pedido em
+       * prosa como "um briefing de boas-vindas, parabenizando pelo esforço"
+       * não tem essa forma, então `objetivo`/`entregaveis`/`aprovação` saíam
+       * MISSING mesmo com a resposta escrita, em português corrido, dentro do
+       * próprio pedido (achado real, 21/09/2026: task "Executar briefing —
+       * Cliente Teste 7" saiu só com [CONFIRMAR] nos três campos, e a
+       * mensagem de boas-vindas pedida nunca apareceu na task).
+       *
+       * Corrige SEM regenerar o briefing inteiro: pergunta ao LLM só pelos
+       * campos que faltam, só a partir do PRÓPRIO PEDIDO (nunca inventando
+       * dado de cliente), no mesmo formato "campo: valor" que
+       * `extractLabeledFacts` já sabe ler — reusa o parser e o merge por
+       * precedência que já existem, não cria caminho novo.
+       *
+       * SEM CONDIÇÃO DE `seniorToolContext`: esse contexto é a autorização
+       * normal de qualquer execução autenticada (ver senior-runtime-context.ts
+       * — não é exclusivo de um fluxo especial), então quase toda criação de
+       * task passa por aqui. `params.briefingWriter` agora é seguro
+       * (`completeTextSafely`, sem ferramenta nenhuma — ver execute-job.ts).
+       */
+      const lacunas = pendingCriticalFields(composeInput);
+      if (lacunas.length > 0) {
+        // Um "chave (rótulo)" por linha, pronto pra virar molde: modelos
+        // menores (fallback local, ver completeTextViaOllama) seguem um
+        // template explícito com muito mais consistência do que uma
+        // instrução solta pedindo "uma linha por campo, formato chave:valor".
+        const molde = lacunas.map((l) => `${l.key}: `).join('\n');
+        const resposta = await params
+          .briefingWriter(
+            [
+              'Leia o PEDIDO abaixo. Preencha o MOLDE copiando ou parafraseando SÓ o que o pedido determina explicitamente — nunca invente, nunca deduza além do que está escrito.',
+              'Regras: responda usando EXATAMENTE as chaves do molde, uma por linha, "chave: valor". Se o pedido não determinar aquele campo, apague a linha inteira dele — não deixe "chave:" vazio, não escreva "não informado".',
+              '',
+              `MOLDE:\n${molde}`,
+              '',
+              `PEDIDO: ${fonteDoPedido}`,
+            ].join('\n'),
+          )
+          .catch(() => null);
+        if (resposta) {
+          const interpretados = extractLabeledFacts(resposta, 'pedido do usuário (interpretado)');
+          if (interpretados.length > 0) {
+            composto = composeBriefing({ ...composeInput, facts: mergeFacts(composeInput.facts, interpretados) });
+          }
+        }
+      }
+
+      /**
+       * DRAFT APROVADO (Otto -> task): o conteúdo já foi escrito e aprovado
+       * na conversa — preservar INTEGRALMENTE, sem chamar LLM nenhum aqui.
+       * Único ramo que ainda sobrescreve `composto`, e só porque não é um
+       * briefing operacional: é a peça criativa em si.
+       */
+      if (artifact) {
+        entrada.briefing = `CONTEXTO\n${clientName ?? 'Demanda da conversa'}\n\nMATERIAL DA CONVERSA — PRESERVAR INTEGRALMENTE\n${artifact}\n\nORIENTAÇÃO DE PRODUÇÃO\n${params.message}\n\nCRITÉRIO DE CONCLUSÃO\nEntregar o material solicitado, preservando o conteúdo aprovado, para revisão da solicitante.`;
+      } else {
+        entrada.briefing = [composto.markdown, blocoDePendencias(plano.items, plano.pendencies)].filter(Boolean).join('\n\n');
+      }
       briefingEvaluation = evaluateBriefing(composto, { clientName });
-      entrada.briefing = [composto.markdown, blocoDePendencias(plano.items, plano.pendencies)].filter(Boolean).join('\n\n');
       record('guard.briefing_quality', `tipo=${deliveryType} score=${briefingEvaluation.score} executável=${briefingEvaluation.executable}`, briefingEvaluation.executable);
     }
   }
@@ -868,6 +1017,8 @@ export async function tryBentoActionGuard(params: {
     listId,
     { name: params.userName, clickUpEmail: params.userClickUpEmail },
     entradas,
+    undefined,
+    params.seniorToolContext ?? undefined,
   );
   for (const r of resultados) {
     for (const tc of r.toolCalls) record(tc.tool, tc.input_summary, tc.ok, tc.error);

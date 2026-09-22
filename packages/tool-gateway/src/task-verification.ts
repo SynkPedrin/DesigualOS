@@ -28,6 +28,13 @@ export interface ExpectedTaskState {
    * instante continua usando 'exact' (o default, que não muda nada).
    */
   dueDateGranularity?: 'exact' | 'day';
+  /**
+   * Trechos que a descrição PRECISA conter após a escrita (verificação
+   * semântica mínima do briefing, não só "task existe" — seção 36). Usado
+   * por update_brief: confirma que o CONTEÚDO ANTERIOR sobreviveu e a
+   * instrução NOVA entrou, em vez de só checar que a task ainda existe.
+   */
+  descriptionContains?: string[];
 }
 
 export interface TaskVerification {
@@ -108,6 +115,15 @@ export function verifyTaskState(actual: TaskDetail, expected: ExpectedTaskState)
     checked.push('status');
     if ((actual.status ?? '').toLowerCase().trim() !== expected.status.toLowerCase().trim()) {
       mismatches.push(`status esperado "${expected.status}", mas a task está como "${actual.status ?? 'sem status'}"`);
+    }
+  }
+
+  if (expected.descriptionContains !== undefined) {
+    checked.push('conteúdo da descrição');
+    for (const trecho of expected.descriptionContains) {
+      if (!actual.description.includes(trecho)) {
+        mismatches.push(`descrição deveria conter "${trecho.slice(0, 60)}" e não contém após a escrita`);
+      }
     }
   }
 

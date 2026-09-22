@@ -39,11 +39,15 @@ import {
 } from './response-provenance.js';
 import { stripBlockMarkers, stripMarkdownArtifacts, withPersonality, extractApprovalProposal } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
+import { completeTextSafely } from '@desigual-os/router';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard } from './bento-action-guard';
+import { loadSeniorRuntimeContext } from './senior-runtime-context';
 import { detectSmallTalk } from './small-talk';
 import { registrarConhecimentoDoTurno } from './knowledge-statement';
+import { looksLikeCreativeFeedback } from './conversation-artifact';
+import { checkDateRangeMatch, sourceRangeMismatchMessage } from './jarbas-date-guard';
 
 // Feature flag do Agentic V2 (seção 112 da spec): o loop com estado,
 // avaliação e replan só assume o dispatch quando ligado; desligado, o
@@ -60,6 +64,14 @@ export function parseAgentLoopFlag(raw: string | undefined): Set<AgentName> {
   return new Set(enabled.filter((agent) => AGENT_NAMES.includes(agent) && agent !== 'jarbas'));
 }
 
+export function agentLoopEnabledFor(agent: AgentName, env: NodeJS.ProcessEnv = process.env): boolean {
+  // Per-agent flags are the preferred production control. The legacy list is
+  // retained for rollback compatibility and never enables Jarbas.
+  const specific = env[`AGENT_LOOP_${agent.toUpperCase()}_V2`];
+  if (specific !== undefined) return specific === 'true' && agent !== 'jarbas';
+  return parseAgentLoopFlag(env.AGENT_LOOP_V2).has(agent);
+}
+
 // Parse preguiçoso: AGENT_NAMES não pode ser lido no escopo de módulo (TDZ
 // em import circular com @desigual-os/types — quebrou o vitest na primeira
 // versão). A primeira consulta acontece no primeiro dispatch.
@@ -67,7 +79,7 @@ let agentLoopV2Agents: Set<AgentName> | null = null;
 
 function agentLoopV2Enabled(agent: AgentName): boolean {
   if (!agentLoopV2Agents) agentLoopV2Agents = parseAgentLoopFlag(process.env.AGENT_LOOP_V2);
-  return agentLoopV2Agents.has(agent);
+  return agentLoopEnabledFor(agent) || agentLoopV2Agents.has(agent);
 }
 
 // Convenção de porta padrão dos Node Agents genéricos (desigual-node). Em
@@ -152,6 +164,48 @@ export function limitarContexto(partes: Array<string | undefined>): string | und
   if (texto.length === 0) return undefined;
   if (texto.length <= TETO_DE_CONTEXTO) return texto;
   return `${texto.slice(0, TETO_DE_CONTEXTO)}\n\n[CONTEXTO TRUNCADO em ${TETO_DE_CONTEXTO} caracteres — havia ${texto.length}. O que veio depois deste ponto NÃO chegou até você; não conclua ausência a partir disso.]`;
+}
+
+/**
+ * Fallback de `completeTextSafely` (router, chamada direta à Anthropic) pra
+ * quando ANTHROPIC_API_KEY não está configurada neste ambiente — o caso
+ * real de hoje (21/09/2026): a chave está vazia em `.env`, então o gap-fill
+ * do briefing (bento-action-guard.ts) silenciosamente não preenchia nada,
+ * mesmo com a lógica de merge correta e testada. Usa o mesmo caminho que
+ * Otto/Studio já respeitam pra não furar o controle de admissão da GPU
+ * única (`gpu-gateway.ts`): fala com o Ollama local pela porta do próprio
+ * worker, nunca direto com a RTX. Igual a `completeTextSafely`: SEM
+ * ferramenta nenhuma, texto puro — o modelo não tem como executar nada.
+ */
+async function completeTextViaOllama(prompt: string, logger: Logger): Promise<string | null> {
+  const porta = process.env.GPU_GATEWAY_PORT ?? '11500';
+  // 'kairo' só existe no Ollama local desta máquina de dev — o gateway fala
+  // com a RTX real (100.x, ver GPU_UPSTREAM_URL), cujos modelos são outros
+  // (checado ao vivo em 21/09/2026: qwen2.5:14b, ministral-3:3b, llama3.1:8b,
+  // qwen3.6:35b-a3b). 'kairo' aqui dava 404 silencioso.
+  const modelo = process.env.OLLAMA_TEXT_MODEL ?? 'qwen2.5:14b';
+  try {
+    const response = await fetch(`http://localhost:${porta}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: modelo,
+        messages: [{ role: 'user', content: prompt }],
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      logger.warn({ status: response.status }, 'completeTextViaOllama: gateway respondeu erro');
+      return null;
+    }
+    const body = (await response.json()) as { message?: { content?: string } };
+    const texto = body.message?.content?.trim();
+    return texto && texto.length > 0 ? texto : null;
+  } catch (error) {
+    logger.warn({ error: error instanceof Error ? error.message : String(error) }, 'completeTextViaOllama falhou');
+    return null;
+  }
 }
 
 export async function callBento(message: string, logger: Logger, operationalContext?: string): Promise<ExecuteResponse> {
@@ -870,16 +924,29 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   // o avaliador reprovar por não haver resposta e o replan se esgotar — medido:
   // replan_exhausted em 11s numa frase que só registrava uma decisão. Como
   // ENSINAR é o fluxo de que a memória depende, ele não pode devolver erro.
-  const registro = await registrarConhecimentoDoTurno({
-    message,
-    clientId: runningExecution?.clientId ?? null,
-    clientName: null,
-    userId: runningExecution?.userId ?? null,
-    agent,
-    conversationId: conversationId ?? null,
-    executionId,
-    logger,
-  }).catch(() => null);
+  /**
+   * "Ficou genérico." e "Agora gostei." são CRÍTICA/APROVAÇÃO de um draft que
+   * acabou de ser mostrado, nunca uma afirmação a registrar como conhecimento
+   * permanente — achado real (22/09/2026): sem esta guarda, as duas caíam em
+   * `registrarConhecimentoDoTurno` (nem pergunta, nem tem verbo de pedido),
+   * respondiam "Registrado: - Ficou genérico." e o Otto NUNCA chegava a
+   * produzir a V2 de verdade — a task final usava esse "Registrado" como se
+   * fosse o conteúdo aprovado. Escopado a `otto`: é onde existe loop de
+   * draft/feedback; Bento não tem esse padrão de conversa.
+   */
+  const registro =
+    agent === 'otto' && looksLikeCreativeFeedback(message)
+      ? null
+      : await registrarConhecimentoDoTurno({
+          message,
+          clientId: runningExecution?.clientId ?? null,
+          clientName: null,
+          userId: runningExecution?.userId ?? null,
+          agent,
+          conversationId: conversationId ?? null,
+          executionId,
+          logger,
+        }).catch(() => null);
   if (registro) {
     logger.info({ executionId, agent, tipos: registro.tipos }, '[registro] afirmação registrada sem passar pelo loop');
     guardedResult = {
@@ -939,7 +1006,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     };
   }
 
-  if (!guardedResult && agent === 'bento') {
+  if (!guardedResult && (agent === 'bento' || agent === 'otto')) {
     const [jobUser] = runningExecution?.userId
       ? await db.select().from(schema.users).where(eq(schema.users.id, runningExecution.userId))
       : [];    const agencyClient = await db
@@ -963,23 +1030,29 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       userName: jobUser?.name ?? jobUser?.email ?? 'usuário',
       userClickUpEmail: jobUser?.clickupEmail ?? null,
       userEmail: jobUser?.email ?? null,
+      seniorToolContext: await loadSeniorRuntimeContext(executionDbId),
       agencyListId: agencyClient[0]?.clickupListId ?? null,
       clientId: runningExecution?.clientId ?? null,
       clientName: clienteDaExecucao?.name ?? null,
       // O material do turno chega aqui pelo mesmo caminho que vai pro node.
       // Sem repassar, a task nascia sem o print que originou a demanda.
       attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
-      briefingWriter: async (prompt) => {
-        const brief = await callBento(prompt, logger);
-        return brief.status === 'completed' ? brief.answer : null;
-      },
+      // NUNCA `callNode`/`callBento` aqui: aquilo dispara o Bento DE VERDADE
+      // (mesmo bot do WhatsApp, mesma credencial real de escrita no ClickUp).
+      // Achado real (21/09/2026): o prompt embute o PEDIDO original ("Bento,
+      // crie uma task..."), e o Bento em produção tratou o meta-pedido como
+      // ordem de verdade — criou uma SEGUNDA task real, fora do dispatch,
+      // sem idempotência nem verificação (ver safe-complete.ts no router).
+      // `completeTextSafely` chama a Anthropic direto, sem nenhuma
+      // ferramenta: o modelo não tem como executar nada, só devolver texto.
+      briefingWriter: async (prompt) => (await completeTextSafely(prompt, logger)) ?? (await completeTextViaOllama(prompt, logger)),
       logger,
     }).catch((error: unknown) => {
-      logger.error({ error, executionId }, 'Bento action guard falhou; seguindo pro fluxo normal do agente');
-      return null;
+      logger.error({ error, executionId }, 'Senior action guard failed');
+      return failedAgentResponse(agent, 'Não consegui verificar a ação. Não vou confirmar a criação; confira a task antes de tentar novamente.');
     });
     if (guarded) {
-      guardedResult = guarded;
+      guardedResult = { ...guarded, agent, execution_id: executionId };
     }
   }
 
@@ -1129,6 +1202,28 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     // [FIM_BLOCO] dos prompts de personalidade viram parágrafo aqui também.
     if (result.answer)
       result = { ...result, answer: stripMarkdownArtifacts(stripBlockMarkers(stripEmDashes(result.answer))) };
+    /**
+     * SOURCE_RANGE_MISMATCH, na borda (22/09/2026). A análise de tráfego do
+     * Jarbas é externa (JARBAS_ASK_URL) — nenhum parsing de data ou consulta
+     * de Meta Ads vive neste repositório, então a causa raiz do serviço
+     * ignorar o período pedido não é corrigível aqui. O que é: o próprio
+     * Jarbas já DECLARA o período que consultou no início da resposta
+     * ("CARTEIRA, 2026-09-01 a 2026-09-30, fonte: Meta Ads") — comparado
+     * contra o período que o usuário pediu, em português, na mensagem
+     * original. Divergência bloqueia a resposta ANTES de mostrar um ranking
+     * de um período errado como se fosse do período certo. Fail-open: só
+     * bloqueia quando os DOIS ranges foram extraídos com segurança.
+     */
+    if (agent === 'jarbas' && result.answer) {
+      const verificacao = checkDateRangeMatch(message, result.answer);
+      if (!verificacao.ok) {
+        logger.warn(
+          { executionId, requested: verificacao.requested, queried: verificacao.queried },
+          '[jarbas] SOURCE_RANGE_MISMATCH bloqueado na borda',
+        );
+        result = { ...result, answer: sourceRangeMismatchMessage(verificacao) };
+      }
+    }
     // Ver estimateTokenUsage acima: sem isso, Bento/Jarbas/Suzy nunca geravam
     // linha de custo nenhuma (usage sempre {0,0} vindo deles).
     if (result.usage.input_tokens === 0 && result.usage.output_tokens === 0 && result.answer) {

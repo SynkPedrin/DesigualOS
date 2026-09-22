@@ -49,4 +49,20 @@ describe('detectKnowledgeStatement', () => {
     expect(r.answer).toMatch(/fica valendo/i);
     expect(r.answer).toMatch(/me corrige/i);
   });
+
+  /**
+   * OTTO_GENERIC_FEEDBACK_IMPROVES — documenta a ARMADILHA real (22/09/2026):
+   * "Ficou genérico." e "Agora gostei." não são pergunta e não têm verbo de
+   * pedido, então ESTA função registra as duas como conhecimento — é
+   * exatamente por isso que `execute-job.ts` precisa checar
+   * `looksLikeCreativeFeedback` ANTES de chamar `registrarConhecimentoDoTurno`
+   * quando o agente é o Otto (ver conversation-artifact.test.ts). Sem esse
+   * desvio, a resposta virava "Registrado: - Ficou genérico." e o Otto nunca
+   * chegava a reescrever o draft — a task final usava esse "Registrado" como
+   * se fosse o conteúdo aprovado.
+   */
+  it('ARMADILHA: "Ficou genérico."/"Agora gostei." SERIAM registradas aqui — por isso o caller precisa desviar antes', () => {
+    expect(detectKnowledgeStatement('Ficou genérico.', 'Cliente Teste 7')).not.toBeNull();
+    expect(detectKnowledgeStatement('Agora gostei.', 'Cliente Teste 7')).not.toBeNull();
+  });
 });

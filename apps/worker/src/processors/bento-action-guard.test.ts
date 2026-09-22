@@ -44,4 +44,37 @@ describe('bento-action-guard: classificação de intenção', () => {
     expect(classifyIntentForTest('o que a Tammy precisa entregar?').kind).toBe('none');
     expect(classifyIntentForTest('como está a operação?').kind).toBe('none');
   });
+
+  /**
+   * BENTO_CREATE_NOT_UPDATE (briefing): regressão da falha real (21/09/2026)
+   * — "Bento, atualize o briefing dessa task adicionando que a mensagem deve
+   * ter um tom humano e motivador" não casava com nenhum `update_*`
+   * conhecido (só assignee/due/status existiam) e caía em `criacaoPadrao`,
+   * criando uma SEGUNDA task real em vez de editar a existente. A task real
+   * ficou até sem responsável ("sem responsável definido"), porque o pedido
+   * de update não tem nome de pessoa nenhum — outro sintoma do mesmo bug.
+   */
+  it('"atualize o briefing dessa task..." é update_brief, NUNCA create', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest(
+      'Bento, atualize o briefing dessa task adicionando que a mensagem deve ter um tom humano e motivador.',
+    );
+    expect(intent.kind).toBe('update_brief');
+  });
+
+  it.each([
+    'edita o briefing dessa task, adiciona um prazo de 3 dias',
+    'complementa a descrição dessa task com o link do arquivo',
+    'acrescenta na descrição dela que o cliente pediu tom mais informal',
+  ])('%s -> update_brief', async (msg) => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    expect(classifyIntentForTest(msg).kind).toBe('update_brief');
+  });
+
+  it('"muda o prazo" continua update_due — update_brief não hijacka pedido de prazo sem mencionar briefing/descrição', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    expect(classifyIntentForTest('muda o prazo dessa task pra amanhã').kind).toBe('update_due');
+    // "atualiza"/"adiciona" sozinhos, sem menção a briefing/descrição, não bastam pro update_brief.
+    expect(classifyIntentForTest('atualiza o prazo dessa task pra amanhã').kind).not.toBe('update_brief');
+  });
 });
