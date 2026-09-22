@@ -25,7 +25,7 @@ export interface CorpusCase {
   expectedActions?: number;
 }
 
-export const CORPUS_VERSION = '2026-09-22.4';
+export const CORPUS_VERSION = '2026-09-22.5';
 
 /**
  * TAMMY — como a operação fala. Todas são ordens inequívocas: se o Bento não
@@ -67,6 +67,14 @@ Bento, tenho a solicitação acima. Preciso que separe a demanda e lance pro Gui
   { id: 'T20', message: 'deleta essa demanda', expected: 'ACT', note: 'sinônimo de apagar' },
   { id: 'T21', message: 'exclui a task do Pedro', expected: 'ACT', note: 'exclusão com alvo nomeado' },
   { id: 'T22', message: 'remove essa task, foi criada errada', expected: 'ACT', note: 'exclusão com justificativa' },
+  // ACHADO REAL no E2E de release (22/09/2026, gate CRUD contra "Cliente
+  // Teste 7"): o trecho entre aspas do NOVO VALOR (título, comentário)
+  // passava de metade do comprimento da frase e virava 'quote' na
+  // segmentação — a ordem inteira nunca executava, mesmo sem citar
+  // comando de ninguém. Ver RECEBE_VALOR_ANTES_DA_ASPAS em action-intent-v2.ts.
+  { id: 'T24', message: "troca o título dessa task pra 'QA E2E — UPDATE TITLE (Fase RC 690fdfc)'", expected: 'ACT', note: 'valor entre aspas mais longo que a ordem, mesma frase' },
+  { id: 'T25', message: "adiciona um comentário nessa task dizendo 'confirmado pelo QA'", expected: 'ACT', note: 'mesmo achado, comentário' },
+  { id: 'T26', message: "muda o nome dessa task para \"Boas-vindas — versão final revisada pelo cliente\"", expected: 'ACT', note: 'mesmo achado, valor bem mais longo que a ordem' },
 ];
 
 /**
@@ -158,6 +166,12 @@ Bento, o que você acha dessa demanda?`,
   // DELETE: negação vence, igual a qualquer outra família (22/09/2026).
   { id: 'X37', message: 'não apaga essa task ainda', expected: 'ANALYZE', note: 'negação sobre exclusão' },
   { id: 'X38', message: 'ontem eu deletei uma task por engano', expected: 'ANALYZE', note: 'passado, primeira pessoa' },
+  // Regressão do fix de T24-T26: uma palavra de rótulo perto da aspa NÃO
+  // pode reabilitar um comando genuinamente citado — o verbo que importa
+  // está DENTRO da aspa, e semNomes (classifySegment) já o remove antes da
+  // checagem de família, então o wrapper sozinho ("o nome que ele deu foi")
+  // não tem verbo de ordem nenhum.
+  { id: 'X39', message: "o nome que ele deu pra task foi 'cria uma task pro Gui', mas isso é só o relato", expected: 'ANALYZE', note: 'rótulo perto da aspa + comando citado dentro — continua ANALYZE' },
 ];
 
 /**

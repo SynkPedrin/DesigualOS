@@ -277,6 +277,18 @@ const LIBERACAO =
 
 /** Trecho entre aspas: conteúdo citado nunca é ordem pro Bento. */
 const CITACAO = /["“”'']([^"“”'']{4,200})["“”'']/g;
+/**
+ * Aspas que RECEBEM um valor que a própria ordem está definindo (novo
+ * título, texto do comentário, nome da task) não são citação de comando
+ * alheio — achado real no E2E de release (22/09/2026): "troca o título
+ * dessa task pra 'Nome Novo Bem Longo'" tem o trecho entre aspas maior que
+ * metade da frase, e caía em `ehCitacao` pelo critério de proporção — a
+ * ordem inteira ("troca...pra") virava 'quote' e nunca executava. Mesmo
+ * raciocínio que `classifySegment` já aplica pro CASO INVERSO (nome
+ * rotulado não vira família de verbo) — aqui aplicado ANTES, na
+ * segmentação, pro caso de a citação dominar o trecho inteiro.
+ */
+const RECEBE_VALOR_ANTES_DA_ASPAS = /(t[íi]tulo|nome|coment[áa]rio|texto|chamad[ao]|nomead[ao]|dizendo|que diz)/i;
 
 /**
  * Quebra a mensagem em trechos analisáveis.
@@ -295,7 +307,13 @@ export function segmentMessage(message: string): Array<{ text: string; index: nu
   CITACAO.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = CITACAO.exec(turno)) !== null) {
-    if (m[1]) citados.push(m[1]);
+    if (!m[1]) continue;
+    // Não conta como citação quando o que vem ANTES da aspa é um rótulo de
+    // campo ("título", "nome", "comentário"...) — é valor sendo definido,
+    // não comando relatado.
+    const antes = turno.slice(Math.max(0, m.index - 40), m.index);
+    if (RECEBE_VALOR_ANTES_DA_ASPAS.test(antes)) continue;
+    citados.push(m[1]);
   }
 
   const bruto = turno
