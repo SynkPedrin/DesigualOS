@@ -58,3 +58,21 @@ export function withExecutionId(logger: Logger, executionId: string): Logger {
 }
 
 export type { Logger } from 'pino';
+
+/**
+ * P0-03 (auditoria de release readiness, 22/09/2026): o WebSocket recebe o
+ * bearer Supabase na query string (`/ws?token=...` — o WebSocket nativo do
+ * browser não permite header Authorization no handshake, ver ws/routes.ts),
+ * e o logger de request/response do Fastify grava a URL completa por
+ * padrão. Confirmado: 2.242 ocorrências de `/ws?token=` em 8 MB de log, 13
+ * tokens distintos, 2 ainda válidos no momento da coleta.
+ *
+ * Mascara SÓ o valor do parâmetro `token`, preservando o resto da URL (path,
+ * outros query params) — é isso que mantém o log útil pra depuração sem
+ * carregar a credencial. Cobre `?token=` e `&token=` em qualquer posição.
+ */
+const TOKEN_QUERY_PARAM = /([?&]token=)[^&\s]+/gi;
+
+export function redactTokenFromUrl(url: string): string {
+  return url.replace(TOKEN_QUERY_PARAM, '$1[REDACTED]');
+}

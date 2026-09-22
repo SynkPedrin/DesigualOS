@@ -1,12 +1,12 @@
 import './env.js';
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import corsPlugin from '@fastify/cors';
 import websocketPlugin from '@fastify/websocket';
 import multipartPlugin from '@fastify/multipart';
 import rateLimitPlugin from '@fastify/rate-limit';
 import helmetPlugin from '@fastify/helmet';
 import { z } from 'zod';
-import { createLogger } from '@desigual-os/logging';
+import { createLogger, redactTokenFromUrl } from '@desigual-os/logging';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
 import { startHealthCheckRetention, startHealthSweep } from './health/scheduler';
@@ -59,15 +59,30 @@ const healthResponseSchema = z.object({
 
 // Fastify usa seu próprio logger interno (pino) para logs de request/response.
 // createLogger acima é usado para logs de aplicação fora do ciclo de request.
+// P0-03 (auditoria 22/09/2026): o serializer padrão do Fastify grava a URL
+// INTEIRA da request, e `/ws?token=<jwt>` (handshake do WebSocket — o
+// WebSocket nativo do browser não aceita header Authorization) ia pro log
+// assim, credencial válida incluída. `req.url` é a ÚNICA coisa que muda:
+// mesmo formato de sempre (method/url/hostname/remoteAddress/remotePort),
+// só a query string do token mascarada antes do logger ver o valor.
+const requestSerializer = (request: FastifyRequest) => ({
+  method: request.method,
+  url: redactTokenFromUrl(request.url),
+  hostname: request.hostname,
+  remoteAddress: request.socket?.remoteAddress ?? request.ip,
+  remotePort: request.socket?.remotePort ?? 0,
+});
+
 const app = Fastify({
   logger: isProd
-    ? { level: process.env.LOG_LEVEL ?? 'info' }
+    ? { level: process.env.LOG_LEVEL ?? 'info', serializers: { req: requestSerializer } }
     : {
         level: process.env.LOG_LEVEL ?? 'info',
         transport: {
           target: 'pino-pretty',
           options: { colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
         },
+        serializers: { req: requestSerializer },
       },
 });
 
