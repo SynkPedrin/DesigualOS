@@ -200,6 +200,48 @@ describe('P0-01: UPDATE nunca vira CREATE — unknown operation = no mutation', 
     expect(decisao.kind).toBe('ask_clarification');
   });
 
+  /**
+   * Achado real no E2E de release (22/09/2026, lista de QA "Cliente Teste
+   * 7"): "altere essa task para o status pronto" — a reprodução EXATA do
+   * P0-01 original — caiu em "não consegui mapear o status" porque a lista
+   * real só tinha "to do"/"complete" (inglês), e só o HINT do usuário era
+   * checado em português. classifyIntent continuava certo (update_status,
+   * nunca create); o bug estava um passo depois, no mapeamento pro status
+   * real da lista.
+   */
+  describe('mapStatusHintToRealStatus — hint em português, lista em qualquer língua', () => {
+    it('"pronto" mapeia pra "complete" (inglês) — o caso real do E2E', async () => {
+      const { mapStatusHintToRealStatus } = await import('./bento-action-guard.js');
+      expect(mapStatusHintToRealStatus('pronto', ['to do', 'complete'])).toBe('complete');
+    });
+
+    it.each(['done', 'closed', 'finished'])('"concluído" mapeia pra "%s" (variantes em inglês)', async (status) => {
+      const { mapStatusHintToRealStatus } = await import('./bento-action-guard.js');
+      expect(mapStatusHintToRealStatus('concluído', ['to do', status])).toBe(status);
+    });
+
+    it('continua funcionando com a lista em português (comportamento preservado)', async () => {
+      const { mapStatusHintToRealStatus } = await import('./bento-action-guard.js');
+      expect(mapStatusHintToRealStatus('pronto', ['aberto', 'em andamento', 'concluído'])).toBe('concluído');
+      expect(mapStatusHintToRealStatus('em andamento', ['aberto', 'em andamento', 'concluído'])).toBe('em andamento');
+    });
+
+    it('"em andamento" mapeia pra "in progress" (inglês)', async () => {
+      const { mapStatusHintToRealStatus } = await import('./bento-action-guard.js');
+      expect(mapStatusHintToRealStatus('em andamento', ['to do', 'in progress', 'complete'])).toBe('in progress');
+    });
+
+    it('"aberto" mapeia pra "new"/"backlog" (inglês)', async () => {
+      const { mapStatusHintToRealStatus } = await import('./bento-action-guard.js');
+      expect(mapStatusHintToRealStatus('aberto', ['backlog', 'complete'])).toBe('backlog');
+    });
+
+    it('status sem correspondência nenhuma continua undefined — nunca inventa', async () => {
+      const { mapStatusHintToRealStatus } = await import('./bento-action-guard.js');
+      expect(mapStatusHintToRealStatus('pronto', ['to do', 'in progress'])).toBeUndefined();
+    });
+  });
+
   describe('decideFallbackIntent — a regra estrutural isolada', () => {
     it('sem task anterior na conversa, referência é à DEMANDA discutida — continua criando (vocabulário real preservado)', async () => {
       const { decideFallbackIntent } = await import('./bento-action-guard.js');

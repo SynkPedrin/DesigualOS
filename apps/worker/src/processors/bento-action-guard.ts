@@ -301,6 +301,35 @@ export function decideFallbackIntent(message: string, lastTaskId: string | null)
   return { kind: 'intent', intent: criacaoPadrao(message) };
 }
 
+/**
+ * P0-01 (22/09/2026): só reconhecia "revisão" ou "pronto/concluído" —
+ * "altere essa task para em andamento" não mapeava pra nenhum status real e
+ * caía no `status_sem_mapeamento` do caller, quando a lista tinha um status
+ * "em andamento" de verdade. Ordem importa: cada categoria checa o HINT
+ * primeiro (o que a pessoa pediu), só então procura na lista real — nunca o
+ * contrário, que inventaria status.
+ *
+ * Achado real no E2E de release (22/09/2026, lista de QA "Cliente Teste
+ * 7"): status do ClickUp em INGLÊS ("complete") não casava com o padrão do
+ * lado da LISTA — só o hint do usuário ("pronto") era checado em português.
+ * "altere essa task para o status pronto" (reprodução exata do P0-01
+ * original) caía em "não consegui mapear", mesmo a lista tendo um status de
+ * conclusão de verdade. O padrão do lado da lista precisa reconhecer as
+ * duas línguas: quem hospeda a conta ClickUp escolhe o idioma do status,
+ * não quem fala com o Bento.
+ */
+export function mapStatusHintToRealStatus(hint: string, statuses: string[]): string | undefined {
+  return /revis/i.test(hint)
+    ? statuses.find((status) => /revis/i.test(status))
+    : /(pront|conclu|feito|encerr)/i.test(hint)
+      ? statuses.find((status) => /(pront|conclu|feito|encerr|complet|done|closed|finish)/i.test(status))
+      : /(andamento|progress|fazendo|doing)/i.test(hint)
+        ? statuses.find((status) => /(andamento|progress|fazendo|doing|in\s*progress)/i.test(status))
+        : /(aberto|to\s*do|a\s*fazer|open)/i.test(hint)
+          ? statuses.find((status) => /(aberto|to\s*do|a\s*fazer|open|new|backlog)/i.test(status))
+          : undefined;
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
@@ -900,24 +929,7 @@ export async function tryBentoActionGuard(params: {
 
     if (intent.kind === 'update_status') {
       const statuses = await listStatusesForTask(config, taskId).catch(() => []);
-      /**
-       * P0-01 (22/09/2026): só reconhecia "revisão" ou "pronto/concluído" —
-       * "altere essa task para em andamento" não mapeava pra nenhum status
-       * real e caía no `status_sem_mapeamento` abaixo, quando a lista tinha
-       * um status "em andamento" de verdade. Ordem importa: cada categoria
-       * checa o HINT primeiro (o que a pessoa pediu), só então procura na
-       * lista real — nunca o contrário, que inventaria status.
-       */
-      const hint = intent.statusHint;
-      const wanted = /revis/i.test(hint)
-        ? statuses.find((status) => /revis/i.test(status))
-        : /(pront|conclu|feito|encerr)/i.test(hint)
-          ? statuses.find((status) => /(pront|conclu|feito|encerr)/i.test(status))
-          : /(andamento|progress|fazendo|doing)/i.test(hint)
-            ? statuses.find((status) => /(andamento|progress|fazendo|doing)/i.test(status))
-            : /(aberto|to\s*do|a\s*fazer|open)/i.test(hint)
-              ? statuses.find((status) => /(aberto|to\s*do|a\s*fazer|open)/i.test(status))
-              : undefined;
+      const wanted = mapStatusHintToRealStatus(intent.statusHint, statuses);
       if (!wanted) {
         return guardResponse({
           ok: true,
