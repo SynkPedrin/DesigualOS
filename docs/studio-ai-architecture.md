@@ -218,23 +218,119 @@ mesmo**, queimando GPU real numa peça que ninguém veria, e inserindo
 
 ---
 
-## 8. O que NÃO está validado
+## 8. O que foi validado AO VIVO (17/09/2026, fase 2)
 
-Honestidade explícita, na forma que o plano pediu:
+Tudo abaixo rodou contra a GPU real, o Redis real, o Postgres real e, onde
+indicado, pelo **navegador** com login de verdade (`studio-test@`, papel
+colaborador, senha pelo formulário - sem token fabricado e sem service key).
+
+| Item | Evidência |
+|---|---|
+| Login real pelo formulário | `tests/e2e/studio-front-validation.spec.ts`; screenshots em `tests/e2e/shots/` |
+| Job criado pela interface | `202 POST /studio/jobs` -> `STU-MU4GK4TT4B396E`, `STU-MU4I35VT5AB437`, `STU-MU4JXHX1C0C3E6` |
+| Loop de correção REAL | job `STU-MU4I35VT5AB437`: 3 tentativas, diretiva de correção não vazia, lineage persistida |
+| MAX_ATTEMPTS | mesmo job: parou em 3, `final_action: accept_best` |
+| Melhor candidato | mesmo job: `chosen: 1` de 3 (antes da correção escolhia a 3, a pior) |
+| PASS -> upscale -> final QA | job `STU-MU4JXHX1C0C3E6`: approve 8,5 -> upscale `restore` -> final QA `kept: true` em 12,7s -> entregue 2048x1728 |
+| Timeout de fila | job `STU-MU4GF4BD55B3A2`: criado pela UI 18:48:45, sem worker, `failed` às 18:52:03 com "No available Studio worker." |
+| Rollback pela flag | job `STU-MU4K5NFAA2A6B2` com `STUDIO_AUTONOMOUS_QA=false`: nenhum estágio de QA emitido, `metadata.qa = null` |
+| Lock do BullMQ não duplica | job de 15s com `lockDuration` de 3s processado **1x** (renovação automática confirmada) |
+| Recuperação de worker morto | job retomado e concluído depois do lock expirar; o prompt do ComfyUI foi **resumido**, não regerado |
+| Fallback do crítico | `CriticUnavailableError` no final QA entregou a peça aprovada sem upscale, sem falhar o job |
+
+## 9. Bugs encontrados NA PRÓPRIA implementação (e corrigidos)
+
+Achados por execução real, não por revisão de código:
+
+1. **Correção vazia virava sorteio.** Job `STU-MU4GK4TT4B396E`: a tentativa 1
+   reprovou só por `anatomy`, a região alvo virou `body` (sem texto de foco)
+   e nenhum problema era `high` - a diretiva saiu **vazia**. O loop regerou
+   com o MESMO prompt e seed nova. O sorteio **piorou** a peça: inseriu mãos
+   deformadas (`hands: 3`) numa imagem que não tinha mão nenhuma.
+   Corrigido: `buildCorrectionDirective` devolve `null` e o loop **para** em
+   vez de regerar às cegas.
+
+2. **`anatomy` agregado reprovava peça boa.** O mesmo job: `anatomy: 4.0`
+   convivendo com `hands: 10` e `face: 10`, numa foto de produto cuja única
+   anatomia visível (um tornozelo) estava correta. Corrigido: o agregado só
+   reprova quando `hands` ou `face` também reprovam.
+
+3. **Melhor candidato entregava a pior peça.** As três tentativas empataram
+   em `overall` (7,5) e `artifact` (8); o desempate por "tentativa mais nova"
+   escolheu a 3, com defeito `high` de dedos fundidos, em cima da 1, limpa.
+   Corrigido: desempata por menos dano concreto, depois por mão/rosto.
+
+4. **Final QA morria com HTTP 400.** Job `STU-MU4JNHW41060D7`: as duas
+   imagens iam cruas; o PNG de 2048px do upscale somado ao original estourou
+   o corpo aceito pelo Ollama. Corrigido: reduz a 1024px/JPEG antes de
+   enviar (também corta memória e tempo).
+
+5. **Worker morria em silêncio.** Saía com código 1 sem escrever uma linha -
+   o job ficava preso em `rendering` até o lock expirar (25 min).
+   Corrigido: handlers de `uncaughtException`/`unhandledRejection` que
+   registram o motivo antes de sair. Foram eles que revelaram a causa real
+   das mortes seguintes: `EADDRINUSE` na porta 4100 (instância anterior
+   ainda viva), não pressão de memória como se supôs primeiro.
+
+## 10. O que continua NÃO validado
 
 | Item | Estado |
 |---|---|
-| Loop completo com correção real (attempt 1 reprova → attempt 2 melhora) | **NÃO VALIDADO AO VIVO.** A única execução real aprovou na 1ª tentativa (score 9,2). O caminho de correção tem cobertura de teste unitário, não de GPU |
-| Crítico em caso difícil (mão/rosto/identidade) ao vivo | **NÃO VALIDADO.** A execução real foi um tênis em fundo cinza — sem anatomia e sem texto, o caso fácil |
-| Upscale só após aprovação / final QA | **NÃO IMPLEMENTADO** neste passo. `selectFinishStrategy` continua sem chamador; `finish_master_v1` segue bloqueado por falta do custom node |
-| Testes reais pelo frontend (TESTE FRONT 01–10) | **BLOQUEADO**: sem credencial de login. A suíte E2E do repo só testa o portão de auth, não autentica |
-| Benchmark A/B (pipeline atual × QA loop) | **NÃO EXECUTADO** |
-| `lockDuration` sob loop de 3 tentativas | **NÃO TESTADO** |
-| Carrossel/vídeo no loop | **FORA DE ESCOPO** por ora: carrossel tem âncora entre slides e refazer um slide do meio quebra a continuidade |
+| Ganho de qualidade comprovado | **NÃO.** Ver seção 11 |
+| A/B/C com 6 cenários e avaliação humana cega | **NÃO EXECUTADO** |
+| Referências pelo frontend (upload) | **NÃO TESTADO** |
+| Múltiplas referências com papéis distintos | **NÃO TESTADO** |
+| Refresh (F5) durante geração | **NÃO TESTADO** |
+| Cancelamento pela UI | Backend provado; **botão na UI não testado** |
+| ComfyUI offline | **NÃO TESTADO** |
+| 2 usuários / isolamento | **NÃO TESTADO** — e ver o achado de segurança abaixo |
+| 5 jobs simultâneos (carga) | **NÃO TESTADO** |
+| Calibração de thresholds por distribuição | **NÃO FEITA** (amostra pequena demais) |
+| Carrossel/vídeo no loop | Fora de escopo desta fase, por decisão |
 
----
+**Achado de segurança (pré-existente, não introduzido aqui):**
+`apps/api/src/lib/access.ts:15` — `hasClientAccess()` é um stub que devolve
+`true` para qualquer usuário e qualquer cliente. Todo endpoint do Studio que
+"protege" o cliente com essa função não protege nada: qualquer colaborador
+autenticado age sobre qualquer cliente. O teste de isolamento entre usuários
+(FRONT 09) não faz sentido antes de isso existir de verdade.
 
-## 9. Troubleshooting
+## 11. Qualidade: o que os dados dizem
+
+Comparação A/B no MESMO briefing (frasco de perfume em mármore):
+
+| | Pipeline antigo (flag OFF) | QA loop + upscale (flag ON) |
+|---|---|---|
+| Entrega | 1328x752 (1,0 MP), com letterbox | 2048x1728 (3,5 MP), sem letterbox |
+| Nota do crítico | 7,5 | 8,5 (antes do upscale) |
+| Tentativas | 1 | 1 (aprovou de primeira) |
+| Tempo total | 400 s | 292 s |
+| Upscale + final QA | não existe | `restore`, `kept: true`, 12,7 s |
+
+**Isto NÃO prova ganho de qualidade.** É n=1, com SEED DIFERENTE em cada
+lado - ou seja, duas imagens diferentes, não a mesma imagem com e sem
+tratamento. O tempo menor do lado ON é artefato de o modelo já estar quente,
+não do pipeline. A única diferença estruturalmente atribuível ao pipeline
+novo é a resolução final e o laudo persistido.
+
+Pior: no único caso em que o loop de fato iterou (job `STU-MU4I35VT5AB437`),
+as notas foram **7,5 -> 7,5 -> 7,0**. O loop não melhorou a peça; entregou a
+primeira tentativa. Em outro caso o loop **piorou** a peça antes da correção
+do bug 1. Não há, hoje, uma única execução em que a tentativa 2 tenha
+superado a 1.
+
+## 12. Falsos positivos/negativos do crítico (qwen3.5:9b), medidos
+
+| Tipo | Caso |
+|---|---|
+| Falso negativo grave | Declarou a placa truncada "Residencial HABIANA" como *"perfectly legible and correctly spelled"* |
+| Falso negativo | Não viu os defeitos de mão na foto de família que o 35B viu |
+| Falso positivo | `anatomy: 4.0` com `hands: 10`/`face: 10` numa foto de produto correta |
+| Falso negativo | Não apontou o letterbox (tarja preta) na peça do baseline A/B |
+| Inconsistência de rótulo | Classificou defeito de mão como `region: "product"` |
+| Ponto forte | Determinístico a temp 0; localizou dedos fundidos e orelha assimétrica corretamente |
+
+## 13. Troubleshooting
 
 **Studio não processa nada.** Confira se existe worker consumindo a fila:
 `curl -H "Authorization: Bearer $NODE_SECRET" http://<host>:4100/metrics`.
@@ -261,7 +357,7 @@ Idempotente por `filename` dentro do cliente; rodar de novo não duplica.
 
 ---
 
-## 10. Como ligar e desligar
+## 14. Como ligar e desligar
 
 ```bash
 # nodes/studio-node/.env
