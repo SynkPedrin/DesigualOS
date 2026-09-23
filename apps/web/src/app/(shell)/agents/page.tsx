@@ -21,7 +21,7 @@ export default function AgentsPage() {
   // pro colaborador e nunca sai de `isPending`. Os cards de agente usam `executions:read`
   // (permitido pro colaborador), então usam seu próprio pending - senão os cards ficavam
   // presos em skeleton pra sempre pro colaborador, esperando uma query que nunca dispara.
-  const { data: health, isPending } = useInfrastructureHealth(isMaster);
+  const { data: health, isPending, isError: healthError } = useInfrastructureHealth(isMaster);
   const { isPending: statsPending, isError: statsError, refetch: refetchStats } = useExecutions();
   const stats = useAgentStats();
   // Card clicado abre o modal de detalhes (telemetria do node + atividade real),
@@ -38,26 +38,30 @@ export default function AgentsPage() {
 
       {isMaster && (
         <Surface level="grafite" className="mb-8 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="font-mono text-xs uppercase tracking-wider text-nevoa">Saúde geral</p>
-              <p className="font-display text-3xl font-black text-sinal">
-                {isPending ? '-' : `${health?.overallHealthPercent}%`}
-              </p>
-            </div>
-            <div className="flex gap-6 font-mono text-xs text-nevoa">
+          {healthError ? (
+            <p className="font-mono text-xs text-erro">Não consegui carregar a saúde da infraestrutura.</p>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <p className="uppercase tracking-wider">Agentes conectados</p>
-                <p className="mt-1 text-sm text-branco-cru">
-                  {isPending ? '-' : `${health?.agentsConnected.online}/${health?.agentsConnected.total}`}
+                <p className="font-mono text-xs uppercase tracking-wider text-nevoa">Saúde geral</p>
+                <p className="font-display text-3xl font-black text-sinal">
+                  {isPending ? '-' : `${health?.overallHealthPercent}%`}
                 </p>
               </div>
-              <div>
-                <p className="uppercase tracking-wider">Total de nós</p>
-                <p className="mt-1 text-sm text-branco-cru">{isPending ? '-' : health?.totalNodes}</p>
+              <div className="flex gap-6 font-mono text-xs text-nevoa">
+                <div>
+                  <p className="uppercase tracking-wider">Agentes conectados</p>
+                  <p className="mt-1 text-sm text-branco-cru">
+                    {isPending ? '-' : `${health?.agentsConnected.online}/${health?.agentsConnected.total}`}
+                  </p>
+                </div>
+                <div>
+                  <p className="uppercase tracking-wider">Total de nós</p>
+                  <p className="mt-1 text-sm text-branco-cru">{isPending ? '-' : health?.totalNodes}</p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </Surface>
       )}
 

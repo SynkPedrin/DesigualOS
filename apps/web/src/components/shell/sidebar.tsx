@@ -42,7 +42,7 @@ export function Sidebar({
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const setStudioModalOpen = useUiStore((state) => state.setStudioModalOpen);
   const { isMaster } = useIsMaster();
-  const { data: health, isPending } = useInfrastructureHealth(isMaster);
+  const { data: health, isPending, isError } = useInfrastructureHealth(isMaster);
   const { data: me } = useMe();
   const { logoSrc } = useBrandAssets();
   const visibleNavItems = NAV_ITEMS.filter((item) => !item.masterOnly || isMaster);
@@ -204,6 +204,11 @@ export function Sidebar({
               <div className="h-3 w-1/2 animate-pulse rounded bg-grafite-elevado" />
               <div className="h-3 w-2/3 animate-pulse rounded bg-grafite-elevado" />
             </div>
+          ) : isError ? (
+            // Falha ao carregar a saúde é diferente de saúde ruim: sem isto, os campos
+            // caíam pra `undefined` e a tela mostrava "undefined%" — parecendo dado real
+            // em vez da falta dele.
+            <p className="font-mono text-xs text-erro">Não consegui carregar a saúde da infraestrutura.</p>
           ) : (
             <dl className="space-y-1.5 font-mono text-xs">
               <div className="flex items-center justify-between">
