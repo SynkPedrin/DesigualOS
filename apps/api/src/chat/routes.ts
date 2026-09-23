@@ -323,12 +323,10 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           projectId: effectiveProjectId,
           agent: decision.primary_agent,
         }),
-        resolveOperationalTurn(
-          body.message,
-          user,
-          new Date(),
-          escopoAnterior ? { kind: escopoAnterior.kind as never, operational: escopoAnterior.operational } : null,
-        ),
+        // O estado anterior vai INTEIRO. Remontar o objeto campo a campo aqui
+        // descartava `person`/`clients` — a entidade era gravada no turno e
+        // jogada fora na leitura, e o follow-up caía em GLOBAL (1209 tasks).
+        resolveOperationalTurn(body.message, user, new Date(), escopoAnterior),
       ]);
       const contextBlock = formatContextForPrompt(context);
       // O Bento NÃO recebe o bloco de contexto, e isso é deliberado.
