@@ -647,14 +647,51 @@ async function readBackVerify(
  * READ-BACK DE AUSÊNCIA (nunca declara sucesso só porque a chamada não jogou
  * erro).
  */
+/**
+ * 404 CONFIRMADO ("a task não existe") é uma resposta bem diferente de
+ * "não consegui checar" (timeout, rate limit, instabilidade de rede) — mas
+ * `getTask(...).catch(() => null/false)` tratava as duas igual. Achado real
+ * no E2E de release (22/09/2026): um erro transitório na checagem PRÉ-delete
+ * fez o guard responder "já pode ter sido apagada antes" quando a task
+ * seguia intacta (nunca tentou apagar, e a mensagem sugeria que sim). O
+ * mesmo padrão do lado PÓS-delete seria pior: um erro transitório ali vira
+ * `aindaExiste = false`, que é literalmente "SUCESSO CONFIRMADO" mesmo
+ * quando o delete pode ter falhado silenciosamente — a categoria exata de
+ * falsa confirmação que este release inteiro existe pra fechar.
+ *
+ * `null` aqui significa "não sei", nunca "não existe" — quem chama decide o
+ * que fazer com a incerteza, em vez de o helper decidir por omissão.
+ */
+export async function taskExisteForTest(config: ClickUpConfig, taskId: string): Promise<boolean | null> {
+  return taskExiste(config, taskId);
+}
+
+async function taskExiste(config: ClickUpConfig, taskId: string): Promise<boolean | null> {
+  try {
+    await getTask(config, taskId);
+    return true;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return /\(404\)/.test(detail) ? false : null;
+  }
+}
+
 async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, logger: Logger): Promise<ExecuteResponse> {
   const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
   const start = performance.now();
   const record = (tool: string, input: string, ok: boolean, error?: string) => {
     toolCalls.push({ tool, input_summary: input, ok, duration_ms: Math.round(performance.now() - start), ...(error ? { error } : {}) });
   };
-  const antes = await getTask(config, taskId).catch(() => null);
-  if (!antes) {
+  const existiaAntes = await taskExiste(config, taskId);
+  if (existiaAntes === null) {
+    return guardResponse({
+      ok: false,
+      toolCalls,
+      answer: `Não consegui checar a task (${taskId}) no ClickUp antes de apagar — pode ter sido uma instabilidade de rede. Não apaguei nada; tenta de novo em instantes.`,
+      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, errorCode: 'CLICKUP_LOOKUP_FAILED', verified: false },
+    });
+  }
+  if (!existiaAntes) {
     return guardResponse({
       ok: true,
       toolCalls,
@@ -662,19 +699,37 @@ async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, log
       metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, reason: 'task_nao_encontrada' },
     });
   }
+  const antes = await getTask(config, taskId).catch(() => null);
+  if (!antes) {
+    return guardResponse({
+      ok: false,
+      toolCalls,
+      answer: `Não consegui reler a task (${taskId}) pra confirmar o nome antes de apagar. Não apaguei nada; tenta de novo.`,
+      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, errorCode: 'CLICKUP_LOOKUP_FAILED', verified: false },
+    });
+  }
   try {
     await deleteTask(config, taskId);
     record('clickup.delete_task', taskId, true);
-    const aindaExiste = await getTask(config, taskId).then(() => true).catch(() => false);
-    record('clickup.get_task', `read-back-absence ${taskId}`, !aindaExiste, aindaExiste ? 'task ainda existe após delete' : undefined);
-    logger.info({ intent_classification: 'delete', task_id: taskId, confirmed: true, verified: !aindaExiste }, '[guard] exclusão executada');
+    const aindaExisteDepois = await taskExiste(config, taskId);
+    const aindaExiste = aindaExisteDepois !== false;
+    record(
+      'clickup.get_task',
+      `read-back-absence ${taskId}`,
+      !aindaExiste,
+      aindaExisteDepois === null ? 'não consegui reler pra confirmar ausência' : aindaExiste ? 'task ainda existe após delete' : undefined,
+    );
+    logger.info({ intent_classification: 'delete', task_id: taskId, confirmed: true, verified: !aindaExiste, read_back_uncertain: aindaExisteDepois === null }, '[guard] exclusão executada');
     return guardResponse({
       ok: true,
       toolCalls,
-      answer: aindaExiste
-        ? `Enviei a exclusão da task "${antes.name}" (${taskId}), mas ao reler ela ainda aparece no ClickUp. Confere lá — não confirmo sucesso sem isso.`
-        : `Task "${antes.name}" (${taskId}) apagada e CONFIRMADA por leitura: ela não existe mais no ClickUp.`,
-      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, verified: !aindaExiste },
+      answer:
+        aindaExisteDepois === null
+          ? `Enviei a exclusão da task "${antes.name}" (${taskId}), mas não consegui reler pra confirmar a ausência. Confere no ClickUp.`
+          : aindaExiste
+            ? `Enviei a exclusão da task "${antes.name}" (${taskId}), mas ao reler ela ainda aparece no ClickUp. Confere lá — não confirmo sucesso sem isso.`
+            : `Task "${antes.name}" (${taskId}) apagada e CONFIRMADA por leitura: ela não existe mais no ClickUp.`,
+      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, verified: !aindaExiste, read_back_uncertain: aindaExisteDepois === null },
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

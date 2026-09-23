@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@desigual-os/database', () => ({ db: {}, schema: {} }));
 
@@ -129,6 +129,45 @@ describe('DELETE: pedido, confirmação e alvo pendente', () => {
   it('mensagem qualquer sem o marcador não tem alvo pendente nenhum — "sim" solto nunca apaga por acidente', async () => {
     const { extractPendingDeleteTaskIdForTest } = await import('./bento-action-guard.js');
     expect(extractPendingDeleteTaskIdForTest('Atribuído e CONFIRMADO por leitura no ClickUp: a task (86bc999zz) agora é de Pedro.')).toBeNull();
+  });
+
+  /**
+   * Achado real no E2E de release (22/09/2026): `getTask(...).catch(() =>
+   * null/false)` tratava "404 confirmado" (task não existe de verdade) e
+   * "erro transitório" (timeout, rate limit) como a MESMA coisa. Uma
+   * instabilidade de rede na checagem PRÉ-delete fez o guard responder "já
+   * pode ter sido apagada antes" numa task que seguia intacta — e o mesmo
+   * padrão do lado PÓS-delete seria pior: um erro transitório ali vira
+   * "SUCESSO CONFIRMADO" mesmo quando o delete pode ter falhado, a
+   * categoria exata de falsa confirmação que este release existe pra fechar.
+   */
+  describe('taskExisteForTest — 404 confirmado NUNCA se confunde com erro transitório', () => {
+    afterEach(() => vi.unstubAllGlobals());
+    const config = { apiKey: 'pk_fake', teamId: 'T1' };
+
+    it('resposta 200 -> true (task existe)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ id: 't1', name: 'X', status: null, priority: null, assignees: [], attachments: [] }) })));
+      const { taskExisteForTest } = await import('./bento-action-guard.js');
+      expect(await taskExisteForTest(config, 't1')).toBe(true);
+    });
+
+    it('404 confirmado -> false (task realmente não existe)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => 'Task not found' })));
+      const { taskExisteForTest } = await import('./bento-action-guard.js');
+      expect(await taskExisteForTest(config, 't1')).toBe(false);
+    });
+
+    it.each([500, 429, 503])('erro %i (não é 404) -> null, NUNCA false — não sabemos se existe', async (status) => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, text: async () => 'erro' })));
+      const { taskExisteForTest } = await import('./bento-action-guard.js');
+      expect(await taskExisteForTest(config, 't1')).toBeNull();
+    });
+
+    it('fetch rejeitando (rede fora) -> null, nunca false', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
+      const { taskExisteForTest } = await import('./bento-action-guard.js');
+      expect(await taskExisteForTest(config, 't1')).toBeNull();
+    });
   });
 });
 
