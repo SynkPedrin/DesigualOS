@@ -218,9 +218,29 @@ describe('carouselPlanSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejeita carrossel fora da faixa canônica 10-16', () => {
+  it('rejeita quando slide_count não bate com o número real de slides do array', () => {
     const slides = [slide(1, 'hook')];
     expect(carouselPlanSchema.safeParse({ concept: 'X', slide_count: 5, slides }).success).toBe(false);
+  });
+
+  /**
+   * REGRESSÃO REAL (Otto Senior V1, "Universal Quality Floor"): este
+   * schema exigia 10-16 cards pra render_mode editorial — a mesma lei de
+   * um formato de produto específico e isolado, achada ao vivo travando
+   * um pedido explícito de 6 slides mesmo DEPOIS de `planCarousel` já ter
+   * sido corrigido pra honrar a contagem pedida. Otto não tem acoplamento
+   * com aquele produto; carrossel de 6, 5 ou 8 é válido quando o array de
+   * slides bate com slide_count.
+   */
+  it('teste 9d: aceita carrossel com menos de 10 slides quando o array bate com slide_count (regressão real, 6 slides)', () => {
+    const slides = [slide(1, 'hook'), slide(2, 'development'), slide(3, 'development'), slide(4, 'development'), slide(5, 'development'), slide(6, 'cta')];
+    const result = carouselPlanSchema.safeParse({ concept: 'X', slide_count: 6, slides });
+    expect(result.success).toBe(true);
+  });
+
+  it('aceita carrossel de 5 slides (explicitamente pedido pelo usuário)', () => {
+    const slides = [slide(1, 'hook'), slide(2, 'development'), slide(3, 'development'), slide(4, 'development'), slide(5, 'cta')];
+    expect(carouselPlanSchema.safeParse({ concept: 'X', slide_count: 5, slides }).success).toBe(true);
   });
 
   it('rejeita narrative_function fora do enum', () => {

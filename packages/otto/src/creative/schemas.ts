@@ -261,11 +261,19 @@ export const carouselSlideSchema = z.object({
 export const carouselPlanSchema = z.object({
   concept: z.string().min(1),
   render_mode: normalizedEnum(['editorial', 'photographic'], { default: 'editorial' }),
-  // Lei do modus operandi: carrossel é 10 a 16 cards 1080x1350.
-  slide_count: z.number().int().min(1).max(16),
+  /**
+   * Otto Senior V1, "Universal Quality Floor": este campo chegou a exigir
+   * 10-16 pra render_mode editorial — a mesma lei de um formato de produto
+   * específico e isolado (achado ao vivo real: pedir 6 slides pro
+   * `planCarousel` já corrigido em código ainda quebrava aqui, na
+   * validação de SCHEMA, que não sabia da correção e rejeitava o próprio
+   * plano que o pedido do usuário pedia). Otto não tem, e não deve ter,
+   * nenhum acoplamento com aquele produto. Teto de sanidade em 20 (mesmo
+   * limite de `parseRequestedSlideCount`), sem piso artificial.
+   */
+  slide_count: z.number().int().min(1).max(20),
   slides: z.array(carouselSlideSchema).min(1),
 }).superRefine((plan, ctx) => {
-  if (plan.render_mode === 'editorial' && plan.slide_count < 10) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['slide_count'], message: 'Carrossel editorial requer 10 a 16 cards.' });
   if (plan.slides.length !== plan.slide_count) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['slides'], message: 'O número de slides deve corresponder ao plano.' });
 });
 
