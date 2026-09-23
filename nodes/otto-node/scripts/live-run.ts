@@ -16,10 +16,22 @@
  * (achado ao vivo nesta sessão: um teste com a ordem trocada caiu
  * silenciosamente no caminho de chat em vez do de produção).
  *
- * Saída: o logger (pino) escreve no MESMO stdout deste script antes do JSON
- * final. Pra extrair só o JSON de um arquivo salvo, pegue a partir da última
- * linha que é exatamente "{" no início: `tail -n +$(grep -n '^{$' out.json |
- * tail -1 | cut -d: -f1) out.json`.
+ * Saída: JSON puro no stdout — nada de log misturado (ver Blocker 6 abaixo).
+ * Pra extrair de um arquivo salvo: `tail -n +$(grep -n '^{$' out.json | tail
+ * -1 | cut -d: -f1) out.json`.
+ *
+ * BLOCKER 6 (Otto Elite — observabilidade de aceitação): antes, `info` era
+ * um no-op — os logs estruturados que execute.ts já emite em cada estágio
+ * (estratégia decidida, avaliação do critic com scores/overall/root_cause,
+ * reescrita rejeitada por regressão, reparo de completude) eram descartados,
+ * deixando o benchmark ao vivo sem NENHUMA evidência de estágio — só o
+ * resultado final, sem saber o que aconteceu no meio. Isto não é acrescentar
+ * feature de produto, é infraestrutura de aceitação: sem isto, é impossível
+ * provar (só especular) que a estratégia/critic/reescrita rodaram como
+ * esperado num run real. `info` agora ACUMULA os eventos estruturados
+ * (mensagem + campos — os mesmos objetos que execute.ts já loga, nunca
+ * prosa livre) e eles saem no campo `trace` do JSON final, junto com o
+ * resultado.
  */
 import { loadConfig } from '../src/config.js';
 import { createDefaultDeps, executeTask } from '../src/execute.js';
@@ -39,7 +51,15 @@ process.env.OTTO_BRAIN_PATH = process.env.OTTO_BRAIN_PATH ?? new URL('../../../B
 const config = loadConfig();
 const deps = createDefaultDeps(config);
 
+interface TraceEvent {
+  t_ms: number;
+  message: string;
+  fields?: Record<string, unknown>;
+}
+const trace: TraceEvent[] = [];
 const startedAt = Date.now();
+const record = (msg: string, fields?: Record<string, unknown>) => trace.push({ t_ms: Date.now() - startedAt, message: msg, fields });
+
 const response = await executeTask(
   {
     execution_id: `live-${Date.now()}`,
@@ -50,8 +70,24 @@ const response = await executeTask(
   },
   config,
   deps,
-  { info: () => {}, warn: (...a: unknown[]) => console.error('[warn]', ...a), error: (...a: unknown[]) => console.error('[error]', ...a) } as never,
+  {
+    // pino's info(fields, msg) ou info(msg) — os dois formatos aparecem em execute.ts.
+    info: (a: unknown, b?: unknown) =>
+      typeof a === 'string' ? record(a) : record(typeof b === 'string' ? b : '', a as Record<string, unknown>),
+    warn: (a: unknown, b?: unknown) => {
+      const msg = typeof a === 'string' ? a : (b as string) ?? '';
+      const fields = typeof a === 'string' ? undefined : (a as Record<string, unknown>);
+      record(`[warn] ${msg}`, fields);
+      console.error('[warn]', msg, fields ?? '');
+    },
+    error: (a: unknown, b?: unknown) => {
+      const msg = typeof a === 'string' ? a : (b as string) ?? '';
+      const fields = typeof a === 'string' ? undefined : (a as Record<string, unknown>);
+      record(`[error] ${msg}`, fields);
+      console.error('[error]', msg, fields ?? '');
+    },
+  } as never,
 );
 const elapsedMs = Date.now() - startedAt;
 
-console.log(JSON.stringify({ elapsedMs, model, response }, null, 2));
+console.log(JSON.stringify({ elapsedMs, model, response, trace }, null, 2));
