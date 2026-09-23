@@ -1,8 +1,17 @@
 # Jarbas Senior Intelligence — handoff e limite externo
 
-Auditoria de 24/09/2026, branch `jarbas-senior-intelligence` (baseada em
-`worktree-bento-jarbas-senior-hardening`, que contém o hardening de
-autorização do Bento ainda não mergeado em `main`).
+Auditoria de 24/09/2026, branch `jarbas-senior-v1` (baseada em
+`jarbas-senior-intelligence`, que por sua vez é baseada em
+`worktree-bento-jarbas-senior-hardening` — hardening de autorização do
+Bento ainda não mergeado em `main`).
+
+**Atualização desta rodada (mesma data):** a missão anterior tinha só o
+contrato de tipos e o verificador numérico. Esta rodada constrói o
+MECANISMO de handoff Bento↔Jarbas de verdade — dispatch idempotente,
+máquina de estado, árvore de diagnóstico determinística, detecção de
+intenção de handoff/status/mutação-proibida — tudo 100% offline, testado,
+e deliberadamente NÃO conectado ao caminho de produção. A seção 8
+(nova) explica exatamente por quê.
 
 Este documento existe porque a missão que motivou esta branch pediu uma
 arquitetura de "inteligência sênior" pro Jarbas — visão macro da agência,
@@ -177,7 +186,53 @@ arquitetura futura. O que falta é só o EXECUTOR do lado autorizado (que
 chamaria a Graph API de verdade) — que esta missão explicitamente proíbe
 construir agora.
 
-## 7. Limitações conhecidas (resumo)
+## 7. O que esta rodada construiu — mecanismo real, offline, não conectado
+
+- **`packages/agent-runtime/src/agent-task.ts`** — `AgentTaskStore`
+  (interface) + `InMemoryAgentTaskStore` (única implementação fornecida).
+  Dispatch idempotente por `dispatchKey` (mesma chave duas vezes = mesma
+  tarefa, nunca duplica — §33), máquina de estado completa (§23) que
+  recusa transição inválida e nunca sai de um estado terminal, isolamento
+  de organização em toda leitura/escrita (`cross_org` explícito, nunca
+  lança exceção nem vaza dado de outra org).
+- **`packages/agent-runtime/src/jarbas-diagnosis.ts`** — árvore de
+  diagnóstico determinística (§18), não-LLM: dado um snapshot de métricas
+  JÁ CALCULADO, decide entre saudável / hipótese de fadiga de criativo /
+  hipótese de problema pós-clique / problema de tracking / amostra
+  insuficiente. Limiares por escala de métrica (CTR em pontos percentuais
+  pequenos, CPM em variação relativa, frequência em unidades) — a primeira
+  versão usava um limiar único e não detectava quedas reais de CTR: achado
+  e corrigido nesta mesma rodada, com teste de regressão.
+- **`packages/agent-runtime/src/jarbas-fixtures.ts`** — 10 cenários
+  sintéticos (subconjunto deliberado dos ~28 pedidos na missão — ver §4
+  acima pelo porquê do corte: os que faltam dependem de resolução de
+  entidade Meta real).
+- **`packages/agent-runtime/src/bento-jarbas-handoff.ts`** — detecção
+  determinística (regex, sem LLM) de três intenções: pedido de handoff
+  ("Bento, manda o Jarbas analisar..."), pergunta de status ("o Jarbas
+  terminou?"), e pedido de mutação proibida ("aumenta orçamento 20%") —
+  esta última existe só pra o CALLER decidir nunca executar, nunca pra
+  autorizar.
+- **28 testes de fluxo** (`bento-jarbas-handoff.test.ts`) cobrindo
+  literalmente os 8 cenários exigidos em §65 da missão, ponta a ponta com
+  os componentes acima.
+
+## 7.1 Por que nada disto está ligado ao Bento de produção
+
+`InMemoryAgentTaskStore` é só em memória — perde todo estado a cada
+restart do worker. Ligar isto ao `bento-action-guard.ts` real faria o
+sistema PARECER capaz de rastrear tarefas entre turnos quando na verdade
+perderia tudo silenciosamente a cada deploy/restart — exatamente o "fake
+success" que a missão inteira existe pra impedir. Persistir de verdade
+exige uma migração de schema Postgres real (`agent_tasks` + resultado
+associado), que é uma mudança de produção que esta missão explicitamente
+proíbe ("do not deploy", "do not restart production"). A interface
+`AgentTaskStore` já está no formato certo pra uma implementação Postgres
+assumir o lugar da implementação em memória sem que nenhum código
+chamador precise mudar — esse é o próximo passo concreto, não construído
+aqui.
+
+## 8. Limitações conhecidas (resumo)
 
 - Sem trace de ferramenta do serviço externo → nenhum número do Jarbas é
   verificável hoje, só o período.

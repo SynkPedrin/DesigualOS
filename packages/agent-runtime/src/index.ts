@@ -64,3 +64,19 @@ export {
   type MetricAvailability,
   type VerificationResult,
 } from './metric-verifier';
+export {
+  InMemoryAgentTaskStore,
+  isTerminalStatus,
+  type AgentTaskStore,
+  type DispatchAgentTaskInput,
+  type DispatchOutcome,
+  type TransitionOutcome,
+} from './agent-task';
+export { diagnoseCampaignSnapshot, type CampaignMetricSnapshot, type DiagnosisClass, type DiagnosisResult } from './jarbas-diagnosis';
+export * as jarbasFixtures from './jarbas-fixtures';
+export {
+  detectForbiddenMetaMutationRequest,
+  detectJarbasHandoffRequest,
+  detectJarbasStatusQuery,
+  type JarbasHandoffIntent,
+} from './bento-jarbas-handoff';

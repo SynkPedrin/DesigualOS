@@ -128,7 +128,7 @@ export function classifyMetricAvailability(params: {
  * CPL disparou 200%" de virar recomendação confiante, não pra ser a
  * palavra final sobre estatística.
  */
-export function isSampleTooSmall(params: { conversions?: number; spend?: number; impressions?: number }): boolean {
+export function isSampleTooSmall(params: { conversions?: number | undefined; spend?: number | undefined; impressions?: number | undefined }): boolean {
   if (params.conversions !== undefined && params.conversions < 10) return true;
   if (params.spend !== undefined && params.spend < 50) return true;
   if (params.impressions !== undefined && params.impressions < 1000) return true;
