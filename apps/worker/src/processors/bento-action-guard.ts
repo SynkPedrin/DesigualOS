@@ -496,10 +496,26 @@ async function loadConversationContext(
       if (!previousAttachments.some((x) => x.url === a.url)) previousAttachments.push({ ...a, fromPreviousTurn: true });
     }
   }
+  let lastTaskIdResolved = false;
   for (const message of recent) {
-    if (!lastTaskId && message.role === 'assistant') {
+    if (!lastTaskIdResolved && message.role === 'assistant') {
       const urls = [...message.content.matchAll(TASK_URL)];
-      if (urls.length > 0) lastTaskId = urls[urls.length - 1]![1]!;
+      if (urls.length === 1) {
+        // Uma task só citada — confirmação de CREATE/READ/UPDATE de uma
+        // operação singular. Essa é "a task" que "essa"/"muda o status"
+        // legitimamente resolve.
+        lastTaskId = urls[0]![1]!;
+        lastTaskIdResolved = true;
+      } else if (urls.length > 1) {
+        // Resposta de LISTA (várias demandas). Não existe "a task" aqui —
+        // escolher a última da lista por acaso da ordem em que apareceu é
+        // exatamente o que fazia "e a segunda?"/"e o prazo?" virar update
+        // sobre uma task arbitrária, nunca escolhida pelo usuário. Trava a
+        // busca neste ponto (não deixa cair numa referência mais antiga,
+        // que já não é o que está na tela do usuário) — o resultado é
+        // "sem task resolvida", que já tem resposta honesta própria.
+        lastTaskIdResolved = true;
+      }
     }
     // Confirmação de exclusão só é válida quando vem IMEDIATAMENTE depois da
     // pergunta do guard — ou seja, quando a mensagem mais recente do
