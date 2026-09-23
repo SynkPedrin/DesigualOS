@@ -1103,6 +1103,7 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     let creativePlanCalls = 0;
     let videoPlanCalls = 0;
     const briefingsRecebidos: string[] = [];
+    const videoPromptsRecebidos: string[] = [];
     let criticCalls = 0;
 
     const videoSemFala = {
@@ -1126,6 +1127,8 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
               return Promise.resolve(creativePlanFixture);
             }
             videoPlanCalls += 1;
+            const list = messages as { role: string; content: string }[];
+            videoPromptsRecebidos.push(list.find((m) => m.role === 'user')?.content ?? '');
             return Promise.resolve(videoPlanCalls === 1 ? videoSemFala : videoComFala);
           },
           // O critic (propositalmente) reporta TUDO ok — a reprovação real
@@ -1169,6 +1172,16 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     expect(briefingsRecebidos[1]).toContain('O forno como palco');
     expect(body.metadata.critic).toMatchObject({ enabled: true, passed: true, rewrites: 1 });
     expect(body.answer).toContain('Roteiro:');
+
+    // Achado ao vivo real (segunda validação Cosentino): planVideo era
+    // chamado de novo, do zero, sem NENHUMA ideia do que a revisão pedia —
+    // a fala sumia de cenas que já a tinham porque o segundo passo do
+    // pipeline nunca soube que havia algo pra corrigir. A nota do critic
+    // agora chega em planVideo também, não só em createCreativePlan.
+    expect(videoPlanCalls).toBe(2);
+    expect(videoPromptsRecebidos[0]).not.toMatch(/REVISÃO OBRIGATÓRIA/); // 1a chamada (draft): sem nota
+    expect(videoPromptsRecebidos[1]).toMatch(/REVISÃO OBRIGATÓRIA \(o storyboard anterior falhou/);
+    expect(videoPromptsRecebidos[1]).toMatch(/entregável\(is\) pedido\(s\) faltando: roteiro/);
 
     await app.close();
   });

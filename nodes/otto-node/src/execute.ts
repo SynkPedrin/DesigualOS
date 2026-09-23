@@ -726,7 +726,7 @@ export async function executeTask(
      * o critic julga o ENTREGÁVEL INTEIRO renderizado (LLM, mais caro), e por
      * isso vive FORA, como uma segunda porta sobre a primeira.
      */
-    async function produce(effectiveMessage: string) {
+    async function produce(effectiveMessage: string, shapingRevisionNote?: string) {
       const pipeline = await runCreativePipeline(
         {
           researchProvider,
@@ -800,12 +800,13 @@ export async function executeTask(
       // ifs também são mutuamente exclusivos por jobType.
       let carouselPlan;
       let videoPlan;
+      const shapingOpts = shapingRevisionNote ? { revisionNote: shapingRevisionNote } : {};
       if (jobType === 'carousel') {
-        carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan));
+        carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan, 10, shapingOpts));
         logger.info({ slides: carouselPlan.slide_count, llm_ms: llmMs }, '[OTTO:plan] carrossel planejado');
       }
       if (jobType === 'video' || jobType === 'reels') {
-        videoPlan = await measureLlm(() => planVideo({ llm: deps.llm }, plan));
+        videoPlan = await measureLlm(() => planVideo({ llm: deps.llm }, plan, shapingOpts));
         logger.info({ scenes: videoPlan.scenes.length, llm_ms: llmMs }, '[OTTO:plan] vídeo planejado');
       }
 
@@ -929,7 +930,7 @@ export async function executeTask(
 
         let rewritten: Awaited<ReturnType<typeof produce>>;
         try {
-          rewritten = await produce(augmentedMessage);
+          rewritten = await produce(augmentedMessage, revisionNote);
         } catch (rewriteError) {
           // REWRITE FAILS -> keep previous valid version, do NOT destroy turn.
           pipelineDegraded = true;

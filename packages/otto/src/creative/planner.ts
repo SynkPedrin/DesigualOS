@@ -120,6 +120,7 @@ export async function planCarousel(
   deps: PlannerDeps,
   plan: CreativePlan,
   slideCount = 10,
+  opts: { revisionNote?: string } = {},
 ): Promise<CarouselPlan> {
   const count = Math.min(16, Math.max(10, Math.round(slideCount)));
 
@@ -137,7 +138,16 @@ Leis do carrossel (inegociáveis):
 Gere exatamente ${count} slides com estas chaves:
 {"concept": string, "render_mode": "editorial"|"photographic", "slide_count": ${count}, "slides": [{"index": number (1..${count}), "narrative_function": "hook"|"context"|"development"|"value"|"cta", "objective": string, "copy": string, "visual": string, "composition": string, "layout": string, "image_prompt": string}]}`;
 
-  const user = `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`;
+  const user = [
+    `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`,
+    // Mesmo raciocínio de planVideo: sem isto, a reescrita regenerava o
+    // carrossel do zero sem saber o que a avaliação anterior reprovou.
+    opts.revisionNote
+      ? `REVISÃO OBRIGATÓRIA (o carrossel anterior falhou nesta avaliação; corrija, não regenere às cegas):\n${opts.revisionNote}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   deps.logger?.info({ slideCount: count }, 'otto: planejando carrossel');
   return deps.llm.chatJson(
@@ -151,7 +161,11 @@ Gere exatamente ${count} slides com estas chaves:
 }
 
 /** Planejamento de vídeo/reels: cena a cena com direção de câmera e ritmo. */
-export async function planVideo(deps: PlannerDeps, plan: CreativePlan): Promise<VideoPlan> {
+export async function planVideo(
+  deps: PlannerDeps,
+  plan: CreativePlan,
+  opts: { revisionNote?: string } = {},
+): Promise<VideoPlan> {
   const system = `${CREATIVE_DIRECTOR_PREAMBLE}
 
 Você está planejando um vídeo/reels a partir de um plano criativo aprovado. Cada cena tem direção de câmera, movimento de sujeito, ambiente, luz, transição e ritmo - um storyboard em JSON, não um prompt único.
@@ -170,7 +184,23 @@ Padrão de produção: editorial publicitário com detalhe fotográfico, não sl
 Gere com estas chaves:
 {"concept": string, "duration": number (segundos), "aspect_ratio": string (ex: "9:16"), "scenes": [{"duration_seconds": number, "image_prompt": string, "shot_type": "portrait"|"wide"|"detail"|"action"|"environment"|"closing", "continuity": string, "camera_movement": string, "subject_movement": string, "environment": string, "lighting": string, "transition": string, "pacing": string, "spoken_line": string (opcional, português), "on_screen_text": string (opcional, português)}], "sound_direction": string, "text_overlays": string[], "cta": string, "generation_prompts": string[] (inglês, um por cena)}`;
 
-  const user = `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`;
+  const user = [
+    `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`,
+    /**
+     * Otto Senior 20Y, achado ao vivo (segunda validação Cosentino): o loop
+     * de critic/reescrita mandava a nota de revisão só pra createCreativePlan
+     * — planVideo era chamado de novo, do zero, sem nenhuma ideia do que a
+     * revisão pedia. Resultado medido: a fala (spoken_line) sumia de cenas
+     * que já a tinham, e o gate de completude derrubava o entregável de novo
+     * por "roteiro" ausente — a mesma falha se repetindo porque o segundo
+     * passo do pipeline nunca soube que havia uma falha pra corrigir.
+     */
+    opts.revisionNote
+      ? `REVISÃO OBRIGATÓRIA (o storyboard anterior falhou nesta avaliação; corrija, não regenere às cegas):\n${opts.revisionNote}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   deps.logger?.info('otto: planejando vídeo');
   return deps.llm.chatJson(
