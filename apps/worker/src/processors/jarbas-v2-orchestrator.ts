@@ -46,7 +46,7 @@ function summarizeFacts(facts: MetricFact[]): { totals: Record<string, number>; 
  * §21: resumo executivo primeiro, fato separado de hipótese, sem certeza
  * não sustentada, nada de despejo de JSON cru.
  */
-function formatExecutiveAnswer(task: AgentTask, result: JarbasAnalysisResult, metricVerified: boolean): string {
+export function formatExecutiveAnswer(task: AgentTask, result: JarbasAnalysisResult, metricVerified: boolean): string {
   const { totals, entityCount } = summarizeFacts(result.metricFacts);
   const linhas: string[] = [];
   linhas.push(`Análise de ${task.scope} concluída.`);

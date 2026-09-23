@@ -4,7 +4,7 @@ import {
   adaptJarbasResponse,
   buildProposedAction,
   detectJarbasHandoffRequest,
-  detectJarbasStatusQuery,
+  detectJarbasResultQuery,
   generateRecommendation,
   diagnoseCampaignSnapshot,
 } from '@desigual-os/agent-runtime';
@@ -138,8 +138,11 @@ describe('§36 — fluxo offline ponta a ponta, com mock do serviço externo V2'
     const done = await store.transition(task.taskId, 'ready_for_review', ORG);
     expect(done.ok).toBe(true);
 
-    // 9. BENTO STATUS QUERY — lê o que já foi salvo, nunca reroda o Jarbas.
-    expect(detectJarbasStatusQuery('Bento, o que ele encontrou?')).toBe(true);
+    // 9. BENTO RESULT QUERY — lê o que já foi salvo, nunca reroda o Jarbas.
+    // ("o que ele encontrou?" pergunta pelo RESULTADO, não só pelo status —
+    // ver detectJarbasStatusQuery vs. detectJarbasResultQuery em
+    // bento-jarbas-handoff.ts, §7/§8 da missão de fechamento de chat.)
+    expect(detectJarbasResultQuery('Bento, o que ele encontrou?')).toBe(true);
     const lido = await store.get(task.taskId);
     const resultado = await store.getResult(task.taskId);
     expect(lido?.status).toBe('ready_for_review');

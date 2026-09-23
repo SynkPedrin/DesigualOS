@@ -45,14 +45,41 @@ export function detectJarbasHandoffRequest(message: string): JarbasHandoffIntent
 // regex do JS (modo não-unicode) não trata como caractere de palavra — um
 // \b logo depois nunca bate (mesma pegadinha já documentada em
 // bento-action-guard.ts pra "amanhã").
-const STATUS_QUERY = /\b(terminou|finalizou|acabou|conclu[íi]u|onde (ele |ela )?(est[áa]|ficou)|o que (ele )?(achou|encontrou|falou)|qual (foi a )?(recomenda[çc][ãa]o|resultado)|o que (falt|ficou faltando))/i;
+//
+// Duas perguntas DIFERENTES, cada uma com resposta própria (§7/§8 da
+// missão de fechamento de chat): "terminou?"/"onde está?" pergunta pelo
+// STATUS da tarefa (lê AgentTask.status); "o que encontrou?"/"qual foi a
+// conclusão?" pergunta pelo RESULTADO (lê JarbasAnalysisResult). Confundir
+// as duas faria uma pergunta de status rodar a resposta executiva inteira
+// à toa, ou uma pergunta de resultado devolver só "ainda está analisando"
+// quando na verdade já tem resultado pronto pra mostrar.
+const STATUS_QUERY = /\b(terminou|finalizou|acabou|conclu[íi]u|onde (ele |ela )?(est[áa]|ficou))/i;
+const RESULT_QUERY = /\b(o que (ele )?(achou|encontrou|falou)|qual (foi (a|o) )?(recomenda[çc][ãa]o|resultado|conclus[ãa]o)|o que (falt|ficou faltando))/i;
 
-/** "o Jarbas terminou?" / "o que ele achou?" / "onde ele está?" (§26/§46). */
+function mencionaJarbasOuAnalise(texto: string): boolean {
+  return JARBAS_MENTION.test(texto) || /\b(ele|essa an[áa]lise|aquela an[áa]lise)\b/i.test(texto);
+}
+
+/** "o Jarbas terminou?" / "onde ele está?" (§7/§26/§46) — pergunta de STATUS, nunca de resultado. */
 export function detectJarbasStatusQuery(message: string): boolean {
   const texto = message.trim();
   if (texto.length === 0) return false;
-  if (!JARBAS_MENTION.test(texto) && !/\b(ele|essa an[áa]lise|aquela an[áa]lise)\b/i.test(texto)) return false;
+  if (!mencionaJarbasOuAnalise(texto)) return false;
   return STATUS_QUERY.test(texto);
+}
+
+/**
+ * "o que ele encontrou?" / "qual foi a conclusão?" (§8) — pergunta de
+ * RESULTADO, nunca só de status. Sem o gate de menção explícita ao Jarbas
+ * (diferente de detectJarbasStatusQuery): "qual foi a conclusão?" já é
+ * específico o bastante sozinho, e a mensagem citada na missão de
+ * fechamento de chat (§5) é exatamente essa, sem repetir "Jarbas" — quem
+ * está perguntando já está numa conversa onde o handoff aconteceu.
+ */
+export function detectJarbasResultQuery(message: string): boolean {
+  const texto = message.trim();
+  if (texto.length === 0) return false;
+  return RESULT_QUERY.test(texto);
 }
 
 /** "aumenta orçamento em 20%" endereçado ao Jarbas — nunca executa, sempre vira proposta (§24/§49). */

@@ -4,6 +4,7 @@ import { idColumn, timestampColumns } from './_shared';
 import { organizations } from './organizations';
 import { clients } from './clients';
 import { users } from './identity';
+import { conversations } from './conversation';
 
 /**
  * agent_tasks — persistência real do handoff Bento -> Jarbas (missão de
@@ -29,6 +30,8 @@ export const agentTasks = pgTable(
     dispatchKey: text('dispatch_key').notNull(),
     organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
     clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+    /** Conversa que originou o handoff (§4-§6 da missão de fechamento de chat) — permite achar "a última tarefa do Jarbas desta conversa" sem taskId em mãos. Nullable: nem todo dispatch nasce de uma conversa (ex.: canário/script). */
+    conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
     requestedBy: uuid('requested_by').references(() => users.id, { onDelete: 'set null' }),
     assignedAgent: text('assigned_agent').notNull().default('jarbas'),
     objective: text('objective').notNull(),
@@ -56,6 +59,8 @@ export const agentTasks = pgTable(
     clientIdx: index('agent_tasks_client_id_idx').on(table.clientId),
     statusIdx: index('agent_tasks_status_idx').on(table.status),
     updatedAtIdx: index('agent_tasks_updated_at_idx').on(table.updatedAt),
+    /** "última tarefa do Jarbas nesta conversa, para este cliente" (§5/§6) — as três chaves juntas, nunca conversationId sozinho, pra troca de cliente na mesma conversa não vazar tarefa do cliente anterior. */
+    conversationLookupIdx: index('agent_tasks_org_client_conversation_idx').on(table.organizationId, table.clientId, table.conversationId),
     /** Consulta de "quem está elegível pra retry agora" (§12/§25). */
     retryIdx: index('agent_tasks_next_eligible_retry_at_idx').on(table.nextEligibleRetryAt),
   }),

@@ -28,6 +28,13 @@ export interface AgentTaskStore {
    */
   updateScope(taskId: string, next: { scope?: string; timeWindow?: AgentTask['timeWindow'] }, callerOrganizationId: string): Promise<TransitionOutcome>;
   recordFailure(taskId: string, error: string, callerOrganizationId: string): Promise<RecordFailureOutcome>;
+  /**
+   * "Qual foi a última tarefa do Jarbas nesta conversa?" (§5-§6). As TRÊS
+   * chaves juntas, sempre — nunca só conversationId: se a conversa trocar de
+   * cliente, a tarefa do cliente anterior não pode "vazar" pra pergunta de
+   * status/resultado feita depois da troca. Mais recente = maior updatedAt.
+   */
+  getLatestTaskForClientConversation(organizationId: string, clientId: string, conversationId: string): Promise<AgentTask | null>;
 }
 
 export type RecordFailureOutcome =
@@ -43,7 +50,8 @@ export interface DispatchAgentTaskInput {
   dispatchKey: string;
   organizationId: string;
   clientId: string;
-  requestedBy: string;
+  conversationId?: string | null;
+  requestedBy: string | null;
   objective: string;
   scope: string;
   entityRefs: AgentTask['entityRefs'];
@@ -138,6 +146,7 @@ export class InMemoryAgentTaskStore implements AgentTaskStore {
       taskId: novoTaskId(),
       organizationId: input.organizationId,
       clientId: input.clientId,
+      conversationId: input.conversationId ?? null,
       requestedBy: input.requestedBy,
       assignedAgent: 'jarbas',
       objective: input.objective,
@@ -230,6 +239,15 @@ export class InMemoryAgentTaskStore implements AgentTaskStore {
     const atualizado: AgentTask = { ...task, retry, status: proximoStatus, updatedAt: agora };
     this.tarefas.set(taskId, atualizado);
     return { ok: true, task: atualizado, retryable };
+  }
+
+  async getLatestTaskForClientConversation(organizationId: string, clientId: string, conversationId: string): Promise<AgentTask | null> {
+    let maisRecente: AgentTask | null = null;
+    for (const task of this.tarefas.values()) {
+      if (task.organizationId !== organizationId || task.clientId !== clientId || task.conversationId !== conversationId) continue;
+      if (!maisRecente || task.updatedAt > maisRecente.updatedAt) maisRecente = task;
+    }
+    return maisRecente;
   }
 }
 

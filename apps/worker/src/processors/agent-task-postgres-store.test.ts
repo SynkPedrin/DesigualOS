@@ -29,7 +29,7 @@ function fakeDb(initial: FakeRow[] = []) {
         values: (v: FakeRow) => ({
           onConflictDoNothing: (_opts?: unknown) => ({
             returning: async () => {
-              const existente = [...linhas.values()].find((r) => (r.dispatchKey && r.dispatchKey === v.dispatchKey) || (r.taskId === v.taskId && r.taskVersion === v.taskVersion));
+              const existente = [...linhas.values()].find((r) => (r.dispatchKey && r.dispatchKey === v.dispatchKey) || (v.taskId !== undefined && r.taskId === v.taskId && r.taskVersion === v.taskVersion));
               if (existente) return [];
               seq += 1;
               const row: FakeRow = { id: `row-${seq}`, version: 1, attemptCount: 0, lastError: null, lastErrorAt: null, nextEligibleRetryAt: null, createdAt: new Date(), updatedAt: new Date(), status: 'assigned', requestedBy: null, dueAt: null, entityRefs: [], constraints: [], timeWindowStart: null, timeWindowEnd: null, ...v };
@@ -41,9 +41,24 @@ function fakeDb(initial: FakeRow[] = []) {
       }),
       select: () => ({
         from: (_table: unknown) => ({
-          where: async (cond: { type: string; a?: unknown; b?: unknown; conds?: unknown[] } | undefined) => {
-            const rows = [...linhas.values()];
-            return rows.filter((r) => matches(r, cond));
+          where: (cond: { type: string; a?: unknown; b?: unknown; conds?: unknown[] } | undefined) => {
+            const rows = [...linhas.values()].filter((r) => matches(r, cond));
+            const promise = Promise.resolve(rows);
+            // Encadeável (.orderBy().limit()) e também aguardável direto —
+            // igual ao query builder real do drizzle-orm.
+            return Object.assign(promise, {
+              orderBy: (ordCond: { op: string; col?: string } | undefined) => {
+                const ordenadas = [...rows].sort((a, b) => {
+                  const col = ordCond?.col ?? 'updatedAt';
+                  const av = String(a[col] instanceof Date ? (a[col] as Date).toISOString() : a[col]);
+                  const bv = String(b[col] instanceof Date ? (b[col] as Date).toISOString() : b[col]);
+                  return ordCond?.op === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
+                });
+                return Object.assign(Promise.resolve(ordenadas), {
+                  limit: (n: number) => Promise.resolve(ordenadas.slice(0, n)),
+                });
+              },
+            });
           },
         }),
       }),
@@ -81,6 +96,7 @@ vi.mock('drizzle-orm', () => ({
   eq: (col: { __col?: string }, val: unknown) => ({ op: 'eq', col: col?.__col, val }),
   and: (...conds: unknown[]) => ({ op: 'and', conds }),
   inArray: (col: { __col?: string }, vals: unknown[]) => ({ op: 'in', col: col?.__col, vals }),
+  desc: (col: { __col?: string }) => ({ op: 'desc', col: col?.__col }),
 }));
 
 let currentDb: ReturnType<typeof fakeDb>;
@@ -95,7 +111,9 @@ vi.mock('@desigual-os/database', () => ({
       dispatchKey: { __col: 'dispatchKey' },
       organizationId: { __col: 'organizationId' },
       clientId: { __col: 'clientId' },
+      conversationId: { __col: 'conversationId' },
       status: { __col: 'status' },
+      updatedAt: { __col: 'updatedAt' },
     },
     agentTaskResults: {
       taskId: { __col: 'taskId' },
@@ -187,6 +205,39 @@ describe('PostgresAgentTaskStore.attachResult — rejeita resultado de versão s
  * pra QUALQUER par (de, para) dos 13 status — se as duas divergirem, um
  * mock nunca pegaria, só este teste cruzado pega.
  */
+describe('PostgresAgentTaskStore.getLatestTaskForClientConversation — §5/§6 da missão de fechamento de chat', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('devolve a tarefa mais recente desta conversa, para este cliente', async () => {
+    currentDb = fakeDb();
+    const { PostgresAgentTaskStore } = await import('./agent-task-postgres-store');
+    const store = new PostgresAgentTaskStore();
+    const a = await store.dispatch(baseInput({ dispatchKey: 'k1', conversationId: 'conv-1' }));
+    await new Promise((r) => setTimeout(r, 2));
+    const b = await store.dispatch(baseInput({ dispatchKey: 'k2', conversationId: 'conv-1' }));
+
+    const latest = await store.getLatestTaskForClientConversation(a.task.organizationId, a.task.clientId, 'conv-1');
+    expect(latest?.taskId).toBe(b.task.taskId);
+  });
+
+  it('troca de cliente na mesma conversa nunca reaproveita tarefa do cliente anterior', async () => {
+    currentDb = fakeDb();
+    const { PostgresAgentTaskStore } = await import('./agent-task-postgres-store');
+    const store = new PostgresAgentTaskStore();
+    await store.dispatch(baseInput({ dispatchKey: 'k1', conversationId: 'conv-1', clientId: 'cliente-antigo' }));
+    const latest = await store.getLatestTaskForClientConversation('org-1', 'cliente-novo', 'conv-1');
+    expect(latest).toBeNull();
+  });
+
+  it('sem tarefa nesta conversa -> null, nunca inventa uma', async () => {
+    currentDb = fakeDb();
+    const { PostgresAgentTaskStore } = await import('./agent-task-postgres-store');
+    const store = new PostgresAgentTaskStore();
+    const latest = await store.getLatestTaskForClientConversation('org-1', 'cliente-a', 'conv-nunca-usada');
+    expect(latest).toBeNull();
+  });
+});
+
 describe('consistência entre a tabela Postgres (local) e a máquina de estado real (agent-task.ts)', () => {
   it('para cada par (de, para), o InMemoryAgentTaskStore concorda com o que o store Postgres permitiria', async () => {
     for (const de of AGENT_TASK_STATUSES) {
