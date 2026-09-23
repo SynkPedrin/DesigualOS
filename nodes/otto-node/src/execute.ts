@@ -686,9 +686,27 @@ export async function executeTask(
      * a legenda gerada não tinha hashtag nenhuma e ignorou "pode usar emojis
      * na legenda", porque nada no prompt do planner sabia que isso foi pedido.
      */
-    const contratoEstruturaProducao = contratoDeSaida(stripOrchestratorContext(request.message));
+    /**
+     * BRIEFING LIMPO (Otto Senior 20Y, Missão 6): o caminho de produção
+     * mandava request.message CRU (com o bloco de contexto do orquestrador
+     * ainda embutido, "\n\n---\nContexto:\n...") como `briefing` do
+     * createCreativePlan — em toda chamada, inclusive a de reescrita, que
+     * ainda por cima ANEXA a nota do critic em cima disso. Investigado antes
+     * de mudar (regra do fechamento: não aumentar o prompt sem inspecionar
+     * primeiro) — achado: o dossiê do cliente entrava duas vezes (cru na
+     * mensagem E via clientContext/DNA abaixo), sem a framing de precedência
+     * que o caminho de chat já dá a ele (escopoSection). Na reescrita, isso
+     * empilhava: dossiê cru + nota do critic + possível nota interna do loop
+     * anti-genérico — três blocos de instrução na mesma mensagem. Extrai o
+     * contexto UMA vez aqui; o briefing e a nota de reescrita usam só o
+     * turno do usuário (producaoBriefingBase), e o contexto do orquestrador
+     * (quando existe) entra no clientContext, uma vez, com framing clara.
+     */
+    const producaoBriefingBase = stripOrchestratorContext(request.message);
+    const contextoOrquestradorProducao = extractOrchestratorContext(request.message);
+    const contratoEstruturaProducao = contratoDeSaida(producaoBriefingBase);
     const contratoProducao = diretivaDoContrato(contratoEstruturaProducao);
-    const pedeEmoji = /\bemojis?\b/i.test(stripOrchestratorContext(request.message));
+    const pedeEmoji = /\bemojis?\b/i.test(producaoBriefingBase);
     const entregaveisPedidos = contratoEstruturaProducao.artefato === 'indefinido'
       ? []
       : [contratoEstruturaProducao.artefato, ...(contratoEstruturaProducao.adicionais ?? [])];
@@ -721,6 +739,11 @@ export async function executeTask(
                     knowledge,
                     referenceAssets: request.attachments,
                     clientContext: [
+                      // PRECEDÊNCIA (mesma regra do caminho de chat, escopoSection):
+                      // fato resolvido pelo orquestrador > palpite de retrieval.
+                      contextoOrquestradorProducao
+                        ? `ESCOPO RESOLVIDO DESTE TURNO (consultado nas fontes da operação, tem PRECEDÊNCIA sobre qualquer outro conhecimento abaixo):\n${contextoOrquestradorProducao}`
+                        : '',
                       dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
                       formatResearchBlock(research),
                       contratoProducao ? `O campo "copy" precisa seguir este contrato:\n${contratoProducao}` : '',
@@ -812,7 +835,7 @@ export async function executeTask(
       return { pipeline, plan, carouselPlan, videoPlan, spec, fidelityWarning, answer };
     }
 
-    let result = await produce(request.message);
+    let result = await produce(producaoBriefingBase);
 
     /**
      * CRITIC + REWRITE (Otto Senior V1.0 closure, regras 14-19): DRAFT ->
@@ -887,7 +910,7 @@ export async function executeTask(
 
       while (criticGate && !criticGate.passed && !pipelineDegraded && criticRewrites < MAX_REWRITES) {
         const revisionNote = formatCriticRevisionNote(criticEvaluation!, criticGate);
-        const augmentedMessage = `${request.message}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
+        const augmentedMessage = `${producaoBriefingBase}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
         const attemptNumber = criticRewrites + 1;
 
         let rewritten: Awaited<ReturnType<typeof produce>>;

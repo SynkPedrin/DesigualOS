@@ -896,6 +896,48 @@ describe('POST /execute — loop criativo (pipeline + pesquisa + qualidade)', ()
     await app.close();
   });
 
+  /**
+   * MISSÃO 6 (Otto Senior 20Y): o bloco de contexto do orquestrador não pode
+   * entrar cru no "Briefing:" do planner (duplicando o que já chega via
+   * clientContext) nem se acumular numa reescrita. Isto é o que investigamos
+   * antes de tocar no prompt de reescrita: o contexto tinha que aparecer
+   * UMA vez, com framing de precedência, não duas.
+   */
+  it('bloco de contexto do orquestrador entra UMA vez, via clientContext com framing de precedência — nunca cru dentro de "Briefing:"', async () => {
+    let userPrompt = '';
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) {
+              const list = messages as { role: string; content: string }[];
+              userPrompt = list.find((message) => message.role === 'user')?.content ?? '';
+              return Promise.resolve(creativePlanFixture);
+            }
+            return Promise.resolve({ ...makeCarouselFixture() });
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    await execute(app, {
+      execution_id: 'exe-contexto-limpo',
+      message: `Crie um carrossel pro cliente.${CONTEXT_BLOCK_MARKER}CLIENTE DO TURNO: Cosentino\nDossiê real do cliente.`,
+    });
+
+    expect(userPrompt).toMatch(/ESCOPO RESOLVIDO DESTE TURNO.*PRECEDÊNCIA/s);
+    expect(userPrompt).toContain('CLIENTE DO TURNO: Cosentino');
+    // O dossiê aparece UMA vez só (na seção de contexto), não duplicado
+    // dentro do "Briefing:" cru.
+    expect(userPrompt.split('CLIENTE DO TURNO: Cosentino')).toHaveLength(2);
+    const briefingSection = userPrompt.slice(userPrompt.indexOf('Briefing:'));
+    expect(briefingSection).not.toContain('CLIENTE DO TURNO');
+    expect(briefingSection).not.toContain('---\nContexto:');
+
+    await app.close();
+  });
+
   it('sem provider configurado a pesquisa NÃO acontece e isso fica declarado', async () => {
     const app = buildTestApp(
       makeDeps(
