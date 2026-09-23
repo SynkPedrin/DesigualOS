@@ -68,6 +68,14 @@ async function fetchClickUp(url: string | URL, init: RequestInit = {}): Promise<
 export interface ClickUpConfig {
   apiKey: string;
   teamId: string;
+  /**
+   * Só setado por `bento-action-guard.ts`, depois de confirmar org+capacidade
+   * (RBAC clickup:write) e que a conta NÃO é o bot de QA — ver o comentário
+   * em `write-scope.ts:assertListInScope`. Ausente/false = cerca de lista
+   * continua valendo como sempre (comportamento inalterado pra Otto, Jarbas,
+   * Suzy, Studio, automações e rotas HTTP que não setam este campo).
+   */
+  writeScope?: { authorizedForProduction: boolean };
 }
 
 // O GET /team/:teamId do ClickUp devolve mais campos em member.user do que
@@ -210,7 +218,7 @@ export interface CreatedTask {
 }
 
 export async function createTask(config: ClickUpConfig, params: CreateTaskParams): Promise<CreatedTask> {
-  assertListInScope(params.listId);
+  assertListInScope(params.listId, process.env, config.writeScope?.authorizedForProduction);
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${params.listId}/task`, {
     method: 'POST',
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },

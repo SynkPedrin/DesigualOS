@@ -847,7 +847,10 @@ export async function tryBentoActionGuard(params: {
    * normal de chat (análise, perguntas) nunca paga essa consulta extra.
    */
   if (DELETE_AFFIRMATIVE.test(message.trim())) {
-    const confirmConfig = getClickUpConfigOrNull();
+    const confirmConfigBase = getClickUpConfigOrNull();
+    const confirmConfig = confirmConfigBase
+      ? { ...confirmConfigBase, writeScope: { authorizedForProduction: !ehQaBot(params.userEmail ?? null) } }
+      : null;
     if (confirmConfig) {
       const confirmContext = await loadConversationContext(conversationId, params.seniorToolContext?.agent, confirmConfig);
       if (confirmContext.pendingDeleteTaskId) {
@@ -965,8 +968,9 @@ export async function tryBentoActionGuard(params: {
     });
   }
 
-  const config = getClickUpConfigOrNull();
-  if (!config) return null;
+  const configBase = getClickUpConfigOrNull();
+  if (!configBase) return null;
+  const config: ClickUpConfig = { ...configBase, writeScope: { authorizedForProduction: !ehQaBot(params.userEmail ?? null) } };
 
   const context = await loadConversationContext(conversationId, params.seniorToolContext?.agent, config);
 

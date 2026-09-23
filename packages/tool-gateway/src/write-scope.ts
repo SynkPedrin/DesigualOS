@@ -72,11 +72,32 @@ export function getWriteScopeListId(env: NodeJS.ProcessEnv = process.env): strin
   return raw ? raw : null;
 }
 
-/** Cria/edita numa lista conhecida: barra quando não é a permitida. */
-export function assertListInScope(listId: string, env: NodeJS.ProcessEnv = process.env): void {
+/**
+ * `authorizedForProduction` é a válvula de escape ESTRUTURAL prevista pra
+ * promoção de homologação pra produção (23/09/2026): quando `true`, esta
+ * cerca de lista deixa de valer PARA ESTA CHAMADA, porque quem chamou já
+ * provou, rio acima (`bento-action-guard.ts`), que a pessoa é humana,
+ * autenticada, tem `clickup:write` pela RBAC e a organização do cliente-alvo
+ * bate com a dela. A cerca nunca é o único portão pra essa população — é
+ * redundante de propósito.
+ *
+ * Continua impossível de contornar por quem NÃO passou por aquele portão:
+ * o valor só chega aqui dentro de `ClickUpConfig.writeScope` (createTask) ou
+ * pela mesma origem (`assertTaskInScope`), nunca de um parâmetro que uma
+ * rota HTTP, automação ou o bot de QA possa setar sozinho. O bot de QA em
+ * especial NUNCA recebe esse `true` (ver `podeEscreverEmProducao` +
+ * `ehQaBot`) — pra ele a cerca de lista continua a única linha de defesa
+ * pra "esse cliente é mesmo o de QA?", e por isso tem que continuar valendo.
+ */
+export function assertListInScope(
+  listId: string,
+  env: NodeJS.ProcessEnv = process.env,
+  authorizedForProduction = false,
+): void {
   assertWriteEnabled(env);
   const escopo = getWriteScopeListId(env);
   if (!escopo) return;
+  if (authorizedForProduction) return;
   if (listId !== escopo) {
     throw new WriteScopeError(
       `Escrita BLOQUEADA: a lista ${listId} está fora do escopo de teste (só ${escopo} é permitida).`,
@@ -102,6 +123,7 @@ export async function assertTaskInScope(
   assertWriteEnabled(env);
   const escopo = getWriteScopeListId(env);
   if (!escopo) return;
+  if (config.writeScope?.authorizedForProduction) return;
   let listId: string;
   try {
     listId = await getTaskListId(config, taskId);

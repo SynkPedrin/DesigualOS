@@ -34,6 +34,18 @@ describe('assertListInScope', () => {
   it('sem cerca configurada, não interfere', () => {
     expect(() => assertListInScope(CLIENTE, {})).not.toThrow();
   });
+
+  it('authorizedForProduction=true deixa passar lista de cliente real (humano de produção já verificado rio acima)', () => {
+    expect(() => assertListInScope(CLIENTE, { CLICKUP_TEST_LIST_ID: QA }, true)).not.toThrow();
+  });
+
+  it('authorizedForProduction=false (padrão/bot de QA) continua barrado fora da lista de QA', () => {
+    expect(() => assertListInScope(CLIENTE, { CLICKUP_TEST_LIST_ID: QA }, false)).toThrow(WriteScopeError);
+  });
+
+  it('o kill switch ainda vence authorizedForProduction=true', () => {
+    expect(() => assertListInScope(CLIENTE, { CLICKUP_TEST_LIST_ID: QA, BENTO_WRITE_ENABLED: 'false' }, true)).toThrow(/DESLIGADA/);
+  });
 });
 
 describe('assertTaskInScope', () => {
@@ -80,6 +92,29 @@ describe('assertTaskInScope', () => {
     try {
       await assertTaskInScope(config, 'task-1', {});
       expect(chamou).toBe(false);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('config.writeScope.authorizedForProduction=true deixa passar sem nem consultar a lista da task', async () => {
+    const configAutorizado = { apiKey: 'k', teamId: 't', writeScope: { authorizedForProduction: true } } as Parameters<typeof assertTaskInScope>[0];
+    const original = globalThis.fetch;
+    let chamou = false;
+    globalThis.fetch = (async () => { chamou = true; return new Response('{}', { status: 200 }); }) as typeof fetch;
+    try {
+      await expect(assertTaskInScope(configAutorizado, 'task-1', { CLICKUP_TEST_LIST_ID: QA })).resolves.toBeUndefined();
+      expect(chamou).toBe(false);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('config.writeScope.authorizedForProduction ausente (bot de QA) continua barrado fora da lista de QA', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = fetchRespondendoLista(CLIENTE) as typeof fetch;
+    try {
+      await expect(assertTaskInScope(config, 'task-1', { CLICKUP_TEST_LIST_ID: QA })).rejects.toThrow(WriteScopeError);
     } finally {
       globalThis.fetch = original;
     }
