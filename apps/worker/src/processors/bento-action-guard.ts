@@ -753,7 +753,7 @@ async function taskExiste(config: ClickUpConfig, taskId: string): Promise<boolea
 }
 
 /**
- * ALVO CITADO PERTENCE AO CLIENTE DA CONVERSA. Achado na auditoria sênior
+ * ALVO CITADO É AUTORIZADO PRO CONTEXTO ATUAL. Achado na auditoria sênior
  * (24/09/2026), consequência direta de abrir escrita de produção pra
  * clientes reais nesta mesma missão: nada verificava que um ID/URL de task
  * CITADO NA MENSAGEM (extractExplicitTaskIdFromMessage) ou herdado do
@@ -761,39 +761,61 @@ async function taskExiste(config: ClickUpConfig, taskId: string): Promise<boolea
  * conversa. Um colaborador com acesso ao Cliente A podia colar o link de
  * uma task do Cliente B e mutar lá — a checagem de organização valida o
  * USUÁRIO contra o cliente da CONVERSA (loadSeniorRuntimeContext), nunca a
- * TASK citada contra esse mesmo cliente. Antes da autorização de produção
- * (BENTO_WRITE_ALLOWLIST + cerca de lista globais), isso ficava mascarado
- * por acidente — agora precisa ser checado de propósito.
+ * TASK citada contra esse mesmo cliente.
  *
- * `null` é "não consigo confirmar" — nunca "pertence". Quem chama só
- * BLOQUEIA no `false` explícito (mismatch confirmado); `null` (sem
- * `clientClickupListId` pra comparar — conversa sem cliente específico,
- * cliente sem lista mapeada — ou falha transitória ao ler a task) deixa
- * passar, porque bloquear sempre que a checagem é inconclusiva quebraria
- * toda conversa de escopo agência/sem cliente único. O que este helper
- * fecha é o vazamento CONFIRMÁVEL: task de um cliente citada dentro da
- * conversa de outro.
+ * PARA ESCRITA, FALHA FECHADA — revisão da versão anterior (que deixava
+ * passar em qualquer caso inconclusivo): mutação nunca pode seguir sem
+ * confirmação positiva. Três resultados:
+ *
+ *   'match'    — a task pertence ao cliente ATIVO da conversa; ou, em
+ *                conversa de escopo agência (sem cliente único), pertence
+ *                a um cliente da MESMA organização do usuário.
+ *   'mismatch' — pertence a outro cliente (mesma org ou org diferente).
+ *                Mesmo dentro da mesma org, cliente diferente do ativo é
+ *                mismatch: "trocar de cliente" é uma decisão explícita do
+ *                turno (clientId muda), nunca inferida da task citada.
+ *   'unknown'  — não deu pra confirmar (lookup falhou, a lista da task não
+ *                bate com NENHUM cliente cadastrado, ou não há cliente
+ *                ativo nem organização pra comparar). Chamador de ESCRITA
+ *                trata 'unknown' IGUAL a 'mismatch': nenhuma mutação sem
+ *                prova positiva. Leitura pode ser mais tolerante — ver
+ *                comentário no portão de leitura, se/quando existir.
  */
-export async function taskPertenceAoClienteForTest(
+export type TaskClientAuthorization = 'match' | 'mismatch' | 'unknown';
+
+export async function resolveTaskClientAuthorizationForTest(
   config: ClickUpConfig,
   taskId: string,
-  clientClickupListId: string | null,
-): Promise<boolean | null> {
-  return taskPertenceAoCliente(config, taskId, clientClickupListId);
+  activeClientId: string | null,
+  activeOrganizationId: string | null,
+): Promise<TaskClientAuthorization> {
+  return resolveTaskClientAuthorization(config, taskId, activeClientId, activeOrganizationId);
 }
 
-async function taskPertenceAoCliente(
+async function resolveTaskClientAuthorization(
   config: ClickUpConfig,
   taskId: string,
-  clientClickupListId: string | null,
-): Promise<boolean | null> {
-  if (!clientClickupListId) return null;
+  activeClientId: string | null,
+  activeOrganizationId: string | null,
+): Promise<TaskClientAuthorization> {
+  let listaReal: string;
   try {
-    const listaReal = await getTaskListId(config, taskId);
-    return listaReal === clientClickupListId;
+    listaReal = await getTaskListId(config, taskId);
   } catch {
-    return null;
+    return 'unknown';
   }
+  const [dono] = await db
+    .select({ id: schema.clients.id, organizationId: schema.clients.organizationId })
+    .from(schema.clients)
+    .where(eq(schema.clients.clickupListId, listaReal))
+    .limit(1)
+    .catch(() => []);
+  if (!dono) return 'unknown';
+  if (activeClientId) return dono.id === activeClientId ? 'match' : 'mismatch';
+  if (activeOrganizationId && dono.organizationId) {
+    return dono.organizationId === activeOrganizationId ? 'match' : 'mismatch';
+  }
+  return 'unknown';
 }
 
 async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, logger: Logger): Promise<ExecuteResponse> {
@@ -895,8 +917,6 @@ export async function tryBentoActionGuard(params: {
   /** Cliente da execução, quando houver: é a chave do retrieval do briefing. */
   clientId?: string | null;
   clientName?: string | null;
-  /** clickup_list_id esperado do cliente da conversa — ver taskPertenceAoCliente. */
-  clientClickupListId?: string | null;
   /** Anexos do turno ATUAL (o print/PDF que veio junto do pedido). */
   attachments?: TaskAttachment[];
   logger: Logger;
@@ -934,10 +954,26 @@ export async function tryBentoActionGuard(params: {
             metadata: { guard: 'bento-action', action: 'blocked_write_authz', write_authorized: false, write_reason: 'fora da autorização de produção do Bento' },
           });
         }
-        const pertence = await taskPertenceAoCliente(confirmConfig, confirmContext.pendingDeleteTaskId, params.clientClickupListId ?? null);
-        if (pertence === false) {
-          logger.warn({ task_id: confirmContext.pendingDeleteTaskId, client_id: params.clientId ?? null }, '[guard] DELETE recusado: task citada não pertence ao cliente da conversa');
-          return guardResponse({ ok: true, toolCalls: [], answer: 'Não encontrei essa task neste cliente — não apaguei nada.', metadata: { guard: 'bento-action', action: 'denied_cross_client_target', verified: false } });
+        const autorizacao = await resolveTaskClientAuthorization(
+          confirmConfig,
+          confirmContext.pendingDeleteTaskId,
+          params.clientId ?? null,
+          params.seniorToolContext?.organizationId ?? null,
+        );
+        if (autorizacao !== 'match') {
+          logger.warn(
+            { task_id: confirmContext.pendingDeleteTaskId, client_id: params.clientId ?? null, authorization: autorizacao },
+            '[guard] DELETE recusado: não confirmei que a task citada pertence ao contexto ativo',
+          );
+          return guardResponse({
+            ok: true,
+            toolCalls: [],
+            answer:
+              autorizacao === 'unknown'
+                ? 'Não consegui confirmar que essa task pertence ao cliente ativo, então não apaguei nada.'
+                : 'Não encontrei essa task neste cliente — não apaguei nada.',
+            metadata: { guard: 'bento-action', action: 'denied_cross_client_target', write_authorized: false, verified: false, authorization: autorizacao },
+          });
         }
         return executeConfirmedDelete(confirmConfig, confirmContext.pendingDeleteTaskId, logger);
       }
@@ -1052,18 +1088,30 @@ export async function tryBentoActionGuard(params: {
   const alvoExplicitoNesteTurno = extractExplicitTaskIdFromMessage(message);
   if (alvoExplicitoNesteTurno) context.lastTaskId = alvoExplicitoNesteTurno;
 
-  // TASK CITADA PERTENCE AO CLIENTE DA CONVERSA — ver docstring de
-  // taskPertenceAoCliente. Vale pra todo caminho de escrita abaixo (update,
-  // comment, delete) que usa `context.lastTaskId` como alvo.
+  // TASK CITADA É AUTORIZADA PRO CONTEXTO ATIVO — ver docstring de
+  // resolveTaskClientAuthorization. Vale pra todo caminho de escrita abaixo
+  // (update, comment, delete) que usa `context.lastTaskId` como alvo.
+  // Falha fechada: 'mismatch' E 'unknown' bloqueiam a mutação.
   if (context.lastTaskId) {
-    const pertence = await taskPertenceAoCliente(config, context.lastTaskId, params.clientClickupListId ?? null);
-    if (pertence === false) {
-      logger.warn({ task_id: context.lastTaskId, client_id: params.clientId ?? null }, '[guard] escrita recusada: task citada não pertence ao cliente da conversa');
+    const autorizacao = await resolveTaskClientAuthorization(
+      config,
+      context.lastTaskId,
+      params.clientId ?? null,
+      params.seniorToolContext?.organizationId ?? null,
+    );
+    if (autorizacao !== 'match') {
+      logger.warn(
+        { task_id: context.lastTaskId, client_id: params.clientId ?? null, authorization: autorizacao },
+        '[guard] escrita recusada: não confirmei que a task citada pertence ao contexto ativo',
+      );
       return guardResponse({
         ok: true,
         toolCalls: [],
-        answer: 'Não encontrei essa task neste cliente — não alterei nada.',
-        metadata: { guard: 'bento-action', action: 'denied_cross_client_target', write_authorized: false, verified: false },
+        answer:
+          autorizacao === 'unknown'
+            ? 'Não consegui confirmar que essa task pertence ao cliente ativo, então não alterei nada.'
+            : 'Não encontrei essa task neste cliente — não alterei nada.',
+        metadata: { guard: 'bento-action', action: 'denied_cross_client_target', write_authorized: false, verified: false, authorization: autorizacao },
       });
     }
   }

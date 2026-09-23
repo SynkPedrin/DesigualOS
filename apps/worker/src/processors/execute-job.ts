@@ -1023,7 +1023,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     // o que torna o texto específico em vez de genérico.
     const [clienteDaExecucao] = runningExecution?.clientId
       ? await db
-          .select({ name: schema.clients.name, clickupListId: schema.clients.clickupListId })
+          .select({ name: schema.clients.name })
           .from(schema.clients)
           .where(eq(schema.clients.id, runningExecution.clientId))
           .limit(1)
@@ -1039,7 +1039,6 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       agencyListId: agencyClient[0]?.clickupListId ?? null,
       clientId: runningExecution?.clientId ?? null,
       clientName: clienteDaExecucao?.name ?? null,
-      clientClickupListId: clienteDaExecucao?.clickupListId ?? null,
       // O material do turno chega aqui pelo mesmo caminho que vai pro node.
       // Sem repassar, a task nascia sem o print que originou a demanda.
       attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
