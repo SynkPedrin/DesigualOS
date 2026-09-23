@@ -193,3 +193,6 @@ export {
   formatStrategyBriefing,
 } from './creative/strategy.js';
 export type { StrategyDeps, StrategyInput, AngleSelection, DevelopBigIdeaInput } from './creative/strategy.js';
+
+export { validateReelExecution, formatReelExecutionNote } from './creative/reel-execution.js';
+export type { ReelExecutionFinding, ReelExecutionIssue } from './creative/reel-execution.js';

@@ -37,6 +37,8 @@ import {
   bigIdeaPassesTest,
   selectBestHook,
   formatStrategyBriefing,
+  validateReelExecution,
+  formatReelExecutionNote,
   type BrainHealth,
   type BrandKit,
   type CarouselPlan,
@@ -848,6 +850,39 @@ export async function executeTask(
     }
 
     /**
+     * REPARO ESTREITO DE EXECUÇÃO (Otto Elite, "Reel Execution Engine
+     * Closure", Section 20): quando a causa raiz é EXECUTABILITY/STRUCTURE
+     * num vídeo/reels, o problema é o STORYBOARD, não o conceito/ângulo/
+     * copy — regenerar tudo via `produce()` de novo (que rechama
+     * createCreativePlan inteiro) arrisca perder um conceito/legenda já
+     * aprovados por um problema que é só de direção de cena. Este reparo
+     * chama SÓ planVideo de novo, com o CreativePlan já existente
+     * (`basePlan`) intacto — a mesma ideia de `completionRepair`/correção
+     * factual abaixo, aplicada à camada de execução.
+     */
+    async function repairVideoExecution(basePlan: Awaited<ReturnType<typeof createCreativePlan>>, revisionNote: string) {
+      const videoPlan = await measureLlm(() =>
+        planVideo({ llm: deps.llm }, basePlan, { revisionNote, ...(strategyBriefing ? { strategyBriefing } : {}) }),
+      );
+      const clientId = refClientId ?? basePlan.client;
+      const spec = buildProductionSpec(basePlan, {
+        clientId,
+        jobType,
+        videoPlan,
+        aspectRatio: videoPlan.aspect_ratio,
+        referenceAssets: request.attachments,
+        metadata: { execution_id: request.execution_id },
+      });
+      const fidelityWarning =
+        typeof spec.metadata.fidelity_warning === 'string' ? spec.metadata.fidelity_warning : null;
+      const answer = [formatPlanAnswer(basePlan.concept, basePlan.copy, videoPlan, undefined), fidelityWarning]
+        .filter(Boolean)
+        .join('\n\n');
+      logger.info({ execution_id: request.execution_id, scenes: videoPlan.scenes.length }, '[OTTO:reel] reparo estreito de execução concluído (storyboard refeito, conceito/copy preservados)');
+      return { pipeline: result.pipeline, plan: basePlan, carouselPlan: undefined, videoPlan, spec, fidelityWarning, answer };
+    }
+
+    /**
      * CRITIC + REWRITE (Otto Senior V1.0 closure, regras 14-19): DRAFT ->
      * CRITIC -> se falhar, REWRITE #1 -> CRITIC #2 -> se falhar, REWRITE #2
      * -> FINAL CHECK. Máximo 2 reescritas — nunca infinito. O primeiro draft
@@ -873,7 +908,17 @@ export async function executeTask(
     const MAX_REWRITES = 2;
     let criticEvaluation: Awaited<ReturnType<typeof critiqueDeliverable>> | null = null;
     let criticGate: ReturnType<typeof passesCriticGate> | null = null;
+    let criticReelIssues: ReturnType<typeof validateReelExecution> = [];
     let criticRewrites = 0;
+    /**
+     * ROTEAMENTO DE REESCRITA POR CAMADA (Otto Elite, "Reel Execution Engine
+     * Closure", Section 21): EXECUTABILITY/STRUCTURE pra vídeo/reels não
+     * regenera conceito, ângulo nem copy — regenera SÓ o storyboard
+     * (planVideo de novo, plano criativo preservado). STRUCTURE entra aqui
+     * porque, pra este formato, "estrutura" É a estrutura de cena — não
+     * existe uma "camada de estrutura" separada do storyboard em vídeo.
+     */
+    const EXECUTION_REPAIR_ROOT_CAUSES = new Set(['EXECUTABILITY', 'STRUCTURE']);
     /**
      * INVARIANTE ABSOLUTO (Otto Senior 20Y, Missão 4-5): nenhuma falha de
      * ESTÁGIO DE MELHORIA (critic, reescrita) pode destruir um artefato já
@@ -982,27 +1027,63 @@ export async function executeTask(
       );
       // Missão 7: completude é CALCULADA, não autocertificada pelo modelo.
       const missingDeliverables = computeMissingDeliverables(result.answer, entregaveisPedidos);
-      const gate = passesCriticGate(evaluation, missingDeliverables);
+      let gate = passesCriticGate(evaluation, missingDeliverables);
+
+      /**
+       * REEL EXECUTION LINTER (Otto Elite, "Reel Execution Engine Closure"):
+       * checagem DETERMINÍSTICA sobre o storyboard renderizado — mesma
+       * lógica de `computeMissingDeliverables`, não confiar só no
+       * julgamento do critic pra pegar padrão mecânico (câmera travada
+       * repetida, "Visual: None", duração idêntica em toda cena). Achado ao
+       * vivo em DOIS modelos diferentes. Só roda pra vídeo/reels — carrossel
+       * e os demais formatos não têm essa estrutura de cena.
+       */
+      const reelExecutionIssues =
+        (jobType === 'video' || jobType === 'reels') && result.videoPlan
+          ? validateReelExecution(result.videoPlan)
+          : [];
+      if (reelExecutionIssues.length > 0) {
+        gate = {
+          ...gate,
+          passed: false,
+          reasons: [...gate.reasons, ...reelExecutionIssues.map((issue) => `execução de reel: ${issue.detail}`)],
+        };
+      }
+
       // Otto Elite, Blocker 3: gate reprovado com root_cause="NONE" é
       // logicamente inconsistente — nunca confiar cegamente nisso.
-      const reconciledRootCause = reconcileRootCause(evaluation, gate, missingDeliverables);
+      let reconciledRootCause = reconcileRootCause(evaluation, gate, missingDeliverables);
+      // O linter determinístico manda sobre a classificação do modelo pra
+      // este caso específico: se ele achou um padrão mecânico real e o
+      // modelo classificou outra coisa (ou nem reprovou), a causa raiz É de
+      // execução — polir hook/copy não resolveria "Visual: None".
+      if (reelExecutionIssues.length > 0 && !['EXECUTABILITY', 'STRUCTURE'].includes(reconciledRootCause)) {
+        reconciledRootCause = 'EXECUTABILITY';
+      }
       if (reconciledRootCause !== evaluation.root_cause) {
         logger.warn(
           { execution_id: request.execution_id, reported: evaluation.root_cause, corrected: reconciledRootCause, overall: gate.overall },
-          '[OTTO:critic] root_cause=NONE em gate reprovado — reclassificado em código',
+          '[OTTO:critic] root_cause reclassificado em código (NONE inconsistente ou achado do linter de execução de reel)',
         );
       }
       const reconciledEvaluation = { ...evaluation, root_cause: reconciledRootCause };
       logger.info(
-        { attempt: criticRewrites, overall: gate.overall, passed: gate.passed, reasons: gate.reasons, root_cause: reconciledEvaluation.root_cause },
+        {
+          attempt: criticRewrites,
+          overall: gate.overall,
+          passed: gate.passed,
+          reasons: gate.reasons,
+          root_cause: reconciledEvaluation.root_cause,
+          reel_execution_findings: reelExecutionIssues.map((i) => i.finding),
+        },
         '[OTTO:critic] avaliação do entregável renderizado',
       );
-      return { evaluation: reconciledEvaluation, gate };
+      return { evaluation: reconciledEvaluation, gate, reelExecutionIssues };
     }
 
     if (criticHabilitado) {
       try {
-        ({ evaluation: criticEvaluation, gate: criticGate } = await critique());
+        ({ evaluation: criticEvaluation, gate: criticGate, reelExecutionIssues: criticReelIssues } = await critique());
       } catch (criticError) {
         // CRITIC FAILS -> keep draft, do NOT destroy turn (regra do fechamento).
         pipelineDegraded = true;
@@ -1055,7 +1136,22 @@ export async function executeTask(
           }
         }
 
-        const revisionNote = formatCriticRevisionNote(criticEvaluation!, criticGate);
+        /**
+         * REPARO ESTREITO DE EXECUÇÃO vs. REESCRITA GERAL (Otto Elite,
+         * "Reel Execution Engine Closure", Section 21): EXECUTABILITY/
+         * STRUCTURE num vídeo/reels é problema de STORYBOARD, não de
+         * conceito/ângulo/copy — troca `produce()` (que regenera tudo) por
+         * `repairVideoExecution()` (só planVideo de novo, plano criativo
+         * intacto). A nota de reparo usa o achado DETERMINÍSTICO do linter
+         * quando ele existe (mais específico que o texto livre do critic:
+         * "cena 3 tem Visual: None" > "melhore a executabilidade").
+         */
+        const isExecutionRepair =
+          (jobType === 'video' || jobType === 'reels') && EXECUTION_REPAIR_ROOT_CAUSES.has(criticEvaluation!.root_cause);
+        const revisionNote =
+          isExecutionRepair && criticReelIssues.length > 0
+            ? formatReelExecutionNote(criticReelIssues)
+            : formatCriticRevisionNote(criticEvaluation!, criticGate);
         /**
          * PEÇA ATUAL na reescrita (Otto Senior 20Y, Missão 6 — item do
          * checklist "REWRITE INPUT" que ainda faltava: "CURRENT VALID
@@ -1072,7 +1168,9 @@ export async function executeTask(
 
         let rewritten: Awaited<ReturnType<typeof produce>>;
         try {
-          rewritten = await produce(augmentedMessage, revisionNote, strategyBriefing || undefined);
+          rewritten = isExecutionRepair
+            ? await repairVideoExecution(result.plan, revisionNote)
+            : await produce(augmentedMessage, revisionNote, strategyBriefing || undefined);
         } catch (rewriteError) {
           // REWRITE FAILS -> keep previous valid version, do NOT destroy turn.
           pipelineDegraded = true;
@@ -1109,7 +1207,7 @@ export async function executeTask(
         criticRewrites = attemptNumber;
 
         try {
-          ({ evaluation: criticEvaluation, gate: criticGate } = await critique());
+          ({ evaluation: criticEvaluation, gate: criticGate, reelExecutionIssues: criticReelIssues } = await critique());
         } catch (criticError) {
           // SECOND CRITIC FAILS -> keep latest valid version.
           pipelineDegraded = true;

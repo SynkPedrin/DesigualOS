@@ -1186,7 +1186,7 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
 
     const videoComFala = {
       concept: 'X', duration: 5, aspect_ratio: '9:16',
-      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5, spoken_line: 'Abertura dia 24 de setembro.' }],
+      scenes: [{ camera_movement: 'plano fixo médio', subject_movement: 'apresentador olha pra câmera e fala diretamente', environment: 'estúdio com fundo neutro', lighting: 'luz de estúdio suave', transition: 'corte seco no fim da fala', pacing: 'direto', duration_seconds: 5, spoken_line: 'Abertura dia 24 de setembro.' }],
       sound_direction: 'trilha', text_overlays: [], cta: 'Confira', generation_prompts: ['a'],
     };
     const videoSemFala = { ...videoComFala, scenes: [{ ...videoComFala.scenes[0], spoken_line: undefined }] };
@@ -1248,7 +1248,7 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
 
     const videoSemFala = {
       concept: 'X', duration: 5, aspect_ratio: '9:16',
-      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      scenes: [{ camera_movement: 'plano fixo médio', subject_movement: 'apresentador olha pra câmera e fala diretamente', environment: 'estúdio com fundo neutro', lighting: 'luz de estúdio suave', transition: 'corte seco no fim da fala', pacing: 'direto', duration_seconds: 5 }],
       sound_direction: 'trilha', text_overlays: [], cta: 'Confira', generation_prompts: ['a'],
     };
     const videoComFala = { ...videoSemFala, scenes: [{ ...videoSemFala.scenes[0], spoken_line: 'Abertura dia 24 de setembro.' }] };
@@ -1327,7 +1327,7 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
 
     const videoSemFala = {
       concept: 'X', duration: 5, aspect_ratio: '9:16',
-      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      scenes: [{ camera_movement: 'plano fixo médio', subject_movement: 'apresentador olha pra câmera e fala diretamente', environment: 'estúdio com fundo neutro', lighting: 'luz de estúdio suave', transition: 'corte seco no fim da fala', pacing: 'direto', duration_seconds: 5 }],
       sound_direction: 'trilha', text_overlays: [], cta: 'Confira', generation_prompts: ['a'],
     };
     const videoComFala = {
@@ -1950,6 +1950,142 @@ describe('camada de estratégia (Otto Elite)', () => {
 
       await app.close();
     });
+  });
+});
+
+/**
+ * REEL EXECUTION ENGINE (Otto Elite, "Reel Execution Engine Closure"):
+ * teste 9/10 da missão — "strong strategy + weak execution" precisa rodar
+ * um REPARO ESTREITO (só planVideo de novo) sem tocar em createCreativePlan
+ * — teste 10 é a mesma coisa, provando que o conceito/copy sobrevive.
+ */
+describe('Reel Execution Engine (Otto Elite)', () => {
+  const cenaFraca = {
+    camera_movement: 'estático',
+    subject_movement: 'None',
+    environment: 'None',
+    lighting: 'luz de estúdio',
+    transition: 'transição dinâmica',
+    pacing: 'direto',
+    duration_seconds: 5,
+  };
+  const cenasBoas = [
+    {
+      camera_movement: 'push-in lento',
+      subject_movement: 'o corretor caminha até a porta e a abre com um gesto firme',
+      environment: 'fachada do stand de vendas ao entardecer',
+      lighting: 'luz quente de fim de tarde',
+      transition: 'corte no movimento da mão',
+      pacing: 'direto',
+      duration_seconds: 3,
+    },
+    {
+      camera_movement: 'tracking lateral',
+      subject_movement: 'a atendente recebe o visitante e aponta para a maquete',
+      environment: 'recepção do stand com maquete iluminada',
+      lighting: 'luz interna quente',
+      transition: 'match cut no gesto da mão',
+      pacing: 'moderado',
+      duration_seconds: 2,
+    },
+    {
+      camera_movement: 'macro',
+      subject_movement: 'detalhe do convite sendo entregue nas mãos do visitante',
+      environment: 'balcão de atendimento com acabamento premium',
+      lighting: 'luz lateral suave',
+      transition: 'corte seco no beat da trilha',
+      pacing: 'direto',
+      duration_seconds: 2.5,
+    },
+  ];
+
+  function videoPlanFixture(scenes: typeof cenaFraca[]) {
+    return {
+      concept: 'Abertura sem fila',
+      duration: scenes.reduce((t, s) => t + s.duration_seconds, 0),
+      aspect_ratio: '9:16',
+      scenes,
+      sound_direction: 'trilha leve',
+      text_overlays: [],
+      cta: 'Garanta seu horário',
+      generation_prompts: scenes.map(() => 'a prompt'),
+    };
+  }
+
+  it('teste 9/10: "Visual: None" força EXECUTABILITY mesmo quando o critic aprovaria — reparo estreito preserva concept/copy, não regenera createCreativePlan', async () => {
+    let creativePlanCalls = 0;
+    let videoPlanCalls = 0;
+    let repairPromptReceived = '';
+
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) {
+              creativePlanCalls += 1;
+              return Promise.resolve(creativePlanFixture);
+            }
+            videoPlanCalls += 1;
+            if (videoPlanCalls === 1) return Promise.resolve(videoPlanFixture([cenaFraca, cenaFraca, cenaFraca]));
+            const list = messages as { role: string; content: string }[];
+            repairPromptReceived = list.find((m) => m.role === 'user')?.content ?? '';
+            return Promise.resolve(videoPlanFixture(cenasBoas));
+          },
+          // Critic (propositalmente) aprovaria — a reprovação real vem do
+          // linter determinístico de execução de reel, não do julgamento do modelo.
+          critic: () => Promise.resolve(CRITIC_APPROVES),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-reel-execution', message: 'Crie um reels pro cliente' });
+
+    expect(body.status).toBe('completed');
+    // SÓ UMA chamada de createCreativePlan (o draft) — o reparo NUNCA regenerou conceito/copy.
+    expect(creativePlanCalls).toBe(1);
+    expect(videoPlanCalls).toBe(2); // draft (fraco) + 1 reparo estreito de execução
+    expect(repairPromptReceived).toMatch(/Visual: ?"None"|"None"\/vazia/); // nota do linter, não do critic genérico
+    expect(repairPromptReceived).toMatch(/Preserve o conceito, a copy e a mensagem já aprovados/);
+    // O reparo resolveu — a segunda avaliação (sobre o storyboard já
+    // corrigido) não acha mais nenhum achado do linter, então passa de
+    // verdade. A rejeição na 1a avaliação foi 100% determinística (o
+    // critic fake tinha aprovado de cara), não uma opinião do modelo.
+    expect(body.metadata.critic).toMatchObject({ passed: true, rewrites: 1 });
+    expect(body.metadata.quality_tier).toBe('elite');
+
+    await app.close();
+  });
+
+  it('sequência dinâmica e executável passa sem reparo (concept/copy preservados desde o draft, sem chamada extra)', async () => {
+    let creativePlanCalls = 0;
+    let videoPlanCalls = 0;
+
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) {
+              creativePlanCalls += 1;
+              return Promise.resolve(creativePlanFixture);
+            }
+            videoPlanCalls += 1;
+            return Promise.resolve(videoPlanFixture(cenasBoas));
+          },
+          critic: () => Promise.resolve(CRITIC_APPROVES),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-reel-execution-ok', message: 'Crie um reels pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(creativePlanCalls).toBe(1);
+    expect(videoPlanCalls).toBe(1); // sem reparo nenhum — nada disparou o linter
+    expect(body.metadata.critic).toMatchObject({ passed: true, rewrites: 0 });
+
+    await app.close();
   });
 });
 

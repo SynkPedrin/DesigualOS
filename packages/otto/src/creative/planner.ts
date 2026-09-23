@@ -161,6 +161,37 @@ Gere exatamente ${count} slides com estas chaves:
   );
 }
 
+/**
+ * REEL EXECUTION ENGINE (Otto Elite, missão de fechamento "Reel Execution
+ * Engine Closure"): este prompt é a camada de INTELIGÊNCIA DE FORMATO
+ * específica de vídeo curto — não um storyboard genérico de "cena com
+ * câmera e luz". Achado ao vivo, repetido em DOIS modelos diferentes
+ * (qwen3.5:4b local E qwen2.5:14b na GPU): mesmo com o schema certo, os
+ * dois produziram cenas estáticas de 5s mecânicos, "Visual: None" em cenas
+ * de tipografia, e câmera repetida sem variação — o gargalo não era o
+ * tamanho do modelo, era faltar ESTA camada de raciocínio específica de
+ * Reels antes de escrever a cena. O schema (videoSceneSchema) não ganhou
+ * campos novos de propósito — todo o raciocínio abaixo (papel de retenção,
+ * variedade de câmera, ritmo de duração) se expressa nos MESMOS campos que
+ * já existiam (camera_movement, subject_movement, transition, duration),
+ * só que com conteúdo de verdade em vez de placeholder.
+ */
+const REEL_EXECUTION_ENGINE = `RACIOCÍNIO DE REEL (pense nisto ANTES de escrever cada cena, mas só preencha os campos do schema — não crie campos novos):
+
+PAPEL DE RETENÇÃO por cena (não é campo do schema, é como você decide o que a cena faz): a primeira cena existe pra PARAR o scroll (ação/enquadramento/contraste que justifica parar — nunca confie só na locução pros primeiros 2 segundos); as do meio ORIENTAM, DESENVOLVEM ou trazem uma QUEBRA DE PADRÃO (mudança de enquadramento, ritmo ou energia visual — reels sem NENHUMA quebra viram 6 fotos com voz por cima, o teste que reprova PLATFORM_FIT); a(s) última(s) fecham a PROMESSA e levam ao CTA. Nem toda cena precisa de um papel especial, mas a sequência como um todo precisa mostrar essa curva — não energia constante do início ao fim.
+
+CÂMERA (camera_movement) é vocabulário de direção real, não "estático" repetido: push-in, pull-back, tracking, handheld, POV, over-the-shoulder, macro, pan, tilt, rack focus, whip, ou plano travado (locked) QUANDO for a escolha certa pra aquela cena — nunca o padrão default de todas. Toda decisão de câmera serve a atenção, emoção, clareza ou transição da cena; não enumere termos de câmera por enumerar.
+
+AÇÃO DO SUJEITO (subject_movement) precisa responder "o que está de fato acontecendo" — não "família feliz na sala", e sim algo como "o casal entra pela porta enquanto a câmera acompanha lateralmente; os dois param um instante e olham o ambiente". Curto e genérico demais não é executável.
+
+CENA SÓ DE TIPOGRAFIA é permitida, mas NUNCA "Visual: None" ou vazio — descreva fundo, composição do texto, entrada/saída (escala, wipe, corte no beat), como se fosse uma cena normal, só que sem sujeito humano.
+
+TRANSIÇÃO (transition) tem que dizer o QUÊ, não só que existe: corte seco, corte no movimento (ex.: "corte no movimento da mão abrindo a porta"), match cut, corte por som, wipe — nunca só "transição dinâmica" sem dizer qual.
+
+RITMO DE DURAÇÃO (duration_seconds): NÃO repita o mesmo número em todas as cenas por padrão (5s, 5s, 5s, 5s é ritmo mecânico, não editorial) — derive a duração do que cabe na cena: fala mais longa, ação mais complexa ou papel de retenção mais importante pedem mais tempo; um beat de texto ou corte rápido pode ser 1-2s. Varie de propósito.
+
+TESTE DO EDITOR: se um editor recebesse só isto amanhã, ele precisa saber o que filmar, o que se move, que enquadramento, o que muda, que texto aparece, o que é dito e quando cortar — pra CADA cena, sem precisar perguntar.`;
+
 /** Planejamento de vídeo/reels: cena a cena com direção de câmera e ritmo. */
 export async function planVideo(
   deps: PlannerDeps,
@@ -170,6 +201,8 @@ export async function planVideo(
   const system = `${CREATIVE_DIRECTOR_PREAMBLE}
 
 Você está planejando um vídeo/reels a partir de um plano criativo aprovado. Cada cena tem direção de câmera, movimento de sujeito, ambiente, luz, transição e ritmo - um storyboard em JSON, não um prompt único.
+
+${REEL_EXECUTION_ENGINE}
 
 Padrão de produção: editorial publicitário com detalhe fotográfico, não slideshow genérico.
 - Planeje takes de 1 a 5 segundos, no máximo 16. A soma das durações deve ser duration.
