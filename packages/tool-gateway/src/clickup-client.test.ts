@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertSafeAttachmentUrl, createTask, getTeamMembers, uploadTaskAttachment } from './clickup-client';
+import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, uploadTaskAttachment } from './clickup-client';
 
 /**
  * Cobertura do timeout de rede adicionado na auditoria de production
@@ -99,6 +99,45 @@ describe('assertSafeAttachmentUrl — SSRF: anexo só do nosso Storage', () => {
 
   it('URL malformada não derruba o processo, só rejeita', () => {
     expect(() => assertSafeAttachmentUrl('não é uma url', env)).toThrow();
+  });
+});
+
+/**
+ * P1-priority (release readiness, achado real no E2E de release,
+ * 22/09/2026): a leitura de QUALQUER task com prioridade definida quebrava
+ * — inclusive DELETE, que sempre relê a task antes de apagar. Causa:
+ * `priority.priority` do ClickUp é o RÓTULO em texto ("high"/"urgent"/
+ * "normal"/"low"), não o dígito — só `priority.id` é o número 1-4.
+ * Reproduzido com a resposta REAL batida direto na API pra confirmar o
+ * formato: `{"color":"#f8ae00","id":"2","orderindex":"2","priority":"high"}`.
+ */
+describe('getTask — prioridade do ClickUp é rótulo em texto, não o dígito', () => {
+  const RESPOSTA_BASE = { id: 't1', name: 'X', status: null, due_date: null, list: { id: 'L1' }, assignees: [], description: '', attachments: [] };
+
+  it('task com prioridade "alta" (id "2", rótulo "high") lê priority: 2', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ ...RESPOSTA_BASE, priority: { color: '#f8ae00', id: '2', orderindex: '2', priority: 'high' } }),
+    })));
+    const t = await getTask(CONFIG, 't1');
+    expect(t.priority).toBe(2);
+  });
+
+  it('task sem prioridade nenhuma (priority: null) lê priority: null, não quebra', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ...RESPOSTA_BASE, priority: null }) })));
+    const t = await getTask(CONFIG, 't1');
+    expect(t.priority).toBeNull();
+  });
+
+  it.each([
+    ['1', 'urgent'], ['2', 'high'], ['3', 'normal'], ['4', 'low'],
+  ])('id "%s" (rótulo "%s") lê o dígito certo', async (id, label) => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ ...RESPOSTA_BASE, priority: { color: '#x', id, orderindex: id, priority: label } }),
+    })));
+    const t = await getTask(CONFIG, 't1');
+    expect(t.priority).toBe(Number(id));
   });
 });
 

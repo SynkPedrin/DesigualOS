@@ -413,9 +413,17 @@ const taskDetailSchema = z.object({
   id: z.string(),
   name: z.string(),
   status: z.object({ status: z.string() }).nullish(),
-  // ClickUp devolve prioridade como objeto ({ priority: "1", ... }) ou null
-  // (sem prioridade definida) — nunca o número solto.
-  priority: z.object({ priority: z.coerce.number().int().min(1).max(4) }).nullish(),
+  /**
+   * ClickUp devolve prioridade como objeto ou null (sem prioridade
+   * definida) — nunca o número solto. Achado real no E2E de release
+   * (22/09/2026, bloqueava DELETE e qualquer getTask de task com
+   * prioridade): o campo `priority.priority` é o RÓTULO em texto ("urgent"/
+   * "high"/"normal"/"low"), não o dígito — `z.coerce.number()` nele vira
+   * NaN e o schema inteiro falha, derrubando toda leitura da task
+   * (confirmado batendo direto na API: `{"color":"#f8ae00","id":"2",
+   * "orderindex":"2","priority":"high"}`). O número 1-4 real é `priority.id`.
+   */
+  priority: z.object({ id: z.coerce.number().int().min(1).max(4) }).nullish(),
   due_date: z.union([z.string(), z.number(), z.null()]).optional(),
   list: z.object({ id: z.string() }).nullish(),
   assignees: z
@@ -468,7 +476,7 @@ export async function getTask(config: ClickUpConfig, taskId: string): Promise<Ta
     id: raw.id,
     name: raw.name,
     status: raw.status?.status ?? null,
-    priority: (raw.priority?.priority as 1 | 2 | 3 | 4 | undefined) ?? null,
+    priority: (raw.priority?.id as 1 | 2 | 3 | 4 | undefined) ?? null,
     dueDate: due != null && Number.isFinite(due) ? due : null,
     listId: raw.list?.id ?? null,
     assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),
