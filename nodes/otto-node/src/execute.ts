@@ -815,30 +815,36 @@ export async function executeTask(
     let result = await produce(request.message);
 
     /**
-     * CRITIC + REWRITE (Otto Elite Phase 2, Fase 2 — Fases 9-15 do brief):
-     * o primeiro draft NÃO é o produto final pra reels/vídeo/carrossel — os
-     * formatos onde a rubrica (hook, retenção, roteiro executável) mais
-     * importa e onde o baseline ao vivo desta sessão mediu 59/100.
+     * CRITIC + REWRITE (Otto Senior V1.0 closure, regras 14-19): DRAFT ->
+     * CRITIC -> se falhar, REWRITE #1 -> CRITIC #2 -> se falhar, REWRITE #2
+     * -> FINAL CHECK. Máximo 2 reescritas — nunca infinito. O primeiro draft
+     * nunca é automaticamente considerado elite pra reels/vídeo/carrossel:
+     * os formatos onde a rubrica (hook, retenção, roteiro executável) mais
+     * importa, e onde o baseline ao vivo desta sessão mediu 59/100.
      *
      * NÃO roda pra 'image'/'upscale': a peça principal ali é a imagem em si
      * (renderizada depois pelo Studio), e o texto que o critic julgaria
      * (copy/legenda) já passa pelo mesmo contrato de saída acima sem o custo
      * de outra chamada de LLM inteira.
      *
-     * MAX 1 reescrita, não os 2 do brief: cada chamada de createCreativePlan
-     * já mede 200-350s nesta máquina (CPU-only, ver OTTO_ELITE_HANDOFF.md).
-     * Duas reescritas completas poderiam levar um turno a 15+ minutos, o que
-     * o próprio brief (Fase 35-36) trata como inaceitável. Documentado como
-     * risco conhecido, não resolvido silenciosamente.
+     * LATÊNCIA: cada produce() já mede 200-350s nesta máquina (CPU-only, ver
+     * OTTO_ELITE_HANDOFF.md), então o pior caso (draft + 2 reescritas + 3
+     * avaliações do critic) pode passar de 15-20 minutos. Regra 28 do brief
+     * de fechamento é explícita — qualidade e latência são preocupações
+     * separadas, não sacrificar qualidade pra ficar rápido — então isto fica
+     * como está, com PERFORMANCE OPTIMIZATION NEEDED registrado na metadata
+     * quando o turno ultrapassa um teto observável, em vez de cortar
+     * reescrita à toa.
      */
     const CRITIC_ENABLED_INTENTS: StudioJobType[] = ['reels', 'video', 'carousel'];
     const criticHabilitado = CRITIC_ENABLED_INTENTS.includes(jobType);
+    const MAX_REWRITES = 2;
     let criticEvaluation: Awaited<ReturnType<typeof critiqueDeliverable>> | null = null;
     let criticGate: ReturnType<typeof passesCriticGate> | null = null;
     let criticRewrites = 0;
 
-    if (criticHabilitado) {
-      criticEvaluation = await measureLlm(() =>
+    async function critique() {
+      const evaluation = await measureLlm(() =>
         critiqueDeliverable(
           { llm: deps.llm },
           {
@@ -848,35 +854,35 @@ export async function executeTask(
           },
         ),
       );
-      criticGate = passesCriticGate(criticEvaluation);
+      const gate = passesCriticGate(evaluation);
       logger.info(
-        { overall: criticGate.overall, passed: criticGate.passed, reasons: criticGate.reasons },
+        { attempt: criticRewrites, overall: gate.overall, passed: gate.passed, reasons: gate.reasons },
         '[OTTO:critic] avaliação do entregável renderizado',
       );
+      return { evaluation, gate };
+    }
 
-      if (!criticGate.passed) {
+    if (criticHabilitado) {
+      ({ evaluation: criticEvaluation, gate: criticGate } = await critique());
+
+      while (!criticGate.passed && criticRewrites < MAX_REWRITES) {
         const revisionNote = formatCriticRevisionNote(criticEvaluation, criticGate);
-        const augmentedMessage = `${request.message}\n\nREVISÃO DO CRITIC OBRIGATÓRIA:\n${revisionNote}`;
+        const augmentedMessage = `${request.message}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
         result = await produce(augmentedMessage);
-        criticRewrites = 1;
-
-        criticEvaluation = await measureLlm(() =>
-          critiqueDeliverable(
-            { llm: deps.llm },
-            {
-              briefing: stripOrchestratorContext(request.message),
-              renderedAnswer: result.answer,
-              requestedDeliverables: entregaveisPedidos,
-            },
-          ),
-        );
-        criticGate = passesCriticGate(criticEvaluation);
-        logger.info(
-          { overall: criticGate.overall, passed: criticGate.passed, reasons: criticGate.reasons },
-          '[OTTO:critic] avaliação após reescrita',
-        );
+        criticRewrites += 1;
+        ({ evaluation: criticEvaluation, gate: criticGate } = await critique());
       }
     }
+
+    /**
+     * ESTADO FINAL DE QUALIDADE (regra 19): nunca chamar "elite" um trabalho
+     * que não passou. Job types sem critic (image/upscale) não têm veredito
+     * de qualidade textual — ficam como "not_evaluated", nem elite nem draft,
+     * porque a pergunta não se aplica a eles.
+     */
+    const qualityTier = !criticHabilitado ? 'not_evaluated' : criticGate?.passed ? 'elite' : 'draft';
+    const elitePassed = criticHabilitado ? (criticGate?.passed ?? false) : null;
+    const requiresHumanReview = criticHabilitado ? !(criticGate?.passed ?? false) : false;
 
     const { pipeline, plan, carouselPlan, videoPlan, spec, answer } = result;
 
@@ -917,9 +923,16 @@ export async function executeTask(
               passed: criticGate.passed,
               reasons: criticGate.reasons,
               rewrites: criticRewrites,
+              max_rewrites: MAX_REWRITES,
             },
           }
         : { critic: { enabled: false } }),
+      // Regra 19 (Otto Senior V1.0): nunca chamar "elite" trabalho que não
+      // passou. quality_tier/elite_passed/requires_human_review são o
+      // veredito FINAL, explícito, visível fora de metadata.critic.
+      quality_tier: qualityTier,
+      elite_passed: elitePassed,
+      requires_human_review: requiresHumanReview,
     };
     const timings: PhaseTimings = {
       classify_ms: classifyMs,
@@ -928,6 +941,16 @@ export async function executeTask(
       total_ms: since(startedAt),
     };
     metadata.timings = timings;
+    // Regra 28: registrar quando a latência passou de um teto observável,
+    // sem tocar em qualidade por causa disso — sinalização, não sacrifício.
+    const PERFORMANCE_CEILING_MS = 480_000; // 8min: ~2x uma geração única observada nesta sessão
+    if (timings.total_ms > PERFORMANCE_CEILING_MS) {
+      metadata.performance_note = 'PERFORMANCE OPTIMIZATION NEEDED';
+      logger.warn(
+        { total_ms: timings.total_ms, execution_id: request.execution_id },
+        '[OTTO:performance] turno passou do teto observável de latência',
+      );
+    }
 
     return {
       execution_id: request.execution_id,

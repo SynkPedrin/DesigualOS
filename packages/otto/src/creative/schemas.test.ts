@@ -226,6 +226,50 @@ describe('videoPlanSchema', () => {
     if (!result.success) return;
     expect(result.data.duration).toBe(10);
   });
+
+  /**
+   * REGRESSÃO REAL: validação ao vivo do caso Cosentino (Otto Senior V1.0
+   * closure) — o modelo mandou uma cena com duration_seconds=6 (fora do
+   * range [1,5]), a correção única do chatJson não resolveu, e o turno
+   * inteiro morreu depois de ~293s por um valor de TIMING interno. Regra
+   * 25-26 do brief de fechamento: ruído representacional inofensivo
+   * (número finito fora do range) é normalizado (clampado), não descartado.
+   */
+  it('clampa duration_seconds fora de [1,5] em vez de rejeitar o plano inteiro', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'Abertura sem fila',
+      duration: 11,
+      aspect_ratio: '9:16',
+      scenes: [
+        { camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 6 },
+        { camera_movement: 'b', subject_movement: 'b', environment: 'b', lighting: 'b', transition: 'b', pacing: 'b', duration_seconds: 0.2 },
+      ],
+      sound_direction: 'trilha leve',
+      text_overlays: [],
+      cta: 'Garanta seu horário',
+      generation_prompts: ['a', 'b'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.scenes[0]!.duration_seconds).toBe(5); // 6 clampado pro teto
+    expect(result.data.scenes[1]!.duration_seconds).toBe(1); // 0.2 clampado pro piso
+    expect(result.data.duration).toBe(6); // duration derivada da SOMA JÁ CLAMPADA (5+1)
+  });
+
+  it('valor não numérico continua sendo erro de verdade (não é ruído de representação)', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'X',
+      duration: 5,
+      aspect_ratio: '9:16',
+      scenes: [
+        { camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 'muito' as unknown as number },
+      ],
+      sound_direction: 'x',
+      cta: 'x',
+      generation_prompts: ['x'],
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('productionSpecSchema', () => {

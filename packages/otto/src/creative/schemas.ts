@@ -154,8 +154,31 @@ const optionalString = () =>
     z.string().min(1).optional(),
   );
 
+/**
+ * Duração de cena CLAMPADA em vez de rejeitada quando fora de [1,5]s.
+ *
+ * Medido ao vivo em 22/09/2026 (Otto Elite — validação Cosentino): o modelo
+ * mandou uma cena com duration_seconds > 5 (ex: 6s pra um beat que "pedia"
+ * mais tempo), a correção única do chatJson não resolveu, e o turno inteiro
+ * morreu depois de ~293s — por um valor de TIMING interno, não um fato
+ * (cliente, data, oferta). Isto é ruído representacional inofensivo (Otto
+ * Senior V1.0, regra 25-26: "normalize deterministic non-semantic noise...
+ * do not destroy a 3-minute creative generation because of a harmless
+ * internal timing value"): um número FINITO fora do range é clampado pro
+ * limite mais próximo, não descartado. Um valor NÃO numérico (string, null,
+ * NaN) continua caindo no erro de schema normal — isso não é ruído de
+ * representação, é o campo ausente ou errado de verdade.
+ */
+const clampedSceneDuration = () =>
+  z.preprocess((value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.min(5, Math.max(1, value));
+    }
+    return value;
+  }, z.number().min(1).max(5).optional());
+
 export const videoSceneSchema = z.object({
-  duration_seconds: z.number().min(1).max(5).optional(),
+  duration_seconds: clampedSceneDuration(),
   image_prompt: optionalString(),
   shot_type: z.enum(['portrait', 'wide', 'detail', 'action', 'environment', 'closing']).optional(),
   continuity: optionalString(),

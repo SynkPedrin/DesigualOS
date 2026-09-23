@@ -1115,17 +1115,23 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     await app.close();
   });
 
-  it('critic reprova e continua reprovando após a reescrita: entrega mesmo assim, mas metadata.critic.passed fica false (nunca trava o turno)', async () => {
+  it('critic reprova e continua reprovando após DUAS reescritas: entrega mesmo assim (nunca trava o turno), quality_tier fica "draft"', async () => {
+    let creativePlanCalls = 0;
+    let criticCalls = 0;
     const app = buildTestApp(
       makeDeps(
         {
           chatJson: (schema) => {
-            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            if (schema === creativePlanSchema) {
+              creativePlanCalls += 1;
+              return Promise.resolve(creativePlanFixture);
+            }
             if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
             return Promise.reject(new OttoLLMError('schema inesperado'));
           },
-          critic: () =>
-            Promise.resolve({
+          critic: () => {
+            criticCalls += 1;
+            return Promise.resolve({
               scores: {
                 strategy: 5, concept: 5, hook: 5, specificity: 5, originality: 5,
                 brand_fit: 5, copy: 5, retention: 5, platform_fit: 5, executability: 5,
@@ -1136,7 +1142,8 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
                 ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
               },
               reasoning: 'fraco em tudo',
-            }),
+            });
+          },
         },
         brainDir,
       ),
@@ -1151,7 +1158,58 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     // mesmo princípio do loop anti-genérico (creative-pipeline.ts), que
     // também entrega após esgotar revisões em vez de devolver erro.
     expect(body.status).toBe('completed');
-    expect(body.metadata.critic).toMatchObject({ enabled: true, passed: false, rewrites: 1 });
+    // MAX_REWRITES=2: draft inicial + 2 reescritas = 3 chamadas de createCreativePlan.
+    expect(creativePlanCalls).toBe(3);
+    expect(criticCalls).toBe(3); // avaliação inicial + após reescrita 1 + após reescrita 2
+    expect(body.metadata.critic).toMatchObject({ enabled: true, passed: false, rewrites: 2, max_rewrites: 2 });
+    // Regra 19: nunca chamar "elite" trabalho que não passou.
+    expect(body.metadata.quality_tier).toBe('draft');
+    expect(body.metadata.elite_passed).toBe(false);
+    expect(body.metadata.requires_human_review).toBe(true);
+
+    await app.close();
+  });
+
+  it('critic aprova de primeira: quality_tier "elite", elite_passed true, sem revisão humana obrigatória', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+            return Promise.reject(new OttoLLMError('schema inesperado'));
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-critic-elite',
+      message: 'Crie um carrossel pro cliente',
+    });
+
+    expect(body.status).toBe('completed');
+    expect(body.metadata.quality_tier).toBe('elite');
+    expect(body.metadata.elite_passed).toBe(true);
+    expect(body.metadata.requires_human_review).toBe(false);
+
+    await app.close();
+  });
+
+  it('job type sem critic (image): quality_tier "not_evaluated", elite_passed null', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        { chatJson: (schema) => (schema === creativePlanSchema ? Promise.resolve(creativePlanFixture) : Promise.reject(new OttoLLMError('x'))) },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-tier-image', message: 'Crie uma imagem pro cliente' });
+
+    expect(body.metadata.quality_tier).toBe('not_evaluated');
+    expect(body.metadata.elite_passed).toBeNull();
+    expect(body.metadata.requires_human_review).toBe(false);
 
     await app.close();
   });
