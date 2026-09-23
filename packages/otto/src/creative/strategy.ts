@@ -56,7 +56,7 @@ Produza UM objeto de estratégia com estes campos:
 
 TESTE DE QUALIDADE DA ESTRATÉGIA: se "communication_job" for só "informar", "divulgar", "mostrar" ou "apresentar" sem nada além disso, a estratégia é fraca — vá mais fundo no que muda pra quem vê.
 
-Depois, gere de 4 a 6 ÂNGULOS CRIATIVOS GENUINAMENTE DIFERENTES (não reescritas da mesma frase - rotas conceituais reais: fricção removida, antecipação, urgência de oportunidade, prova social, mecanismo, momento cultural, etc). Cada ângulo tem:
+Depois, gere EXATAMENTE 4 ÂNGULOS CRIATIVOS GENUINAMENTE DIFERENTES (não reescritas da mesma frase - rotas conceituais reais: fricção removida, antecipação, urgência de oportunidade, prova social, mecanismo, momento cultural, etc). Cada ângulo tem:
 - name: nome curto do ângulo
 - one_sentence_idea: a ideia em uma frase (não o objetivo - a IDEIA)
 - hook_direction: que tipo de abertura esse ângulo sugere
@@ -89,7 +89,23 @@ export async function developStrategy(deps: StrategyDeps, input: StrategyInput):
       { role: 'user', content: user },
     ],
     creativeStrategySchema,
-    { temperature: 0.8 },
+    {
+      temperature: 0.8,
+      /**
+       * BLOCKER 1 (Otto Elite, validação ao vivo real): developStrategy
+       * falhou com "angles: Required" — a chave inteira ausente, não um
+       * valor mal formado. Causa raiz provável: o schema é o maior de todo
+       * o pipeline (9 campos de estratégia + até 6 ângulos × 9 campos + 8
+       * scores cada), "angles" é o ÚLTIMO campo pedido no prompt, e o
+       * budget padrão de JSON (DEFAULT_NUM_PREDICT_JSON=4000) corta a
+       * geração antes do modelo chegar lá. Isto não é ruído de
+       * representação (Missão 1-3 do fechamento anterior) — é conteúdo
+       * semântico real (os ângulos) truncado por falta de espaço, e a
+       * correção certa é dar espaço, não inventar ângulo em código nem
+       * fingir que a chamada passou.
+       */
+      numPredict: 7_000,
+    },
   );
 }
 
@@ -170,7 +186,7 @@ export interface DevelopBigIdeaInput {
 const BIG_IDEA_SYSTEM = `Você é um diretor de criação sênior. A partir do ângulo escolhido, produza:
 
 - big_idea: a proposição criativa em UMA frase que governa a peça inteira. NÃO é o objetivo de negócio reformulado ("vamos informar que...") — é o que torna ESTA peça diferente de qualquer anúncio genérico do mesmo assunto.
-- hooks: de 5 a 8 aberturas candidatas (hooks) pra essa ideia, cada uma com:
+- hooks: EXATAMENTE 5 aberturas candidatas (hooks) pra essa ideia, cada uma com:
   - text: o texto/conceito do hook em si
   - scores: stop_power, specificity, curiosity, clarity, believability, brand_fit, continuation_power (0 a 10 cada, julgue isoladamente)
 
@@ -195,7 +211,9 @@ export async function developBigIdeaAndHooks(deps: StrategyDeps, input: DevelopB
       { role: 'user', content: user },
     ],
     bigIdeaAndHooksSchema,
-    { temperature: 0.8 },
+    // BLOCKER 1: mesmo raciocínio de developStrategy — 5 hooks × 7 scores é
+    // um schema grande, budget padrão de 4000 arrisca truncar "hooks".
+    { temperature: 0.8, numPredict: 5_000 },
   );
 }
 

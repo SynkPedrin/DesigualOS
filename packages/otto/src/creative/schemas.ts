@@ -101,6 +101,30 @@ const clampedNumber = (min: number, max: number) =>
     return value;
   }, z.number().min(min).max(max).optional());
 
+/**
+ * Array de string que TOLERA o modelo mandando UMA STRING SOLTA em vez de
+ * array de um item — Otto Elite, Blocker 3 (achado ao vivo:
+ * `text_overlays` recebeu string, não array; mesma classe de
+ * `referencesField`, generalizada aqui pra qualquer campo textual em
+ * lista). "abc" -> ["abc"] é semanticamente sem perda: o modelo tinha UM
+ * item e não empacotou. Array já correto passa direto. `null`/"" viram
+ * lista vazia (perde sentido só quando o array em si é opcional — por isso
+ * quem precisa de min(1) real, como generation_prompts, aplica o preprocess
+ * mas mantém o próprio .min(1) na base, que barra lista vazia normalmente).
+ * Objeto, número ou qualquer outro tipo NÃO é normalizado — cai no erro de
+ * schema normal, porque não é ruído de representação, é conteúdo errado.
+ */
+const stringOrArray = <T extends z.ZodArray<z.ZodString>>(base: T) =>
+  z.preprocess((value) => {
+    if (Array.isArray(value)) return value;
+    if (value === null) return [];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length === 0 ? [] : [trimmed];
+    }
+    return value;
+  }, base);
+
 // ---------------------------------------------------------------------------
 // Direção de arte: o bloco que impede prompt genérico. Cada campo é uma
 // decisão que um diretor de arte humano tomaria antes de abrir o Midjourney.
@@ -249,9 +273,9 @@ export const videoPlanSchema = z.object({
   aspect_ratio: z.string().min(1),
   scenes: z.array(videoSceneSchema).min(1).max(16),
   sound_direction: z.string().min(1),
-  text_overlays: z.array(z.string()).default([]),
+  text_overlays: stringOrArray(z.array(z.string())).default([]),
   cta: z.string().min(1),
-  generation_prompts: z.array(z.string()).min(1),
+  generation_prompts: stringOrArray(z.array(z.string()).min(1)),
 }).superRefine((plan, ctx) => {
   if (plan.generation_prompts.length !== plan.scenes.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['generation_prompts'], message: 'Cada cena precisa de um prompt de movimento.' });
@@ -378,9 +402,9 @@ export const criticScoresSchema = z.object({
 });
 
 export const criticFlagsSchema = z.object({
-  missing_deliverables: z.array(z.string()).default([]),
+  missing_deliverables: stringOrArray(z.array(z.string())).default([]),
   genericity: z.boolean().default(false),
-  unsupported_claims: z.array(z.string()).default([]),
+  unsupported_claims: stringOrArray(z.array(z.string())).default([]),
   weak_hook: z.boolean().default(false),
   weak_concept: z.boolean().default(false),
   bad_cta: z.boolean().default(false),

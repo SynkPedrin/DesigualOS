@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   carouselPlanSchema,
   creativePlanSchema,
+  criticFlagsSchema,
   productionSpecSchema,
   realWorldFidelitySchema,
   videoPlanSchema,
@@ -342,6 +343,60 @@ describe('videoPlanSchema', () => {
     if (result.success) expect(result.data.scenes[0]!.duration_seconds).toBeUndefined();
   });
 
+  /**
+   * REGRESSÃO REAL: Otto Elite, Blocker 3 — validação ao vivo real (mesma
+   * sessão) mandou text_overlays como STRING ("Abertura 24/09") em vez de
+   * array (["Abertura 24/09"]), derrubando a reescrita inteira. "abc" ->
+   * ["abc"] não perde informação — o modelo tinha UM item e não empacotou.
+   */
+  it('text_overlays: string solta vira array de um item (Blocker 3)', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      sound_direction: 'x', text_overlays: 'Abertura 24/09', cta: 'x', generation_prompts: ['x'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.text_overlays).toEqual(['Abertura 24/09']);
+  });
+
+  it('text_overlays: null ou "" viram lista vazia', () => {
+    const comNull = videoPlanSchema.safeParse({
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      sound_direction: 'x', text_overlays: null, cta: 'x', generation_prompts: ['x'],
+    });
+    expect(comNull.success).toBe(true);
+    if (comNull.success) expect(comNull.data.text_overlays).toEqual([]);
+  });
+
+  it('generation_prompts: string solta vira array de um item, mas continua exigindo 1 por cena (min 1 preservado)', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      sound_direction: 'x', text_overlays: [], cta: 'x', generation_prompts: 'construction site golden hour',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.generation_prompts).toEqual(['construction site golden hour']);
+  });
+
+  it('generation_prompts: array vazio continua rejeitado (min(1) real não vira ausência tolerada)', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      sound_direction: 'x', text_overlays: [], cta: 'x', generation_prompts: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('objeto ou número em campo de array continua erro real (não é ruído de representação)', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      sound_direction: 'x', text_overlays: 42 as unknown as string[], cta: 'x', generation_prompts: ['x'],
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('valor não numérico continua sendo erro de verdade (não é ruído de representação)', () => {
     const result = videoPlanSchema.safeParse({
       concept: 'X',
@@ -376,5 +431,25 @@ describe('productionSpecSchema', () => {
         prompt: 'x',
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('criticFlagsSchema (Blocker 3)', () => {
+  it('missing_deliverables e unsupported_claims toleram string solta como array de um item', () => {
+    const result = criticFlagsSchema.safeParse({ missing_deliverables: 'roteiro', unsupported_claims: 'preço não informado no briefing' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.missing_deliverables).toEqual(['roteiro']);
+      expect(result.data.unsupported_claims).toEqual(['preço não informado no briefing']);
+    }
+  });
+
+  it('null e "" viram lista vazia nos dois campos', () => {
+    const result = criticFlagsSchema.safeParse({ missing_deliverables: null, unsupported_claims: '' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.missing_deliverables).toEqual([]);
+      expect(result.data.unsupported_claims).toEqual([]);
+    }
   });
 });
