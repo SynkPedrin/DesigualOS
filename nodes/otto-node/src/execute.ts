@@ -43,6 +43,7 @@ import {
   selectBestValidCandidate,
   type CandidateRecord,
   detectPlaceholderContent,
+  detectForbiddenLanguage,
   detectCarouselRepetition,
   type BrainHealth,
   type BrandKit,
@@ -630,18 +631,72 @@ export async function executeTask(
           : contratoEstrutura.artefato === 'roteiro'
             ? 1_800
             : undefined;
-      const answer = await measureLlm(() =>
+      const chatSystemPrompt = `${CHAT_SYSTEM_PROMPT}${escopoSection}${referenteSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}\n\n${FECHAMENTO_ENTREGA}`;
+      let answer = await measureLlm(() =>
         deps.llm.chat(
           [
-            {
-              role: 'system',
-              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${referenteSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}\n\n${FECHAMENTO_ENTREGA}`,
-            },
+            { role: 'system', content: chatSystemPrompt },
             { role: 'user', content: request.message },
           ],
           { temperature: 0.7, suppressThinking: policy.suppressThinking, ...(numPredict ? { numPredict } : {}) },
         ),
       );
+
+      /**
+       * PISO UNIVERSAL DE QUALIDADE NO CAMINHO DE CHAT (Otto Senior V1,
+       * "Universal Quality Floor"): caption, copy, feedback rewrite e
+       * outros pedidos de PRODUÇÃO CRIATIVA passam por aqui — o único
+       * caminho SEM nenhuma checagem determinística até esta missão.
+       * Achados ao vivo reais: `[FOTO DA VISTA PANORÂMICA]` sobreviveu
+       * numa legenda, e `#SonhosRealizadosComQualidade` sobreviveu com o
+       * dossiê dizendo explicitamente "sem exagero de 'sonho realizado'".
+       * `contratoEstrutura.artefato !== 'indefinido'` já é o sinal de
+       * "isto é produção criativa, não pergunta/conhecimento" — reusa a
+       * detecção que este mesmo bloco já calcula, não duplica lógica nova
+       * (Section 3: "distinguish knowledge/chat from creative
+       * production"). Checagem determinística, sem chamada de LLM extra —
+       * proporcional a um pedido leve (Section 2).
+       */
+      let chatQualityIssues: string[] = [];
+      let chatQualityRepairAttempted = false;
+      if (contratoEstrutura.artefato !== 'indefinido') {
+        const placeholders = detectPlaceholderContent(answer);
+        const forbiddenLanguage = detectForbiddenLanguage(answer, contextoResolvido ?? '');
+        chatQualityIssues = [...placeholders, ...forbiddenLanguage];
+        if (chatQualityIssues.length > 0) {
+          chatQualityRepairAttempted = true;
+          const repairInstruction = [
+            'CORREÇÃO OBRIGATÓRIA antes de entregar: a resposta abaixo tem problema(s) que não podem ir pro cliente.',
+            placeholders.length > 0 ? `Placeholder de produção não preenchido, sobrou no texto: ${placeholders.join(', ')}. Substitua por conteúdo final de verdade ou remova.` : '',
+            forbiddenLanguage.length > 0 ? `Linguagem que o próprio contexto do cliente proíbe explicitamente sobrevive na resposta: ${forbiddenLanguage.join(', ')}. Reescreva sem essa expressão nem variação dela (plural, hashtag, etc).` : '',
+            `Resposta anterior:\n${answer}`,
+            'Preserve tudo o que está certo. Corrija SOMENTE os pontos acima.',
+          ].filter(Boolean).join('\n\n');
+          try {
+            const corrigido = await measureLlm(() =>
+              deps.llm.chat(
+                [
+                  { role: 'system', content: chatSystemPrompt },
+                  { role: 'user', content: repairInstruction },
+                ],
+                { temperature: 0.5, suppressThinking: policy.suppressThinking, ...(numPredict ? { numPredict } : {}) },
+              ),
+            );
+            answer = corrigido;
+            chatQualityIssues = [...detectPlaceholderContent(answer), ...detectForbiddenLanguage(answer, contextoResolvido ?? '')];
+            logger.info(
+              { execution_id: request.execution_id, resolved: chatQualityIssues.length === 0 },
+              '[OTTO:quality] correção de placeholder/linguagem proibida aplicada no caminho de chat',
+            );
+          } catch (repairError) {
+            logger.warn(
+              { execution_id: request.execution_id, error: repairError instanceof Error ? repairError.message : String(repairError) },
+              '[OTTO:quality] correção de placeholder/linguagem proibida falhou — mantendo resposta original',
+            );
+          }
+        }
+      }
+
       const timings: PhaseTimings = {
         classify_ms: classifyMs,
         retrieval_ms: retrievalMs,
@@ -666,6 +721,9 @@ export async function executeTask(
           retrieval: { depth: depth.depth, reason: depth.reason, signals: depth.signals, ...policy },
           timings,
           ...(dna ? { creative_dna: dna } : {}),
+          ...(contratoEstrutura.artefato !== 'indefinido'
+            ? { quality_gate: { placeholders_and_forbidden_language: chatQualityIssues, repair_attempted: chatQualityRepairAttempted } }
+            : {}),
         },
       };
     }
@@ -1432,6 +1490,59 @@ export async function executeTask(
     }
 
     /**
+     * PISO UNIVERSAL DE QUALIDADE PRO CAMINHO DE IMAGEM (Otto Senior V1,
+     * "Universal Quality Floor"): 'image'/'upscale' NUNCA passam pelo
+     * critic (a peça principal é a imagem, renderizada depois pelo
+     * Studio), mas o campo `copy` que ESTE bloco produz ainda é texto
+     * client-facing (legenda, copy de anúncio) — e até esta missão não
+     * tinha NENHUMA checagem, nem a determinística e barata. Achado ao
+     * vivo real (certificação não-vídeo): um "ad" de performance saiu com
+     * linguagem de escassez que o dossiê proibia explicitamente, sem
+     * nenhum gate pra pegar. Roda só pra 'image' (não 'upscale', que não
+     * gera copy nova) e só quando algo é encontrado — sem chamada de LLM
+     * extra no caminho feliz.
+     */
+    let imageQualityRepairAttempted = false;
+    let imageQualityIssuesFinal: string[] = [];
+    if (!criticHabilitado && jobType === 'image') {
+      const placeholders = detectPlaceholderContent(result.answer);
+      const forbiddenLanguage = detectForbiddenLanguage(result.answer, contextoOrquestradorProducao ?? '');
+      imageQualityIssuesFinal = [...placeholders, ...forbiddenLanguage];
+      if (imageQualityIssuesFinal.length > 0) {
+        imageQualityRepairAttempted = true;
+        const repairMessage = [
+          `${producaoBriefingBase}`,
+          `PEÇA ATUAL (o que você escreveu):\n${result.answer}`,
+          'CORREÇÃO OBRIGATÓRIA: preserve TODO o resto do conteúdo exatamente como está. Corrija SOMENTE os pontos abaixo:',
+          placeholders.length > 0 ? `- Placeholder de produção não preenchido: ${placeholders.join(', ')}. Substitua por conteúdo final ou remova.` : '',
+          forbiddenLanguage.length > 0 ? `- Linguagem que o contexto do cliente proíbe explicitamente sobrevive: ${forbiddenLanguage.join(', ')}. Reescreva sem essa expressão nem variação.` : '',
+        ].filter(Boolean).join('\n\n');
+        try {
+          const corrigido = await produce(repairMessage, undefined, strategyBriefing || undefined);
+          const aindaComProblema = [...detectPlaceholderContent(corrigido.answer), ...detectForbiddenLanguage(corrigido.answer, contextoOrquestradorProducao ?? '')];
+          if (aindaComProblema.length < imageQualityIssuesFinal.length) {
+            result = corrigido;
+            imageQualityIssuesFinal = aindaComProblema;
+            logger.info(
+              { execution_id: request.execution_id, remaining: aindaComProblema },
+              '[OTTO:quality] correção de placeholder/linguagem proibida aplicada no caminho de imagem',
+            );
+          } else {
+            logger.warn(
+              { execution_id: request.execution_id, imageQualityIssuesFinal, aindaComProblema },
+              '[OTTO:quality] correção não melhorou — mantendo versão anterior',
+            );
+          }
+        } catch (repairError) {
+          logger.warn(
+            { execution_id: request.execution_id, error: repairError instanceof Error ? repairError.message : String(repairError) },
+            '[OTTO:quality] correção de placeholder/linguagem proibida falhou — mantendo versão anterior',
+          );
+        }
+      }
+    }
+
+    /**
      * ESTADO FINAL DE QUALIDADE (regra 19): nunca chamar "elite" um trabalho
      * que não passou — e um pipeline degradado (qualquer estágio de melhoria
      * que falhou) NUNCA pode ser "elite", mesmo que a última avaliação
@@ -1457,9 +1568,19 @@ export async function executeTask(
      * "lorem ipsum", colchete de variável não substituída).
      */
     const placeholdersFinal = detectPlaceholderContent(result.answer);
+    /**
+     * LINGUAGEM PROIBIDA (Otto Senior V1, "Universal Quality Floor"):
+     * mesmo raciocínio — o dossiê do cliente pode proibir uma expressão
+     * explicitamente ("sem exagero de 'sonho realizado'"), e isso nunca
+     * tinha checagem determinística nem no caminho de vídeo/carrossel
+     * (o critic LLM julga fato/genericidade, não frase proibida
+     * específica declarada no contexto).
+     */
+    const forbiddenLanguageFinal = detectForbiddenLanguage(result.answer, contextoOrquestradorProducao ?? '');
     const criticPassedFinal =
       !pipelineDegraded &&
       (criticGate?.passed ?? false) &&
+      forbiddenLanguageFinal.length === 0 &&
       missingFinal.length === 0 &&
       unsupportedClaimsFinal.length === 0 &&
       placeholdersFinal.length === 0;
@@ -1556,8 +1677,10 @@ export async function executeTask(
       missing_deliverables: missingFinal,
       unsupported_claims: unsupportedClaimsFinal,
       placeholders_detected: placeholdersFinal,
+      forbidden_language_detected: forbiddenLanguageFinal,
       ...(completionRepairAttempted ? { completion_repair: { attempted: true, succeeded: completionRepairSucceeded } } : {}),
       ...(factualCorrectionAttempted ? { factual_correction: { attempted: true, succeeded: factualCorrectionSucceeded } } : {}),
+      ...(imageQualityRepairAttempted ? { image_quality_repair: { attempted: true, remaining_issues: imageQualityIssuesFinal } } : {}),
     };
     const timings: PhaseTimings = {
       classify_ms: classifyMs,

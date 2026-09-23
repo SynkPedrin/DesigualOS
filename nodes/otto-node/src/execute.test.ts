@@ -2283,6 +2283,164 @@ describe('Reel Execution Engine (Otto Elite)', () => {
 });
 
 /**
+ * PISO UNIVERSAL DE QUALIDADE (Otto Senior V1, "Universal Quality Floor"):
+ * caption/copy no caminho de CHAT e ad/static no caminho de IMAGEM eram os
+ * dois únicos caminhos de produção criativa sem NENHUMA checagem
+ * determinística — nem a de placeholder que a sessão já tinha construído.
+ * Estes testes replicam os dois achados ao vivo reais da certificação
+ * não-vídeo.
+ */
+describe('piso universal de qualidade — caminho de chat (Otto Senior V1)', () => {
+  const DOSSIE_VISTA_ALEGRE =
+    'CLIENTE DO TURNO: Construtora Alvorada\nTom de marca: aspiracional mas honesto, sem exagero de "sonho realizado".';
+
+  /**
+   * REGRESSÃO REAL: legenda de Instagram (caminho de chat, nunca gated até
+   * esta missão) saiu com `[FOTO DA VISTA PANORÂMICA]` sobrando no meio do
+   * texto — um placeholder de produção nunca preenchido.
+   */
+  it('teste: placeholder de produção sobrevivendo numa legenda (caminho de chat) dispara reparo', async () => {
+    let chatCalls = 0;
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chat: () => {
+            chatCalls += 1;
+            return Promise.resolve(
+              chatCalls === 1
+                ? 'Seja bem-vindo! [FOTO DA VISTA PANORÂMICA] Venha conhecer.'
+                : 'Seja bem-vindo! Venha conhecer a vista panorâmica de perto.',
+            );
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-chat-placeholder',
+      message: `Crie uma legenda pro Instagram.${CONTEXT_BLOCK_MARKER}${DOSSIE_VISTA_ALEGRE}`,
+    });
+
+    expect(body.status).toBe('completed');
+    expect(chatCalls).toBe(2); // draft + 1 reparo
+    expect(body.answer).not.toContain('[FOTO DA VISTA PANORÂMICA]');
+    const qualityGate = body.metadata.quality_gate as { placeholders_and_forbidden_language: string[]; repair_attempted: boolean };
+    expect(qualityGate.repair_attempted).toBe(true);
+    expect(qualityGate.placeholders_and_forbidden_language).toEqual([]);
+
+    await app.close();
+  });
+
+  /**
+   * REGRESSÃO REAL: `#SonhosRealizadosComQualidade` sobreviveu com o
+   * dossiê dizendo explicitamente "sem exagero de 'sonho realizado'".
+   */
+  it('teste 18: linguagem proibida pelo dossiê (hashtag CamelCase pluralizada) dispara reparo', async () => {
+    let chatCalls = 0;
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chat: () => {
+            chatCalls += 1;
+            return Promise.resolve(
+              chatCalls === 1
+                ? 'Bem-vindo! #SonhosRealizadosComQualidade'
+                : 'Bem-vindo! #QualidadeElegante',
+            );
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-chat-forbidden',
+      message: `Crie uma legenda pro Instagram.${CONTEXT_BLOCK_MARKER}${DOSSIE_VISTA_ALEGRE}`,
+    });
+
+    expect(body.status).toBe('completed');
+    expect(chatCalls).toBe(2);
+    expect(body.answer).not.toContain('SonhosRealizados');
+    const qualityGate = body.metadata.quality_gate as { placeholders_and_forbidden_language: string[] };
+    expect(qualityGate.placeholders_and_forbidden_language).toEqual([]);
+
+    await app.close();
+  });
+
+  it('pergunta pura (não é produção criativa) NÃO roda a checagem — sem chamada extra', async () => {
+    let chatCalls = 0;
+    const app = buildTestApp(
+      makeDeps({ chat: () => { chatCalls += 1; return Promise.resolve('Resposta qualquer.'); } }, brainDir),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-chat-pergunta', message: 'Qual o melhor horário pra postar?' });
+
+    expect(body.status).toBe('completed');
+    expect(chatCalls).toBe(1); // sem reparo — não é produção criativa
+    expect(body.metadata.quality_gate).toBeUndefined();
+
+    await app.close();
+  });
+});
+
+describe('piso universal de qualidade — caminho de imagem (Otto Senior V1)', () => {
+  /**
+   * REGRESSÃO REAL: um "ad" de performance saiu com linguagem de escassez
+   * ("sem o estresse da falta de estoque") que o dossiê proibia
+   * explicitamente — job type 'image' nunca passava por nenhum gate.
+   */
+  it('teste: linguagem de escassez proibida pelo dossiê, num "ad" (job type image), dispara reparo', async () => {
+    let creativePlanCalls = 0;
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: () => {
+            creativePlanCalls += 1;
+            return Promise.resolve({
+              ...creativePlanFixture,
+              copy: creativePlanCalls === 1 ? 'Novidade! Sem o estresse da falta de estoque.' : 'Novidade! Ofertas especiais todos os dias.',
+            });
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-image-forbidden',
+      message: `Crie um anúncio pro cliente.${CONTEXT_BLOCK_MARKER}CLIENTE DO TURNO: Rosa Chá\nRegra: não use "falta de estoque" na comunicação.`,
+    });
+
+    expect(body.status).toBe('completed');
+    expect(creativePlanCalls).toBe(2); // draft + 1 reparo
+    expect(body.answer).not.toContain('falta de estoque');
+    expect(body.metadata.image_quality_repair).toMatchObject({ attempted: true, remaining_issues: [] });
+    expect(body.metadata.forbidden_language_detected).toEqual([]);
+
+    await app.close();
+  });
+
+  it('image sem nenhum placeholder/linguagem proibida não dispara reparo extra', async () => {
+    let creativePlanCalls = 0;
+    const app = buildTestApp(
+      makeDeps(
+        { chatJson: () => { creativePlanCalls += 1; return Promise.resolve(creativePlanFixture); } },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-image-clean', message: 'Crie uma imagem pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(creativePlanCalls).toBe(1);
+    expect(body.metadata.image_quality_repair).toBeUndefined();
+
+    await app.close();
+  });
+});
+
+/**
  * FASE 13 — o node não pode ir ao vault pra descobrir o que "o segundo"
  * significa. Este arquivo mede exatamente isso: quantas vezes o retrieval foi
  * chamado, e com qual query.
