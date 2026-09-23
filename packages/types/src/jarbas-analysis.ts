@@ -91,8 +91,52 @@ export interface SourceTraceEntry {
  * que o serviço externo ganhar suporte real; consumidor deve checar antes
  * de assumir forma.
  */
+export type RecommendationType =
+  | 'observe'
+  | 'review_creative'
+  | 'check_tracking'
+  | 'check_post_click'
+  | 'review_audience'
+  | 'review_budget'
+  | 'collect_more_data';
+
+export interface Recommendation {
+  type: RecommendationType;
+  title: string;
+  rationale: string;
+  evidenceRefs: string[];
+  confidence: 'high' | 'medium' | 'low';
+  priority: 'high' | 'medium' | 'low';
+  expectedImpact?: string | null;
+  risk: string;
+  requiresApproval: boolean;
+}
+
+export type ProposedActionType = 'budget_change' | 'bid_change' | 'audience_change' | 'creative_change' | 'pause' | 'resume' | 'duplicate' | 'publish';
+
+/**
+ * Proposta de mutação — NUNCA um caminho de execução. Este repositório não
+ * tem, em nenhum lugar, código capaz de chamar a Graph API do Meta; um
+ * ProposedAction existe só pra registrar a proposta e aguardar aprovação
+ * humana (mesmo padrão de requestToolCall/[AGUARDA_APROVACAO] já usado
+ * pra Jarbas/Suzy em execute-job.ts — ver §6 do handoff doc).
+ */
+export interface ProposedAction {
+  type: ProposedActionType;
+  entityId: string;
+  currentValue: string | number | null;
+  proposedValue: string | number;
+  reason: string;
+  evidenceRefs: string[];
+  risk: string;
+  requiresApproval: true;
+}
+
 export interface JarbasAnalysisResult {
   schemaVersion: 1;
+  taskId: string;
+  /** Precisa bater com AgentTask.version NO MOMENTO da leitura (§16) — senão o resultado é stale. */
+  taskVersion: number;
   /** false até o serviço externo devolver dado estruturado de verdade — nunca populado por invenção local. */
   provenanceAvailable: boolean;
   scope: {
@@ -107,6 +151,8 @@ export interface JarbasAnalysisResult {
   claims: AnalysisClaim[];
   metricFacts: MetricFact[];
   comparisons: MetricComparison[];
+  recommendations: Recommendation[];
+  proposedActions: ProposedAction[];
   missingData: string[];
   risks: string[];
   sourceTrace: SourceTraceEntry[];
@@ -130,11 +176,10 @@ export type AgentTaskStatus =
 
 /**
  * Contrato de uma tarefa entre agentes (§15-17) — Bento atribuindo trabalho
- * ao Jarbas. NÃO existe mecanismo de despacho/persistência disto hoje (nem
- * tabela, nem fila, nem rota): é só o formato de dados que esse mecanismo
- * precisaria falar quando for construído. Construir o mecanismo em si
- * (tabela, lifecycle, idempotência) é trabalho de produto novo, fora do
- * escopo desta missão de hardening.
+ * ao Jarbas. O mecanismo de dispatch/estado (packages/agent-runtime/src/
+ * agent-task.ts) já existe e é testado offline; a persistência real
+ * (Postgres) é código também, mas nunca aplicada contra o banco ao vivo
+ * nesta missão — ver docs/coordination/JARBAS_SENIOR_HANDOFF.md.
  */
 export interface AgentTask {
   taskId: string;
@@ -150,6 +195,116 @@ export interface AgentTask {
   /** O pedido ORIGINAL do funcionário — nunca só a interpretação derivada do Bento (regra do handoff, §17). */
   originalUserRequest: string;
   createdAt: string;
+  updatedAt: string;
   dueAt: string | null;
   status: AgentTaskStatus;
+  /**
+   * Versão do ESCOPO (§15-16). Incrementa quando o escopo muda
+   * (ex.: "últimos 7 dias" -> "últimos 30 dias") enquanto a tarefa está em
+   * andamento. Um resultado só é válido se `result.taskVersion` bater com
+   * `task.version` NO MOMENTO da leitura — nunca apresentar resultado de
+   * versão antiga como se fosse da atual.
+   */
+  version: number;
+  retry: TaskRetryState;
+}
+
+export interface TaskRetryState {
+  attemptCount: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  nextEligibleRetryAt: string | null;
+}
+
+export type PerformanceMemoryEventType =
+  | 'analysis_completed'
+  | 'hypothesis_accepted'
+  | 'hypothesis_rejected'
+  | 'recommendation_generated'
+  | 'recommendation_approved'
+  | 'recommendation_rejected'
+  | 'action_performed'
+  | 'outcome_observed'
+  | 'tracking_incident'
+  | 'creative_changed'
+  | 'budget_changed'
+  | 'kpi_target_changed';
+
+/**
+ * Registro de aprendizado operacional (§17-22). NÃO é uma tabela nova —
+ * é o formato que um `RememberInput` (packages/orchestrator/src/
+ * memory-engine.ts, motor JÁ EXISTENTE e reaproveitado, nunca reescrito)
+ * assume quando quem grava é o caminho de resposta do Jarbas. `subject`
+ * (campo do RememberInput real) é o que garante que uma REJEIÇÃO
+ * substitui a hipótese anterior do MESMO aspecto, em vez de acumular.
+ */
+export interface PerformanceMemoryEvent {
+  organizationId: string;
+  clientId: string;
+  entityType: MetaEntityType | null;
+  entityId: string | null;
+  eventType: PerformanceMemoryEventType;
+  observation: string;
+  hypothesis?: string | null;
+  recommendation?: string | null;
+  decision?: string | null;
+  outcome?: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  sourceRefs: string[];
+  createdAt: string;
+}
+
+/**
+ * Contrato V2 que o serviço externo (agentes-desigual) PRECISARIA falar
+ * pra sair de "texto livre" — nunca implementado nem chamado de verdade
+ * nesta missão (código-fonte do serviço não está acessível deste
+ * ambiente, ver docs/coordination/JARBAS_SENIOR_HANDOFF.md). Existe aqui
+ * só como contrato/parser-alvo: o adapter local (jarbas-response-adapter.ts
+ * em packages/agent-runtime) sabe reconhecer este formato SE ele um dia
+ * chegar, e cai pro formato V1 (`{answer}`) com segurança quando não.
+ */
+export interface JarbasExternalResponseV2 {
+  schemaVersion: '2';
+  ok: boolean;
+  agent: 'jarbas';
+  answer: string;
+  scope: {
+    organizationId: string;
+    clientId: string;
+    accountId?: string | null;
+    entityType?: MetaEntityType | null;
+    entityId?: string | null;
+    entityName?: string | null;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    timezone?: string | null;
+  };
+  metricFacts: MetricFact[];
+  comparisons: MetricComparison[];
+  observations: string[];
+  hypotheses: string[];
+  recommendations: Recommendation[];
+  missingData: string[];
+  proposedActions: ProposedAction[];
+  sourceTrace: SourceTraceEntry[];
+  toolTrace: ToolTraceEntry[];
+  confidence: 'high' | 'medium' | 'low' | 'insufficient_data';
+  fetchedAt?: string | null;
+  errors?: string[];
+}
+
+export interface ToolTraceEntry {
+  toolName: string;
+  operation: string;
+  entityId: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  status: 'ok' | 'error';
+  durationMs: number;
+  resultRef: string | null;
+}
+
+/** Formato legado — o único que o serviço externo fala de fato hoje. */
+export interface JarbasExternalResponseV1 {
+  answer: string;
 }

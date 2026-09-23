@@ -232,7 +232,115 @@ assumir o lugar da implementação em memória sem que nenhum código
 chamador precise mudar — esse é o próximo passo concreto, não construído
 aqui.
 
-## 8. Limitações conhecidas (resumo)
+## 8. Rodada de fechamento (24/09/2026) — serviço, recomendação, macro, RBAC, memória
+
+**Busca pelo código-fonte do serviço externo:** exaustiva, negativa. `JARBAS_ASK_URL=http://100.118.12.97:3102`
+aponta pra uma máquina Tailscale SEPARADA desta, sem filesystem nem
+container acessível daqui — confirmado via busca em todo o disco local,
+inventário completo do Docker (nenhum container `agentes-desigual`), e
+nenhum repositório correspondente em `/Users/pedro`. Nenhuma tentativa de
+contato de rede foi feita com esse IP (regra explícita desta missão: um
+request inesperado ao `JARBAS_ASK_URL` de produção deveria FALHAR o teste,
+não ser algo que eu mesmo disparo pra "verificar"). Verdict aplicável:
+**EXTERNAL JARBAS SERVICE SOURCE ACCESS REQUIRED** — exato pedido na seção 10.
+
+**O que esta rodada construiu, tudo local, offline, testado:**
+
+- **Versionamento de tarefa** (`agent-task.ts`): `AgentTask.version` +
+  `updateScope()` — muda escopo em andamento, incrementa versão, descarta
+  o resultado da versão anterior (nunca "stale mas visível" — descartado
+  de propósito). `attachResult` recusa (`stale_version`) um resultado cuja
+  `taskVersion` não bate com a versão vigente da tarefa.
+- **Retry limitado** (`agent-task.ts`): `isRetryableError` classifica
+  timeout/429/5xx como retentável e permissão/entidade
+  ambígua/versão-inválida/contrato como não; `recordFailure` aplica um
+  teto de 3 tentativas com backoff exponencial determinístico
+  (`computeNextEligibleRetry`), e esgotar o teto move a tarefa pra
+  `blocked_external_service` — nunca retry infinito.
+- **Motor de recomendação** (`jarbas-diagnosis.ts`, `generateRecommendation`):
+  fecha o gap que a rodada anterior deixou aberto — cada uma das 5 classes
+  de diagnóstico tem uma recomendação ESPECÍFICA (`review_creative`,
+  `check_post_click`, `check_tracking`, `collect_more_data`, `observe`),
+  nunca a genérica "teste mais criativos" pra tudo, com `evidenceRefs`
+  apontando pras observações que justificam.
+- **Ações propostas** (`bento-jarbas-handoff.ts`, `buildProposedAction`):
+  "aumenta orçamento 20%" vira uma `ProposedAction` com
+  `requiresApproval: true` — nunca uma chamada de mutação, porque NENHUM
+  caminho de código deste repositório é capaz de chamar a Graph API do
+  Meta (fato estrutural, não uma flag).
+- **Adapter V1/V2** (`jarbas-response-adapter.ts`): reconhece o contrato
+  `JarbasExternalResponseV2` (definido em `packages/types`) SE ele um dia
+  chegar, cai pro legado (`{answer}`) com segurança quando não — nunca
+  lança exceção, nunca finge proveniência que a resposta não tem
+  (`qualityTier: 'beta'` sempre que `metricFacts` está vazio).
+- **Visão macro da agência** (`jarbas-macro-view.ts`,
+  `buildAgencyMacroView`): classifica clientes em
+  ATTENTION_NOW/WATCH/HEALTHY/INSUFFICIENT_DATA/TRACKING_PROBLEM
+  reaproveitando a MESMA árvore de diagnóstico individual — nunca ranqueia
+  CPL de lead-gen contra ROAS de ecommerce, porque cada cliente é julgado
+  contra a própria árvore, nunca contra o vizinho.
+- **RBAC** (`apps/worker/src/processors/jarbas-task-permissions.test.ts`):
+  NÃO é um framework novo — é a convenção de nome de capability
+  (`resource: 'jarbas'`, ações `read/assign/analysis/propose_action/
+  approve_action`) testada contra a função `hasPermission` REAL
+  (`packages/auth/src/rbac.ts`, já usada por Bento/Otto). Nenhuma
+  permissão nasce de texto de prompt — a checagem é estrutural, contra a
+  lista de permissões resolvida do usuário.
+- **Memória de performance** (`apps/worker/src/processors/
+  jarbas-performance-memory.ts`): adaptador fino chamando `rememberFact`
+  — o MESMO motor real já usado por Bento (`client-fact.ts`,
+  `preference-memory.ts`) e Otto, nunca uma tabela nova. `subject` é
+  `cliente:<id>:jarbas:<eventType>:<entityId>` — uma hipótese REJEITADA
+  sobre a mesma entidade aposenta o veredito anterior sobre ELA (mesmo
+  mecanismo de supersessão do `memory-engine.ts`, não reimplementado).
+- **Fluxo ponta a ponta offline** (`jarbas-end-to-end-offline.test.ts`,
+  §36 da missão — "o teste de integração mais importante"): pedido do
+  funcionário → detecção de handoff → dispatch idempotente → mock do
+  serviço V2 → adapter → diagnóstico determinístico → recomendação →
+  escrita de memória (motor real, mockado só pra não tocar banco em teste)
+  → resultado anexado → `READY_FOR_REVIEW` → pergunta de status do Bento
+  lida do que já foi salvo. Passa, sem nenhuma chamada de rede.
+
+**O que esta rodada deliberadamente NÃO construiu:**
+
+- **`PostgresAgentTaskStore`** (persistência real, §13). Decisão
+  consciente de risco: a interface `AgentTaskStore` já está pronta pra
+  receber essa implementação sem que nenhum código chamador mude, mas
+  escrever a migração E aplicá-la contra o banco real (mesmo Supabase
+  usado por todo o resto do sistema em produção) ultrapassa o que esta
+  sessão vem tratando como seguro em TODAS as missões anteriores deste
+  mesmo programa de hardening ("do not deploy", "do not restart
+  production"). Consequência direta: sobrevivência a restart (§14/§37) e
+  persistência entre processos não estão provadas — só a LÓGICA que uma
+  implementação persistente precisaria respeitar está.
+- **Integração real com a Graph API do Meta.** Fora de escopo por
+  definição desta missão (nenhuma mutação, nenhum teste ao vivo).
+
+## 9. EXTERNAL JARBAS SERVICE SOURCE ACCESS REQUIRED — pedido exato
+
+1. **Repositório/serviço necessário:** o código-fonte de `agentes-desigual`,
+   hospedado hoje na máquina Tailscale `100.118.12.97:3102` — endpoint
+   `/internal/ask`. Não identificado neste ambiente; precisa de acesso
+   explícito (caminho de filesystem, repositório git, ou credencial SSH)
+   fornecido por quem administra aquela máquina.
+2. **Mudança de endpoint exata:** `/internal/ask` precisa aceitar o mesmo
+   request de hoje (`{agent, text, sessionId}`) e, quando tiver dado
+   estruturado disponível, responder no formato `JarbasExternalResponseV2`
+   (`packages/types/src/jarbas-analysis.ts`, campo a campo já documentado
+   nesta seção 9) em vez de só `{answer}`. O adapter deste repositório
+   (`jarbas-response-adapter.ts`) já sabe consumir os dois formatos.
+3. **Campos mínimos pra sair de Beta:** pelo menos um `metricFacts[]`
+   não-vazio, cada item com `source`+`provenanceId`+`periodStart`/
+   `periodEnd`+`fetchedAt` reais — sem isso `qualityTier` nunca passa de
+   `'beta'`, propositalmente.
+4. **Testes de integração exigidos depois do acesso:** contract test do
+   payload V2 real contra o schema local, teste de round-trip completo
+   substituindo o mock por uma chamada real (ainda assim nunca contra
+   conta de cliente real — usar conta de teste/sandbox do Meta), e
+   confirmação de que `metric-verifier.ts` rejeita um `metricFacts` cujo
+   valor não bate com a conta manual esperada.
+
+## 10. Limitações conhecidas (resumo)
 
 - Sem trace de ferramenta do serviço externo → nenhum número do Jarbas é
   verificável hoje, só o período.

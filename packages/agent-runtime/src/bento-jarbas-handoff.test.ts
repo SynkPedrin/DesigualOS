@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectForbiddenMetaMutationRequest, detectJarbasHandoffRequest, detectJarbasStatusQuery } from './bento-jarbas-handoff';
+import { buildProposedAction, detectForbiddenMetaMutationRequest, detectJarbasHandoffRequest, detectJarbasStatusQuery } from './bento-jarbas-handoff';
 import { InMemoryAgentTaskStore } from './agent-task';
 import { diagnoseCampaignSnapshot } from './jarbas-diagnosis';
 import { FIXTURE_CREATIVE_FATIGUE } from './jarbas-fixtures';
@@ -59,6 +59,25 @@ describe('detectForbiddenMetaMutationRequest (§24/§49) — nunca executar, sem
   });
 });
 
+describe('buildProposedAction (§12) — sempre proposta, requiresApproval sempre true', () => {
+  it('"aumenta orçamento em 20%" gera uma proposta budget_change com requiresApproval', () => {
+    const proposta = buildProposedAction({ message: 'aumenta orçamento em 20%', entityId: 'camp-1', currentValue: 3000 });
+    expect(proposta).not.toBeNull();
+    expect(proposta?.type).toBe('budget_change');
+    expect(proposta?.requiresApproval).toBe(true);
+    expect(proposta?.currentValue).toBe(3000);
+  });
+
+  it('"pausa essa campanha" gera proposta do tipo pause', () => {
+    const proposta = buildProposedAction({ message: 'pausa essa campanha', entityId: 'camp-1' });
+    expect(proposta?.type).toBe('pause');
+  });
+
+  it('mensagem sem pedido de mutação não gera proposta nenhuma', () => {
+    expect(buildProposedAction({ message: 'analisa a campanha', entityId: 'camp-1' })).toBeNull();
+  });
+});
+
 /**
  * §65 — OS 8 FLUXOS OFFLINE EXIGIDOS, ponta a ponta com os componentes
  * construídos nesta missão. Nenhuma chamada de rede, nenhum dado de
@@ -94,11 +113,15 @@ describe('§65 — fluxos offline Bento <-> Jarbas', () => {
     const diagnostico = diagnoseCampaignSnapshot(FIXTURE_CREATIVE_FATIGUE);
     const resultado = {
       schemaVersion: 1 as const,
+      taskId: task.taskId,
+      taskVersion: task.version,
       provenanceAvailable: false,
       scope: { organizationId: ORG, clientId: CLIENTE, accountId: null, entityType: 'campaign' as const, entityId: 'camp-x', periodStart: '2026-09-17', periodEnd: '2026-09-24' },
       claims: diagnostico.hypotheses.map((h) => ({ text: h, kind: 'hypothesis' as const, metricFactIds: [], confidence: 'medium' as const })),
       metricFacts: [],
       comparisons: [],
+      recommendations: [],
+      proposedActions: [],
       missingData: [],
       risks: [],
       sourceTrace: [],
@@ -127,7 +150,7 @@ describe('§65 — fluxos offline Bento <-> Jarbas', () => {
     await store.transition(task.taskId, 'acknowledged', ORG);
     await store.transition(task.taskId, 'context_resolved', ORG);
     await store.transition(task.taskId, 'analyzing', ORG);
-    const resultado = resultadoMinimo();
+    const resultado = resultadoMinimo(task.taskId, task.version);
     await store.attachResult(task.taskId, resultado, ORG);
     expect(detectJarbasStatusQuery('o que ele encontrou?')).toBe(true);
     const salvo = await store.getResult(task.taskId);
@@ -194,14 +217,18 @@ describe('§65 — fluxos offline Bento <-> Jarbas', () => {
     };
   }
 
-  function resultadoMinimo() {
+  function resultadoMinimo(taskId = 'task-x', taskVersion = 1) {
     return {
       schemaVersion: 1 as const,
+      taskId,
+      taskVersion,
       provenanceAvailable: false,
       scope: { organizationId: ORG, clientId: CLIENTE, accountId: null, entityType: null, entityId: null, periodStart: null, periodEnd: null },
       claims: [],
       metricFacts: [],
       comparisons: [],
+      recommendations: [],
+      proposedActions: [],
       missingData: [],
       risks: [],
       sourceTrace: [],

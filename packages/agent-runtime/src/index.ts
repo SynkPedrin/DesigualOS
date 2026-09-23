@@ -67,16 +67,23 @@ export {
 export {
   InMemoryAgentTaskStore,
   isTerminalStatus,
+  isRetryableError,
+  computeNextEligibleRetry,
+  MAX_TENTATIVAS_RETRY,
   type AgentTaskStore,
   type DispatchAgentTaskInput,
   type DispatchOutcome,
   type TransitionOutcome,
+  type RecordFailureOutcome,
 } from './agent-task';
-export { diagnoseCampaignSnapshot, type CampaignMetricSnapshot, type DiagnosisClass, type DiagnosisResult } from './jarbas-diagnosis';
+export { diagnoseCampaignSnapshot, generateRecommendation, type CampaignMetricSnapshot, type DiagnosisClass, type DiagnosisResult } from './jarbas-diagnosis';
 export * as jarbasFixtures from './jarbas-fixtures';
 export {
+  buildProposedAction,
   detectForbiddenMetaMutationRequest,
   detectJarbasHandoffRequest,
   detectJarbasStatusQuery,
   type JarbasHandoffIntent,
 } from './bento-jarbas-handoff';
+export { adaptJarbasResponse, type AdaptedJarbasResponse } from './jarbas-response-adapter';
+export { buildAgencyMacroView, type AgencyMacroView, type ClientMacroEntry, type ClientMacroInput, type MacroBucket } from './jarbas-macro-view';

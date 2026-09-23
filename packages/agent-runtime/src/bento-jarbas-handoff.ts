@@ -61,3 +61,38 @@ const META_MUTATION_REQUEST = /\b(aumenta[r]?|reduz[ir]?|diminui[r]?|muda[r]?|tr
 export function detectForbiddenMetaMutationRequest(message: string): boolean {
   return META_MUTATION_REQUEST.test(message.trim());
 }
+
+/**
+ * "aumenta orçamento 20%" -> proposta, NUNCA execução (§12/§24). O tipo é
+ * sempre inferido do PRIMEIRO verbo de mutação reconhecido na mensagem —
+ * quando nenhum bate com precisão, cai em 'budget_change' como default
+ * conservador (ainda assim, nunca vira mutação real).
+ */
+export function buildProposedAction(params: {
+  message: string;
+  entityId: string;
+  currentValue?: string | number | null;
+}): { type: 'budget_change' | 'bid_change' | 'audience_change' | 'creative_change' | 'pause' | 'resume' | 'duplicate' | 'publish'; entityId: string; currentValue: string | number | null; proposedValue: string; reason: string; evidenceRefs: string[]; risk: string; requiresApproval: true } | null {
+  const texto = params.message.trim();
+  if (!detectForbiddenMetaMutationRequest(texto)) return null;
+
+  let type: 'budget_change' | 'bid_change' | 'audience_change' | 'creative_change' | 'pause' | 'resume' | 'duplicate' | 'publish' = 'budget_change';
+  if (/pausa/i.test(texto)) type = 'pause';
+  else if (/retoma/i.test(texto)) type = 'resume';
+  else if (/duplica/i.test(texto)) type = 'duplicate';
+  else if (/publica/i.test(texto)) type = 'publish';
+  else if (/criativo/i.test(texto)) type = 'creative_change';
+  else if (/p[uú]blico|audi[êe]ncia/i.test(texto)) type = 'audience_change';
+  else if (/lance|bid/i.test(texto)) type = 'bid_change';
+
+  return {
+    type,
+    entityId: params.entityId,
+    currentValue: params.currentValue ?? null,
+    proposedValue: texto,
+    reason: `pedido explícito do usuário: "${texto}"`,
+    evidenceRefs: [],
+    risk: 'requer aprovação humana antes de qualquer execução — nenhum caminho de código deste repositório executa isto sozinho',
+    requiresApproval: true,
+  };
+}

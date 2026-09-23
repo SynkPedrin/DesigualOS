@@ -1,3 +1,4 @@
+import type { Recommendation, RecommendationType } from '@desigual-os/types';
 import { isSampleTooSmall } from './metric-verifier';
 
 /**
@@ -168,5 +169,33 @@ export function diagnoseCampaignSnapshot(m: CampaignMetricSnapshot): DiagnosisRe
     hypotheses: [],
     confidence: 'medium',
     recommendConfidentAction: false,
+  };
+}
+
+/**
+ * Fecha o gap do §11: a árvore de diagnóstico parava em hipótese. Cada
+ * classe de diagnóstico tem UMA recomendação específica (nunca o genérico
+ * "testar mais criativos" pra tudo — §41) — `evidenceRefs` aponta pras
+ * observações que justificam, nunca texto solto sem rastro.
+ */
+const RECOMENDACAO_POR_CLASSE: Record<DiagnosisClass, { type: RecommendationType; title: string; risk: string }> = {
+  healthy: { type: 'observe', title: 'Manter e observar — sem sinal de atenção nas métricas atuais', risk: 'nenhum: nenhuma mudança está sendo proposta' },
+  creative_fatigue_hypothesis: { type: 'review_creative', title: 'Revisar o criativo — frequência subindo e CTR caindo é padrão de fadiga', risk: 'baixo: revisão não muda a campanha até decisão humana' },
+  post_click_issue_hypothesis: { type: 'check_post_click', title: 'Investigar pós-clique (landing page, formulário, tracking ou processo comercial)', risk: 'baixo: apenas investigação, sem mudança de mídia' },
+  tracking_problem: { type: 'check_tracking', title: 'Validar tracking antes de qualquer decisão de otimização', risk: 'médio: decisão sobre dado corrompido pode piorar a campanha' },
+  insufficient_sample: { type: 'collect_more_data', title: 'Aguardar mais volume antes de qualquer otimização', risk: 'nenhum: otimizar com amostra pequena é o risco que esta recomendação evita' },
+};
+
+export function generateRecommendation(diagnosis: DiagnosisResult): Recommendation {
+  const base = RECOMENDACAO_POR_CLASSE[diagnosis.class];
+  return {
+    type: base.type,
+    title: base.title,
+    rationale: diagnosis.hypotheses[0] ?? diagnosis.observations[0] ?? 'sem observação relevante no período analisado',
+    evidenceRefs: diagnosis.observations,
+    confidence: diagnosis.confidence === 'insufficient_data' ? 'low' : diagnosis.confidence,
+    priority: diagnosis.class === 'tracking_problem' ? 'high' : diagnosis.class === 'healthy' ? 'low' : 'medium',
+    risk: base.risk,
+    requiresApproval: false,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diagnoseCampaignSnapshot } from './jarbas-diagnosis';
+import { diagnoseCampaignSnapshot, generateRecommendation } from './jarbas-diagnosis';
 import {
   FIXTURE_CPM_SPIKE,
   FIXTURE_CREATIVE_FATIGUE,
@@ -89,5 +89,51 @@ describe('diagnoseCampaignSnapshot — saudável e outros fixtures do laboratór
   it('zero leads com tráfego saudável cai em amostra insuficiente (0 conversões < piso) — limitação conhecida, documentada', () => {
     const r = diagnoseCampaignSnapshot(FIXTURE_ZERO_LEADS_HEALTHY_TRAFFIC);
     expect(r.class).toBe('insufficient_sample');
+  });
+});
+
+/**
+ * §11/§41 — cada classe de diagnóstico gera uma recomendação ESPECÍFICA,
+ * nunca o genérico "teste mais criativos" pra tudo.
+ */
+describe('generateRecommendation — nunca genérica, sempre rastreável (§11/§41)', () => {
+  it('fadiga de criativo recomenda REVIEW_CREATIVE, nunca CHECK_TRACKING', () => {
+    const diag = diagnoseCampaignSnapshot(FIXTURE_CREATIVE_FATIGUE);
+    const rec = generateRecommendation(diag);
+    expect(rec.type).toBe('review_creative');
+    expect(rec.evidenceRefs).toEqual(diag.observations);
+  });
+
+  it('problema pós-clique recomenda CHECK_POST_CLICK, NÃO revisão de criativo (§42)', () => {
+    const diag = diagnoseCampaignSnapshot(FIXTURE_POST_CLICK_ISSUE);
+    const rec = generateRecommendation(diag);
+    expect(rec.type).toBe('check_post_click');
+    expect(rec.type).not.toBe('review_creative');
+  });
+
+  it('tracking quebrado recomenda CHECK_TRACKING com prioridade alta, nunca otimização', () => {
+    const diag = diagnoseCampaignSnapshot(FIXTURE_TRACKING_FAILURE);
+    const rec = generateRecommendation(diag);
+    expect(rec.type).toBe('check_tracking');
+    expect(rec.priority).toBe('high');
+    expect(rec.requiresApproval).toBe(false); // é diagnóstico, não mutação
+  });
+
+  it('amostra pequena recomenda COLLECT_MORE_DATA, nunca uma recomendação agressiva', () => {
+    const diag = diagnoseCampaignSnapshot(FIXTURE_LOW_SAMPLE_NEW_CAMPAIGN);
+    const rec = generateRecommendation(diag);
+    expect(rec.type).toBe('collect_more_data');
+  });
+
+  it('campanha saudável recomenda OBSERVE', () => {
+    const diag = diagnoseCampaignSnapshot(FIXTURE_HEALTHY);
+    const rec = generateRecommendation(diag);
+    expect(rec.type).toBe('observe');
+  });
+
+  it('nenhuma recomendação desta árvore jamais exige aprovação (diagnóstico não é mutação)', () => {
+    for (const fixture of [FIXTURE_HEALTHY, FIXTURE_CREATIVE_FATIGUE, FIXTURE_POST_CLICK_ISSUE, FIXTURE_TRACKING_FAILURE, FIXTURE_LOW_SAMPLE_NEW_CAMPAIGN]) {
+      expect(generateRecommendation(diagnoseCampaignSnapshot(fixture)).requiresApproval).toBe(false);
+    }
   });
 });
