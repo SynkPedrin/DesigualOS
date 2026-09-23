@@ -1,6 +1,6 @@
 import type { Logger } from '@desigual-os/logging';
 import type { OttoLLMProvider } from '../llm/ollama-provider.js';
-import { criticEvaluationSchema, type CriticEvaluation, type CriticScores } from './schemas.js';
+import { criticEvaluationSchema, type CriticEvaluation, type CriticRootCause, type CriticScores } from './schemas.js';
 
 /**
  * critic.ts — Otto Elite Phase 2, Fase 2 (Fases 9-15 do brief): o primeiro
@@ -33,6 +33,15 @@ export interface CriticInput {
   renderedAnswer: string;
   /** Entregáveis nomeados explicitamente no pedido (ver output-contract.ts). */
   requestedDeliverables?: string[];
+  /**
+   * Resumo da camada estratégica (Otto Elite — Missão 14: "the critic must
+   * evaluate not only the final draft, but alignment with: creative brief,
+   * selected angle, big idea, hook, execution plan"). Ver
+   * strategy.ts::formatStrategyBriefing. Sem isto, o critic só vê o texto
+   * final e não consegue dizer SE a peça é fiel à estratégia decidida — só
+   * se o texto em si está bom, que é uma pergunta mais rasa.
+   */
+  strategyContext?: string;
 }
 
 const CRITIC_SYSTEM = `Você é um painel de revisão criativa sênior da agência Desigual, julgando o trabalho de outro criativo antes dele chegar ao cliente. Avalie como as seguintes perspectivas julgariam JUNTAS, numa única nota por dimensão:
@@ -69,9 +78,26 @@ Marque as flags (booleano ou lista) quando aplicável:
 - missing_production_direction: falta direção de execução (visual, tempo, tom) pra quem for produzir
 - brand_mismatch: tom incompatível com o que o contexto diz da marca
 
+Se uma DIREÇÃO ESTRATÉGICA (big idea, ângulo, hook escolhido) foi fornecida, avalie também se a resposta é FIEL a ela — não só se o texto final está bom isoladamente. Uma peça polida que abandona o ângulo/big idea decidido antes é uma falha de fidelidade, não uma vitória de copy.
+
+Quando reprovar, classifique "root_cause" na camada mais crítica que falhou (não liste várias — a MAIS crítica):
+- STRATEGY: a peça não serve o objetivo/público real
+- ANGLE: o ângulo escolhido não está sendo seguido ou era fraco
+- BIG_IDEA: não há proposição criativa central clara
+- HOOK: a abertura não segura atenção
+- STRUCTURE: a peça não tem estrutura/progressão coerente
+- COPY: a ideia está certa mas o texto em si é fraco/genérico/soa IA
+- BRAND_FIT: tom incompatível com a marca
+- EXECUTABILITY: falta direção concreta pra quem for produzir
+- FACTUAL: afirma algo sem base no briefing
+- DELIVERABLE: falta um item pedido
+- NONE: a peça passa
+
+Escolha UMA. Isto decide se a reescrita regenera só a copy ou volta pra camada estratégica (ângulo/big idea/hook) — classificar errado desperdiça uma reescrita inteira polindo frase quando o problema é a ideia.
+
 Seja severo e honesto. Aprovar peça mediana custa mais caro pra agência do que reprovar e refazer. "reasoning" é uma frase curta e ACIONÁVEL — o que precisa mudar, não uma descrição do que já está lá.
 
-Responda SOMENTE com o JSON: {"scores": {"strategy": n, "concept": n, "hook": n, "specificity": n, "originality": n, "brand_fit": n, "copy": n, "retention": n, "platform_fit": n, "executability": n}, "flags": {"missing_deliverables": string[], "genericity": bool, "unsupported_claims": string[], "weak_hook": bool, "weak_concept": bool, "bad_cta": bool, "bad_platform_fit": bool, "ai_slop": bool, "over_explanation": bool, "missing_production_direction": bool, "brand_mismatch": bool}, "reasoning": string}`;
+Responda SOMENTE com o JSON: {"scores": {"strategy": n, "concept": n, "hook": n, "specificity": n, "originality": n, "brand_fit": n, "copy": n, "retention": n, "platform_fit": n, "executability": n}, "flags": {"missing_deliverables": string[], "genericity": bool, "unsupported_claims": string[], "weak_hook": bool, "weak_concept": bool, "bad_cta": bool, "bad_platform_fit": bool, "ai_slop": bool, "over_explanation": bool, "missing_production_direction": bool, "brand_mismatch": bool}, "reasoning": string, "root_cause": "STRATEGY"|"ANGLE"|"BIG_IDEA"|"HOOK"|"STRUCTURE"|"COPY"|"BRAND_FIT"|"EXECUTABILITY"|"FACTUAL"|"DELIVERABLE"|"NONE"}`;
 
 export async function critiqueDeliverable(deps: CriticDeps, input: CriticInput): Promise<CriticEvaluation> {
   const user = [
@@ -79,6 +105,7 @@ export async function critiqueDeliverable(deps: CriticDeps, input: CriticInput):
     input.requestedDeliverables && input.requestedDeliverables.length > 0
       ? `Entregáveis pedidos explicitamente: ${input.requestedDeliverables.join(', ')}`
       : null,
+    input.strategyContext ? `${input.strategyContext}` : null,
     `Resposta gerada (exatamente como o humano vai ler):\n\n${input.renderedAnswer}`,
   ]
     .filter(Boolean)
@@ -164,6 +191,22 @@ export function passesCriticGate(evaluation: CriticEvaluation, codeMissingDelive
 }
 
 /**
+ * Escopo da reescrita (Otto Elite — Missão 16). Uma falha classificada em
+ * STRATEGY/ANGLE/BIG_IDEA/HOOK precisa regenerar a CAMADA ESTRATÉGICA
+ * inteira (novo ângulo, nova big idea, novo hook) antes de redigir de novo
+ * — polir a frase quando o problema é a IDEIA é a "reescrita de sinônimo"
+ * que a missão proíbe. As demais causas (COPY/STRUCTURE/BRAND_FIT/
+ * EXECUTABILITY/FACTUAL/DELIVERABLE) só exigem reescrever o texto com a
+ * estratégia já decidida — refazer o ângulo não resolveria um problema que
+ * é de execução, e custaria uma chamada de LLM inteira à toa.
+ */
+const STRATEGY_LAYER_ROOT_CAUSES: readonly CriticRootCause[] = ['STRATEGY', 'ANGLE', 'BIG_IDEA', 'HOOK'];
+
+export function rewriteRequiresStrategyLayer(rootCause: CriticRootCause): boolean {
+  return STRATEGY_LAYER_ROOT_CAUSES.includes(rootCause);
+}
+
+/**
  * Nota de revisão pro passo de geração reaproveitar (mesmo mecanismo do loop
  * anti-genérico em creative-pipeline.ts: `revisionNote` concatenado no
  * briefing). Lista o que falhou E o motivo de cada flag marcada, pra a
@@ -190,6 +233,9 @@ export function formatCriticRevisionNote(evaluation: CriticEvaluation, gate: Cri
   return [
     `A versão anterior falhou na revisão de qualidade (nota ${gate.overall}/100, mínimo 88):`,
     ...gate.reasons.map((reason) => `- ${reason}`),
+    evaluation.root_cause && evaluation.root_cause !== 'NONE'
+      ? `Causa raiz (camada que falhou): ${evaluation.root_cause}.`
+      : '',
     evaluation.reasoning ? `Avaliação: ${evaluation.reasoning}` : '',
     flagNotes.length > 0 ? `O que precisa mudar:\n${flagNotes.map((note) => `- ${note}`).join('\n')}` : '',
     'Reescreva. Isto pode significar trocar ângulo, conceito, hook, estrutura ou CTA — não é troca de sinônimo. Preserve os fatos do briefing original.',

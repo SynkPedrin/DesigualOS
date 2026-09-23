@@ -5,8 +5,9 @@ import {
   deriveCriticOverall,
   formatCriticRevisionNote,
   passesCriticGate,
+  rewriteRequiresStrategyLayer,
 } from './critic.js';
-import type { CriticEvaluation } from './schemas.js';
+import type { CriticEvaluation, CriticRootCause } from './schemas.js';
 
 const baseScores = {
   strategy: 9,
@@ -146,6 +147,38 @@ describe('passesCriticGate', () => {
   });
 });
 
+describe('rewriteRequiresStrategyLayer (Missão 16)', () => {
+  it('STRATEGY, ANGLE, BIG_IDEA e HOOK exigem regenerar a camada estratégica', () => {
+    const causes: CriticRootCause[] = ['STRATEGY', 'ANGLE', 'BIG_IDEA', 'HOOK'];
+    for (const cause of causes) {
+      expect(rewriteRequiresStrategyLayer(cause), cause).toBe(true);
+    }
+  });
+
+  it('COPY, STRUCTURE, BRAND_FIT, EXECUTABILITY, FACTUAL, DELIVERABLE, NONE só exigem reescrever o texto', () => {
+    const causes: CriticRootCause[] = ['COPY', 'STRUCTURE', 'BRAND_FIT', 'EXECUTABILITY', 'FACTUAL', 'DELIVERABLE', 'NONE'];
+    for (const cause of causes) {
+      expect(rewriteRequiresStrategyLayer(cause), cause).toBe(false);
+    }
+  });
+});
+
+describe('formatCriticRevisionNote com root_cause', () => {
+  it('inclui a causa raiz classificada na nota, quando reprovado', () => {
+    const evalComCausa = evaluation({ scores: { ...baseScores, hook: 5 }, root_cause: 'HOOK' });
+    const gate = passesCriticGate(evalComCausa);
+    const note = formatCriticRevisionNote(evalComCausa, gate);
+    expect(note).toMatch(/Causa raiz \(camada que falhou\): HOOK/);
+  });
+
+  it('não menciona causa raiz quando root_cause é NONE', () => {
+    const evalSemCausa = evaluation({ scores: { ...baseScores, hook: 5 }, root_cause: 'NONE' });
+    const gate = passesCriticGate(evalSemCausa);
+    const note = formatCriticRevisionNote(evalSemCausa, gate);
+    expect(note).not.toMatch(/Causa raiz/);
+  });
+});
+
 describe('formatCriticRevisionNote', () => {
   it('lista os motivos do gate e instrui reescrita real, não patch de sinônimo', () => {
     const gate = passesCriticGate(evaluation({ scores: { ...baseScores, hook: 5 } }));
@@ -196,5 +229,31 @@ describe('critiqueDeliverable', () => {
     expect(capturedUser).toContain('Conceito: X');
     expect(capturedUser).toContain('roteiro, legenda');
     expect(result.scores.strategy).toBe(9);
+  });
+
+  /** Missão 14: o critic precisa ver a direção estratégica pra avaliar fidelidade, não só o texto final isolado. */
+  it('manda o strategyContext quando fornecido, pro critic avaliar fidelidade à estratégia', async () => {
+    let capturedUser = '';
+    const llm = {
+      chat: () => Promise.reject(new Error('not expected')),
+      chatJson: (messages: unknown) => {
+        const list = messages as { role: string; content: string }[];
+        capturedUser = list.find((m) => m.role === 'user')?.content ?? '';
+        return Promise.resolve(evaluation());
+      },
+      healthCheck: () => Promise.reject(new Error('not expected')),
+    };
+
+    await critiqueDeliverable(
+      { llm: llm as never },
+      {
+        briefing: 'Crie um reels',
+        renderedAnswer: 'Conceito: X',
+        strategyContext: 'DIREÇÃO ESTRATÉGICA DESTA PEÇA:\nIdeia central (big idea): A chave que nunca esperou.',
+      },
+    );
+
+    expect(capturedUser).toContain('DIREÇÃO ESTRATÉGICA DESTA PEÇA');
+    expect(capturedUser).toContain('A chave que nunca esperou.');
   });
 });

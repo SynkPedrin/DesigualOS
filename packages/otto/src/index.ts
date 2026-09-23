@@ -173,6 +173,7 @@ export {
   deriveCriticOverall,
   passesCriticGate,
   formatCriticRevisionNote,
+  rewriteRequiresStrategyLayer,
 } from './creative/critic.js';
 export type { CriticDeps, CriticInput, CriticGateResult } from './creative/critic.js';
 
