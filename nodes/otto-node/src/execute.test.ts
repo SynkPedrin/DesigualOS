@@ -1160,6 +1160,13 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     expect(creativePlanCalls).toBe(2); // geração inicial + UMA reescrita, não duas
     expect(briefingsRecebidos[1]).toMatch(/REVISÃO DO CRITIC OBRIGATÓRIA/);
     expect(briefingsRecebidos[1]).toMatch(/entregável\(is\) pedido\(s\) faltando: roteiro/);
+    // Missão 6: a reescrita recebe a PEÇA ATUAL (o que o draft já escreveu),
+    // não só a nota do critic — achado ao vivo: sem isso, a reescrita
+    // regenerava do zero e perdia conteúdo bom (fala sumindo de cenas que
+    // já tinham). "O forno como palco" é o concept do creativePlanFixture,
+    // então aparece no rendered answer do draft anterior.
+    expect(briefingsRecebidos[1]).toMatch(/PEÇA ATUAL.*preserve o que já está bom/s);
+    expect(briefingsRecebidos[1]).toContain('O forno como palco');
     expect(body.metadata.critic).toMatchObject({ enabled: true, passed: true, rewrites: 1 });
     expect(body.answer).toContain('Roteiro:');
 

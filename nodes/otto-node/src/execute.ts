@@ -913,7 +913,18 @@ export async function executeTask(
 
       while (criticGate && !criticGate.passed && !pipelineDegraded && criticRewrites < MAX_REWRITES) {
         const revisionNote = formatCriticRevisionNote(criticEvaluation!, criticGate);
-        const augmentedMessage = `${producaoBriefingBase}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
+        /**
+         * PEÇA ATUAL na reescrita (Otto Senior 20Y, Missão 6 — item do
+         * checklist "REWRITE INPUT" que ainda faltava: "CURRENT VALID
+         * DRAFT"). Sem isto, a reescrita regenerava do zero só com a nota do
+         * critic como guia, e o modelo não tinha como saber O QUE já estava
+         * bom pra preservar. Achado ao vivo (segunda validação Cosentino,
+         * pós Missão 1-7): a reescrita #2 tirou a fala (spoken_line) de 3 das
+         * 4 cenas que a tinham — uma peça pior, não melhor, porque não havia
+         * "mantenha o resto" pra ancorar a edição. Mandar a peça atual
+         * transforma "reescreva do zero" em "edite isto".
+         */
+        const augmentedMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu — preserve o que já está bom, corrija só o que a revisão abaixo aponta):\n${result.answer}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
         const attemptNumber = criticRewrites + 1;
 
         let rewritten: Awaited<ReturnType<typeof produce>>;
