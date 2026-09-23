@@ -197,6 +197,39 @@ export function looksLikeSequencedScript(text: string): boolean {
 }
 
 /**
+ * BRIEFING CRIATIVO — checagem semântica (Otto Senior V1, "Universal
+ * Quality Floor", Section 11-12). Achado ao vivo real: pedido de
+ * "briefing criativo" degradava pro mesmo formato de "Conceito: X /
+ * Legenda: Y" — um rótulo "Briefing:" na frente não faz de um texto um
+ * briefing de verdade (Section 12: "a Creative Brief fails... Do not pass
+ * merely because a label says 'Briefing:'"). Exige um NÚMERO MÍNIMO das
+ * seções esperadas como rótulo próprio — não todas (nem todo campo precisa
+ * ser verboso), mas o suficiente pra provar que é um documento estruturado
+ * de execução, não uma peça de copy disfarçada.
+ */
+const CREATIVE_BRIEF_SECTIONS = [
+  /\bobjetivo\s*:/i,
+  /\bp[uú]blico\s*:/i,
+  /\binsight\s*:/i,
+  /\bmensagem\s+central\s*:/i,
+  /\bconceito(\s+criativo)?\s*:/i,
+  /\btom\s*:/i,
+  /\bdire[çc][ãa]o\s+visual\s*:/i,
+  /\belementos?\s+obrigat[óo]rios?\s*:/i,
+  /\bevitar\s*:/i,
+  /\bentreg[áa]ve(l|is)\s*:/i,
+  /\bplataforma\s*:/i,
+  /\bcta\s*:/i,
+];
+const CREATIVE_BRIEF_MINIMUM_SECTIONS = 6;
+
+export function looksLikeCreativeBrief(text: string): boolean {
+  if (!text) return false;
+  const found = CREATIVE_BRIEF_SECTIONS.filter((pattern) => pattern.test(text)).length;
+  return found >= CREATIVE_BRIEF_MINIMUM_SECTIONS;
+}
+
+/**
  * Completude de entregáveis CALCULADA EM CÓDIGO (Otto Senior 20Y, Missão 7:
  * "Do NOT ask the model to self-certify completeness"). O critic também
  * reporta `flags.missing_deliverables`, mas isso é o modelo julgando o

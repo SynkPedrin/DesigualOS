@@ -174,6 +174,7 @@ export {
   explainDeliverableGap,
   looksLikeScriptContent,
   looksLikeSequencedScript,
+  looksLikeCreativeBrief,
   detectPlaceholderContent,
   deliverableRegression,
   deriveCriticOverall,

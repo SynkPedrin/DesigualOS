@@ -2382,6 +2382,74 @@ describe('piso universal de qualidade — caminho de chat (Otto Senior V1)', () 
 
     await app.close();
   });
+
+  /**
+   * REGRESSÃO REAL (Otto Senior V1, "Universal Quality Floor", Section 11):
+   * pedido de "briefing criativo" degradava pro mesmo formato de
+   * "Conceito: X / Legenda: Y" — sem NENHUMA das seções que um designer/
+   * copywriter/diretor de arte precisa pra executar.
+   */
+  it('teste: caption disfarçada de briefing ("Conceito:/Legenda:") dispara reparo pra estrutura real de briefing', async () => {
+    let chatCalls = 0;
+    const briefingReal = [
+      'Objetivo: gerar leads qualificados via LinkedIn.',
+      'Público: diretores financeiros de empresas de médio porte.',
+      'Insight: decisores hesitam em reestruturar por medo de expor fragilidade.',
+      'Mensagem Central: reestruturar cedo é proteger o que já foi construído.',
+      'Tom: sério, técnico, confiável.',
+      'CTA: agende uma conversa inicial sem compromisso.',
+    ].join('\n\n');
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chat: () => {
+            chatCalls += 1;
+            return Promise.resolve(
+              chatCalls === 1
+                ? 'Conceito: Transformar desconhecidos em clientes.\n\nLegenda: Descubra como podemos ajudar sua empresa.'
+                : briefingReal,
+            );
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-briefing', message: 'Crie um briefing criativo pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(chatCalls).toBe(2); // draft (caption disfarçada) + 1 reparo
+    expect(body.answer).toContain('Objetivo:');
+    expect(body.answer).toContain('CTA:');
+    const qualityGate = body.metadata.quality_gate as { placeholders_and_forbidden_language: string[] };
+    expect(qualityGate.placeholders_and_forbidden_language).toEqual([]);
+
+    await app.close();
+  });
+
+  it('briefing criativo já bem estruturado na primeira tentativa não dispara reparo', async () => {
+    let chatCalls = 0;
+    const briefingReal = [
+      'Objetivo: gerar leads qualificados.',
+      'Público: diretores financeiros.',
+      'Insight: hesitam por medo de expor fragilidade.',
+      'Mensagem Central: reestruturar cedo protege o que já foi construído.',
+      'Tom: sério e técnico.',
+      'CTA: agende uma conversa.',
+    ].join('\n\n');
+    const app = buildTestApp(
+      makeDeps({ chat: () => { chatCalls += 1; return Promise.resolve(briefingReal); } }, brainDir),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-briefing-ok', message: 'Crie um briefing criativo pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(chatCalls).toBe(1); // sem reparo — já veio estruturado
+    const qualityGate = body.metadata.quality_gate as { repair_attempted: boolean };
+    expect(qualityGate.repair_attempted).toBe(false);
+
+    await app.close();
+  });
 });
 
 describe('piso universal de qualidade — caminho de imagem (Otto Senior V1)', () => {

@@ -25,6 +25,7 @@ export type ArtefatoPedido =
   | 'prompt'
   | 'email'
   | 'nome'
+  | 'briefing'
   | 'indefinido';
 
 export interface ContratoDeSaida {
@@ -49,6 +50,12 @@ const NUMERO_POR_EXTENSO: Record<string, number> = {
  * ainda que a palavra Reels apareça perto de "post" no mesmo briefing.
  */
 const FORMAS: Array<{ artefato: Exclude<ArtefatoPedido, 'indefinido'>; re: RegExp }> = [
+  // Otto Senior V1, "Universal Quality Floor" — Section 11: "briefing" vem
+  // ANTES de roteiro/legenda de propósito. Sem isso, "briefing pra um
+  // roteiro de Reels" batia primeiro em 'roteiro' (a FORMA mais específica
+  // da lista original), e o pedido de BRIEFING nunca era reconhecido —
+  // o artefato caía pra 'indefinido' e degradava pra formato de legenda.
+  { artefato: 'briefing', re: /\b(briefings?|brief\s+criativo|briefing\s+criativo)\b/ },
   { artefato: 'roteiro', re: /\b(roteiros?|scripts?|storyboards?)\b/ },
   { artefato: 'prompt', re: /\bprompts?\b/ },
   { artefato: 'email', re: /\b(e-?mails?|newsletters?|disparos?)\b/ },
@@ -135,6 +142,18 @@ const FORMA_FINAL: Record<Exclude<ArtefatoPedido, 'indefinido'>, string> = {
   prompt: 'o prompt em si, pronto pra colar no gerador, sem explicação no meio.',
   email: 'assunto em uma linha, corpo, e CTA. Pronto pra enviar.',
   nome: 'o nome, e embaixo UMA linha dizendo por que ele funciona.',
+  /**
+   * Otto Senior V1, "Universal Quality Floor" — Section 11: antes desta
+   * missão, um pedido de "briefing criativo" nunca tinha um formato
+   * dedicado — caía em 'indefinido' e degradava pro mesmo formato de
+   * legenda (Conceito + Legenda), sem nenhuma das seções que um designer/
+   * copywriter/diretor de arte precisa pra trabalhar a partir dele. Cada
+   * seção listada abaixo vira um RÓTULO obrigatório na resposta — é isso
+   * que `looksLikeCreativeBrief` (critic.ts) confere depois, do mesmo jeito
+   * que `looksLikeSequencedScript` confere roteiro.
+   */
+  briefing:
+    'documento estruturado com seções rotuladas, cada uma em sua própria linha: Objetivo, Público, Insight (o que o público sente/pensa que a peça precisa resolver), Mensagem Central, Conceito Criativo, Tom, Direção Visual, Elementos Obrigatórios, Evitar, Entregáveis, Plataforma e CTA. Não é uma legenda com título de "Briefing:" na frente — é um documento que um designer, copywriter ou diretor de arte consegue executar sem perguntar nada de volta.',
 };
 
 /**

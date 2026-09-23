@@ -44,6 +44,7 @@ import {
   type CandidateRecord,
   detectPlaceholderContent,
   detectForbiddenLanguage,
+  looksLikeCreativeBrief,
   detectCarouselRepetition,
   type BrainHealth,
   type BrandKit,
@@ -177,6 +178,13 @@ function detectProductionIntent(message: string): StudioJobType | null {
   if (/\breels\b/.test(normalized)) return 'reels';
   if (/\bvideo\b/.test(normalized)) return 'video';
   if (/\bupscale\b/.test(normalized)) return 'upscale';
+  // Otto Senior V1, "Universal Quality Floor" — Section 11: "briefing
+  // criativo" tem a palavra "criativo", que por si só já batia no padrão
+  // de intenção de imagem abaixo — um pedido de DOCUMENTO de planejamento
+  // ia pro caminho de produção de imagem por acidente léxico, nunca
+  // chegando no caminho de chat (onde o formato de briefing de verdade
+  // agora existe). Checagem ANTES do padrão genérico, não depois.
+  if (/\bbriefings?\b/.test(normalized)) return null;
   if (/\b(imagem|arte|post|peca|criativo|banner|anuncio|card|thumbnail)\b/.test(normalized)) return 'image';
   return null;
 }
@@ -662,13 +670,20 @@ export async function executeTask(
       if (contratoEstrutura.artefato !== 'indefinido') {
         const placeholders = detectPlaceholderContent(answer);
         const forbiddenLanguage = detectForbiddenLanguage(answer, contextoResolvido ?? '');
-        chatQualityIssues = [...placeholders, ...forbiddenLanguage];
+        // Otto Senior V1, Section 11-12: "briefing" pedido explicitamente
+        // precisa ter cara de briefing — rótulo "Briefing:" na frente de
+        // uma legenda não conta (achado ao vivo real).
+        const briefEstruturaFaltando = contratoEstrutura.artefato === 'briefing' && !looksLikeCreativeBrief(answer);
+        chatQualityIssues = [...placeholders, ...forbiddenLanguage, ...(briefEstruturaFaltando ? ['estrutura de briefing incompleta'] : [])];
         if (chatQualityIssues.length > 0) {
           chatQualityRepairAttempted = true;
           const repairInstruction = [
             'CORREÇÃO OBRIGATÓRIA antes de entregar: a resposta abaixo tem problema(s) que não podem ir pro cliente.',
             placeholders.length > 0 ? `Placeholder de produção não preenchido, sobrou no texto: ${placeholders.join(', ')}. Substitua por conteúdo final de verdade ou remova.` : '',
             forbiddenLanguage.length > 0 ? `Linguagem que o próprio contexto do cliente proíbe explicitamente sobrevive na resposta: ${forbiddenLanguage.join(', ')}. Reescreva sem essa expressão nem variação dela (plural, hashtag, etc).` : '',
+            briefEstruturaFaltando
+              ? 'Isto foi pedido como BRIEFING CRIATIVO, mas a resposta não tem a estrutura de um: faltam as seções rotuladas (Objetivo:, Público:, Insight:, Mensagem Central:, Conceito:, Tom:, Direção Visual:, Elementos Obrigatórios:, Evitar:, Entregáveis:, Plataforma:, CTA: — pelo menos 6 delas, cada uma em sua própria linha). Não é uma legenda com "Briefing:" na frente — reescreva como documento estruturado.'
+              : '',
             `Resposta anterior:\n${answer}`,
             'Preserve tudo o que está certo. Corrija SOMENTE os pontos acima.',
           ].filter(Boolean).join('\n\n');
@@ -683,7 +698,11 @@ export async function executeTask(
               ),
             );
             answer = corrigido;
-            chatQualityIssues = [...detectPlaceholderContent(answer), ...detectForbiddenLanguage(answer, contextoResolvido ?? '')];
+            chatQualityIssues = [
+              ...detectPlaceholderContent(answer),
+              ...detectForbiddenLanguage(answer, contextoResolvido ?? ''),
+              ...(contratoEstrutura.artefato === 'briefing' && !looksLikeCreativeBrief(answer) ? ['estrutura de briefing incompleta'] : []),
+            ];
             logger.info(
               { execution_id: request.execution_id, resolved: chatQualityIssues.length === 0 },
               '[OTTO:quality] correção de placeholder/linguagem proibida aplicada no caminho de chat',

@@ -9,6 +9,7 @@ import {
   formatCriticRevisionNote,
   looksLikeScriptContent,
   looksLikeSequencedScript,
+  looksLikeCreativeBrief,
   passesCriticGate,
   reconcileRootCause,
   rewriteRequiresStrategyLayer,
@@ -426,6 +427,39 @@ describe('critiqueDeliverable', () => {
 
     expect(capturedUser).toContain('DIREÇÃO ESTRATÉGICA DESTA PEÇA');
     expect(capturedUser).toContain('A chave que nunca esperou.');
+  });
+});
+
+describe('looksLikeCreativeBrief (Otto Senior V1, "Universal Quality Floor")', () => {
+  /**
+   * REGRESSÃO REAL: pedido de "briefing criativo" degradava pro mesmo
+   * formato de "Conceito: X / Legenda: Y" — um rótulo "Briefing:" na
+   * frente não fazia (nem faz) de um texto um briefing de verdade.
+   */
+  it('teste: caption disfarçada de briefing ("Conceito: X / Legenda: Y") NÃO passa (achado ao vivo real)', () => {
+    const falsoBriefing = 'Conceito: Transformar desconhecidos em clientes.\n\nLegenda: Descubra como a Mendes & Prado pode ajudar sua empresa.';
+    expect(looksLikeCreativeBrief(falsoBriefing)).toBe(false);
+  });
+
+  it('briefing real, com seções suficientes rotuladas, passa', () => {
+    const briefingReal = [
+      'Objetivo: gerar leads qualificados via LinkedIn.',
+      'Público: diretores financeiros de empresas de médio porte.',
+      'Insight: decisores hesitam em reestruturar por medo de expor fragilidade.',
+      'Mensagem Central: reestruturar cedo é proteger o que já foi construído.',
+      'Tom: sério, técnico, confiável.',
+      'CTA: agende uma conversa inicial sem compromisso.',
+    ].join('\n\n');
+    expect(looksLikeCreativeBrief(briefingReal)).toBe(true);
+  });
+
+  it('poucas seções (abaixo do mínimo) não passa', () => {
+    const briefingIncompleto = 'Objetivo: gerar leads.\n\nTom: sério.';
+    expect(looksLikeCreativeBrief(briefingIncompleto)).toBe(false);
+  });
+
+  it('texto vazio não passa', () => {
+    expect(looksLikeCreativeBrief('')).toBe(false);
   });
 });
 
