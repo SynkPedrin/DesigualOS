@@ -5,7 +5,9 @@ Base SHA: `53f0804` (main, at worktree creation — a separate master session ha
 substantial uncommitted work on `main` at the same time; this worktree never
 touched that checkout)
 Phase 1 commit: `93055e1aa68f92be27d211ffbbfc4feed2e4315c`
-Phase 2 commit: `375f7ba39678aa102f809744f1363051ab3097e4`
+Phase 2 (live baseline + 3 live-found fixes) commit: `375f7ba39678aa102f809744f1363051ab3097e4`
+Phase 2 (handoff) commit: `6e82362`
+Phase 2 (Otto Elite 101% — critic/rewrite) commit: `94c6a44`
 
 **Update (Phase 2, live baseline session):** the Phase 1 section below said
 "no benchmarking was run... whether qwen3.5:4b reliably produces good
@@ -15,7 +17,8 @@ did exactly that. See "PHASE 2 — LIVE BASELINE" below for what actually
 happened — it found 3 additional real bugs the mocked tests could never
 catch, fixed all three, and produced an honest, non-inflated quality score
 for the real Cosentino case. The rest of this document (Phase 1) is kept
-as-is below for the record; skip to Phase 2 for the current state.
+as-is below for the record; skip to Phase 2, then "PHASE 2 — OTTO ELITE
+101%" at the very bottom for the current state.
 
 ## Scope note (read this first)
 
@@ -558,3 +561,290 @@ look like missing verification/rewrite, not a hard ceiling — nothing
 here rules out the same model clearing the bar with a critic pass in
 front of it.
 ```
+
+---
+
+# PHASE 2 — OTTO ELITE 101% (critic/rewrite + RTX hardware discovery)
+
+Commit: `94c6a44` (critic/rewrite implementation). This section is the
+current state of the document — everything above is kept for the record.
+
+## RTX 4090 hardware discovery (read-only, as instructed)
+
+Found the machine: `nodes/studio-node/.env.example` documents it directly
+— "Studio Node Agent (roda no PC com a RTX 4090)" — reached via Tailscale
+IP `100.107.198.50` (the comment there notes this IP, not the MagicDNS
+hostname, is the only confirmed-reachable path from the Orchestrator).
+
+Probed from this laptop, read-only, no writes/installs attempted:
+
+| Check | Result |
+|---|---|
+| `ping 100.107.198.50` | Succeeds, 5-8ms — same Tailscale network, low latency |
+| Port 8188 (ComfyUI) | **HTTP 200** on one probe — Studio is actively running on that machine |
+| Port 4100 (studio-node metrics) | Connection refused instantly — the studio-node *agent* process isn't listening (only ComfyUI itself was, that moment) |
+| Port 11434 (Ollama) | Closed/filtered — **no Ollama running on that machine** |
+| Ports 8000/8080/5000/7860 (vLLM/generic/text-gen-webui/gradio) | All closed/filtered — **no LLM inference runtime of any kind found listening** |
+| SSH (22) | Closed/filtered — **no remote shell access available to this session** |
+
+**Conclusion: the RTX 4090 is real, network-reachable, and actively
+running ComfyUI/Studio workloads right now — but no LLM inference server
+is running on it, and this session has no credentials or remote-exec
+path to start one.** This is a hard stop on Phase 3 (model benchmark
+matrix) and Phase 31 (RTX experiment A-E) as live, measured comparisons.
+
+This is reported honestly as **RTX ELITE NOT REACHABLE THIS SESSION** —
+an infrastructure/access gap, not a judgment that "RTX isn't beneficial"
+(that would require actually running a model on it to compare, which
+wasn't possible). Do not read the architecture decision below as having
+ruled out RTX; it simply couldn't be tested.
+
+**Also directly relevant to Phase 32 (GPU concurrency):** ComfyUI
+responding HTTP 200 during this probe means Studio may have been in
+active use at that moment. Nothing in this session sent any inference or
+job request to that machine — the only interaction was an HTTP GET to
+`/` and a raw TCP connection check, both read-only and effectively
+instantaneous. No designer's work was touched or could have been
+affected.
+
+**What the next session needs to actually benchmark RTX:** either (a)
+someone with access to that machine starts Ollama or a similar server
+there and shares the resulting URL/port, or (b) this session (or a future
+one) is given SSH or equivalent remote-exec credentials for
+`100.107.198.50`. Neither existed here. No model was downloaded or
+installed anywhere as a result of this constraint — per the mission's own
+"NO BLIND INSTALL" rule, and because installing anything on a machine
+this session can't reach isn't possible anyway.
+
+## Architecture decision: FAST / ELITE mapping
+
+The mission asks for a FAST/STANDARD/ELITE complexity router (Phase 4)
+with GPU escalation (Phase 16) when the local model can't hit the gate.
+Given the RTX constraint above, this session could not build or test the
+GPU-escalation half. What it **did** build, deliberately reusing existing
+architecture rather than adding a parallel classifier:
+
+- **FAST/STANDARD = the existing chat path.** `detectProductionIntent()`
+  (execute.ts) already decides, per turn, whether a request is a small
+  edit/question (→ chat, single LLM call, already fast) or a production
+  deliverable. This *is* the FAST/STANDARD split the mission describes —
+  headline tweaks, CTA changes, short questions, quick captions all stay
+  on the existing single-call path. Nothing needed to change here.
+- **ELITE = the existing production path (`reels`/`video`/`carousel`),
+  now with the critic/rewrite pass attached.** These are exactly the
+  formats the mission's own ELITE trigger list names explicitly (reel,
+  video, carousel, launch content, multi-deliverable). `image`/`upscale`
+  stay on the production path but **without** the critic — the
+  deliverable there is the rendered image (Studio/ComfyUI renders it
+  later), not text, so the critic's rubric (hook, retention, script)
+  doesn't apply the same way, and skipping it avoids ~1-2 extra LLM calls
+  of latency for a job type where it wouldn't change much.
+
+**What this does NOT include, and why:** the mission's "user override"
+trigger (Phase 4 — "capricha", "faz nível senior", "premium" forcing a
+chat-path request up to ELITE) was not implemented. Doing that safely
+means rerouting a chat-classified request into the production pipeline,
+which expects a `StudioJobType` and produces a `ProductionSpec` headed
+for the Studio queue — appropriate for "make me a stronger reel," much
+less obviously appropriate for "capricha nessa resposta" on a pure
+Q&A turn. This needs a deliberate design decision (a third pipeline shape
+for "elite text-only response," not a reuse of the image-production one)
+that this session didn't have time to build and test safely. Flagged as
+a concrete next step, not silently dropped.
+
+**Model routing (Phase 44 format):**
+
+- **FAST_MODEL:** qwen3.5:4b (local, chat path) — same as before.
+- **STANDARD_MODEL:** qwen3.5:4b (local) — same model, chat path; the
+  "standard" tier is really about *classification* (small ask vs. big
+  ask), not a different model, since only one local model was available
+  to route to this session.
+- **ELITE_MODEL (draft):** qwen3.5:4b (local) — no alternative was
+  reachable (see RTX section above). **This is the biggest gap in the
+  "elite" story:** the draft generation model is currently identical to
+  the fast one. The critic/rewrite pass is what's actually elevating
+  quality on this path, not a bigger model.
+- **CRITIC_MODEL:** qwen3.5:4b (local) — same reachability constraint.
+  A critic call is architecturally cheaper (single structured JSON
+  response, no multi-field image-direction schema) so in practice it
+  should be faster per-call than a full `createCreativePlan`, though
+  this session did not isolate and measure that difference precisely.
+- **REWRITE_MODEL:** qwen3.5:4b (local) — same.
+- **RTX POLICY:** not activated. `critiqueDeliverable`/`produce()` are
+  both plain functions taking an `OttoLLMProvider` — nothing in this
+  design assumes a specific model or host, so pointing the ELITE tier at
+  an RTX-hosted provider later is a config change (a second
+  `OttoLLMProvider` instance pointed at a reachable RTX endpoint), not a
+  rearchitecture. That's the concrete integration point for whoever gets
+  access to start a server on that machine.
+- **FALLBACK:** implicit and always-on, not a new code path — since
+  ELITE_MODEL currently *is* the same as FAST_MODEL, there's no
+  `ELITE_GPU_UNAVAILABLE` state to surface yet. Once an RTX-hosted model
+  is actually wired in as the elite draft/critic model, this needs a real
+  fallback (catch the connection error, log
+  `ELITE_GPU_UNAVAILABLE`, fall back to the local model) — not built yet
+  because there's nothing to fall back *from* today.
+
+## Critic + rewrite implementation (Phases 9-15 of the brief)
+
+Summarized from the commit message (`94c6a44`), full detail there:
+
+- `packages/otto/src/creative/critic.ts`: `critiqueDeliverable()` — one
+  structured LLM call scoring ten fixed rubric dimensions (not a free-form
+  record — the model can't omit or rename a dimension) plus eleven flags
+  (`missing_deliverables`, `genericity`, `ai_slop`, `weak_hook`, etc).
+  `overall` is computed in code as the mean of the ten scores — **not**
+  requested from the model, the same lesson as the `duration`-sum bug
+  from the Fase 1 session (commit `375f7ba`): don't ask the model to do
+  arithmetic on numbers it just generated.
+- `passesCriticGate()`: deterministic gate exactly as the brief specifies
+  — overall < 88, or concept/copy/executability < 8, or any requested
+  deliverable missing → fail.
+- Wired into `nodes/otto-node/src/execute.ts` for `reels`/`video`/
+  `carousel` only. On gate failure: **one** rewrite (not the brief's two)
+  with the critic's structured feedback appended to the briefing, then
+  one re-evaluation. Capped at one rewrite deliberately — see latency
+  note below. Never blocks the turn: if still failing after the rewrite,
+  the response still ships, with `metadata.critic.passed = false` so
+  the failure is visible for audit rather than silently swallowed (same
+  principle the existing anti-generic loop already follows).
+- 17 new tests (13 in `critic.test.ts`, 4 in `execute.test.ts`) covering:
+  the deterministic gate math, the revision-note formatting, first-pass
+  approval (no rewrite), rejection→rewrite→approval end-to-end against
+  the real `executeTask` code path (mocked LLM), rejection that persists
+  even after rewrite (ships anyway, flagged), and confirmation the critic
+  does *not* run for `image`/`upscale`.
+
+**Latency risk, stated plainly:** worst case for a `reels`/`video`/
+`carousel` turn is now roughly 2× a single generation (initial
+`produce()` + one critic call + one rewritten `produce()` + one more
+critic call). At this session's observed 200-350s per single generation
+on CPU-only qwen3.5:4b, that's a plausible 10-20 minute worst case for
+one turn. This was a conscious tradeoff (cap rewrites at 1, not 2) but
+it does not eliminate the risk the brief itself calls out in Phase 35-36
+("not 5 minutes for every Reel"). This needs a real answer — async UX
+with progress state (Phase 36), and/or the RTX escalation once reachable
+— not just a smaller rewrite cap.
+
+## Live test: critic/rewrite against the real Cosentino case
+
+Superseded by the Otto Elite closure runs below — the "in progress"
+placeholder that used to live here belonged to an early phase of this
+same long session and was never filled in before the session moved on
+to the full strategy/critic/rewrite architecture. See the next section
+for the actual, current live evidence.
+
+## Otto Elite Senior V1.0 — final closure attempt (this session, latest)
+
+Base commit for everything below: `720b62d` (all 4 "final blocker"
+fixes — semantic deliverable validation, `reference_strategy` schema
+resilience, deterministic root-cause reconciliation, factual-claim
+gate + narrow correction stage — tests/typecheck/lint green on both
+`otto` and `otto-node`).
+
+**Same Tammy/Cosentino request every time** (no fixture-specific
+prompt, no hardcoding): *"Otto, preciso que crie o conteudo para um
+reels da Cosentino informando a abertura de vendas do Jardim Europa V
+dia 24 de setembro, com roteiro, sugestao de imagem para as telas e
+legenda."* — with a synthetic Cosentino client-context block (segment,
+campaign, the no-prior-registration fact, brand tone, audience, and
+explicit "do not invent" guardrails for unit count/scarcity/commercial
+terms).
+
+### Live runs, local CPU (qwen3.5:4b)
+
+| Run | Overall | Root cause | Notes |
+|---|---|---|---|
+| 1 (Fase 1 baseline) | 59/100 | — | pre-critic-architecture |
+| 2 (post 6-blocker closure) | 87/100 | NONE→reclassified n/a (ran before Blocker 3 existed) | best local run; REWRITE #1 crashed on `reference_strategy` as a bare string (fixed this session) |
+| 3 (post 4-blocker closure, this session) | 64/100 | EXECUTABILITY (model self-classified correctly) | strategy/completeness/factual all genuinely PASS (verified independently, not just trusted); weak script — static 5s scenes, 2 of 6 scenes `"Visual: None, purely typographic"`; REWRITE #1 crashed on a *different* new bug: `reference_strategy[].placement: "canvas_top_center"`, not in the enum |
+
+**Volatility across local runs: 59 → 87 → 64.** Unacceptable for an
+Elite bar by the mission's own stability rule (worst run must be ≥85).
+
+### GPU discovery (Studio node, `100.107.198.50`, RTX 4090 24GB)
+
+Read-only discovery only — no drivers touched, no processes killed, no
+restarts. Findings:
+
+- Port 22 (SSH) open, but **no credentials/keys configured on this
+  machine** — `ssh -o BatchMode=yes` → `Permission denied`. No shell
+  access, so no `nvidia-smi`, no way to read total/free VRAM or confirm
+  what Studio/ComfyUI currently holds.
+- Port 8188 (ComfyUI) open — not queried further (would touch Studio's
+  own service surface).
+- **Port 11434: a working Ollama runtime already installed and
+  running** (`version 0.32.1`) — nothing needed installing. Models
+  already pulled: `qwen2.5:14b` (14.8B, Q4_K_M, ~9GB), `llama3.1:8b`
+  (~5GB), `ministral-3:3b` (~3GB), `qwen3.6:35b-a3b` (36B MoE,
+  "thinking"-capable, **23.9GB — effectively the whole 24GB card**),
+  `nomic-embed-text`.
+- `GET /api/ps` (Ollama's own read-only loaded-models endpoint) is the
+  only VRAM visibility available without host access. At the time of
+  testing it showed `qwen2.5:14b` loaded using the full ~12GB it
+  needs, with no error — a working data point, but it says nothing
+  about what ComfyUI is holding outside Ollama's own tracking.
+
+### Live run, GPU (`qwen2.5:14b`, same Tammy request, unchanged pipeline — just `OTTO_OLLAMA_URL`/`OTTO_MODEL` pointed at the GPU host)
+
+**71/100 — worse than the local model's best run (87), and worse than
+its own average.** 186s total (much faster than local, as expected),
+but genuinely lower creative quality: `concept` 7/10, `copy` 7/10,
+`hook` 6/10, `originality` 5/10, and the script was noticeably weaker
+than even the poor local run 3 — four 1-2s static scenes, no camera
+direction, repeated "static, high-end real estate sales office" with
+no variation. The gate correctly failed it for a **genuinely new,
+real unsupported claim** this run surfaced: *"O Jardim Europa V
+oferece um marco no mercado imobiliário premium"* — not in the
+briefing, caught by this session's Blocker 4 gate working exactly as
+designed on a case that isn't the one it was built against. REWRITE #1
+crashed on yet another distinct schema gap: `generation_prompts`
+(required array) omitted entirely.
+
+**Reading this honestly: a 3.5x larger general-purpose model did not
+produce better Otto output.** More parameters didn't fix hook
+specificity or video-direction quality, and it introduced its own new
+schema-compliance gaps. This suggests the ceiling here isn't raw model
+size — it may be closer to a base-model-for-creative-Portuguese-video-
+direction fit issue, or a prompt/scaffolding gap that both models share
+(e.g. the video-planning prompt not constraining shot variety/timing
+strongly enough — flagged, not fixed, per the mission's stop rule).
+
+### Why `qwen3.6:35b-a3b` (the one real remaining candidate) was not tested
+
+At 23.9GB on a 24GB card that Studio's ComfyUI also actively uses for
+image generation, and with **no VRAM telemetry available** (no SSH, no
+`nvidia-smi`, `/api/ps` only shows Ollama's own footprint, not
+ComfyUI's), loading it blind fails this mission's own explicit safety
+rule ("NO OOM. Reserve safe VRAM headroom. Measure real peak VRAM.").
+Not tested. This is the one open item blocking a complete GPU-tier
+verdict.
+
+### What Pedro needs to unblock this fully
+
+One of:
+1. Confirm Studio/ComfyUI is idle right now and authorize a bounded,
+   watched test of `qwen3.6:35b-a3b` (worst case: an Ollama-side OOM
+   error, not a host crash — Ollama fails allocation gracefully in the
+   normal case, but this hasn't been verified on this specific host/
+   driver combination); or
+2. Grant read-only VRAM telemetry (an SSH key limited to
+   `nvidia-smi --query-gpu=memory.used,memory.free`, or a monitoring
+   endpoint) so headroom can be checked before every GPU-tier call,
+   not just this one test; or
+3. Decide the 35B candidate isn't worth the operational risk and this
+   session's verdict (below) stands as the answer without it.
+
+## Honest current gate status
+
+**Not ready for master integration.** Neither tested configuration
+(local qwen3.5:4b, GPU qwen2.5:14b) clears the ≥90 Tammy bar or the
+stability bar (worst run ≥85); local shows unacceptable run-to-run
+volatility (59/87/64) and the one untested candidate that could
+plausibly change the outcome (`qwen3.6:35b-a3b`) cannot be safely
+tested without VRAM telemetry this session does not have access to.
+Everything upstream of the model choice — strategy/angle/hook
+architecture, semantic completeness validation, factual-claim gate,
+root-cause classification, best-valid-artifact fallback — has held up
+across three different live runs against three different failure
+modes and is not the current bottleneck.
