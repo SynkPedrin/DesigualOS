@@ -396,6 +396,15 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
 export interface EstadoDoTurnoAnterior {
   kind: ScopeKind;
   operational: boolean;
+  /**
+   * A ENTIDADE do turno anterior, não só a intenção. Sem estes dois campos o
+   * follow-up herdava `operational: true` e caía em GLOBAL — perguntar "e as
+   * mais urgentes?" logo depois de "quais as demandas da Alícia?" varria a
+   * carteira inteira sem filtro de responsável e devolvia task de outra
+   * pessoa. Medido no front publicado em 23/09/2026.
+   */
+  person?: PersonMention | null;
+  clients?: ClientMatch[];
 }
 
 export async function resolveOperationalScope(
@@ -516,6 +525,54 @@ export async function resolveOperationalScope(
       signals,
       person,
     };
+  }
+
+  /**
+   * PRECEDÊNCIA 2c — o turno HERDA A ENTIDADE do anterior.
+   *
+   * Quem chega aqui não citou cliente (precedência 2) nem pessoa (2b): a frase
+   * não traz assunto próprio. Herdar a ENTIDADE é mais permissivo que herdar a
+   * INTENÇÃO (`herdaDoAnterior`, lista curada de frases elípticas) de
+   * propósito, porque o risco é oposto: herdar intenção errado faz uma
+   * pergunta criativa ir bater no ClickUp, enquanto herdar entidade só FILTRA
+   * uma consulta que, sem isso, varreria a carteira inteira. Por isso basta o
+   * turno já ser operacional por sinal próprio — "qual vence primeiro?" tem o
+   * marcador "vence", não cita ninguém, e vinha logo depois de "quais as
+   * demandas da Alícia?": responder pela agência inteira ali nunca é a leitura
+   * melhor. Citar outra pessoa ou outro cliente continua trocando a entidade,
+   * porque as precedências 2 e 2b já retornaram antes daqui.
+   */
+  const herdaEntidade = Boolean(anterior) && (herdaDoAnterior || operational);
+  if (herdaEntidade) {
+    if (anterior?.kind === 'PERSON' && anterior.person) {
+      signals.push(`herdado:pessoa:${anterior.person.name}`);
+      return {
+        kind: 'PERSON',
+        clients: [],
+        ambiguous,
+        temporal,
+        operational: true,
+        comparative,
+        briefing,
+        confidence: anterior.person.confidence,
+        signals,
+        person: anterior.person,
+      };
+    }
+    if ((anterior?.kind === 'CLIENT' || anterior?.kind === 'MULTI_CLIENT') && anterior.clients?.length) {
+      signals.push(`herdado:cliente:${anterior.clients.map((c) => c.name).join(',')}`);
+      return {
+        kind: anterior.kind,
+        clients: anterior.clients,
+        ambiguous,
+        temporal,
+        operational: true,
+        comparative,
+        briefing,
+        confidence: 0.75,
+        signals,
+      };
+    }
   }
 
   // PRECEDÊNCIA 3 — nenhum cliente resolvido: aí sim marcadores decidem.

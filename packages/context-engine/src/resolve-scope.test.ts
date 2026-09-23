@@ -420,3 +420,58 @@ describe('carry-forward de follow-up', () => {
     ).toBe(false);
   });
 });
+
+/**
+ * Regressão do aceite no front publicado (23/09/2026). "quais as demandas da
+ * Alícia?" resolvia PERSON e respondia certo; o follow-up "e as mais
+ * urgentes?" perdia a pessoa, caía em GLOBAL e devolvia task de OUTRA pessoa
+ * (Gabriel Valenço, Oscar Menezes). O turno herdava a intenção sem a entidade.
+ */
+describe('follow-up elíptico herda a ENTIDADE, não só a intenção', () => {
+  const PESSOA_ANTERIOR = {
+    kind: 'PERSON' as const,
+    operational: true,
+    person: { name: 'alicia', candidatos: ['alicia'], confidence: 0.9, memberIds: [88409653] },
+    clients: [],
+  };
+
+  it('person_then_urgency_followup_keeps_person', async () => {
+    const r = await resolveOperationalScope('e as mais urgentes?', new Date(), PESSOA_ANTERIOR);
+    expect(r.kind).toBe('PERSON');
+    expect(r.person?.name).toBe('alicia');
+  });
+
+  it('person_then_deadline_followup_keeps_person', async () => {
+    const r = await resolveOperationalScope('qual vence primeiro?', new Date(), PESSOA_ANTERIOR);
+    expect(r.kind).toBe('PERSON');
+    expect(r.person?.name).toBe('alicia');
+  });
+
+  it('person_followup_never_falls_back_to_carteira_inteira', async () => {
+    const r = await resolveOperationalScope('e o prazo?', new Date(), PESSOA_ANTERIOR);
+    expect(r.kind).not.toBe('GLOBAL');
+  });
+
+  it('citar_outra_pessoa_troca_a_entidade', async () => {
+    const r = await resolveOperationalScope('e as tarefas da Esther?', new Date(), PESSOA_ANTERIOR);
+    expect(r.kind).toBe('PERSON');
+    expect(r.person?.name).not.toBe('alicia');
+  });
+
+  it('citar_cliente_explicito_vence_a_heranca_de_pessoa', async () => {
+    const r = await resolveOperationalScope('e a Cosentino?', new Date(), PESSOA_ANTERIOR);
+    expect(r.kind).toBe('CLIENT');
+  });
+
+  it('cliente_anterior_tambem_e_herdado_no_follow-up', async () => {
+    const anterior = {
+      kind: 'CLIENT' as const,
+      operational: true,
+      person: null,
+      clients: [{ id: 'c1', name: '3Net', slug: '3net' }],
+    } as unknown as Parameters<typeof resolveOperationalScope>[2];
+    const r = await resolveOperationalScope('e as mais urgentes?', new Date(), anterior);
+    expect(r.kind).toBe('CLIENT');
+    expect(r.clients[0]?.name).toBe('3Net');
+  });
+});

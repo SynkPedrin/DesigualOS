@@ -7,6 +7,7 @@ import {
   formatContextForPrompt,
   resolveClientFromText,
   resolveDefaultProjectForClient,
+  type EstadoDoTurnoAnterior,
 } from '@desigual-os/context-engine';
 import { route, type RouterDecision } from '@desigual-os/router';
 import { dispatchChatMessage, touchConversation } from '@desigual-os/orchestrator';
@@ -266,7 +267,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         )
         .catch(() => [] as unknown[])) as unknown as Array<{ metadata: Record<string, unknown> | null }>;
       const escopoAnterior =
-        (anteriores[0]?.metadata as { escopo?: { kind: string; operational: boolean } } | null)?.escopo ?? null;
+        (anteriores[0]?.metadata as { escopo?: EstadoDoTurnoAnterior } | null)?.escopo ?? null;
 
       const [userMessage] = await db
         .insert(schema.messages)
@@ -375,7 +376,13 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           .set({
             metadata: {
               ...(userMessage.metadata ?? {}),
-              escopo: { kind: operationalTurn.scope.kind, operational: operationalTurn.scope.operational },
+              // A entidade vai junto: é ela que o follow-up elíptico herda.
+              escopo: {
+                kind: operationalTurn.scope.kind,
+                operational: operationalTurn.scope.operational,
+                person: operationalTurn.scope.person ?? null,
+                clients: operationalTurn.scope.clients,
+              },
             },
           })
           .where(eq(schema.messages.id, userMessage.id))
