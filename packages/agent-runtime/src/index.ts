@@ -53,3 +53,14 @@ export {
   type GroundingReport,
 } from './grounding';
 export * from './failure-taxonomy';
+export {
+  classifyMetricAvailability,
+  computeChangePercent,
+  isSampleTooSmall,
+  percentagePointsDelta,
+  verifyClaimedChangePercent,
+  verifyClaimedPercentagePoints,
+  verifyClaimedRatio,
+  type MetricAvailability,
+  type VerificationResult,
+} from './metric-verifier';
