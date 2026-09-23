@@ -82,6 +82,7 @@ export {
   buildProposedAction,
   detectForbiddenMetaMutationRequest,
   detectJarbasHandoffRequest,
+  detectJarbasResultQuery,
   detectJarbasStatusQuery,
   type JarbasHandoffIntent,
 } from './bento-jarbas-handoff';

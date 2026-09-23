@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type {
   AgentTask,
@@ -44,6 +44,7 @@ export class PostgresAgentTaskStore implements AgentTaskStore {
         dispatchKey: input.dispatchKey,
         organizationId: input.organizationId,
         clientId: input.clientId,
+        conversationId: input.conversationId ?? null,
         requestedBy: input.requestedBy ?? null,
         assignedAgent: 'jarbas',
         objective: input.objective,
@@ -168,6 +169,22 @@ export class PostgresAgentTaskStore implements AgentTaskStore {
     return { ok: true, task: rowToAgentTask(atualizado), retryable };
   }
 
+  async getLatestTaskForClientConversation(organizationId: string, clientId: string, conversationId: string): Promise<AgentTask | null> {
+    const [row] = await db
+      .select()
+      .from(schema.agentTasks)
+      .where(
+        and(
+          eq(schema.agentTasks.organizationId, organizationId),
+          eq(schema.agentTasks.clientId, clientId),
+          eq(schema.agentTasks.conversationId, conversationId),
+        ),
+      )
+      .orderBy(desc(schema.agentTasks.updatedAt))
+      .limit(1);
+    return row ? rowToAgentTask(row) : null;
+  }
+
   /** Diagnóstico só quando o UPDATE atômico já devolveu 0 linhas — nunca decide a transição, só explica a recusa. */
   private async diagnoseTransitionFailure(taskId: string, callerOrganizationId: string): Promise<TransitionOutcome> {
     const [task] = await db.select().from(schema.agentTasks).where(eq(schema.agentTasks.id, taskId));
@@ -210,7 +227,8 @@ function rowToAgentTask(row: typeof schema.agentTasks.$inferSelect): AgentTask {
     taskId: row.id,
     organizationId: row.organizationId,
     clientId: row.clientId,
-    requestedBy: row.requestedBy ?? '',
+    conversationId: row.conversationId ?? null,
+    requestedBy: row.requestedBy ?? null,
     assignedAgent: 'jarbas',
     objective: row.objective,
     scope: row.scope,

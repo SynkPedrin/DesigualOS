@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProposedAction, detectForbiddenMetaMutationRequest, detectJarbasHandoffRequest, detectJarbasStatusQuery } from './bento-jarbas-handoff';
+import { buildProposedAction, detectForbiddenMetaMutationRequest, detectJarbasHandoffRequest, detectJarbasResultQuery, detectJarbasStatusQuery } from './bento-jarbas-handoff';
 import { InMemoryAgentTaskStore } from './agent-task';
 import { diagnoseCampaignSnapshot } from './jarbas-diagnosis';
 import { FIXTURE_CREATIVE_FATIGUE } from './jarbas-fixtures';
@@ -28,12 +28,10 @@ describe('detectJarbasHandoffRequest — não overfit em frase exata (§28)', ()
   });
 });
 
-describe('detectJarbasStatusQuery (§26/§46)', () => {
+describe('detectJarbasStatusQuery (§7/§26/§46) — pergunta pelo STATUS, nunca pelo resultado', () => {
   it.each([
     'o Jarbas terminou?',
     'onde ele está?',
-    'o que ele achou?',
-    'qual foi a recomendação do Jarbas?',
     'Bento, o Jarbas terminou aquela análise?',
   ])('reconhece pergunta de status: %s', (msg) => {
     expect(detectJarbasStatusQuery(msg)).toBe(true);
@@ -41,6 +39,26 @@ describe('detectJarbasStatusQuery (§26/§46)', () => {
 
   it('pedido de handoff não é confundido com pergunta de status', () => {
     expect(detectJarbasStatusQuery('manda o Jarbas analisar a Cosentino')).toBe(false);
+  });
+
+  it.each(['o que ele achou?', 'qual foi a recomendação do Jarbas?'])('pergunta de RESULTADO não é confundida com pergunta de status: %s', (msg) => {
+    expect(detectJarbasStatusQuery(msg)).toBe(false);
+  });
+});
+
+describe('detectJarbasResultQuery (§8) — pergunta pelo RESULTADO, nunca só pelo status', () => {
+  it.each([
+    'o que ele achou?',
+    'o que ele encontrou?',
+    'qual foi a recomendação do Jarbas?',
+    'qual foi o resultado?',
+    'qual foi a conclusão?',
+  ])('reconhece pergunta de resultado: %s', (msg) => {
+    expect(detectJarbasResultQuery(msg)).toBe(true);
+  });
+
+  it.each(['o Jarbas terminou?', 'onde ele está?'])('pergunta de STATUS não é confundida com pergunta de resultado: %s', (msg) => {
+    expect(detectJarbasResultQuery(msg)).toBe(false);
   });
 });
 
@@ -152,7 +170,7 @@ describe('§65 — fluxos offline Bento <-> Jarbas', () => {
     await store.transition(task.taskId, 'analyzing', ORG);
     const resultado = resultadoMinimo(task.taskId, task.version);
     await store.attachResult(task.taskId, resultado, ORG);
-    expect(detectJarbasStatusQuery('o que ele encontrou?')).toBe(true);
+    expect(detectJarbasResultQuery('o que ele encontrou?')).toBe(true);
     const salvo = await store.getResult(task.taskId);
     expect(salvo).toEqual(resultado);
   });

@@ -274,6 +274,20 @@
       "when": 1790181045834,
       "tag": "0038_jarbas_persistent_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1790188217353,
+      "tag": "0039_jarbas_chat_operability",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790188500000,
+      "tag": "0040_client_meta_accounts_revoke_public",
+      "breakpoints": true
     }
   ]
 }

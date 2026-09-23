@@ -188,7 +188,10 @@ export interface AgentTask {
   taskId: string;
   organizationId: string;
   clientId: string;
-  requestedBy: string;
+  /** Conversa que originou o handoff — null quando o dispatch não nasceu de uma conversa (ex.: canário/script). Permite achar "a última tarefa do Jarbas desta conversa" sem taskId em mãos (§4-§6 da missão de fechamento de chat). */
+  conversationId: string | null;
+  /** FK real pra users.id — null quando o e-mail de quem pediu não bate com nenhum usuário conhecido (nunca inventado). */
+  requestedBy: string | null;
   assignedAgent: 'jarbas';
   objective: string;
   scope: string;
