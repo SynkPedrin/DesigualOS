@@ -1,6 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@desigual-os/database', () => ({ db: {}, schema: {} }));
+/** Linha "dona" da lista consultada por resolveTaskClientAuthorization — cada teste ajusta. */
+let donoDaLista: { id: string; organizationId: string | null } | null = null;
+
+vi.mock('drizzle-orm', () => ({
+  eq: (col: { __col?: string }, value: unknown) => ({ op: 'eq', col: col?.__col, value }),
+  desc: (col: unknown) => col,
+}));
+
+vi.mock('@desigual-os/database', () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: () => ({
+            catch: () => Promise.resolve(donoDaLista ? [donoDaLista] : []),
+          }),
+        }),
+      }),
+    }),
+  },
+  schema: { clients: { id: { __col: 'id' }, organizationId: { __col: 'organizationId' }, clickupListId: { __col: 'clickupListId' } } },
+}));
 
 /**
  * Regressão da falha medida ao vivo em 14/09/2026: "perfeito, atribua a task
@@ -36,6 +57,60 @@ describe('bento-action-guard: classificação de intenção', () => {
       expect(intent.personName).toBe('Pedro Gabriel');
       expect(intent.taskName).toBe('Boas-vindas');
     }
+  });
+
+  /**
+   * Auditoria sênior (24/09/2026): "hoje"/"amanhã" descrevendo o PRAZO de
+   * tasks EXISTENTES (filtro de leitura pro resumo) não pode virar o prazo
+   * da task NOVA sendo criada — são coisas diferentes na mesma frase.
+   */
+  it('"cria uma task resumindo as tasks vencendo hoje" NÃO herda hoje como prazo da task nova', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest('cria uma task de QA com um resumo das tasks abertas que vencem hoje');
+    expect(intent.kind).toBe('create');
+    if (intent.kind === 'create') expect(intent.dueDate).toBeNull();
+  });
+
+  it('"cria uma task resumindo o que vence amanhã" também não herda o prazo pra task nova', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest('cria uma task resumindo o que vence amanhã');
+    expect(intent.kind).toBe('create');
+    if (intent.kind === 'create') expect(intent.dueDate).toBeNull();
+  });
+
+  it('marcador explícito ("prazo pra hoje") continua atribuindo prazo à task nova, mesmo com filtro na mesma frase', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest('cria uma task com prazo pra hoje resumindo as tasks que vencem amanhã');
+    expect(intent.kind).toBe('create');
+    if (intent.kind === 'create') expect(intent.dueDate).not.toBeNull();
+  });
+
+  it('sem cláusula de filtro, "cria uma task pra hoje" continua herdando hoje normalmente (comportamento antigo preservado)', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest('cria uma task pra hoje sobre organização de arquivos');
+    expect(intent.kind).toBe('create');
+    if (intent.kind === 'create') expect(intent.dueDate).not.toBeNull();
+  });
+
+  it('"que fecham hoje" também é filtro de leitura — não vira prazo da task nova', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest('cria uma task com as tasks que fecham hoje');
+    expect(intent.kind).toBe('create');
+    if (intent.kind === 'create') expect(intent.dueDate).toBeNull();
+  });
+
+  it('"com entrega hoje" NÃO é linguagem de filtro — é atributo da task nova, herda o prazo', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest('cria uma task de QA com entrega hoje');
+    expect(intent.kind).toBe('create');
+    if (intent.kind === 'create') expect(intent.dueDate).not.toBeNull();
+  });
+
+  it('"prazo hoje" sem "pra/pro" também herda o prazo da task nova (não é linguagem de filtro)', async () => {
+    const { classifyIntentForTest } = await import('./bento-action-guard.js');
+    const intent = classifyIntentForTest('cria uma task de organização com prazo hoje');
+    expect(intent.kind).toBe('create');
+    if (intent.kind === 'create') expect(intent.dueDate).not.toBeNull();
   });
 
   it('consulta operacional NUNCA cai no guard', async () => {
@@ -194,6 +269,86 @@ describe('DELETE: pedido, confirmação e alvo pendente', () => {
       vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
       const { taskExisteForTest } = await import('./bento-action-guard.js');
       expect(await taskExisteForTest(config, 't1')).toBeNull();
+    });
+  });
+
+  /**
+   * Auditoria sênior (24/09/2026, duas voltas): abrir escrita de produção
+   * pra clientes reais removeu a proteção acidental que a cerca de lista
+   * de QA dava contra citar a task de OUTRO cliente na conversa. A
+   * primeira versão deste helper deixava passar em qualquer caso
+   * inconclusivo (revisão pedida: ESCRITA nunca pode fail-open — só
+   * 'match' confirmado libera; 'mismatch' e 'unknown' bloqueiam os dois).
+   */
+  describe('resolveTaskClientAuthorizationForTest — escrita falha fechada em qualquer caso não confirmado', () => {
+    afterEach(() => { vi.unstubAllGlobals(); donoDaLista = null; });
+    const config = { apiKey: 'pk_fake', teamId: 'T1' };
+
+    function fetchRespondendoLista(listId: string) {
+      return vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ id: 't1', list: { id: listId } }) }));
+    }
+
+    it('task pertence ao cliente ATIVO da conversa -> match', async () => {
+      vi.stubGlobal('fetch', fetchRespondendoLista('L_CLIENTE_A'));
+      donoDaLista = { id: 'cliente-a', organizationId: 'org-1' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', 'cliente-a', 'org-1')).toBe('match');
+    });
+
+    it('task pertence a OUTRO cliente da MESMA organização -> mismatch (trocar de cliente é decisão explícita do turno, nunca inferida)', async () => {
+      vi.stubGlobal('fetch', fetchRespondendoLista('L_CLIENTE_B'));
+      donoDaLista = { id: 'cliente-b', organizationId: 'org-1' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', 'cliente-a', 'org-1')).toBe('mismatch');
+    });
+
+    it('task pertence a cliente de OUTRA organização -> mismatch (hard deny)', async () => {
+      vi.stubGlobal('fetch', fetchRespondendoLista('L_CLIENTE_X'));
+      donoDaLista = { id: 'cliente-x', organizationId: 'org-2' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', 'cliente-a', 'org-1')).toBe('mismatch');
+    });
+
+    it('conversa de escopo agência (sem cliente ativo): task de cliente da MESMA org -> match', async () => {
+      vi.stubGlobal('fetch', fetchRespondendoLista('L_CLIENTE_A'));
+      donoDaLista = { id: 'cliente-a', organizationId: 'org-1' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', null, 'org-1')).toBe('match');
+    });
+
+    it('conversa de escopo agência: task de cliente de OUTRA org -> mismatch', async () => {
+      vi.stubGlobal('fetch', fetchRespondendoLista('L_CLIENTE_X'));
+      donoDaLista = { id: 'cliente-x', organizationId: 'org-2' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', null, 'org-1')).toBe('mismatch');
+    });
+
+    it('sem cliente ativo NEM organização pra comparar -> unknown (nunca match por omissão)', async () => {
+      vi.stubGlobal('fetch', fetchRespondendoLista('L_QUALQUER'));
+      donoDaLista = { id: 'cliente-y', organizationId: 'org-1' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', null, null)).toBe('unknown');
+    });
+
+    it('lista da task não bate com NENHUM cliente cadastrado -> unknown', async () => {
+      vi.stubGlobal('fetch', fetchRespondendoLista('L_DESCONHECIDA'));
+      donoDaLista = null;
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', 'cliente-a', 'org-1')).toBe('unknown');
+    });
+
+    it('falha transitória ao ler a task (timeout/500) -> unknown, nunca match', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, text: async () => 'erro' })));
+      donoDaLista = { id: 'cliente-a', organizationId: 'org-1' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', 'cliente-a', 'org-1')).toBe('unknown');
+    });
+
+    it('fetch rejeitando (rede fora) -> unknown', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
+      donoDaLista = { id: 'cliente-a', organizationId: 'org-1' };
+      const { resolveTaskClientAuthorizationForTest } = await import('./bento-action-guard.js');
+      expect(await resolveTaskClientAuthorizationForTest(config, 't1', 'cliente-a', 'org-1')).toBe('unknown');
     });
   });
 });

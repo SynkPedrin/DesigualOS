@@ -6,6 +6,7 @@ import {
   findMemberByName,
   getTask,
   getTaskComments,
+  getTaskListId,
   listStatusesForTask,
   updateTask,
   verifyTaskState,
@@ -26,6 +27,7 @@ import { buildOperationalActionPlan } from './operational-action-plan';
 import { createManyTasks, type CreateOneInput, type CreateOutcome, type TaskAttachment } from './multi-create-executor';
 import type { SeniorToolContext } from '@desigual-os/tool-gateway';
 import { conversationArtifact, requestsExternalTask } from './conversation-artifact';
+import { tryJarbasHandoff } from './jarbas-handoff';
 
 /**
  * BENTO ACTION GUARD (14/09/2026).
@@ -106,6 +108,36 @@ const ATTACH_ASK = /(anex(e|a|ar)|anexo|attach)\b/i;
 const TASK_URL = /app\.clickup\.com\/t\/([a-z0-9]+)/gi;
 const DUE_TODAY = /(hoje|pra hoje|pro hoje)/i;
 const DUE_TOMORROW = /(amanh|pra amanh)/i;
+/**
+ * "vence(m) hoje" / "vencendo amanhã" descreve o PRAZO de tasks EXISTENTES
+ * (filtro de leitura pra achar quais tasks entram num resumo/briefing) —
+ * nunca deve virar o prazo da task NOVA sendo criada. Achado na auditoria
+ * sênior (24/09/2026): "cria uma task resumindo as tasks vencendo hoje"
+ * atribuía hoje como prazo da task-resumo, quando "hoje" descrevia as
+ * tasks de ORIGEM, não a task nova.
+ */
+const DUE_FILTER_DESCRIBES_OTHER_TASKS = /\b(venc[a-z]*|fecha[m]?|encerra[m]?|expira[m]?)\b[^.!?]{0,25}(hoje|amanh)/i;
+const DUE_EXPLICIT_FOR_NEW_TASK_TOMORROW = /\b(pra|pro|prazo)\s+amanh[ãa]/i;
+const DUE_EXPLICIT_FOR_NEW_TASK_TODAY = /\b(pra|pro|prazo)\s+hoje/i;
+
+/**
+ * Prazo herdado por CREATE: separado de UPDATE_DUE porque ali o alvo já é
+ * uma task existente e referenciada — "hoje"/"amanhã" soltos são inequívocos.
+ * Aqui a task ainda não existe, então uma cláusula de FILTRO (ver comentário
+ * acima) só vale se houver também um marcador explícito de prazo da task
+ * nova; sem ele, a task nasce sem due_date em vez de herdar o filtro.
+ */
+function inferCreateDueDate(message: string): number | null {
+  const now = new Date();
+  if (DUE_FILTER_DESCRIBES_OTHER_TASKS.test(message)) {
+    if (DUE_EXPLICIT_FOR_NEW_TASK_TOMORROW.test(message)) return endOfDay(addDays(now, 1)).getTime();
+    if (DUE_EXPLICIT_FOR_NEW_TASK_TODAY.test(message)) return endOfDay(now).getTime();
+    return null;
+  }
+  if (DUE_TOMORROW.test(message)) return endOfDay(addDays(now, 1)).getTime();
+  if (DUE_TODAY.test(message)) return endOfDay(now).getTime();
+  return null;
+}
 /**
  * DELETE (mission linguistic matrix, 22/09/2026): "apaga essa task"/"exclui
  * essa demanda". Exige palavra de referência — sem ela, "apaga" sozinho é
@@ -295,11 +327,7 @@ function classifyIntent(message: string): GuardIntent {
   }
   if (CREATE_TASK.test(message)) {
     const taskName = extractTaskName(message);
-    const dueDate = DUE_TODAY.test(message)
-      ? endOfDay(new Date()).getTime()
-      : DUE_TOMORROW.test(message)
-        ? endOfDay(addDays(new Date(), 1)).getTime()
-        : null;
+    const dueDate = inferCreateDueDate(message);
     return {
       kind: 'create',
       taskName: taskName ?? '',
@@ -337,11 +365,7 @@ function criacaoPadrao(message: string): GuardIntent {
     kind: 'create',
     taskName: extractTaskName(message) ?? '',
     personName: extractPersonName(message),
-    dueDate: DUE_TOMORROW.test(message)
-      ? endOfDay(addDays(new Date(), 1)).getTime()
-      : DUE_TODAY.test(message)
-        ? endOfDay(new Date()).getTime()
-        : null,
+    dueDate: inferCreateDueDate(message),
     wantsBriefing: BRIEFING_ASK.test(message) || ATTACH_ASK.test(message),
   };
 }
@@ -729,6 +753,72 @@ async function taskExiste(config: ClickUpConfig, taskId: string): Promise<boolea
   }
 }
 
+/**
+ * ALVO CITADO É AUTORIZADO PRO CONTEXTO ATUAL. Achado na auditoria sênior
+ * (24/09/2026), consequência direta de abrir escrita de produção pra
+ * clientes reais nesta mesma missão: nada verificava que um ID/URL de task
+ * CITADO NA MENSAGEM (extractExplicitTaskIdFromMessage) ou herdado do
+ * histórico (context.lastTaskId) pertencia ao cliente resolvido da
+ * conversa. Um colaborador com acesso ao Cliente A podia colar o link de
+ * uma task do Cliente B e mutar lá — a checagem de organização valida o
+ * USUÁRIO contra o cliente da CONVERSA (loadSeniorRuntimeContext), nunca a
+ * TASK citada contra esse mesmo cliente.
+ *
+ * PARA ESCRITA, FALHA FECHADA — revisão da versão anterior (que deixava
+ * passar em qualquer caso inconclusivo): mutação nunca pode seguir sem
+ * confirmação positiva. Três resultados:
+ *
+ *   'match'    — a task pertence ao cliente ATIVO da conversa; ou, em
+ *                conversa de escopo agência (sem cliente único), pertence
+ *                a um cliente da MESMA organização do usuário.
+ *   'mismatch' — pertence a outro cliente (mesma org ou org diferente).
+ *                Mesmo dentro da mesma org, cliente diferente do ativo é
+ *                mismatch: "trocar de cliente" é uma decisão explícita do
+ *                turno (clientId muda), nunca inferida da task citada.
+ *   'unknown'  — não deu pra confirmar (lookup falhou, a lista da task não
+ *                bate com NENHUM cliente cadastrado, ou não há cliente
+ *                ativo nem organização pra comparar). Chamador de ESCRITA
+ *                trata 'unknown' IGUAL a 'mismatch': nenhuma mutação sem
+ *                prova positiva. Leitura pode ser mais tolerante — ver
+ *                comentário no portão de leitura, se/quando existir.
+ */
+export type TaskClientAuthorization = 'match' | 'mismatch' | 'unknown';
+
+export async function resolveTaskClientAuthorizationForTest(
+  config: ClickUpConfig,
+  taskId: string,
+  activeClientId: string | null,
+  activeOrganizationId: string | null,
+): Promise<TaskClientAuthorization> {
+  return resolveTaskClientAuthorization(config, taskId, activeClientId, activeOrganizationId);
+}
+
+async function resolveTaskClientAuthorization(
+  config: ClickUpConfig,
+  taskId: string,
+  activeClientId: string | null,
+  activeOrganizationId: string | null,
+): Promise<TaskClientAuthorization> {
+  let listaReal: string;
+  try {
+    listaReal = await getTaskListId(config, taskId);
+  } catch {
+    return 'unknown';
+  }
+  const [dono] = await db
+    .select({ id: schema.clients.id, organizationId: schema.clients.organizationId })
+    .from(schema.clients)
+    .where(eq(schema.clients.clickupListId, listaReal))
+    .limit(1)
+    .catch(() => []);
+  if (!dono) return 'unknown';
+  if (activeClientId) return dono.id === activeClientId ? 'match' : 'mismatch';
+  if (activeOrganizationId && dono.organizationId) {
+    return dono.organizationId === activeOrganizationId ? 'match' : 'mismatch';
+  }
+  return 'unknown';
+}
+
 async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, logger: Logger): Promise<ExecuteResponse> {
   const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
   const start = performance.now();
@@ -835,6 +925,22 @@ export async function tryBentoActionGuard(params: {
   const { message, conversationId, logger } = params;
   if (params.seniorToolContext && !requestsExternalTask(message) && /\b(cri[ae]|faz|fa[cç]a|mont[ae])\b/i.test(message) && /briefing|reel|roteiro|copy|legenda|conceito/i.test(message)) return null;
 
+  // HANDOFF BENTO -> JARBAS (missão de wiring operacional, 24/09/2026).
+  // Ponto único de contato — tryJarbasHandoff é o único lugar que sabe
+  // qualquer coisa sobre AgentTask/Jarbas V2. Devolve null quando a
+  // mensagem não é handoff/status, e o resto do guard segue como sempre.
+  const jarbasHandoff = await tryJarbasHandoff({
+    message,
+    conversationId,
+    userEmail: params.userEmail ?? null,
+    clientId: params.clientId ?? null,
+    clientName: params.clientName ?? null,
+    seniorToolContext: params.seniorToolContext ?? null,
+  });
+  if (jarbasHandoff) {
+    return guardResponse({ ok: true, toolCalls: [], answer: jarbasHandoff.answer, metadata: jarbasHandoff.metadata });
+  }
+
   /**
    * SEGUNDA VOLTA DA CONFIRMAÇÃO DE EXCLUSÃO — precisa rodar ANTES do portão
    * de `classifyActionIntent` logo abaixo: uma resposta como "sim" não tem
@@ -863,6 +969,27 @@ export async function tryBentoActionGuard(params: {
             toolCalls: [],
             answer: 'Entendi a confirmação, mas apagar task nesse cliente não está autorizado pra essa conta — não vou executar por enquanto.',
             metadata: { guard: 'bento-action', action: 'blocked_write_authz', write_authorized: false, write_reason: 'fora da autorização de produção do Bento' },
+          });
+        }
+        const autorizacao = await resolveTaskClientAuthorization(
+          confirmConfig,
+          confirmContext.pendingDeleteTaskId,
+          params.clientId ?? null,
+          params.seniorToolContext?.organizationId ?? null,
+        );
+        if (autorizacao !== 'match') {
+          logger.warn(
+            { task_id: confirmContext.pendingDeleteTaskId, client_id: params.clientId ?? null, authorization: autorizacao },
+            '[guard] DELETE recusado: não confirmei que a task citada pertence ao contexto ativo',
+          );
+          return guardResponse({
+            ok: true,
+            toolCalls: [],
+            answer:
+              autorizacao === 'unknown'
+                ? 'Não consegui confirmar que essa task pertence ao cliente ativo, então não apaguei nada.'
+                : 'Não encontrei essa task neste cliente — não apaguei nada.',
+            metadata: { guard: 'bento-action', action: 'denied_cross_client_target', write_authorized: false, verified: false, authorization: autorizacao },
           });
         }
         return executeConfirmedDelete(confirmConfig, confirmContext.pendingDeleteTaskId, logger);
@@ -977,6 +1104,34 @@ export async function tryBentoActionGuard(params: {
   // Link explícito NESTE turno ganha do histórico — ver docstring da função.
   const alvoExplicitoNesteTurno = extractExplicitTaskIdFromMessage(message);
   if (alvoExplicitoNesteTurno) context.lastTaskId = alvoExplicitoNesteTurno;
+
+  // TASK CITADA É AUTORIZADA PRO CONTEXTO ATIVO — ver docstring de
+  // resolveTaskClientAuthorization. Vale pra todo caminho de escrita abaixo
+  // (update, comment, delete) que usa `context.lastTaskId` como alvo.
+  // Falha fechada: 'mismatch' E 'unknown' bloqueiam a mutação.
+  if (context.lastTaskId) {
+    const autorizacao = await resolveTaskClientAuthorization(
+      config,
+      context.lastTaskId,
+      params.clientId ?? null,
+      params.seniorToolContext?.organizationId ?? null,
+    );
+    if (autorizacao !== 'match') {
+      logger.warn(
+        { task_id: context.lastTaskId, client_id: params.clientId ?? null, authorization: autorizacao },
+        '[guard] escrita recusada: não confirmei que a task citada pertence ao contexto ativo',
+      );
+      return guardResponse({
+        ok: true,
+        toolCalls: [],
+        answer:
+          autorizacao === 'unknown'
+            ? 'Não consegui confirmar que essa task pertence ao cliente ativo, então não alterei nada.'
+            : 'Não encontrei essa task neste cliente — não alterei nada.',
+        metadata: { guard: 'bento-action', action: 'denied_cross_client_target', write_authorized: false, verified: false, authorization: autorizacao },
+      });
+    }
+  }
 
   // PEDIDO NOVO DE EXCLUSÃO (primeira volta): pede confirmação, NÃO apaga
   // ainda. A segunda volta ("sim"/"confirmo") é tratada mais acima, antes do

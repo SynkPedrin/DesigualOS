@@ -267,6 +267,13 @@
       "when": 1789995000000,
       "tag": "0037_restrict_public_data_api",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1790181045834,
+      "tag": "0038_jarbas_persistent_tasks",
+      "breakpoints": true
     }
   ]
 }

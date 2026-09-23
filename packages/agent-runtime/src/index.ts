@@ -53,3 +53,38 @@ export {
   type GroundingReport,
 } from './grounding';
 export * from './failure-taxonomy';
+export {
+  classifyMetricAvailability,
+  computeChangePercent,
+  isSampleTooSmall,
+  percentagePointsDelta,
+  verifyClaimedChangePercent,
+  verifyClaimedPercentagePoints,
+  verifyClaimedRatio,
+  type MetricAvailability,
+  type VerificationResult,
+} from './metric-verifier';
+export {
+  InMemoryAgentTaskStore,
+  isTerminalStatus,
+  isRetryableError,
+  computeNextEligibleRetry,
+  MAX_TENTATIVAS_RETRY,
+  type AgentTaskStore,
+  type DispatchAgentTaskInput,
+  type DispatchOutcome,
+  type TransitionOutcome,
+  type RecordFailureOutcome,
+} from './agent-task';
+export { diagnoseCampaignSnapshot, generateRecommendation, type CampaignMetricSnapshot, type DiagnosisClass, type DiagnosisResult } from './jarbas-diagnosis';
+export * as jarbasFixtures from './jarbas-fixtures';
+export {
+  buildProposedAction,
+  detectForbiddenMetaMutationRequest,
+  detectJarbasHandoffRequest,
+  detectJarbasStatusQuery,
+  type JarbasHandoffIntent,
+} from './bento-jarbas-handoff';
+export { adaptJarbasResponse, type AdaptedJarbasResponse } from './jarbas-response-adapter';
+export { askJarbasV2, type AskJarbasV2Input, type AskJarbasV2Result, type JarbasV2Config } from './jarbas-v2-client';
+export { buildAgencyMacroView, type AgencyMacroView, type ClientMacroEntry, type ClientMacroInput, type MacroBucket } from './jarbas-macro-view';
