@@ -1141,6 +1141,139 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
   });
 
   /**
+   * INVARIANTE (Otto Elite, Blocker 2): uma reescrita que REMOVE um
+   * entregável que já existia é REJEITADA, mesmo sem erro de schema —
+   * achado ao vivo real: draft com roteiro completo, reescrita #2 sem erro
+   * nenhum mas devolvendo só conceito+legenda (roteiro sumiu). Sem esta
+   * checagem, essa reescrita PIOR teria virado a versão final.
+   */
+  it('reescrita que remove entregável já existente é REJEITADA — mantém a versão anterior (Blocker 2)', async () => {
+    let videoPlanCalls = 0;
+
+    const videoComFala = {
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5, spoken_line: 'Abertura dia 24 de setembro.' }],
+      sound_direction: 'trilha', text_overlays: [], cta: 'Confira', generation_prompts: ['a'],
+    };
+    const videoSemFala = { ...videoComFala, scenes: [{ ...videoComFala.scenes[0], spoken_line: undefined }] };
+
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            videoPlanCalls += 1;
+            // 1a chamada (draft): COM fala. 2a chamada (reescrita): SEM fala — regressão.
+            return Promise.resolve(videoPlanCalls === 1 ? videoComFala : videoSemFala);
+          },
+          critic: () => {
+            // Reprova por um motivo NÃO relacionado a completude (copy fraca) —
+            // força uma reescrita que, por acidente, perde o roteiro.
+            return Promise.resolve({
+              scores: {
+                strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
+                brand_fit: 9, copy: 5, retention: 9, platform_fit: 9, executability: 9,
+              },
+              flags: {
+                missing_deliverables: [], genericity: false, unsupported_claims: [],
+                weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+              },
+              reasoning: 'copy fraca',
+              root_cause: 'COPY',
+            });
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-regressao-roteiro', message: 'Crie um reels com roteiro pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(body.answer).toContain('Roteiro:'); // a versão COM fala sobreviveu
+    expect(body.answer).toContain('Abertura dia 24 de setembro.');
+    expect(body.metadata.quality_pipeline_degraded).toBe(true);
+    expect(body.metadata.quality_pipeline_degraded_reason).toMatch(/removeu entregável\(is\) que já existia\(m\): roteiro/);
+    expect(body.metadata.quality_tier).toBe('draft');
+    expect(body.metadata.elite_passed).toBe(false);
+    expect(body.metadata.missing_deliverables).toEqual([]); // versão final (draft preservado) está completa
+
+    await app.close();
+  });
+
+  /**
+   * Otto Elite, Blocker 2 — reparo de completude: quando um entregável
+   * pedido NUNCA existiu em nenhuma tentativa (não foi perdido no meio do
+   * caminho — isso é o teste acima), uma última chamada NARROW tenta só
+   * adicionar o que falta, preservando o resto.
+   */
+  it('reparo de completude: entregável que nunca existiu é adicionado numa chamada final narrow', async () => {
+    let videoPlanCalls = 0;
+    let repairMessageReceived = '';
+
+    const videoSemFala = {
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      sound_direction: 'trilha', text_overlays: [], cta: 'Confira', generation_prompts: ['a'],
+    };
+    const videoComFala = { ...videoSemFala, scenes: [{ ...videoSemFala.scenes[0], spoken_line: 'Abertura dia 24 de setembro.' }] };
+
+    let creativePlanCalls = 0;
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) {
+              creativePlanCalls += 1;
+              // 4a chamada de createCreativePlan = o passo de REPARO (draft +
+              // 2 reescritas do critic + 1 reparo de completude).
+              if (creativePlanCalls === 4) {
+                const list = messages as { role: string; content: string }[];
+                repairMessageReceived = list.find((m) => m.role === 'user')?.content ?? '';
+              }
+              return Promise.resolve(creativePlanFixture);
+            }
+            videoPlanCalls += 1;
+            // draft + 2 reescritas do critic: NUNCA produz roteiro; só o
+            // reparo (4a chamada de vídeo) finalmente tem fala.
+            return Promise.resolve(videoPlanCalls <= 3 ? videoSemFala : videoComFala);
+          },
+          // Critic sempre reprova por completude (código detecta "roteiro" ausente
+          // de qualquer forma, então o conteúdo do critic aqui é irrelevante pro gate).
+          critic: () =>
+            Promise.resolve({
+              scores: {
+                strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
+                brand_fit: 9, copy: 9, retention: 9, platform_fit: 9, executability: 9,
+              },
+              flags: {
+                missing_deliverables: [], genericity: false, unsupported_claims: [],
+                weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+              },
+              reasoning: 'ok',
+              root_cause: 'DELIVERABLE',
+            }),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-reparo-completude', message: 'Crie um reels com roteiro pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(videoPlanCalls).toBe(4); // draft + 2 reescritas do critic + 1 reparo de completude
+    expect(repairMessageReceived).toMatch(/COMPLEMENTO OBRIGATÓRIO/);
+    expect(repairMessageReceived).toMatch(/preserve TODO o conteúdo/);
+    expect(body.answer).toContain('Roteiro:');
+    expect(body.metadata.completion_repair).toEqual({ attempted: true, succeeded: true });
+    expect(body.metadata.missing_deliverables).toEqual([]);
+
+    await app.close();
+  });
+
+  /**
    * MISSÃO 7 (Otto Senior 20Y): completude é CALCULADA EM CÓDIGO
    * (computeMissingDeliverables), não autocertificada pelo modelo — o
    * critic pode dizer "está completo" e o código ainda reprova se o rótulo

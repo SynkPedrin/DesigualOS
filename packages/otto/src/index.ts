@@ -170,6 +170,7 @@ export type { CreativeOutput, CreativeGenerator, CreativePipelineResult, Creativ
 export {
   critiqueDeliverable,
   computeMissingDeliverables,
+  deliverableRegression,
   deriveCriticOverall,
   passesCriticGate,
   formatCriticRevisionNote,

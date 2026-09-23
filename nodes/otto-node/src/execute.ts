@@ -25,6 +25,7 @@ import {
   createWebSearchProviderFromEnv,
   critiqueDeliverable,
   computeMissingDeliverables,
+  deliverableRegression,
   passesCriticGate,
   formatCriticRevisionNote,
   rewriteRequiresStrategyLayer,
@@ -1061,6 +1062,7 @@ export async function executeTask(
          * transforma "reescreva do zero" em "edite isto".
          */
         const augmentedMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu — preserve o que já está bom, corrija só o que a revisão abaixo aponta):\n${result.answer}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${attemptNumber}):\n${revisionNote}`;
+        const missingAntesDaReescrita = computeMissingDeliverables(result.answer, entregaveisPedidos);
 
         let rewritten: Awaited<ReturnType<typeof produce>>;
         try {
@@ -1075,7 +1077,29 @@ export async function executeTask(
           );
           break;
         }
-        result = rewritten; // só sobrescreve DEPOIS de produce() terminar com sucesso
+
+        /**
+         * INVARIANTE (Otto Elite, Blocker 2): uma reescrita que PIORA a
+         * completude nunca é aceita, mesmo que tenha terminado sem erro de
+         * schema. Achado ao vivo real: draft com roteiro -> reescrita #2 sem
+         * schema error nenhum, mas devolveu só conceito+legenda, perdendo o
+         * roteiro. Sem esta checagem, essa reescrita PIOR teria virado a
+         * versão final. Rejeita o candidato exatamente como uma falha de
+         * reescrita — mantém `result` como estava.
+         */
+        const missingDepoisDaReescrita = computeMissingDeliverables(rewritten.answer, entregaveisPedidos);
+        const regressao = deliverableRegression(missingAntesDaReescrita, missingDepoisDaReescrita);
+        if (regressao.length > 0) {
+          pipelineDegraded = true;
+          degradedReason = `reescrita #${attemptNumber} removeu entregável(is) que já existia(m): ${regressao.join(', ')} — candidato rejeitado, mantendo versão anterior`;
+          logger.warn(
+            { execution_id: request.execution_id, regressao, error: degradedReason },
+            '[OTTO:critic] reescrita regrediu completude — candidato rejeitado',
+          );
+          break;
+        }
+
+        result = rewritten; // só sobrescreve DEPOIS de produce() terminar com sucesso E sem regressão
         criticRewrites = attemptNumber;
 
         try {
@@ -1094,13 +1118,62 @@ export async function executeTask(
     }
 
     /**
+     * REPARO DE COMPLETUDE (Otto Elite, Blocker 2): se um entregável pedido
+     * NUNCA existiu em nenhuma tentativa (draft nem reescritas — não foi
+     * perdido no meio do caminho, isso já é bloqueado pelo invariante
+     * acima), uma última chamada NARROW tenta só adicionar o que falta,
+     * preservando o resto. Diferente da reescrita do critic (que pode trocar
+     * ângulo/conceito inteiro), este passo é estritamente aditivo. Roda no
+     * MÁXIMO uma vez, com o mesmo invariante de não-regressão, e nunca
+     * bloqueia o turno — se falhar ou não resolver, o resultado anterior
+     * continua sendo o que volta pro usuário.
+     */
+    let completionRepairAttempted = false;
+    let completionRepairSucceeded = false;
+    if (criticHabilitado) {
+      const missingAntesDoReparo = computeMissingDeliverables(result.answer, entregaveisPedidos);
+      if (missingAntesDoReparo.length > 0) {
+        completionRepairAttempted = true;
+        const repairMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu):\n${result.answer}\n\nCOMPLEMENTO OBRIGATÓRIO: preserve TODO o conteúdo acima exatamente como está. Adicione APENAS o(s) entregável(is) que faltam: ${missingAntesDoReparo.join(', ')}. Não regenere conceito, ângulo nem o que já foi escrito.`;
+        try {
+          const reparado = await produce(repairMessage, undefined, strategyBriefing || undefined);
+          const missingDepoisDoReparo = computeMissingDeliverables(reparado.answer, entregaveisPedidos);
+          const regressaoNoReparo = deliverableRegression(missingAntesDoReparo, missingDepoisDoReparo);
+          if (regressaoNoReparo.length === 0 && missingDepoisDoReparo.length < missingAntesDoReparo.length) {
+            result = reparado;
+            completionRepairSucceeded = true;
+            logger.info(
+              { execution_id: request.execution_id, resolvido: missingAntesDoReparo.filter((d) => !missingDepoisDoReparo.includes(d)) },
+              '[OTTO:critic] reparo de completude resolveu entregável(is) faltante(s)',
+            );
+          } else {
+            logger.warn(
+              { execution_id: request.execution_id, missingAntesDoReparo, missingDepoisDoReparo, regressaoNoReparo },
+              '[OTTO:critic] reparo de completude não melhorou (ou regrediu) — mantendo versão anterior',
+            );
+          }
+        } catch (repairError) {
+          logger.warn(
+            { execution_id: request.execution_id, error: repairError instanceof Error ? repairError.message : String(repairError) },
+            '[OTTO:critic] reparo de completude falhou — mantendo versão anterior',
+          );
+        }
+      }
+    }
+
+    /**
      * ESTADO FINAL DE QUALIDADE (regra 19): nunca chamar "elite" um trabalho
      * que não passou — e um pipeline degradado (qualquer estágio de melhoria
      * que falhou) NUNCA pode ser "elite", mesmo que a última avaliação
      * disponível tivesse passado. Job types sem critic (image/upscale) não
      * têm veredito de qualidade textual — ficam "not_evaluated".
+     *
+     * INVARIANTE FINAL (Blocker 2, "no exceptions"): missing_deliverables
+     * não-vazio NUNCA é elite, mesmo que o critic tivesse aprovado antes do
+     * reparo — recalculado aqui, não herdado do gate anterior.
      */
-    const criticPassedFinal = !pipelineDegraded && (criticGate?.passed ?? false);
+    const missingFinal = computeMissingDeliverables(result.answer, entregaveisPedidos);
+    const criticPassedFinal = !pipelineDegraded && (criticGate?.passed ?? false) && missingFinal.length === 0;
     const qualityTier = !criticHabilitado ? 'not_evaluated' : criticPassedFinal ? 'elite' : 'draft';
     const elitePassed = criticHabilitado ? criticPassedFinal : null;
     const requiresHumanReview = criticHabilitado ? !criticPassedFinal : false;
@@ -1177,6 +1250,10 @@ export async function executeTask(
       // com a última versão válida em vez de destruir o artefato.
       quality_pipeline_degraded: pipelineDegraded,
       ...(degradedReason ? { quality_pipeline_degraded_reason: degradedReason } : {}),
+      // Blocker 2: completude é recalculada aqui, na versão FINAL — não
+      // herdada de nenhuma avaliação anterior do critic.
+      missing_deliverables: missingFinal,
+      ...(completionRepairAttempted ? { completion_repair: { attempted: true, succeeded: completionRepairSucceeded } } : {}),
     };
     const timings: PhaseTimings = {
       classify_ms: classifyMs,

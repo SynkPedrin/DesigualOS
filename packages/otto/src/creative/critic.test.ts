@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeMissingDeliverables,
   critiqueDeliverable,
+  deliverableRegression,
   deriveCriticOverall,
   formatCriticRevisionNote,
   passesCriticGate,
@@ -73,6 +74,24 @@ describe('computeMissingDeliverables', () => {
 
   it('sem entregáveis pedidos, nada é reportado como faltando', () => {
     expect(computeMissingDeliverables('qualquer coisa', [])).toEqual([]);
+  });
+});
+
+describe('deliverableRegression (Blocker 2)', () => {
+  it('detecta entregável que existia antes e sumiu depois', () => {
+    expect(deliverableRegression([], ['roteiro'])).toEqual(['roteiro']);
+  });
+
+  it('não conta entregável que já faltava antes (não é uma regressão nova)', () => {
+    expect(deliverableRegression(['roteiro'], ['roteiro'])).toEqual([]);
+  });
+
+  it('sem mudança nenhuma, sem regressão', () => {
+    expect(deliverableRegression([], [])).toEqual([]);
+  });
+
+  it('entregável CORRIGIDO (estava faltando, agora não está) não é regressão', () => {
+    expect(deliverableRegression(['roteiro', 'legenda'], ['legenda'])).toEqual([]);
   });
 });
 

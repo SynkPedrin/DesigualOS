@@ -166,6 +166,19 @@ export function computeMissingDeliverables(renderedAnswer: string, requestedDeli
 }
 
 /**
+ * INVARIANTE (Otto Elite, Blocker 2): uma reescrita NUNCA pode remover um
+ * entregável que já existia numa versão válida anterior. Achado ao vivo
+ * real: o draft tinha roteiro; a reescrita #2 devolveu só conceito+legenda,
+ * perdendo o roteiro — e sem esta checagem, essa reescrita PIOR teria virado
+ * a versão "corrigida". Compara a lista de faltantes ANTES e DEPOIS: o que
+ * está em `depois` mas não estava em `antes` é uma REGRESSÃO — o candidato
+ * deve ser rejeitado (mantém a versão anterior), não aceito como melhoria.
+ */
+export function deliverableRegression(missingBefore: string[], missingAfter: string[]): string[] {
+  return missingAfter.filter((item) => !missingBefore.includes(item));
+}
+
+/**
  * Gate de qualidade (Fase 13 do brief): overall < 88 OU concept < 8 OU
  * copy < 8 OU executability < 8 OU falta entregável pedido → falha.
  *
