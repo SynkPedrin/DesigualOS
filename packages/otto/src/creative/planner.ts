@@ -120,7 +120,7 @@ export async function planCarousel(
   deps: PlannerDeps,
   plan: CreativePlan,
   slideCount = 10,
-  opts: { revisionNote?: string } = {},
+  opts: { revisionNote?: string; strategyBriefing?: string } = {},
 ): Promise<CarouselPlan> {
   const count = Math.min(16, Math.max(10, Math.round(slideCount)));
 
@@ -140,6 +140,7 @@ Gere exatamente ${count} slides com estas chaves:
 
   const user = [
     `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`,
+    opts.strategyBriefing ?? '',
     // Mesmo raciocínio de planVideo: sem isto, a reescrita regenerava o
     // carrossel do zero sem saber o que a avaliação anterior reprovou.
     opts.revisionNote
@@ -164,7 +165,7 @@ Gere exatamente ${count} slides com estas chaves:
 export async function planVideo(
   deps: PlannerDeps,
   plan: CreativePlan,
-  opts: { revisionNote?: string } = {},
+  opts: { revisionNote?: string; strategyBriefing?: string } = {},
 ): Promise<VideoPlan> {
   const system = `${CREATIVE_DIRECTOR_PREAMBLE}
 
@@ -186,6 +187,7 @@ Gere com estas chaves:
 
   const user = [
     `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`,
+    opts.strategyBriefing ?? '',
     /**
      * Otto Senior 20Y, achado ao vivo (segunda validação Cosentino): o loop
      * de critic/reescrita mandava a nota de revisão só pra createCreativePlan

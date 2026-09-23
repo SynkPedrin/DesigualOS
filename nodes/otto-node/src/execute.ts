@@ -27,6 +27,13 @@ import {
   computeMissingDeliverables,
   passesCriticGate,
   formatCriticRevisionNote,
+  rewriteRequiresStrategyLayer,
+  developStrategy,
+  selectBestAngle,
+  developBigIdeaAndHooks,
+  bigIdeaPassesTest,
+  selectBestHook,
+  formatStrategyBriefing,
   type BrainHealth,
   type BrandKit,
   type CarouselPlan,
@@ -726,7 +733,7 @@ export async function executeTask(
      * o critic julga o ENTREGÁVEL INTEIRO renderizado (LLM, mais caro), e por
      * isso vive FORA, como uma segunda porta sobre a primeira.
      */
-    async function produce(effectiveMessage: string, shapingRevisionNote?: string) {
+    async function produce(effectiveMessage: string, shapingRevisionNote?: string, strategyBriefing?: string) {
       const pipeline = await runCreativePipeline(
         {
           researchProvider,
@@ -749,6 +756,9 @@ export async function executeTask(
                       formatResearchBlock(research),
                       contratoProducao ? `O campo "copy" precisa seguir este contrato:\n${contratoProducao}` : '',
                       pedeEmoji ? 'O pedido autoriza emojis: use com naturalidade no campo "copy", sem exagerar.' : '',
+                      // Otto Elite — camada de estratégia (angle/big idea/hook
+                      // decididos ANTES do rascunho). Ver strategy.ts.
+                      strategyBriefing ?? '',
                     ]
                       .filter(Boolean)
                       .join('\n'),
@@ -800,7 +810,10 @@ export async function executeTask(
       // ifs também são mutuamente exclusivos por jobType.
       let carouselPlan;
       let videoPlan;
-      const shapingOpts = shapingRevisionNote ? { revisionNote: shapingRevisionNote } : {};
+      const shapingOpts = {
+        ...(shapingRevisionNote ? { revisionNote: shapingRevisionNote } : {}),
+        ...(strategyBriefing ? { strategyBriefing } : {}),
+      };
       if (jobType === 'carousel') {
         carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan, 10, shapingOpts));
         logger.info({ slides: carouselPlan.slide_count, llm_ms: llmMs }, '[OTTO:plan] carrossel planejado');
@@ -837,8 +850,6 @@ export async function executeTask(
       return { pipeline, plan, carouselPlan, videoPlan, spec, fidelityWarning, answer };
     }
 
-    let result = await produce(producaoBriefingBase);
-
     /**
      * CRITIC + REWRITE (Otto Senior V1.0 closure, regras 14-19): DRAFT ->
      * CRITIC -> se falhar, REWRITE #1 -> CRITIC #2 -> se falhar, REWRITE #2
@@ -853,13 +864,12 @@ export async function executeTask(
      * de outra chamada de LLM inteira.
      *
      * LATÊNCIA: cada produce() já mede 200-350s nesta máquina (CPU-only, ver
-     * OTTO_ELITE_HANDOFF.md), então o pior caso (draft + 2 reescritas + 3
-     * avaliações do critic) pode passar de 15-20 minutos. Regra 28 do brief
-     * de fechamento é explícita — qualidade e latência são preocupações
-     * separadas, não sacrificar qualidade pra ficar rápido — então isto fica
-     * como está, com PERFORMANCE OPTIMIZATION NEEDED registrado na metadata
-     * quando o turno ultrapassa um teto observável, em vez de cortar
-     * reescrita à toa.
+     * OTTO_ELITE_HANDOFF.md), então o pior caso (estratégia + draft + 2
+     * reescritas + 3 avaliações do critic) pode passar de 20 minutos. Regra
+     * 28 do brief de fechamento é explícita — qualidade e latência são
+     * preocupações separadas, não sacrificar qualidade pra ficar rápido —
+     * então isto fica como está, com PERFORMANCE OPTIMIZATION NEEDED
+     * registrado na metadata quando o turno ultrapassa um teto observável.
      */
     const CRITIC_ENABLED_INTENTS: StudioJobType[] = ['reels', 'video', 'carousel'];
     const criticHabilitado = CRITIC_ENABLED_INTENTS.includes(jobType);
@@ -881,6 +891,86 @@ export async function executeTask(
     let pipelineDegraded = false;
     let degradedReason: string | null = null;
 
+    /**
+     * CAMADA DE ESTRATÉGIA (Otto Elite — pipeline de pensamento antes do
+     * draft: REQUEST -> ESTRATÉGIA -> DIVERGÊNCIA DE ÂNGULOS -> BIG IDEA ->
+     * HOOK -> DRAFT). Só roda pra job types com critic (mesmo escopo —
+     * reels/video/carousel são os formatos onde ângulo/hook/big idea
+     * importam; 'image'/'upscale' não têm script/hook pra estratégia
+     * decidir). Nunca bloqueia o turno: se a estratégia falhar, o draft
+     * segue SEM ela (grau degradado, registrado), porque uma peça sem
+     * camada estratégica ainda é melhor que nenhuma peça.
+     */
+    let strategyResult: Awaited<ReturnType<typeof developStrategy>> | null = null;
+    let selectedAngle: Awaited<ReturnType<typeof selectBestAngle>>['selected'] | null = null;
+    let bigIdeaResult: Awaited<ReturnType<typeof developBigIdeaAndHooks>> | null = null;
+    let selectedHook: ReturnType<typeof selectBestHook> | null = null;
+    let strategyBriefing = '';
+    let strategyDegraded = false;
+
+    const strategyClientContext = [
+      contextoOrquestradorProducao ? `ESCOPO RESOLVIDO DESTE TURNO:\n${contextoOrquestradorProducao}` : '',
+      dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const brandTerms = contextoOrquestradorProducao
+      ? [extrairClienteDoContexto(contextoOrquestradorProducao)].filter((v): v is string => Boolean(v))
+      : [];
+
+    if (criticHabilitado) {
+      try {
+        strategyResult = await measureLlm(() =>
+          developStrategy({ llm: deps.llm }, { briefing: producaoBriefingBase, clientContext: strategyClientContext }),
+        );
+        const angleSelection = selectBestAngle(strategyResult, brandTerms);
+        const primeiroAngulo = angleSelection.selected;
+        selectedAngle = primeiroAngulo;
+        bigIdeaResult = await measureLlm(() =>
+          developBigIdeaAndHooks(
+            { llm: deps.llm },
+            { briefing: producaoBriefingBase, clientContext: strategyClientContext, selectedAngle: primeiroAngulo, strategy: strategyResult! },
+          ),
+        );
+        // Missão 6/7 do brief de estratégia: se a big idea é só o objetivo
+        // reformulado, tenta o PRÓXIMO ângulo já gerado (sem nova chamada de
+        // divergência — os candidatos já existem) antes de aceitar como está.
+        if (!bigIdeaPassesTest(bigIdeaResult.big_idea) && angleSelection.rejected.length > 0) {
+          const proximo = angleSelection.rejected[0]!.angle;
+          logger.warn(
+            { execution_id: request.execution_id, angulo_descartado: selectedAngle.name },
+            '[OTTO:strategy] big idea fraca — tentando o próximo ângulo já gerado',
+          );
+          const segundaTentativa = await measureLlm(() =>
+            developBigIdeaAndHooks(
+              { llm: deps.llm },
+              { briefing: producaoBriefingBase, clientContext: strategyClientContext, selectedAngle: proximo, strategy: strategyResult! },
+            ),
+          );
+          if (bigIdeaPassesTest(segundaTentativa.big_idea)) {
+            selectedAngle = proximo;
+            bigIdeaResult = segundaTentativa;
+          }
+          // Se a segunda tentativa também falhar no teste, segue com a
+          // primeira mesmo assim — nunca trava o turno por causa disso.
+        }
+        selectedHook = selectBestHook(bigIdeaResult);
+        strategyBriefing = formatStrategyBriefing(strategyResult, selectedAngle, bigIdeaResult.big_idea, selectedHook);
+        logger.info(
+          { execution_id: request.execution_id, angulo: selectedAngle.name, big_idea: bigIdeaResult.big_idea },
+          '[OTTO:strategy] ângulo e big idea decididos antes do draft',
+        );
+      } catch (strategyError) {
+        strategyDegraded = true;
+        logger.warn(
+          { execution_id: request.execution_id, error: strategyError instanceof Error ? strategyError.message : String(strategyError) },
+          '[OTTO:strategy] camada de estratégia falhou — draft segue sem ela',
+        );
+      }
+    }
+
+    let result = await produce(producaoBriefingBase, undefined, strategyBriefing || undefined);
+
     async function critique() {
       const evaluation = await measureLlm(() =>
         critiqueDeliverable(
@@ -889,6 +979,7 @@ export async function executeTask(
             briefing: producaoBriefingBase,
             renderedAnswer: result.answer,
             requestedDeliverables: entregaveisPedidos,
+            ...(strategyBriefing ? { strategyContext: strategyBriefing } : {}),
           },
         ),
       );
@@ -896,7 +987,7 @@ export async function executeTask(
       const missingDeliverables = computeMissingDeliverables(result.answer, entregaveisPedidos);
       const gate = passesCriticGate(evaluation, missingDeliverables);
       logger.info(
-        { attempt: criticRewrites, overall: gate.overall, passed: gate.passed, reasons: gate.reasons },
+        { attempt: criticRewrites, overall: gate.overall, passed: gate.passed, reasons: gate.reasons, root_cause: evaluation.root_cause },
         '[OTTO:critic] avaliação do entregável renderizado',
       );
       return { evaluation, gate };
@@ -913,6 +1004,50 @@ export async function executeTask(
       }
 
       while (criticGate && !criticGate.passed && !pipelineDegraded && criticRewrites < MAX_REWRITES) {
+        const attemptNumber = criticRewrites + 1;
+
+        /**
+         * ESCOPO DA REESCRITA (Missão 16): uma falha em STRATEGY/ANGLE/
+         * BIG_IDEA/HOOK exige regenerar a camada estratégica — trocar de
+         * ângulo pra um já gerado (sem nova chamada de divergência) e
+         * refazer big idea/hook pra ele — ANTES de redigir de novo. Polir a
+         * frase quando o problema é a ideia é a "reescrita de sinônimo" que
+         * a missão proíbe. Nunca bloqueia: se a troca de camada estratégica
+         * falhar, cai pro caminho normal (reescrita de texto com a mesma
+         * estratégia).
+         */
+        if (
+          strategyResult &&
+          selectedAngle &&
+          rewriteRequiresStrategyLayer(criticEvaluation!.root_cause) &&
+          criticRewrites === 0 // só troca de ângulo uma vez — a segunda reescrita refina o que já mudou, não troca de novo
+        ) {
+          try {
+            const outroAngulo = strategyResult.angles.find((a) => a.name !== selectedAngle!.name);
+            if (outroAngulo) {
+              const novaEstrategia = await measureLlm(() =>
+                developBigIdeaAndHooks(
+                  { llm: deps.llm },
+                  { briefing: producaoBriefingBase, clientContext: strategyClientContext, selectedAngle: outroAngulo, strategy: strategyResult! },
+                ),
+              );
+              selectedAngle = outroAngulo;
+              bigIdeaResult = novaEstrategia;
+              selectedHook = selectBestHook(novaEstrategia);
+              strategyBriefing = formatStrategyBriefing(strategyResult, selectedAngle, novaEstrategia.big_idea, selectedHook);
+              logger.info(
+                { execution_id: request.execution_id, novo_angulo: selectedAngle.name, root_cause: criticEvaluation!.root_cause },
+                '[OTTO:strategy] causa raiz era estratégica — trocando de ângulo antes de reescrever',
+              );
+            }
+          } catch (strategyRewriteError) {
+            logger.warn(
+              { execution_id: request.execution_id, error: strategyRewriteError instanceof Error ? strategyRewriteError.message : String(strategyRewriteError) },
+              '[OTTO:strategy] troca de ângulo na reescrita falhou — seguindo com a estratégia atual',
+            );
+          }
+        }
+
         const revisionNote = formatCriticRevisionNote(criticEvaluation!, criticGate);
         /**
          * PEÇA ATUAL na reescrita (Otto Senior 20Y, Missão 6 — item do
@@ -925,12 +1060,11 @@ export async function executeTask(
          * "mantenha o resto" pra ancorar a edição. Mandar a peça atual
          * transforma "reescreva do zero" em "edite isto".
          */
-        const augmentedMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu — preserve o que já está bom, corrija só o que a revisão abaixo aponta):\n${result.answer}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
-        const attemptNumber = criticRewrites + 1;
+        const augmentedMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu — preserve o que já está bom, corrija só o que a revisão abaixo aponta):\n${result.answer}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${attemptNumber}):\n${revisionNote}`;
 
         let rewritten: Awaited<ReturnType<typeof produce>>;
         try {
-          rewritten = await produce(augmentedMessage, revisionNote);
+          rewritten = await produce(augmentedMessage, revisionNote, strategyBriefing || undefined);
         } catch (rewriteError) {
           // REWRITE FAILS -> keep previous valid version, do NOT destroy turn.
           pipelineDegraded = true;
@@ -1001,6 +1135,25 @@ export async function executeTask(
       ...(carouselPlan ? { carousel_plan: carouselPlan } : {}),
       ...(videoPlan ? { video_plan: videoPlan } : {}),
       production_spec: spec,
+      // Otto Elite — artefatos da camada de estratégia (relatório de
+      // benchmark pede: brief, ângulos candidatos + scores, ângulo
+      // selecionado, big idea, hooks candidatos + scores, hook selecionado).
+      // Nunca expõe chain-of-thought livre — só os campos estruturados.
+      strategy: criticHabilitado
+        ? {
+            enabled: true,
+            degraded: strategyDegraded,
+            ...(strategyResult
+              ? {
+                  strategy: strategyResult,
+                  selected_angle: selectedAngle,
+                  big_idea: bigIdeaResult?.big_idea ?? null,
+                  hook_candidates: bigIdeaResult?.hooks ?? [],
+                  selected_hook: selectedHook,
+                }
+              : {}),
+          }
+        : { enabled: false },
       ...(criticHabilitado
         ? {
             critic: {

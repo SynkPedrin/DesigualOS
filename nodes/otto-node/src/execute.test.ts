@@ -8,10 +8,14 @@ import {
   carouselPlanSchema,
   checkBrainHealth,
   creativePlanSchema,
+  creativeStrategySchema,
+  bigIdeaAndHooksSchema,
   criticEvaluationSchema,
   loadBrainIndex,
   productionSpecSchema,
   retrieveRelevantKnowledge,
+  type BigIdeaAndHooks,
+  type CreativeStrategy,
   type CriticEvaluation,
   type OttoLLMProvider,
   type ResearchProvider,
@@ -86,7 +90,47 @@ interface FakeProviderBehavior {
    * precisam saber que ele existe pra continuar passando.
    */
   critic?: (messages: unknown) => Promise<unknown>;
+  /** Mesma ideia, pra quem quer exercer a camada de estratégia (Otto Elite) especificamente. */
+  strategy?: (messages: unknown) => Promise<unknown>;
+  bigIdea?: (messages: unknown) => Promise<unknown>;
 }
+
+const STRATEGY_ANGLE_SCORES = {
+  objective_fit: 8, audience_fit: 8, brand_fit: 8, originality: 8,
+  hook_potential: 8, visual_potential: 8, executability: 8, factual_safety: 8,
+};
+
+/** Estratégia padrão: 4 ângulos válidos, específicos o bastante pra passar no teste de genericidade. */
+const STRATEGY_APPROVES: CreativeStrategy = {
+  audience_insight: 'público já cansado de processos longos',
+  tension: 'quer decidir rápido, mercado empurra burocracia',
+  opportunity: 'ser a marca que remove a fricção',
+  promise_or_message: 'abertura sem cadastro',
+  communication_job: 'reduzir a objeção de burocracia antes da visita',
+  emotional_direction: 'alívio',
+  desired_reaction: 'agendar visita',
+  reason_to_watch: 'a data está próxima',
+  reason_to_believe: 'atendimento já está pronto',
+  angles: [
+    { name: 'Fricção removida', one_sentence_idea: 'A chave do Jardim Europa V entra sem fila de cadastro', hook_direction: 'pergunta direta', emotional_mechanism: 'alívio', why_it_fits_audience: 'x', why_it_fits_brand: 'x', visual_potential: 'porta abrindo', execution_risk: 'parecer genérico', scores: STRATEGY_ANGLE_SCORES },
+    { name: 'Antecipação', one_sentence_idea: 'O dia 24 muda a forma de comprar casa na Cosentino', hook_direction: 'contagem regressiva', emotional_mechanism: 'expectativa', why_it_fits_audience: 'x', why_it_fits_brand: 'x', visual_potential: 'calendário', execution_risk: 'x', scores: STRATEGY_ANGLE_SCORES },
+    { name: 'Prova social', one_sentence_idea: 'Quem já visitou o Jardim Europa V não esperou fila nenhuma', hook_direction: 'depoimento', emotional_mechanism: 'confiança', why_it_fits_audience: 'x', why_it_fits_brand: 'x', visual_potential: 'visitante satisfeito', execution_risk: 'x', scores: STRATEGY_ANGLE_SCORES },
+    { name: 'Urgência', one_sentence_idea: 'As primeiras unidades do Jardim Europa V somem no primeiro dia', hook_direction: 'escassez', emotional_mechanism: 'urgência', why_it_fits_audience: 'x', why_it_fits_brand: 'x', visual_potential: 'planta baixa', execution_risk: 'x', scores: STRATEGY_ANGLE_SCORES },
+  ],
+};
+
+const HOOK_SCORES = { stop_power: 8, specificity: 8, curiosity: 8, clarity: 8, believability: 8, brand_fit: 8, continuation_power: 8 };
+
+const BIG_IDEA_APPROVES: BigIdeaAndHooks = {
+  big_idea: 'A chave que nunca esperou por burocracia.',
+  hooks: [
+    { text: 'Sua chave já está pronta.', scores: HOOK_SCORES },
+    { text: 'O cadastro que você não vai precisar preencher.', scores: HOOK_SCORES },
+    { text: 'Dia 24, a porta já abre sem fila.', scores: HOOK_SCORES },
+    { text: 'A casa própria sem o processo de sempre.', scores: HOOK_SCORES },
+    { text: 'Você decide, a gente entrega.', scores: HOOK_SCORES },
+  ],
+};
 
 /** Aprovação alta: passa o gate (overall 90, nenhuma dimensão crítica < 8, nenhum entregável faltando). */
 const CRITIC_APPROVES: CriticEvaluation = {
@@ -100,6 +144,7 @@ const CRITIC_APPROVES: CriticEvaluation = {
     ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
   },
   reasoning: 'fixture de teste: aprovado por padrão',
+  root_cause: 'NONE',
 };
 
 /** Registro do que o pipeline pediu ao retrieval, pra checar a profundidade. */
@@ -123,6 +168,12 @@ function makeDeps(
     chatJson: (messages: unknown, schema: unknown, opts?: unknown) => {
       if (schema === criticEvaluationSchema) {
         return behavior.critic ? behavior.critic(messages) : Promise.resolve(CRITIC_APPROVES);
+      }
+      if (schema === creativeStrategySchema) {
+        return behavior.strategy ? behavior.strategy(messages) : Promise.resolve(STRATEGY_APPROVES);
+      }
+      if (schema === bigIdeaAndHooksSchema) {
+        return behavior.bigIdea ? behavior.bigIdea(messages) : Promise.resolve(BIG_IDEA_APPROVES);
       }
       return behavior.chatJson
         ? behavior.chatJson(schema, messages, opts)
@@ -1494,6 +1545,187 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
       expect(body.metadata.quality_pipeline_degraded).toBe(true);
       expect(body.metadata.quality_pipeline_degraded_reason).toMatch(/reescrita #2 falhou/);
       expect(body.metadata.critic).toMatchObject({ enabled: true, rewrites: 1 }); // só a reescrita #1 contou
+
+      await app.close();
+    });
+  });
+});
+
+/**
+ * Deps pra testar o escopo da reescrita por causa raiz (Missão 16): critic
+ * reprova com um root_cause fixo na 1a avaliação, aprova na 2a — nunca
+ * esgota MAX_REWRITES, então dá pra isolar exatamente 1 reescrita.
+ */
+function buildTestAppDepsForRootCause(opts: {
+  rootCause: 'HOOK' | 'COPY';
+  onBigIdeaCall: () => void;
+  onCriticCall: () => void;
+}) {
+  let criticCallCount = 0;
+  return makeDeps(
+    {
+      chatJson: (schema) => {
+        if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+        return Promise.resolve(makeCarouselFixture());
+      },
+      bigIdea: () => {
+        opts.onBigIdeaCall();
+        return Promise.resolve(BIG_IDEA_APPROVES);
+      },
+      critic: () => {
+        opts.onCriticCall();
+        criticCallCount += 1;
+        if (criticCallCount === 1) {
+          return Promise.resolve({
+            scores: {
+              strategy: 5, concept: 5, hook: 5, specificity: 5, originality: 5,
+              brand_fit: 5, copy: 5, retention: 5, platform_fit: 5, executability: 5,
+            },
+            flags: {
+              missing_deliverables: [], genericity: false, unsupported_claims: [],
+              weak_hook: opts.rootCause === 'HOOK', weak_concept: false, bad_cta: false, bad_platform_fit: false,
+              ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+            },
+            reasoning: `falha classificada como ${opts.rootCause}`,
+            root_cause: opts.rootCause,
+          });
+        }
+        return Promise.resolve(CRITIC_APPROVES);
+      },
+    },
+    brainDir,
+  );
+}
+
+/**
+ * CAMADA DE ESTRATÉGIA (Otto Elite): REQUEST -> ESTRATÉGIA -> DIVERGÊNCIA DE
+ * ÂNGULOS -> BIG IDEA -> HOOK -> DRAFT, antes de qualquer texto existir.
+ */
+describe('camada de estratégia (Otto Elite)', () => {
+  it('roda estratégia+ângulos+big idea+hooks ANTES do draft, e os artefatos aparecem em metadata.strategy', async () => {
+    let creativePlanPrompt = '';
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) {
+              const list = messages as { role: string; content: string }[];
+              creativePlanPrompt = list.find((m) => m.role === 'user')?.content ?? '';
+              return Promise.resolve(creativePlanFixture);
+            }
+            return Promise.resolve(makeCarouselFixture());
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-strategy', message: 'Crie um carrossel pro cliente' });
+
+    expect(body.status).toBe('completed');
+    // A direção estratégica chegou no prompt do draft (formatStrategyBriefing).
+    expect(creativePlanPrompt).toMatch(/DIREÇÃO ESTRATÉGICA DESTA PEÇA/);
+    expect(creativePlanPrompt).toContain(BIG_IDEA_APPROVES.big_idea);
+    expect(creativePlanPrompt).toContain(STRATEGY_APPROVES.angles[0]!.name);
+
+    const strategyMeta = body.metadata.strategy as Record<string, unknown>;
+    expect(strategyMeta.enabled).toBe(true);
+    expect(strategyMeta.degraded).toBe(false);
+    expect(strategyMeta.big_idea).toBe(BIG_IDEA_APPROVES.big_idea);
+    expect((strategyMeta.strategy as { angles: unknown[] }).angles).toHaveLength(4);
+    expect(strategyMeta.selected_angle).toBeTruthy();
+    expect(strategyMeta.selected_hook).toBeTruthy();
+
+    await app.close();
+  });
+
+  it('não roda pra job type sem critic (image): metadata.strategy.enabled fica false', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        { chatJson: (schema) => (schema === creativePlanSchema ? Promise.resolve(creativePlanFixture) : Promise.reject(new OttoLLMError('x'))) },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-strategy-image', message: 'Crie uma imagem pro cliente' });
+
+    expect(body.metadata.strategy).toEqual({ enabled: false });
+
+    await app.close();
+  });
+
+  it('estratégia falha (LLM caiu) -> draft segue SEM ela, degradado e visível, nunca trava o turno', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => (schema === creativePlanSchema ? Promise.resolve(creativePlanFixture) : Promise.resolve(makeCarouselFixture())),
+          strategy: () => Promise.reject(new Error('Ollama caiu na estratégia')),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-strategy-falha', message: 'Crie um carrossel pro cliente' });
+
+    expect(body.status).toBe('completed'); // nunca trava o turno
+    const strategyMeta = body.metadata.strategy as Record<string, unknown>;
+    expect(strategyMeta.enabled).toBe(true);
+    expect(strategyMeta.degraded).toBe(true);
+    expect(strategyMeta.strategy).toBeUndefined(); // sem artefato — a chamada nunca terminou
+
+    await app.close();
+  });
+
+  /**
+   * MISSÃO 16: causa raiz na camada estratégica (HOOK) troca de ângulo
+   * (reaproveitando os já gerados — sem nova chamada de divergência) e
+   * regenera big idea/hook ANTES de reescrever o texto. Causa raiz de
+   * execução (COPY) NÃO troca de ângulo — só reescreve com a mesma estratégia.
+   */
+  describe('escopo da reescrita por causa raiz (Missão 16)', () => {
+    it('root_cause=HOOK troca de ângulo e regenera big idea/hook antes da reescrita', async () => {
+      let bigIdeaCalls = 0;
+      let criticCalls = 0;
+      const app = buildTestApp(
+        buildTestAppDepsForRootCause({
+          rootCause: 'HOOK',
+          onBigIdeaCall: () => { bigIdeaCalls += 1; },
+          onCriticCall: () => { criticCalls += 1; },
+        }),
+      );
+
+      const { body } = await execute(app, { execution_id: 'exe-rootcause-hook', message: 'Crie um carrossel pro cliente' });
+
+      expect(body.status).toBe('completed');
+      expect(criticCalls).toBe(2);
+      // 1 chamada inicial (antes do draft) + 1 chamada extra pra trocar de ângulo na reescrita.
+      expect(bigIdeaCalls).toBe(2);
+      const strategyMeta = body.metadata.strategy as { selected_angle: { name: string } };
+      // O ângulo final NÃO é o primeiro da lista (STRATEGY_APPROVES.angles[0]) — trocou.
+      expect(strategyMeta.selected_angle.name).not.toBe(STRATEGY_APPROVES.angles[0]!.name);
+
+      await app.close();
+    });
+
+    it('root_cause=COPY NÃO troca de ângulo — só reescreve o texto com a mesma estratégia', async () => {
+      let bigIdeaCalls = 0;
+      let criticCalls = 0;
+      const app = buildTestApp(
+        buildTestAppDepsForRootCause({
+          rootCause: 'COPY',
+          onBigIdeaCall: () => { bigIdeaCalls += 1; },
+          onCriticCall: () => { criticCalls += 1; },
+        }),
+      );
+
+      const { body } = await execute(app, { execution_id: 'exe-rootcause-copy', message: 'Crie um carrossel pro cliente' });
+
+      expect(body.status).toBe('completed');
+      expect(criticCalls).toBe(2);
+      // Só a chamada inicial — root_cause=COPY não troca de ângulo, não regenera big idea/hook.
+      expect(bigIdeaCalls).toBe(1);
+      const strategyMeta = body.metadata.strategy as { selected_angle: { name: string } };
+      expect(strategyMeta.selected_angle.name).toBe(STRATEGY_APPROVES.angles[0]!.name);
 
       await app.close();
     });
