@@ -24,6 +24,7 @@ import {
   diretivaDoContrato,
   createWebSearchProviderFromEnv,
   critiqueDeliverable,
+  computeMissingDeliverables,
   passesCriticGate,
   formatCriticRevisionNote,
   type BrainHealth,
@@ -884,13 +885,15 @@ export async function executeTask(
         critiqueDeliverable(
           { llm: deps.llm },
           {
-            briefing: stripOrchestratorContext(request.message),
+            briefing: producaoBriefingBase,
             renderedAnswer: result.answer,
             requestedDeliverables: entregaveisPedidos,
           },
         ),
       );
-      const gate = passesCriticGate(evaluation);
+      // Missão 7: completude é CALCULADA, não autocertificada pelo modelo.
+      const missingDeliverables = computeMissingDeliverables(result.answer, entregaveisPedidos);
+      const gate = passesCriticGate(evaluation, missingDeliverables);
       logger.info(
         { attempt: criticRewrites, overall: gate.overall, passed: gate.passed, reasons: gate.reasons },
         '[OTTO:critic] avaliação do entregável renderizado',

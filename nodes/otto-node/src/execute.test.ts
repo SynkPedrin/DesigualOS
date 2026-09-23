@@ -1089,10 +1089,31 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     await app.close();
   });
 
-  it('critic reprova (entregável faltando) e o Otto reescreve UMA vez com a nota do critic no briefing', async () => {
+  /**
+   * MISSÃO 7 (Otto Senior 20Y): completude é CALCULADA EM CÓDIGO
+   * (computeMissingDeliverables), não autocertificada pelo modelo — o
+   * critic pode dizer "está completo" e o código ainda reprova se o rótulo
+   * esperado ("Roteiro:") não aparecer de fato na resposta renderizada.
+   * Cenário real: pedido de reels com roteiro; o primeiro vídeo gerado não
+   * tem NENHUMA fala (spoken_line), então formatVideoScript não renderiza
+   * seção de roteiro nenhuma — código detecta a ausência mesmo o critic
+   * (propositalmente) reportando missing_deliverables vazio.
+   */
+  it('completude é calculada em código (Missão 7): reprova por "Roteiro:" ausente mesmo o critic dizendo que está tudo lá, reescreve UMA vez', async () => {
     let creativePlanCalls = 0;
+    let videoPlanCalls = 0;
     const briefingsRecebidos: string[] = [];
     let criticCalls = 0;
+
+    const videoSemFala = {
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: 5 }],
+      sound_direction: 'trilha', text_overlays: [], cta: 'Confira', generation_prompts: ['a'],
+    };
+    const videoComFala = {
+      ...videoSemFala,
+      scenes: [{ ...videoSemFala.scenes[0], spoken_line: 'Abertura dia 24 de setembro.' }],
+    };
 
     const app = buildTestApp(
       makeDeps(
@@ -1104,26 +1125,13 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
               briefingsRecebidos.push(list.find((m) => m.role === 'user')?.content ?? '');
               return Promise.resolve(creativePlanFixture);
             }
-            if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
-            return Promise.reject(new OttoLLMError('schema inesperado'));
+            videoPlanCalls += 1;
+            return Promise.resolve(videoPlanCalls === 1 ? videoSemFala : videoComFala);
           },
+          // O critic (propositalmente) reporta TUDO ok — a reprovação real
+          // vem do código, não da autoavaliação do modelo.
           critic: () => {
             criticCalls += 1;
-            // Primeira chamada reprova (falta legenda); segunda (pós-reescrita) aprova.
-            if (criticCalls === 1) {
-              return Promise.resolve({
-                scores: {
-                  strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
-                  brand_fit: 9, copy: 9, retention: 9, platform_fit: 9, executability: 9,
-                },
-                flags: {
-                  missing_deliverables: ['legenda'], genericity: false, unsupported_claims: [],
-                  weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
-                  ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
-                },
-                reasoning: 'faltou a legenda pedida',
-              });
-            }
             return Promise.resolve({
               scores: {
                 strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
@@ -1134,7 +1142,7 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
                 weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
                 ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
               },
-              reasoning: 'agora está completo',
+              reasoning: 'parece completo (o critic está errado aqui de propósito)',
             });
           },
         },
@@ -1144,15 +1152,16 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
 
     const { body } = await execute(app, {
       execution_id: 'exe-critic-reprova',
-      message: 'Crie um carrossel e uma legenda pro cliente',
+      message: 'Crie um reels com roteiro pro cliente',
     });
 
     expect(body.status).toBe('completed');
     expect(criticCalls).toBe(2); // avaliação inicial + reavaliação pós-reescrita
     expect(creativePlanCalls).toBe(2); // geração inicial + UMA reescrita, não duas
     expect(briefingsRecebidos[1]).toMatch(/REVISÃO DO CRITIC OBRIGATÓRIA/);
-    expect(briefingsRecebidos[1]).toMatch(/faltou a legenda pedida/);
+    expect(briefingsRecebidos[1]).toMatch(/entregável\(is\) pedido\(s\) faltando: roteiro/);
     expect(body.metadata.critic).toMatchObject({ enabled: true, passed: true, rewrites: 1 });
+    expect(body.answer).toContain('Roteiro:');
 
     await app.close();
   });

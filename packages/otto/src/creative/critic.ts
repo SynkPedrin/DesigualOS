@@ -109,18 +109,56 @@ export interface CriticGateResult {
 }
 
 /**
+ * Completude de entregáveis CALCULADA EM CÓDIGO (Otto Senior 20Y, Missão 7:
+ * "Do NOT ask the model to self-certify completeness"). O critic também
+ * reporta `flags.missing_deliverables`, mas isso é o modelo julgando o
+ * próprio trabalho — o mesmo modelo que já demonstrou nesta sessão que
+ * esquece campos e instruções sob pressão de prompt longo. Quando o
+ * chamador sabe quais entregáveis foram pedidos (ver output-contract.ts),
+ * a verificação real é procurar a seção correspondente na resposta
+ * RENDERIZADA — determinístico, não opinião.
+ *
+ * Cobre só os dois rótulos que o caminho de produção de fato renderiza
+ * (formatPlanAnswer/formatVideoScript): "Legenda:" e "Roteiro:". Os demais
+ * tipos de artefato (título, headline, prompt, email, nome) só existem no
+ * caminho de chat, que já garante completude na hora da geração via
+ * contratoDeSaida/diretivaDoContrato — não há rótulo fixo pra checar aqui.
+ */
+export function computeMissingDeliverables(renderedAnswer: string, requestedDeliverables: string[]): string[] {
+  const missing: string[] = [];
+  // [ \t]*, não \s*: \s* atravessa quebra de linha e o teste passaria mesmo
+  // com "Legenda:" vazio seguido de QUALQUER outra seção não-vazia mais
+  // adiante na resposta (achado ao escrever o teste desta função).
+  if (requestedDeliverables.includes('legenda') && !/Legenda:[ \t]*\S/.test(renderedAnswer)) {
+    missing.push('legenda');
+  }
+  if (requestedDeliverables.includes('roteiro') && !renderedAnswer.includes('Roteiro:')) {
+    missing.push('roteiro');
+  }
+  return missing;
+}
+
+/**
  * Gate de qualidade (Fase 13 do brief): overall < 88 OU concept < 8 OU
  * copy < 8 OU executability < 8 OU falta entregável pedido → falha.
+ *
+ * `codeMissingDeliverables`, quando fornecido, SUBSTITUI
+ * `evaluation.flags.missing_deliverables` como fonte da checagem de
+ * completude (Missão 7) — o código manda, não a autoavaliação do modelo.
+ * Omitido (undefined), o gate cai de volta no que o critic reportou
+ * (compatibilidade com quem ainda não tem a lista de entregáveis pedidos
+ * à mão).
  */
-export function passesCriticGate(evaluation: CriticEvaluation): CriticGateResult {
+export function passesCriticGate(evaluation: CriticEvaluation, codeMissingDeliverables?: string[]): CriticGateResult {
   const overall = deriveCriticOverall(evaluation.scores);
   const reasons: string[] = [];
   if (overall < 88) reasons.push(`nota geral ${overall}/100 abaixo de 88`);
   if (evaluation.scores.concept < 8) reasons.push(`concept ${evaluation.scores.concept}/10 abaixo de 8`);
   if (evaluation.scores.copy < 8) reasons.push(`copy ${evaluation.scores.copy}/10 abaixo de 8`);
   if (evaluation.scores.executability < 8) reasons.push(`executability ${evaluation.scores.executability}/10 abaixo de 8`);
-  if (evaluation.flags.missing_deliverables.length > 0) {
-    reasons.push(`entregável(is) pedido(s) faltando: ${evaluation.flags.missing_deliverables.join(', ')}`);
+  const missingDeliverables = codeMissingDeliverables ?? evaluation.flags.missing_deliverables;
+  if (missingDeliverables.length > 0) {
+    reasons.push(`entregável(is) pedido(s) faltando: ${missingDeliverables.join(', ')}`);
   }
   return { passed: reasons.length === 0, overall, reasons };
 }

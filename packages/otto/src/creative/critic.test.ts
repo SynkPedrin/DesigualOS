@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeMissingDeliverables,
   critiqueDeliverable,
   deriveCriticOverall,
   formatCriticRevisionNote,
@@ -48,7 +49,48 @@ describe('deriveCriticOverall', () => {
   });
 });
 
+describe('computeMissingDeliverables', () => {
+  it('detecta "roteiro" ausente quando a resposta não tem seção "Roteiro:"', () => {
+    const missing = computeMissingDeliverables('Conceito: X\n\nLegenda: Y\n\nCTA: Z', ['roteiro']);
+    expect(missing).toEqual(['roteiro']);
+  });
+
+  it('não marca "roteiro" quando a seção existe', () => {
+    const missing = computeMissingDeliverables('Conceito: X\n\nRoteiro:\n\nCena 1...', ['roteiro']);
+    expect(missing).toEqual([]);
+  });
+
+  it('detecta "legenda" ausente quando não há conteúdo depois de "Legenda:"', () => {
+    const missing = computeMissingDeliverables('Conceito: X\n\nLegenda:   \n\nCTA: Z', ['legenda']);
+    expect(missing).toEqual(['legenda']);
+  });
+
+  it('não verifica artefatos sem rótulo fixo no caminho de produção (título, headline etc)', () => {
+    const missing = computeMissingDeliverables('Conceito: X', ['titulo']);
+    expect(missing).toEqual([]);
+  });
+
+  it('sem entregáveis pedidos, nada é reportado como faltando', () => {
+    expect(computeMissingDeliverables('qualquer coisa', [])).toEqual([]);
+  });
+});
+
 describe('passesCriticGate', () => {
+  it('usa codeMissingDeliverables (Missão 7) em vez de evaluation.flags.missing_deliverables quando fornecido', () => {
+    // O modelo diz que está tudo ok...
+    const evalOtimista = evaluation({ flags: { ...baseFlags, missing_deliverables: [] } });
+    // ...mas o código sabe que "roteiro" está faltando de verdade.
+    const result = passesCriticGate(evalOtimista, ['roteiro']);
+    expect(result.passed).toBe(false);
+    expect(result.reasons.some((r) => r.includes('roteiro'))).toBe(true);
+  });
+
+  it('sem codeMissingDeliverables, cai de volta no autorreporte do modelo (compatibilidade)', () => {
+    const semOverride = passesCriticGate(evaluation({ flags: { ...baseFlags, missing_deliverables: ['legenda'] } }));
+    expect(semOverride.passed).toBe(false);
+    expect(semOverride.reasons.some((r) => r.includes('legenda'))).toBe(true);
+  });
+
   it('aprova quando overall >= 88 e nenhuma dimensão crítica < 8', () => {
     const result = passesCriticGate(evaluation());
     expect(result.passed).toBe(true);
