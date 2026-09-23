@@ -60,7 +60,7 @@ Julgue cada dimensão de 0 a 10, SEM CALCULAR MÉDIA OU TOTAL (isso é feito por
 - specificity: se trocássemos o nome do cliente por outro, isso ainda faria sentido? (nota baixa = sim, troca sem perder nada)
 - originality: isso foge de fórmula/clichê de anúncio genérico?
 - brand_fit: o tom bate com o que o contexto descreve da marca?
-- copy: o texto soa humano, tem ritmo e personalidade, ou soa "texto de IA"?
+- copy: o texto soa humano, tem ritmo e personalidade, ou soa "texto de IA"? PUNA especificamente: palavra de outro idioma incrustada onde deveria ser português (ex.: "simplemente" em vez de "simplesmente"), direção visual em inglês misturada sem necessidade num texto majoritariamente em português (nomes próprios e termos técnicos de produção tudo bem — frase inteira em inglês solta no meio, não), frase com concordância estranha ou construção que nenhum redator publicaria, e metáfora que exagera além do que o fato sustenta (isso também vira unsupported_claims quando fortalece uma afirmação, mas aqui pontue mesmo quando é só estilisticamente exagerado sem virar alegação factual nova). Isto é julgamento normal de qualidade de copy, não uma lista fixa de palavras proibidas — o padrão é "um redator sênior aprovaria isto sem mexer?".
 - retention: para vídeo/carrossel, existe estrutura que sustenta atenção até o fim (não é só um bloco de texto)?
 - platform_fit: a forma é nativa do formato pedido (duração, estrutura, linguagem)?
 - executability: um editor/designer consegue produzir a partir disto amanhã, sem voltar perguntando o que fazer?
@@ -140,6 +140,63 @@ export interface CriticGateResult {
 }
 
 /**
+ * Extrai o texto de uma seção rotulada ("Legenda:", "Roteiro:") até o
+ * próximo rótulo conhecido ou o fim da resposta. Usado pela validação
+ * SEMÂNTICA abaixo — presença do rótulo não basta, precisa isolar o
+ * conteúdo pra julgar se ele é do TIPO certo.
+ */
+function extractLabeledSection(renderedAnswer: string, label: string, stopLabels: string[]): string | null {
+  const start = new RegExp(`${label}:[ \\t]*`, 'i').exec(renderedAnswer);
+  if (!start) return null;
+  const rest = renderedAnswer.slice(start.index + start[0].length);
+  let end = rest.length;
+  for (const stop of stopLabels) {
+    const stopMatch = new RegExp(`\\n\\s*${stop}:`, 'i').exec(rest);
+    if (stopMatch && stopMatch.index < end) end = stopMatch.index;
+  }
+  return rest.slice(0, end).trim();
+}
+
+function countOccurrences(pattern: RegExp, text: string): number {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  return (text.match(new RegExp(pattern.source, flags)) ?? []).length;
+}
+
+/**
+ * Detecta CONTEÚDO DE ROTEIRO (cena a cena, com timecode/direção de câmera)
+ * disfarçado sob o rótulo "Legenda:" — Otto Elite, Blocker 1 (achado ao
+ * vivo real: a validação Cosentino passou `missing_deliverables=[]` com uma
+ * "Legenda:" que era, na verdade, um roteiro duplicado com timestamps
+ * "[00:00-00:03]", porque a checagem antiga só olhava se havia TEXTO NÃO
+ * VAZIO depois do rótulo, não se esse texto tinha CARA de legenda). Dois ou
+ * mais sinais de estrutura de roteiro (timestamp, "Cena N", "Imagem:",
+ * "Fala:") no texto que deveria ser uma legenda em prosa é o limiar — um
+ * sinal isolado (ex.: uma legenda que menciona "das 18h às 20h") não basta
+ * pra reprovar, mas repetição é indício de que o bloco inteiro é outra
+ * coisa, não legenda.
+ */
+export function looksLikeScriptContent(text: string): boolean {
+  if (!text) return false;
+  const timestamps = countOccurrences(/\d{1,2}:\d{2}/, text);
+  const cenas = countOccurrences(/\bCena\s+\d+/i, text);
+  const imagens = countOccurrences(/\bImagem:/i, text);
+  const falas = countOccurrences(/\bFala:/i, text);
+  const signals = [timestamps >= 2, cenas >= 2, imagens >= 2, falas >= 2, cenas >= 1 && falas >= 1].filter(Boolean).length;
+  return signals >= 1;
+}
+
+/**
+ * Contraparte de `looksLikeScriptContent`: um ROTEIRO pedido precisa ter
+ * estrutura de cena/sequência — cópia corrida em parágrafo, sem marcação
+ * nenhuma de cena, timecode ou direção visual, não é um roteiro executável
+ * (Blocker 1: "no scene/sequence structure where a script was requested").
+ */
+export function looksLikeSequencedScript(text: string): boolean {
+  if (!text) return false;
+  return /\bCena\s+\d+/i.test(text) || /\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2}/.test(text) || /\bVisual:/i.test(text);
+}
+
+/**
  * Completude de entregáveis CALCULADA EM CÓDIGO (Otto Senior 20Y, Missão 7:
  * "Do NOT ask the model to self-certify completeness"). O critic também
  * reporta `flags.missing_deliverables`, mas isso é o modelo julgando o
@@ -149,6 +206,12 @@ export interface CriticGateResult {
  * a verificação real é procurar a seção correspondente na resposta
  * RENDERIZADA — determinístico, não opinião.
  *
+ * Otto Elite, Blocker 1: rótulo presente NÃO é suficiente — precisa ser do
+ * TIPO certo de conteúdo (validação semântica/estrutural, não só regex de
+ * presença). Uma "Legenda:" cujo conteúdo tem cara de roteiro (timestamps,
+ * "Cena N" repetido) conta como FALTANDO, porque a peça não tem uma legenda
+ * de verdade em lugar nenhum, mesmo o rótulo existindo.
+ *
  * Cobre só os dois rótulos que o caminho de produção de fato renderiza
  * (formatPlanAnswer/formatVideoScript): "Legenda:" e "Roteiro:". Os demais
  * tipos de artefato (título, headline, prompt, email, nome) só existem no
@@ -157,16 +220,42 @@ export interface CriticGateResult {
  */
 export function computeMissingDeliverables(renderedAnswer: string, requestedDeliverables: string[]): string[] {
   const missing: string[] = [];
-  // [ \t]*, não \s*: \s* atravessa quebra de linha e o teste passaria mesmo
-  // com "Legenda:" vazio seguido de QUALQUER outra seção não-vazia mais
-  // adiante na resposta (achado ao escrever o teste desta função).
-  if (requestedDeliverables.includes('legenda') && !/Legenda:[ \t]*\S/.test(renderedAnswer)) {
-    missing.push('legenda');
+  if (requestedDeliverables.includes('legenda')) {
+    const section = extractLabeledSection(renderedAnswer, 'Legenda', ['Roteiro', 'CTA']);
+    if (!section || section.length === 0 || looksLikeScriptContent(section)) {
+      missing.push('legenda');
+    }
   }
-  if (requestedDeliverables.includes('roteiro') && !renderedAnswer.includes('Roteiro:')) {
-    missing.push('roteiro');
+  if (requestedDeliverables.includes('roteiro')) {
+    const section = extractLabeledSection(renderedAnswer, 'Roteiro', []);
+    if (!section || section.length === 0 || !looksLikeSequencedScript(section)) {
+      missing.push('roteiro');
+    }
   }
   return missing;
+}
+
+/**
+ * Explica POR QUE um entregável está marcado como faltando, pra a mensagem
+ * de reparo (execute.ts) pedir a correção certa — "adicionar" quando o
+ * rótulo nunca existiu, "substituir só essa seção" quando ele existe mas é
+ * do tipo errado (Blocker 1: não regenerar a peça inteira por um campo
+ * malformado).
+ */
+export function explainDeliverableGap(id: string, renderedAnswer: string): string {
+  if (id === 'legenda') {
+    const section = extractLabeledSection(renderedAnswer, 'Legenda', ['Roteiro', 'CTA']);
+    if (section && looksLikeScriptContent(section)) {
+      return 'legenda (o texto atual sob "Legenda:" é um roteiro com timestamps/cenas, não uma legenda de post — substitua SÓ essa seção por um texto de legenda em prosa natural, sem "Cena X", "Imagem:", "Fala:" ou timestamps)';
+    }
+  }
+  if (id === 'roteiro') {
+    const section = extractLabeledSection(renderedAnswer, 'Roteiro', []);
+    if (section && !looksLikeSequencedScript(section)) {
+      return 'roteiro (o texto atual sob "Roteiro:" não tem estrutura de cena/sequência — reescreva como roteiro cena a cena, com direção visual e timing)';
+    }
+  }
+  return id;
 }
 
 /**
@@ -204,7 +293,64 @@ export function passesCriticGate(evaluation: CriticEvaluation, codeMissingDelive
   if (missingDeliverables.length > 0) {
     reasons.push(`entregável(is) pedido(s) faltando: ${missingDeliverables.join(', ')}`);
   }
+  // Otto Elite, Blocker 4: "elite_passed can NEVER be true if
+  // unsupported_claims.length > 0" — a checagem final em execute.ts repete
+  // isto sobre o estado FINAL, mas o gate do critic precisa reprovar aqui
+  // também, senão nenhuma reescrita é sequer disparada pra corrigir o fato.
+  if (evaluation.flags.unsupported_claims.length > 0) {
+    reasons.push(`afirmação sem base no briefing: ${evaluation.flags.unsupported_claims.join('; ')}`);
+  }
   return { passed: reasons.length === 0, overall, reasons };
+}
+
+/**
+ * Dimensão mais fraca -> camada correspondente, usada só quando o gate
+ * reprovou E o critic classificou root_cause=NONE (inconsistência lógica:
+ * Otto Elite, Blocker 3). Mapeamento aproximado, não perfeito — o objetivo
+ * não é adivinhar a intenção exata do modelo, é NUNCA deixar uma reprovação
+ * sem causa classificada, porque root_cause=NONE faz a reescrita cair no
+ * caminho de "só ajuste de texto" mesmo quando o problema pode ser de
+ * ângulo/big idea/estrutura.
+ */
+const DIMENSION_TO_ROOT_CAUSE: Record<keyof CriticScores, CriticRootCause> = {
+  strategy: 'STRATEGY',
+  concept: 'BIG_IDEA',
+  hook: 'HOOK',
+  specificity: 'ANGLE',
+  originality: 'ANGLE',
+  brand_fit: 'BRAND_FIT',
+  copy: 'COPY',
+  retention: 'STRUCTURE',
+  platform_fit: 'STRUCTURE',
+  executability: 'EXECUTABILITY',
+};
+
+/**
+ * Otto Elite, Blocker 3: "if gate fails, root_cause MUST NOT equal NONE
+ * unless failure is exclusively a machine-only condition that has its own
+ * explicit classification." Achado ao vivo real: overall=87 (abaixo do
+ * corte de 88), gate reprovado, e root_cause="NONE" — logicamente
+ * inconsistente, e o código NUNCA deve confiar cegamente nisso (o brief é
+ * explícito: "Do NOT trust the critic's NONE blindly"). Prioridade da
+ * reclassificação: entregável faltando (determinístico, mais confiável que
+ * julgamento) > alegação sem base > dimensão mais fraca entre as que
+ * reprovaram.
+ */
+export function reconcileRootCause(
+  evaluation: CriticEvaluation,
+  gate: CriticGateResult,
+  codeMissingDeliverables?: string[],
+): CriticRootCause {
+  if (gate.passed || evaluation.root_cause !== 'NONE') return evaluation.root_cause;
+
+  const missingDeliverables = codeMissingDeliverables ?? evaluation.flags.missing_deliverables;
+  if (missingDeliverables.length > 0) return 'DELIVERABLE';
+  if (evaluation.flags.unsupported_claims.length > 0) return 'FACTUAL';
+
+  const weakest = (Object.entries(evaluation.scores) as Array<[keyof CriticScores, number]>).sort(
+    (a, b) => a[1] - b[1],
+  )[0];
+  return weakest ? DIMENSION_TO_ROOT_CAUSE[weakest[0]] : 'STRUCTURE';
 }
 
 /**

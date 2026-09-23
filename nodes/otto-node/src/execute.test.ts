@@ -1299,7 +1299,8 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     expect(body.status).toBe('completed');
     expect(videoPlanCalls).toBe(4); // draft + 2 reescritas do critic + 1 reparo de completude
     expect(repairMessageReceived).toMatch(/COMPLEMENTO OBRIGATÓRIO/);
-    expect(repairMessageReceived).toMatch(/preserve TODO o conteúdo/);
+    expect(repairMessageReceived).toMatch(/preserve TODO o resto do conteúdo/);
+    expect(repairMessageReceived).toMatch(/- roteiro/);
     expect(body.answer).toContain('Roteiro:');
     expect(body.metadata.completion_repair).toEqual({ attempted: true, succeeded: true });
     expect(body.metadata.missing_deliverables).toEqual([]);
@@ -1526,6 +1527,59 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     expect(body.status).toBe('completed');
     expect(criticCalls).toBe(0);
     expect(body.metadata.critic).toEqual({ enabled: false });
+
+    await app.close();
+  });
+
+  /**
+   * Otto Elite, Blocker 4 (teste 7/10 do fechamento): "elite_passed can
+   * NEVER be true if unsupported_claims.length > 0". Achado ao vivo real:
+   * REWRITE #1 quebrou em schema (bug NÃO relacionado ao fato) antes de
+   * corrigir "sem burocracia", e o draft com a alegação sobreviveu como
+   * versão final sem NENHUMA tentativa de correção factual. Este teste
+   * simula o pior caso: o critic reporta a MESMA alegação sem base em toda
+   * avaliação (mesmo depois das 2 reescritas do gate e da correção factual
+   * narrow dedicada) — elite_passed precisa continuar false, e a correção
+   * factual precisa ter sido tentada.
+   */
+  it('unsupported_claims persistente NUNCA vira elite_passed=true, mesmo com scores altos e completude ok (Blocker 4)', async () => {
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+            return Promise.reject(new OttoLLMError('schema inesperado'));
+          },
+          critic: () =>
+            Promise.resolve({
+              scores: {
+                strategy: 9, concept: 9, hook: 9, specificity: 9, originality: 9,
+                brand_fit: 9, copy: 9, retention: 9, platform_fit: 9, executability: 9,
+              },
+              flags: {
+                missing_deliverables: [], genericity: false, unsupported_claims: ['A pizza que o feed inteiro sente o cheiro.'],
+                weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+              },
+              reasoning: 'alegação sem base persistente',
+              root_cause: 'FACTUAL',
+            }),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-factual-persistente', message: 'Crie um carrossel pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(body.metadata.critic.passed).toBe(false);
+    expect(body.metadata.missing_deliverables).toEqual([]); // completude ok isoladamente
+    expect(body.metadata.unsupported_claims.length).toBeGreaterThan(0); // mas o fato continua sem base
+    expect(body.metadata.factual_correction).toEqual({ attempted: true, succeeded: false });
+    expect(body.metadata.elite_passed).toBe(false);
+    expect(body.metadata.quality_tier).toBe('draft');
+    expect(body.metadata.requires_human_review).toBe(true);
 
     await app.close();
   });

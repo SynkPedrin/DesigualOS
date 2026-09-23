@@ -125,6 +125,26 @@ const stringOrArray = <T extends z.ZodArray<z.ZodString>>(base: T) =>
     return value;
   }, base);
 
+/**
+ * Array de OBJETOS que degrada pra lista vazia quando o modelo manda
+ * qualquer coisa que não seja array — Otto Elite, Blocker 2 (achado ao vivo:
+ * `reference_strategy` recebeu uma STRING solta, e o array esperado é de
+ * OBJETOS, não de texto). Diferente de `stringOrArray`, aqui NÃO dá pra
+ * embrulhar a string num item válido sem inventar campos que ela não tem
+ * (role, fidelity, instruction, placement) — isso seria fabricar dado, que
+ * é exatamente o que este arquivo proíbe (ver stringOrArray acima: "objeto
+ * não é normalizado, cai no erro de schema normal, porque não é ruído de
+ * representação"). A diferença aqui é que `reference_strategy` é METADADO
+ * DE PRODUÇÃO OPCIONAL — usado só pra decidir o papel de cada referência
+ * anexada (planner.ts:buildProductionSpec), nunca aparece no texto que o
+ * usuário lê (conceito/legenda/roteiro). Perder essa decisão específica faz
+ * as referências caírem no tratamento padrão (sem papel especial) em vez de
+ * derrubar o turno inteiro por um campo que não é entregável do usuário.
+ * Um valor malformado vira [] (degradado), nunca um objeto fabricado.
+ */
+const arrayOrDegrade = <T extends z.ZodTypeAny>(itemSchema: T) =>
+  z.preprocess((value) => (Array.isArray(value) ? value : []), z.array(itemSchema).default([]));
+
 // ---------------------------------------------------------------------------
 // Direção de arte: o bloco que impede prompt genérico. Cada campo é uma
 // decisão que um diretor de arte humano tomaria antes de abrir o Midjourney.
@@ -180,7 +200,7 @@ export const creativePlanSchema = z.object({
   copy: z.string().min(1),
   art_direction: artDirectionSchema,
   references: referencesField,
-  reference_strategy: z.array(referenceStrategySchema).default([]),
+  reference_strategy: arrayOrDegrade(referenceStrategySchema),
   real_world_fidelity: realWorldFidelitySchema.default({ requires_reference: false }),
   image_prompt: z.string().min(1),
   negative_prompt: z.string().default(''),

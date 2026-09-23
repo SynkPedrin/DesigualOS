@@ -74,6 +74,41 @@ describe('creativePlanSchema', () => {
   });
 
   /**
+   * REGRESSÃO REAL (Otto Elite, Blocker 2): validação ao vivo do caso
+   * Cosentino — REWRITE #1 quebrou com `reference_strategy: Expected array,
+   * received string`, derrubando o turno inteiro mesmo com um draft válido
+   * de 87/100 em mãos. reference_strategy é metadado de produção OPCIONAL
+   * (decide o papel de cada referência anexada; nunca aparece no texto que
+   * o usuário lê) — um valor malformado degrada pra [] em vez de fabricar
+   * um objeto falso ou derrubar o parse inteiro.
+   */
+  it('reference_strategy como string solta (malformado) degrada pra lista vazia, não derruba o parse (Blocker 2)', () => {
+    const result = creativePlanSchema.safeParse({ ...validPlan, reference_strategy: 'uma referência de produto' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reference_strategy).toEqual([]);
+  });
+
+  it('reference_strategy ausente continua vazio por padrão (comportamento anterior preservado)', () => {
+    const semReferenceStrategy = { ...validPlan } as Record<string, unknown>;
+    delete semReferenceStrategy.reference_strategy;
+    const result = creativePlanSchema.safeParse(semReferenceStrategy);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reference_strategy).toEqual([]);
+  });
+
+  it('reference_strategy com array de objetos válidos continua funcionando normalmente', () => {
+    const comReferenceStrategy = {
+      ...validPlan,
+      reference_strategy: [
+        { reference_index: 1, role: 'product', fidelity: 'exact', instruction: 'Preserve product geometry.', placement: 'in_scene' },
+      ],
+    };
+    const result = creativePlanSchema.safeParse(comReferenceStrategy);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reference_strategy).toHaveLength(1);
+  });
+
+  /**
    * REGRESSÃO REAL: a MESMA validação ao vivo também reprovou por
    * real_world_fidelity.entity_type recebendo "" em vez de omitido —
    * mesma classe do bug de spoken_line/on_screen_text (Fase 1), agora

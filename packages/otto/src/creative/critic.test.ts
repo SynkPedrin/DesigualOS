@@ -4,8 +4,12 @@ import {
   critiqueDeliverable,
   deliverableRegression,
   deriveCriticOverall,
+  explainDeliverableGap,
   formatCriticRevisionNote,
+  looksLikeScriptContent,
+  looksLikeSequencedScript,
   passesCriticGate,
+  reconcileRootCause,
   rewriteRequiresStrategyLayer,
 } from './critic.js';
 import type { CriticEvaluation, CriticRootCause } from './schemas.js';
@@ -74,6 +78,57 @@ describe('computeMissingDeliverables', () => {
 
   it('sem entregáveis pedidos, nada é reportado como faltando', () => {
     expect(computeMissingDeliverables('qualquer coisa', [])).toEqual([]);
+  });
+});
+
+describe('validação semântica de entregável (Otto Elite, Blocker 1)', () => {
+  const rotulos = 'Conceito: X\n\nLegenda: ';
+
+  /**
+   * REGRESSÃO REAL: a validação ao vivo Cosentino marcou missing_deliverables=[]
+   * com uma "Legenda:" que na verdade era um roteiro duplicado com timestamps
+   * ("[00:00-00:03]", "(Roteiro - Voz off masculina...)"). Presença do rótulo
+   * não é suficiente — o CONTEÚDO precisa ter cara de legenda.
+   */
+  it('teste 1: "Legenda:" com timestamps/cenas repetidos NÃO é considerada legenda válida', () => {
+    const resposta =
+      `${rotulos}(Roteiro - Voz off)\n\n[00:00 - 00:03]\nImagem: mãos com papéis.\nFala: "Você já parou pra pensar?"\n\n[00:04 - 00:12]\nImagem: chave girando.\nFala: "Na Cosentino você não precisa se cadastrar."`;
+    expect(computeMissingDeliverables(resposta, ['legenda'])).toEqual(['legenda']);
+    expect(looksLikeScriptContent('(Roteiro - Voz off)\n\n[00:00 - 00:03]\nImagem: mãos com papéis.\nFala: "x"\n\n[00:04 - 00:12]\nImagem: chave.\nFala: "y"')).toBe(true);
+  });
+
+  it('teste 2: legenda em prosa natural, sem estrutura de cena, PASSA', () => {
+    const resposta = `${rotulos}Cansou de formulário pra tudo? Na Cosentino você entra direto no seu novo lar, sem papelada, sem enrolação. Jardim Europa V abre hoje. 📲 Link na bio.`;
+    expect(computeMissingDeliverables(resposta, ['legenda'])).toEqual([]);
+    expect(looksLikeScriptContent('Cansou de formulário pra tudo? Na Cosentino você entra direto no seu novo lar, sem papelada.')).toBe(false);
+  });
+
+  it('teste 3: um roteiro completo não satisfaz o pedido de legenda (mesmo texto, entregável diferente)', () => {
+    const roteiro = 'Cena 1 (3s):\nVisual: mãos com papéis.\nFala: "Você já parou pra pensar?"\n\nCena 2 (3s):\nVisual: chave girando.\nFala: "Sem burocracia."';
+    expect(looksLikeScriptContent(roteiro)).toBe(true);
+    expect(computeMissingDeliverables(`Conceito: X\n\nLegenda: ${roteiro}`, ['legenda'])).toEqual(['legenda']);
+  });
+
+  it('teste 4: uma legenda em prosa não satisfaz o pedido de roteiro (falta estrutura de cena/sequência)', () => {
+    const legenda = 'Cansou de formulário pra tudo? Na Cosentino você entra direto no seu novo lar, sem papelada.';
+    expect(looksLikeSequencedScript(legenda)).toBe(false);
+    expect(computeMissingDeliverables(`Conceito: X\n\nRoteiro:\n\n${legenda}`, ['roteiro'])).toEqual(['roteiro']);
+  });
+
+  it('roteiro real com "Cena N"/"Visual:"/"Fala:" passa no teste de estrutura de sequência', () => {
+    const roteiro = 'Cena 1 (3s):\nVisual: mãos com papéis.\nFala: "Você já parou pra pensar?"';
+    expect(looksLikeSequencedScript(roteiro)).toBe(true);
+    expect(computeMissingDeliverables(`Conceito: X\n\nRoteiro:\n\n${roteiro}`, ['roteiro'])).toEqual([]);
+  });
+
+  it('explainDeliverableGap explica que a legenda existe mas está no formato errado (pra reparo substituir, não regenerar tudo)', () => {
+    const resposta = `${rotulos}[00:00-00:03]\nCena 1:\nImagem: x.\nFala: "a"\n\nCena 2:\nImagem: y.\nFala: "b"`;
+    const explicacao = explainDeliverableGap('legenda', resposta);
+    expect(explicacao).toMatch(/substitua SÓ essa seção/);
+  });
+
+  it('explainDeliverableGap devolve só o id quando o entregável nunca existiu (repare adicionando, não substituindo)', () => {
+    expect(explainDeliverableGap('legenda', 'Conceito: X')).toBe('legenda');
   });
 });
 
@@ -149,6 +204,19 @@ describe('passesCriticGate', () => {
     expect(result.reasons.some((r) => r.includes('legenda'))).toBe(true);
   });
 
+  /**
+   * Blocker 4: "elite_passed can NEVER be true if unsupported_claims.length
+   * > 0" — o gate do critic precisa reprovar por isso sozinho, senão nenhuma
+   * reescrita é sequer disparada pra corrigir o fato (achado ao vivo real:
+   * "sem burocracia" ficou sem correção porque REWRITE #1 quebrou em schema
+   * antes de tocar em conteúdo, e nada tinha reprovado por causa do fato).
+   */
+  it('teste 7: reprova sempre que há unsupported_claims, mesmo com todos os scores altos', () => {
+    const result = passesCriticGate(evaluation({ flags: { ...baseFlags, unsupported_claims: ['sem burocracia'] } }));
+    expect(result.passed).toBe(false);
+    expect(result.reasons.some((r) => r.includes('sem burocracia'))).toBe(true);
+  });
+
   it('a nota real 59/100 da baseline ao vivo (Fase 1, ctx4) reprova o gate', () => {
     // Reconstituindo os scores honestos que o baseline ao vivo recebeu
     // (docs/coordination/OTTO_ELITE_HANDOFF.md, Phase 2, tabela de rubrica):
@@ -179,6 +247,62 @@ describe('rewriteRequiresStrategyLayer (Missão 16)', () => {
     for (const cause of causes) {
       expect(rewriteRequiresStrategyLayer(cause), cause).toBe(false);
     }
+  });
+});
+
+describe('reconcileRootCause (Otto Elite, Blocker 3)', () => {
+  /**
+   * REGRESSÃO REAL: validação ao vivo Cosentino — overall=87 (abaixo do
+   * corte de 88), gate reprovado, e root_cause="NONE" retornado pelo
+   * modelo. Logicamente inconsistente: "Do NOT trust the critic's NONE
+   * blindly" — o código precisa classificar algo sempre que o gate reprova.
+   */
+  it('teste 6: gate reprovado + root_cause=NONE nunca sobrevive — é reclassificado', () => {
+    const scores = { ...baseScores, retention: 7, hook: 8, copy: 8 };
+    const evalInconsistente = evaluation({ scores, root_cause: 'NONE' });
+    const gate = passesCriticGate(evalInconsistente);
+    expect(gate.passed).toBe(false); // overall < 88 por causa do retention baixo
+    const corrigido = reconcileRootCause(evalInconsistente, gate);
+    expect(corrigido).not.toBe('NONE');
+  });
+
+  it('entregável faltando tem prioridade sobre dimensão fraca (determinístico > julgamento)', () => {
+    const evalComFaltante = evaluation({
+      scores: { ...baseScores, hook: 6 },
+      flags: { ...baseFlags, missing_deliverables: ['roteiro'] },
+      root_cause: 'NONE',
+    });
+    const gate = passesCriticGate(evalComFaltante, ['roteiro']);
+    expect(reconcileRootCause(evalComFaltante, gate, ['roteiro'])).toBe('DELIVERABLE');
+  });
+
+  it('alegação sem base tem prioridade sobre dimensão fraca quando não há entregável faltando', () => {
+    const evalComAlegacao = evaluation({
+      scores: { ...baseScores, hook: 6 },
+      flags: { ...baseFlags, unsupported_claims: ['sem burocracia'] },
+      root_cause: 'NONE',
+    });
+    const gate = passesCriticGate(evalComAlegacao);
+    expect(reconcileRootCause(evalComAlegacao, gate)).toBe('FACTUAL');
+  });
+
+  it('sem entregável faltando nem alegação, cai na dimensão mais fraca (concept fraco -> BIG_IDEA)', () => {
+    const evalFraco = evaluation({ scores: { ...baseScores, concept: 5 }, root_cause: 'NONE' });
+    const gate = passesCriticGate(evalFraco);
+    expect(reconcileRootCause(evalFraco, gate)).toBe('BIG_IDEA');
+  });
+
+  it('não mexe no root_cause quando o gate passou', () => {
+    const evalAprovado = evaluation({ root_cause: 'NONE' });
+    const gate = passesCriticGate(evalAprovado);
+    expect(gate.passed).toBe(true);
+    expect(reconcileRootCause(evalAprovado, gate)).toBe('NONE');
+  });
+
+  it('não mexe no root_cause quando o modelo já classificou algo diferente de NONE', () => {
+    const evalClassificado = evaluation({ scores: { ...baseScores, hook: 5 }, root_cause: 'HOOK' });
+    const gate = passesCriticGate(evalClassificado);
+    expect(reconcileRootCause(evalClassificado, gate)).toBe('HOOK');
   });
 });
 

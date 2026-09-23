@@ -25,8 +25,10 @@ import {
   createWebSearchProviderFromEnv,
   critiqueDeliverable,
   computeMissingDeliverables,
+  explainDeliverableGap,
   deliverableRegression,
   passesCriticGate,
+  reconcileRootCause,
   formatCriticRevisionNote,
   rewriteRequiresStrategyLayer,
   developStrategy,
@@ -409,7 +411,6 @@ function formatVideoScript(video: VideoPlan): string {
 function formatPlanAnswer(
   planConcept: string,
   planCopy: string,
-  jobType: StudioJobType,
   videoPlan?: VideoPlan,
   carouselPlan?: CarouselPlan,
 ): string {
@@ -419,13 +420,7 @@ function formatPlanAnswer(
         .map((slide) => `Slide ${slide.index}: ${slide.copy}`)
         .join('\n')}`
     : '';
-  return [`Conceito: ${planConcept}`, `Legenda: ${planCopy}`]
-    .join('\n\n')
-    .concat(
-      script,
-      carrossel,
-      `\n\nSpec de produção (${jobType}) gerada e anexada a esta resposta; o Orchestrator transforma em job do Studio.`,
-    );
+  return [`Conceito: ${planConcept}`, `Legenda: ${planCopy}`].join('\n\n').concat(script, carrossel);
 }
 
 export async function executeTask(
@@ -845,7 +840,7 @@ export async function executeTask(
         logger.warn({ execution_id: request.execution_id }, '[OTTO:fidelity] briefing sem referência fiel pra entidade real');
       }
 
-      const answer = [formatPlanAnswer(plan.concept, plan.copy, jobType, videoPlan, carouselPlan), fidelityWarning]
+      const answer = [formatPlanAnswer(plan.concept, plan.copy, videoPlan, carouselPlan), fidelityWarning]
         .filter(Boolean)
         .join('\n\n');
 
@@ -988,11 +983,21 @@ export async function executeTask(
       // Missão 7: completude é CALCULADA, não autocertificada pelo modelo.
       const missingDeliverables = computeMissingDeliverables(result.answer, entregaveisPedidos);
       const gate = passesCriticGate(evaluation, missingDeliverables);
+      // Otto Elite, Blocker 3: gate reprovado com root_cause="NONE" é
+      // logicamente inconsistente — nunca confiar cegamente nisso.
+      const reconciledRootCause = reconcileRootCause(evaluation, gate, missingDeliverables);
+      if (reconciledRootCause !== evaluation.root_cause) {
+        logger.warn(
+          { execution_id: request.execution_id, reported: evaluation.root_cause, corrected: reconciledRootCause, overall: gate.overall },
+          '[OTTO:critic] root_cause=NONE em gate reprovado — reclassificado em código',
+        );
+      }
+      const reconciledEvaluation = { ...evaluation, root_cause: reconciledRootCause };
       logger.info(
-        { attempt: criticRewrites, overall: gate.overall, passed: gate.passed, reasons: gate.reasons, root_cause: evaluation.root_cause },
+        { attempt: criticRewrites, overall: gate.overall, passed: gate.passed, reasons: gate.reasons, root_cause: reconciledEvaluation.root_cause },
         '[OTTO:critic] avaliação do entregável renderizado',
       );
-      return { evaluation, gate };
+      return { evaluation: reconciledEvaluation, gate };
     }
 
     if (criticHabilitado) {
@@ -1135,7 +1140,14 @@ export async function executeTask(
       const missingAntesDoReparo = computeMissingDeliverables(result.answer, entregaveisPedidos);
       if (missingAntesDoReparo.length > 0) {
         completionRepairAttempted = true;
-        const repairMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu):\n${result.answer}\n\nCOMPLEMENTO OBRIGATÓRIO: preserve TODO o conteúdo acima exatamente como está. Adicione APENAS o(s) entregável(is) que faltam: ${missingAntesDoReparo.join(', ')}. Não regenere conceito, ângulo nem o que já foi escrito.`;
+        // Otto Elite, Blocker 1: a lacuna pode ser AUSÊNCIA (nunca existiu)
+        // ou TIPO ERRADO (existe, mas não é do formato pedido — ex.:
+        // "Legenda:" com conteúdo de roteiro). explainDeliverableGap diz
+        // qual dos dois é, pra pedir "adicione" ou "substitua só essa
+        // seção" em vez de sempre "adicione", que não conserta um campo já
+        // presente porém malformado.
+        const gapDescriptions = missingAntesDoReparo.map((id) => explainDeliverableGap(id, result.answer));
+        const repairMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu):\n${result.answer}\n\nCOMPLEMENTO OBRIGATÓRIO: preserve TODO o resto do conteúdo acima exatamente como está. Corrija SOMENTE o(s) entregável(is) a seguir — adicione o que nunca existiu, ou substitua só a seção indicada quando ela existe mas está no formato errado:\n${gapDescriptions.map((d) => `- ${d}`).join('\n')}\nNão regenere conceito, ângulo nem o que já está correto.`;
         try {
           const reparado = await produce(repairMessage, undefined, strategyBriefing || undefined);
           const missingDepoisDoReparo = computeMissingDeliverables(reparado.answer, entregaveisPedidos);
@@ -1163,6 +1175,55 @@ export async function executeTask(
     }
 
     /**
+     * CORREÇÃO FACTUAL ESTREITA (Otto Elite, Blocker 4): o invariante de
+     * não-destruir-artefato-válido (Blocker 2) preserva a última versão boa
+     * quando uma reescrita quebra — mas se essa versão preservada ainda
+     * carrega uma alegação sem base (`unsupported_claims`) que o critic já
+     * tinha detectado, ela sobrevive até o usuário sem correção nenhuma
+     * (achado ao vivo real: "sem burocracia" sobreviveu porque REWRITE #1
+     * quebrou em schema, não em conteúdo). Esta etapa roda NO MÁXIMO uma
+     * vez, fora do loop de reescrita do critic (não conta como reescrita
+     * #3), e é estritamente ADITIVA/CORRETIVA — só troca as frases
+     * apontadas, preservando conceito, ângulo e o resto do texto.
+     */
+    let factualCorrectionAttempted = false;
+    let factualCorrectionSucceeded = false;
+    if (criticHabilitado && criticEvaluation && criticEvaluation.flags.unsupported_claims.length > 0) {
+      const claimsAntes = criticEvaluation.flags.unsupported_claims;
+      factualCorrectionAttempted = true;
+      const factualMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu):\n${result.answer}\n\nCORREÇÃO FACTUAL OBRIGATÓRIA: preserve TODO o resto do conteúdo, conceito, ângulo e estrutura exatamente como estão. Ajuste APENAS as frases abaixo, que afirmam algo além do que o briefing autoriza — reescreva cada uma pra ficar fiel ao fato original sem perder a força criativa:\n${claimsAntes.map((c) => `- "${c}"`).join('\n')}`;
+      try {
+        const corrigido = await produce(factualMessage, undefined, strategyBriefing || undefined);
+        const missingAntesDaCorrecao = computeMissingDeliverables(result.answer, entregaveisPedidos);
+        const missingDepoisDaCorrecao = computeMissingDeliverables(corrigido.answer, entregaveisPedidos);
+        const regressaoNaCorrecao = deliverableRegression(missingAntesDaCorrecao, missingDepoisDaCorrecao);
+        if (regressaoNaCorrecao.length > 0) {
+          logger.warn(
+            { execution_id: request.execution_id, regressaoNaCorrecao },
+            '[OTTO:critic] correção factual regrediu completude — candidato rejeitado, mantendo versão anterior',
+          );
+        } else {
+          result = corrigido;
+          // Checagem determinística, não outra chamada de critic (Blocker 4
+          // pede algo LEVE): se a frase exata apontada ainda aparece
+          // literalmente no texto corrigido, ela não foi resolvida.
+          const claimsDepois = claimsAntes.filter((claim) => corrigido.answer.includes(claim));
+          factualCorrectionSucceeded = claimsDepois.length < claimsAntes.length;
+          criticEvaluation = { ...criticEvaluation, flags: { ...criticEvaluation.flags, unsupported_claims: claimsDepois } };
+          logger.info(
+            { execution_id: request.execution_id, resolved: claimsAntes.length - claimsDepois.length, remaining: claimsDepois },
+            '[OTTO:critic] correção factual aplicada',
+          );
+        }
+      } catch (factualError) {
+        logger.warn(
+          { execution_id: request.execution_id, error: factualError instanceof Error ? factualError.message : String(factualError) },
+          '[OTTO:critic] correção factual falhou — mantendo versão anterior (alegação sem base pode persistir; ver missing_deliverables/elite_passed)',
+        );
+      }
+    }
+
+    /**
      * ESTADO FINAL DE QUALIDADE (regra 19): nunca chamar "elite" um trabalho
      * que não passou — e um pipeline degradado (qualquer estágio de melhoria
      * que falhou) NUNCA pode ser "elite", mesmo que a última avaliação
@@ -1172,9 +1233,17 @@ export async function executeTask(
      * INVARIANTE FINAL (Blocker 2, "no exceptions"): missing_deliverables
      * não-vazio NUNCA é elite, mesmo que o critic tivesse aprovado antes do
      * reparo — recalculado aqui, não herdado do gate anterior.
+     *
+     * INVARIANTE FINAL (Blocker 4, "no exceptions"): unsupported_claims
+     * não-vazio NUNCA é elite — mesmo já sendo parte do motivo de
+     * `criticGate.passed`, é checado de novo aqui explicitamente porque
+     * `criticGate` pode estar desatualizado em relação à correção factual
+     * acima (que atualiza `criticEvaluation`, não `criticGate`).
      */
     const missingFinal = computeMissingDeliverables(result.answer, entregaveisPedidos);
-    const criticPassedFinal = !pipelineDegraded && (criticGate?.passed ?? false) && missingFinal.length === 0;
+    const unsupportedClaimsFinal = criticEvaluation?.flags.unsupported_claims ?? [];
+    const criticPassedFinal =
+      !pipelineDegraded && (criticGate?.passed ?? false) && missingFinal.length === 0 && unsupportedClaimsFinal.length === 0;
     const qualityTier = !criticHabilitado ? 'not_evaluated' : criticPassedFinal ? 'elite' : 'draft';
     const elitePassed = criticHabilitado ? criticPassedFinal : null;
     const requiresHumanReview = criticHabilitado ? !criticPassedFinal : false;
@@ -1254,7 +1323,9 @@ export async function executeTask(
       // Blocker 2: completude é recalculada aqui, na versão FINAL — não
       // herdada de nenhuma avaliação anterior do critic.
       missing_deliverables: missingFinal,
+      unsupported_claims: unsupportedClaimsFinal,
       ...(completionRepairAttempted ? { completion_repair: { attempted: true, succeeded: completionRepairSucceeded } } : {}),
+      ...(factualCorrectionAttempted ? { factual_correction: { attempted: true, succeeded: factualCorrectionSucceeded } } : {}),
     };
     const timings: PhaseTimings = {
       classify_ms: classifyMs,

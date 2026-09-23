@@ -170,9 +170,13 @@ export type { CreativeOutput, CreativeGenerator, CreativePipelineResult, Creativ
 export {
   critiqueDeliverable,
   computeMissingDeliverables,
+  explainDeliverableGap,
+  looksLikeScriptContent,
+  looksLikeSequencedScript,
   deliverableRegression,
   deriveCriticOverall,
   passesCriticGate,
+  reconcileRootCause,
   formatCriticRevisionNote,
   rewriteRequiresStrategyLayer,
 } from './creative/critic.js';
