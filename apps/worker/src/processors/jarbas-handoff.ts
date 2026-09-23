@@ -1,6 +1,7 @@
 import { hasPermission } from '@desigual-os/auth';
-import { detectJarbasHandoffRequest, detectJarbasStatusQuery, InMemoryAgentTaskStore, type AgentTaskStore } from '@desigual-os/agent-runtime';
+import { detectJarbasHandoffRequest, detectJarbasStatusQuery, type AgentTaskStore } from '@desigual-os/agent-runtime';
 import type { SeniorToolContext } from '@desigual-os/tool-gateway';
+import { PostgresAgentTaskStore } from './agent-task-postgres-store';
 import { runJarbasV2Task } from './jarbas-v2-orchestrator';
 
 /**
@@ -18,10 +19,17 @@ import { runJarbasV2Task } from './jarbas-v2-orchestrator';
  * quando esse mapa existir aqui.
  */
 
+/**
+ * §11 da missão de wiring: produção usa SEMPRE PostgresAgentTaskStore — se
+ * o Postgres estiver fora, a chamada real dentro de `store.dispatch`/
+ * `runJarbasV2Task` lança, e esse erro SOBE (nenhum catch aqui engole
+ * pra "sucesso silencioso" nem troca por um store em memória). Testes
+ * usam InMemoryAgentTaskStore diretamente (ver jarbas-v2-orchestrator.
+ * test.ts) — nunca este arquivo, que é só o caminho real.
+ */
 let sharedStore: AgentTaskStore | null = null;
-/** Store compartilhado do processo — trocar por PostgresAgentTaskStore real quando plugado (ver docs). */
 function getStore(): AgentTaskStore {
-  if (!sharedStore) sharedStore = new InMemoryAgentTaskStore();
+  if (!sharedStore) sharedStore = new PostgresAgentTaskStore();
   return sharedStore;
 }
 
