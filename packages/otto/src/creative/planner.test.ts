@@ -56,6 +56,20 @@ describe('buildImagePrompt', () => {
     expect(prompt.split('. ').length).toBeGreaterThanOrEqual(8);
     expect(prompt.length).toBeGreaterThan(400);
   });
+
+  /**
+   * REGRESSÃO REAL (Otto Elite, "Reel Execution Engine Closure", achado ao
+   * vivo GPU qwen2.5:14b): technical_specs virou opcional no schema; sem
+   * este teste, buildImagePrompt quebraria com "undefined" literal no
+   * prompt de imagem quando o campo vem ausente.
+   */
+  it('sem technical_specs, o prompt sai completo mesmo assim (sem "undefined" literal)', () => {
+    const plan = makePlan();
+    delete (plan as { technical_specs?: string }).technical_specs;
+    const prompt = buildImagePrompt(plan);
+    expect(prompt).not.toContain('undefined');
+    expect(prompt).toContain('construction site golden hour');
+  });
 });
 
 describe('buildProductionSpec', () => {
@@ -134,6 +148,20 @@ describe('buildProductionSpec', () => {
   it('usa delivery_format do plano quando presente (não sobrescreve o que o modelo decidiu)', () => {
     const spec = buildProductionSpec(makePlan(), { clientId: 'c', jobType: 'image' });
     expect(spec.metadata.delivery_format).toBe('PNG 1080x1350');
+  });
+
+  /**
+   * REGRESSÃO REAL (Otto Elite, "Reel Execution Engine Closure", achado ao
+   * vivo GPU qwen2.5:14b): sem production_requirements, o spec ainda
+   * precisa montar normalmente — o campo é metadado de produção opcional,
+   * nunca lido pelo usuário, e não pode derrubar o turno.
+   */
+  it('sem production_requirements, o spec ainda monta normalmente e omite o campo do metadata', () => {
+    const plan = makePlan();
+    delete (plan as { production_requirements?: string }).production_requirements;
+    const spec = buildProductionSpec(plan, { clientId: 'c', jobType: 'image' });
+    expect(spec.metadata.production_requirements).toBeUndefined();
+    expect(spec.prompt.length).toBeGreaterThan(0);
   });
 
   it('propaga referências com papel semântico e CreativeSpec de fidelidade máxima', () => {

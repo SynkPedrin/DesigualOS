@@ -204,8 +204,19 @@ export const creativePlanSchema = z.object({
   real_world_fidelity: realWorldFidelitySchema.default({ requires_reference: false }),
   image_prompt: z.string().min(1),
   negative_prompt: z.string().default(''),
-  technical_specs: z.string().min(1),
-  production_requirements: z.string().min(1),
+  /**
+   * TYPE B (Otto Elite, "Reel Execution Engine Closure" — achado ao vivo
+   * contra qwen2.5:14b GPU): ambos vieram como string vazia no draft e
+   * sobreviveram à correção-retry, derrubando o turno INTEIRO — resposta
+   * `status: 'failed'`, turno vazio — por dois campos de METADADO DE
+   * PRODUÇÃO (especificação técnica de entrega, requisito de produção),
+   * nunca lidos pelo usuário. Nem entregável criativo (concept/copy/
+   * roteiro/legenda) nem dado factual — perder o valor não fabrica nada,
+   * só reduz o quanto de contexto operacional chega ao Studio. Mesma
+   * classe de `delivery_format` logo abaixo.
+   */
+  technical_specs: optionalString(),
+  production_requirements: optionalString(),
   quality_criteria: z.array(qualityCriteriaSchema).min(1),
   /**
    * TYPE A (Missão 2): `delivery_format` é derivável de jobType + aspect

@@ -59,6 +59,31 @@ describe('creativePlanSchema', () => {
    * inteiro. TYPE A (Missão 2): o campo é derivável de jobType+aspect_ratio,
    * que o código já sabe — não devia ser exigido do modelo.
    */
+  /**
+   * REGRESSÃO REAL (Otto Elite, "Reel Execution Engine Closure"): validação
+   * ao vivo contra qwen2.5:14b na GPU — o draft veio com technical_specs e
+   * production_requirements como string vazia, sobreviveu à correção-retry,
+   * e derrubou o turno INTEIRO (status: 'failed', resposta vazia) por dois
+   * campos de metadado de produção que o usuário nunca lê. Mesma classe de
+   * delivery_format: TYPE B, opcional, sem fabricar dado nenhum.
+   */
+  it('technical_specs e production_requirements são opcionais (achado ao vivo, GPU qwen2.5:14b)', () => {
+    const semAmbos = { ...validPlan } as Record<string, unknown>;
+    delete semAmbos.technical_specs;
+    delete semAmbos.production_requirements;
+    const result = creativePlanSchema.safeParse(semAmbos);
+    expect(result.success).toBe(true);
+  });
+
+  it('technical_specs e production_requirements vazios ("") também são tratados como ausentes, não erro', () => {
+    const result = creativePlanSchema.safeParse({ ...validPlan, technical_specs: '', production_requirements: '' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.technical_specs).toBeUndefined();
+      expect(result.data.production_requirements).toBeUndefined();
+    }
+  });
+
   it('delivery_format é opcional: plano sem o campo continua válido', () => {
     const semDeliveryFormat = { ...validPlan } as Record<string, unknown>;
     delete semDeliveryFormat.delivery_format;

@@ -267,7 +267,7 @@ export function buildImagePrompt(plan: CreativePlan): string {
     `Materials and texture: ${ad.materials}`,
     `Atmosphere: ${ad.atmosphere}`,
     `Typography (if any text is rendered): ${ad.typography}`,
-    `Technical: ${plan.technical_specs}`,
+    ...(plan.technical_specs ? [`Technical: ${plan.technical_specs}`] : []),
     `Visual hierarchy follows the objective: ${plan.objective}`,
   ];
   if (plan.references.length > 0) {
@@ -436,7 +436,7 @@ export function buildProductionSpec(
       objective: plan.objective,
       concept: plan.concept,
       delivery_format: plan.delivery_format ?? deriveDeliveryFormat(jobType, aspectRatio),
-      production_requirements: plan.production_requirements,
+      ...(plan.production_requirements ? { production_requirements: plan.production_requirements } : {}),
       creative_spec: creativeSpec,
       ...(opts.carouselPlan ? { carousel_plan: opts.carouselPlan } : {}),
       ...(opts.carouselPlan?.render_mode === 'photographic' ? { design: 'photographic' } : {}),
