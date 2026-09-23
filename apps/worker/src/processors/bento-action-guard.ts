@@ -6,6 +6,7 @@ import {
   findMemberByName,
   getTask,
   getTaskComments,
+  getTaskListId,
   listStatusesForTask,
   updateTask,
   verifyTaskState,
@@ -106,6 +107,36 @@ const ATTACH_ASK = /(anex(e|a|ar)|anexo|attach)\b/i;
 const TASK_URL = /app\.clickup\.com\/t\/([a-z0-9]+)/gi;
 const DUE_TODAY = /(hoje|pra hoje|pro hoje)/i;
 const DUE_TOMORROW = /(amanh|pra amanh)/i;
+/**
+ * "vence(m) hoje" / "vencendo amanhã" descreve o PRAZO de tasks EXISTENTES
+ * (filtro de leitura pra achar quais tasks entram num resumo/briefing) —
+ * nunca deve virar o prazo da task NOVA sendo criada. Achado na auditoria
+ * sênior (24/09/2026): "cria uma task resumindo as tasks vencendo hoje"
+ * atribuía hoje como prazo da task-resumo, quando "hoje" descrevia as
+ * tasks de ORIGEM, não a task nova.
+ */
+const DUE_FILTER_DESCRIBES_OTHER_TASKS = /\b(venc[a-z]*|fecha[m]?|encerra[m]?|expira[m]?)\b[^.!?]{0,25}(hoje|amanh)/i;
+const DUE_EXPLICIT_FOR_NEW_TASK_TOMORROW = /\b(pra|pro|prazo)\s+amanh[ãa]/i;
+const DUE_EXPLICIT_FOR_NEW_TASK_TODAY = /\b(pra|pro|prazo)\s+hoje/i;
+
+/**
+ * Prazo herdado por CREATE: separado de UPDATE_DUE porque ali o alvo já é
+ * uma task existente e referenciada — "hoje"/"amanhã" soltos são inequívocos.
+ * Aqui a task ainda não existe, então uma cláusula de FILTRO (ver comentário
+ * acima) só vale se houver também um marcador explícito de prazo da task
+ * nova; sem ele, a task nasce sem due_date em vez de herdar o filtro.
+ */
+function inferCreateDueDate(message: string): number | null {
+  const now = new Date();
+  if (DUE_FILTER_DESCRIBES_OTHER_TASKS.test(message)) {
+    if (DUE_EXPLICIT_FOR_NEW_TASK_TOMORROW.test(message)) return endOfDay(addDays(now, 1)).getTime();
+    if (DUE_EXPLICIT_FOR_NEW_TASK_TODAY.test(message)) return endOfDay(now).getTime();
+    return null;
+  }
+  if (DUE_TOMORROW.test(message)) return endOfDay(addDays(now, 1)).getTime();
+  if (DUE_TODAY.test(message)) return endOfDay(now).getTime();
+  return null;
+}
 /**
  * DELETE (mission linguistic matrix, 22/09/2026): "apaga essa task"/"exclui
  * essa demanda". Exige palavra de referência — sem ela, "apaga" sozinho é
@@ -295,11 +326,7 @@ function classifyIntent(message: string): GuardIntent {
   }
   if (CREATE_TASK.test(message)) {
     const taskName = extractTaskName(message);
-    const dueDate = DUE_TODAY.test(message)
-      ? endOfDay(new Date()).getTime()
-      : DUE_TOMORROW.test(message)
-        ? endOfDay(addDays(new Date(), 1)).getTime()
-        : null;
+    const dueDate = inferCreateDueDate(message);
     return {
       kind: 'create',
       taskName: taskName ?? '',
@@ -337,11 +364,7 @@ function criacaoPadrao(message: string): GuardIntent {
     kind: 'create',
     taskName: extractTaskName(message) ?? '',
     personName: extractPersonName(message),
-    dueDate: DUE_TOMORROW.test(message)
-      ? endOfDay(addDays(new Date(), 1)).getTime()
-      : DUE_TODAY.test(message)
-        ? endOfDay(new Date()).getTime()
-        : null,
+    dueDate: inferCreateDueDate(message),
     wantsBriefing: BRIEFING_ASK.test(message) || ATTACH_ASK.test(message),
   };
 }
@@ -729,6 +752,50 @@ async function taskExiste(config: ClickUpConfig, taskId: string): Promise<boolea
   }
 }
 
+/**
+ * ALVO CITADO PERTENCE AO CLIENTE DA CONVERSA. Achado na auditoria sênior
+ * (24/09/2026), consequência direta de abrir escrita de produção pra
+ * clientes reais nesta mesma missão: nada verificava que um ID/URL de task
+ * CITADO NA MENSAGEM (extractExplicitTaskIdFromMessage) ou herdado do
+ * histórico (context.lastTaskId) pertencia ao cliente resolvido da
+ * conversa. Um colaborador com acesso ao Cliente A podia colar o link de
+ * uma task do Cliente B e mutar lá — a checagem de organização valida o
+ * USUÁRIO contra o cliente da CONVERSA (loadSeniorRuntimeContext), nunca a
+ * TASK citada contra esse mesmo cliente. Antes da autorização de produção
+ * (BENTO_WRITE_ALLOWLIST + cerca de lista globais), isso ficava mascarado
+ * por acidente — agora precisa ser checado de propósito.
+ *
+ * `null` é "não consigo confirmar" — nunca "pertence". Quem chama só
+ * BLOQUEIA no `false` explícito (mismatch confirmado); `null` (sem
+ * `clientClickupListId` pra comparar — conversa sem cliente específico,
+ * cliente sem lista mapeada — ou falha transitória ao ler a task) deixa
+ * passar, porque bloquear sempre que a checagem é inconclusiva quebraria
+ * toda conversa de escopo agência/sem cliente único. O que este helper
+ * fecha é o vazamento CONFIRMÁVEL: task de um cliente citada dentro da
+ * conversa de outro.
+ */
+export async function taskPertenceAoClienteForTest(
+  config: ClickUpConfig,
+  taskId: string,
+  clientClickupListId: string | null,
+): Promise<boolean | null> {
+  return taskPertenceAoCliente(config, taskId, clientClickupListId);
+}
+
+async function taskPertenceAoCliente(
+  config: ClickUpConfig,
+  taskId: string,
+  clientClickupListId: string | null,
+): Promise<boolean | null> {
+  if (!clientClickupListId) return null;
+  try {
+    const listaReal = await getTaskListId(config, taskId);
+    return listaReal === clientClickupListId;
+  } catch {
+    return null;
+  }
+}
+
 async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, logger: Logger): Promise<ExecuteResponse> {
   const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
   const start = performance.now();
@@ -828,6 +895,8 @@ export async function tryBentoActionGuard(params: {
   /** Cliente da execução, quando houver: é a chave do retrieval do briefing. */
   clientId?: string | null;
   clientName?: string | null;
+  /** clickup_list_id esperado do cliente da conversa — ver taskPertenceAoCliente. */
+  clientClickupListId?: string | null;
   /** Anexos do turno ATUAL (o print/PDF que veio junto do pedido). */
   attachments?: TaskAttachment[];
   logger: Logger;
@@ -864,6 +933,11 @@ export async function tryBentoActionGuard(params: {
             answer: 'Entendi a confirmação, mas apagar task nesse cliente não está autorizado pra essa conta — não vou executar por enquanto.',
             metadata: { guard: 'bento-action', action: 'blocked_write_authz', write_authorized: false, write_reason: 'fora da autorização de produção do Bento' },
           });
+        }
+        const pertence = await taskPertenceAoCliente(confirmConfig, confirmContext.pendingDeleteTaskId, params.clientClickupListId ?? null);
+        if (pertence === false) {
+          logger.warn({ task_id: confirmContext.pendingDeleteTaskId, client_id: params.clientId ?? null }, '[guard] DELETE recusado: task citada não pertence ao cliente da conversa');
+          return guardResponse({ ok: true, toolCalls: [], answer: 'Não encontrei essa task neste cliente — não apaguei nada.', metadata: { guard: 'bento-action', action: 'denied_cross_client_target', verified: false } });
         }
         return executeConfirmedDelete(confirmConfig, confirmContext.pendingDeleteTaskId, logger);
       }
@@ -977,6 +1051,22 @@ export async function tryBentoActionGuard(params: {
   // Link explícito NESTE turno ganha do histórico — ver docstring da função.
   const alvoExplicitoNesteTurno = extractExplicitTaskIdFromMessage(message);
   if (alvoExplicitoNesteTurno) context.lastTaskId = alvoExplicitoNesteTurno;
+
+  // TASK CITADA PERTENCE AO CLIENTE DA CONVERSA — ver docstring de
+  // taskPertenceAoCliente. Vale pra todo caminho de escrita abaixo (update,
+  // comment, delete) que usa `context.lastTaskId` como alvo.
+  if (context.lastTaskId) {
+    const pertence = await taskPertenceAoCliente(config, context.lastTaskId, params.clientClickupListId ?? null);
+    if (pertence === false) {
+      logger.warn({ task_id: context.lastTaskId, client_id: params.clientId ?? null }, '[guard] escrita recusada: task citada não pertence ao cliente da conversa');
+      return guardResponse({
+        ok: true,
+        toolCalls: [],
+        answer: 'Não encontrei essa task neste cliente — não alterei nada.',
+        metadata: { guard: 'bento-action', action: 'denied_cross_client_target', write_authorized: false, verified: false },
+      });
+    }
+  }
 
   // PEDIDO NOVO DE EXCLUSÃO (primeira volta): pede confirmação, NÃO apaga
   // ainda. A segunda volta ("sim"/"confirmo") é tratada mais acima, antes do
