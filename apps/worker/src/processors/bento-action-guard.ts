@@ -560,18 +560,16 @@ function nomeDaUrl(url: string): string {
 }
 
 /**
- * ALLOWLIST DO CANARY — quem pode disparar escrita nesta fase.
- *
- * Mora aqui, e não na cerca, porque é o guard que sabe QUEM está falando; a
- * cerca só enxerga lista de ClickUp. São coisas diferentes e complementares:
- * o kill switch desliga pra todo mundo de uma vez, o allowlist limita o raio
- * de explosão enquanto a coisa está ligada.
+ * ALLOWLIST DE EMERGÊNCIA — nariz de cera opcional, não é mais o portão
+ * principal de produção (esse virou capacidade/papel, já checado antes de
+ * chegar aqui via `seniorToolContext.permissions`). Continua existindo só
+ * pra operação poder estreitar o raio na mão sem deploy de código, do jeito
+ * que fez durante a homologação:
  *
  *   BENTO_WRITE_ALLOWLIST=tammy@institutoalmada.org
  *
- * Vazio/unset = todo mundo que já tem `clickup:write` escreve, que é o
- * comportamento normal do produto. Durante a homologação, uma linha na env
- * limita a uma pessoa — e tirar a linha é a expansão pra equipe.
+ * Vazio/unset (padrão de produção) = a allowlist não filtra ninguém; quem
+ * chegou até aqui já provou capacidade (`clickup:write`) e organização.
  */
 export function bentoWriteAllowlist(env: NodeJS.ProcessEnv = process.env): Set<string> {
   const raw = env.BENTO_WRITE_ALLOWLIST?.trim();
@@ -579,11 +577,49 @@ export function bentoWriteAllowlist(env: NodeJS.ProcessEnv = process.env): Set<s
   return new Set(raw.split(',').map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0));
 }
 
-/** O turno desta pessoa pode escrever no canary? Sem allowlist, todos podem. */
-export function podeEscreverNoCanary(email: string | null, env: NodeJS.ProcessEnv = process.env): boolean {
+/**
+ * IDENTIDADE DO BOT DE QA — não é papel nem organização, é uma conta fixa de
+ * teste automatizado. O raio dela é sempre o cliente de QA, nunca a carteira
+ * real, e essa restrição é estrutural: não depende da allowlist de
+ * emergência estar configurada ou não.
+ */
+export function ehQaBot(email: string | null, env: NodeJS.ProcessEnv = process.env): boolean {
+  const configurado = (env.BENTO_QA_BOT_EMAIL ?? 'qa-bot@institutoalmada.org').trim().toLowerCase();
+  return email !== null && email.toLowerCase() === configurado;
+}
+
+function ehClienteDeQa(clientName: string | null | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  const configurado = (env.BENTO_QA_CLIENT_NAME ?? 'Cliente Teste 7').trim().toLowerCase();
+  return typeof clientName === 'string' && clientName.trim().toLowerCase() === configurado;
+}
+
+/**
+ * PORTÃO DE PRODUÇÃO — substitui o allowlist fixo de homologação por
+ * papel/capacidade real (achado no aceite: `super@institutoalmada.org`
+ * tinha `clickup:write` pela RBAC e mesmo assim era recusado só por não
+ * estar no allowlist por e-mail).
+ *
+ * Nesta altura da chamada, `seniorToolContext.permissions` já garantiu
+ * capacidade (`clickup:write`, via papel master/colaborador) e
+ * `loadSeniorRuntimeContext` já garantiu organização (o `organizationId`
+ * resolvido bateu com uma membership do usuário) — cross-tenant já morreu
+ * antes daqui. O que falta checar aqui é só:
+ *
+ *   1. allowlist de emergência, SE estiver configurada (operação estreitando
+ *      o raio na mão);
+ *   2. bot de QA só escreve no cliente de QA, nunca na carteira real —
+ *      mesmo tendo a mesma capacidade RBAC que qualquer colaborador.
+ */
+export function podeEscreverEmProducao(
+  params: { userEmail: string | null; clientName?: string | null | undefined },
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
   const lista = bentoWriteAllowlist(env);
-  if (lista.size === 0) return true;
-  return email !== null && lista.has(email.toLowerCase());
+  if (lista.size > 0 && (params.userEmail === null || !lista.has(params.userEmail.toLowerCase()))) {
+    return false;
+  }
+  if (ehQaBot(params.userEmail, env)) return ehClienteDeQa(params.clientName, env);
+  return true;
 }
 
 /**
@@ -818,12 +854,12 @@ export async function tryBentoActionGuard(params: {
         if (params.seniorToolContext === null || (params.seniorToolContext && !params.seniorToolContext.permissions.some((p) => p.resource === 'clickup' && p.action === 'write'))) {
           return guardResponse({ ok: false, toolCalls: [], answer: 'Não fiz alterações: não consegui validar sua organização e permissão de escrita no ClickUp.', metadata: { errorCode: 'PERMISSION_DENIED', verified: false } });
         }
-        if (!podeEscreverNoCanary(params.userEmail ?? null)) {
+        if (!podeEscreverEmProducao({ userEmail: params.userEmail ?? null, clientName: params.clientName })) {
           return guardResponse({
             ok: true,
             toolCalls: [],
-            answer: 'Entendi a confirmação, mas apagar task no ClickUp ainda está liberado só pra homologação — não vou executar por enquanto.',
-            metadata: { guard: 'bento-action', action: 'blocked_canary', write_authorized: false, write_reason: 'usuário fora de BENTO_WRITE_ALLOWLIST' },
+            answer: 'Entendi a confirmação, mas apagar task nesse cliente não está autorizado pra essa conta — não vou executar por enquanto.',
+            metadata: { guard: 'bento-action', action: 'blocked_write_authz', write_authorized: false, write_reason: 'fora da autorização de produção do Bento' },
           });
         }
         return executeConfirmedDelete(confirmConfig, confirmContext.pendingDeleteTaskId, logger);
@@ -904,27 +940,27 @@ export async function tryBentoActionGuard(params: {
     return guardResponse({ ok: false, toolCalls: [], answer: 'Não fiz alterações: não consegui validar sua organização e permissão de escrita no ClickUp.', metadata: { errorCode: 'PERMISSION_DENIED', verified: false } });
   }
 
-  // PORTÃO DO CANARY. Vem ANTES de qualquer ferramenta: quem está fora da
-  // homologação não dispara nem a consulta de membros do ClickUp. E a recusa é
-  // explícita — deixar cair no caminho de análise faria a pessoa achar que o
-  // Bento não entendeu, quando ele entendeu e está proibido.
-  if (!podeEscreverNoCanary(params.userEmail ?? null)) {
+  // PORTÃO DE AUTORIZAÇÃO DE PRODUÇÃO. Vem ANTES de qualquer ferramenta: quem
+  // não está autorizado não dispara nem a consulta de membros do ClickUp. E a
+  // recusa é explícita — deixar cair no caminho de análise faria a pessoa
+  // achar que o Bento não entendeu, quando ele entendeu e está proibido.
+  if (!podeEscreverEmProducao({ userEmail: params.userEmail ?? null, clientName: params.clientName })) {
     logger.info(
-      { intent_classification: acao.kind, write_authorized: false, write_reason: 'fora do allowlist do canary', user_email: params.userEmail ?? null },
-      '[guard] escrita bloqueada: usuário fora do canary'
+      { intent_classification: acao.kind, write_authorized: false, write_reason: 'fora da autorização de produção do Bento', user_email: params.userEmail ?? null },
+      '[guard] escrita bloqueada: usuário fora da autorização de produção'
     );
     return guardResponse({
       ok: true,
       toolCalls: [],
       answer:
-        'Entendi o pedido, mas criar e alterar task no ClickUp ainda está liberado só pra homologação — não vou escrever por enquanto. ' +
-        'Posso organizar a demanda, montar o briefing e te dizer exatamente o que lançar. Quem libera isso pra todo mundo é o Pedro.',
+        'Entendi o pedido, mas criar e alterar task no ClickUp não está autorizado pra essa conta neste cliente — não vou escrever por enquanto. ' +
+        'Posso organizar a demanda, montar o briefing e te dizer exatamente o que lançar.',
       metadata: {
         guard: 'bento-action',
-        action: 'blocked_canary',
+        action: 'blocked_write_authz',
         intent_classification: acao.kind,
         write_authorized: false,
-        write_reason: 'usuário fora de BENTO_WRITE_ALLOWLIST',
+        write_reason: 'fora da autorização de produção do Bento',
       },
     });
   }

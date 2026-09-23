@@ -4,7 +4,7 @@ import { buildOperationalActionPlan } from './operational-action-plan';
 import { buildOperationalTitle, chavesDoCliente, mensagemCitaCliente } from './write-target';
 import { ehMaterialDeDemanda } from './bento-action-guard';
 import { blocoDeReferencias, createOneTask, createManyTasks, type CreateDeps, type CreateOneInput, type TaskAttachment } from './multi-create-executor';
-import { bentoWriteAllowlist, podeEscreverNoCanary } from './bento-action-guard';
+import { bentoWriteAllowlist, ehQaBot, podeEscreverEmProducao } from './bento-action-guard';
 import { afirmaTerEscrito, houveEscritaBemSucedida } from './agentic-dispatch';
 import type { PlannedTask } from './operational-action-plan';
 
@@ -498,30 +498,66 @@ describe('attachment_reference_survives_readback', () => {
 });
 
 // ---------------------------------------------------------------------------
-// FASE 7 — ALLOWLIST DO CANARY.
+// FASE 7 — AUTORIZAÇÃO DE PRODUÇÃO (allowlist de emergência + escopo do bot de QA).
+//
+// Achado no aceite de release (23/09/2026): a allowlist por e-mail
+// (BENTO_WRITE_ALLOWLIST) era o ÚNICO portão de escrita — uma conta com
+// `clickup:write` de verdade pela RBAC (super@institutoalmada.org, papel
+// master) era recusada só por não estar na lista fixa da homologação.
+// `podeEscreverEmProducao` promove o portão pra capacidade/organização (já
+// verificadas antes de chegar aqui) e mantém só duas restrições estruturais:
+// a allowlist de emergência QUANDO configurada, e o bot de QA nunca escrever
+// fora do cliente de QA — mesmo tendo a mesma capacidade RBAC que qualquer
+// colaborador real.
 // ---------------------------------------------------------------------------
 
-describe('canary allowlist', () => {
-  it('sem allowlist, todo mundo escreve (comportamento normal do produto)', () => {
+describe('autorização de produção do Bento', () => {
+  it('sem allowlist configurada, quem já provou capacidade escreve (comportamento normal do produto)', () => {
     expect(bentoWriteAllowlist({})).toEqual(new Set());
-    expect(podeEscreverNoCanary('qualquer@x.com', {})).toBe(true);
+    expect(podeEscreverEmProducao({ userEmail: 'super@institutoalmada.org', clientName: 'Qualquer Cliente Real' }, {})).toBe(true);
   });
 
-  it('com allowlist, só quem está nela escreve', () => {
+  it('Pedro (RBAC master, clickup:write real) escreve em Cliente Teste 7 e no próprio cliente real', () => {
+    expect(podeEscreverEmProducao({ userEmail: 'super@institutoalmada.org', clientName: 'Cliente Teste 7' }, {})).toBe(true);
+    expect(podeEscreverEmProducao({ userEmail: 'super@institutoalmada.org', clientName: 'Cliente Real da Carteira' }, {})).toBe(true);
+  });
+
+  it('bot de QA escreve em Cliente Teste 7', () => {
+    expect(ehQaBot('qa-bot@institutoalmada.org', {})).toBe(true);
+    expect(podeEscreverEmProducao({ userEmail: 'qa-bot@institutoalmada.org', clientName: 'Cliente Teste 7' }, {})).toBe(true);
+  });
+
+  it('bot de QA é recusado em qualquer outro cliente, mesmo com a mesma capacidade RBAC de um colaborador real', () => {
+    expect(podeEscreverEmProducao({ userEmail: 'qa-bot@institutoalmada.org', clientName: 'Cliente Real da Carteira' }, {})).toBe(false);
+    expect(podeEscreverEmProducao({ userEmail: 'qa-bot@institutoalmada.org', clientName: null }, {})).toBe(false);
+  });
+
+  it('nome do cliente de QA é configurável e comparado sem diferenciar maiúsculas/espaço nas pontas', () => {
+    const env = { BENTO_QA_CLIENT_NAME: 'Outro Cliente De Homologação' };
+    expect(podeEscreverEmProducao({ userEmail: 'qa-bot@institutoalmada.org', clientName: '  outro cliente de homologação  ' }, env)).toBe(true);
+    expect(podeEscreverEmProducao({ userEmail: 'qa-bot@institutoalmada.org', clientName: 'Cliente Teste 7' }, env)).toBe(false);
+  });
+
+  it('e-mail do bot de QA é configurável', () => {
+    const env = { BENTO_QA_BOT_EMAIL: 'qa-bot@outraorg.com' };
+    expect(ehQaBot('qa-bot@outraorg.com', env)).toBe(true);
+    expect(ehQaBot('qa-bot@institutoalmada.org', env)).toBe(false);
+  });
+
+  it('allowlist de emergência, quando configurada, ainda estreita o raio pra todo mundo (inclusive quem tem RBAC)', () => {
     const env = { BENTO_WRITE_ALLOWLIST: 'tammy@institutoalmada.org' };
-    expect(podeEscreverNoCanary('tammy@institutoalmada.org', env)).toBe(true);
-    expect(podeEscreverNoCanary('TAMMY@InstitutoAlmada.org', env)).toBe(true);
-    expect(podeEscreverNoCanary('outra@institutoalmada.org', env)).toBe(false);
+    expect(podeEscreverEmProducao({ userEmail: 'tammy@institutoalmada.org', clientName: 'Cliente Real da Carteira' }, env)).toBe(true);
+    expect(podeEscreverEmProducao({ userEmail: 'super@institutoalmada.org', clientName: 'Cliente Real da Carteira' }, env)).toBe(false);
   });
 
-  it('usuário sem e-mail nunca passa por uma allowlist ativa', () => {
-    expect(podeEscreverNoCanary(null, { BENTO_WRITE_ALLOWLIST: 'tammy@institutoalmada.org' })).toBe(false);
+  it('usuário sem e-mail nunca passa por uma allowlist de emergência ativa', () => {
+    expect(podeEscreverEmProducao({ userEmail: null, clientName: 'Cliente Real da Carteira' }, { BENTO_WRITE_ALLOWLIST: 'tammy@institutoalmada.org' })).toBe(false);
   });
 
-  it('allowlist aceita mais de um e-mail (expansão gradual)', () => {
+  it('allowlist de emergência aceita mais de um e-mail (expansão gradual)', () => {
     const env = { BENTO_WRITE_ALLOWLIST: 'tammy@x.org, pedro@x.org ' };
-    expect(podeEscreverNoCanary('pedro@x.org', env)).toBe(true);
-    expect(podeEscreverNoCanary('gui@x.org', env)).toBe(false);
+    expect(podeEscreverEmProducao({ userEmail: 'pedro@x.org', clientName: 'Cliente Real da Carteira' }, env)).toBe(true);
+    expect(podeEscreverEmProducao({ userEmail: 'gui@x.org', clientName: 'Cliente Real da Carteira' }, env)).toBe(false);
   });
 });
 
