@@ -25,12 +25,19 @@ export type ArtefatoPedido =
   | 'prompt'
   | 'email'
   | 'nome'
+  | 'briefing'
   | 'indefinido';
 
 export interface ContratoDeSaida {
   artefato: ArtefatoPedido;
   /** Quantas peças. Null quando o pedido não diz. */
   quantidade: number | null;
+  /**
+   * Outros artefatos pedidos NO MESMO turno, além do principal. Só existe
+   * quando o pedido nomeia um segundo artefato explicitamente conectado ao
+   * primeiro ("... e uma legenda ...") — ver `artefatosAdicionais`.
+   */
+  adicionais?: Array<Exclude<ArtefatoPedido, 'indefinido'>>;
 }
 
 const NUMERO_POR_EXTENSO: Record<string, number> = {
@@ -42,7 +49,13 @@ const NUMERO_POR_EXTENSO: Record<string, number> = {
  * Ordem importa: o mais específico primeiro. "roteiro de Reels" é roteiro,
  * ainda que a palavra Reels apareça perto de "post" no mesmo briefing.
  */
-const FORMAS: Array<{ artefato: ArtefatoPedido; re: RegExp }> = [
+const FORMAS: Array<{ artefato: Exclude<ArtefatoPedido, 'indefinido'>; re: RegExp }> = [
+  // Otto Senior V1, "Universal Quality Floor" — Section 11: "briefing" vem
+  // ANTES de roteiro/legenda de propósito. Sem isso, "briefing pra um
+  // roteiro de Reels" batia primeiro em 'roteiro' (a FORMA mais específica
+  // da lista original), e o pedido de BRIEFING nunca era reconhecido —
+  // o artefato caía pra 'indefinido' e degradava pra formato de legenda.
+  { artefato: 'briefing', re: /\b(briefings?|brief\s+criativo|briefing\s+criativo)\b/ },
   { artefato: 'roteiro', re: /\b(roteiros?|scripts?|storyboards?)\b/ },
   { artefato: 'prompt', re: /\bprompts?\b/ },
   { artefato: 'email', re: /\b(e-?mails?|newsletters?|disparos?)\b/ },
@@ -72,11 +85,48 @@ function quantidadeDe(texto: string): number | null {
   return null;
 }
 
+/**
+ * SEGUNDO ENTREGÁVEL, quando o pedido nomeia um explicitamente — não pela
+ * simples presença de uma segunda palavra da lista FORMAS (isso reabriria o
+ * bug que "roteiro vence post na mesma frase" corrigiu: "roteiro pro post de
+ * Reels" tem 'post', mas é sinônimo solto do MESMO roteiro, não um segundo
+ * pedido).
+ *
+ * O sinal de segundo pedido é a conjunção: "... e uma legenda ...", "...
+ * além de um título ...". Sem conector, é ruído do mesmo entregável.
+ *
+ * Bug real medido (regressão Jardim Europa V, 22/09/2026): "quero um
+ * roteiro ... e uma legenda complementar bem escrita" tinha os dois
+ * entregáveis pedidos de forma explícita e conectada, e a versão anterior
+ * desta função devolvia só 'roteiro', com uma diretiva que dizia "entregue
+ * roteiro, e só isso" — contradizendo a REGRA 2 do CHAT_SYSTEM_PROMPT
+ * (entregar todos os entregáveis pedidos) e sobrepondo ela, já que o
+ * contrato "vale sobre qualquer regra de formato acima".
+ */
+function artefatosAdicionais(
+  textoNormalizado: string,
+  principal: ArtefatoPedido,
+): Array<Exclude<ArtefatoPedido, 'indefinido'>> {
+  const encontrados: Array<Exclude<ArtefatoPedido, 'indefinido'>> = [];
+  for (const forma of FORMAS) {
+    if (forma.artefato === principal) continue;
+    const corpo = forma.re.source.replace(/^\\b/, '').replace(/\\b$/, '');
+    const conectado = new RegExp(`\\b(?:e|al[ée]m de)\\s+(?:um|uma|o|a)?\\s*${corpo}`);
+    if (conectado.test(textoNormalizado)) encontrados.push(forma.artefato);
+  }
+  return encontrados;
+}
+
 export function contratoDeSaida(mensagem: string): ContratoDeSaida {
   const t = normalizar(mensagem ?? '');
   const forma = FORMAS.find((f) => f.re.test(t));
   if (!forma) return { artefato: 'indefinido', quantidade: null };
-  return { artefato: forma.artefato, quantidade: quantidadeDe(t) };
+  const adicionais = artefatosAdicionais(t, forma.artefato);
+  return {
+    artefato: forma.artefato,
+    quantidade: quantidadeDe(t),
+    ...(adicionais.length > 0 ? { adicionais } : {}),
+  };
 }
 
 /**
@@ -92,6 +142,18 @@ const FORMA_FINAL: Record<Exclude<ArtefatoPedido, 'indefinido'>, string> = {
   prompt: 'o prompt em si, pronto pra colar no gerador, sem explicação no meio.',
   email: 'assunto em uma linha, corpo, e CTA. Pronto pra enviar.',
   nome: 'o nome, e embaixo UMA linha dizendo por que ele funciona.',
+  /**
+   * Otto Senior V1, "Universal Quality Floor" — Section 11: antes desta
+   * missão, um pedido de "briefing criativo" nunca tinha um formato
+   * dedicado — caía em 'indefinido' e degradava pro mesmo formato de
+   * legenda (Conceito + Legenda), sem nenhuma das seções que um designer/
+   * copywriter/diretor de arte precisa pra trabalhar a partir dele. Cada
+   * seção listada abaixo vira um RÓTULO obrigatório na resposta — é isso
+   * que `looksLikeCreativeBrief` (critic.ts) confere depois, do mesmo jeito
+   * que `looksLikeSequencedScript` confere roteiro.
+   */
+  briefing:
+    'documento estruturado com seções rotuladas, cada uma em sua própria linha: Objetivo, Público, Insight (o que o público sente/pensa que a peça precisa resolver), Mensagem Central, Conceito Criativo, Tom, Direção Visual, Elementos Obrigatórios, Evitar, Entregáveis, Plataforma e CTA. Não é uma legenda com título de "Briefing:" na frente — é um documento que um designer, copywriter ou diretor de arte consegue executar sem perguntar nada de volta.',
 };
 
 /**
@@ -101,21 +163,34 @@ const FORMA_FINAL: Record<Exclude<ArtefatoPedido, 'indefinido'>, string> = {
  */
 export function diretivaDoContrato(contrato: ContratoDeSaida): string {
   if (contrato.artefato === 'indefinido') return '';
-  const forma = FORMA_FINAL[contrato.artefato];
+  const artefatoPrincipal = contrato.artefato;
+  const forma = FORMA_FINAL[artefatoPrincipal];
   const quantos = contrato.quantidade;
+  const adicionais = contrato.adicionais ?? [];
 
-  const linhas = [
-    'CONTRATO DE SAÍDA DESTE TURNO (vale sobre qualquer regra de formato acima):',
-    quantos
-      ? `Foi pedido: ${quantos} ${contrato.artefato}(s). Entregue exatamente ${quantos}, numerados.`
-      : `Foi pedido: ${contrato.artefato}. Entregue ${contrato.artefato}, e só isso.`,
-    `Forma final: ${forma}`,
-  ];
+  const linhas = ['CONTRATO DE SAÍDA DESTE TURNO (vale sobre qualquer regra de formato acima):'];
 
-  if (contrato.artefato === 'titulo' || contrato.artefato === 'headline') {
+  if (adicionais.length > 0) {
+    // Mais de um entregável nomeado no mesmo pedido: a REGRA 2 do prompt de
+    // chat já manda entregar todos, e o contrato não pode contradizer isso
+    // travando num artefato só. Cada um ganha a própria forma final.
+    const todos: Array<Exclude<ArtefatoPedido, 'indefinido'>> = [artefatoPrincipal, ...adicionais];
     linhas.push(
-      'NÃO devolva legenda, post completo, carrossel nem roteiro. Entregar mais do que foi pedido não é generosidade: quem recebeu vai ter que garimpar a linha que queria dentro do texto.',
+      `Foi pedido MAIS DE UM entregável: ${todos.join(', ')}. Entregue TODOS, cada um com seu próprio título — entregar só um deles é não entregar o pedido.`,
+      ...todos.map((a) => `Forma final de ${a}: ${FORMA_FINAL[a]}`),
     );
+  } else {
+    linhas.push(
+      quantos
+        ? `Foi pedido: ${quantos} ${contrato.artefato}(s). Entregue exatamente ${quantos}, numerados.`
+        : `Foi pedido: ${contrato.artefato}. Entregue ${contrato.artefato}, e só isso.`,
+      `Forma final: ${forma}`,
+    );
+    if (contrato.artefato === 'titulo' || contrato.artefato === 'headline') {
+      linhas.push(
+        'NÃO devolva legenda, post completo, carrossel nem roteiro. Entregar mais do que foi pedido não é generosidade: quem recebeu vai ter que garimpar a linha que queria dentro do texto.',
+      );
+    }
   }
   linhas.push('Comentário sobre as escolhas, se houver, vai num bloco ÚNICO depois da entrega — nunca no meio dela.');
   return linhas.join('\n');
@@ -231,4 +306,25 @@ export function exigeFrescorOperacional(mensagem: string): boolean {
   const t = mensagem ?? '';
   if (DEPENDE_DO_AGORA.some((re) => re.test(t))) return true;
   return TEMPO_SOZINHO.test(t) && COISA_OPERACIONAL.test(t);
+}
+
+/**
+ * QUANTIDADE DE SLIDES DE CARROSSEL (Otto Senior V1, "Universal Quality
+ * Floor" — Section 9). Achado ao vivo real: pedido explícito de "8 slides"
+ * devolveu 10, porque `planCarousel` era chamado com a contagem HARDCODED
+ * em execute.ts, nunca lendo o que o usuário pediu. Deliberadamente
+ * separado de `contratoDeSaida`/`quantidadeDe`: aquele mecanismo só extrai
+ * quantidade quando já identificou QUAL artefato está sendo quantificado
+ * (titulo/headline/legenda/roteiro), e "carrossel"/"slides" nunca foi um
+ * `ArtefatoPedido` reconhecido ali — ensinar isso ao contrato geral
+ * arriscaria mudar comportamento já testado (35 casos) pra um problema
+ * que é só do carrossel. Aceita "N slides", "N cards", "carrossel de N".
+ */
+const SLIDE_COUNT_PATTERN = /\b(\d{1,2})\s*(?:slides?|cards?)\b|\bcarross[eé]l\s+de\s+(\d{1,2})\b/i;
+
+export function parseRequestedSlideCount(mensagem: string): number | null {
+  const match = SLIDE_COUNT_PATTERN.exec(mensagem ?? '');
+  if (!match) return null;
+  const n = Number(match[1] ?? match[2]);
+  return n >= 1 && n <= 20 ? n : null;
 }

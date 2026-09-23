@@ -56,6 +56,20 @@ describe('buildImagePrompt', () => {
     expect(prompt.split('. ').length).toBeGreaterThanOrEqual(8);
     expect(prompt.length).toBeGreaterThan(400);
   });
+
+  /**
+   * REGRESSÃO REAL (Otto Elite, "Reel Execution Engine Closure", achado ao
+   * vivo GPU qwen2.5:14b): technical_specs virou opcional no schema; sem
+   * este teste, buildImagePrompt quebraria com "undefined" literal no
+   * prompt de imagem quando o campo vem ausente.
+   */
+  it('sem technical_specs, o prompt sai completo mesmo assim (sem "undefined" literal)', () => {
+    const plan = makePlan();
+    delete (plan as { technical_specs?: string }).technical_specs;
+    const prompt = buildImagePrompt(plan);
+    expect(prompt).not.toContain('undefined');
+    expect(prompt).toContain('construction site golden hour');
+  });
 });
 
 describe('buildProductionSpec', () => {
@@ -115,6 +129,39 @@ describe('buildProductionSpec', () => {
     const spec = buildProductionSpec(makePlan(), { clientId: 'c' });
     expect(spec.metadata.objective).toBe('Lançar a nova linha de pisos vinílicos');
     expect(spec.metadata.concept).toBe('O piso que sobrevive ao canteiro');
+  });
+
+  /**
+   * REGRESSÃO REAL (Otto Senior 20Y, Missão 2): validação ao vivo do caso
+   * Cosentino perdeu delivery_format inteiro na resposta de REWRITE #1 e
+   * derrubou o turno. delivery_format é TYPE A (derivável de jobType +
+   * aspect_ratio, que o código já sabe) — quando o plano não traz o campo,
+   * buildProductionSpec deriva um valor em vez de propagar undefined.
+   */
+  it('deriva delivery_format quando o plano não traz o campo (TYPE A, Missão 2)', () => {
+    const plan = makePlan();
+    delete (plan as { delivery_format?: string }).delivery_format;
+    const spec = buildProductionSpec(plan, { clientId: 'c', jobType: 'reels', aspectRatio: '9:16' });
+    expect(spec.metadata.delivery_format).toBe('Reels 9:16');
+  });
+
+  it('usa delivery_format do plano quando presente (não sobrescreve o que o modelo decidiu)', () => {
+    const spec = buildProductionSpec(makePlan(), { clientId: 'c', jobType: 'image' });
+    expect(spec.metadata.delivery_format).toBe('PNG 1080x1350');
+  });
+
+  /**
+   * REGRESSÃO REAL (Otto Elite, "Reel Execution Engine Closure", achado ao
+   * vivo GPU qwen2.5:14b): sem production_requirements, o spec ainda
+   * precisa montar normalmente — o campo é metadado de produção opcional,
+   * nunca lido pelo usuário, e não pode derrubar o turno.
+   */
+  it('sem production_requirements, o spec ainda monta normalmente e omite o campo do metadata', () => {
+    const plan = makePlan();
+    delete (plan as { production_requirements?: string }).production_requirements;
+    const spec = buildProductionSpec(plan, { clientId: 'c', jobType: 'image' });
+    expect(spec.metadata.production_requirements).toBeUndefined();
+    expect(spec.prompt.length).toBeGreaterThan(0);
   });
 
   it('propaga referências com papel semântico e CreativeSpec de fidelidade máxima', () => {
@@ -220,6 +267,23 @@ describe('buildProductionSpec', () => {
         { url: 'https://example.com/x.png', filename: 'x.png', contentType: 'image/png', fidelity: 'interpretive' },
       ]);
       expect(warning).not.toBeNull();
+    });
+
+    /**
+     * Otto Elite, Blocker 5: o aviso virava a PRIMEIRA COISA que a pessoa
+     * lia — um parágrafo técnico dominando a resposta antes de qualquer
+     * criação aparecer. Curto o bastante pra virar nota de produção no fim,
+     * não manchete no topo (a posição é decidida em execute.ts, mas o
+     * TAMANHO do texto é decidido aqui).
+     */
+    it('o texto do aviso é uma nota curta, não um parágrafo técnico completo (Blocker 5)', () => {
+      const plan = makePlan();
+      plan.real_world_fidelity = { requires_reference: true, entity_type: 'location', entity_description: 'a fachada real do prédio' };
+      const warning = checkRealWorldFidelity(plan, []);
+      expect(warning).not.toBeNull();
+      expect(warning!.length).toBeLessThan(150);
+      expect(warning).not.toMatch(/^Atenção:/);
+      expect(warning).toContain('a fachada real do prédio');
     });
   });
 });

@@ -21,10 +21,34 @@ import {
   classificarTurno,
   resolverReferente,
   contratoDeSaida,
+  parseRequestedSlideCount,
   diretivaDoContrato,
   createWebSearchProviderFromEnv,
+  critiqueDeliverable,
+  computeMissingDeliverables,
+  explainDeliverableGap,
+  deliverableRegression,
+  passesCriticGate,
+  reconcileRootCause,
+  formatCriticRevisionNote,
+  rewriteRequiresStrategyLayer,
+  developStrategy,
+  selectBestAngle,
+  developBigIdeaAndHooks,
+  bigIdeaPassesTest,
+  selectBestHook,
+  formatStrategyBriefing,
+  validateReelExecution,
+  formatReelExecutionNote,
+  selectBestValidCandidate,
+  type CandidateRecord,
+  detectPlaceholderContent,
+  detectForbiddenLanguage,
+  looksLikeCreativeBrief,
+  detectCarouselRepetition,
   type BrainHealth,
   type BrandKit,
+  type CarouselPlan,
   type CreativeDNA,
   type CreativeFeedback,
   type DepthPolicy,
@@ -36,6 +60,7 @@ import {
   type RetrieveOptions,
   type StudioJobType,
   type TurnDepthPlan,
+  type VideoPlan,
 } from '@desigual-os/otto';
 import type { OttoNodeConfig } from './config.js';
 import { runtimeState } from './state.js';
@@ -153,6 +178,13 @@ function detectProductionIntent(message: string): StudioJobType | null {
   if (/\breels\b/.test(normalized)) return 'reels';
   if (/\bvideo\b/.test(normalized)) return 'video';
   if (/\bupscale\b/.test(normalized)) return 'upscale';
+  // Otto Senior V1, "Universal Quality Floor" — Section 11: "briefing
+  // criativo" tem a palavra "criativo", que por si só já batia no padrão
+  // de intenção de imagem abaixo — um pedido de DOCUMENTO de planejamento
+  // ia pro caminho de produção de imagem por acidente léxico, nunca
+  // chegando no caminho de chat (onde o formato de briefing de verdade
+  // agora existe). Checagem ANTES do padrão genérico, não depois.
+  if (/\bbriefings?\b/.test(normalized)) return null;
   if (/\b(imagem|arte|post|peca|criativo|banner|anuncio|card|thumbnail)\b/.test(normalized)) return 'image';
   return null;
 }
@@ -367,15 +399,44 @@ function formatResearchBlock(research: { performed: boolean; summary: string; fi
   return `\n\nPesquisa externa REAL feita para este turno (use como base factual; cite só o que está aqui):\n${research.summary}\nFontes:\n${fontes}`;
 }
 
+/**
+ * Roteiro cena a cena pro chat, quando o vídeo é FALADO (tem spoken_line em
+ * pelo menos uma cena). Sem isto, "roteiro de Reels" devolvia só conceito e
+ * copy resumidos — a direção de câmera e a fala completa ficavam presas em
+ * metadata.video_plan, que o Orchestrator lê pra fila do Studio, mas quem
+ * pediu o roteiro num chat nunca vê. Regressão real: Jardim Europa V
+ * (Cosentino), 22/09/2026 — resposta chegou sem roteiro executável.
+ */
+function formatVideoScript(video: VideoPlan): string {
+  const temFala = video.scenes.some((scene) => scene.spoken_line);
+  if (!temFala) return '';
+  const cenas = video.scenes
+    .map((scene, index) => {
+      const linhas = [`Cena ${index + 1}${scene.duration_seconds ? ` (${scene.duration_seconds}s)` : ''}:`];
+      linhas.push(`Visual: ${scene.subject_movement}, ${scene.environment}.`);
+      if (scene.spoken_line) linhas.push(`Fala: "${scene.spoken_line}"`);
+      if (scene.on_screen_text) linhas.push(`Texto na tela: ${scene.on_screen_text}`);
+      return linhas.join('\n');
+    })
+    .join('\n\n');
+  const overlays = video.text_overlays.length > 0 ? `\n\nTextos na tela (gerais): ${video.text_overlays.join(' / ')}` : '';
+  return `\n\nRoteiro:\n\n${cenas}${overlays}\n\nCTA: ${video.cta}`;
+}
+
 /** Resumo legível do plano pro chat: a metadata carrega o JSON completo. */
-function formatPlanAnswer(planConcept: string, planCopy: string, jobType: StudioJobType): string {
-  return [
-    `Conceito: ${planConcept}`,
-    '',
-    `Copy: ${planCopy}`,
-    '',
-    `Spec de produção (${jobType}) gerada e anexada a esta resposta; o Orchestrator transforma em job do Studio.`,
-  ].join('\n');
+function formatPlanAnswer(
+  planConcept: string,
+  planCopy: string,
+  videoPlan?: VideoPlan,
+  carouselPlan?: CarouselPlan,
+): string {
+  const script = videoPlan ? formatVideoScript(videoPlan) : '';
+  const carrossel = carouselPlan
+    ? `\n\n${carouselPlan.slides
+        .map((slide) => `Slide ${slide.index}: ${slide.copy}`)
+        .join('\n')}`
+    : '';
+  return [`Conceito: ${planConcept}`, `Legenda: ${planCopy}`].join('\n\n').concat(script, carrossel);
 }
 
 export async function executeTask(
@@ -560,19 +621,101 @@ export async function executeTask(
        * Entra DEPOIS da diretiva de direção porque é mais específico que ela:
        * a direção diz como pensar, o contrato diz o que entregar.
        */
-      const contrato = diretivaDoContrato(contratoDeSaida(stripOrchestratorContext(request.message)));
-      const answer = await measureLlm(() =>
+      const contratoEstrutura = contratoDeSaida(stripOrchestratorContext(request.message));
+      const contrato = diretivaDoContrato(contratoEstrutura);
+      /**
+       * TETO DE GERAÇÃO por entregável. O padrão de chat (1000 tokens,
+       * ollama-provider.ts) foi calibrado pra uma resposta só; um roteiro
+       * de Reels sozinho (hook + shot a shot + direção + CTA) já aperta
+       * esse teto, e um pedido com mais de um entregável (ex: roteiro +
+       * legenda, o caso real da regressão Jardim Europa V) dobra o texto
+       * esperado. Sem folga aqui, ou a peça sai cortada, ou o modelo
+       * economiza detalhe pra caber — os dois são o mesmo sintoma de
+       * "roteiro fraco" visto na operação.
+       */
+      const numPredict =
+        contratoEstrutura.adicionais && contratoEstrutura.adicionais.length > 0
+          ? 2_400
+          : contratoEstrutura.artefato === 'roteiro'
+            ? 1_800
+            : undefined;
+      const chatSystemPrompt = `${CHAT_SYSTEM_PROMPT}${escopoSection}${referenteSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}\n\n${FECHAMENTO_ENTREGA}`;
+      let answer = await measureLlm(() =>
         deps.llm.chat(
           [
-            {
-              role: 'system',
-              content: `${CHAT_SYSTEM_PROMPT}${escopoSection}${referenteSection}${dnaSection}${attachmentsSection}\n\n${directive}${contrato ? `\n\n${contrato}` : ''}\n\nConhecimento do Brain:\n\n${formatKnowledgeBlock(knowledge)}\n\n${FECHAMENTO_ENTREGA}`,
-            },
+            { role: 'system', content: chatSystemPrompt },
             { role: 'user', content: request.message },
           ],
-          { temperature: 0.7, suppressThinking: policy.suppressThinking },
+          { temperature: 0.7, suppressThinking: policy.suppressThinking, ...(numPredict ? { numPredict } : {}) },
         ),
       );
+
+      /**
+       * PISO UNIVERSAL DE QUALIDADE NO CAMINHO DE CHAT (Otto Senior V1,
+       * "Universal Quality Floor"): caption, copy, feedback rewrite e
+       * outros pedidos de PRODUÇÃO CRIATIVA passam por aqui — o único
+       * caminho SEM nenhuma checagem determinística até esta missão.
+       * Achados ao vivo reais: `[FOTO DA VISTA PANORÂMICA]` sobreviveu
+       * numa legenda, e `#SonhosRealizadosComQualidade` sobreviveu com o
+       * dossiê dizendo explicitamente "sem exagero de 'sonho realizado'".
+       * `contratoEstrutura.artefato !== 'indefinido'` já é o sinal de
+       * "isto é produção criativa, não pergunta/conhecimento" — reusa a
+       * detecção que este mesmo bloco já calcula, não duplica lógica nova
+       * (Section 3: "distinguish knowledge/chat from creative
+       * production"). Checagem determinística, sem chamada de LLM extra —
+       * proporcional a um pedido leve (Section 2).
+       */
+      let chatQualityIssues: string[] = [];
+      let chatQualityRepairAttempted = false;
+      if (contratoEstrutura.artefato !== 'indefinido') {
+        const placeholders = detectPlaceholderContent(answer);
+        const forbiddenLanguage = detectForbiddenLanguage(answer, contextoResolvido ?? '');
+        // Otto Senior V1, Section 11-12: "briefing" pedido explicitamente
+        // precisa ter cara de briefing — rótulo "Briefing:" na frente de
+        // uma legenda não conta (achado ao vivo real).
+        const briefEstruturaFaltando = contratoEstrutura.artefato === 'briefing' && !looksLikeCreativeBrief(answer);
+        chatQualityIssues = [...placeholders, ...forbiddenLanguage, ...(briefEstruturaFaltando ? ['estrutura de briefing incompleta'] : [])];
+        if (chatQualityIssues.length > 0) {
+          chatQualityRepairAttempted = true;
+          const repairInstruction = [
+            'CORREÇÃO OBRIGATÓRIA antes de entregar: a resposta abaixo tem problema(s) que não podem ir pro cliente.',
+            placeholders.length > 0 ? `Placeholder de produção não preenchido, sobrou no texto: ${placeholders.join(', ')}. Substitua por conteúdo final de verdade ou remova.` : '',
+            forbiddenLanguage.length > 0 ? `Linguagem que o próprio contexto do cliente proíbe explicitamente sobrevive na resposta: ${forbiddenLanguage.join(', ')}. Reescreva sem essa expressão nem variação dela (plural, hashtag, etc).` : '',
+            briefEstruturaFaltando
+              ? 'Isto foi pedido como BRIEFING CRIATIVO, mas a resposta não tem a estrutura de um: faltam as seções rotuladas (Objetivo:, Público:, Insight:, Mensagem Central:, Conceito:, Tom:, Direção Visual:, Elementos Obrigatórios:, Evitar:, Entregáveis:, Plataforma:, CTA: — pelo menos 6 delas, cada uma em sua própria linha). Não é uma legenda com "Briefing:" na frente — reescreva como documento estruturado.'
+              : '',
+            `Resposta anterior:\n${answer}`,
+            'Preserve tudo o que está certo. Corrija SOMENTE os pontos acima.',
+          ].filter(Boolean).join('\n\n');
+          try {
+            const corrigido = await measureLlm(() =>
+              deps.llm.chat(
+                [
+                  { role: 'system', content: chatSystemPrompt },
+                  { role: 'user', content: repairInstruction },
+                ],
+                { temperature: 0.5, suppressThinking: policy.suppressThinking, ...(numPredict ? { numPredict } : {}) },
+              ),
+            );
+            answer = corrigido;
+            chatQualityIssues = [
+              ...detectPlaceholderContent(answer),
+              ...detectForbiddenLanguage(answer, contextoResolvido ?? ''),
+              ...(contratoEstrutura.artefato === 'briefing' && !looksLikeCreativeBrief(answer) ? ['estrutura de briefing incompleta'] : []),
+            ];
+            logger.info(
+              { execution_id: request.execution_id, resolved: chatQualityIssues.length === 0 },
+              '[OTTO:quality] correção de placeholder/linguagem proibida aplicada no caminho de chat',
+            );
+          } catch (repairError) {
+            logger.warn(
+              { execution_id: request.execution_id, error: repairError instanceof Error ? repairError.message : String(repairError) },
+              '[OTTO:quality] correção de placeholder/linguagem proibida falhou — mantendo resposta original',
+            );
+          }
+        }
+      }
+
       const timings: PhaseTimings = {
         classify_ms: classifyMs,
         retrieval_ms: retrievalMs,
@@ -597,6 +740,9 @@ export async function executeTask(
           retrieval: { depth: depth.depth, reason: depth.reason, signals: depth.signals, ...policy },
           timings,
           ...(dna ? { creative_dna: dna } : {}),
+          ...(contratoEstrutura.artefato !== 'indefinido'
+            ? { quality_gate: { placeholders_and_forbidden_language: chatQualityIssues, repair_attempted: chatQualityRepairAttempted } }
+            : {}),
         },
       };
     }
@@ -616,66 +762,864 @@ export async function executeTask(
       search: () => Promise.reject(new Error('pesquisa externa não configurada (OTTO_SEARCH_PROVIDER/OTTO_SEARCH_API_KEY ausentes)')),
     };
 
-    // A geração é o passo INJETADO do pipeline: o planner real do Otto, com o
-    // bloco de pesquisa e a nota de revisão quando o gate reprovou a anterior.
-    const pipeline = await runCreativePipeline(
-      {
-        researchProvider,
-        generator: {
-          generate: async ({ research, revisionNote }) => {
-            const generated = await measureLlm(() =>
-              createCreativePlan(
-                { llm: deps.llm },
-                {
-                  briefing: revisionNote ? `${request.message}\n\nREVISÃO OBRIGATÓRIA: ${revisionNote}` : request.message,
-                  knowledge,
-                  referenceAssets: request.attachments,
-                  clientContext: [
-                    dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
-                    formatResearchBlock(research),
-                  ]
-                    .filter(Boolean)
-                    .join('\n'),
-                },
-              ),
-            );
-            return { copy: generated.copy, concept: generated.concept, plan: generated };
+    /**
+     * CONTRATO DE SAÍDA no caminho de produção também.
+     *
+     * `contratoDeSaida`/`diretivaDoContrato` só eram usados no chat (linha
+     * ~563). createCreativePlan tem seu PRÓPRIO prompt (CREATIVE_DIRECTOR_PREAMBLE,
+     * pensado pra geração de imagem) e nunca recebia essa diretiva — então o
+     * campo `copy` saía sem a forma de legenda de verdade (hashtags, bloco de
+     * CTA) mesmo quando o pedido nomeava "legenda" explicitamente. Medido ao
+     * vivo em 22/09/2026 (Otto Elite Phase 2, baseline reels Jardim Europa V):
+     * a legenda gerada não tinha hashtag nenhuma e ignorou "pode usar emojis
+     * na legenda", porque nada no prompt do planner sabia que isso foi pedido.
+     */
+    /**
+     * BRIEFING LIMPO (Otto Senior 20Y, Missão 6): o caminho de produção
+     * mandava request.message CRU (com o bloco de contexto do orquestrador
+     * ainda embutido, "\n\n---\nContexto:\n...") como `briefing` do
+     * createCreativePlan — em toda chamada, inclusive a de reescrita, que
+     * ainda por cima ANEXA a nota do critic em cima disso. Investigado antes
+     * de mudar (regra do fechamento: não aumentar o prompt sem inspecionar
+     * primeiro) — achado: o dossiê do cliente entrava duas vezes (cru na
+     * mensagem E via clientContext/DNA abaixo), sem a framing de precedência
+     * que o caminho de chat já dá a ele (escopoSection). Na reescrita, isso
+     * empilhava: dossiê cru + nota do critic + possível nota interna do loop
+     * anti-genérico — três blocos de instrução na mesma mensagem. Extrai o
+     * contexto UMA vez aqui; o briefing e a nota de reescrita usam só o
+     * turno do usuário (producaoBriefingBase), e o contexto do orquestrador
+     * (quando existe) entra no clientContext, uma vez, com framing clara.
+     */
+    const producaoBriefingBase = stripOrchestratorContext(request.message);
+    const contextoOrquestradorProducao = extractOrchestratorContext(request.message);
+    const contratoEstruturaProducao = contratoDeSaida(producaoBriefingBase);
+    const contratoProducao = diretivaDoContrato(contratoEstruturaProducao);
+    const pedeEmoji = /\bemojis?\b/i.test(producaoBriefingBase);
+    // Otto Senior V1, "Universal Quality Floor", Section 9: quantidade real
+    // pedida pro carrossel — achado ao vivo real, "8 slides" virava 10
+    // porque o número era fixo aqui embaixo, nunca lido do pedido.
+    const requestedSlideCount = parseRequestedSlideCount(producaoBriefingBase) ?? 10;
+    const entregaveisPedidos = contratoEstruturaProducao.artefato === 'indefinido'
+      ? []
+      : [contratoEstruturaProducao.artefato, ...(contratoEstruturaProducao.adicionais ?? [])];
+    // `intent` já foi narrowed pro early-return do chat (!intent) acima, mas
+    // essa narrowing não atravessa a fronteira de `produce()` (função aninhada
+    // declarada depois) — TS trata o closure como podendo ver o tipo largo de
+    // novo. `jobType` fixa o valor não-nulo pro resto do bloco de produção.
+    const jobType: StudioJobType = intent;
+
+    /**
+     * `produce()` isola geração + shaping (carrossel/vídeo) + spec + resposta
+     * renderizada por trás de uma função, pra o CRITIC (abaixo) poder chamar
+     * de novo com uma nota de reescrita SEM duplicar a sequência inteira. O
+     * loop anti-genérico de `runCreativePipeline` continua existindo dentro
+     * desta função — ele julga só a copy (heurística determinística, barata);
+     * o critic julga o ENTREGÁVEL INTEIRO renderizado (LLM, mais caro), e por
+     * isso vive FORA, como uma segunda porta sobre a primeira.
+     */
+    async function produce(effectiveMessage: string, shapingRevisionNote?: string, strategyBriefing?: string) {
+      const pipeline = await runCreativePipeline(
+        {
+          researchProvider,
+          generator: {
+            generate: async ({ research, revisionNote }) => {
+              const generated = await measureLlm(() =>
+                createCreativePlan(
+                  { llm: deps.llm },
+                  {
+                    briefing: revisionNote ? `${effectiveMessage}\n\nREVISÃO OBRIGATÓRIA: ${revisionNote}` : effectiveMessage,
+                    knowledge,
+                    referenceAssets: request.attachments,
+                    clientContext: [
+                      // PRECEDÊNCIA (mesma regra do caminho de chat, escopoSection):
+                      // fato resolvido pelo orquestrador > palpite de retrieval.
+                      contextoOrquestradorProducao
+                        ? `ESCOPO RESOLVIDO DESTE TURNO (consultado nas fontes da operação, tem PRECEDÊNCIA sobre qualquer outro conhecimento abaixo):\n${contextoOrquestradorProducao}`
+                        : '',
+                      dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
+                      formatResearchBlock(research),
+                      contratoProducao ? `O campo "copy" precisa seguir este contrato:\n${contratoProducao}` : '',
+                      pedeEmoji ? 'O pedido autoriza emojis: use com naturalidade no campo "copy", sem exagerar.' : '',
+                      // Otto Elite — camada de estratégia (angle/big idea/hook
+                      // decididos ANTES do rascunho). Ver strategy.ts.
+                      strategyBriefing ?? '',
+                    ]
+                      .filter(Boolean)
+                      .join('\n'),
+                  },
+                ),
+              );
+              return { copy: generated.copy, concept: generated.concept, plan: generated };
+            },
           },
         },
-      },
-      stateInput,
-      // Sem brandTerms de propósito: o único identificador de cliente que o
-      // node tem aqui é o UUID do context_ref, e UUID não aparece em copy
-      // nenhuma — passá-lo como "termo de marca" só produziria uma âncora que
-      // jamais casa. Sem ele, assessCreativeCopy decide por clichê + âncora
-      // concreta (número), que é o sinal que de fato existe neste ponto.
-      {},
-    );
-
-    if (!pipeline.output) {
-      throw new Error('pipeline criativo não produziu peça');
-    }
-    const plan = pipeline.output.plan as Awaited<ReturnType<typeof createCreativePlan>>;
-
-    logger.info(
-      {
-        concept: plan.concept,
-        job_type: intent,
-        llm_ms: llmMs,
-        gaps: pipeline.readiness.gaps,
-        research_performed: pipeline.research.performed,
-        research_sources: pipeline.research.findings.length,
-        quality_passed: pipeline.qualityPassed,
-        revisions: pipeline.revisions,
-      },
-      '[OTTO:creative] loop criativo concluído',
-    );
-    if (pipeline.readiness.requiresResearch && !pipeline.research.performed) {
-      logger.warn(
-        { execution_id: request.execution_id },
-        '[OTTO:research] o objetivo pedia dado atual e a pesquisa NÃO aconteceu; a peça sai sem base de mercado',
+        stateInput,
+        // Sem brandTerms de propósito: o único identificador de cliente que o
+        // node tem aqui é o UUID do context_ref, e UUID não aparece em copy
+        // nenhuma — passá-lo como "termo de marca" só produziria uma âncora que
+        // jamais casa. Sem ele, assessCreativeCopy decide por clichê + âncora
+        // concreta (número), que é o sinal que de fato existe neste ponto.
+        {},
       );
+
+      if (!pipeline.output) {
+        throw new Error('pipeline criativo não produziu peça');
+      }
+      const plan = pipeline.output.plan as Awaited<ReturnType<typeof createCreativePlan>>;
+
+      logger.info(
+        {
+          concept: plan.concept,
+          job_type: jobType,
+          llm_ms: llmMs,
+          gaps: pipeline.readiness.gaps,
+          research_performed: pipeline.research.performed,
+          research_sources: pipeline.research.findings.length,
+          quality_passed: pipeline.qualityPassed,
+          revisions: pipeline.revisions,
+        },
+        '[OTTO:creative] loop criativo concluído',
+      );
+      if (pipeline.readiness.requiresResearch && !pipeline.research.performed) {
+        logger.warn(
+          { execution_id: request.execution_id },
+          '[OTTO:research] o objetivo pedia dado atual e a pesquisa NÃO aconteceu; a peça sai sem base de mercado',
+        );
+      }
+
+      // Sequencial por DEPENDÊNCIA REAL, não por descuido: planCarousel e
+      // planVideo recebem o CreativePlan pronto como entrada (o JSON do plano é
+      // o user prompt deles), então não há Promise.all possível aqui sem
+      // planejar o carrossel a partir de um plano que ainda não existe. Os dois
+      // ifs também são mutuamente exclusivos por jobType.
+      let carouselPlan;
+      let videoPlan;
+      const shapingOpts = {
+        ...(shapingRevisionNote ? { revisionNote: shapingRevisionNote } : {}),
+        ...(strategyBriefing ? { strategyBriefing } : {}),
+      };
+      if (jobType === 'carousel') {
+        carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan, requestedSlideCount, shapingOpts));
+        logger.info({ slides: carouselPlan.slide_count, llm_ms: llmMs }, '[OTTO:plan] carrossel planejado');
+      }
+      if (jobType === 'video' || jobType === 'reels') {
+        videoPlan = await measureLlm(() => planVideo({ llm: deps.llm }, plan, shapingOpts));
+        logger.info({ scenes: videoPlan.scenes.length, llm_ms: llmMs }, '[OTTO:plan] vídeo planejado');
+      }
+
+      const clientId = refClientId ?? plan.client;
+      const spec = buildProductionSpec(plan, {
+        clientId,
+        jobType,
+        ...(carouselPlan ? { carouselPlan } : {}),
+        ...(videoPlan ? { videoPlan, aspectRatio: videoPlan.aspect_ratio } : {}),
+        referenceAssets: request.attachments,
+        metadata: { execution_id: request.execution_id },
+      });
+      logger.info({ job_type: spec.job_type, depth: depth.depth }, '[OTTO:spec] spec de produção pronta pro handoff');
+
+      // Gate de fidelidade real (ver checkRealWorldFidelity): a pessoa vê
+      // isso ANTES de esperar o job do Studio terminar, não depois — mas
+      // como NOTA DE PRODUÇÃO no fim da entrega (Blocker 2/5), não como a
+      // primeira linha dominando a peça criativa com um aviso técnico.
+      const fidelityWarning =
+        typeof spec.metadata.fidelity_warning === 'string' ? spec.metadata.fidelity_warning : null;
+      if (fidelityWarning) {
+        logger.warn({ execution_id: request.execution_id }, '[OTTO:fidelity] briefing sem referência fiel pra entidade real');
+      }
+
+      const answer = [formatPlanAnswer(plan.concept, plan.copy, videoPlan, carouselPlan), fidelityWarning]
+        .filter(Boolean)
+        .join('\n\n');
+
+      return { pipeline, plan, carouselPlan, videoPlan, spec, fidelityWarning, answer };
     }
+
+    /**
+     * REPARO ESTREITO DE EXECUÇÃO (Otto Elite, "Reel Execution Engine
+     * Closure", Section 20): quando a causa raiz é EXECUTABILITY/STRUCTURE
+     * num vídeo/reels, o problema é o STORYBOARD, não o conceito/ângulo/
+     * copy — regenerar tudo via `produce()` de novo (que rechama
+     * createCreativePlan inteiro) arrisca perder um conceito/legenda já
+     * aprovados por um problema que é só de direção de cena. Este reparo
+     * chama SÓ planVideo de novo, com o CreativePlan já existente
+     * (`basePlan`) intacto — a mesma ideia de `completionRepair`/correção
+     * factual abaixo, aplicada à camada de execução.
+     */
+    async function repairVideoExecution(basePlan: Awaited<ReturnType<typeof createCreativePlan>>, revisionNote: string) {
+      const videoPlan = await measureLlm(() =>
+        planVideo({ llm: deps.llm }, basePlan, { revisionNote, ...(strategyBriefing ? { strategyBriefing } : {}) }),
+      );
+      const clientId = refClientId ?? basePlan.client;
+      const spec = buildProductionSpec(basePlan, {
+        clientId,
+        jobType,
+        videoPlan,
+        aspectRatio: videoPlan.aspect_ratio,
+        referenceAssets: request.attachments,
+        metadata: { execution_id: request.execution_id },
+      });
+      const fidelityWarning =
+        typeof spec.metadata.fidelity_warning === 'string' ? spec.metadata.fidelity_warning : null;
+      const answer = [formatPlanAnswer(basePlan.concept, basePlan.copy, videoPlan, undefined), fidelityWarning]
+        .filter(Boolean)
+        .join('\n\n');
+      logger.info({ execution_id: request.execution_id, scenes: videoPlan.scenes.length }, '[OTTO:reel] reparo estreito de execução concluído (storyboard refeito, conceito/copy preservados)');
+      return { pipeline: result.pipeline, plan: basePlan, carouselPlan: undefined, videoPlan, spec, fidelityWarning, answer };
+    }
+
+    /**
+     * CRITIC + REWRITE (Otto Senior V1.0 closure, regras 14-19): DRAFT ->
+     * CRITIC -> se falhar, REWRITE #1 -> CRITIC #2 -> se falhar, REWRITE #2
+     * -> FINAL CHECK. Máximo 2 reescritas — nunca infinito. O primeiro draft
+     * nunca é automaticamente considerado elite pra reels/vídeo/carrossel:
+     * os formatos onde a rubrica (hook, retenção, roteiro executável) mais
+     * importa, e onde o baseline ao vivo desta sessão mediu 59/100.
+     *
+     * NÃO roda pra 'image'/'upscale': a peça principal ali é a imagem em si
+     * (renderizada depois pelo Studio), e o texto que o critic julgaria
+     * (copy/legenda) já passa pelo mesmo contrato de saída acima sem o custo
+     * de outra chamada de LLM inteira.
+     *
+     * LATÊNCIA: cada produce() já mede 200-350s nesta máquina (CPU-only, ver
+     * OTTO_ELITE_HANDOFF.md), então o pior caso (estratégia + draft + 2
+     * reescritas + 3 avaliações do critic) pode passar de 20 minutos. Regra
+     * 28 do brief de fechamento é explícita — qualidade e latência são
+     * preocupações separadas, não sacrificar qualidade pra ficar rápido —
+     * então isto fica como está, com PERFORMANCE OPTIMIZATION NEEDED
+     * registrado na metadata quando o turno ultrapassa um teto observável.
+     */
+    const CRITIC_ENABLED_INTENTS: StudioJobType[] = ['reels', 'video', 'carousel'];
+    const criticHabilitado = CRITIC_ENABLED_INTENTS.includes(jobType);
+    const MAX_REWRITES = 2;
+    let criticEvaluation: Awaited<ReturnType<typeof critiqueDeliverable>> | null = null;
+    let criticGate: ReturnType<typeof passesCriticGate> | null = null;
+    let criticReelIssues: ReturnType<typeof validateReelExecution> = [];
+    let criticRewrites = 0;
+    /**
+     * MELHOR ARTEFATO VÁLIDO, NÃO O MAIS RECENTE (Otto Senior V1, "Best-
+     * Valid Fix"). Achado ao vivo real: draft=45, reescrita#1=43, reparo de
+     * execução=39, todos estruturalmente válidos (sem regressão de
+     * completude) — o sistema entregava 39 por ser o último, não o melhor.
+     * O invariante de não-regressão (Blocker 2) continua impedindo um
+     * candidato PIOR EM COMPLETUDE de virar `result`; isto aqui compara
+     * NOTA entre os candidatos que passaram nesse portão, depois do loop
+     * inteiro rodar — nunca durante, pra não interferir na lógica de "PEÇA
+     * ATUAL" que cada reescrita usa como âncora.
+     */
+    interface CriticCandidate {
+      stage: string;
+      producedResult: Awaited<ReturnType<typeof produce>>;
+      evaluation: Awaited<ReturnType<typeof critiqueDeliverable>>;
+      gate: ReturnType<typeof passesCriticGate>;
+      missingDeliverables: string[];
+    }
+    const criticCandidates: CriticCandidate[] = [];
+    function toCandidateRecord(candidate: CriticCandidate, order: number): CandidateRecord<CriticCandidate> {
+      return {
+        stage: candidate.stage,
+        value: candidate,
+        schemaValid: true, // só chega aqui quem sobreviveu a produce()/reparo sem exceção e sem regressão
+        semanticComplete: candidate.missingDeliverables.length === 0,
+        factuallyValid: candidate.evaluation.flags.unsupported_claims.length === 0,
+        qualityScore: candidate.gate.overall,
+        criticalDimensionScores: candidate.evaluation.scores,
+        unsupportedClaims: candidate.evaluation.flags.unsupported_claims,
+        order,
+      };
+    }
+    /**
+     * ROTEAMENTO DE REESCRITA POR CAMADA (Otto Elite, "Reel Execution Engine
+     * Closure", Section 21): EXECUTABILITY/STRUCTURE pra vídeo/reels não
+     * regenera conceito, ângulo nem copy — regenera SÓ o storyboard
+     * (planVideo de novo, plano criativo preservado). STRUCTURE entra aqui
+     * porque, pra este formato, "estrutura" É a estrutura de cena — não
+     * existe uma "camada de estrutura" separada do storyboard em vídeo.
+     */
+    const EXECUTION_REPAIR_ROOT_CAUSES = new Set(['EXECUTABILITY', 'STRUCTURE']);
+    /**
+     * INVARIANTE ABSOLUTO (Otto Senior 20Y, Missão 4-5): nenhuma falha de
+     * ESTÁGIO DE MELHORIA (critic, reescrita) pode destruir um artefato já
+     * válido. `result` só é sobrescrita quando um produce() novo TERMINA COM
+     * SUCESSO; se o critic ou a reescrita lançarem exceção, o loop para e o
+     * QUE JÁ EXISTE (draft ou última reescrita bem-sucedida) é o que volta
+     * pro usuário — nunca null, nunca erro cru. Achado ao vivo que motivou
+     * isto: REWRITE #1 quebrou em schema (delivery_format sumiu,
+     * entity_type=""), e o turno inteiro morreu depois de 431s mesmo com um
+     * DRAFT_V1 válido já em mãos.
+     */
+    let pipelineDegraded = false;
+    let degradedReason: string | null = null;
+
+    /**
+     * CAMADA DE ESTRATÉGIA (Otto Elite — pipeline de pensamento antes do
+     * draft: REQUEST -> ESTRATÉGIA -> DIVERGÊNCIA DE ÂNGULOS -> BIG IDEA ->
+     * HOOK -> DRAFT). Só roda pra job types com critic (mesmo escopo —
+     * reels/video/carousel são os formatos onde ângulo/hook/big idea
+     * importam; 'image'/'upscale' não têm script/hook pra estratégia
+     * decidir). Nunca bloqueia o turno: se a estratégia falhar, o draft
+     * segue SEM ela (grau degradado, registrado), porque uma peça sem
+     * camada estratégica ainda é melhor que nenhuma peça.
+     */
+    let strategyResult: Awaited<ReturnType<typeof developStrategy>> | null = null;
+    let selectedAngle: Awaited<ReturnType<typeof selectBestAngle>>['selected'] | null = null;
+    let bigIdeaResult: Awaited<ReturnType<typeof developBigIdeaAndHooks>> | null = null;
+    let selectedHook: ReturnType<typeof selectBestHook> | null = null;
+    let strategyBriefing = '';
+    let strategyDegraded = false;
+
+    const strategyClientContext = [
+      contextoOrquestradorProducao ? `ESCOPO RESOLVIDO DESTE TURNO:\n${contextoOrquestradorProducao}` : '',
+      dna ? `DNA criativo do cliente:\n${formatDnaBlock(dna)}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const brandTerms = contextoOrquestradorProducao
+      ? [extrairClienteDoContexto(contextoOrquestradorProducao)].filter((v): v is string => Boolean(v))
+      : [];
+
+    if (criticHabilitado) {
+      try {
+        strategyResult = await measureLlm(() =>
+          developStrategy({ llm: deps.llm }, { briefing: producaoBriefingBase, clientContext: strategyClientContext }),
+        );
+        const angleSelection = selectBestAngle(strategyResult, brandTerms);
+        const primeiroAngulo = angleSelection.selected;
+        selectedAngle = primeiroAngulo;
+        bigIdeaResult = await measureLlm(() =>
+          developBigIdeaAndHooks(
+            { llm: deps.llm },
+            { briefing: producaoBriefingBase, clientContext: strategyClientContext, selectedAngle: primeiroAngulo, strategy: strategyResult! },
+          ),
+        );
+        // Missão 6/7 do brief de estratégia: se a big idea é só o objetivo
+        // reformulado, tenta o PRÓXIMO ângulo já gerado (sem nova chamada de
+        // divergência — os candidatos já existem) antes de aceitar como está.
+        if (!bigIdeaPassesTest(bigIdeaResult.big_idea) && angleSelection.rejected.length > 0) {
+          const proximo = angleSelection.rejected[0]!.angle;
+          logger.warn(
+            { execution_id: request.execution_id, angulo_descartado: selectedAngle.name },
+            '[OTTO:strategy] big idea fraca — tentando o próximo ângulo já gerado',
+          );
+          const segundaTentativa = await measureLlm(() =>
+            developBigIdeaAndHooks(
+              { llm: deps.llm },
+              { briefing: producaoBriefingBase, clientContext: strategyClientContext, selectedAngle: proximo, strategy: strategyResult! },
+            ),
+          );
+          if (bigIdeaPassesTest(segundaTentativa.big_idea)) {
+            selectedAngle = proximo;
+            bigIdeaResult = segundaTentativa;
+          }
+          // Se a segunda tentativa também falhar no teste, segue com a
+          // primeira mesmo assim — nunca trava o turno por causa disso.
+        }
+        selectedHook = selectBestHook(bigIdeaResult);
+        strategyBriefing = formatStrategyBriefing(strategyResult, selectedAngle, bigIdeaResult.big_idea, selectedHook);
+        logger.info(
+          { execution_id: request.execution_id, angulo: selectedAngle.name, big_idea: bigIdeaResult.big_idea },
+          '[OTTO:strategy] ângulo e big idea decididos antes do draft',
+        );
+      } catch (strategyError) {
+        strategyDegraded = true;
+        logger.warn(
+          { execution_id: request.execution_id, error: strategyError instanceof Error ? strategyError.message : String(strategyError) },
+          '[OTTO:strategy] camada de estratégia falhou — draft segue sem ela',
+        );
+      }
+    }
+
+    let result = await produce(producaoBriefingBase, undefined, strategyBriefing || undefined);
+
+    async function critique() {
+      const evaluation = await measureLlm(() =>
+        critiqueDeliverable(
+          { llm: deps.llm },
+          {
+            briefing: producaoBriefingBase,
+            renderedAnswer: result.answer,
+            requestedDeliverables: entregaveisPedidos,
+            ...(strategyBriefing ? { strategyContext: strategyBriefing } : {}),
+          },
+        ),
+      );
+      // Missão 7: completude é CALCULADA, não autocertificada pelo modelo.
+      const missingDeliverables = computeMissingDeliverables(result.answer, entregaveisPedidos);
+      let gate = passesCriticGate(evaluation, missingDeliverables);
+
+      /**
+       * REEL EXECUTION LINTER (Otto Elite, "Reel Execution Engine Closure"):
+       * checagem DETERMINÍSTICA sobre o storyboard renderizado — mesma
+       * lógica de `computeMissingDeliverables`, não confiar só no
+       * julgamento do critic pra pegar padrão mecânico (câmera travada
+       * repetida, "Visual: None", duração idêntica em toda cena). Achado ao
+       * vivo em DOIS modelos diferentes. Só roda pra vídeo/reels — carrossel
+       * e os demais formatos não têm essa estrutura de cena.
+       */
+      const reelExecutionIssues =
+        (jobType === 'video' || jobType === 'reels') && result.videoPlan
+          ? validateReelExecution(result.videoPlan)
+          : [];
+      if (reelExecutionIssues.length > 0) {
+        gate = {
+          ...gate,
+          passed: false,
+          reasons: [...gate.reasons, ...reelExecutionIssues.map((issue) => `execução de reel: ${issue.detail}`)],
+        };
+      }
+
+      /**
+       * CAROUSEL QUALITY LINTER (Otto Senior V1, "Universal Quality Floor"):
+       * mesma lógica — checagem determinística de repetição/progressão
+       * sobre os slides renderizados, independente do julgamento do critic.
+       * Raciocínio próprio do Otto (ver carousel-quality.ts), sem nenhum
+       * acoplamento com skills externas.
+       */
+      const carouselQualityIssues = jobType === 'carousel' && result.carouselPlan ? detectCarouselRepetition(result.carouselPlan) : [];
+      if (carouselQualityIssues.length > 0) {
+        gate = {
+          ...gate,
+          passed: false,
+          reasons: [...gate.reasons, ...carouselQualityIssues.map((issue) => `qualidade de carrossel: ${issue.detail}`)],
+        };
+      }
+
+      // Otto Elite, Blocker 3: gate reprovado com root_cause="NONE" é
+      // logicamente inconsistente — nunca confiar cegamente nisso.
+      let reconciledRootCause = reconcileRootCause(evaluation, gate, missingDeliverables);
+      // O linter determinístico manda sobre a classificação do modelo pra
+      // este caso específico: se ele achou um padrão mecânico real e o
+      // modelo classificou outra coisa (ou nem reprovou), a causa raiz É de
+      // execução — polir hook/copy não resolveria "Visual: None".
+      if (reelExecutionIssues.length > 0 && !['EXECUTABILITY', 'STRUCTURE'].includes(reconciledRootCause)) {
+        reconciledRootCause = 'EXECUTABILITY';
+      }
+      // Repetição de carrossel é falha de ESTRUTURA (a peça não progride),
+      // não de copy isolada — reescrever só o texto sem saber QUAIS slides
+      // colidem repetiria o mesmo erro com sinônimos novos.
+      if (carouselQualityIssues.length > 0 && reconciledRootCause !== 'STRUCTURE') {
+        reconciledRootCause = 'STRUCTURE';
+      }
+      if (reconciledRootCause !== evaluation.root_cause) {
+        logger.warn(
+          { execution_id: request.execution_id, reported: evaluation.root_cause, corrected: reconciledRootCause, overall: gate.overall },
+          '[OTTO:critic] root_cause reclassificado em código (NONE inconsistente ou achado do linter de execução de reel)',
+        );
+      }
+      const reconciledEvaluation = { ...evaluation, root_cause: reconciledRootCause };
+      logger.info(
+        {
+          attempt: criticRewrites,
+          overall: gate.overall,
+          passed: gate.passed,
+          reasons: gate.reasons,
+          root_cause: reconciledEvaluation.root_cause,
+          reel_execution_findings: reelExecutionIssues.map((i) => i.finding),
+        },
+        '[OTTO:critic] avaliação do entregável renderizado',
+      );
+      return { evaluation: reconciledEvaluation, gate, reelExecutionIssues };
+    }
+
+    if (criticHabilitado) {
+      try {
+        ({ evaluation: criticEvaluation, gate: criticGate, reelExecutionIssues: criticReelIssues } = await critique());
+        criticCandidates.push({
+          stage: 'draft',
+          producedResult: result,
+          evaluation: criticEvaluation,
+          gate: criticGate,
+          missingDeliverables: computeMissingDeliverables(result.answer, entregaveisPedidos),
+        });
+      } catch (criticError) {
+        // CRITIC FAILS -> keep draft, do NOT destroy turn (regra do fechamento).
+        pipelineDegraded = true;
+        degradedReason = `critic #1 falhou: ${criticError instanceof Error ? criticError.message : String(criticError)}`;
+        logger.warn({ execution_id: request.execution_id, error: degradedReason }, '[OTTO:critic] avaliação inicial falhou — mantendo draft');
+      }
+
+      while (criticGate && !criticGate.passed && !pipelineDegraded && criticRewrites < MAX_REWRITES) {
+        const attemptNumber = criticRewrites + 1;
+
+        /**
+         * ESCOPO DA REESCRITA (Missão 16): uma falha em STRATEGY/ANGLE/
+         * BIG_IDEA/HOOK exige regenerar a camada estratégica — trocar de
+         * ângulo pra um já gerado (sem nova chamada de divergência) e
+         * refazer big idea/hook pra ele — ANTES de redigir de novo. Polir a
+         * frase quando o problema é a ideia é a "reescrita de sinônimo" que
+         * a missão proíbe. Nunca bloqueia: se a troca de camada estratégica
+         * falhar, cai pro caminho normal (reescrita de texto com a mesma
+         * estratégia).
+         */
+        if (
+          strategyResult &&
+          selectedAngle &&
+          rewriteRequiresStrategyLayer(criticEvaluation!.root_cause) &&
+          criticRewrites === 0 // só troca de ângulo uma vez — a segunda reescrita refina o que já mudou, não troca de novo
+        ) {
+          try {
+            const outroAngulo = strategyResult.angles.find((a) => a.name !== selectedAngle!.name);
+            if (outroAngulo) {
+              const novaEstrategia = await measureLlm(() =>
+                developBigIdeaAndHooks(
+                  { llm: deps.llm },
+                  { briefing: producaoBriefingBase, clientContext: strategyClientContext, selectedAngle: outroAngulo, strategy: strategyResult! },
+                ),
+              );
+              selectedAngle = outroAngulo;
+              bigIdeaResult = novaEstrategia;
+              selectedHook = selectBestHook(novaEstrategia);
+              strategyBriefing = formatStrategyBriefing(strategyResult, selectedAngle, novaEstrategia.big_idea, selectedHook);
+              logger.info(
+                { execution_id: request.execution_id, novo_angulo: selectedAngle.name, root_cause: criticEvaluation!.root_cause },
+                '[OTTO:strategy] causa raiz era estratégica — trocando de ângulo antes de reescrever',
+              );
+            }
+          } catch (strategyRewriteError) {
+            logger.warn(
+              { execution_id: request.execution_id, error: strategyRewriteError instanceof Error ? strategyRewriteError.message : String(strategyRewriteError) },
+              '[OTTO:strategy] troca de ângulo na reescrita falhou — seguindo com a estratégia atual',
+            );
+          }
+        }
+
+        /**
+         * REPARO ESTREITO DE EXECUÇÃO vs. REESCRITA GERAL (Otto Elite,
+         * "Reel Execution Engine Closure", Section 21): EXECUTABILITY/
+         * STRUCTURE num vídeo/reels é problema de STORYBOARD, não de
+         * conceito/ângulo/copy — troca `produce()` (que regenera tudo) por
+         * `repairVideoExecution()` (só planVideo de novo, plano criativo
+         * intacto). A nota de reparo usa o achado DETERMINÍSTICO do linter
+         * quando ele existe (mais específico que o texto livre do critic:
+         * "cena 3 tem Visual: None" > "melhore a executabilidade").
+         */
+        const isExecutionRepair =
+          (jobType === 'video' || jobType === 'reels') && EXECUTION_REPAIR_ROOT_CAUSES.has(criticEvaluation!.root_cause);
+        const revisionNote =
+          isExecutionRepair && criticReelIssues.length > 0
+            ? formatReelExecutionNote(criticReelIssues)
+            : formatCriticRevisionNote(criticEvaluation!, criticGate);
+        /**
+         * PEÇA ATUAL na reescrita (Otto Senior 20Y, Missão 6 — item do
+         * checklist "REWRITE INPUT" que ainda faltava: "CURRENT VALID
+         * DRAFT"). Sem isto, a reescrita regenerava do zero só com a nota do
+         * critic como guia, e o modelo não tinha como saber O QUE já estava
+         * bom pra preservar. Achado ao vivo (segunda validação Cosentino,
+         * pós Missão 1-7): a reescrita #2 tirou a fala (spoken_line) de 3 das
+         * 4 cenas que a tinham — uma peça pior, não melhor, porque não havia
+         * "mantenha o resto" pra ancorar a edição. Mandar a peça atual
+         * transforma "reescreva do zero" em "edite isto".
+         */
+        const augmentedMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu — preserve o que já está bom, corrija só o que a revisão abaixo aponta):\n${result.answer}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${attemptNumber}):\n${revisionNote}`;
+        const missingAntesDaReescrita = computeMissingDeliverables(result.answer, entregaveisPedidos);
+
+        let rewritten: Awaited<ReturnType<typeof produce>>;
+        try {
+          rewritten = isExecutionRepair
+            ? await repairVideoExecution(result.plan, revisionNote)
+            : await produce(augmentedMessage, revisionNote, strategyBriefing || undefined);
+        } catch (rewriteError) {
+          // REWRITE FAILS -> keep previous valid version, do NOT destroy turn.
+          pipelineDegraded = true;
+          degradedReason = `reescrita #${attemptNumber} falhou: ${rewriteError instanceof Error ? rewriteError.message : String(rewriteError)}`;
+          logger.warn(
+            { execution_id: request.execution_id, error: degradedReason },
+            '[OTTO:critic] reescrita falhou — mantendo última versão válida',
+          );
+          break;
+        }
+
+        /**
+         * INVARIANTE (Otto Elite, Blocker 2): uma reescrita que PIORA a
+         * completude nunca é aceita, mesmo que tenha terminado sem erro de
+         * schema. Achado ao vivo real: draft com roteiro -> reescrita #2 sem
+         * schema error nenhum, mas devolveu só conceito+legenda, perdendo o
+         * roteiro. Sem esta checagem, essa reescrita PIOR teria virado a
+         * versão final. Rejeita o candidato exatamente como uma falha de
+         * reescrita — mantém `result` como estava.
+         */
+        const missingDepoisDaReescrita = computeMissingDeliverables(rewritten.answer, entregaveisPedidos);
+        const regressao = deliverableRegression(missingAntesDaReescrita, missingDepoisDaReescrita);
+        if (regressao.length > 0) {
+          pipelineDegraded = true;
+          degradedReason = `reescrita #${attemptNumber} removeu entregável(is) que já existia(m): ${regressao.join(', ')} — candidato rejeitado, mantendo versão anterior`;
+          logger.warn(
+            { execution_id: request.execution_id, regressao, error: degradedReason },
+            '[OTTO:critic] reescrita regrediu completude — candidato rejeitado',
+          );
+          break;
+        }
+
+        result = rewritten; // só sobrescreve DEPOIS de produce() terminar com sucesso E sem regressão
+        criticRewrites = attemptNumber;
+
+        try {
+          ({ evaluation: criticEvaluation, gate: criticGate, reelExecutionIssues: criticReelIssues } = await critique());
+          criticCandidates.push({
+            stage: `rewrite_${attemptNumber}`,
+            producedResult: result,
+            evaluation: criticEvaluation,
+            gate: criticGate,
+            missingDeliverables: computeMissingDeliverables(result.answer, entregaveisPedidos),
+          });
+        } catch (criticError) {
+          // SECOND CRITIC FAILS -> keep latest valid version.
+          pipelineDegraded = true;
+          degradedReason = `critic #${attemptNumber + 1} falhou: ${criticError instanceof Error ? criticError.message : String(criticError)}`;
+          logger.warn(
+            { execution_id: request.execution_id, error: degradedReason },
+            '[OTTO:critic] reavaliação falhou — mantendo última versão válida',
+          );
+          break;
+        }
+      }
+
+      /**
+       * SELEÇÃO DO MELHOR CANDIDATO (não o mais recente) — roda DEPOIS do
+       * loop inteiro terminar, sobre todos os candidatos que passaram no
+       * portão de não-regressão. Se o vencedor não for o último (`result`
+       * já aponta pra ele), troca `result`/`criticEvaluation`/`criticGate`
+       * de volta pro candidato vencedor. As etapas seguintes (reparo de
+       * completude, correção factual, cálculo final de qualidade) operam
+       * sobre o QUE FOR ESCOLHIDO aqui, não sobre o que aconteceu por
+       * último — elas já leem `result`/`criticEvaluation` da variável, então
+       * não precisam de nenhuma mudança.
+       */
+      if (criticCandidates.length > 0) {
+        const winner = selectBestValidCandidate(criticCandidates.map((c, i) => toCandidateRecord(c, i)));
+        if (winner) {
+          const chosen = winner.value;
+          if (chosen.producedResult !== result) {
+            logger.info(
+              {
+                execution_id: request.execution_id,
+                chosen_stage: chosen.stage,
+                chosen_score: chosen.gate.overall,
+                discarded_last_stage: criticCandidates[criticCandidates.length - 1]!.stage,
+                discarded_last_score: criticCandidates[criticCandidates.length - 1]!.gate.overall,
+              },
+              '[OTTO:critic] melhor candidato válido escolhido — não é o mais recente',
+            );
+          }
+          result = chosen.producedResult;
+          criticEvaluation = chosen.evaluation;
+          criticGate = chosen.gate;
+        }
+      }
+    }
+
+    /**
+     * REPARO DE COMPLETUDE (Otto Elite, Blocker 2): se um entregável pedido
+     * NUNCA existiu em nenhuma tentativa (draft nem reescritas — não foi
+     * perdido no meio do caminho, isso já é bloqueado pelo invariante
+     * acima), uma última chamada NARROW tenta só adicionar o que falta,
+     * preservando o resto. Diferente da reescrita do critic (que pode trocar
+     * ângulo/conceito inteiro), este passo é estritamente aditivo. Roda no
+     * MÁXIMO uma vez, com o mesmo invariante de não-regressão, e nunca
+     * bloqueia o turno — se falhar ou não resolver, o resultado anterior
+     * continua sendo o que volta pro usuário.
+     */
+    let completionRepairAttempted = false;
+    let completionRepairSucceeded = false;
+    if (criticHabilitado) {
+      const missingAntesDoReparo = computeMissingDeliverables(result.answer, entregaveisPedidos);
+      if (missingAntesDoReparo.length > 0) {
+        completionRepairAttempted = true;
+        // Otto Elite, Blocker 1: a lacuna pode ser AUSÊNCIA (nunca existiu)
+        // ou TIPO ERRADO (existe, mas não é do formato pedido — ex.:
+        // "Legenda:" com conteúdo de roteiro). explainDeliverableGap diz
+        // qual dos dois é, pra pedir "adicione" ou "substitua só essa
+        // seção" em vez de sempre "adicione", que não conserta um campo já
+        // presente porém malformado.
+        const gapDescriptions = missingAntesDoReparo.map((id) => explainDeliverableGap(id, result.answer));
+        const repairMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu):\n${result.answer}\n\nCOMPLEMENTO OBRIGATÓRIO: preserve TODO o resto do conteúdo acima exatamente como está. Corrija SOMENTE o(s) entregável(is) a seguir — adicione o que nunca existiu, ou substitua só a seção indicada quando ela existe mas está no formato errado:\n${gapDescriptions.map((d) => `- ${d}`).join('\n')}\nNão regenere conceito, ângulo nem o que já está correto.`;
+        try {
+          const reparado = await produce(repairMessage, undefined, strategyBriefing || undefined);
+          const missingDepoisDoReparo = computeMissingDeliverables(reparado.answer, entregaveisPedidos);
+          const regressaoNoReparo = deliverableRegression(missingAntesDoReparo, missingDepoisDoReparo);
+          if (regressaoNoReparo.length === 0 && missingDepoisDoReparo.length < missingAntesDoReparo.length) {
+            result = reparado;
+            completionRepairSucceeded = true;
+            logger.info(
+              { execution_id: request.execution_id, resolvido: missingAntesDoReparo.filter((d) => !missingDepoisDoReparo.includes(d)) },
+              '[OTTO:critic] reparo de completude resolveu entregável(is) faltante(s)',
+            );
+          } else {
+            logger.warn(
+              { execution_id: request.execution_id, missingAntesDoReparo, missingDepoisDoReparo, regressaoNoReparo },
+              '[OTTO:critic] reparo de completude não melhorou (ou regrediu) — mantendo versão anterior',
+            );
+          }
+        } catch (repairError) {
+          logger.warn(
+            { execution_id: request.execution_id, error: repairError instanceof Error ? repairError.message : String(repairError) },
+            '[OTTO:critic] reparo de completude falhou — mantendo versão anterior',
+          );
+        }
+      }
+    }
+
+    /**
+     * CORREÇÃO FACTUAL ESTREITA (Otto Elite, Blocker 4): o invariante de
+     * não-destruir-artefato-válido (Blocker 2) preserva a última versão boa
+     * quando uma reescrita quebra — mas se essa versão preservada ainda
+     * carrega uma alegação sem base (`unsupported_claims`) que o critic já
+     * tinha detectado, ela sobrevive até o usuário sem correção nenhuma
+     * (achado ao vivo real: "sem burocracia" sobreviveu porque REWRITE #1
+     * quebrou em schema, não em conteúdo). Esta etapa roda NO MÁXIMO uma
+     * vez, fora do loop de reescrita do critic (não conta como reescrita
+     * #3), e é estritamente ADITIVA/CORRETIVA — só troca as frases
+     * apontadas, preservando conceito, ângulo e o resto do texto.
+     */
+    let factualCorrectionAttempted = false;
+    let factualCorrectionSucceeded = false;
+    if (criticHabilitado && criticEvaluation && criticEvaluation.flags.unsupported_claims.length > 0) {
+      const claimsAntes = criticEvaluation.flags.unsupported_claims;
+      factualCorrectionAttempted = true;
+      const factualMessage = `${producaoBriefingBase}\n\nPEÇA ATUAL (o que você escreveu):\n${result.answer}\n\nCORREÇÃO FACTUAL OBRIGATÓRIA: preserve TODO o resto do conteúdo, conceito, ângulo e estrutura exatamente como estão. Ajuste APENAS as frases abaixo, que afirmam algo além do que o briefing autoriza — reescreva cada uma pra ficar fiel ao fato original sem perder a força criativa:\n${claimsAntes.map((c) => `- "${c}"`).join('\n')}`;
+      try {
+        const corrigido = await produce(factualMessage, undefined, strategyBriefing || undefined);
+        const missingAntesDaCorrecao = computeMissingDeliverables(result.answer, entregaveisPedidos);
+        const missingDepoisDaCorrecao = computeMissingDeliverables(corrigido.answer, entregaveisPedidos);
+        const regressaoNaCorrecao = deliverableRegression(missingAntesDaCorrecao, missingDepoisDaCorrecao);
+        if (regressaoNaCorrecao.length > 0) {
+          logger.warn(
+            { execution_id: request.execution_id, regressaoNaCorrecao },
+            '[OTTO:critic] correção factual regrediu completude — candidato rejeitado, mantendo versão anterior',
+          );
+        } else {
+          result = corrigido;
+          // Checagem determinística, não outra chamada de critic (Blocker 4
+          // pede algo LEVE): se a frase exata apontada ainda aparece
+          // literalmente no texto corrigido, ela não foi resolvida.
+          const claimsDepois = claimsAntes.filter((claim) => corrigido.answer.includes(claim));
+          factualCorrectionSucceeded = claimsDepois.length < claimsAntes.length;
+          criticEvaluation = { ...criticEvaluation, flags: { ...criticEvaluation.flags, unsupported_claims: claimsDepois } };
+          logger.info(
+            { execution_id: request.execution_id, resolved: claimsAntes.length - claimsDepois.length, remaining: claimsDepois },
+            '[OTTO:critic] correção factual aplicada',
+          );
+        }
+      } catch (factualError) {
+        logger.warn(
+          { execution_id: request.execution_id, error: factualError instanceof Error ? factualError.message : String(factualError) },
+          '[OTTO:critic] correção factual falhou — mantendo versão anterior (alegação sem base pode persistir; ver missing_deliverables/elite_passed)',
+        );
+      }
+    }
+
+    /**
+     * PISO UNIVERSAL DE QUALIDADE PRO CAMINHO DE IMAGEM (Otto Senior V1,
+     * "Universal Quality Floor"): 'image'/'upscale' NUNCA passam pelo
+     * critic (a peça principal é a imagem, renderizada depois pelo
+     * Studio), mas o campo `copy` que ESTE bloco produz ainda é texto
+     * client-facing (legenda, copy de anúncio) — e até esta missão não
+     * tinha NENHUMA checagem, nem a determinística e barata. Achado ao
+     * vivo real (certificação não-vídeo): um "ad" de performance saiu com
+     * linguagem de escassez que o dossiê proibia explicitamente, sem
+     * nenhum gate pra pegar. Roda só pra 'image' (não 'upscale', que não
+     * gera copy nova) e só quando algo é encontrado — sem chamada de LLM
+     * extra no caminho feliz.
+     */
+    let imageQualityRepairAttempted = false;
+    let imageQualityIssuesFinal: string[] = [];
+    if (!criticHabilitado && jobType === 'image') {
+      const placeholders = detectPlaceholderContent(result.answer);
+      const forbiddenLanguage = detectForbiddenLanguage(result.answer, contextoOrquestradorProducao ?? '');
+      imageQualityIssuesFinal = [...placeholders, ...forbiddenLanguage];
+      if (imageQualityIssuesFinal.length > 0) {
+        imageQualityRepairAttempted = true;
+        const repairMessage = [
+          `${producaoBriefingBase}`,
+          `PEÇA ATUAL (o que você escreveu):\n${result.answer}`,
+          'CORREÇÃO OBRIGATÓRIA: preserve TODO o resto do conteúdo exatamente como está. Corrija SOMENTE os pontos abaixo:',
+          placeholders.length > 0 ? `- Placeholder de produção não preenchido: ${placeholders.join(', ')}. Substitua por conteúdo final ou remova.` : '',
+          forbiddenLanguage.length > 0 ? `- Linguagem que o contexto do cliente proíbe explicitamente sobrevive: ${forbiddenLanguage.join(', ')}. Reescreva sem essa expressão nem variação.` : '',
+        ].filter(Boolean).join('\n\n');
+        try {
+          const corrigido = await produce(repairMessage, undefined, strategyBriefing || undefined);
+          const aindaComProblema = [...detectPlaceholderContent(corrigido.answer), ...detectForbiddenLanguage(corrigido.answer, contextoOrquestradorProducao ?? '')];
+          if (aindaComProblema.length < imageQualityIssuesFinal.length) {
+            result = corrigido;
+            imageQualityIssuesFinal = aindaComProblema;
+            logger.info(
+              { execution_id: request.execution_id, remaining: aindaComProblema },
+              '[OTTO:quality] correção de placeholder/linguagem proibida aplicada no caminho de imagem',
+            );
+          } else {
+            logger.warn(
+              { execution_id: request.execution_id, imageQualityIssuesFinal, aindaComProblema },
+              '[OTTO:quality] correção não melhorou — mantendo versão anterior',
+            );
+          }
+        } catch (repairError) {
+          logger.warn(
+            { execution_id: request.execution_id, error: repairError instanceof Error ? repairError.message : String(repairError) },
+            '[OTTO:quality] correção de placeholder/linguagem proibida falhou — mantendo versão anterior',
+          );
+        }
+      }
+    }
+
+    /**
+     * ESTADO FINAL DE QUALIDADE (regra 19): nunca chamar "elite" um trabalho
+     * que não passou — e um pipeline degradado (qualquer estágio de melhoria
+     * que falhou) NUNCA pode ser "elite", mesmo que a última avaliação
+     * disponível tivesse passado. Job types sem critic (image/upscale) não
+     * têm veredito de qualidade textual — ficam "not_evaluated".
+     *
+     * INVARIANTE FINAL (Blocker 2, "no exceptions"): missing_deliverables
+     * não-vazio NUNCA é elite, mesmo que o critic tivesse aprovado antes do
+     * reparo — recalculado aqui, não herdado do gate anterior.
+     *
+     * INVARIANTE FINAL (Blocker 4, "no exceptions"): unsupported_claims
+     * não-vazio NUNCA é elite — mesmo já sendo parte do motivo de
+     * `criticGate.passed`, é checado de novo aqui explicitamente porque
+     * `criticGate` pode estar desatualizado em relação à correção factual
+     * acima (que atualiza `criticEvaluation`, não `criticGate`).
+     */
+    const missingFinal = computeMissingDeliverables(result.answer, entregaveisPedidos);
+    const unsupportedClaimsFinal = criticEvaluation?.flags.unsupported_claims ?? [];
+    /**
+     * CHECAGEM DE PLACEHOLDER (Otto Senior V1, "Non-Video Certification"):
+     * mesmo invariante de completude/factualidade — nunca "elite" com um
+     * placeholder óbvio sobrevivendo na resposta final ("texto aqui",
+     * "lorem ipsum", colchete de variável não substituída).
+     */
+    const placeholdersFinal = detectPlaceholderContent(result.answer);
+    /**
+     * LINGUAGEM PROIBIDA (Otto Senior V1, "Universal Quality Floor"):
+     * mesmo raciocínio — o dossiê do cliente pode proibir uma expressão
+     * explicitamente ("sem exagero de 'sonho realizado'"), e isso nunca
+     * tinha checagem determinística nem no caminho de vídeo/carrossel
+     * (o critic LLM julga fato/genericidade, não frase proibida
+     * específica declarada no contexto).
+     */
+    const forbiddenLanguageFinal = detectForbiddenLanguage(result.answer, contextoOrquestradorProducao ?? '');
+    const criticPassedFinal =
+      !pipelineDegraded &&
+      (criticGate?.passed ?? false) &&
+      forbiddenLanguageFinal.length === 0 &&
+      missingFinal.length === 0 &&
+      unsupportedClaimsFinal.length === 0 &&
+      placeholdersFinal.length === 0;
+    /**
+     * REELS = BETA, CONGELADO (Otto Senior V1, "Final Non-Video
+     * Certification"): live evidence across every model tested this
+     * project (4B local, 14B GPU, 35B GPU) never once cleared the elite
+     * bar for video — 59/87/64 local, 71/60 GPU 14B, 39 GPU 35B. Video
+     * format NEVER reports "elite" or skips human review, regardless of
+     * what score a future run happens to hit — the ceiling here is proven
+     * unreliable, not a one-off bad run. Non-video formats (image/carousel/
+     * upscale) are unaffected; this is scoped to the format, not a global
+     * downgrade.
+     */
+    const isVideoFormat = jobType === 'video' || jobType === 'reels';
+    const qualityTier = !criticHabilitado ? 'not_evaluated' : isVideoFormat ? 'beta' : criticPassedFinal ? 'elite' : 'draft';
+    const elitePassed = criticHabilitado ? (isVideoFormat ? false : criticPassedFinal) : null;
+    const requiresHumanReview = criticHabilitado ? (isVideoFormat || !criticPassedFinal) : false;
+
+    const { pipeline, plan, carouselPlan, videoPlan, spec, answer } = result;
 
     const metadata: Record<string, unknown> = {
       intent,
@@ -702,36 +1646,61 @@ export async function executeTask(
         trace: pipeline.trace,
       },
       ...(dna ? { creative_dna: dna } : {}),
+      ...(carouselPlan ? { carousel_plan: carouselPlan } : {}),
+      ...(videoPlan ? { video_plan: videoPlan } : {}),
+      production_spec: spec,
+      // Otto Elite — artefatos da camada de estratégia (relatório de
+      // benchmark pede: brief, ângulos candidatos + scores, ângulo
+      // selecionado, big idea, hooks candidatos + scores, hook selecionado).
+      // Nunca expõe chain-of-thought livre — só os campos estruturados.
+      strategy: criticHabilitado
+        ? {
+            enabled: true,
+            degraded: strategyDegraded,
+            ...(strategyResult
+              ? {
+                  strategy: strategyResult,
+                  selected_angle: selectedAngle,
+                  big_idea: bigIdeaResult?.big_idea ?? null,
+                  hook_candidates: bigIdeaResult?.hooks ?? [],
+                  selected_hook: selectedHook,
+                }
+              : {}),
+          }
+        : { enabled: false },
+      ...(criticHabilitado
+        ? {
+            critic: {
+              enabled: true,
+              ...(criticEvaluation && criticGate
+                ? { evaluation: criticEvaluation, overall: criticGate.overall, passed: criticGate.passed, reasons: criticGate.reasons }
+                : {}),
+              rewrites: criticRewrites,
+              max_rewrites: MAX_REWRITES,
+            },
+          }
+        : { critic: { enabled: false } }),
+      // Regra 19 (Otto Senior V1.0): nunca chamar "elite" trabalho que não
+      // passou. quality_tier/elite_passed/requires_human_review são o
+      // veredito FINAL, explícito, visível fora de metadata.critic.
+      quality_tier: qualityTier,
+      elite_passed: elitePassed,
+      requires_human_review: requiresHumanReview,
+      // Missão 4-5 (Otto Senior 20Y): visível pra auditoria sempre que um
+      // estágio de melhoria (critic ou reescrita) falhou e o turno seguiu
+      // com a última versão válida em vez de destruir o artefato.
+      quality_pipeline_degraded: pipelineDegraded,
+      ...(degradedReason ? { quality_pipeline_degraded_reason: degradedReason } : {}),
+      // Blocker 2: completude é recalculada aqui, na versão FINAL — não
+      // herdada de nenhuma avaliação anterior do critic.
+      missing_deliverables: missingFinal,
+      unsupported_claims: unsupportedClaimsFinal,
+      placeholders_detected: placeholdersFinal,
+      forbidden_language_detected: forbiddenLanguageFinal,
+      ...(completionRepairAttempted ? { completion_repair: { attempted: true, succeeded: completionRepairSucceeded } } : {}),
+      ...(factualCorrectionAttempted ? { factual_correction: { attempted: true, succeeded: factualCorrectionSucceeded } } : {}),
+      ...(imageQualityRepairAttempted ? { image_quality_repair: { attempted: true, remaining_issues: imageQualityIssuesFinal } } : {}),
     };
-
-    // Sequencial por DEPENDÊNCIA REAL, não por descuido: planCarousel e
-    // planVideo recebem o CreativePlan pronto como entrada (o JSON do plano é
-    // o user prompt deles), então não há Promise.all possível aqui sem
-    // planejar o carrossel a partir de um plano que ainda não existe. Os dois
-    // ifs também são mutuamente exclusivos por jobType.
-    let carouselPlan;
-    let videoPlan;
-    if (intent === 'carousel') {
-      carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan));
-      metadata.carousel_plan = carouselPlan;
-      logger.info({ slides: carouselPlan.slide_count, llm_ms: llmMs }, '[OTTO:plan] carrossel planejado');
-    }
-    if (intent === 'video' || intent === 'reels') {
-      videoPlan = await measureLlm(() => planVideo({ llm: deps.llm }, plan));
-      metadata.video_plan = videoPlan;
-      logger.info({ scenes: videoPlan.scenes.length, llm_ms: llmMs }, '[OTTO:plan] vídeo planejado');
-    }
-
-    const clientId = refClientId ?? plan.client;
-    const spec = buildProductionSpec(plan, {
-      clientId,
-      jobType: intent,
-      ...(carouselPlan ? { carouselPlan } : {}),
-      ...(videoPlan ? { videoPlan, aspectRatio: videoPlan.aspect_ratio } : {}),
-      referenceAssets: request.attachments,
-      metadata: { execution_id: request.execution_id },
-    });
-    metadata.production_spec = spec;
     const timings: PhaseTimings = {
       classify_ms: classifyMs,
       retrieval_ms: retrievalMs,
@@ -739,25 +1708,22 @@ export async function executeTask(
       total_ms: since(startedAt),
     };
     metadata.timings = timings;
-    logger.info(
-      { job_type: spec.job_type, ...timings, depth: depth.depth },
-      '[OTTO:spec] spec de produção pronta pro handoff',
-    );
-
-    // Gate de fidelidade real (ver checkRealWorldFidelity): se o briefing
-    // pede um produto/marca/pessoa/local REAL sem referência fiel anexada,
-    // a pessoa vê isso ANTES de esperar o job do Studio terminar, não depois.
-    const fidelityWarning =
-      typeof spec.metadata.fidelity_warning === 'string' ? spec.metadata.fidelity_warning : null;
-    if (fidelityWarning) {
-      logger.warn({ execution_id: request.execution_id }, '[OTTO:fidelity] briefing sem referência fiel pra entidade real');
+    // Regra 28: registrar quando a latência passou de um teto observável,
+    // sem tocar em qualidade por causa disso — sinalização, não sacrifício.
+    const PERFORMANCE_CEILING_MS = 480_000; // 8min: ~2x uma geração única observada nesta sessão
+    if (timings.total_ms > PERFORMANCE_CEILING_MS) {
+      metadata.performance_note = 'PERFORMANCE OPTIMIZATION NEEDED';
+      logger.warn(
+        { total_ms: timings.total_ms, execution_id: request.execution_id },
+        '[OTTO:performance] turno passou do teto observável de latência',
+      );
     }
 
     return {
       execution_id: request.execution_id,
       agent: config.AGENT_NAME,
       status: 'completed',
-      answer: [fidelityWarning, formatPlanAnswer(plan.concept, plan.copy, intent)].filter(Boolean).join('\n\n'),
+      answer,
       sources,
       tool_calls: [],
       usage: { input_tokens: 0, output_tokens: 0 },

@@ -47,6 +47,16 @@ export {
   carouselSlideSchema,
   creativeFeedbackSchema,
   creativePlanSchema,
+  criticEvaluationSchema,
+  criticFlagsSchema,
+  criticRootCauseSchema,
+  criticScoresSchema,
+  angleScoresSchema,
+  creativeAngleSchema,
+  creativeStrategySchema,
+  hookScoresSchema,
+  hookCandidateSchema,
+  bigIdeaAndHooksSchema,
   productionSpecSchema,
   qualityCriteriaSchema,
   qualityEvaluationSchema,
@@ -63,6 +73,16 @@ export type {
   CarouselSlide,
   CreativeFeedback,
   CreativePlan,
+  CriticEvaluation,
+  CriticFlags,
+  CriticRootCause,
+  CriticScores,
+  AngleScores,
+  CreativeAngle,
+  CreativeStrategy,
+  HookScores,
+  HookCandidate,
+  BigIdeaAndHooks,
   ProductionSpec,
   QualityCriteria,
   QualityEvaluation,
@@ -93,6 +113,7 @@ export {
   diretivaDoContrato,
   ehRevisaoEliptica,
   exigeFrescorOperacional,
+  parseRequestedSlideCount,
 } from './creative/output-contract.js';
 export type { ArtefatoPedido, ContratoDeSaida } from './creative/output-contract.js';
 export type { DirectionDirectiveInput } from './creative/stance.js';
@@ -146,3 +167,50 @@ export type { WebSearchVendor, WebSearchConfig } from './research/web-search-pro
 export type { SourceQuality, ResearchSource, ResearchFinding, ResearchProvider, ResearchEvidence, ResearchResult } from './research/research.js';
 export { runCreativePipeline } from './creative/creative-pipeline.js';
 export type { CreativeOutput, CreativeGenerator, CreativePipelineResult, CreativePipelineDeps } from './creative/creative-pipeline.js';
+
+export {
+  critiqueDeliverable,
+  computeMissingDeliverables,
+  explainDeliverableGap,
+  looksLikeScriptContent,
+  looksLikeSequencedScript,
+  looksLikeCreativeBrief,
+  detectPlaceholderContent,
+  deliverableRegression,
+  deriveCriticOverall,
+  passesCriticGate,
+  reconcileRootCause,
+  formatCriticRevisionNote,
+  rewriteRequiresStrategyLayer,
+} from './creative/critic.js';
+export type { CriticDeps, CriticInput, CriticGateResult } from './creative/critic.js';
+
+export {
+  developStrategy,
+  deriveAngleTotal,
+  selectBestAngle,
+  bigIdeaPassesTest,
+  developBigIdeaAndHooks,
+  deriveHookTotal,
+  selectBestHook,
+  formatStrategyBriefing,
+} from './creative/strategy.js';
+export type { StrategyDeps, StrategyInput, AngleSelection, DevelopBigIdeaInput } from './creative/strategy.js';
+
+export { validateReelExecution, formatReelExecutionNote } from './creative/reel-execution.js';
+export type { ReelExecutionFinding, ReelExecutionIssue } from './creative/reel-execution.js';
+
+export { detectCarouselRepetition, formatCarouselQualityNote } from './creative/carousel-quality.js';
+export type { CarouselQualityFinding, CarouselQualityIssue } from './creative/carousel-quality.js';
+
+export { selectBestValidCandidate } from './creative/best-valid.js';
+export type { CandidateRecord } from './creative/best-valid.js';
+
+export {
+  containsForbiddenPhrase,
+  extractForbiddenPhrases,
+  detectForbiddenLanguage,
+  extractRequestedRemovals,
+  verifyRequestedRemovals,
+} from './creative/universal-quality.js';
+export type { RequestedRemoval, RemovalVerification } from './creative/universal-quality.js';

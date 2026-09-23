@@ -83,7 +83,7 @@ materiais, anatomia, local e preservações das referências. O gerador não dev
 precisar traduzir os outros campos para entender a direção.
 
 Formato:
-{"client": string, "project": string (opcional), "objective": string, "audience": string, "strategy": string, "concept": string, "narrative": string, "copy": string, "art_direction": {"composition": string, "typography": string, "color": string, "lighting": string, "photography": string, "materials": string, "atmosphere": string}, "references": string[], "reference_strategy": [{"reference_index": number começando em 1, "role": "auto"|"scene"|"subject"|"product"|"style"|"layout"|"logo"|"mask", "fidelity": "exact"|"high"|"interpretive", "instruction": string em inglês, "placement": "reference_only"|"in_scene"|"canvas_top_left"|"canvas_top_right"|"canvas_bottom_left"|"canvas_bottom_right"}], "real_world_fidelity": {"requires_reference": boolean, "entity_type": "product"|"brand"|"person"|"location"|"machine" (opcional), "entity_description": string (opcional, o que precisa ser fiel)}, "image_prompt": string (inglês, detalhado), "negative_prompt": string (inglês), "technical_specs": string, "production_requirements": string, "quality_criteria": [{"criterion": string, "description": string, "weight": number 0..1}], "delivery_format": string}`;
+{"client": string, "project": string (opcional), "objective": string, "audience": string, "strategy": string, "concept": string, "narrative": string, "copy": string, "art_direction": {"composition": string, "typography": string, "color": string, "lighting": string, "photography": string, "materials": string, "atmosphere": string}, "references": string[], "reference_strategy": [{"reference_index": number começando em 1, "role": "auto"|"scene"|"subject"|"product"|"style"|"layout"|"logo"|"mask", "fidelity": "exact"|"high"|"interpretive", "instruction": string em inglês, "placement": "reference_only"|"in_scene"|"canvas_top_left"|"canvas_top_right"|"canvas_bottom_left"|"canvas_bottom_right"}], "real_world_fidelity": {"requires_reference": boolean, "entity_type": "product"|"brand"|"person"|"location"|"machine" (opcional), "entity_description": string (opcional, o que precisa ser fiel)}, "image_prompt": string (inglês, detalhado), "negative_prompt": string (inglês), "technical_specs": string, "production_requirements": string, "quality_criteria": [{"criterion": string, "description": string, "weight": number 0..1}], "delivery_format": string (opcional; o sistema já sabe o formato de entrega pelo tipo do pedido, deixe de fora se não tiver certeza)}`;
 
   const user = [
     input.clientContext ? `Contexto do cliente:\n${input.clientContext}` : null,
@@ -110,18 +110,27 @@ Formato:
 }
 
 /**
- * Planejamento de carrossel respeitando as leis do modus operandi canônico
- * (.agents/skills/carrossel-cinema-impossivel): 10 a 16 cards, hook na capa,
- * CTA emocional no último, desenvolvimento no meio. slideCount é clampado
- * pro intervalo canônico: pedir 5 cards não produz carrossel, produz peça
- * quebrada - melhor ajustar do que entregar fora da lei.
+ * Planejamento de carrossel: hook na capa, CTA emocional no último,
+ * desenvolvimento no meio.
+ *
+ * `slideCount` é a contagem que o CHAMADOR decidiu (pedido explícito do
+ * usuário, ou o default do produto Otto quando o pedido não diz) — esta
+ * função não impõe nenhum piso/teto próprio. Otto Senior V1, "Universal
+ * Quality Floor": esta função chegou a clampar TODO carrossel pro
+ * intervalo 10-16, uma lei canônica de um formato de produto específico e
+ * completamente isolado de Otto. Aplicar essa lei a QUALQUER cliente do
+ * Otto (SaaS, imobiliária, restaurante...) estava errado — Otto não tem, e
+ * não deve ter, nenhum acoplamento em tempo de execução com sistemas
+ * externos de terceiros. Um teto de sanidade (1-20) ainda protege contra
+ * valor patológico vindo de fora; a decisão de QUANTO pedir é do chamador.
  */
 export async function planCarousel(
   deps: PlannerDeps,
   plan: CreativePlan,
   slideCount = 10,
+  opts: { revisionNote?: string; strategyBriefing?: string } = {},
 ): Promise<CarouselPlan> {
-  const count = Math.min(16, Math.max(10, Math.round(slideCount)));
+  const count = Math.min(20, Math.max(1, Math.round(slideCount)));
 
   const system = `${CREATIVE_DIRECTOR_PREAMBLE}
 
@@ -137,7 +146,17 @@ Leis do carrossel (inegociáveis):
 Gere exatamente ${count} slides com estas chaves:
 {"concept": string, "render_mode": "editorial"|"photographic", "slide_count": ${count}, "slides": [{"index": number (1..${count}), "narrative_function": "hook"|"context"|"development"|"value"|"cta", "objective": string, "copy": string, "visual": string, "composition": string, "layout": string, "image_prompt": string}]}`;
 
-  const user = `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`;
+  const user = [
+    `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`,
+    opts.strategyBriefing ?? '',
+    // Mesmo raciocínio de planVideo: sem isto, a reescrita regenerava o
+    // carrossel do zero sem saber o que a avaliação anterior reprovou.
+    opts.revisionNote
+      ? `REVISÃO OBRIGATÓRIA (o carrossel anterior falhou nesta avaliação; corrija, não regenere às cegas):\n${opts.revisionNote}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   deps.logger?.info({ slideCount: count }, 'otto: planejando carrossel');
   return deps.llm.chatJson(
@@ -150,11 +169,48 @@ Gere exatamente ${count} slides com estas chaves:
   );
 }
 
+/**
+ * REEL EXECUTION ENGINE (Otto Elite, missão de fechamento "Reel Execution
+ * Engine Closure"): este prompt é a camada de INTELIGÊNCIA DE FORMATO
+ * específica de vídeo curto — não um storyboard genérico de "cena com
+ * câmera e luz". Achado ao vivo, repetido em DOIS modelos diferentes
+ * (qwen3.5:4b local E qwen2.5:14b na GPU): mesmo com o schema certo, os
+ * dois produziram cenas estáticas de 5s mecânicos, "Visual: None" em cenas
+ * de tipografia, e câmera repetida sem variação — o gargalo não era o
+ * tamanho do modelo, era faltar ESTA camada de raciocínio específica de
+ * Reels antes de escrever a cena. O schema (videoSceneSchema) não ganhou
+ * campos novos de propósito — todo o raciocínio abaixo (papel de retenção,
+ * variedade de câmera, ritmo de duração) se expressa nos MESMOS campos que
+ * já existiam (camera_movement, subject_movement, transition, duration),
+ * só que com conteúdo de verdade em vez de placeholder.
+ */
+const REEL_EXECUTION_ENGINE = `RACIOCÍNIO DE REEL (pense nisto ANTES de escrever cada cena, mas só preencha os campos do schema — não crie campos novos):
+
+PAPEL DE RETENÇÃO por cena (não é campo do schema, é como você decide o que a cena faz): a primeira cena existe pra PARAR o scroll (ação/enquadramento/contraste que justifica parar — nunca confie só na locução pros primeiros 2 segundos); as do meio ORIENTAM, DESENVOLVEM ou trazem uma QUEBRA DE PADRÃO (mudança de enquadramento, ritmo ou energia visual — reels sem NENHUMA quebra viram 6 fotos com voz por cima, o teste que reprova PLATFORM_FIT); a(s) última(s) fecham a PROMESSA e levam ao CTA. Nem toda cena precisa de um papel especial, mas a sequência como um todo precisa mostrar essa curva — não energia constante do início ao fim.
+
+CÂMERA (camera_movement) é vocabulário de direção real, não "estático" repetido: push-in, pull-back, tracking, handheld, POV, over-the-shoulder, macro, pan, tilt, rack focus, whip, ou plano travado (locked) QUANDO for a escolha certa pra aquela cena — nunca o padrão default de todas. Toda decisão de câmera serve a atenção, emoção, clareza ou transição da cena; não enumere termos de câmera por enumerar.
+
+AÇÃO DO SUJEITO (subject_movement) precisa responder "o que está de fato acontecendo" — não "família feliz na sala", e sim algo como "o casal entra pela porta enquanto a câmera acompanha lateralmente; os dois param um instante e olham o ambiente". Curto e genérico demais não é executável.
+
+CENA SÓ DE TIPOGRAFIA é permitida, mas NUNCA "Visual: None" ou vazio — descreva fundo, composição do texto, entrada/saída (escala, wipe, corte no beat), como se fosse uma cena normal, só que sem sujeito humano.
+
+TRANSIÇÃO (transition) tem que dizer o QUÊ, não só que existe: corte seco, corte no movimento (ex.: "corte no movimento da mão abrindo a porta"), match cut, corte por som, wipe — nunca só "transição dinâmica" sem dizer qual.
+
+RITMO DE DURAÇÃO (duration_seconds): NÃO repita o mesmo número em todas as cenas por padrão (5s, 5s, 5s, 5s é ritmo mecânico, não editorial) — derive a duração do que cabe na cena: fala mais longa, ação mais complexa ou papel de retenção mais importante pedem mais tempo; um beat de texto ou corte rápido pode ser 1-2s. Varie de propósito.
+
+TESTE DO EDITOR: se um editor recebesse só isto amanhã, ele precisa saber o que filmar, o que se move, que enquadramento, o que muda, que texto aparece, o que é dito e quando cortar — pra CADA cena, sem precisar perguntar.`;
+
 /** Planejamento de vídeo/reels: cena a cena com direção de câmera e ritmo. */
-export async function planVideo(deps: PlannerDeps, plan: CreativePlan): Promise<VideoPlan> {
+export async function planVideo(
+  deps: PlannerDeps,
+  plan: CreativePlan,
+  opts: { revisionNote?: string; strategyBriefing?: string } = {},
+): Promise<VideoPlan> {
   const system = `${CREATIVE_DIRECTOR_PREAMBLE}
 
 Você está planejando um vídeo/reels a partir de um plano criativo aprovado. Cada cena tem direção de câmera, movimento de sujeito, ambiente, luz, transição e ritmo - um storyboard em JSON, não um prompt único.
+
+${REEL_EXECUTION_ENGINE}
 
 Padrão de produção: editorial publicitário com detalhe fotográfico, não slideshow genérico.
 - Planeje takes de 1 a 5 segundos, no máximo 16. A soma das durações deve ser duration.
@@ -164,11 +220,30 @@ Padrão de produção: editorial publicitário com detalhe fotográfico, não sl
 - Preserve poros, cabelo/pelos, trama dos tecidos, reflexos e sombras de contato; não invente peças, identidade, logo ou modelo de produto. Referências reais têm prioridade sobre imaginação.
 - Textos e logos exatos pertencem à composição gráfica, não peça ao gerador de vídeo para redesenhá-los. Não afirme que houve aprovação visual automática.
 - Cuts são cortes de montagem entre takes. sound_direction descreve ambiente/SFX; trilha contínua, locução e tipografia exigem finalização separada.
+- SE o briefing pede um vídeo INFORMATIVO — alguém explicando algo, anunciando uma data, um processo, uma condição de atendimento, e não só um b-roll mudo — preencha spoken_line em CADA cena com a fala exata daquele take, em português, na ordem em que vai ser gravada/locutada. Sem spoken_line, quem recebe o plano tem direção de câmera e nenhuma palavra do que dizer, e o roteiro não é executável. Preencha também on_screen_text quando aquela cena tiver texto próprio na tela (data, preço, condição), além do que já vai em text_overlays.
+- Se o vídeo for puramente visual (b-roll, produto sem locução), deixe spoken_line de fora — não invente fala que ninguém pediu.
 
 Gere com estas chaves:
-{"concept": string, "duration": number (segundos), "aspect_ratio": string (ex: "9:16"), "scenes": [{"duration_seconds": number, "image_prompt": string, "shot_type": "portrait"|"wide"|"detail"|"action"|"environment"|"closing", "continuity": string, "camera_movement": string, "subject_movement": string, "environment": string, "lighting": string, "transition": string, "pacing": string}], "sound_direction": string, "text_overlays": string[], "cta": string, "generation_prompts": string[] (inglês, um por cena)}`;
+{"concept": string, "duration": number (segundos), "aspect_ratio": string (ex: "9:16"), "scenes": [{"duration_seconds": number, "image_prompt": string, "shot_type": "portrait"|"wide"|"detail"|"action"|"environment"|"closing", "continuity": string, "camera_movement": string, "subject_movement": string, "environment": string, "lighting": string, "transition": string, "pacing": string, "spoken_line": string (opcional, português), "on_screen_text": string (opcional, português)}], "sound_direction": string, "text_overlays": string[], "cta": string, "generation_prompts": string[] (inglês, um por cena)}`;
 
-  const user = `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`;
+  const user = [
+    `Plano criativo aprovado:\n\n${JSON.stringify(plan, null, 2)}`,
+    opts.strategyBriefing ?? '',
+    /**
+     * Otto Senior 20Y, achado ao vivo (segunda validação Cosentino): o loop
+     * de critic/reescrita mandava a nota de revisão só pra createCreativePlan
+     * — planVideo era chamado de novo, do zero, sem nenhuma ideia do que a
+     * revisão pedia. Resultado medido: a fala (spoken_line) sumia de cenas
+     * que já a tinham, e o gate de completude derrubava o entregável de novo
+     * por "roteiro" ausente — a mesma falha se repetindo porque o segundo
+     * passo do pipeline nunca soube que havia uma falha pra corrigir.
+     */
+    opts.revisionNote
+      ? `REVISÃO OBRIGATÓRIA (o storyboard anterior falhou nesta avaliação; corrija, não regenere às cegas):\n${opts.revisionNote}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   deps.logger?.info('otto: planejando vídeo');
   return deps.llm.chatJson(
@@ -200,7 +275,7 @@ export function buildImagePrompt(plan: CreativePlan): string {
     `Materials and texture: ${ad.materials}`,
     `Atmosphere: ${ad.atmosphere}`,
     `Typography (if any text is rendered): ${ad.typography}`,
-    `Technical: ${plan.technical_specs}`,
+    ...(plan.technical_specs ? [`Technical: ${plan.technical_specs}`] : []),
     `Visual hierarchy follows the objective: ${plan.objective}`,
   ];
   if (plan.references.length > 0) {
@@ -220,6 +295,25 @@ export interface BuildProductionSpecOptions {
   aspectRatio?: string;
   metadata?: Record<string, unknown>;
   referenceAssets?: StudioReferenceAsset[];
+}
+
+/**
+ * `delivery_format` TYPE A (Otto Senior 20Y, Missão 2): jobType e aspect
+ * ratio já são conhecidos pelo CÓDIGO no momento de montar o spec — não faz
+ * sentido pedir pro modelo ser a fonte de verdade de um campo de
+ * roteamento do sistema, e um achado ao vivo (validação Cosentino) mostrou
+ * o modelo derrubando o turno inteiro por esquecer esse campo numa
+ * reescrita longa. Só usado quando o plano não trouxe um (ou trouxe vazio).
+ */
+function deriveDeliveryFormat(jobType: StudioJobType, aspectRatio: string): string {
+  const labels: Record<StudioJobType, string> = {
+    image: 'Imagem',
+    carousel: 'Carrossel',
+    video: 'Vídeo',
+    reels: 'Reels',
+    upscale: 'Upscale',
+  };
+  return `${labels[jobType]} ${aspectRatio}`;
 }
 
 function applyReferenceStrategy(plan: CreativePlan, assets: StudioReferenceAsset[]): StudioReferenceAsset[] {
@@ -292,10 +386,18 @@ function buildCreativeSpec(
 /**
  * Não BLOQUEIA a geração: um plano de LLM tem falso positivo/negativo
  * demais pra travar o pipeline inteiro numa aposta binária. Em vez disso,
- * anexa um aviso explícito (metadata.fidelity_warning) que a resposta do
- * Otto no chat e o job do Studio carregam adiante, pra pessoa saber que está
- * recebendo um conceito fictício em vez de fingir uma fidelidade que a
- * geração sem referência não consegue entregar.
+ * anexa um aviso (metadata.fidelity_warning, dado de produção de verdade)
+ * que a resposta do Otto no chat e o job do Studio carregam adiante, pra
+ * pessoa saber que está recebendo um conceito fictício em vez de fingir uma
+ * fidelidade que a geração sem referência não consegue entregar.
+ *
+ * Otto Elite, Blocker 5: a versão anterior deste texto era um parágrafo
+ * técnico completo ("Atenção: este briefing pede para representar... anexe
+ * uma foto de referência se a fidelidade ao real importar aqui") que virava
+ * a PRIMEIRA COISA que a pessoa lia na resposta — dominando um pedido de
+ * conteúdo normal com um aviso técnico longo antes de qualquer criação
+ * aparecer. Curto e no fim, não em cima: é dado de produção, não a
+ * manchete da entrega.
  */
 export function checkRealWorldFidelity(
   plan: CreativePlan,
@@ -306,7 +408,7 @@ export function checkRealWorldFidelity(
   const hasFaithfulReference = referenceAssets.some((asset) => asset.fidelity === 'exact' || asset.fidelity === 'high');
   if (hasFaithfulReference) return null;
   const entity = fidelity.entity_description?.trim() || `${fidelity.entity_type ?? 'elemento'} real mencionado no briefing`;
-  return `Atenção: este briefing pede para representar ${entity}, mas nenhuma referência de imagem fiel foi anexada. O resultado será um conceito visual fictício (aproximado, não o original) - anexe uma foto de referência se a fidelidade ao real importar aqui.`;
+  return `Nota de produção: sem referência de imagem fiel de ${entity} — o visual é aproximado, não o real.`;
 }
 
 /**
@@ -341,8 +443,8 @@ export function buildProductionSpec(
     metadata: {
       objective: plan.objective,
       concept: plan.concept,
-      delivery_format: plan.delivery_format,
-      production_requirements: plan.production_requirements,
+      delivery_format: plan.delivery_format ?? deriveDeliveryFormat(jobType, aspectRatio),
+      ...(plan.production_requirements ? { production_requirements: plan.production_requirements } : {}),
       creative_spec: creativeSpec,
       ...(opts.carouselPlan ? { carousel_plan: opts.carouselPlan } : {}),
       ...(opts.carouselPlan?.render_mode === 'photographic' ? { design: 'photographic' } : {}),

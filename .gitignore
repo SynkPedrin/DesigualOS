@@ -96,3 +96,8 @@ artifacts/
 # Pacote de sync do checkout pra outra máquina (script de deploy manual);
 # artefato binário grande, nunca código.
 .desigualos-src-sync.tgz
+
+# Resultados de runs ao vivo do golden set (Otto Senior 20Y) - saída local
+# de dev, nunca artefato de build nem dado de cliente real (fixtures são
+# fictícias), mas não precisa virar histórico de commits.
+nodes/otto-node/scripts/.golden-results/
