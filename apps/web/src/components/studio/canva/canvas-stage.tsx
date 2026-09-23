@@ -92,6 +92,31 @@ export function CanvasStage({
     setViewport(centerViewport(zoom, container, { width: documentWidth, height: documentHeight }));
   }, [zoom, documentWidth, documentHeight, tamanhoContainer]);
 
+  /**
+   * O efeito acima só recentra quando o ZOOM muda - e quando a pessoa já
+   * escolheu um zoom manualmente (topbar/atalho), o auto-fit do editor
+   * (use-canva-editor.ts) para de mexer no zoom em resize. Se o container
+   * encolhe depois disso (janela redimensionada, layout assentando depois de
+   * fonte/imagem carregar, sidebar reabrindo painel), o pan antigo passa a
+   * apontar pra fora da área visível e a artboard fica parcialmente
+   * inalcançável atrás do `overflow-hidden` do container - sem centralizar de
+   * novo (isso desfaria o zoom escolhido), só reancorando pan pra dentro dos
+   * limites de `clampPan`.
+   */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width <= 0 || height <= 0) return;
+      setViewport((v) => clampPan(v, { width, height }, { width: documentWidth, height: documentHeight }));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [containerRef, documentWidth, documentHeight]);
+
   function handleWheel(event: React.WheelEvent) {
     // ctrl/meta + roda é também como o macOS entrega o pinch do trackpad.
     if (!event.ctrlKey && !event.metaKey) return;
