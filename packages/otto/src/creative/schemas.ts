@@ -22,6 +22,7 @@ import {
  */
 const referencesField = z.preprocess((value) => {
   if (Array.isArray(value)) return value;
+  if (value === null) return [];
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (trimmed.length === 0 || /^(nenhuma?|none|n\/a|sem referências?)$/i.test(trimmed)) return [];
@@ -31,18 +32,23 @@ const referencesField = z.preprocess((value) => {
 }, z.array(z.string()).default([]));
 
 // ---------------------------------------------------------------------------
-// SCHEMA RESILIENCE TOOLKIT (Otto Senior 20Y, Missão 1-3).
+// SCHEMA RESILIENCE TOOLKIT (Otto Senior 20Y, Missão 1-3, 19).
 //
-// Três achados ao vivo, mesma causa raiz: qwen3.5:4b, ao decidir que um
-// campo OPCIONAL não se aplica, não omite a chave — ele manda "" (string
-// vazia) ou um número fora do range esperado. z.optional() trata isso como
-// PRESENTE E INVÁLIDO, não como ausente, e como chatJson só corrige uma vez
-// (ollama-provider.ts), um campo que existe pra ser opcional derrubava o
-// turno inteiro (achados reais: spoken_line/on_screen_text "" — 252s
-// perdidos; duration_seconds fora de [1,5] — 293s perdidos).
+// Achados ao vivo, mesma causa raiz repetida em formatos diferentes:
+// qwen3.5:4b, ao decidir que um campo OPCIONAL não se aplica, não omite a
+// chave — manda "" (string vazia), `null` (JSON explícito), ou um número
+// fora do range esperado. z.optional() só aceita `undefined` como "ausente"
+// — `""` e `null` contam como PRESENTE E INVÁLIDO — e como chatJson só
+// corrige uma vez (ollama-provider.ts), um campo que existe pra ser
+// opcional derrubava o turno inteiro (achados reais: spoken_line/
+// on_screen_text "" — 252s perdidos; duration_seconds fora de [1,5] — 293s
+// perdidos; real_world_fidelity.entity_type: null — mais uma rodada
+// perdida). Corrigir "" e não `null` é resolver a instância, não a classe
+// (Missão 19) — `isBlank()` cobre as DUAS representações de "nada" de uma
+// vez.
 //
 // Classificação (Missão 1): isto só vale pra campos TYPE B (opcionais, onde
-// omissão é semanticamente equivalente a "" vazio). NUNCA aplicar este
+// omissão é semanticamente equivalente a vazio/null). NUNCA aplicar este
 // padrão a TYPE C (conteúdo semântico obrigatório: roteiro, headline,
 // conceito) nem deixar um valor NÃO VAZIO E INVÁLIDO ("banana" num enum de
 // 5 opções) escapar da validação normal — esse caso continua caindo no
@@ -50,42 +56,45 @@ const referencesField = z.preprocess((value) => {
 // não ruído de representação.
 // ---------------------------------------------------------------------------
 
-/**
- * String opcional que TOLERA "" como "ausente".
- */
-const optionalString = () =>
-  z.preprocess(
-    (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
-    z.string().min(1).optional(),
-  );
+/** "" (string vazia/só espaço) ou `null` — as duas formas que um campo opcional "sem valor" toma quando o modelo não omite a chave. */
+function isBlank(value: unknown): boolean {
+  return value === null || (typeof value === 'string' && value.trim().length === 0);
+}
 
 /**
- * Enum opcional (ou com default) que TOLERA "" como "ausente" — "" vira
- * undefined ANTES da validação, então cai no .optional()/.default() em vez
- * de estourar "invalid_enum_value". Um valor não-vazio que não bate com
- * NENHUMA opção continua inválido: não é convertido pra undefined (isso
- * esconderia um erro semântico real do modelo), só passa reto pro enum
- * rejeitar normalmente e acionar a correção existente do chatJson.
+ * String opcional que TOLERA "" ou `null` como "ausente".
+ */
+const optionalString = () =>
+  z.preprocess((value) => (isBlank(value) ? undefined : value), z.string().min(1).optional());
+
+/**
+ * Enum opcional (ou com default) que TOLERA "" ou `null` como "ausente" —
+ * vira undefined ANTES da validação, então cai no .optional()/.default() em
+ * vez de estourar "invalid_enum_value"/"invalid_type". Um valor não-vazio
+ * que não bate com NENHUMA opção continua inválido: não é convertido pra
+ * undefined (isso esconderia um erro semântico real do modelo), só passa
+ * reto pro enum rejeitar normalmente e acionar a correção existente do
+ * chatJson.
  */
 const normalizedEnum = <T extends readonly [string, ...string[]]>(values: T, opts: { default?: T[number] } = {}) => {
   const base = opts.default !== undefined ? z.enum(values).default(opts.default) : z.enum(values).optional();
-  return z.preprocess(
-    (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
-    base,
-  );
+  return z.preprocess((value) => (isBlank(value) ? undefined : value), base);
 };
 
 /**
- * Número opcional CLAMPADO em vez de rejeitado quando fora de [min,max].
+ * Número opcional CLAMPADO em vez de rejeitado quando fora de [min,max];
+ * `null`/vazio TOLERADO como "ausente" (mesma classe dos dois helpers acima).
  *
  * Regra 25-26 (Otto Senior V1.0): ruído representacional inofensivo (um
  * valor de TIMING/medida interno fora do range, não um fato de
  * cliente/data/oferta) é normalizado, não descartado — um FINITO fora do
- * range é clampado pro limite mais próximo. Um valor NÃO numérico (string,
- * null, NaN) continua caindo no erro de schema normal.
+ * range é clampado pro limite mais próximo. Um valor NÃO numérico (string
+ * não-vazia, NaN) continua caindo no erro de schema normal — não é ruído de
+ * representação, é o campo errado de verdade.
  */
 const clampedNumber = (min: number, max: number) =>
   z.preprocess((value) => {
+    if (isBlank(value)) return undefined;
     if (typeof value === 'number' && Number.isFinite(value)) {
       return Math.min(max, Math.max(min, value));
     }

@@ -75,3 +75,8 @@ Brain-Marketing/brain-desigual-ia-labs.md
 .tools/
 Claude outputs/
 vault-clientes/
+
+# Resultados de runs ao vivo do golden set (Otto Senior 20Y) - saída local
+# de dev, nunca artefato de build nem dado de cliente real (fixtures são
+# fictícias), mas não precisa virar histórico de commits.
+nodes/otto-node/scripts/.golden-results/

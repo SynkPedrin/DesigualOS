@@ -84,6 +84,19 @@ describe('creativePlanSchema', () => {
     if (result.success) expect(result.data.entity_type).toBeUndefined();
   });
 
+  /**
+   * REGRESSÃO REAL: segunda validação ao vivo do caso Cosentino (Otto
+   * Senior 20Y, após os fixes de Missão 1-7) — desta vez o modelo mandou
+   * `null` explícito em vez de "", e o fix anterior (só tratava "") não
+   * cobria essa forma. Mesma classe (Missão 19: fix classes, não
+   * instâncias) — agora `null` também conta como ausente.
+   */
+  it('real_world_fidelity.entity_type: null é tratado como ausente (mesma classe do bug de "", forma diferente)', () => {
+    const result = realWorldFidelitySchema.safeParse({ requires_reference: true, entity_type: null, entity_description: 'a fachada real' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entity_type).toBeUndefined();
+  });
+
   it('real_world_fidelity.entity_type: valor não-vazio e inválido continua sendo erro real (não vira undefined silenciosamente)', () => {
     const result = realWorldFidelitySchema.safeParse({ requires_reference: true, entity_type: 'banana' });
     expect(result.success).toBe(false);
@@ -113,6 +126,12 @@ describe('creativePlanSchema', () => {
     const referenciaReal = creativePlanSchema.safeParse({ ...validPlan, references: 'campanha anterior do cliente' });
     expect(referenciaReal.success).toBe(true);
     if (referenciaReal.success) expect(referenciaReal.data.references).toEqual(['campanha anterior do cliente']);
+  });
+
+  it('tolera references vindo como null (mesma classe, forma diferente)', () => {
+    const result = creativePlanSchema.safeParse({ ...validPlan, references: null });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.references).toEqual([]);
   });
 });
 
@@ -311,6 +330,16 @@ describe('videoPlanSchema', () => {
     expect(result.data.scenes[0]!.duration_seconds).toBe(5); // 6 clampado pro teto
     expect(result.data.scenes[1]!.duration_seconds).toBe(1); // 0.2 clampado pro piso
     expect(result.data.duration).toBe(6); // duration derivada da SOMA JÁ CLAMPADA (5+1)
+  });
+
+  it('duration_seconds: null é tratado como ausente (mesma classe, forma diferente)', () => {
+    const result = videoPlanSchema.safeParse({
+      concept: 'X', duration: 5, aspect_ratio: '9:16',
+      scenes: [{ camera_movement: 'a', subject_movement: 'a', environment: 'a', lighting: 'a', transition: 'a', pacing: 'a', duration_seconds: null }],
+      sound_direction: 'x', text_overlays: [], cta: 'x', generation_prompts: ['x'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.scenes[0]!.duration_seconds).toBeUndefined();
   });
 
   it('valor não numérico continua sendo erro de verdade (não é ruído de representação)', () => {
