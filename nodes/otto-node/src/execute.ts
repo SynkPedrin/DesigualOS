@@ -842,6 +842,19 @@ export async function executeTask(
     let criticEvaluation: Awaited<ReturnType<typeof critiqueDeliverable>> | null = null;
     let criticGate: ReturnType<typeof passesCriticGate> | null = null;
     let criticRewrites = 0;
+    /**
+     * INVARIANTE ABSOLUTO (Otto Senior 20Y, Missão 4-5): nenhuma falha de
+     * ESTÁGIO DE MELHORIA (critic, reescrita) pode destruir um artefato já
+     * válido. `result` só é sobrescrita quando um produce() novo TERMINA COM
+     * SUCESSO; se o critic ou a reescrita lançarem exceção, o loop para e o
+     * QUE JÁ EXISTE (draft ou última reescrita bem-sucedida) é o que volta
+     * pro usuário — nunca null, nunca erro cru. Achado ao vivo que motivou
+     * isto: REWRITE #1 quebrou em schema (delivery_format sumiu,
+     * entity_type=""), e o turno inteiro morreu depois de 431s mesmo com um
+     * DRAFT_V1 válido já em mãos.
+     */
+    let pipelineDegraded = false;
+    let degradedReason: string | null = null;
 
     async function critique() {
       const evaluation = await measureLlm(() =>
@@ -863,26 +876,62 @@ export async function executeTask(
     }
 
     if (criticHabilitado) {
-      ({ evaluation: criticEvaluation, gate: criticGate } = await critique());
-
-      while (!criticGate.passed && criticRewrites < MAX_REWRITES) {
-        const revisionNote = formatCriticRevisionNote(criticEvaluation, criticGate);
-        const augmentedMessage = `${request.message}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
-        result = await produce(augmentedMessage);
-        criticRewrites += 1;
+      try {
         ({ evaluation: criticEvaluation, gate: criticGate } = await critique());
+      } catch (criticError) {
+        // CRITIC FAILS -> keep draft, do NOT destroy turn (regra do fechamento).
+        pipelineDegraded = true;
+        degradedReason = `critic #1 falhou: ${criticError instanceof Error ? criticError.message : String(criticError)}`;
+        logger.warn({ execution_id: request.execution_id, error: degradedReason }, '[OTTO:critic] avaliação inicial falhou — mantendo draft');
+      }
+
+      while (criticGate && !criticGate.passed && !pipelineDegraded && criticRewrites < MAX_REWRITES) {
+        const revisionNote = formatCriticRevisionNote(criticEvaluation!, criticGate);
+        const augmentedMessage = `${request.message}\n\nREVISÃO DO CRITIC OBRIGATÓRIA (tentativa ${criticRewrites + 1}):\n${revisionNote}`;
+        const attemptNumber = criticRewrites + 1;
+
+        let rewritten: Awaited<ReturnType<typeof produce>>;
+        try {
+          rewritten = await produce(augmentedMessage);
+        } catch (rewriteError) {
+          // REWRITE FAILS -> keep previous valid version, do NOT destroy turn.
+          pipelineDegraded = true;
+          degradedReason = `reescrita #${attemptNumber} falhou: ${rewriteError instanceof Error ? rewriteError.message : String(rewriteError)}`;
+          logger.warn(
+            { execution_id: request.execution_id, error: degradedReason },
+            '[OTTO:critic] reescrita falhou — mantendo última versão válida',
+          );
+          break;
+        }
+        result = rewritten; // só sobrescreve DEPOIS de produce() terminar com sucesso
+        criticRewrites = attemptNumber;
+
+        try {
+          ({ evaluation: criticEvaluation, gate: criticGate } = await critique());
+        } catch (criticError) {
+          // SECOND CRITIC FAILS -> keep latest valid version.
+          pipelineDegraded = true;
+          degradedReason = `critic #${attemptNumber + 1} falhou: ${criticError instanceof Error ? criticError.message : String(criticError)}`;
+          logger.warn(
+            { execution_id: request.execution_id, error: degradedReason },
+            '[OTTO:critic] reavaliação falhou — mantendo última versão válida',
+          );
+          break;
+        }
       }
     }
 
     /**
      * ESTADO FINAL DE QUALIDADE (regra 19): nunca chamar "elite" um trabalho
-     * que não passou. Job types sem critic (image/upscale) não têm veredito
-     * de qualidade textual — ficam como "not_evaluated", nem elite nem draft,
-     * porque a pergunta não se aplica a eles.
+     * que não passou — e um pipeline degradado (qualquer estágio de melhoria
+     * que falhou) NUNCA pode ser "elite", mesmo que a última avaliação
+     * disponível tivesse passado. Job types sem critic (image/upscale) não
+     * têm veredito de qualidade textual — ficam "not_evaluated".
      */
-    const qualityTier = !criticHabilitado ? 'not_evaluated' : criticGate?.passed ? 'elite' : 'draft';
-    const elitePassed = criticHabilitado ? (criticGate?.passed ?? false) : null;
-    const requiresHumanReview = criticHabilitado ? !(criticGate?.passed ?? false) : false;
+    const criticPassedFinal = !pipelineDegraded && (criticGate?.passed ?? false);
+    const qualityTier = !criticHabilitado ? 'not_evaluated' : criticPassedFinal ? 'elite' : 'draft';
+    const elitePassed = criticHabilitado ? criticPassedFinal : null;
+    const requiresHumanReview = criticHabilitado ? !criticPassedFinal : false;
 
     const { pipeline, plan, carouselPlan, videoPlan, spec, answer } = result;
 
@@ -914,14 +963,13 @@ export async function executeTask(
       ...(carouselPlan ? { carousel_plan: carouselPlan } : {}),
       ...(videoPlan ? { video_plan: videoPlan } : {}),
       production_spec: spec,
-      ...(criticEvaluation && criticGate
+      ...(criticHabilitado
         ? {
             critic: {
               enabled: true,
-              evaluation: criticEvaluation,
-              overall: criticGate.overall,
-              passed: criticGate.passed,
-              reasons: criticGate.reasons,
+              ...(criticEvaluation && criticGate
+                ? { evaluation: criticEvaluation, overall: criticGate.overall, passed: criticGate.passed, reasons: criticGate.reasons }
+                : {}),
               rewrites: criticRewrites,
               max_rewrites: MAX_REWRITES,
             },
@@ -933,6 +981,11 @@ export async function executeTask(
       quality_tier: qualityTier,
       elite_passed: elitePassed,
       requires_human_review: requiresHumanReview,
+      // Missão 4-5 (Otto Senior 20Y): visível pra auditoria sempre que um
+      // estágio de melhoria (critic ou reescrita) falhou e o turno seguiu
+      // com a última versão válida em vez de destruir o artefato.
+      quality_pipeline_degraded: pipelineDegraded,
+      ...(degradedReason ? { quality_pipeline_degraded_reason: degradedReason } : {}),
     };
     const timings: PhaseTimings = {
       classify_ms: classifyMs,

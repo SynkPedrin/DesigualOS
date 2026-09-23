@@ -31,6 +31,68 @@ const referencesField = z.preprocess((value) => {
 }, z.array(z.string()).default([]));
 
 // ---------------------------------------------------------------------------
+// SCHEMA RESILIENCE TOOLKIT (Otto Senior 20Y, Missão 1-3).
+//
+// Três achados ao vivo, mesma causa raiz: qwen3.5:4b, ao decidir que um
+// campo OPCIONAL não se aplica, não omite a chave — ele manda "" (string
+// vazia) ou um número fora do range esperado. z.optional() trata isso como
+// PRESENTE E INVÁLIDO, não como ausente, e como chatJson só corrige uma vez
+// (ollama-provider.ts), um campo que existe pra ser opcional derrubava o
+// turno inteiro (achados reais: spoken_line/on_screen_text "" — 252s
+// perdidos; duration_seconds fora de [1,5] — 293s perdidos).
+//
+// Classificação (Missão 1): isto só vale pra campos TYPE B (opcionais, onde
+// omissão é semanticamente equivalente a "" vazio). NUNCA aplicar este
+// padrão a TYPE C (conteúdo semântico obrigatório: roteiro, headline,
+// conceito) nem deixar um valor NÃO VAZIO E INVÁLIDO ("banana" num enum de
+// 5 opções) escapar da validação normal — esse caso continua caindo no
+// caminho de correção existente do chatJson, porque é um erro de verdade,
+// não ruído de representação.
+// ---------------------------------------------------------------------------
+
+/**
+ * String opcional que TOLERA "" como "ausente".
+ */
+const optionalString = () =>
+  z.preprocess(
+    (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
+    z.string().min(1).optional(),
+  );
+
+/**
+ * Enum opcional (ou com default) que TOLERA "" como "ausente" — "" vira
+ * undefined ANTES da validação, então cai no .optional()/.default() em vez
+ * de estourar "invalid_enum_value". Um valor não-vazio que não bate com
+ * NENHUMA opção continua inválido: não é convertido pra undefined (isso
+ * esconderia um erro semântico real do modelo), só passa reto pro enum
+ * rejeitar normalmente e acionar a correção existente do chatJson.
+ */
+const normalizedEnum = <T extends readonly [string, ...string[]]>(values: T, opts: { default?: T[number] } = {}) => {
+  const base = opts.default !== undefined ? z.enum(values).default(opts.default) : z.enum(values).optional();
+  return z.preprocess(
+    (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
+    base,
+  );
+};
+
+/**
+ * Número opcional CLAMPADO em vez de rejeitado quando fora de [min,max].
+ *
+ * Regra 25-26 (Otto Senior V1.0): ruído representacional inofensivo (um
+ * valor de TIMING/medida interno fora do range, não um fato de
+ * cliente/data/oferta) é normalizado, não descartado — um FINITO fora do
+ * range é clampado pro limite mais próximo. Um valor NÃO numérico (string,
+ * null, NaN) continua caindo no erro de schema normal.
+ */
+const clampedNumber = (min: number, max: number) =>
+  z.preprocess((value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.min(max, Math.max(min, value));
+    }
+    return value;
+  }, z.number().min(min).max(max).optional());
+
+// ---------------------------------------------------------------------------
 // Direção de arte: o bloco que impede prompt genérico. Cada campo é uma
 // decisão que um diretor de arte humano tomaria antes de abrir o Midjourney.
 // ---------------------------------------------------------------------------
@@ -54,9 +116,9 @@ export const qualityCriteriaSchema = z.object({
 export const referenceStrategySchema = z.object({
   reference_index: z.number().int().min(1),
   role: z.enum(STUDIO_REFERENCE_ROLES),
-  fidelity: z.enum(STUDIO_REFERENCE_FIDELITY).default('high'),
+  fidelity: normalizedEnum(STUDIO_REFERENCE_FIDELITY, { default: 'high' }),
   instruction: z.string().min(1),
-  placement: z.enum(STUDIO_BRAND_PLACEMENTS).default('reference_only'),
+  placement: normalizedEnum(STUDIO_BRAND_PLACEMENTS, { default: 'reference_only' }),
 });
 
 /**
@@ -70,13 +132,13 @@ export const referenceStrategySchema = z.object({
  */
 export const realWorldFidelitySchema = z.object({
   requires_reference: z.boolean().default(false),
-  entity_type: z.enum(['product', 'brand', 'person', 'location', 'machine']).optional(),
-  entity_description: z.string().optional(),
+  entity_type: normalizedEnum(['product', 'brand', 'person', 'location', 'machine']),
+  entity_description: optionalString(),
 });
 
 export const creativePlanSchema = z.object({
   client: z.string().min(1),
-  project: z.string().optional(),
+  project: optionalString(),
   objective: z.string().min(1),
   audience: z.string().min(1),
   strategy: z.string().min(1),
@@ -92,7 +154,19 @@ export const creativePlanSchema = z.object({
   technical_specs: z.string().min(1),
   production_requirements: z.string().min(1),
   quality_criteria: z.array(qualityCriteriaSchema).min(1),
-  delivery_format: z.string().min(1),
+  /**
+   * TYPE A (Missão 2): `delivery_format` é derivável de jobType + aspect
+   * ratio, que o CÓDIGO já sabe no momento de montar a produção
+   * (buildProductionSpec recebe jobType/aspectRatio como parâmetros). Pedir
+   * pro modelo ser a fonte de verdade de um campo de ROTEAMENTO do sistema
+   * — especialmente durante uma reescrita longa, com o contrato do critic
+   * anexado ao prompt — é pedir pra ele lembrar de um dado que ele não
+   * deveria precisar carregar. Achado ao vivo (validação Cosentino,
+   * REWRITE #1): o campo sumiu inteiro do JSON de reescrita e derrubou o
+   * turno inteiro. Agora é opcional aqui; buildProductionSpec (planner.ts)
+   * deriva um valor determinístico quando ausente.
+   */
+  delivery_format: optionalString(),
 });
 
 // ---------------------------------------------------------------------------
@@ -122,7 +196,7 @@ export const carouselSlideSchema = z.object({
 
 export const carouselPlanSchema = z.object({
   concept: z.string().min(1),
-  render_mode: z.enum(['editorial', 'photographic']).default('editorial'),
+  render_mode: normalizedEnum(['editorial', 'photographic'], { default: 'editorial' }),
   // Lei do modus operandi: carrossel é 10 a 16 cards 1080x1350.
   slide_count: z.number().int().min(1).max(16),
   slides: z.array(carouselSlideSchema).min(1),
@@ -135,52 +209,10 @@ export const carouselPlanSchema = z.object({
 // Vídeo/reels: cena a cena com direção de câmera e ritmo, não um "promptão".
 // ---------------------------------------------------------------------------
 
-/**
- * String opcional que TOLERA "" como "ausente".
- *
- * Medido ao vivo em 22/09/2026 (Otto Elite Phase 2, baseline real contra
- * qwen3.5:4b): pedido para o modelo "deixar de fora" um campo opcional
- * quando não se aplica não significa que ele omite a chave — ele manda
- * spoken_line: "" pra cena que não fala. z.string().min(1).optional() trata
- * "" como PRESENTE E INVÁLIDO (não como ausente), e como chatJson só tem UMA
- * tentativa de correção antes de desistir (ollama-provider.ts), isso derrubou
- * o turno inteiro depois de 252s — pior que o stub antigo, que pelo menos
- * respondia. O pipeline não pode ficar mais frágil por causa de um campo que
- * existe pra ser opcional.
- */
-const optionalString = () =>
-  z.preprocess(
-    (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
-    z.string().min(1).optional(),
-  );
-
-/**
- * Duração de cena CLAMPADA em vez de rejeitada quando fora de [1,5]s.
- *
- * Medido ao vivo em 22/09/2026 (Otto Elite — validação Cosentino): o modelo
- * mandou uma cena com duration_seconds > 5 (ex: 6s pra um beat que "pedia"
- * mais tempo), a correção única do chatJson não resolveu, e o turno inteiro
- * morreu depois de ~293s — por um valor de TIMING interno, não um fato
- * (cliente, data, oferta). Isto é ruído representacional inofensivo (Otto
- * Senior V1.0, regra 25-26: "normalize deterministic non-semantic noise...
- * do not destroy a 3-minute creative generation because of a harmless
- * internal timing value"): um número FINITO fora do range é clampado pro
- * limite mais próximo, não descartado. Um valor NÃO numérico (string, null,
- * NaN) continua caindo no erro de schema normal — isso não é ruído de
- * representação, é o campo ausente ou errado de verdade.
- */
-const clampedSceneDuration = () =>
-  z.preprocess((value) => {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return Math.min(5, Math.max(1, value));
-    }
-    return value;
-  }, z.number().min(1).max(5).optional());
-
 export const videoSceneSchema = z.object({
-  duration_seconds: clampedSceneDuration(),
+  duration_seconds: clampedNumber(1, 5),
   image_prompt: optionalString(),
-  shot_type: z.enum(['portrait', 'wide', 'detail', 'action', 'environment', 'closing']).optional(),
+  shot_type: normalizedEnum(['portrait', 'wide', 'detail', 'action', 'environment', 'closing']),
   continuity: optionalString(),
   camera_movement: z.string().min(1),
   subject_movement: z.string().min(1),

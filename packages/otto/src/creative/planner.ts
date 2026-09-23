@@ -83,7 +83,7 @@ materiais, anatomia, local e preservações das referências. O gerador não dev
 precisar traduzir os outros campos para entender a direção.
 
 Formato:
-{"client": string, "project": string (opcional), "objective": string, "audience": string, "strategy": string, "concept": string, "narrative": string, "copy": string, "art_direction": {"composition": string, "typography": string, "color": string, "lighting": string, "photography": string, "materials": string, "atmosphere": string}, "references": string[], "reference_strategy": [{"reference_index": number começando em 1, "role": "auto"|"scene"|"subject"|"product"|"style"|"layout"|"logo"|"mask", "fidelity": "exact"|"high"|"interpretive", "instruction": string em inglês, "placement": "reference_only"|"in_scene"|"canvas_top_left"|"canvas_top_right"|"canvas_bottom_left"|"canvas_bottom_right"}], "real_world_fidelity": {"requires_reference": boolean, "entity_type": "product"|"brand"|"person"|"location"|"machine" (opcional), "entity_description": string (opcional, o que precisa ser fiel)}, "image_prompt": string (inglês, detalhado), "negative_prompt": string (inglês), "technical_specs": string, "production_requirements": string, "quality_criteria": [{"criterion": string, "description": string, "weight": number 0..1}], "delivery_format": string}`;
+{"client": string, "project": string (opcional), "objective": string, "audience": string, "strategy": string, "concept": string, "narrative": string, "copy": string, "art_direction": {"composition": string, "typography": string, "color": string, "lighting": string, "photography": string, "materials": string, "atmosphere": string}, "references": string[], "reference_strategy": [{"reference_index": number começando em 1, "role": "auto"|"scene"|"subject"|"product"|"style"|"layout"|"logo"|"mask", "fidelity": "exact"|"high"|"interpretive", "instruction": string em inglês, "placement": "reference_only"|"in_scene"|"canvas_top_left"|"canvas_top_right"|"canvas_bottom_left"|"canvas_bottom_right"}], "real_world_fidelity": {"requires_reference": boolean, "entity_type": "product"|"brand"|"person"|"location"|"machine" (opcional), "entity_description": string (opcional, o que precisa ser fiel)}, "image_prompt": string (inglês, detalhado), "negative_prompt": string (inglês), "technical_specs": string, "production_requirements": string, "quality_criteria": [{"criterion": string, "description": string, "weight": number 0..1}], "delivery_format": string (opcional; o sistema já sabe o formato de entrega pelo tipo do pedido, deixe de fora se não tiver certeza)}`;
 
   const user = [
     input.clientContext ? `Contexto do cliente:\n${input.clientContext}` : null,
@@ -224,6 +224,25 @@ export interface BuildProductionSpecOptions {
   referenceAssets?: StudioReferenceAsset[];
 }
 
+/**
+ * `delivery_format` TYPE A (Otto Senior 20Y, Missão 2): jobType e aspect
+ * ratio já são conhecidos pelo CÓDIGO no momento de montar o spec — não faz
+ * sentido pedir pro modelo ser a fonte de verdade de um campo de
+ * roteamento do sistema, e um achado ao vivo (validação Cosentino) mostrou
+ * o modelo derrubando o turno inteiro por esquecer esse campo numa
+ * reescrita longa. Só usado quando o plano não trouxe um (ou trouxe vazio).
+ */
+function deriveDeliveryFormat(jobType: StudioJobType, aspectRatio: string): string {
+  const labels: Record<StudioJobType, string> = {
+    image: 'Imagem',
+    carousel: 'Carrossel',
+    video: 'Vídeo',
+    reels: 'Reels',
+    upscale: 'Upscale',
+  };
+  return `${labels[jobType]} ${aspectRatio}`;
+}
+
 function applyReferenceStrategy(plan: CreativePlan, assets: StudioReferenceAsset[]): StudioReferenceAsset[] {
   return assets.slice(0, 10).map((asset, index) => {
     const strategy = plan.reference_strategy.find((item) => item.reference_index === index + 1);
@@ -343,7 +362,7 @@ export function buildProductionSpec(
     metadata: {
       objective: plan.objective,
       concept: plan.concept,
-      delivery_format: plan.delivery_format,
+      delivery_format: plan.delivery_format ?? deriveDeliveryFormat(jobType, aspectRatio),
       production_requirements: plan.production_requirements,
       creative_spec: creativeSpec,
       ...(opts.carouselPlan ? { carousel_plan: opts.carouselPlan } : {}),

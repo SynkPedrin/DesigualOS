@@ -1240,6 +1240,193 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
 
     await app.close();
   });
+
+  /**
+   * INVARIANTE ABSOLUTO (Otto Senior 20Y, Missão 4-5, Missão 24 — injeção
+   * de falha): nenhuma falha de ESTÁGIO DE MELHORIA pode destruir um
+   * artefato já válido. Achado ao vivo real: REWRITE #1 quebrou em schema
+   * (delivery_format sumiu) e o turno inteiro morreu com 431s perdidos,
+   * mesmo com um DRAFT_V1 válido em mãos. Estes quatro testes replicam cada
+   * ponto de falha do loop (critic #1, reescrita #1, critic #2, reescrita
+   * #2) via mock e confirmam: o usuário SEMPRE recebe a última versão
+   * válida, nunca null/erro cru, e NUNCA "elite" quando degradado.
+   */
+  describe('injeção de falha: nenhum estágio de melhoria pode destruir um artefato válido', () => {
+    it('critic #1 lança exceção -> mantém o DRAFT, nunca elite, degradado e visível na metadata', async () => {
+      const app = buildTestApp(
+        makeDeps(
+          {
+            chatJson: (schema) => {
+              if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+              if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+              return Promise.reject(new OttoLLMError('schema inesperado'));
+            },
+            critic: () => Promise.reject(new Error('Ollama caiu no meio do critic')),
+          },
+          brainDir,
+        ),
+      );
+
+      const { body } = await execute(app, { execution_id: 'exe-inj-critic1', message: 'Crie um carrossel pro cliente' });
+
+      expect(body.status).toBe('completed');
+      expect(body.answer).toContain('O forno como palco'); // o draft (creativePlanFixture) sobreviveu
+      expect(body.metadata.quality_tier).toBe('draft');
+      expect(body.metadata.elite_passed).toBe(false);
+      expect(body.metadata.requires_human_review).toBe(true);
+      expect(body.metadata.quality_pipeline_degraded).toBe(true);
+      expect(body.metadata.quality_pipeline_degraded_reason).toMatch(/critic #1 falhou/);
+      expect(body.metadata.critic).toMatchObject({ enabled: true, rewrites: 0 });
+
+      await app.close();
+    });
+
+    it('REWRITE #1 lança exceção (o achado real) -> mantém o DRAFT válido anterior, nunca destrói o turno', async () => {
+      let creativePlanCalls = 0;
+      const app = buildTestApp(
+        makeDeps(
+          {
+            chatJson: (schema) => {
+              creativePlanCalls += 1;
+              if (schema === creativePlanSchema) {
+                // Draft (1a chamada) é válido; REWRITE (2a chamada) quebra —
+                // exatamente o padrão observado ao vivo (delivery_format
+                // sumiu / entity_type="").
+                if (creativePlanCalls === 1) return Promise.resolve(creativePlanFixture);
+                return Promise.reject(new OttoLLMError('schema mismatch: delivery_format Required'));
+              }
+              if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+              return Promise.reject(new OttoLLMError('schema inesperado'));
+            },
+            critic: () =>
+              Promise.resolve({
+                scores: {
+                  strategy: 5, concept: 5, hook: 5, specificity: 5, originality: 5,
+                  brand_fit: 5, copy: 5, retention: 5, platform_fit: 5, executability: 5,
+                },
+                flags: {
+                  missing_deliverables: [], genericity: true, unsupported_claims: [],
+                  weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                  ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+                },
+                reasoning: 'fraco',
+              }),
+          },
+          brainDir,
+        ),
+      );
+
+      const { body } = await execute(app, { execution_id: 'exe-inj-rewrite1', message: 'Crie um carrossel pro cliente' });
+
+      expect(body.status).toBe('completed');
+      expect(body.answer).toContain('O forno como palco'); // o DRAFT original, não null
+      expect(body.metadata.quality_tier).toBe('draft');
+      expect(body.metadata.elite_passed).toBe(false);
+      expect(body.metadata.requires_human_review).toBe(true);
+      expect(body.metadata.quality_pipeline_degraded).toBe(true);
+      expect(body.metadata.quality_pipeline_degraded_reason).toMatch(/reescrita #1 falhou/);
+      expect(body.metadata.critic).toMatchObject({ enabled: true, rewrites: 0 }); // reescrita NUNCA contou como concluída
+
+      await app.close();
+    });
+
+    it('CRITIC #2 (pós-reescrita) lança exceção -> mantém a REESCRITA #1, que já é uma versão válida melhor que o draft', async () => {
+      let creativePlanCalls = 0;
+      let criticCalls = 0;
+      const app = buildTestApp(
+        makeDeps(
+          {
+            chatJson: (schema) => {
+              if (schema === creativePlanSchema) {
+                creativePlanCalls += 1;
+                return Promise.resolve(creativePlanFixture);
+              }
+              if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+              return Promise.reject(new OttoLLMError('schema inesperado'));
+            },
+            critic: () => {
+              criticCalls += 1;
+              if (criticCalls === 1) {
+                return Promise.resolve({
+                  scores: {
+                    strategy: 5, concept: 5, hook: 5, specificity: 5, originality: 5,
+                    brand_fit: 5, copy: 5, retention: 5, platform_fit: 5, executability: 5,
+                  },
+                  flags: {
+                    missing_deliverables: [], genericity: true, unsupported_claims: [],
+                    weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                    ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+                  },
+                  reasoning: 'fraco',
+                });
+              }
+              return Promise.reject(new Error('Ollama caiu na 2a avaliação'));
+            },
+          },
+          brainDir,
+        ),
+      );
+
+      const { body } = await execute(app, { execution_id: 'exe-inj-critic2', message: 'Crie um carrossel pro cliente' });
+
+      expect(body.status).toBe('completed');
+      expect(creativePlanCalls).toBe(2); // draft + UMA reescrita bem-sucedida
+      expect(body.metadata.quality_tier).toBe('draft');
+      expect(body.metadata.elite_passed).toBe(false);
+      expect(body.metadata.quality_pipeline_degraded).toBe(true);
+      expect(body.metadata.quality_pipeline_degraded_reason).toMatch(/critic #2 falhou/);
+      expect(body.metadata.critic).toMatchObject({ enabled: true, rewrites: 1 }); // a reescrita #1 CONTOU, pois terminou com sucesso
+
+      await app.close();
+    });
+
+    it('REWRITE #2 lança exceção -> mantém a REESCRITA #1 (última versão válida), não trava o turno', async () => {
+      let creativePlanCalls = 0;
+      const app = buildTestApp(
+        makeDeps(
+          {
+            chatJson: (schema) => {
+              if (schema === creativePlanSchema) {
+                creativePlanCalls += 1;
+                // Draft (1) e reescrita #1 (2) válidas; reescrita #2 (3) quebra.
+                if (creativePlanCalls <= 2) return Promise.resolve(creativePlanFixture);
+                return Promise.reject(new OttoLLMError('schema mismatch na 2a reescrita'));
+              }
+              if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+              return Promise.reject(new OttoLLMError('schema inesperado'));
+            },
+            // Critic reprova SEMPRE (nunca passa) -> força tentar as 2 reescritas.
+            critic: () =>
+              Promise.resolve({
+                scores: {
+                  strategy: 5, concept: 5, hook: 5, specificity: 5, originality: 5,
+                  brand_fit: 5, copy: 5, retention: 5, platform_fit: 5, executability: 5,
+                },
+                flags: {
+                  missing_deliverables: [], genericity: true, unsupported_claims: [],
+                  weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                  ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+                },
+                reasoning: 'fraco',
+              }),
+          },
+          brainDir,
+        ),
+      );
+
+      const { body } = await execute(app, { execution_id: 'exe-inj-rewrite2', message: 'Crie um carrossel pro cliente' });
+
+      expect(body.status).toBe('completed');
+      expect(body.answer).toContain('O forno como palco');
+      expect(creativePlanCalls).toBe(3); // draft + reescrita#1 (sucesso) + reescrita#2 (falhou)
+      expect(body.metadata.quality_tier).toBe('draft');
+      expect(body.metadata.quality_pipeline_degraded).toBe(true);
+      expect(body.metadata.quality_pipeline_degraded_reason).toMatch(/reescrita #2 falhou/);
+      expect(body.metadata.critic).toMatchObject({ enabled: true, rewrites: 1 }); // só a reescrita #1 contou
+
+      await app.close();
+    });
+  });
 });
 
 /**

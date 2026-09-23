@@ -117,6 +117,25 @@ describe('buildProductionSpec', () => {
     expect(spec.metadata.concept).toBe('O piso que sobrevive ao canteiro');
   });
 
+  /**
+   * REGRESSÃO REAL (Otto Senior 20Y, Missão 2): validação ao vivo do caso
+   * Cosentino perdeu delivery_format inteiro na resposta de REWRITE #1 e
+   * derrubou o turno. delivery_format é TYPE A (derivável de jobType +
+   * aspect_ratio, que o código já sabe) — quando o plano não traz o campo,
+   * buildProductionSpec deriva um valor em vez de propagar undefined.
+   */
+  it('deriva delivery_format quando o plano não traz o campo (TYPE A, Missão 2)', () => {
+    const plan = makePlan();
+    delete (plan as { delivery_format?: string }).delivery_format;
+    const spec = buildProductionSpec(plan, { clientId: 'c', jobType: 'reels', aspectRatio: '9:16' });
+    expect(spec.metadata.delivery_format).toBe('Reels 9:16');
+  });
+
+  it('usa delivery_format do plano quando presente (não sobrescreve o que o modelo decidiu)', () => {
+    const spec = buildProductionSpec(makePlan(), { clientId: 'c', jobType: 'image' });
+    expect(spec.metadata.delivery_format).toBe('PNG 1080x1350');
+  });
+
   it('propaga referências com papel semântico e CreativeSpec de fidelidade máxima', () => {
     const plan = makePlan();
     plan.reference_strategy = [

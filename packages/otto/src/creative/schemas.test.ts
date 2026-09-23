@@ -3,6 +3,7 @@ import {
   carouselPlanSchema,
   creativePlanSchema,
   productionSpecSchema,
+  realWorldFidelitySchema,
   videoPlanSchema,
 } from './schemas.js';
 
@@ -49,6 +50,49 @@ describe('creativePlanSchema', () => {
   it('rejeita plano sem quality_criteria', () => {
     const broken = { ...validPlan, quality_criteria: [] };
     expect(creativePlanSchema.safeParse(broken).success).toBe(false);
+  });
+
+  /**
+   * REGRESSÃO REAL: validação ao vivo do caso Cosentino (Otto Senior 20Y) —
+   * delivery_format sumiu inteiro do JSON de REWRITE #1 e derrubou o turno
+   * inteiro. TYPE A (Missão 2): o campo é derivável de jobType+aspect_ratio,
+   * que o código já sabe — não devia ser exigido do modelo.
+   */
+  it('delivery_format é opcional: plano sem o campo continua válido', () => {
+    const semDeliveryFormat = { ...validPlan } as Record<string, unknown>;
+    delete semDeliveryFormat.delivery_format;
+    const result = creativePlanSchema.safeParse(semDeliveryFormat);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.delivery_format).toBeUndefined();
+  });
+
+  it('delivery_format vazio ("") também é tratado como ausente, não erro', () => {
+    const result = creativePlanSchema.safeParse({ ...validPlan, delivery_format: '' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.delivery_format).toBeUndefined();
+  });
+
+  /**
+   * REGRESSÃO REAL: a MESMA validação ao vivo também reprovou por
+   * real_world_fidelity.entity_type recebendo "" em vez de omitido —
+   * mesma classe do bug de spoken_line/on_screen_text (Fase 1), agora
+   * confirmada num campo enum, não só string.
+   */
+  it('real_world_fidelity.entity_type: "" é tratado como ausente', () => {
+    const result = realWorldFidelitySchema.safeParse({ requires_reference: true, entity_type: '', entity_description: 'a fachada real' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entity_type).toBeUndefined();
+  });
+
+  it('real_world_fidelity.entity_type: valor não-vazio e inválido continua sendo erro real (não vira undefined silenciosamente)', () => {
+    const result = realWorldFidelitySchema.safeParse({ requires_reference: true, entity_type: 'banana' });
+    expect(result.success).toBe(false);
+  });
+
+  it('real_world_fidelity.entity_type: valor válido passa normalmente', () => {
+    const result = realWorldFidelitySchema.safeParse({ requires_reference: true, entity_type: 'product' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entity_type).toBe('product');
   });
 
   /**
@@ -104,6 +148,17 @@ describe('carouselPlanSchema', () => {
     expect(
       carouselPlanSchema.safeParse({ concept: 'X', slide_count: 10, slides }).success,
     ).toBe(false);
+  });
+
+  it('render_mode "" é tratado como ausente e cai no default "editorial" (mesma classe do bug de entity_type)', () => {
+    const slides = [
+      slide(1, 'hook'),
+      ...Array.from({ length: 8 }, (_, i) => slide(i + 2, 'development')),
+      slide(10, 'cta'),
+    ];
+    const result = carouselPlanSchema.safeParse({ concept: 'X', render_mode: '', slide_count: 10, slides });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.render_mode).toBe('editorial');
   });
 });
 
@@ -170,6 +225,7 @@ describe('videoPlanSchema', () => {
           on_screen_text: '',
           continuity: '',
           image_prompt: '',
+          shot_type: '',
         },
         {
           camera_movement: 'estático',
@@ -192,6 +248,7 @@ describe('videoPlanSchema', () => {
     if (!result.success) return;
     expect(result.data.scenes[0]!.spoken_line).toBe('Dia 24 de setembro abre a venda.');
     expect(result.data.scenes[0]!.on_screen_text).toBeUndefined();
+    expect(result.data.scenes[0]!.shot_type).toBeUndefined();
     expect(result.data.scenes[1]!.spoken_line).toBeUndefined();
     expect(result.data.scenes[1]!.on_screen_text).toBe('Sem cadastro');
   });
