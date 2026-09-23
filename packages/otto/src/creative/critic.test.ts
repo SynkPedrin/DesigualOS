@@ -4,6 +4,7 @@ import {
   critiqueDeliverable,
   deliverableRegression,
   deriveCriticOverall,
+  detectPlaceholderContent,
   explainDeliverableGap,
   formatCriticRevisionNote,
   looksLikeScriptContent,
@@ -425,5 +426,35 @@ describe('critiqueDeliverable', () => {
 
     expect(capturedUser).toContain('DIREÇÃO ESTRATÉGICA DESTA PEÇA');
     expect(capturedUser).toContain('A chave que nunca esperou.');
+  });
+});
+
+describe('detectPlaceholderContent (Otto Senior V1, checagem leve de placeholder)', () => {
+  it('detecta "texto aqui"', () => {
+    expect(detectPlaceholderContent('Legenda: texto aqui')).toContain('texto aqui');
+  });
+
+  it('detecta "lorem ipsum"', () => {
+    expect(detectPlaceholderContent('Legenda: Lorem ipsum dolor sit amet')).toEqual(expect.arrayContaining([expect.stringMatching(/lorem ipsum/i)]));
+  });
+
+  it('detecta colchete de variável não substituída ("[nome da marca]")', () => {
+    expect(detectPlaceholderContent('CTA: compre já em [nome da marca]')).toEqual(expect.arrayContaining(['[nome da marca]']));
+  });
+
+  it('detecta chave de variável não substituída ("{cliente}")', () => {
+    expect(detectPlaceholderContent('Legenda: bem-vindo à {cliente}')).toEqual(expect.arrayContaining(['{cliente}']));
+  });
+
+  it('NÃO confunde "[A CONFIRMAR: ...]" (lacuna declarada de propósito) com placeholder esquecido', () => {
+    expect(detectPlaceholderContent('Legenda: o preço é [A CONFIRMAR: valor final com o time comercial]')).toEqual([]);
+  });
+
+  it('NÃO confunde "[DADO A CONFIRMAR: ...]" com placeholder esquecido', () => {
+    expect(detectPlaceholderContent('Roteiro: entrega em [DADO A CONFIRMAR: prazo]')).toEqual([]);
+  });
+
+  it('texto real, sem placeholder nenhum, não dispara nada', () => {
+    expect(detectPlaceholderContent('Conceito: A chave que nunca esperou.\n\nLegenda: Sua próxima decisão começa aqui, sem fila.')).toEqual([]);
   });
 });

@@ -406,3 +406,44 @@ export function formatCriticRevisionNote(evaluation: CriticEvaluation, gate: Cri
     .filter(Boolean)
     .join('\n');
 }
+
+/**
+ * CHECAGEM LEVE DE PLACEHOLDER (Otto Senior V1, "Non-Video Certification").
+ * Deliberadamente PEQUENA — não é engenharia de heurística geral, é uma
+ * lista curta de frases que NUNCA são entregável de verdade, sejam quais
+ * forem o cliente ou o formato: rótulo de campo vazio ("texto aqui"),
+ * placeholder de geração de texto clássico ("lorem ipsum"), colchete de
+ * variável não substituída ("[nome da marca]", "{cliente}"), e a
+ * descrição-de-si-mesma que a validação ao vivo desta sessão encontrou
+ * duas vezes ("roteiro em marcação de tempo" como LEGENDA, e CTA que só
+ * repete o nome do cliente/projeto sem nenhuma instrução de ação).
+ */
+const PLACEHOLDER_PATTERNS: RegExp[] = [
+  /\btexto\s+aqui\b/i,
+  /\blorem\s+ipsum\b/i,
+  /\bimagem\s+bonita\b/i,
+  /\bcena\s+din[aâ]mica\b/i,
+  /\bmostrar\s+(o\s+)?empreendimento\b/i,
+  /\[[^\]]{1,40}\]/, // "[nome da marca]", "[DADO A CONFIRMAR]" já é tratado como lacuna legítima em outro lugar — ver nota abaixo
+  /\{[^}]{1,40}\}/, // "{cliente}", "{produto}"
+];
+
+/**
+ * `[DADO A CONFIRMAR: ...]`/`[A CONFIRMAR: ...]` é lacuna DECLARADA de
+ * propósito (regra 4 do CHAT_SYSTEM_PROMPT em execute.ts) — não é
+ * placeholder esquecido, é honestidade sobre o que falta. O padrão de
+ * colchete acima pegaria isso também; esta whitelist evita falso positivo
+ * no único uso de colchete que o próprio sistema pede pra existir.
+ */
+const DECLARED_GAP_MARKER = /\[(DADO A CONFIRMAR|A CONFIRMAR|CONFIRMAR|FALTA)\s*:/i;
+
+export function detectPlaceholderContent(renderedAnswer: string): string[] {
+  const found: string[] = [];
+  for (const pattern of PLACEHOLDER_PATTERNS) {
+    const match = pattern.exec(renderedAnswer);
+    if (match && !DECLARED_GAP_MARKER.test(match[0])) {
+      found.push(match[0]);
+    }
+  }
+  return found;
+}

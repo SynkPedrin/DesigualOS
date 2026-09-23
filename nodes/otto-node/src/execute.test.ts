@@ -1229,7 +1229,7 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     expect(body.answer).toContain('Abertura dia 24 de setembro.');
     expect(body.metadata.quality_pipeline_degraded).toBe(true);
     expect(body.metadata.quality_pipeline_degraded_reason).toMatch(/removeu entregável\(is\) que já existia\(m\): roteiro/);
-    expect(body.metadata.quality_tier).toBe('draft');
+    expect(body.metadata.quality_tier).toBe('beta'); // reels: congelado em beta (Otto Senior V1), nunca "draft" nem "elite"
     expect(body.metadata.elite_passed).toBe(false);
     expect(body.metadata.missing_deliverables).toEqual([]); // versão final (draft preservado) está completa
 
@@ -1456,6 +1456,69 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     expect(body.metadata.quality_tier).toBe('draft');
     expect(body.metadata.elite_passed).toBe(false);
     expect(body.metadata.requires_human_review).toBe(true);
+
+    await app.close();
+  });
+
+  /**
+   * REGRESSÃO REAL (Otto Senior V1, "Best-Valid Fix"): achado ao vivo com
+   * qwen3.6:35b-a3b — draft=45, reescrita#1=43, reescrita#2=39, TODOS
+   * estruturalmente válidos (sem regressão de completude). O sistema
+   * entregava 39 (o mais recente); devia entregar 45 (o melhor). Nenhum
+   * dos três passa o gate (< 88), então o loop consome as 2 reescritas e
+   * termina reprovado de qualquer forma — a única coisa que muda é QUAL
+   * dos três vira `result` final.
+   */
+  it('melhor candidato válido vence, não o mais recente: draft=45 > reescrita#1=43 > reescrita#2=39 (Otto Senior V1, Best-Valid Fix)', async () => {
+    let creativePlanCalls = 0;
+    let criticCalls = 0;
+    const scoresPorTentativa = [
+      { strategy: 5, concept: 5, hook: 5, specificity: 4, originality: 4, brand_fit: 5, copy: 4, retention: 4, platform_fit: 4, executability: 5 }, // média 45
+      { strategy: 5, concept: 4, hook: 4, specificity: 4, originality: 4, brand_fit: 5, copy: 4, retention: 4, platform_fit: 4, executability: 5 }, // média 43
+      { strategy: 4, concept: 4, hook: 4, specificity: 4, originality: 3, brand_fit: 4, copy: 3, retention: 4, platform_fit: 4, executability: 4 }, // média 38 (~39)
+    ];
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) {
+              creativePlanCalls += 1;
+              return Promise.resolve(creativePlanFixture);
+            }
+            if (schema === carouselPlanSchema) return Promise.resolve(makeCarouselFixture());
+            return Promise.reject(new OttoLLMError('schema inesperado'));
+          },
+          critic: () => {
+            const scores = scoresPorTentativa[Math.min(criticCalls, scoresPorTentativa.length - 1)]!;
+            criticCalls += 1;
+            return Promise.resolve({
+              scores,
+              flags: {
+                missing_deliverables: [], genericity: false, unsupported_claims: [],
+                weak_hook: false, weak_concept: false, bad_cta: false, bad_platform_fit: false,
+                ai_slop: false, over_explanation: false, missing_production_direction: false, brand_mismatch: false,
+              },
+              reasoning: `tentativa ${criticCalls}`,
+              root_cause: 'COPY',
+            });
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-best-valid',
+      message: 'Crie um carrossel pro cliente',
+    });
+
+    expect(body.status).toBe('completed');
+    expect(creativePlanCalls).toBe(3); // draft + 2 reescritas — todas rodaram, nenhuma passou o gate
+    const critic = body.metadata.critic as { overall?: number; rewrites?: number };
+    // A nota FINAL reportada é a do DRAFT (45), não a da última reescrita (39/38).
+    expect(critic.overall).toBe(45);
+    expect(critic.rewrites).toBe(2); // as duas reescritas rodaram — só a ESCOLHA final não é a mais recente
+    expect(body.metadata.quality_tier).toBe('draft'); // nenhum candidato passou os 88 do gate
 
     await app.close();
   });
@@ -2052,7 +2115,11 @@ describe('Reel Execution Engine (Otto Elite)', () => {
     // verdade. A rejeição na 1a avaliação foi 100% determinística (o
     // critic fake tinha aprovado de cara), não uma opinião do modelo.
     expect(body.metadata.critic).toMatchObject({ passed: true, rewrites: 1 });
-    expect(body.metadata.quality_tier).toBe('elite');
+    // Reels: congelado em beta (Otto Senior V1) mesmo com o critic aprovando
+    // de verdade — o gate passou, mas o formato não certifica "elite" ainda.
+    expect(body.metadata.quality_tier).toBe('beta');
+    expect(body.metadata.elite_passed).toBe(false);
+    expect(body.metadata.requires_human_review).toBe(true);
 
     await app.close();
   });
@@ -2084,6 +2151,11 @@ describe('Reel Execution Engine (Otto Elite)', () => {
     expect(creativePlanCalls).toBe(1);
     expect(videoPlanCalls).toBe(1); // sem reparo nenhum — nada disparou o linter
     expect(body.metadata.critic).toMatchObject({ passed: true, rewrites: 0 });
+    // Otto Senior V1: reels é BETA por definição de formato, mesmo aprovado
+    // de primeira sem nenhum reparo — nunca "elite" pra vídeo neste V1.
+    expect(body.metadata.quality_tier).toBe('beta');
+    expect(body.metadata.elite_passed).toBe(false);
+    expect(body.metadata.requires_human_review).toBe(true);
 
     await app.close();
   });

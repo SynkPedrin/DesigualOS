@@ -39,6 +39,9 @@ import {
   formatStrategyBriefing,
   validateReelExecution,
   formatReelExecutionNote,
+  selectBestValidCandidate,
+  type CandidateRecord,
+  detectPlaceholderContent,
   type BrainHealth,
   type BrandKit,
   type CarouselPlan,
@@ -911,6 +914,38 @@ export async function executeTask(
     let criticReelIssues: ReturnType<typeof validateReelExecution> = [];
     let criticRewrites = 0;
     /**
+     * MELHOR ARTEFATO VÁLIDO, NÃO O MAIS RECENTE (Otto Senior V1, "Best-
+     * Valid Fix"). Achado ao vivo real: draft=45, reescrita#1=43, reparo de
+     * execução=39, todos estruturalmente válidos (sem regressão de
+     * completude) — o sistema entregava 39 por ser o último, não o melhor.
+     * O invariante de não-regressão (Blocker 2) continua impedindo um
+     * candidato PIOR EM COMPLETUDE de virar `result`; isto aqui compara
+     * NOTA entre os candidatos que passaram nesse portão, depois do loop
+     * inteiro rodar — nunca durante, pra não interferir na lógica de "PEÇA
+     * ATUAL" que cada reescrita usa como âncora.
+     */
+    interface CriticCandidate {
+      stage: string;
+      producedResult: Awaited<ReturnType<typeof produce>>;
+      evaluation: Awaited<ReturnType<typeof critiqueDeliverable>>;
+      gate: ReturnType<typeof passesCriticGate>;
+      missingDeliverables: string[];
+    }
+    const criticCandidates: CriticCandidate[] = [];
+    function toCandidateRecord(candidate: CriticCandidate, order: number): CandidateRecord<CriticCandidate> {
+      return {
+        stage: candidate.stage,
+        value: candidate,
+        schemaValid: true, // só chega aqui quem sobreviveu a produce()/reparo sem exceção e sem regressão
+        semanticComplete: candidate.missingDeliverables.length === 0,
+        factuallyValid: candidate.evaluation.flags.unsupported_claims.length === 0,
+        qualityScore: candidate.gate.overall,
+        criticalDimensionScores: candidate.evaluation.scores,
+        unsupportedClaims: candidate.evaluation.flags.unsupported_claims,
+        order,
+      };
+    }
+    /**
      * ROTEAMENTO DE REESCRITA POR CAMADA (Otto Elite, "Reel Execution Engine
      * Closure", Section 21): EXECUTABILITY/STRUCTURE pra vídeo/reels não
      * regenera conceito, ângulo nem copy — regenera SÓ o storyboard
@@ -1084,6 +1119,13 @@ export async function executeTask(
     if (criticHabilitado) {
       try {
         ({ evaluation: criticEvaluation, gate: criticGate, reelExecutionIssues: criticReelIssues } = await critique());
+        criticCandidates.push({
+          stage: 'draft',
+          producedResult: result,
+          evaluation: criticEvaluation,
+          gate: criticGate,
+          missingDeliverables: computeMissingDeliverables(result.answer, entregaveisPedidos),
+        });
       } catch (criticError) {
         // CRITIC FAILS -> keep draft, do NOT destroy turn (regra do fechamento).
         pipelineDegraded = true;
@@ -1208,6 +1250,13 @@ export async function executeTask(
 
         try {
           ({ evaluation: criticEvaluation, gate: criticGate, reelExecutionIssues: criticReelIssues } = await critique());
+          criticCandidates.push({
+            stage: `rewrite_${attemptNumber}`,
+            producedResult: result,
+            evaluation: criticEvaluation,
+            gate: criticGate,
+            missingDeliverables: computeMissingDeliverables(result.answer, entregaveisPedidos),
+          });
         } catch (criticError) {
           // SECOND CRITIC FAILS -> keep latest valid version.
           pipelineDegraded = true;
@@ -1217,6 +1266,39 @@ export async function executeTask(
             '[OTTO:critic] reavaliação falhou — mantendo última versão válida',
           );
           break;
+        }
+      }
+
+      /**
+       * SELEÇÃO DO MELHOR CANDIDATO (não o mais recente) — roda DEPOIS do
+       * loop inteiro terminar, sobre todos os candidatos que passaram no
+       * portão de não-regressão. Se o vencedor não for o último (`result`
+       * já aponta pra ele), troca `result`/`criticEvaluation`/`criticGate`
+       * de volta pro candidato vencedor. As etapas seguintes (reparo de
+       * completude, correção factual, cálculo final de qualidade) operam
+       * sobre o QUE FOR ESCOLHIDO aqui, não sobre o que aconteceu por
+       * último — elas já leem `result`/`criticEvaluation` da variável, então
+       * não precisam de nenhuma mudança.
+       */
+      if (criticCandidates.length > 0) {
+        const winner = selectBestValidCandidate(criticCandidates.map((c, i) => toCandidateRecord(c, i)));
+        if (winner) {
+          const chosen = winner.value;
+          if (chosen.producedResult !== result) {
+            logger.info(
+              {
+                execution_id: request.execution_id,
+                chosen_stage: chosen.stage,
+                chosen_score: chosen.gate.overall,
+                discarded_last_stage: criticCandidates[criticCandidates.length - 1]!.stage,
+                discarded_last_score: criticCandidates[criticCandidates.length - 1]!.gate.overall,
+              },
+              '[OTTO:critic] melhor candidato válido escolhido — não é o mais recente',
+            );
+          }
+          result = chosen.producedResult;
+          criticEvaluation = chosen.evaluation;
+          criticGate = chosen.gate;
         }
       }
     }
@@ -1340,11 +1422,34 @@ export async function executeTask(
      */
     const missingFinal = computeMissingDeliverables(result.answer, entregaveisPedidos);
     const unsupportedClaimsFinal = criticEvaluation?.flags.unsupported_claims ?? [];
+    /**
+     * CHECAGEM DE PLACEHOLDER (Otto Senior V1, "Non-Video Certification"):
+     * mesmo invariante de completude/factualidade — nunca "elite" com um
+     * placeholder óbvio sobrevivendo na resposta final ("texto aqui",
+     * "lorem ipsum", colchete de variável não substituída).
+     */
+    const placeholdersFinal = detectPlaceholderContent(result.answer);
     const criticPassedFinal =
-      !pipelineDegraded && (criticGate?.passed ?? false) && missingFinal.length === 0 && unsupportedClaimsFinal.length === 0;
-    const qualityTier = !criticHabilitado ? 'not_evaluated' : criticPassedFinal ? 'elite' : 'draft';
-    const elitePassed = criticHabilitado ? criticPassedFinal : null;
-    const requiresHumanReview = criticHabilitado ? !criticPassedFinal : false;
+      !pipelineDegraded &&
+      (criticGate?.passed ?? false) &&
+      missingFinal.length === 0 &&
+      unsupportedClaimsFinal.length === 0 &&
+      placeholdersFinal.length === 0;
+    /**
+     * REELS = BETA, CONGELADO (Otto Senior V1, "Final Non-Video
+     * Certification"): live evidence across every model tested this
+     * project (4B local, 14B GPU, 35B GPU) never once cleared the elite
+     * bar for video — 59/87/64 local, 71/60 GPU 14B, 39 GPU 35B. Video
+     * format NEVER reports "elite" or skips human review, regardless of
+     * what score a future run happens to hit — the ceiling here is proven
+     * unreliable, not a one-off bad run. Non-video formats (image/carousel/
+     * upscale) are unaffected; this is scoped to the format, not a global
+     * downgrade.
+     */
+    const isVideoFormat = jobType === 'video' || jobType === 'reels';
+    const qualityTier = !criticHabilitado ? 'not_evaluated' : isVideoFormat ? 'beta' : criticPassedFinal ? 'elite' : 'draft';
+    const elitePassed = criticHabilitado ? (isVideoFormat ? false : criticPassedFinal) : null;
+    const requiresHumanReview = criticHabilitado ? (isVideoFormat || !criticPassedFinal) : false;
 
     const { pipeline, plan, carouselPlan, videoPlan, spec, answer } = result;
 
@@ -1422,6 +1527,7 @@ export async function executeTask(
       // herdada de nenhuma avaliação anterior do critic.
       missing_deliverables: missingFinal,
       unsupported_claims: unsupportedClaimsFinal,
+      placeholders_detected: placeholdersFinal,
       ...(completionRepairAttempted ? { completion_repair: { attempted: true, succeeded: completionRepairSucceeded } } : {}),
       ...(factualCorrectionAttempted ? { factual_correction: { attempted: true, succeeded: factualCorrectionSucceeded } } : {}),
     };

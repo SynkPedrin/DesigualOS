@@ -173,6 +173,7 @@ export {
   explainDeliverableGap,
   looksLikeScriptContent,
   looksLikeSequencedScript,
+  detectPlaceholderContent,
   deliverableRegression,
   deriveCriticOverall,
   passesCriticGate,
@@ -196,3 +197,6 @@ export type { StrategyDeps, StrategyInput, AngleSelection, DevelopBigIdeaInput }
 
 export { validateReelExecution, formatReelExecutionNote } from './creative/reel-execution.js';
 export type { ReelExecutionFinding, ReelExecutionIssue } from './creative/reel-execution.js';
+
+export { selectBestValidCandidate } from './creative/best-valid.js';
+export type { CandidateRecord } from './creative/best-valid.js';
