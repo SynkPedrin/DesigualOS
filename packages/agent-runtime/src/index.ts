@@ -86,4 +86,5 @@ export {
   type JarbasHandoffIntent,
 } from './bento-jarbas-handoff';
 export { adaptJarbasResponse, type AdaptedJarbasResponse } from './jarbas-response-adapter';
+export { askJarbasV2, type AskJarbasV2Input, type AskJarbasV2Result, type JarbasV2Config } from './jarbas-v2-client';
 export { buildAgencyMacroView, type AgencyMacroView, type ClientMacroEntry, type ClientMacroInput, type MacroBucket } from './jarbas-macro-view';

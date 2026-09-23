@@ -27,6 +27,7 @@ import { buildOperationalActionPlan } from './operational-action-plan';
 import { createManyTasks, type CreateOneInput, type CreateOutcome, type TaskAttachment } from './multi-create-executor';
 import type { SeniorToolContext } from '@desigual-os/tool-gateway';
 import { conversationArtifact, requestsExternalTask } from './conversation-artifact';
+import { tryJarbasHandoff } from './jarbas-handoff';
 
 /**
  * BENTO ACTION GUARD (14/09/2026).
@@ -923,6 +924,22 @@ export async function tryBentoActionGuard(params: {
 }): Promise<ExecuteResponse | null> {
   const { message, conversationId, logger } = params;
   if (params.seniorToolContext && !requestsExternalTask(message) && /\b(cri[ae]|faz|fa[cç]a|mont[ae])\b/i.test(message) && /briefing|reel|roteiro|copy|legenda|conceito/i.test(message)) return null;
+
+  // HANDOFF BENTO -> JARBAS (missão de wiring operacional, 24/09/2026).
+  // Ponto único de contato — tryJarbasHandoff é o único lugar que sabe
+  // qualquer coisa sobre AgentTask/Jarbas V2. Devolve null quando a
+  // mensagem não é handoff/status, e o resto do guard segue como sempre.
+  const jarbasHandoff = await tryJarbasHandoff({
+    message,
+    conversationId,
+    userEmail: params.userEmail ?? null,
+    clientId: params.clientId ?? null,
+    clientName: params.clientName ?? null,
+    seniorToolContext: params.seniorToolContext ?? null,
+  });
+  if (jarbasHandoff) {
+    return guardResponse({ ok: true, toolCalls: [], answer: jarbasHandoff.answer, metadata: jarbasHandoff.metadata });
+  }
 
   /**
    * SEGUNDA VOLTA DA CONFIRMAÇÃO DE EXCLUSÃO — precisa rodar ANTES do portão
