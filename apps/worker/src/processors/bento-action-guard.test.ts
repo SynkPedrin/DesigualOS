@@ -132,6 +132,33 @@ describe('DELETE: pedido, confirmação e alvo pendente', () => {
   });
 
   /**
+   * Achado real no E2E de release (22/09/2026): "apaga essa task
+   * https://app.clickup.com/t/86bc5dm9t", com o link citado da forma mais
+   * explícita possível NA PRÓPRIA mensagem, respondia "não encontrei
+   * nenhuma task" — `lastTaskId` só vinha de mensagem ANTERIOR do
+   * assistente, e numa conversa longa (comum depois de várias idas e
+   * voltas de UPDATE) essa mensagem envelhecia pra fora da janela de
+   * histórico.
+   */
+  describe('extractExplicitTaskIdFromMessage — link citado no PRÓPRIO turno ganha do histórico', () => {
+    it('extrai o id do link ClickUp citado na mensagem atual', async () => {
+      const { extractExplicitTaskIdFromMessage } = await import('./bento-action-guard.js');
+      expect(extractExplicitTaskIdFromMessage('apaga essa task https://app.clickup.com/t/86bc5dm9t')).toBe('86bc5dm9t');
+    });
+
+    it('sem link nenhum na mensagem, devolve null — não inventa alvo', async () => {
+      const { extractExplicitTaskIdFromMessage } = await import('./bento-action-guard.js');
+      expect(extractExplicitTaskIdFromMessage('apaga a task 86bc5dm9t')).toBeNull();
+      expect(extractExplicitTaskIdFromMessage('apaga essa task')).toBeNull();
+    });
+
+    it('dois links na mesma mensagem: o ÚLTIMO citado é o alvo (mesmo critério do histórico)', async () => {
+      const { extractExplicitTaskIdFromMessage } = await import('./bento-action-guard.js');
+      expect(extractExplicitTaskIdFromMessage('não é essa https://app.clickup.com/t/aaa111, é essa https://app.clickup.com/t/bbb222')).toBe('bbb222');
+    });
+  });
+
+  /**
    * Achado real no E2E de release (22/09/2026): `getTask(...).catch(() =>
    * null/false)` tratava "404 confirmado" (task não existe de verdade) e
    * "erro transitório" (timeout, rate limit) como a MESMA coisa. Uma

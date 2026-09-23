@@ -210,6 +210,23 @@ export function buildDeleteConfirmMarkerForTest(taskId: string): string {
   return `${DELETE_CONFIRM_MARKER} (id:${taskId})`;
 }
 
+/**
+ * ALVO EXPLÍCITO NO PRÓPRIO TURNO ganha de qualquer inferência de
+ * histórico. Achado real no E2E de release (22/09/2026, gate de DELETE):
+ * `lastTaskId` só vinha de link ClickUp em mensagem ANTERIOR do assistente
+ * — numa conversa longa (comum depois de várias idas e voltas de UPDATE),
+ * a mensagem que tinha o link envelhecia pra fora da janela de histórico,
+ * e "apaga essa task https://app.clickup.com/t/86bc5dm9t" — com o alvo
+ * dito da forma mais explícita possível — respondia "não encontrei
+ * nenhuma task". Quem cita o link na própria mensagem não devia precisar
+ * que o Bento "lembre" de nada. Pega o ÚLTIMO link citado no turno, mesmo
+ * padrão já usado em loadConversationContext pra histórico.
+ */
+export function extractExplicitTaskIdFromMessage(message: string): string | null {
+  const urls = [...message.matchAll(TASK_URL)];
+  return urls.length > 0 ? urls[urls.length - 1]![1]! : null;
+}
+
 function classifyIntent(message: string): GuardIntent {
   const hasReference = REFERENCE_WORDS.test(message);
   const person = extractPersonName(message);
@@ -916,6 +933,10 @@ export async function tryBentoActionGuard(params: {
   if (!config) return null;
 
   const context = await loadConversationContext(conversationId, params.seniorToolContext?.agent, config);
+
+  // Link explícito NESTE turno ganha do histórico — ver docstring da função.
+  const alvoExplicitoNesteTurno = extractExplicitTaskIdFromMessage(message);
+  if (alvoExplicitoNesteTurno) context.lastTaskId = alvoExplicitoNesteTurno;
 
   // PEDIDO NOVO DE EXCLUSÃO (primeira volta): pede confirmação, NÃO apaga
   // ainda. A segunda volta ("sim"/"confirmo") é tratada mais acima, antes do
