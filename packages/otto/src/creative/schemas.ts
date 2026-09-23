@@ -392,6 +392,30 @@ export const criticFlagsSchema = z.object({
 });
 
 /**
+ * Classificação de causa raiz (Otto Elite — Missão 15): QUANDO o critic
+ * reprova, ele precisa dizer EM QUE CAMADA está o problema, não só quais
+ * scores caíram. Isto é o que decide o ESCOPO da reescrita (Missão 16): uma
+ * falha em STRATEGY/ANGLE/BIG_IDEA/HOOK exige regenerar a camada
+ * estratégica inteira (ângulo, big idea, hook) antes de redigir de novo;
+ * uma falha em COPY/STRUCTURE/BRAND_FIT/EXECUTABILITY/FACTUAL/DELIVERABLE
+ * só exige reescrever o texto — polir frase quando o problema é a ideia
+ * é a "reescrita de sinônimo" que a missão proíbe explicitamente.
+ */
+export const criticRootCauseSchema = z.enum([
+  'STRATEGY',
+  'ANGLE',
+  'BIG_IDEA',
+  'HOOK',
+  'STRUCTURE',
+  'COPY',
+  'BRAND_FIT',
+  'EXECUTABILITY',
+  'FACTUAL',
+  'DELIVERABLE',
+  'NONE',
+]);
+
+/**
  * `overall` NÃO vem do modelo. Lição do bug de `duration` (mesma sessão,
  * commit 375f7ba): pedir pro modelo somar/derivar um número a partir de
  * outros campos que ele mesmo gerou é pedir aritmética que ele erra de
@@ -404,6 +428,75 @@ export const criticEvaluationSchema = z.object({
   scores: criticScoresSchema,
   flags: criticFlagsSchema,
   reasoning: z.string().min(1),
+  /** 'NONE' quando a peça passa; caso contrário, a camada mais crítica que falhou. */
+  root_cause: criticRootCauseSchema.default('NONE'),
+});
+
+// ---------------------------------------------------------------------------
+// CAMADA ESTRATÉGICA (Otto Elite — pipeline de pensamento antes do draft).
+// Duas chamadas estruturadas, não cinco: divergência de ângulos + scoring
+// numa só, big idea + hooks numa segunda. "Algumas etapas podem ocorrer numa
+// única inferência estruturada" — cada chamada de LLM nesta máquina já mede
+// minutos (ver OTTO_ELITE_HANDOFF.md); um estágio por chamada seria 5-6
+// chamadas só pra pensar, antes de qualquer rascunho existir.
+// ---------------------------------------------------------------------------
+
+export const angleScoresSchema = z.object({
+  objective_fit: z.number().min(0).max(10),
+  audience_fit: z.number().min(0).max(10),
+  brand_fit: z.number().min(0).max(10),
+  originality: z.number().min(0).max(10),
+  hook_potential: z.number().min(0).max(10),
+  visual_potential: z.number().min(0).max(10),
+  executability: z.number().min(0).max(10),
+  factual_safety: z.number().min(0).max(10),
+});
+
+export const creativeAngleSchema = z.object({
+  name: z.string().min(1),
+  one_sentence_idea: z.string().min(1),
+  hook_direction: z.string().min(1),
+  emotional_mechanism: z.string().min(1),
+  why_it_fits_audience: z.string().min(1),
+  why_it_fits_brand: z.string().min(1),
+  visual_potential: z.string().min(1),
+  execution_risk: z.string().min(1),
+  scores: angleScoresSchema,
+});
+
+export const creativeStrategySchema = z.object({
+  audience_insight: z.string().min(1),
+  tension: z.string().min(1),
+  opportunity: z.string().min(1),
+  promise_or_message: z.string().min(1),
+  communication_job: z.string().min(1),
+  emotional_direction: z.string().min(1),
+  desired_reaction: z.string().min(1),
+  reason_to_watch: z.string().min(1),
+  reason_to_believe: z.string().min(1),
+  /** 4-6 ângulos GENUINAMENTE diferentes — não sinônimos da mesma frase. */
+  angles: z.array(creativeAngleSchema).min(4).max(6),
+});
+
+export const hookScoresSchema = z.object({
+  stop_power: z.number().min(0).max(10),
+  specificity: z.number().min(0).max(10),
+  curiosity: z.number().min(0).max(10),
+  clarity: z.number().min(0).max(10),
+  believability: z.number().min(0).max(10),
+  brand_fit: z.number().min(0).max(10),
+  continuation_power: z.number().min(0).max(10),
+});
+
+export const hookCandidateSchema = z.object({
+  text: z.string().min(1),
+  scores: hookScoresSchema,
+});
+
+export const bigIdeaAndHooksSchema = z.object({
+  big_idea: z.string().min(1),
+  /** 5-8 hooks candidatos; escolha final é feita em código (ver critic.ts). */
+  hooks: z.array(hookCandidateSchema).min(5).max(8),
 });
 
 export type ArtDirection = z.infer<typeof artDirectionSchema>;
@@ -423,4 +516,11 @@ export type QualityIssue = z.infer<typeof qualityIssueSchema>;
 export type QualityEvaluation = z.infer<typeof qualityEvaluationSchema>;
 export type CriticScores = z.infer<typeof criticScoresSchema>;
 export type CriticFlags = z.infer<typeof criticFlagsSchema>;
+export type CriticRootCause = z.infer<typeof criticRootCauseSchema>;
 export type CriticEvaluation = z.infer<typeof criticEvaluationSchema>;
+export type AngleScores = z.infer<typeof angleScoresSchema>;
+export type CreativeAngle = z.infer<typeof creativeAngleSchema>;
+export type CreativeStrategy = z.infer<typeof creativeStrategySchema>;
+export type HookScores = z.infer<typeof hookScoresSchema>;
+export type HookCandidate = z.infer<typeof hookCandidateSchema>;
+export type BigIdeaAndHooks = z.infer<typeof bigIdeaAndHooksSchema>;

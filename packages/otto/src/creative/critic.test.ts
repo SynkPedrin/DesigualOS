@@ -36,7 +36,7 @@ const baseFlags = {
 };
 
 function evaluation(overrides: Partial<CriticEvaluation> = {}): CriticEvaluation {
-  return { scores: baseScores, flags: baseFlags, reasoning: 'ok', ...overrides };
+  return { scores: baseScores, flags: baseFlags, reasoning: 'ok', root_cause: 'NONE', ...overrides };
 }
 
 describe('deriveCriticOverall', () => {

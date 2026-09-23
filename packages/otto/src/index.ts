@@ -49,7 +49,14 @@ export {
   creativePlanSchema,
   criticEvaluationSchema,
   criticFlagsSchema,
+  criticRootCauseSchema,
   criticScoresSchema,
+  angleScoresSchema,
+  creativeAngleSchema,
+  creativeStrategySchema,
+  hookScoresSchema,
+  hookCandidateSchema,
+  bigIdeaAndHooksSchema,
   productionSpecSchema,
   qualityCriteriaSchema,
   qualityEvaluationSchema,
@@ -68,7 +75,14 @@ export type {
   CreativePlan,
   CriticEvaluation,
   CriticFlags,
+  CriticRootCause,
   CriticScores,
+  AngleScores,
+  CreativeAngle,
+  CreativeStrategy,
+  HookScores,
+  HookCandidate,
+  BigIdeaAndHooks,
   ProductionSpec,
   QualityCriteria,
   QualityEvaluation,
@@ -161,3 +175,15 @@ export {
   formatCriticRevisionNote,
 } from './creative/critic.js';
 export type { CriticDeps, CriticInput, CriticGateResult } from './creative/critic.js';
+
+export {
+  developStrategy,
+  deriveAngleTotal,
+  selectBestAngle,
+  bigIdeaPassesTest,
+  developBigIdeaAndHooks,
+  deriveHookTotal,
+  selectBestHook,
+  formatStrategyBriefing,
+} from './creative/strategy.js';
+export type { StrategyDeps, StrategyInput, AngleSelection, DevelopBigIdeaInput } from './creative/strategy.js';
