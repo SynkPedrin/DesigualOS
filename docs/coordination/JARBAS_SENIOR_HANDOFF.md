@@ -340,7 +340,82 @@ não ser algo que eu mesmo disparo pra "verificar"). Verdict aplicável:
    confirmação de que `metric-verifier.ts` rejeita um `metricFacts` cujo
    valor não bate com a conta manual esperada.
 
-## 10. Limitações conhecidas (resumo)
+## 10. Fechamento de persistência (24/09/2026) — migração PRONTA, NÃO APLICADA
+
+**Migração criada:** `database/migrations/0038_jarbas_persistent_tasks.sql`
+— `agent_tasks` + `agent_task_results`, seguindo exatamente as convenções
+já existentes (`_shared.ts` idColumn/timestampColumns, FK pra
+`organizations`/`clients`/`users`, índices por organização/cliente/status/
+`updated_at`/retry-elegível, cerca de acesso público igual à de
+`0037_restrict_public_data_api.sql`). Aditiva, não-destrutiva: nenhuma
+tabela existente é alterada, nenhuma coluna removida.
+
+**Achado real durante a geração:** `drizzle-kit generate` tentou recriar
+`organizations`/`organization_members`/`clients.organization_id`/
+`automations.organization_id` — os snapshots das migrações 0035-0037
+(fundação de tenant, já aplicada em produção) não estão commitados em
+`database/migrations/meta/` nesta branch, uma lacuna PRÉ-EXISTENTE não
+causada por esta missão. O arquivo `.sql` gerado foi editado à mão pra
+conter só `agent_tasks`/`agent_task_results` — a tentativa de recriar
+tabelas que já existem foi removida antes de qualquer consideração de
+aplicar. Reportado, não corrigido (corrigir exigiria reconstruir os três
+snapshots faltantes contra o estado real do banco, fora do escopo desta
+missão de persistência do Jarbas).
+
+**Migração NÃO aplicada.** Rodar `db:migrate` conecta no MESMO Supabase
+que todo o resto do sistema usa em produção — não existe banco local/de
+teste configurado neste ambiente (confirmado: todo teste deste
+repositório já mocka `@desigual-os/database` inteiro, nenhum roda
+contra Postgres real). Aplicar exigiria autorização explícita, que esta
+missão condicionou a "pare antes de aplicar" quando só o banco
+compartilhado existe — exatamente esta situação.
+
+**`PostgresAgentTaskStore`** (`apps/worker/src/processors/
+agent-task-postgres-store.ts`) implementa a MESMA interface `AgentTaskStore`
+que `InMemoryAgentTaskStore` já implementa — nenhum código chamador
+precisaria mudar pra trocar de uma pra outra. Toda transição de estado é
+um `UPDATE ... WHERE id = ? AND organization_id = ? AND status IN (...)`
+atômico — nunca um SELECT seguido de UPDATE separado, que teria janela de
+corrida entre dois workers (§9-10). `dispatch_key` é `UNIQUE` de verdade
+no banco: dois workers despachando a mesma chave colidem no INSERT
+(`onConflictDoNothing`), não em RAM de processo.
+
+**O que foi provado, e como:** 7 testes de contrato contra um banco
+MOCKADO (mesmo padrão de `workflow-consolidation.test.ts`) — idempotência
+via conflito de UNIQUE simulado, isolamento de organização no WHERE,
+recusa de transição inválida, recusa de resultado de versão stale — mais
+um teste cruzado que compara, par a par, a tabela de transições duplicada
+no store Postgres contra a máquina de estado REAL de `agent-task.ts`
+(`InMemoryAgentTaskStore`), pra garantir que as duas nunca divergem.
+
+**O que NÃO foi provado, honestamente:** nenhum destes testes é uma prova
+de concorrência real (§9) ou de sobrevivência a restart (§11/§37) — mock
+de banco roda single-threaded, sem duas conexões de verdade disputando a
+mesma linha, e sem um processo de verdade morrendo e outro assumindo. O
+DESIGN (WHERE atômico, UNIQUE constraint) é o que garante essas
+propriedades quando a migração for aplicada — mas "o design está certo"
+não é o mesmo que "foi observado acontecendo", e este documento não finge
+que é.
+
+## 11. Comando exato pra aplicar (requer aprovação)
+
+```bash
+pnpm --filter @desigual-os/database exec tsx src/migrate.ts
+```
+
+(equivalente a `pnpm db:migrate` dentro de `packages/database`) — conecta
+em `DATABASE_URL` do `.env` (o Supabase compartilhado de produção) e roda
+TODAS as migrações pendentes via `drizzle-orm/postgres-js/migrator`
+(idempotente: migração já aplicada é pulada pelo próprio mecanismo de
+journal do Drizzle). Antes de rodar: revisar
+`database/migrations/0038_jarbas_persistent_tasks.sql` uma última vez,
+confirmar backup/snapshot do banco disponível, e só então autorizar.
+Depois de aplicada, `PostgresAgentTaskStore` pode substituir
+`InMemoryAgentTaskStore` no caminho de handoff real (que, como
+documentado na seção 7.1, ainda não existe) — e SÓ nesse momento
+"restart recovery" vira algo testável de verdade, não só desenhado.
+
+## 12. Limitações conhecidas (resumo)
 
 - Sem trace de ferramenta do serviço externo → nenhum número do Jarbas é
   verificável hoje, só o período.

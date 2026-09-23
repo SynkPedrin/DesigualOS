@@ -159,20 +159,23 @@ export interface JarbasAnalysisResult {
   analysisConfidence: 'high' | 'medium' | 'low' | 'insufficient_data';
 }
 
-export type AgentTaskStatus =
-  | 'assigned'
-  | 'acknowledged'
-  | 'context_resolved'
-  | 'data_required'
-  | 'analyzing'
-  | 'verifying'
-  | 'completed_analysis'
-  | 'ready_for_review'
-  | 'blocked_needs_data'
-  | 'blocked_ambiguous'
-  | 'blocked_permission'
-  | 'blocked_external_service'
-  | 'cancelled';
+export const AGENT_TASK_STATUSES = [
+  'assigned',
+  'acknowledged',
+  'context_resolved',
+  'data_required',
+  'analyzing',
+  'verifying',
+  'completed_analysis',
+  'ready_for_review',
+  'blocked_needs_data',
+  'blocked_ambiguous',
+  'blocked_permission',
+  'blocked_external_service',
+  'cancelled',
+] as const;
+
+export type AgentTaskStatus = (typeof AGENT_TASK_STATUSES)[number];
 
 /**
  * Contrato de uma tarefa entre agentes (§15-17) — Bento atribuindo trabalho
