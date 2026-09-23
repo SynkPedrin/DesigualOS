@@ -60,6 +60,27 @@ const creativePlanFixture = {
   delivery_format: 'Carrossel 1080x1350',
 };
 
+/**
+ * Copy DISTINTA por slide, de propósito (Otto Senior V1, "Universal
+ * Quality Floor" — carousel repetition linter): um texto genérico tipo
+ * "Copy do slide N" teria o MESMO conjunto de palavras significativas em
+ * todo slide ("copy", "slide" — o número é curto demais pra contar) e
+ * dispararia falso positivo em `detectCarouselRepetition`, que julga por
+ * vocabulário compartilhado, não pelo rótulo do fixture.
+ */
+const CAROUSEL_SLIDE_COPIES = [
+  'O forno acende às 18h e a fila já começa antes disso.',
+  'Cada disco de massa descansa 48 horas antes de ir ao forno.',
+  'A farinha vem de um moinho de pedra a 40km daqui.',
+  'O queijo derrete e estica porque é feito na hora, todo dia.',
+  'Sexta-feira é o único dia com a fornada especial de calabresa.',
+  'O cliente que chega primeiro escolhe a mesa da janela.',
+  'Reservas só pelo WhatsApp, a partir de terça-feira.',
+  'O molho leva seis horas de cozimento em fogo baixo.',
+  'Cada mesa recebe uma azeitoneira própria da casa.',
+  'Peça a sua pelo aplicativo e retire sem fila.',
+];
+
 function makeCarouselFixture(slideCount = 10) {
   const functions = ['hook', 'context', 'development', 'value', 'development', 'value', 'development', 'value', 'context', 'cta'];
   return {
@@ -69,7 +90,7 @@ function makeCarouselFixture(slideCount = 10) {
       index: index + 1,
       narrative_function: narrativeFunction,
       objective: `Objetivo do slide ${index + 1}`,
-      copy: `Copy do slide ${index + 1}`,
+      copy: CAROUSEL_SLIDE_COPIES[index % CAROUSEL_SLIDE_COPIES.length],
       visual: `Visual do slide ${index + 1}`,
       composition: `Composição do slide ${index + 1}`,
       layout: `Layout do slide ${index + 1}`,
@@ -982,6 +1003,62 @@ describe('POST /execute — loop criativo (pipeline + pesquisa + qualidade)', ()
   });
 
   /**
+   * REGRESSÃO REAL (Otto Senior V1, "Universal Quality Floor", Section 9):
+   * pedido explícito de "8 slides" devolvia 10 — a contagem era hardcoded
+   * em execute.ts, nunca lida do pedido do usuário.
+   */
+  it('teste 9c: carrossel com "8 slides" pedidos explicitamente gera exatamente 8, não o default de 10', async () => {
+    let carouselSystemPrompt = '';
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            const list = messages as { role: string; content: string }[];
+            carouselSystemPrompt = list.find((m) => m.role === 'system')?.content ?? '';
+            return Promise.resolve(makeCarouselFixture(8));
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, {
+      execution_id: 'exe-slide-count',
+      message: 'Crie um carrossel de 8 slides para o cliente sobre o lançamento da nova coleção.',
+    });
+
+    expect(body.status).toBe('completed');
+    expect(carouselSystemPrompt).toMatch(/exatamente 8 slides/);
+    expect((body.metadata.carousel_plan as { slide_count: number }).slide_count).toBe(8);
+
+    await app.close();
+  });
+
+  it('carrossel SEM quantidade pedida continua no default de 10 (comportamento anterior preservado)', async () => {
+    let carouselSystemPrompt = '';
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema, messages) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            const list = messages as { role: string; content: string }[];
+            carouselSystemPrompt = list.find((m) => m.role === 'system')?.content ?? '';
+            return Promise.resolve(makeCarouselFixture());
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    await execute(app, { execution_id: 'exe-slide-count-default', message: 'Crie um carrossel pro cliente' });
+
+    expect(carouselSystemPrompt).toMatch(/exatamente 10 slides/);
+
+    await app.close();
+  });
+
+  /**
    * MISSÃO 6 (Otto Senior 20Y): o bloco de contexto do orquestrador não pode
    * entrar cru no "Briefing:" do planner (duplicando o que já chega via
    * clientContext) nem se acumular numa reescrita. Isto é o que investigamos
@@ -1643,6 +1720,50 @@ describe('critic + rewrite (Otto Elite Phase 2)', () => {
     expect(body.metadata.elite_passed).toBe(false);
     expect(body.metadata.quality_tier).toBe('draft');
     expect(body.metadata.requires_human_review).toBe(true);
+
+    await app.close();
+  });
+
+  /**
+   * REGRESSÃO REAL (Otto Senior V1, "Universal Quality Floor", certificação
+   * não-vídeo): carrossel real (LaunchDesk/SaaS) repetiu "Antes:"/"Depois:"
+   * em dois pares de slides — nota de retenção/platform_fit despencou, mas
+   * o critic (LLM) não tinha nenhum sinal determinístico pra apontar ONDE.
+   * O linter de repetição precisa forçar a reprovação mesmo quando o
+   * critic (fake, aqui) aprovaria de cara.
+   */
+  it('teste 10: repetição real de carrossel (rótulo "Antes:"/"Depois:" repetido) força reprovação e root_cause=STRUCTURE, mesmo com critic aprovando', async () => {
+    const carrosselComRepeticao = {
+      concept: 'x',
+      slide_count: 4,
+      slides: [
+        { index: 1, narrative_function: 'hook', objective: 'o', copy: 'Configurar tarefas manualmente toma tempo do seu time.', visual: 'v', composition: 'c', layout: 'l', image_prompt: 'p' },
+        { index: 2, narrative_function: 'development', objective: 'o', copy: 'Antes: configuração manual de tarefas leva horas todo mês.', visual: 'v', composition: 'c', layout: 'l', image_prompt: 'p' },
+        { index: 3, narrative_function: 'development', objective: 'o', copy: 'Antes: revisar e reconfigurar tarefas manualmente consome o dia.', visual: 'v', composition: 'c', layout: 'l', image_prompt: 'p' },
+        { index: 4, narrative_function: 'cta', objective: 'o', copy: 'Ative a automação direto no seu workspace hoje.', visual: 'v', composition: 'c', layout: 'l', image_prompt: 'p' },
+      ],
+    };
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) return Promise.resolve(creativePlanFixture);
+            if (schema === carouselPlanSchema) return Promise.resolve(carrosselComRepeticao);
+            return Promise.reject(new OttoLLMError('schema inesperado'));
+          },
+          critic: () => Promise.resolve(CRITIC_APPROVES),
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-carousel-repeticao', message: 'Crie um carrossel pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(body.metadata.critic).toMatchObject({ passed: false });
+    const reasons = (body.metadata.critic as { reasons: string[] }).reasons;
+    expect(reasons.some((r) => r.includes('qualidade de carrossel'))).toBe(true);
+    expect((body.metadata.critic as { evaluation: { root_cause: string } }).evaluation.root_cause).toBe('STRUCTURE');
 
     await app.close();
   });

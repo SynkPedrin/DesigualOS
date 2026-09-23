@@ -288,3 +288,24 @@ export function exigeFrescorOperacional(mensagem: string): boolean {
   if (DEPENDE_DO_AGORA.some((re) => re.test(t))) return true;
   return TEMPO_SOZINHO.test(t) && COISA_OPERACIONAL.test(t);
 }
+
+/**
+ * QUANTIDADE DE SLIDES DE CARROSSEL (Otto Senior V1, "Universal Quality
+ * Floor" — Section 9). Achado ao vivo real: pedido explícito de "8 slides"
+ * devolveu 10, porque `planCarousel` era chamado com a contagem HARDCODED
+ * em execute.ts, nunca lendo o que o usuário pediu. Deliberadamente
+ * separado de `contratoDeSaida`/`quantidadeDe`: aquele mecanismo só extrai
+ * quantidade quando já identificou QUAL artefato está sendo quantificado
+ * (titulo/headline/legenda/roteiro), e "carrossel"/"slides" nunca foi um
+ * `ArtefatoPedido` reconhecido ali — ensinar isso ao contrato geral
+ * arriscaria mudar comportamento já testado (35 casos) pra um problema
+ * que é só do carrossel. Aceita "N slides", "N cards", "carrossel de N".
+ */
+const SLIDE_COUNT_PATTERN = /\b(\d{1,2})\s*(?:slides?|cards?)\b|\bcarross[eé]l\s+de\s+(\d{1,2})\b/i;
+
+export function parseRequestedSlideCount(mensagem: string): number | null {
+  const match = SLIDE_COUNT_PATTERN.exec(mensagem ?? '');
+  if (!match) return null;
+  const n = Number(match[1] ?? match[2]);
+  return n >= 1 && n <= 20 ? n : null;
+}

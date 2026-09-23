@@ -5,6 +5,7 @@ import {
   diretivaDoContrato,
   ehRevisaoEliptica,
   exigeFrescorOperacional,
+  parseRequestedSlideCount,
 } from './output-contract.js';
 
 describe('three_titles_returns_three_titles', () => {
@@ -263,5 +264,37 @@ describe('freshness_is_prioritized_for_operational_request', () => {
 
   it('na dúvida fica o aviso: "uma versão pro cliente" não fala de operação', () => {
     expect(exigeFrescorOperacional('Uma versão pro cliente.')).toBe(false);
+  });
+});
+
+/**
+ * REGRESSÃO REAL (Otto Senior V1, "Universal Quality Floor", Section 9):
+ * pedido explícito de "8 slides" devolveu 10 — planCarousel era chamado com
+ * a contagem hardcoded em execute.ts, nunca lendo o que o usuário pediu.
+ */
+describe('parseRequestedSlideCount (Otto Senior V1)', () => {
+  it('teste 9a: "carrossel de 8 slides" -> 8, não o default de 10', () => {
+    expect(parseRequestedSlideCount('Crie um carrossel de 8 slides para o cliente')).toBe(8);
+  });
+
+  it('teste 9b: "5 slides" -> 5', () => {
+    expect(parseRequestedSlideCount('Quero um carrossel com 5 slides sobre o lançamento')).toBe(5);
+  });
+
+  it('"carrossel de 6" (sem a palavra slides) também é reconhecido', () => {
+    expect(parseRequestedSlideCount('Faz um carrossel de 6 para o Instagram')).toBe(6);
+  });
+
+  it('"N cards" também conta como pedido de quantidade', () => {
+    expect(parseRequestedSlideCount('Crie 7 cards para o carrossel')).toBe(7);
+  });
+
+  it('sem quantidade pedida, devolve null (quem chama decide o default do produto)', () => {
+    expect(parseRequestedSlideCount('Crie um carrossel pro cliente')).toBeNull();
+  });
+
+  it('número fora da faixa razoável (0 ou > 20) devolve null', () => {
+    expect(parseRequestedSlideCount('Crie um carrossel de 0 slides')).toBeNull();
+    expect(parseRequestedSlideCount('Crie um carrossel de 45 slides')).toBeNull();
   });
 });

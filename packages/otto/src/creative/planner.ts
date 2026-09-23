@@ -110,11 +110,19 @@ Formato:
 }
 
 /**
- * Planejamento de carrossel respeitando as leis do modus operandi canônico
- * (.agents/skills/carrossel-cinema-impossivel): 10 a 16 cards, hook na capa,
- * CTA emocional no último, desenvolvimento no meio. slideCount é clampado
- * pro intervalo canônico: pedir 5 cards não produz carrossel, produz peça
- * quebrada - melhor ajustar do que entregar fora da lei.
+ * Planejamento de carrossel: hook na capa, CTA emocional no último,
+ * desenvolvimento no meio.
+ *
+ * `slideCount` é a contagem que o CHAMADOR decidiu (pedido explícito do
+ * usuário, ou o default do produto Otto quando o pedido não diz) — esta
+ * função não impõe nenhum piso/teto próprio. Otto Senior V1, "Universal
+ * Quality Floor": esta função chegou a clampar TODO carrossel pro
+ * intervalo 10-16, uma lei canônica de um formato de produto específico e
+ * completamente isolado de Otto. Aplicar essa lei a QUALQUER cliente do
+ * Otto (SaaS, imobiliária, restaurante...) estava errado — Otto não tem, e
+ * não deve ter, nenhum acoplamento em tempo de execução com sistemas
+ * externos de terceiros. Um teto de sanidade (1-20) ainda protege contra
+ * valor patológico vindo de fora; a decisão de QUANTO pedir é do chamador.
  */
 export async function planCarousel(
   deps: PlannerDeps,
@@ -122,7 +130,7 @@ export async function planCarousel(
   slideCount = 10,
   opts: { revisionNote?: string; strategyBriefing?: string } = {},
 ): Promise<CarouselPlan> {
-  const count = Math.min(16, Math.max(10, Math.round(slideCount)));
+  const count = Math.min(20, Math.max(1, Math.round(slideCount)));
 
   const system = `${CREATIVE_DIRECTOR_PREAMBLE}
 

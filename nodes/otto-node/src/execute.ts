@@ -21,6 +21,7 @@ import {
   classificarTurno,
   resolverReferente,
   contratoDeSaida,
+  parseRequestedSlideCount,
   diretivaDoContrato,
   createWebSearchProviderFromEnv,
   critiqueDeliverable,
@@ -42,6 +43,7 @@ import {
   selectBestValidCandidate,
   type CandidateRecord,
   detectPlaceholderContent,
+  detectCarouselRepetition,
   type BrainHealth,
   type BrandKit,
   type CarouselPlan,
@@ -716,6 +718,10 @@ export async function executeTask(
     const contratoEstruturaProducao = contratoDeSaida(producaoBriefingBase);
     const contratoProducao = diretivaDoContrato(contratoEstruturaProducao);
     const pedeEmoji = /\bemojis?\b/i.test(producaoBriefingBase);
+    // Otto Senior V1, "Universal Quality Floor", Section 9: quantidade real
+    // pedida pro carrossel — achado ao vivo real, "8 slides" virava 10
+    // porque o número era fixo aqui embaixo, nunca lido do pedido.
+    const requestedSlideCount = parseRequestedSlideCount(producaoBriefingBase) ?? 10;
     const entregaveisPedidos = contratoEstruturaProducao.artefato === 'indefinido'
       ? []
       : [contratoEstruturaProducao.artefato, ...(contratoEstruturaProducao.adicionais ?? [])];
@@ -816,7 +822,7 @@ export async function executeTask(
         ...(strategyBriefing ? { strategyBriefing } : {}),
       };
       if (jobType === 'carousel') {
-        carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan, 10, shapingOpts));
+        carouselPlan = await measureLlm(() => planCarousel({ llm: deps.llm }, plan, requestedSlideCount, shapingOpts));
         logger.info({ slides: carouselPlan.slide_count, llm_ms: llmMs }, '[OTTO:plan] carrossel planejado');
       }
       if (jobType === 'video' || jobType === 'reels') {
@@ -1085,6 +1091,22 @@ export async function executeTask(
         };
       }
 
+      /**
+       * CAROUSEL QUALITY LINTER (Otto Senior V1, "Universal Quality Floor"):
+       * mesma lógica — checagem determinística de repetição/progressão
+       * sobre os slides renderizados, independente do julgamento do critic.
+       * Raciocínio próprio do Otto (ver carousel-quality.ts), sem nenhum
+       * acoplamento com skills externas.
+       */
+      const carouselQualityIssues = jobType === 'carousel' && result.carouselPlan ? detectCarouselRepetition(result.carouselPlan) : [];
+      if (carouselQualityIssues.length > 0) {
+        gate = {
+          ...gate,
+          passed: false,
+          reasons: [...gate.reasons, ...carouselQualityIssues.map((issue) => `qualidade de carrossel: ${issue.detail}`)],
+        };
+      }
+
       // Otto Elite, Blocker 3: gate reprovado com root_cause="NONE" é
       // logicamente inconsistente — nunca confiar cegamente nisso.
       let reconciledRootCause = reconcileRootCause(evaluation, gate, missingDeliverables);
@@ -1094,6 +1116,12 @@ export async function executeTask(
       // execução — polir hook/copy não resolveria "Visual: None".
       if (reelExecutionIssues.length > 0 && !['EXECUTABILITY', 'STRUCTURE'].includes(reconciledRootCause)) {
         reconciledRootCause = 'EXECUTABILITY';
+      }
+      // Repetição de carrossel é falha de ESTRUTURA (a peça não progride),
+      // não de copy isolada — reescrever só o texto sem saber QUAIS slides
+      // colidem repetiria o mesmo erro com sinônimos novos.
+      if (carouselQualityIssues.length > 0 && reconciledRootCause !== 'STRUCTURE') {
+        reconciledRootCause = 'STRUCTURE';
       }
       if (reconciledRootCause !== evaluation.root_cause) {
         logger.warn(

@@ -113,6 +113,7 @@ export {
   diretivaDoContrato,
   ehRevisaoEliptica,
   exigeFrescorOperacional,
+  parseRequestedSlideCount,
 } from './creative/output-contract.js';
 export type { ArtefatoPedido, ContratoDeSaida } from './creative/output-contract.js';
 export type { DirectionDirectiveInput } from './creative/stance.js';
@@ -198,5 +199,17 @@ export type { StrategyDeps, StrategyInput, AngleSelection, DevelopBigIdeaInput }
 export { validateReelExecution, formatReelExecutionNote } from './creative/reel-execution.js';
 export type { ReelExecutionFinding, ReelExecutionIssue } from './creative/reel-execution.js';
 
+export { detectCarouselRepetition, formatCarouselQualityNote } from './creative/carousel-quality.js';
+export type { CarouselQualityFinding, CarouselQualityIssue } from './creative/carousel-quality.js';
+
 export { selectBestValidCandidate } from './creative/best-valid.js';
 export type { CandidateRecord } from './creative/best-valid.js';
+
+export {
+  containsForbiddenPhrase,
+  extractForbiddenPhrases,
+  detectForbiddenLanguage,
+  extractRequestedRemovals,
+  verifyRequestedRemovals,
+} from './creative/universal-quality.js';
+export type { RequestedRemoval, RemovalVerification } from './creative/universal-quality.js';
