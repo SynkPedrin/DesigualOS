@@ -835,16 +835,17 @@ export async function executeTask(
       });
       logger.info({ job_type: spec.job_type, depth: depth.depth }, '[OTTO:spec] spec de produção pronta pro handoff');
 
-      // Gate de fidelidade real (ver checkRealWorldFidelity): se o briefing
-      // pede um produto/marca/pessoa/local REAL sem referência fiel anexada,
-      // a pessoa vê isso ANTES de esperar o job do Studio terminar, não depois.
+      // Gate de fidelidade real (ver checkRealWorldFidelity): a pessoa vê
+      // isso ANTES de esperar o job do Studio terminar, não depois — mas
+      // como NOTA DE PRODUÇÃO no fim da entrega (Blocker 2/5), não como a
+      // primeira linha dominando a peça criativa com um aviso técnico.
       const fidelityWarning =
         typeof spec.metadata.fidelity_warning === 'string' ? spec.metadata.fidelity_warning : null;
       if (fidelityWarning) {
         logger.warn({ execution_id: request.execution_id }, '[OTTO:fidelity] briefing sem referência fiel pra entidade real');
       }
 
-      const answer = [fidelityWarning, formatPlanAnswer(plan.concept, plan.copy, jobType, videoPlan, carouselPlan)]
+      const answer = [formatPlanAnswer(plan.concept, plan.copy, jobType, videoPlan, carouselPlan), fidelityWarning]
         .filter(Boolean)
         .join('\n\n');
 

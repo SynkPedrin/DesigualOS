@@ -240,5 +240,22 @@ describe('buildProductionSpec', () => {
       ]);
       expect(warning).not.toBeNull();
     });
+
+    /**
+     * Otto Elite, Blocker 5: o aviso virava a PRIMEIRA COISA que a pessoa
+     * lia — um parágrafo técnico dominando a resposta antes de qualquer
+     * criação aparecer. Curto o bastante pra virar nota de produção no fim,
+     * não manchete no topo (a posição é decidida em execute.ts, mas o
+     * TAMANHO do texto é decidido aqui).
+     */
+    it('o texto do aviso é uma nota curta, não um parágrafo técnico completo (Blocker 5)', () => {
+      const plan = makePlan();
+      plan.real_world_fidelity = { requires_reference: true, entity_type: 'location', entity_description: 'a fachada real do prédio' };
+      const warning = checkRealWorldFidelity(plan, []);
+      expect(warning).not.toBeNull();
+      expect(warning!.length).toBeLessThan(150);
+      expect(warning).not.toMatch(/^Atenção:/);
+      expect(warning).toContain('a fachada real do prédio');
+    });
   });
 });

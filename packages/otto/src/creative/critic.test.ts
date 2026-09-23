@@ -250,6 +250,33 @@ describe('critiqueDeliverable', () => {
     expect(result.scores.strategy).toBe(9);
   });
 
+  /**
+   * Blocker 4 (Otto Elite, achado ao vivo real): o critic aprovou "sem
+   * papelada", "as chaves já estão na sua mão" e "garanta sua vaga" quando
+   * o briefing só dizia "sem cadastro", "abertura de vendas" e nada sobre
+   * escassez. O prompt precisa instruir explicitamente que reformulação
+   * criativa não pode FORTALECER o fato original.
+   */
+  it('system prompt instrui o critic a não deixar reformulação criativa fortalecer o fato original (Blocker 4)', async () => {
+    let capturedSystem = '';
+    const llm = {
+      chat: () => Promise.reject(new Error('not expected')),
+      chatJson: (messages: unknown) => {
+        const list = messages as { role: string; content: string }[];
+        capturedSystem = list.find((m) => m.role === 'system')?.content ?? '';
+        return Promise.resolve(evaluation());
+      },
+      healthCheck: () => Promise.reject(new Error('not expected')),
+    };
+
+    await critiqueDeliverable({ llm: llm as never }, { briefing: 'x', renderedAnswer: 'y' });
+
+    expect(capturedSystem).toMatch(/FORTALECE o fato original/);
+    expect(capturedSystem).toMatch(/sem necessidade de cadastro.*sem papelada/s);
+    expect(capturedSystem).toMatch(/abertura de vendas.*chaves já estão na sua mão/s);
+    expect(capturedSystem).toMatch(/garanta sua vaga/);
+  });
+
   /** Missão 14: o critic precisa ver a direção estratégica pra avaliar fidelidade, não só o texto final isolado. */
   it('manda o strategyContext quando fornecido, pro critic avaliar fidelidade à estratégia', async () => {
     let capturedUser = '';

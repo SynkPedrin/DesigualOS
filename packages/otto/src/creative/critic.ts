@@ -68,7 +68,11 @@ Julgue cada dimensão de 0 a 10, SEM CALCULAR MÉDIA OU TOTAL (isso é feito por
 Marque as flags (booleano ou lista) quando aplicável:
 - missing_deliverables: liste aqui qualquer entregável PEDIDO explicitamente que NÃO apareceu na resposta (compare contra a lista de entregáveis pedidos, se fornecida)
 - genericity: a peça serviria pra qualquer marca no mesmo setor
-- unsupported_claims: liste qualquer número, data, garantia ou fato que a resposta afirma sem ter vindo do briefing
+- unsupported_claims: liste qualquer número, data, garantia ou fato que a resposta afirma sem ter vindo do briefing. ISTO INCLUI reformulação criativa que FORTALECE o fato original além do que ele realmente diz — dramatizar a APRESENTAÇÃO é permitido, fortalecer a AFIRMAÇÃO por trás não é. Classes de fato pra checar com cuidado: preço, disponibilidade, escassez, reserva/vaga garantida, garantia, propriedade/posse, entrega, ausência de burocracia, prazo, resultado, prova, característica, condição comercial. Exemplos REAIS de fortalecimento indevido (achados ao vivo nesta sessão):
+  - briefing diz "sem necessidade de cadastro" -> resposta diz "sem papelada" (generaliza de UM processo específico pra TODA burocracia — sinalize)
+  - briefing diz "abertura de vendas" -> resposta diz "as chaves já estão na sua mão" (vendas abertas não é posse/entrega — sinalize)
+  - briefing NÃO menciona escassez/vagas limitadas -> resposta diz "garanta sua vaga" (implica escassez que não foi dita — sinalize)
+  Se a resposta faz esse tipo de salto, liste a frase exata em unsupported_claims mesmo que o "espírito" pareça compatível com o briefing.
 - weak_hook: abertura fraca ou óbvia
 - weak_concept: não há ideia central clara
 - bad_cta: call-to-action ausente, vago ou deslocado

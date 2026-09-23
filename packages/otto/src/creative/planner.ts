@@ -345,10 +345,18 @@ function buildCreativeSpec(
 /**
  * Não BLOQUEIA a geração: um plano de LLM tem falso positivo/negativo
  * demais pra travar o pipeline inteiro numa aposta binária. Em vez disso,
- * anexa um aviso explícito (metadata.fidelity_warning) que a resposta do
- * Otto no chat e o job do Studio carregam adiante, pra pessoa saber que está
- * recebendo um conceito fictício em vez de fingir uma fidelidade que a
- * geração sem referência não consegue entregar.
+ * anexa um aviso (metadata.fidelity_warning, dado de produção de verdade)
+ * que a resposta do Otto no chat e o job do Studio carregam adiante, pra
+ * pessoa saber que está recebendo um conceito fictício em vez de fingir uma
+ * fidelidade que a geração sem referência não consegue entregar.
+ *
+ * Otto Elite, Blocker 5: a versão anterior deste texto era um parágrafo
+ * técnico completo ("Atenção: este briefing pede para representar... anexe
+ * uma foto de referência se a fidelidade ao real importar aqui") que virava
+ * a PRIMEIRA COISA que a pessoa lia na resposta — dominando um pedido de
+ * conteúdo normal com um aviso técnico longo antes de qualquer criação
+ * aparecer. Curto e no fim, não em cima: é dado de produção, não a
+ * manchete da entrega.
  */
 export function checkRealWorldFidelity(
   plan: CreativePlan,
@@ -359,7 +367,7 @@ export function checkRealWorldFidelity(
   const hasFaithfulReference = referenceAssets.some((asset) => asset.fidelity === 'exact' || asset.fidelity === 'high');
   if (hasFaithfulReference) return null;
   const entity = fidelity.entity_description?.trim() || `${fidelity.entity_type ?? 'elemento'} real mencionado no briefing`;
-  return `Atenção: este briefing pede para representar ${entity}, mas nenhuma referência de imagem fiel foi anexada. O resultado será um conceito visual fictício (aproximado, não o original) - anexe uma foto de referência se a fidelidade ao real importar aqui.`;
+  return `Nota de produção: sem referência de imagem fiel de ${entity} — o visual é aproximado, não o real.`;
 }
 
 /**

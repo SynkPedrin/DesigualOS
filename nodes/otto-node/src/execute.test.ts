@@ -277,6 +277,40 @@ describe('POST /execute', () => {
     await app.close();
   });
 
+  /**
+   * Otto Elite, Blocker 5: a nota de fidelidade não pode ser a PRIMEIRA
+   * coisa que a pessoa lê, dominando um pedido de conteúdo normal com um
+   * aviso técnico antes de qualquer criação aparecer — vai no FIM, como
+   * nota de produção curta.
+   */
+  it('nota de fidelidade vem no FIM da resposta, não no início (Blocker 5)', async () => {
+    const planSemFidelidade = {
+      ...creativePlanFixture,
+      real_world_fidelity: { requires_reference: true, entity_type: 'location', entity_description: 'a fachada real da loja' },
+    };
+    const app = buildTestApp(
+      makeDeps(
+        {
+          chatJson: (schema) => {
+            if (schema === creativePlanSchema) return Promise.resolve(planSemFidelidade);
+            return Promise.resolve(makeCarouselFixture());
+          },
+        },
+        brainDir,
+      ),
+    );
+
+    const { body } = await execute(app, { execution_id: 'exe-fidelidade-fim', message: 'Crie um carrossel pro cliente' });
+
+    expect(body.status).toBe('completed');
+    expect(body.answer).toContain('Nota de produção');
+    expect(body.answer).toContain('a fachada real da loja');
+    // A nota vem DEPOIS do conceito, não antes.
+    expect(body.answer.indexOf('Conceito:')).toBeLessThan(body.answer.indexOf('Nota de produção'));
+
+    await app.close();
+  });
+
   it('pergunta sem verbo de produção vira chat com conhecimento, sem spec', async () => {
     const app = buildTestApp(
       makeDeps({ chat: () => Promise.resolve('Resposta estratégica baseada no Brain.') }, brainDir),
