@@ -49,6 +49,7 @@ import {
 import type { Logger } from '@desigual-os/logging';
 import { completeTextSafely } from '@desigual-os/router';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
+import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard } from './bento-action-guard';
 import { loadSeniorRuntimeContext } from './senior-runtime-context';
@@ -1217,9 +1218,21 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
        * node. O Otto respondia "Sem contexto sobre 'o segundo'" tendo acabado
        * de escrever os três títulos.
        *
-       * Aqui vai SÓ o diálogo (limitado, sanitizado, mesma conversa) — nunca o
-       * dossiê: o despejo operacional na mensagem continua proibido, porque foi
-       * ele que envenenou o pedido criativo em 17/09.
+       * Aqui vai o diálogo (limitado, sanitizado, mesma conversa) e a
+       * IDENTIDADE DO CLIENTE — nunca o despejo operacional, que continua
+       * proibido porque foi ele que envenenou o pedido criativo em 17/09.
+       *
+       * A identidade entrou em 24/09/2026. O bloco de cliente existia
+       * (client-context.ts formatClientBlock, que funde os registros
+       * client.profile) mas só era montado dentro do dispatch agêntico — com
+       * AGENT_LOOP_V2 desligada o node recebia mensagem crua, sem id e sem
+       * nome de cliente. `extractClientId` devolvia null, `clientId` virava
+       * 'unresolved', a cerca de cliente do vault nunca fechava, e o modelo
+       * preenchia o buraco com conhecimento de mundo: pedido de conteúdo pra
+       * "Cosentino" (Construtora e Imobiliária, da carteira) voltou como copy
+       * do Cosentino Group espanhol, com #Dekton e #Caesarstone. É o mesmo
+       * defeito de 15/09 que fez uma concessionária John Deere virar "rede de
+       * joias" — corrigido lá só no caminho agêntico.
        */
       let mensagemComDialogo = message;
       if (aceitaContextoNaMensagem(agent) && conversationId) {
@@ -1240,11 +1253,34 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         );
         if (dialogo) mensagemComDialogo = `${message}\n\n---\nContexto:\n${dialogo}`;
       }
+
+      // IDENTIDADE DO CLIENTE no caminho direto. O node já sabe ler as duas
+      // formas: `client:<id>` em context_refs (extractClientId) e a linha
+      // "CLIENTE DO TURNO: <nome>" dentro do contexto
+      // (extrairClienteDoContexto, que é o que fecha a cerca do vault).
+      let refsDoTurno = contextRefs;
+      if (aceitaContextoNaMensagem(agent)) {
+        const clienteDoTurno = await resolveClientTurnContext({
+          message,
+          executionClientId: runningExecution?.clientId ?? null,
+        }).catch(() => null);
+        if (clienteDoTurno) {
+          const totalClientes = await contarClientes().catch(() => 0);
+          const blocoCliente = formatClientBlock(clienteDoTurno, totalClientes);
+          if (blocoCliente) {
+            mensagemComDialogo = `${mensagemComDialogo}\n\n---\n${blocoCliente}`;
+          }
+          if (clienteDoTurno.clientId && !refsDoTurno.some((r) => r.startsWith('client:'))) {
+            refsDoTurno = [...refsDoTurno, `client:${clienteDoTurno.clientId}`];
+          }
+        }
+      }
+
       result = await callNode(
         agent,
         executionId,
         mensagemComDialogo,
-        contextRefs,
+        refsDoTurno,
         logger,
         conversationId ?? undefined,
         clientBrandKit,
@@ -1265,7 +1301,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
           agent,
           executionId,
           mensagemComDialogo,
-          contextRefs,
+          refsDoTurno,
           logger,
           conversationId ?? undefined,
           clientBrandKit,
