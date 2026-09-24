@@ -1248,6 +1248,13 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
        * joias" — corrigido lá só no caminho agêntico.
        */
       let mensagemComDialogo = message;
+      // Partes do bloco de contexto. Vão TODAS sob o mesmo marcador
+      // ("\n\n---\nContexto:\n") porque é ele que o node usa pra separar o
+      // turno do usuário do que o orquestrador anexou: o que fica fora do
+      // marcador entra na detecção de intenção e de contrato de saída (e um
+      // dossiê que cita "roteiro"/"post" faz "me dá 3 títulos" virar pedido
+      // de produção), e o que fica dentro é promovido pro system prompt.
+      const partesDeContexto: string[] = [];
       if (aceitaContextoNaMensagem(agent) && conversationId) {
         const turnos = (await db
           .select({ role: schema.messages.role, agent: schema.messages.agent, content: schema.messages.content })
@@ -1264,7 +1271,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
             .map((m) => ({ role: m.role as TurnoDeDialogo['role'], agent: m.agent, content: m.content })),
           agent,
         );
-        if (dialogo) mensagemComDialogo = `${message}\n\n---\nContexto:\n${dialogo}`;
+        if (dialogo) partesDeContexto.push(dialogo);
       }
 
       /**
@@ -1333,13 +1340,15 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         if (clienteDoTurno) {
           const totalClientes = await contarClientes().catch(() => 0);
           const blocoCliente = formatClientBlock(clienteDoTurno, totalClientes);
-          if (blocoCliente) {
-            mensagemComDialogo = `${mensagemComDialogo}\n\n---\n${blocoCliente}`;
-          }
+          if (blocoCliente) partesDeContexto.push(blocoCliente);
           if (clienteDoTurno.clientId && !refsDoTurno.some((r) => r.startsWith('client:'))) {
             refsDoTurno = [...refsDoTurno, `client:${clienteDoTurno.clientId}`];
           }
         }
+      }
+
+      if (partesDeContexto.length > 0) {
+        mensagemComDialogo = `${message}\n\n---\nContexto:\n${partesDeContexto.join('\n\n')}`;
       }
 
       result = await callNode(
