@@ -21,7 +21,8 @@ const CORTESIA = new RegExp(`^(obrigad[oa]|valeu|vlw|show|beleza|blz|perfeito|ok
 const TUDO_BEM = new RegExp(`^(tudo bem|tudo bom|como vai|como voc[êe] est[áa]|td bem|td bom)${FIM}`, 'i');
 
 /** Sinal de que NÃO é small talk, por mais curta que a frase seja. */
-const TEM_TRABALHO = /(tasks?|tarefas?|prazos?|clientes?|campanhas?|posts?|copy|briefings?|reels|carross[eé]is?|carrossel|clickup|relat[óo]rios?|m[ée]tricas?|or[çc]amentos?|status|entregas?|aprova|atrasad|vencem?|prioriz|organiz)/i;
+const TEM_TRABALHO =
+  /(tasks?|tarefas?|prazos?|clientes?|campanhas?|posts?|copy|briefings?|reels|carross[eé]is?|carrossel|clickup|relat[óo]rios?|m[ée]tricas?|or[çc]amentos?|status|entregas?|aprova|atrasad|vencem?|prioriz|organiz|fato|hip[óo]tese|fonte|tirou|comparad|per[íi]odo|dados?|de onde|veio de)/i;
 
 export interface SmallTalk {
   kind: 'saudacao' | 'cortesia' | 'tudo_bem';

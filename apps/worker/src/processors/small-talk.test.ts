@@ -64,3 +64,29 @@ describe('robustez do corte de contexto', () => {
     expect(detectSmallTalk('Oi\n\nme vê as tarefas de hoje por favor', 'bento')).toBeNull();
   });
 });
+
+/**
+ * Regressão medida no front em 24/09/2026: "isso é fato ou hipótese?" começa
+ * com "isso", que está na lista de cortesia, e virava "De nada. Quando quiser
+ * outro recorte de performance, é só pedir." — a pergunta nunca chegava no
+ * agente. Ela existe justamente pra separar o que é medido do que é leitura.
+ */
+describe('pergunta sobre fato/fonte nunca é small talk', () => {
+  const perguntas = [
+    'isso é fato ou hipótese?',
+    'isso veio de onde?',
+    'certo, mas qual a fonte?',
+    'ok, e comparado com o período anterior?',
+    'entendi, de onde você tirou esses dados?',
+  ];
+  for (const p of perguntas) {
+    it(`"${p}" segue o caminho normal`, () => {
+      expect(detectSmallTalk(p, 'jarbas')).toBeNull();
+    });
+  }
+
+  it('cortesia pura continua sendo atalho', () => {
+    expect(detectSmallTalk('valeu', 'jarbas')).not.toBeNull();
+    expect(detectSmallTalk('isso', 'jarbas')).not.toBeNull();
+  });
+});
