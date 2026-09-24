@@ -62,6 +62,7 @@ import {
   checkDateRangeMatch,
   comparacaoIndisponivelMessage,
   comparacaoNaoRealizada,
+  clienteDoBloco,
   compararPeriodos,
   extrairMetricas,
   ehComparacaoComPeriodoAnterior,
@@ -1499,7 +1500,13 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
      */
     if (agent === 'jarbas' && result.answer && comparacaoPedida && !comparacaoJaFeita) {
       const { atual, anterior } = comparacaoPedida;
-      const perguntaB = `como foi ${nomeClienteDoTurno || 'a conta'} de ${anterior.start} a ${anterior.end}?`;
+      // Cliente do turno, ou o que o próprio bloco do período A declarou: o
+      // follow-up "e comparado com o anterior?" costuma vir sem cliente fixado.
+      const cliente = nomeClienteDoTurno || clienteDoBloco(result.answer) || '';
+      if (!cliente) {
+        logger.warn({ executionId }, '[jarbas] sem cliente para buscar o período anterior');
+      }
+      const perguntaB = `como foi ${cliente || 'a conta'} de ${anterior.start} a ${anterior.end}?`;
       const respostaB = await callNode(
         agent,
         executionId,

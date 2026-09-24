@@ -302,3 +302,20 @@ export function compararPeriodos(
   }
   return linhas.join('\n');
 }
+
+/**
+ * Nome da conta declarado no cabeçalho do próprio bloco: "CA 1, 3Net, este
+ * mes (...)" ou "CA 1 - 3Net — mes corrente (...)".
+ *
+ * A busca do período anterior precisa dizer de QUAL cliente está falando, e o
+ * turno de follow-up pode não trazer cliente fixado (a pessoa só escreveu "e
+ * comparado com o anterior?"). O cabeçalho do turno anterior sempre traz —
+ * é o próprio serviço que o escreve.
+ */
+export function clienteDoBloco(answer: string): string | null {
+  const comVirgula = /^CA\s*\d+\s*,\s*([^,\n]{2,60}?)\s*,/i.exec(answer.trim());
+  if (comVirgula?.[1]) return comVirgula[1].trim();
+  const comTraco = /^CA\s*\d+\s*[-–]\s*([^,\n—]{2,60}?)\s*(?:—|-|,)/i.exec(answer.trim());
+  if (comTraco?.[1]) return comTraco[1].trim();
+  return null;
+}

@@ -10,6 +10,7 @@ import {
   mensagemDeComparacao,
   extrairMetricas,
   compararPeriodos,
+  clienteDoBloco,
 } from './jarbas-date-guard';
 
 /**
@@ -242,5 +243,17 @@ Conversas no WhatsApp: 95`;
   it('recusa quando nada alinha, em vez de inventar', () => {
     const texto = compararPeriodos({}, {}, { start: 'a', end: 'b' }, { start: 'c', end: 'd' });
     expect(texto).toContain('não vou comparar');
+  });
+});
+
+describe('cliente declarado no cabeçalho do bloco', () => {
+  it('lê o formato com vírgula', () => {
+    expect(clienteDoBloco('CA 1, 3Net, este mes (2026-09-01 a 2026-09-24), fonte: Meta Ads')).toBe('3Net');
+  });
+  it('lê o formato com traço', () => {
+    expect(clienteDoBloco('CA 1 - 3Net — mes corrente ate hoje (2026-09-01 a 2026-09-24), fonte: Meta Ads')).toBe('3Net');
+  });
+  it('devolve null quando o bloco é de carteira', () => {
+    expect(clienteDoBloco('CARTEIRA, 2026-09-01 a 2026-09-24, fonte: Meta Ads')).toBeNull();
   });
 });
