@@ -143,7 +143,38 @@ export const ROUTING_RULES: RoutingRule[] = [
   },
   {
     intent: 'knowledge_query',
-    keywords: ['qual é o processo', 'onboarding do cliente', 'sop de', 'histórico do cliente', 'como fazemos'],
+    /**
+     * Substantivo de OPERAÇÃO também é sinal forte, pelo mesmo motivo que o de
+     * entregável criativo: sem palavra forte, a decisão depende do classifier,
+     * e classifier indisponível (ou lento, sob fila da GPU) vira pedido de
+     * esclarecimento numa pergunta óbvia. Medido em 24/09/2026: "quais as
+     * demandas da Alícia?" e "qual o processo de onboarding de cliente?"
+     * caíram no esclarecimento porque nenhuma regra as cobria.
+     */
+    keywords: [
+      'qual é o processo',
+      'onboarding do cliente',
+      'sop de',
+      'histórico do cliente',
+      'como fazemos',
+      'processo de onboarding',
+      'demanda',
+      'demandas',
+      'tarefa',
+      'tarefas',
+      'task',
+      'tasks',
+      'prazo',
+      'prazos',
+      'atrasada',
+      'atrasadas',
+      'atrasado',
+      'atrasados',
+      'responsável',
+      'responsavel',
+      'entrega',
+      'entregas',
+    ],
     primaryAgent: 'bento',
     requiredTools: ['clickup'],
     complexity: 'low',

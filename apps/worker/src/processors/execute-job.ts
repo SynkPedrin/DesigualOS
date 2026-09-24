@@ -1255,6 +1255,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       // dossiê que cita "roteiro"/"post" faz "me dá 3 títulos" virar pedido
       // de produção), e o que fica dentro é promovido pro system prompt.
       const partesDeContexto: string[] = [];
+      let sufixoDeCliente = "";
       if (aceitaContextoNaMensagem(agent) && conversationId) {
         const turnos = (await db
           .select({ role: schema.messages.role, agent: schema.messages.agent, content: schema.messages.content })
@@ -1338,9 +1339,31 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
           executionClientId: runningExecution?.clientId ?? null,
         }).catch(() => null);
         if (clienteDoTurno) {
-          const totalClientes = await contarClientes().catch(() => 0);
-          const blocoCliente = formatClientBlock(clienteDoTurno, totalClientes);
-          if (blocoCliente) partesDeContexto.push(blocoCliente);
+          if (agent === 'jarbas' || agent === 'suzy') {
+            /**
+             * Jarbas e Suzy NÃO recebem o bloco — recebem UMA LINHA.
+             *
+             * O serviço deles classifica a mensagem inteira, e bloco grande com
+             * nome de cliente e palavra de job dispara o edge case
+             * `job_via_whatsapp` (documentado na API, medido em 10/09/2026).
+             * Foi o que aconteceu quando este trecho passou a anexar o dossiê:
+             * "quanto gastou?" com a 3Net selecionada voltou perguntando "sobre
+             * qual cliente você tá falando?" e "qual campanha tá melhor?" veio
+             * da carteira inteira, num período que ninguém pediu.
+             *
+             * O que o serviço precisa é só o NOME, porque ele resolve cliente
+             * lendo o texto (findClientInText). Uma linha curta faz isso sem
+             * virar briefing.
+             */
+            const nome = clienteDoTurno.clientName;
+            if (nome && !message.toLowerCase().includes(nome.toLowerCase())) {
+              sufixoDeCliente = ` (cliente: ${nome})`;
+            }
+          } else {
+            const totalClientes = await contarClientes().catch(() => 0);
+            const blocoCliente = formatClientBlock(clienteDoTurno, totalClientes);
+            if (blocoCliente) partesDeContexto.push(blocoCliente);
+          }
           if (clienteDoTurno.clientId && !refsDoTurno.some((r) => r.startsWith('client:'))) {
             refsDoTurno = [...refsDoTurno, `client:${clienteDoTurno.clientId}`];
           }
@@ -1350,6 +1373,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       if (partesDeContexto.length > 0) {
         mensagemComDialogo = `${message}\n\n---\nContexto:\n${partesDeContexto.join('\n\n')}`;
       }
+      // Depois da montagem do contexto, senão a linha se perde na remontagem.
+      if (sufixoDeCliente) mensagemComDialogo = `${mensagemComDialogo}${sufixoDeCliente}`;
 
       result = await callNode(
         agent,

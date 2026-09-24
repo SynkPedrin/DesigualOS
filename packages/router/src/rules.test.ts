@@ -72,3 +72,30 @@ describe('AUTO: pedido de peça criativa decide sem depender da classifier', () 
     expect(matchRule('qual é o processo de onboarding do cliente')?.rule.primaryAgent).toBe('bento');
   });
 });
+
+/** Regressão 24/09/2026: pergunta operacional óbvia caía no esclarecimento. */
+describe('AUTO: pedido operacional decide sem depender da classifier', () => {
+  const LIMIAR = 0.7;
+  const operacionais = [
+    'quais as demandas da Alícia?',
+    'qual o processo de onboarding de cliente?',
+    'quem tá com a task do site?',
+    'tem algo atrasado?',
+    'qual o prazo disso?',
+  ];
+  for (const frase of operacionais) {
+    it(`"${frase}" -> bento acima do limiar`, () => {
+      const m = matchRule(frase);
+      expect(m?.rule.primaryAgent).toBe('bento');
+      expect(m!.confidence).toBeGreaterThanOrEqual(LIMIAR);
+    });
+  }
+
+  it('pedido criativo continua no Otto mesmo citando cliente', () => {
+    expect(matchRule('faz uma legenda pra 3Net')?.rule.primaryAgent).toBe('otto');
+  });
+
+  it('pergunta de mídia paga continua no Jarbas', () => {
+    expect(matchRule('qual o cpa desse mês')?.rule.primaryAgent).toBe('jarbas');
+  });
+});
