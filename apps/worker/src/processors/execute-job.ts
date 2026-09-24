@@ -1275,15 +1275,25 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
        * as duas janelas escritas, lidas do período que ele mesmo declarou no
        * turno anterior.
        */
-      if (agent === 'jarbas' && conversationId && ehComparacaoComPeriodoAnterior(message)) {
-        const [ultima] = (await db
-          .select({ content: schema.messages.content })
-          .from(schema.messages)
-          .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.role, 'assistant')))
-          .orderBy(desc(schema.messages.createdAt))
-          .limit(1)
-          .catch(() => [])) as Array<{ content: string }>;
+      if (agent === 'jarbas' && conversationId) {
+        const ehComparacao = ehComparacaoComPeriodoAnterior(message);
+        const [ultima] = ehComparacao
+          ? ((await db
+              .select({ content: schema.messages.content })
+              .from(schema.messages)
+              .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.role, 'assistant')))
+              .orderBy(desc(schema.messages.createdAt))
+              .limit(1)
+              .catch((e) => {
+                logger.warn({ executionId, err: String(e) }, '[jarbas] falha ao ler período do turno anterior');
+                return [];
+              })) as Array<{ content: string }>)
+          : [];
         const periodoA = ultima?.content ? extractQueriedRange(ultima.content) : null;
+        logger.info(
+          { executionId, ehComparacao, achouAnterior: Boolean(ultima?.content), periodoA },
+          '[jarbas] avaliação de comparação de período',
+        );
         if (periodoA) {
           comparacaoPedida = { atual: periodoA, anterior: periodoAnterior(periodoA) };
           mensagemComDialogo = mensagemDeComparacao(
