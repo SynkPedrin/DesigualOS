@@ -84,8 +84,46 @@ export const ROUTING_RULES: RoutingRule[] = [
     // sendo Studio. Em empate de confiança vale a regra que vem antes aqui,
     // então "gere um carrossel" continua indo direto pro Studio.
     intent: 'creative_direction',
-    keywords: ['direção de arte', 'identidade visual', 'prompt de imagem', 'conceito criativo', 'direção criativa'],
-    topicKeywords: ['carrossel', 'campanha', 'conceito', 'copy', 'criativo', 'roteiro', 'reels', 'posts'],
+    /**
+     * O nome do ENTREGÁVEL criativo é sinal FORTE, não fraco.
+     *
+     * topicKeywords tem teto de 0,65 e o Router só decide a partir de 0,70:
+     * sinal fraco existe pra ESCALAR pro classifier. Só que o classifier está
+     * indisponível em produção (ANTHROPIC_API_KEY vazia), então tudo que
+     * depende dele cai no fallback — que é o Bento. Medido no front em
+     * 24/09/2026: "faz 2 legendas pro aniversário da Cosentino" foi parar no
+     * Bento, que respondeu com a data de fundação tirada do vault e zero
+     * legendas.
+     *
+     * Aqui ficam só os substantivos que NÃO são ambíguos na fala da agência:
+     * pedir legenda, título, headline, hook, copy ou roteiro é pedir peça
+     * criativa, ponto. 'campanha', 'conceito' e 'posts' seguem fracos de
+     * propósito — "como está a campanha" é leitura de mídia paga (Jarbas).
+     */
+    keywords: [
+      'direção de arte',
+      'identidade visual',
+      'prompt de imagem',
+      'conceito criativo',
+      'direção criativa',
+      'legenda',
+      'legendas',
+      'titulo',
+      'título',
+      'titulos',
+      'títulos',
+      'headline',
+      'headlines',
+      'hook',
+      'hooks',
+      'tagline',
+      'roteiro',
+      'roteiros',
+      'carrossel',
+      'copys',
+      'copies',
+    ],
+    topicKeywords: ['campanha', 'conceito', 'copy', 'criativo', 'reels', 'posts'],
     primaryAgent: 'otto',
     requiredTools: ['studio'],
     complexity: 'medium',
