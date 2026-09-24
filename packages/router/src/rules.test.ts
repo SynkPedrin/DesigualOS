@@ -99,3 +99,22 @@ describe('AUTO: pedido operacional decide sem depender da classifier', () => {
     expect(matchRule('qual o cpa desse mês')?.rule.primaryAgent).toBe('jarbas');
   });
 });
+
+/** Regressão: casos que caíam em esclarecimento por falta de regra. */
+describe('AUTO: frases coloquiais decidem por regra', () => {
+  it('"o que tá pegando fogo na agência?" -> bento', () => {
+    const m = matchRule('o que tá pegando fogo na agência?');
+    expect(m?.rule.primaryAgent).toBe('bento');
+    expect(m!.confidence).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it('"manda mensagem pro lead no whatsapp" -> suzy', () => {
+    const m = matchRule('manda mensagem pro lead no whatsapp');
+    expect(m?.rule.primaryAgent).toBe('suzy');
+    expect(m!.confidence).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it('métrica de lead/whatsapp continua no Jarbas', () => {
+    expect(matchRule('quantos leads tivemos esse mês? qual o cpl')?.rule.primaryAgent).toBe('jarbas');
+  });
+});

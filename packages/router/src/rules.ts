@@ -130,12 +130,24 @@ export const ROUTING_RULES: RoutingRule[] = [
   },
   {
     intent: 'social_selling',
+    /**
+     * Frases, não palavras soltas: 'lead' e 'whatsapp' sozinhos roubariam
+     * pergunta de métrica do Jarbas ("quantos leads tivemos?", "quantas
+     * conversas no whatsapp?"). O que identifica a Suzy é FALAR COM alguém.
+     */
     keywords: [
       'responder o lead',
       'qualificar lead',
       'agendar reunião',
       'mensagem no whatsapp',
       'follow-up com o cliente',
+      'mensagem pro lead',
+      'mensagem para o lead',
+      'falar com o lead',
+      'chamar no whatsapp',
+      'manda no whatsapp',
+      'mandar no whatsapp',
+      'responder no whatsapp',
     ],
     primaryAgent: 'suzy',
     requiredTools: ['whatsapp'],
@@ -174,6 +186,10 @@ export const ROUTING_RULES: RoutingRule[] = [
       'responsavel',
       'entrega',
       'entregas',
+      // Fala da operação: "o que tá pegando fogo" é pergunta de urgência, não
+      // de mídia. Sem isto dependia do classifier e virava esclarecimento.
+      'pegando fogo',
+      'pegar fogo',
     ],
     primaryAgent: 'bento',
     requiredTools: ['clickup'],
