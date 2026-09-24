@@ -56,7 +56,17 @@ import { loadSeniorRuntimeContext } from './senior-runtime-context';
 import { detectSmallTalk } from './small-talk';
 import { registrarConhecimentoDoTurno } from './knowledge-statement';
 import { looksLikeCreativeFeedback } from './conversation-artifact';
-import { checkDateRangeMatch, sourceRangeMismatchMessage } from './jarbas-date-guard';
+import {
+  checkDateRangeMatch,
+  comparacaoIndisponivelMessage,
+  comparacaoNaoRealizada,
+  ehComparacaoComPeriodoAnterior,
+  extractQueriedRange,
+  mensagemDeComparacao,
+  periodoAnterior,
+  sourceRangeMismatchMessage,
+  type ParsedDateRange,
+} from './jarbas-date-guard';
 
 // Feature flag do Agentic V2 (seção 112 da spec): o loop com estado,
 // avaliação e replan só assume o dispatch quando ligado; desligado, o
@@ -1176,6 +1186,9 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
 
   let result: ExecuteResponse;
   let usageEstimated = false;
+  // Preenchido só quando o turno É um pedido de comparação de período do
+  // Jarbas; usado depois pra barrar comparação que não aconteceu.
+  let comparacaoPedida: { atual: ParsedDateRange; anterior: ParsedDateRange } | null = null;
   if (guardedResult) {
     result = guardedResult;
   } else try {
@@ -1252,6 +1265,37 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
           agent,
         );
         if (dialogo) mensagemComDialogo = `${message}\n\n---\nContexto:\n${dialogo}`;
+      }
+
+      /**
+       * COMPARAÇÃO DE PERÍODO do Jarbas. O serviço é externo e não lê o
+       * histórico da conversa: "e comparado com o anterior?" chega sem
+       * período nenhum, ele reconsulta o mês corrente e o texto narra uma
+       * variação que nenhum dado sustenta. Aqui o pedido vira explícito, com
+       * as duas janelas escritas, lidas do período que ele mesmo declarou no
+       * turno anterior.
+       */
+      if (agent === 'jarbas' && conversationId && ehComparacaoComPeriodoAnterior(message)) {
+        const [ultima] = (await db
+          .select({ content: schema.messages.content })
+          .from(schema.messages)
+          .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.role, 'assistant')))
+          .orderBy(desc(schema.messages.createdAt))
+          .limit(1)
+          .catch(() => [])) as Array<{ content: string }>;
+        const periodoA = ultima?.content ? extractQueriedRange(ultima.content) : null;
+        if (periodoA) {
+          comparacaoPedida = { atual: periodoA, anterior: periodoAnterior(periodoA) };
+          mensagemComDialogo = mensagemDeComparacao(
+            comparacaoPedida.atual,
+            comparacaoPedida.anterior,
+            mensagemComDialogo,
+          );
+          logger.info(
+            { executionId, atual: comparacaoPedida.atual, anterior: comparacaoPedida.anterior },
+            '[jarbas] comparação explicitada a partir do período do turno anterior',
+          );
+        }
       }
 
       // IDENTIDADE DO CLIENTE no caminho direto. O node já sabe ler as duas
@@ -1349,6 +1393,26 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
      * de um período errado como se fosse do período certo. Fail-open: só
      * bloqueia quando os DOIS ranges foram extraídos com segurança.
      */
+    /**
+     * Fail-CLOSED, ao contrário do checkDateRangeMatch logo abaixo: quando a
+     * pergunta é comparativa, uma resposta que não traz o período anterior
+     * não pode passar afirmando variação. Foi exatamente esse caminho que
+     * devolveu os mesmos números de setembro duas vezes e mesmo assim disse
+     * "está melhor agora do que antes" — e depois classificou isso como
+     * "Fato".
+     */
+    if (agent === 'jarbas' && result.answer && comparacaoPedida) {
+      if (comparacaoNaoRealizada(result.answer, comparacaoPedida.anterior)) {
+        logger.warn(
+          { executionId, anterior: comparacaoPedida.anterior },
+          '[jarbas] comparação pedida mas período anterior ausente na resposta; bloqueada',
+        );
+        result = {
+          ...result,
+          answer: comparacaoIndisponivelMessage(comparacaoPedida.atual, comparacaoPedida.anterior),
+        };
+      }
+    }
     if (agent === 'jarbas' && result.answer) {
       const verificacao = checkDateRangeMatch(message, result.answer);
       if (!verificacao.ok) {

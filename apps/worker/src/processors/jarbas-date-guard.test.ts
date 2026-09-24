@@ -4,6 +4,10 @@ import {
   extractQueriedRange,
   extractRequestedRange,
   sourceRangeMismatchMessage,
+  ehComparacaoComPeriodoAnterior,
+  periodoAnterior,
+  comparacaoNaoRealizada,
+  mensagemDeComparacao,
 } from './jarbas-date-guard';
 
 /**
@@ -108,5 +112,70 @@ describe('sourceRangeMismatchMessage', () => {
     expect(msg).toMatch(/19\/09\/2026/);
     expect(msg).toMatch(/01\/09\/2026/);
     expect(msg).toMatch(/SOURCE_RANGE_MISMATCH/);
+  });
+});
+
+/**
+ * Regressão do front publicado (23/09/2026): "como tá a 3Net esse mês?"
+ * seguido de "e comparado com o anterior?" devolveu os MESMOS números e
+ * ainda assim narrou variação ("melhor agora do que antes"), classificada
+ * como "Fato" no turno seguinte.
+ */
+describe('comparação de período do Jarbas', () => {
+  it('reconhece o follow-up comparativo elíptico', () => {
+    expect(ehComparacaoComPeriodoAnterior('e comparado com o anterior?')).toBe(true);
+    expect(ehComparacaoComPeriodoAnterior('e mês passado?')).toBe(true);
+    expect(ehComparacaoComPeriodoAnterior('compara com o período anterior')).toBe(true);
+  });
+
+  it('não confunde pergunta normal com pedido de comparação', () => {
+    expect(ehComparacaoComPeriodoAnterior('como tá a 3Net esse mês?')).toBe(false);
+    expect(ehComparacaoComPeriodoAnterior('quem tá melhor?')).toBe(false);
+  });
+
+  it('não sequestra pergunta que JÁ traz as duas datas (guard normal cobre)', () => {
+    expect(ehComparacaoComPeriodoAnterior('compara 01/08/2026 a 31/08/2026 com 01/09/2026 a 30/09/2026')).toBe(false);
+  });
+
+  it('mês parcial vira o mês fechado anterior, não janela deslizante', () => {
+    expect(periodoAnterior({ start: '2026-09-01', end: '2026-09-23' })).toEqual({
+      start: '2026-08-01',
+      end: '2026-08-31',
+    });
+  });
+
+  it('vira o ano corretamente em janeiro', () => {
+    expect(periodoAnterior({ start: '2026-01-01', end: '2026-01-15' })).toEqual({
+      start: '2025-12-01',
+      end: '2025-12-31',
+    });
+  });
+
+  it('range que não começa no dia 1 recua a mesma quantidade de dias', () => {
+    expect(periodoAnterior({ start: '2026-09-10', end: '2026-09-19' })).toEqual({
+      start: '2026-08-31',
+      end: '2026-09-09',
+    });
+  });
+
+  it('acusa comparação não realizada quando o período anterior não aparece', () => {
+    const resposta = 'CA 1, 3Net, este mes (2026-09-01 a 2026-09-23), fonte: Meta Ads. Está melhor que antes.';
+    expect(comparacaoNaoRealizada(resposta, { start: '2026-08-01', end: '2026-08-31' })).toBe(true);
+  });
+
+  it('aceita quando os dois períodos aparecem', () => {
+    const resposta = 'Comparando 2026-09-01 a 2026-09-23 com 2026-08-01 a 2026-08-31: CPA subiu 12%.';
+    expect(comparacaoNaoRealizada(resposta, { start: '2026-08-01', end: '2026-08-31' })).toBe(false);
+  });
+
+  it('a mensagem enviada ao serviço externo nomeia as duas janelas', () => {
+    const m = mensagemDeComparacao(
+      { start: '2026-09-01', end: '2026-09-23' },
+      { start: '2026-08-01', end: '2026-08-31' },
+      'e comparado com o anterior?',
+    );
+    expect(m).toContain('2026-09-01 a 2026-09-23');
+    expect(m).toContain('2026-08-01 a 2026-08-31');
+    expect(m).toContain('NÃO compare');
   });
 });

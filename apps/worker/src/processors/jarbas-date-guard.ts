@@ -122,3 +122,88 @@ export function sourceRangeMismatchMessage(result: RangeGuardResult): string {
     `Não vou apresentar esse resultado como se fosse do período de ${formatBR(req.start)} a ${formatBR(req.end)}: seria um dado de outro intervalo (SOURCE_RANGE_MISMATCH). Pergunte de novo especificando o período — às vezes reformular ajuda a fonte a entender o recorte certo.`,
   ].join('\n');
 }
+
+/**
+ * Follow-up COMPARATIVO sem período próprio: "e comparado com o anterior?",
+ * "e mês passado?", "compara com o anterior".
+ *
+ * Medido no front publicado em 23/09/2026: depois de "como tá a 3Net esse
+ * mês?" (2026-09-01 a 2026-09-23), a pergunta "e comparado com o anterior?"
+ * voltou com os MESMOS números, declarando "mes corrente ate hoje (nenhum
+ * periodo citado na pergunta)" — e mesmo assim o texto afirmava "as
+ * frequências estão mais altas agora" e "Streamings tá indo melhor do que
+ * antes". Comparação narrada sobre um único dataset. Perguntado se era fato
+ * ou hipótese, respondeu "Fato."
+ *
+ * O serviço do Jarbas é externo (JARBAS_ASK_URL) e não lê o histórico da
+ * conversa: a pergunta elíptica chega sem período nenhum. O que dá pra
+ * corrigir aqui é tornar o pedido EXPLÍCITO antes de mandar, e barrar o
+ * resultado se mesmo assim só um período voltar.
+ */
+const COMPARATIVO_ELIPTICO =
+  /\b(compar(?:a|ado|ando|e)|versus|\bvs\b|m[êe]s passado|per[ií]odo anterior|o anterior|antes)\b/i;
+
+export function ehComparacaoComPeriodoAnterior(message: string): boolean {
+  const t = message.trim();
+  if (t.length > 120) return false;
+  if (!COMPARATIVO_ELIPTICO.test(t)) return false;
+  // Se a pessoa já citou as duas datas, não é elíptico: o guard normal cobre.
+  return extractRequestedRange(t) === null;
+}
+
+/**
+ * Período imediatamente anterior, de mesmo tamanho e ancorado no mês quando o
+ * range cobre um mês. "01..23 de setembro" vira "01..31 de agosto" — mês
+ * fechado, que é o que a pessoa quer dizer com "o anterior", e não uma janela
+ * deslizante de 23 dias que não casa com nenhum relatório.
+ */
+export function periodoAnterior(range: ParsedDateRange): ParsedDateRange {
+  const [y, m] = range.start.split('-').map(Number) as [number, number, number];
+  const comecaNoDia1 = range.start.endsWith('-01');
+  if (comecaNoDia1) {
+    const anoAnt = m === 1 ? y - 1 : y;
+    const mesAnt = m === 1 ? 12 : m - 1;
+    const ultimoDia = new Date(Date.UTC(anoAnt, mesAnt, 0)).getUTCDate();
+    return { start: `${anoAnt}-${pad2(mesAnt)}-01`, end: `${anoAnt}-${pad2(mesAnt)}-${pad2(ultimoDia)}` };
+  }
+  const inicio = new Date(`${range.start}T00:00:00Z`);
+  const fim = new Date(`${range.end}T00:00:00Z`);
+  const dias = Math.round((fim.getTime() - inicio.getTime()) / 86_400_000) + 1;
+  const novoFim = new Date(inicio.getTime() - 86_400_000);
+  const novoInicio = new Date(novoFim.getTime() - (dias - 1) * 86_400_000);
+  return { start: novoInicio.toISOString().slice(0, 10), end: novoFim.toISOString().slice(0, 10) };
+}
+
+/** Pedido explícito, para o serviço externo não ter o que adivinhar. */
+export function mensagemDeComparacao(atual: ParsedDateRange, anterior: ParsedDateRange, original: string): string {
+  return [
+    original,
+    '',
+    `Compare DOIS períodos e use os dois conjuntos de dados reais:`,
+    `- período atual: ${atual.start} a ${atual.end}`,
+    `- período anterior: ${anterior.start} a ${anterior.end}`,
+    'Consulte os dois no Meta Ads antes de afirmar qualquer variação.',
+    'Se não conseguir os dados do período anterior, diga isso e NÃO compare.',
+  ].join('\n');
+}
+
+/**
+ * Barra a comparação que não aconteceu. Fail-closed de propósito, ao
+ * contrário do checkDateRangeMatch: aqui a pergunta É comparativa, então uma
+ * resposta que declara um período só não pode passar afirmando variação.
+ */
+export function comparacaoNaoRealizada(answer: string, anterior: ParsedDateRange): boolean {
+  const mencionaAnterior =
+    answer.includes(anterior.start) ||
+    answer.includes(anterior.end) ||
+    answer.includes(`${anterior.start} a ${anterior.end}`);
+  return !mencionaAnterior;
+}
+
+export function comparacaoIndisponivelMessage(atual: ParsedDateRange, anterior: ParsedDateRange): string {
+  return [
+    `Não consegui os dados do período anterior (${formatBR(anterior.start)} a ${formatBR(anterior.end)}) nesta consulta,`,
+    `então não vou comparar: o que eu tenho aqui é só ${formatBR(atual.start)} a ${formatBR(atual.end)}.`,
+    'Afirmar variação com um período só seria invenção. Pede de novo em instantes ou me diz as duas datas que eu busco.',
+  ].join(' ');
+}
