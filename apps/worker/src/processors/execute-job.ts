@@ -1521,12 +1521,24 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       ).catch(() => null);
 
       const blocoB = respostaB?.answer ?? '';
-      const periodoBConfere = blocoB.includes(anterior.start) && blocoB.includes(anterior.end);
+      /**
+       * Não basta o texto CONTER as datas — a resposta pode só repetir a
+       * pergunta ("vou verificar 01/08 a 31/08 e te retorno"). O que vale é o
+       * período que o bloco DECLARA ter consultado, lido pelo mesmo parser do
+       * guard de range. Sem isso, um eco viraria base de comparação e o delta
+       * sairia contra dado que ninguém buscou.
+       */
+      const rangeB = extractQueriedRange(blocoB);
+      const periodoBConfere =
+        rangeB !== null && rangeB.start === anterior.start && rangeB.end === anterior.end;
       if (periodoBConfere) {
         const mA = extrairMetricas(result.answer);
         const mB = extrairMetricas(blocoB);
         const delta = compararPeriodos(mA, mB, atual, anterior);
-        logger.info({ executionId, atual, anterior }, '[jarbas] comparação feita com dois períodos reais');
+        logger.info(
+          { executionId, atual, anterior, metricasA: mA, metricasB: mB },
+          '[jarbas] comparação feita com dois períodos reais',
+        );
         result = { ...result, answer: `${result.answer}\n\n${delta}` };
         comparacaoJaFeita = true;
       } else {
