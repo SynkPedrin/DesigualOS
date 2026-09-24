@@ -54,6 +54,7 @@ import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispa
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard } from './bento-action-guard';
+import { tryMotionGuard } from './motion-guard';
 import { loadSeniorRuntimeContext } from './senior-runtime-context';
 import { detectSmallTalk } from './small-talk';
 import { registrarConhecimentoDoTurno } from './knowledge-statement';
@@ -1130,6 +1131,37 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     }
   }
 
+  // OTTO MOTION ENGINE (feature isolada, packages/otto-motion).
+  //
+  // Fica DEPOIS dos guards existentes de propósito: registro de conhecimento,
+  // proveniência, small-talk e ação do Bento continuam tendo a primeira
+  // palavra, exatamente como antes. Com OTTO_MOTION_ENABLED != 'true' a
+  // primeira linha de tryMotionGuard devolve null e este bloco é um no-op.
+  if (!guardedResult) {
+    const motion = await tryMotionGuard({
+      agent,
+      message,
+      executionId,
+      conversationId: conversationId ?? null,
+      clientId: runningExecution?.clientId ?? null,
+      userId: runningExecution?.userId ?? null,
+      projectId: null,
+      attachments: (attachments ?? []).map((a) => ({
+        url: a.url,
+        filename: a.filename,
+        contentType: a.contentType,
+      })),
+      logger,
+    }).catch((error: unknown) => {
+      // Defeito no Motion Engine NUNCA derruba o turno do Otto: sem guard, o
+      // turno segue pro caminho de sempre e a pessoa recebe uma resposta
+      // criativa normal em vez de um erro.
+      logger.error({ error, executionId }, 'Motion guard falhou; turno segue pelo caminho normal do Otto');
+      return null;
+    });
+    if (motion) guardedResult = motion;
+  }
+
   // Brand kit do cliente pro Otto derivar o DNA criativo no turno (o node
   // não acessa o banco). Só busca quando faz sentido: agente otto + execution
   // com cliente. Falha/ausência de kit não pode impedir o dispatch - o turno
@@ -1315,7 +1347,13 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
           : [];
         const periodoA = ultima?.content ? extractQueriedRange(ultima.content) : null;
         logger.info(
-          { executionId, ehComparacao, achouAnterior: Boolean(ultima?.content), periodoA },
+          {
+            executionId,
+            ehComparacao,
+            pergunta: perguntaDoUsuario.slice(0, 160),
+            achouAnterior: Boolean(ultima?.content),
+            periodoA,
+          },
           '[jarbas] avaliação de comparação de período',
         );
         if (periodoA) {
