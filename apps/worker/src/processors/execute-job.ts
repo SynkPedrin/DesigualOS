@@ -1356,6 +1356,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
              * virar briefing.
              */
             const nome = clienteDoTurno.clientName;
+            logger.info(
+              { executionId, agent, clienteResolvido: nome, execClientId: runningExecution?.clientId ?? null },
+              '[cliente] resolução do turno para agente externo',
+            );
             if (nome && !message.toLowerCase().includes(nome.toLowerCase())) {
               sufixoDeCliente = ` (cliente: ${nome})`;
             }
