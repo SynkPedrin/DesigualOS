@@ -60,8 +60,13 @@ import { registrarConhecimentoDoTurno } from './knowledge-statement';
 import { looksLikeCreativeFeedback } from './conversation-artifact';
 import {
   checkDateRangeMatch,
+  clienteDoBloco,
   comparacaoIndisponivelMessage,
   comparacaoNaoRealizada,
+  compararPeriodos,
+  extrairMetricas,
+  paraFormatoBR,
+  rangeDoCabecalho,
   ehComparacaoComPeriodoAnterior,
   extractQueriedRange,
 
@@ -1191,6 +1196,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   // Preenchido só quando o turno É um pedido de comparação de período do
   // Jarbas; usado depois pra barrar comparação que não aconteceu.
   let comparacaoPedida: { atual: ParsedDateRange; anterior: ParsedDateRange } | null = null;
+  let comparacaoJaFeita = false;
+  // Capturados no caminho direto; usados na busca do período anterior.
+  let nomeClienteDoTurno = '';
+  let refsParaComparacao: string[] = [];
   if (guardedResult) {
     result = guardedResult;
   } else try {
@@ -1381,6 +1390,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       }
       // Depois da montagem do contexto, senão a linha se perde na remontagem.
       if (sufixoDeCliente) mensagemComDialogo = `${mensagemComDialogo}${sufixoDeCliente}`;
+      nomeClienteDoTurno = sufixoDeCliente.replace(/^\s*\(cliente:\s*/, '').replace(/\)\s*$/, '').trim();
+      refsParaComparacao = refsDoTurno;
       if (agent === 'jarbas' || agent === 'suzy') {
         logger.info(
           { executionId, agent, enviado: mensagemComDialogo.slice(0, 300) },
@@ -1481,30 +1492,60 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
      * "Fato".
      */
     /**
-     * COMPARAÇÃO AUTOMÁTICA: DESLIGADA, e o motivo está medido.
+     * COMPARAÇÃO com DOIS datasets reais.
      *
-     * A ideia era buscar o período anterior num segundo pedido e calcular o
-     * delta. O parsing de período explícito no serviço foi corrigido hoje e
-     * funciona — "de 01/08/2026 a 31/08/2026" devolve agosto de verdade
-     * (R$ 1767,60 / 164.430 impressões, cabeçalho declarando 2026-08-01 a
-     * 2026-08-31).
+     * Religada em 24/09/2026, depois de o serviço virar determinístico: 10
+     * pedidos idênticos do mesmo período histórico trouxeram dado em 10, com o
+     * mesmo total e o mesmo range declarado. Antes disso a busca do período
+     * anterior acertava 1 em 3, e comparar em cima daquilo produzia delta
+     * inventado com cara de rigor.
      *
-     * O que NÃO funciona é a repetibilidade. Três pedidos idênticos, mesma
-     * conta, mesmo período, sessões diferentes: um devolveu o bloco com dado
-     * real, os outros dois devolveram "Vou verificar os dados e te dou uma
-     * resposta" — promessa, sem número nenhum. E quando o bloco veio dentro do
-     * fluxo automático, os valores de "agosto" saíram diferentes a cada
-     * execução (1419,90 / 1542,85 / 1525,41), nenhum igual ao agosto real.
-     *
-     * Comparar em cima disso é produzir exatamente a comparação inventada que
-     * esta missão proíbe — só que com aparência de rigor, porque o delta vem
-     * formatado e com percentual. Enquanto o caminho de dado do serviço
-     * depender de o modelo decidir responder, a saída honesta é recusar e
-     * dizer por quê. Os utilitários (extrairMetricas, compararPeriodos,
-     * paraFormatoBR, rangeDoCabecalho) ficam prontos e testados para quando o
-     * serviço tiver caminho determinístico.
+     * Regras: pergunta em dd/mm/aaaa (o serviço não lê ISO); o período B só
+     * vale se o CABEÇALHO do bloco declarar exatamente o range pedido (o texto
+     * inteiro aceitaria o eco da pergunta como prova); e o delta é aritmética
+     * sobre os dois blocos, nunca conta do modelo.
      */
-    if (agent === 'jarbas' && result.answer && comparacaoPedida) {
+    if (agent === 'jarbas' && result.answer && comparacaoPedida && !comparacaoJaFeita) {
+      const { atual, anterior } = comparacaoPedida;
+      const cliente = nomeClienteDoTurno || clienteDoBloco(result.answer) || '';
+      const perguntaB = `como foi ${cliente || 'a conta'} de ${paraFormatoBR(anterior.start)} a ${paraFormatoBR(anterior.end)}?`;
+      const respostaB = await callNode(
+        agent,
+        executionId,
+        perguntaB,
+        refsParaComparacao,
+        logger,
+        conversationId ?? undefined,
+        clientBrandKit,
+        attachments,
+        operationalContext,
+        clientFeedbackHistory,
+      ).catch(() => null);
+
+      const blocoB = respostaB?.answer ?? '';
+      const rangeB = rangeDoCabecalho(blocoB);
+      const rangeA = rangeDoCabecalho(result.answer);
+      const aConfere = rangeA !== null && rangeA.start === atual.start && rangeA.end === atual.end;
+      const bConfere = rangeB !== null && rangeB.start === anterior.start && rangeB.end === anterior.end;
+
+      if (aConfere && bConfere) {
+        const mA = extrairMetricas(result.answer);
+        const mB = extrairMetricas(blocoB);
+        const delta = compararPeriodos(mA, mB, atual, anterior);
+        logger.info(
+          { executionId, atual, anterior, metricasA: mA, metricasB: mB },
+          '[jarbas] comparação com dois períodos reais',
+        );
+        result = { ...result, answer: `${result.answer}\n\n${delta}` };
+        comparacaoJaFeita = true;
+      } else {
+        logger.warn(
+          { executionId, rangeA, rangeB, atual, anterior },
+          '[jarbas] range declarado não confere; comparação recusada',
+        );
+      }
+    }
+    if (agent === 'jarbas' && result.answer && comparacaoPedida && !comparacaoJaFeita) {
       if (comparacaoNaoRealizada(result.answer, comparacaoPedida.anterior)) {
         logger.warn(
           { executionId, anterior: comparacaoPedida.anterior },
