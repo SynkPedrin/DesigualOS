@@ -1276,7 +1276,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
        * turno anterior.
        */
       if (agent === 'jarbas' && conversationId) {
-        const ehComparacao = ehComparacaoComPeriodoAnterior(message);
+        // A mensagem que chega aqui já pode trazer o bloco de contexto colado
+        // pela API ("---\nContexto:\n..."). A pergunta do usuário é só a
+        // primeira parte — sem cortar, o teto de tamanho do detector de
+        // follow-up elíptico rejeitava toda pergunta comparativa.
+        const perguntaDoUsuario = message.split('\n\n---\n')[0] ?? message;
+        const ehComparacao = ehComparacaoComPeriodoAnterior(perguntaDoUsuario);
         const [ultima] = ehComparacao
           ? ((await db
               .select({ content: schema.messages.content })
