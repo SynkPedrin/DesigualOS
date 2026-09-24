@@ -1553,7 +1553,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         perguntaB,
         refsParaComparacao,
         logger,
-        conversationId ?? undefined,
+        // Sessão PRÓPRIA: a busca do período anterior é consulta de apoio, não
+        // turno de conversa. Na mesma sessão ela entrava no histórico do
+        // serviço como se a pessoa tivesse perguntado de agosto, e a pergunta
+        // seguinte ("isso é fato ou hipótese?") passava a falar do período
+        // errado. Medido no front em 24/09/2026.
+        conversationId ? `${conversationId}:periodo-anterior` : undefined,
         clientBrandKit,
         attachments,
         operationalContext,
