@@ -413,7 +413,15 @@ function formatVideoScript(video: VideoPlan): string {
   const cenas = video.scenes
     .map((scene, index) => {
       const linhas = [`Cena ${index + 1}${scene.duration_seconds ? ` (${scene.duration_seconds}s)` : ''}:`];
-      linhas.push(`Visual: ${scene.subject_movement}, ${scene.environment}.`);
+      // Campo vazio do plano vinha como "None"/"" e a linha saía "Visual:
+      // None, environmental stillness., Residential exterior, twilight.." —
+      // com "None" literal e pontuação dobrada, na peça que o operador lê.
+      // Medido no front em 24/09/2026. Junta só o que tem conteúdo.
+      const visual = [scene.subject_movement, scene.environment]
+        .map((p) => (p ?? '').trim().replace(/^none\.?$/i, '').replace(/[.\s]+$/, ''))
+        .filter((p) => p.length > 0)
+        .join(', ');
+      if (visual) linhas.push(`Visual: ${visual}.`);
       if (scene.spoken_line) linhas.push(`Fala: "${scene.spoken_line}"`);
       if (scene.on_screen_text) linhas.push(`Texto na tela: ${scene.on_screen_text}`);
       return linhas.join('\n');
