@@ -207,3 +207,98 @@ export function comparacaoIndisponivelMessage(atual: ParsedDateRange, anterior: 
     'Afirmar variação com um período só seria invenção. Pede de novo em instantes ou me diz as duas datas que eu busco.',
   ].join(' ');
 }
+
+/**
+ * Métricas do bloco que o próprio Jarbas imprime. O bloco é gerado por CÓDIGO
+ * no serviço (blocoDeNumerosReais), não pelo modelo — por isso o formato é
+ * estável o bastante para ser lido de volta, e por isso o delta calculado aqui
+ * é aritmética sobre número real, não interpretação.
+ */
+export interface MetricasDoPeriodo {
+  investimento?: number;
+  impressoes?: number;
+  alcance?: number;
+  cliques?: number;
+  ctr?: number;
+  cpc?: number;
+  cpm?: number;
+  frequencia?: number;
+  leads?: number;
+  conversas?: number;
+}
+
+function numeroBR(bruto: string | undefined): number | undefined {
+  if (!bruto) return undefined;
+  const limpo = bruto.replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+  const n = Number(limpo);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+const CAMPOS: Array<[keyof MetricasDoPeriodo, RegExp]> = [
+  ['investimento', /Investimento:\s*R\$\s*([\d.,]+)/i],
+  ['impressoes', /Impress[õo]es:\s*([\d.,]+)/i],
+  ['alcance', /Alcance:\s*([\d.,]+)/i],
+  ['cliques', /Cliques:\s*([\d.,]+)/i],
+  ['ctr', /CTR:\s*([\d.,]+)\s*%/i],
+  ['cpc', /CPC:\s*R\$\s*([\d.,]+)/i],
+  ['cpm', /CPM:\s*R\$\s*([\d.,]+)/i],
+  ['frequencia', /Frequ[êe]ncia:\s*([\d.,]+)/i],
+  ['leads', /Leads:\s*([\d.,]+)/i],
+  ['conversas', /Conversas no WhatsApp:\s*([\d.,]+)/i],
+];
+
+export function extrairMetricas(answer: string): MetricasDoPeriodo {
+  const out: MetricasDoPeriodo = {};
+  for (const [campo, re] of CAMPOS) {
+    const v = numeroBR(re.exec(answer)?.[1]);
+    if (v !== undefined) out[campo] = v;
+  }
+  return out;
+}
+
+const ROTULO: Record<keyof MetricasDoPeriodo, string> = {
+  investimento: 'Investimento',
+  impressoes: 'Impressões',
+  alcance: 'Alcance',
+  cliques: 'Cliques',
+  ctr: 'CTR',
+  cpc: 'CPC',
+  cpm: 'CPM',
+  frequencia: 'Frequência',
+  leads: 'Leads',
+  conversas: 'Conversas no WhatsApp',
+};
+
+function variacao(antes: number, agora: number): string {
+  if (antes === 0) return agora === 0 ? 'estável' : 'sem base no período anterior';
+  const pct = ((agora - antes) / Math.abs(antes)) * 100;
+  const sinal = pct > 0 ? '+' : '';
+  return `${sinal}${pct.toFixed(1)}%`;
+}
+
+/**
+ * Delta A vs B. Só entra métrica presente nos DOIS períodos: comparar contra
+ * ausência é a porta por onde entra número inventado.
+ */
+export function compararPeriodos(
+  atual: MetricasDoPeriodo,
+  anterior: MetricasDoPeriodo,
+  rangeAtual: ParsedDateRange,
+  rangeAnterior: ParsedDateRange,
+): string {
+  const linhas: string[] = [
+    `Comparação — ${rangeAtual.start} a ${rangeAtual.end} contra ${rangeAnterior.start} a ${rangeAnterior.end}:`,
+  ];
+  let comparadas = 0;
+  for (const campo of Object.keys(ROTULO) as Array<keyof MetricasDoPeriodo>) {
+    const a = atual[campo];
+    const b = anterior[campo];
+    if (a === undefined || b === undefined) continue;
+    comparadas += 1;
+    linhas.push(`- ${ROTULO[campo]}: ${b} -> ${a} (${variacao(b, a)})`);
+  }
+  if (comparadas === 0) {
+    return `Não consegui alinhar nenhuma métrica entre ${rangeAnterior.start} a ${rangeAnterior.end} e ${rangeAtual.start} a ${rangeAtual.end}, então não vou comparar.`;
+  }
+  return linhas.join('\n');
+}

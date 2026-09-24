@@ -8,6 +8,8 @@ import {
   periodoAnterior,
   comparacaoNaoRealizada,
   mensagemDeComparacao,
+  extrairMetricas,
+  compararPeriodos,
 } from './jarbas-date-guard';
 
 /**
@@ -177,5 +179,68 @@ describe('comparação de período do Jarbas', () => {
     expect(m).toContain('2026-09-01 a 2026-09-23');
     expect(m).toContain('2026-08-01 a 2026-08-31');
     expect(m).toContain('NÃO compare');
+  });
+});
+
+describe('métricas e delta entre dois períodos reais', () => {
+  const BLOCO_SET = `CA 1, 3Net, este mes (2026-09-01 a 2026-09-24), fonte: Meta Ads
+Investimento: R$ 1639,59
+Impressões: 109.763
+Alcance: 24.965
+Cliques: 1.046
+CTR: 0,95%
+CPC: R$ 1,57
+CPM: R$ 14,94
+Frequência: 4,40
+Conversas no WhatsApp: 97`;
+
+  const BLOCO_AGO = `CA 1, 3Net, 2026-08-01 a 2026-08-31, fonte: Meta Ads
+Investimento: R$ 1767,60
+Impressões: 164.430
+Alcance: 45.999
+Cliques: 1.239
+CTR: 0,75%
+CPC: R$ 1,43
+CPM: R$ 10,75
+Frequência: 3,57
+Conversas no WhatsApp: 95`;
+
+  it('lê os números do bloco impresso pelo serviço', () => {
+    const m = extrairMetricas(BLOCO_SET);
+    expect(m.investimento).toBeCloseTo(1639.59, 2);
+    expect(m.impressoes).toBe(109763);
+    expect(m.ctr).toBeCloseTo(0.95, 2);
+    expect(m.conversas).toBe(97);
+  });
+
+  it('calcula a variação a partir dos dois períodos', () => {
+    const texto = compararPeriodos(
+      extrairMetricas(BLOCO_SET),
+      extrairMetricas(BLOCO_AGO),
+      { start: '2026-09-01', end: '2026-09-24' },
+      { start: '2026-08-01', end: '2026-08-31' },
+    );
+    expect(texto).toContain('2026-08-01 a 2026-08-31');
+    expect(texto).toContain('Investimento');
+    // 1639,59 contra 1767,60 = queda de 7,2%
+    expect(texto).toMatch(/Investimento.*-7\.2%/);
+    // CTR subiu de 0,75 para 0,95 = +26,7%
+    expect(texto).toMatch(/CTR.*\+26\.7%/);
+  });
+
+  it('não compara métrica que falta num dos lados', () => {
+    const texto = compararPeriodos(
+      { investimento: 100, leads: 5 },
+      { investimento: 50 },
+      { start: '2026-09-01', end: '2026-09-24' },
+      { start: '2026-08-01', end: '2026-08-31' },
+    );
+    expect(texto).toContain('Investimento');
+    expect(texto).not.toContain('Leads');
+  });
+
+  it('recusa quando nada alinha, em vez de inventar', () => {
+    const texto = compararPeriodos({}, {}, { start: 'a', end: 'b' }, { start: 'c', end: 'd' });
+    expect(texto).toContain('não vou comparar');
   });
 });

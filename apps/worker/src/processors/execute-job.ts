@@ -62,6 +62,8 @@ import {
   checkDateRangeMatch,
   comparacaoIndisponivelMessage,
   comparacaoNaoRealizada,
+  compararPeriodos,
+  extrairMetricas,
   ehComparacaoComPeriodoAnterior,
   extractQueriedRange,
 
@@ -1191,6 +1193,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   // Preenchido só quando o turno É um pedido de comparação de período do
   // Jarbas; usado depois pra barrar comparação que não aconteceu.
   let comparacaoPedida: { atual: ParsedDateRange; anterior: ParsedDateRange } | null = null;
+  let comparacaoJaFeita = false;
+  // Capturados no caminho direto, usados depois na comparação de período.
+  let nomeClienteDoTurno = '';
+  let refsParaComparacao: string[] = [];
   if (guardedResult) {
     result = guardedResult;
   } else try {
@@ -1381,6 +1387,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       }
       // Depois da montagem do contexto, senão a linha se perde na remontagem.
       if (sufixoDeCliente) mensagemComDialogo = `${mensagemComDialogo}${sufixoDeCliente}`;
+      nomeClienteDoTurno = sufixoDeCliente.replace(/^\s*\(cliente:\s*/, '').replace(/\)\s*$/, '').trim();
+      refsParaComparacao = refsDoTurno;
       if (agent === 'jarbas' || agent === 'suzy') {
         logger.info(
           { executionId, agent, enviado: mensagemComDialogo.slice(0, 300) },
@@ -1480,7 +1488,45 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
      * "está melhor agora do que antes" — e depois classificou isso como
      * "Fato".
      */
-    if (agent === 'jarbas' && result.answer && comparacaoPedida) {
+    /**
+     * COMPARAÇÃO DE VERDADE: busca o período anterior num SEGUNDO pedido, com
+     * as datas escritas, e calcula o delta em cima dos dois blocos reais.
+     *
+     * Só virou possível em 24/09/2026, quando o detectMonth do serviço passou
+     * a reconhecer intervalo explícito (antes, pedir agosto devolvia setembro).
+     * O delta é aritmética sobre o bloco que o próprio serviço imprime por
+     * código — nada aqui pergunta ao modelo quanto variou.
+     */
+    if (agent === 'jarbas' && result.answer && comparacaoPedida && !comparacaoJaFeita) {
+      const { atual, anterior } = comparacaoPedida;
+      const perguntaB = `como foi ${nomeClienteDoTurno || 'a conta'} de ${anterior.start} a ${anterior.end}?`;
+      const respostaB = await callNode(
+        agent,
+        executionId,
+        perguntaB,
+        refsParaComparacao,
+        logger,
+        conversationId ?? undefined,
+        clientBrandKit,
+        attachments,
+        operationalContext,
+        clientFeedbackHistory,
+      ).catch(() => null);
+
+      const blocoB = respostaB?.answer ?? '';
+      const periodoBConfere = blocoB.includes(anterior.start) && blocoB.includes(anterior.end);
+      if (periodoBConfere) {
+        const mA = extrairMetricas(result.answer);
+        const mB = extrairMetricas(blocoB);
+        const delta = compararPeriodos(mA, mB, atual, anterior);
+        logger.info({ executionId, atual, anterior }, '[jarbas] comparação feita com dois períodos reais');
+        result = { ...result, answer: `${result.answer}\n\n${delta}` };
+        comparacaoJaFeita = true;
+      } else {
+        logger.warn({ executionId, anterior }, '[jarbas] período anterior não voltou; comparação recusada');
+      }
+    }
+    if (agent === 'jarbas' && result.answer && comparacaoPedida && !comparacaoJaFeita) {
       if (comparacaoNaoRealizada(result.answer, comparacaoPedida.anterior)) {
         logger.warn(
           { executionId, anterior: comparacaoPedida.anterior },
