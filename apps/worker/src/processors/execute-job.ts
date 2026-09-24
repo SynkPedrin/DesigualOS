@@ -62,7 +62,7 @@ import {
   comparacaoNaoRealizada,
   ehComparacaoComPeriodoAnterior,
   extractQueriedRange,
-  mensagemDeComparacao,
+
   periodoAnterior,
   sourceRangeMismatchMessage,
   type ParsedDateRange,
@@ -1300,15 +1300,22 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
           '[jarbas] avaliação de comparação de período',
         );
         if (periodoA) {
+          /**
+           * Só MARCA o turno como comparativo; não reescreve a mensagem.
+           *
+           * A tentativa de explicitar as duas janelas no texto foi medida em
+           * 24/09/2026 e piorou: o serviço externo devolveu a instrução
+           * inteira pro usuário ("Verifique se temos os dados do período
+           * anterior... e não compare"). E ele não conseguiria atender de
+           * qualquer forma — pedido explícito de 01/08 a 31/08 voltou com
+           * dados de setembro, barrado pelo próprio SOURCE_RANGE_MISMATCH.
+           * O serviço só devolve o mês corrente. Então a única saída honesta
+           * é não comparar, e dizer isso: quem decide é o guard lá embaixo.
+           */
           comparacaoPedida = { atual: periodoA, anterior: periodoAnterior(periodoA) };
-          mensagemComDialogo = mensagemDeComparacao(
-            comparacaoPedida.atual,
-            comparacaoPedida.anterior,
-            mensagemComDialogo,
-          );
           logger.info(
             { executionId, atual: comparacaoPedida.atual, anterior: comparacaoPedida.anterior },
-            '[jarbas] comparação explicitada a partir do período do turno anterior',
+            '[jarbas] turno comparativo marcado; período anterior será exigido na resposta',
           );
         }
       }
