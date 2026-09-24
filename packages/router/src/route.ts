@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { AgentName } from '@desigual-os/types';
 import { classifyWithLLM } from './classifier';
+import { classifyLocally } from './local-classifier';
 import { matchRule } from './rules';
 import { routerDecisionSchema, type RouterDecision } from './schema';
 
@@ -73,6 +74,27 @@ export async function route(message: string, logger: FastifyBaseLogger): Promise
     });
   }
 
+  /**
+   * Classifier LOCAL antes da paga. A paga nunca teve chave em produção, e
+   * sem ela tudo que o rule engine não decidia caía no Bento — inclusive
+   * pergunta de mídia paga, que o Bento responde com dado de vault de outro
+   * mês e, num caso medido, de outro cliente. Um modelo 3B local decide isso
+   * em ~0,1s.
+   */
+  const local = await classifyLocally(message, logger);
+  if (local) {
+    return routerDecisionSchema.parse({
+      intent: 'local_classifier',
+      primary_agent: local.agent,
+      required_tools: [],
+      context: [],
+      estimated_complexity: 'medium',
+      workflow: null,
+      confidence: local.confidence,
+      source: 'classifier',
+    });
+  }
+
   const classified = await classifyWithLLM(message, logger);
   if (classified) {
     return routerDecisionSchema.parse({
@@ -87,11 +109,19 @@ export async function route(message: string, logger: FastifyBaseLogger): Promise
     });
   }
 
-  // Nem regra bateu nem o classifier respondeu (sem API key, por exemplo).
-  // Fallback seguro: bento, porque é o agente de conhecimento geral,
-  // baixa confiança pra deixar claro que isso é um chute, não uma decisão.
+  /**
+   * Nenhuma camada decidiu: nem regra, nem classifier local, nem a paga.
+   *
+   * O fallback ANTES era "manda pro Bento" — e foi exatamente isso que fez
+   * pergunta de mídia paga ser respondida com dado de vault, inclusive de
+   * outro cliente. Chutar o agente é pior que perguntar: agora o turno vira
+   * um pedido de esclarecimento, tratado no worker sem tocar em vault nem em
+   * ferramenta nenhuma (execute-job.ts, caminho `needs_routing_clarification`).
+   * O agente segue 'bento' só porque a fila precisa de um nome válido; o
+   * intent é o que manda.
+   */
   return routerDecisionSchema.parse({
-    intent: 'unclassified',
+    intent: 'needs_routing_clarification',
     primary_agent: 'bento',
     required_tools: [],
     context: [],

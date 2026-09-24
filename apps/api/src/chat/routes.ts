@@ -311,6 +311,31 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         agenteAnterior,
       );
 
+      /**
+       * Nenhuma camada de roteamento decidiu (regra, classifier local e a paga
+       * falharam). ANTES isso virava "manda pro Bento", e foi assim que uma
+       * pergunta de mídia paga foi respondida com dado de vault de outro mês e
+       * de OUTRO CLIENTE. Perguntar é mais barato que vazar: responde aqui
+       * mesmo, sem execução, sem ferramenta e sem tocar em vault.
+       */
+      if (decision.intent === 'needs_routing_clarification') {
+        const pergunta =
+          'Não consegui identificar sozinho se isso é operação (tarefas e prazos), ' +
+          'mídia paga (resultado de anúncios) ou criação (legenda, título, roteiro). ' +
+          'Me diz qual dos três e eu sigo daqui.';
+        await db.insert(schema.messages).values({
+          conversationId,
+          role: 'assistant',
+          agent: null,
+          content: pergunta,
+          metadata: { fast_path: 'needs_routing_clarification' },
+        });
+        await touchConversation(conversationId);
+        request.log.warn({ conversationId }, '[router] sem decisão de agente; pedindo esclarecimento');
+        reply.code(202);
+        return { execution_id: null, conversation_id: conversationId, agent: null, status: 'clarification' };
+      }
+
       // As duas montagens são independentes (a de contexto lê o banco pela
       // decision; a operacional lê mensagem+usuário e às vezes o ClickUp).
       // Com o Postgres remoto a ~130ms de RTT, rodar em série somava os dois
