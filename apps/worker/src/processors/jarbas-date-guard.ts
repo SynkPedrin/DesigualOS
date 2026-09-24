@@ -319,3 +319,26 @@ export function clienteDoBloco(answer: string): string | null {
   if (comTraco?.[1]) return comTraco[1].trim();
   return null;
 }
+
+/**
+ * Data no formato que o serviço REALMENTE lê: dd/mm/aaaa.
+ *
+ * O detectMonth do serviço não reconhece ISO. Pedir "de 2026-08-01 a
+ * 2026-08-31" cai no fallback de mês corrente sem avisar — e o bloco volta com
+ * setembro. Foi assim que a primeira versão desta comparação produziu um delta
+ * de setembro contra setembro, com o rótulo dizendo agosto.
+ */
+export function paraFormatoBR(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+/**
+ * Range declarado no CABEÇALHO (primeira linha) do bloco. Procurar no texto
+ * inteiro aceita o eco da pergunta como se fosse a consulta: a resposta pode
+ * repetir "de 01/08 a 31/08" na prosa e trazer número de outro período.
+ */
+export function rangeDoCabecalho(answer: string): ParsedDateRange | null {
+  const primeiraLinha = (answer.split('\n')[0] ?? '').trim();
+  return extractQueriedRange(primeiraLinha);
+}

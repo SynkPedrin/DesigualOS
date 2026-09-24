@@ -64,6 +64,8 @@ import {
   comparacaoNaoRealizada,
   clienteDoBloco,
   compararPeriodos,
+  paraFormatoBR,
+  rangeDoCabecalho,
   extrairMetricas,
   ehComparacaoComPeriodoAnterior,
   extractQueriedRange,
@@ -1506,7 +1508,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       if (!cliente) {
         logger.warn({ executionId }, '[jarbas] sem cliente para buscar o período anterior');
       }
-      const perguntaB = `como foi ${cliente || 'a conta'} de ${anterior.start} a ${anterior.end}?`;
+      // dd/mm/aaaa: o serviço não lê ISO e cai no mês corrente sem avisar.
+      const perguntaB = `como foi ${cliente || 'a conta'} de ${paraFormatoBR(anterior.start)} a ${paraFormatoBR(anterior.end)}?`;
       const respostaB = await callNode(
         agent,
         executionId,
@@ -1528,7 +1531,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
        * guard de range. Sem isso, um eco viraria base de comparação e o delta
        * sairia contra dado que ninguém buscou.
        */
-      const rangeB = extractQueriedRange(blocoB);
+      const rangeB = rangeDoCabecalho(blocoB);
       const periodoBConfere =
         rangeB !== null && rangeB.start === anterior.start && rangeB.end === anterior.end;
       if (periodoBConfere) {

@@ -11,6 +11,8 @@ import {
   extrairMetricas,
   compararPeriodos,
   clienteDoBloco,
+  paraFormatoBR,
+  rangeDoCabecalho,
 } from './jarbas-date-guard';
 
 /**
@@ -255,5 +257,31 @@ describe('cliente declarado no cabeçalho do bloco', () => {
   });
   it('devolve null quando o bloco é de carteira', () => {
     expect(clienteDoBloco('CARTEIRA, 2026-09-01 a 2026-09-24, fonte: Meta Ads')).toBeNull();
+  });
+});
+
+/**
+ * Regressão de um defeito que esta sessão introduziu e mediu: a busca do
+ * período anterior saía em ISO, o serviço não lê ISO, caía no mês corrente, e
+ * o delta comparava setembro contra setembro com rótulo de agosto.
+ */
+describe('formato e cabeçalho na busca do período anterior', () => {
+  it('converte para o formato que o serviço lê', () => {
+    expect(paraFormatoBR('2026-08-01')).toBe('01/08/2026');
+    expect(paraFormatoBR('2026-12-31')).toBe('31/12/2026');
+  });
+
+  it('lê o range do cabeçalho, não do eco da pergunta', () => {
+    const comEco = [
+      'CA 1, 3Net, mes corrente ate hoje (2026-09-01 a 2026-09-24), fonte: Meta Ads',
+      'Investimento: R$ 1000,00',
+      'Voce pediu de 2026-08-01 a 2026-08-31 e eu vou verificar.',
+    ].join('\n');
+    expect(rangeDoCabecalho(comEco)).toEqual({ start: '2026-09-01', end: '2026-09-24' });
+  });
+
+  it('aceita o cabeçalho quando ele de fato declara o período pedido', () => {
+    const bloco = 'CA 1, 3Net, 2026-08-01 a 2026-08-31, fonte: Meta Ads\nInvestimento: R$ 1767,60';
+    expect(rangeDoCabecalho(bloco)).toEqual({ start: '2026-08-01', end: '2026-08-31' });
   });
 });
