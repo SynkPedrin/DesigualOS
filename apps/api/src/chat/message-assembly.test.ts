@@ -89,14 +89,17 @@ describe('a montagem dos outros agentes não muda', () => {
     expect(operacionalPorCampoApartado('bento')).toBe(true);
   });
 
-  it('jarbas_message_assembly_unchanged: contexto geral sim, operacional nunca', () => {
-    expect(contextoGeralVaiNaMensagem('jarbas')).toBe(true);
+  // Mudou em 24/09/2026: o bloco geral saiu também. Ver o comentário em
+  // message-assembly.ts — o dossiê colado fazia o serviço perguntar "qual
+  // cliente?" com o nome do cliente escrito no próprio texto recebido.
+  it('jarbas_message_assembly: nenhum despejo na mensagem', () => {
+    expect(contextoGeralVaiNaMensagem('jarbas')).toBe(false);
     expect(agenteAceitaBlocoNaMensagem('jarbas')).toBe(false);
     expect(operacionalPorCampoApartado('jarbas')).toBe(false);
   });
 
-  it('suzy_message_assembly_unchanged: mesmo serviço, mesmo contrato', () => {
-    expect(contextoGeralVaiNaMensagem('suzy')).toBe(true);
+  it('suzy_message_assembly: mesmo serviço, mesmo contrato', () => {
+    expect(contextoGeralVaiNaMensagem('suzy')).toBe(false);
     expect(agenteAceitaBlocoNaMensagem('suzy')).toBe(false);
     expect(operacionalPorCampoApartado('suzy')).toBe(false);
   });
@@ -105,5 +108,27 @@ describe('a montagem dos outros agentes não muda', () => {
     expect(contextoGeralVaiNaMensagem('studio')).toBe(true);
     expect(agenteAceitaBlocoNaMensagem('studio')).toBe(true);
     expect(operacionalPorCampoApartado('studio')).toBe(false);
+  });
+});
+
+/**
+ * Regressão 24/09/2026: o bloco geral (com o dossiê inteiro) ia colado na
+ * mensagem do Jarbas. "quanto gastou?" com a 3Net selecionada virava a
+ * pergunta mais ~2 KB de BRAIN, e o serviço respondia "Sobre qual cliente você
+ * tá falando?" — com a 3Net escrita no próprio texto que recebeu.
+ */
+describe('Jarbas e Suzy não recebem despejo de contexto na mensagem', () => {
+  it('nem o bloco geral', () => {
+    expect(contextoGeralVaiNaMensagem('jarbas')).toBe(false);
+    expect(contextoGeralVaiNaMensagem('suzy')).toBe(false);
+  });
+
+  it('nem o bloco operacional', () => {
+    expect(agenteAceitaBlocoNaMensagem('jarbas')).toBe(false);
+    expect(agenteAceitaBlocoNaMensagem('suzy')).toBe(false);
+  });
+
+  it('o Studio segue recebendo o geral: não tem ContextPack nem campo apartado', () => {
+    expect(contextoGeralVaiNaMensagem('studio')).toBe(true);
   });
 });

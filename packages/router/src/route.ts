@@ -44,7 +44,20 @@ export function detectMentionedAgent(message: string): AgentName | null {
  * trabalho do Context Engine (Fase 11), o Router só aponta o que seria
  * necessário buscar.
  */
-export async function route(message: string, logger: FastifyBaseLogger): Promise<RouterDecision> {
+export interface RouteOptions {
+  /**
+   * Injetável para teste: o classifier local faz chamada de rede ao gateway da
+   * GPU, e teste que depende de rede não é teste de roteamento — ou trava no
+   * timeout, ou passa/falha pelo motivo errado.
+   */
+  classificadorLocal?: typeof classifyLocally;
+}
+
+export async function route(
+  message: string,
+  logger: FastifyBaseLogger,
+  opts: RouteOptions = {},
+): Promise<RouterDecision> {
   const mentioned = detectMentionedAgent(message);
   if (mentioned) {
     return routerDecisionSchema.parse({
@@ -81,7 +94,7 @@ export async function route(message: string, logger: FastifyBaseLogger): Promise
    * mês e, num caso medido, de outro cliente. Um modelo 3B local decide isso
    * em ~0,1s.
    */
-  const local = await classifyLocally(message, logger);
+  const local = await (opts.classificadorLocal ?? classifyLocally)(message, logger);
   if (local) {
     return routerDecisionSchema.parse({
       intent: 'local_classifier',

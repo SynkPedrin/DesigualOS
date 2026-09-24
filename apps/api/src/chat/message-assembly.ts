@@ -41,11 +41,24 @@ import type { AgentName } from '@desigual-os/types';
  *
  * Bento fora: envenena a busca vetorial dele. Otto fora: o worker já monta e
  * PROJETA esse mesmo conhecimento, e a segunda cópia crua era o que anulava a
- * projeção. Jarbas e Suzy continuam recebendo — eles não têm ContextPack no
- * worker, e para eles esta é a única via.
+ * projeção.
+ *
+ * Jarbas e Suzy saíram em 24/09/2026, medido no front publicado. O bloco
+ * OPERACIONAL já era proibido para eles (edge case job_via_whatsapp), mas o
+ * bloco GERAL continuava indo — e ele carrega o dossiê inteiro do cliente.
+ * Efeito: "quanto gastou?" com a 3Net selecionada chegava no serviço como a
+ * pergunta mais ~2 KB de BRAIN, e a resposta voltava "Sobre qual cliente você
+ * tá falando?" — com a 3Net escrita no meio do texto que ele acabou de
+ * receber. O mesmo despejo levou "qual campanha tá melhor?" a responder pela
+ * carteira inteira, num período que ninguém pediu.
+ *
+ * O serviço deles resolve cliente lendo o texto (findClientInText) e classifica
+ * a mensagem INTEIRA: o que ele precisa é a pergunta e o NOME do cliente, não o
+ * dossiê. Essa linha curta o worker anexa (ver execute-job.ts, sufixoDeCliente).
+ * Sobra o Studio, que não tem ContextPack nem serviço com classificador próprio.
  */
 export function contextoGeralVaiNaMensagem(agent: AgentName): boolean {
-  return agent !== 'bento' && agent !== 'otto';
+  return agent === 'studio';
 }
 
 /**

@@ -9,6 +9,13 @@ import { comContinuidadeDeAgente } from './agent-continuity.js';
  */
 const logger = { info() {}, warn() {}, error() {}, debug() {} } as never;
 
+/**
+ * O classifier local fala com o gateway da GPU. Aqui ele é desligado de
+ * propósito: o que este arquivo testa é regra + continuidade, e uma chamada de
+ * rede no meio disso só traz timeout e resultado que depende da máquina.
+ */
+const SEM_CLASSIFIER = { classificadorLocal: async () => null };
+
 const CRIATIVOS = [
   'Me explica.',
   'Me dá 3 títulos.',
@@ -38,7 +45,7 @@ function decisao(over: Partial<RouterDecision> = {}): RouterDecision {
 
 describe('otto_first_turn_with_vocative_routes_to_otto', () => {
   it('o vocativo abre a conversa no Otto, e continuidade não interfere', async () => {
-    const d = await route('Otto, lembra daquela campanha de aniversário da Elite?', logger);
+    const d = await route('Otto, lembra daquela campanha de aniversário da Elite?', logger, SEM_CLASSIFIER);
     expect(d.primary_agent).toBe('otto');
     expect(comContinuidadeDeAgente(d, null).primary_agent).toBe('otto');
   });
@@ -58,15 +65,19 @@ describe('otto_followup_with_zero_confidence_stays_with_otto', () => {
 
 describe('otto_three_titles_followup_routes_to_otto', () => {
   it('"Me dá 3 títulos." dentro da conversa do Otto vai pro Otto', async () => {
-    const d = await route('Me dá 3 títulos.', logger);
-    expect(d.confidence).toBe(0);
+    const d = await route('Me dá 3 títulos.', logger, SEM_CLASSIFIER);
+    // Desde 24/09/2026 "títulos" é palavra forte da regra criativa, então esta
+    // frase decide sozinha (confiança 1) em vez de chegar no Otto pela
+    // continuidade. O destino é o mesmo; o caminho é que ficou determinístico.
+    expect(d.confidence).toBe(1);
+    expect(d.primary_agent).toBe('otto');
     expect(comContinuidadeDeAgente(d, 'otto').primary_agent).toBe('otto');
   });
 });
 
 describe('otto_caption_followup_routes_to_otto', () => {
   it('"Agora faz uma legenda." também', async () => {
-    const d = await route('Agora faz uma legenda.', logger);
+    const d = await route('Agora faz uma legenda.', logger, SEM_CLASSIFIER);
     expect(comContinuidadeDeAgente(d, 'otto').primary_agent).toBe('otto');
   });
 });
@@ -74,7 +85,7 @@ describe('otto_caption_followup_routes_to_otto', () => {
 describe('otto_revision_followup_routes_to_otto', () => {
   it('as três formas de reprovar continuam no Otto', async () => {
     for (const fala of ['Tá com cara de IA.', 'Faz de outro jeito então.', 'Uma versão pro cliente.']) {
-      const d = await route(fala, logger);
+      const d = await route(fala, logger, SEM_CLASSIFIER);
       expect(comContinuidadeDeAgente(d, 'otto').primary_agent, fala).toBe('otto');
     }
   });
@@ -89,13 +100,13 @@ describe('otto_operational_followup_stays_with_otto', () => {
    * trocar de interlocutor no meio da frase.
    */
   it('a pergunta operacional dentro do fluxo criativo fica com o Otto', async () => {
-    const d = await route('E vê como tá operacionalmente.', logger);
+    const d = await route('E vê como tá operacionalmente.', logger, SEM_CLASSIFIER);
     expect(comContinuidadeDeAgente(d, 'otto').primary_agent).toBe('otto');
   });
 
   it('o fluxo inteiro de 10 turnos curtos chega ao Otto', async () => {
     for (const fala of CRIATIVOS) {
-      const d = await route(fala, logger);
+      const d = await route(fala, logger, SEM_CLASSIFIER);
       expect(comContinuidadeDeAgente(d, 'otto').primary_agent, fala).toBe('otto');
     }
   });
@@ -103,7 +114,7 @@ describe('otto_operational_followup_stays_with_otto', () => {
 
 describe('explicit_bento_switch_overrides_otto_continuity', () => {
   it('"Bento, me atualiza a operação." troca de agente mesmo vindo do Otto', async () => {
-    const d = await route('Bento, me atualiza a operação.', logger);
+    const d = await route('Bento, me atualiza a operação.', logger, SEM_CLASSIFIER);
     expect(d.primary_agent).toBe('bento');
     expect(comContinuidadeDeAgente(d, 'otto').primary_agent).toBe('bento');
   });
@@ -111,7 +122,7 @@ describe('explicit_bento_switch_overrides_otto_continuity', () => {
 
 describe('explicit_jarbas_switch_overrides_otto_continuity', () => {
   it('"Jarbas, olha essa campanha." também', async () => {
-    const d = await route('Jarbas, olha essa campanha.', logger);
+    const d = await route('Jarbas, olha essa campanha.', logger, SEM_CLASSIFIER);
     expect(d.primary_agent).toBe('jarbas');
     expect(comContinuidadeDeAgente(d, 'otto').primary_agent).toBe('jarbas');
   });
@@ -129,7 +140,7 @@ describe('explicit_jarbas_switch_overrides_otto_continuity', () => {
 
 describe('new_conversation_does_not_inherit_otto', () => {
   it('conversa nova não tem agente anterior: vale a decisão do roteador', async () => {
-    const d = await route('Me dá 3 títulos.', logger);
+    const d = await route('Me dá 3 títulos.', logger, SEM_CLASSIFIER);
     expect(comContinuidadeDeAgente(d, null).primary_agent).toBe(d.primary_agent);
   });
 });
