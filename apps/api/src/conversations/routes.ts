@@ -229,6 +229,10 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
             ? (row.metadata as { attachments: Array<{ url: string; filename: string; contentType: string }> })
                 .attachments
             : [],
+          // Otto Motion Engine: o worker grava o bloco em metadata.motion
+          // (apps/worker/src/processors/motion-guard.ts). Sai aqui pra que
+          // recarregar a página continue mostrando o player, e não só o texto.
+          motion: (row.metadata as { motion?: unknown })?.motion ?? null,
           created_at: row.createdAt.toISOString(),
         })),
       };

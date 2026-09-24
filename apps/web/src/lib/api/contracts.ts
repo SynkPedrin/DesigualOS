@@ -1089,6 +1089,17 @@ export function mapConversationSummary(wire: ConversationSummaryWire): Conversat
   };
 }
 
+/** Bloco de motion gravado pelo worker em messages.metadata.motion. */
+export interface ChatMotionRefWire {
+  motion_id: string;
+  status?: string;
+  format?: string;
+  duration_seconds?: number;
+  fps?: number;
+  width?: number;
+  height?: number;
+}
+
 export interface ConversationMessageWire {
   id: string;
   role: 'user' | 'assistant';
@@ -1100,6 +1111,7 @@ export interface ConversationMessageWire {
   /** Lista completa de anexos (metadata.attachments); pode vir vazia mesmo
    * com attachment_url preenchido em mensagens antigas de antes desta coluna. */
   attachments?: ChatAttachmentWire[];
+  motion?: ChatMotionRefWire | null;
   created_at: ISODateString;
 }
 
@@ -1112,6 +1124,7 @@ export interface ConversationMessage {
   attachmentType: string | null;
   attachmentFilename: string | null;
   attachments: ChatAttachmentWire[];
+  motion: ChatMotionRefWire | null;
   createdAt: ISODateString;
 }
 
@@ -1139,6 +1152,7 @@ export function mapConversationMessage(wire: ConversationMessageWire): Conversat
     attachmentType: wire.attachment_type,
     attachmentFilename: wire.attachment_filename,
     attachments,
+    motion: wire.motion ?? null,
     createdAt: wire.created_at,
   };
 }

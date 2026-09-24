@@ -343,6 +343,9 @@ export function ChatThread() {
       type: attachment.contentType,
       filename: attachment.filename,
     })),
+    // O player do motion vem da metadata da mensagem persistida, então ele
+    // reaparece ao recarregar a página — e não só no turno em que nasceu.
+    motion: message.motion,
     createdAt: message.createdAt,
   }));
 

@@ -288,6 +288,13 @@
       "when": 1790188500000,
       "tag": "0040_client_meta_accounts_revoke_public",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790256990800,
+      "tag": "0041_fast_onslaught",
+      "breakpoints": true
     }
   ]
 }

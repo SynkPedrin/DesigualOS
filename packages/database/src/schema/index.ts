@@ -22,3 +22,4 @@ export * from './agent-runtime';
 export * from './organizations';
 export * from './agent-tasks';
 export * from './client-meta-accounts';
+export * from './motion';

@@ -26,7 +26,8 @@
     "drizzle-orm": "^0.33.0",
     "@desigual-os/agent-runtime": "workspace:*",
     "sharp": "^0.33.5",
-    "@desigual-os/auth": "workspace:*"
+    "@desigual-os/auth": "workspace:*",
+    "@desigual-os/otto-motion": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",

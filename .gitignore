@@ -101,3 +101,8 @@ artifacts/
 # de dev, nunca artefato de build nem dado de cliente real (fixtures são
 # fictícias), mas não precisa virar histórico de commits.
 nodes/otto-node/scripts/.golden-results/
+
+# Workspaces dos jobs do Otto Motion Engine: projeto gerado, frames de QA,
+# MP4 e cópias dos assets do cliente. Tudo reproduzível e, no caso dos
+# assets, material de cliente que não deve entrar num repositório público.
+packages/otto-motion/runtime/

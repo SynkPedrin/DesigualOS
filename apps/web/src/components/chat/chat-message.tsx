@@ -7,6 +7,7 @@ import { Chip } from '@/components/ui/chip';
 import { MarkdownLite } from '@/lib/markdown-lite';
 import { AGENT_META } from '@/lib/agent-meta';
 import { ThinkingSteps } from './thinking-steps';
+import { MotionCard, type ChatMotionRef } from './motion-card';
 import { useTypewriter } from '@/hooks/use-typewriter';
 import { formatClockTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -35,6 +36,8 @@ export interface ChatUiMessage {
    * Presentes, o ThinkingSteps mostra o que o backend reportou de verdade
    * em vez das etapas genéricas por intervalo. */
   liveSteps?: string[] | undefined;
+  /** Otto Motion Engine: presente, o balão ganha o player abaixo do texto. */
+  motion?: ChatMotionRef | null | undefined;
   createdAt?: string | undefined;
 }
 
@@ -206,6 +209,8 @@ export function ChatMessage({
               className="rounded-lg rounded-tl-sm border border-grafite-elevado bg-grafite px-4 py-3 text-sm leading-relaxed text-branco-cru"
             >
               <MarkdownLite text={streamedContent} />
+
+              {message.motion ? <MotionCard reference={message.motion} /> : null}
 
               {message.sources && message.sources.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">

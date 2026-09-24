@@ -20,6 +20,7 @@ import { processAgentJob } from './processors/execute-job.js';
 import { processAutomationJob } from './processors/run-automation.js';
 import { backfillThumbnails, generateThumbnail } from './processors/generate-thumbnail.js';
 import { setupDailyJobs } from './scheduler/index.js';
+import { ottoMotionEnabled, startMotionWorker } from '@desigual-os/otto-motion';
 
 const logger = createLogger({ service: 'worker' });
 
@@ -33,6 +34,14 @@ function isFinalAttempt(
 }
 
 const dailyDigestWorker = setupDailyJobs();
+
+// OTTO MOTION ENGINE (§2): fila própria, registrada só com a flag ligada.
+// Desligada, o worker nem existe — nenhum consumidor, nenhuma conexão extra
+// no Redis, nenhum comportamento novo em processo que já roda em produção.
+const motionWorker = ottoMotionEnabled() ? startMotionWorker(logger) : null;
+if (motionWorker) {
+  logger.info({ queue: 'otto-motion' }, 'Otto Motion Engine ligado');
+}
 
 const automationsWorker = new Worker<AutomationJobData>(
   AUTOMATIONS_QUEUE_NAME,
@@ -186,7 +195,9 @@ async function shutdown(motivo: string): Promise<void> {
   await stopWorkerHeartbeat();
 
   const dreno = Promise.all(
-    [...workers, dailyDigestWorker, automationsWorker, thumbnailsWorker].map((worker) => worker.close()),
+    [...workers, dailyDigestWorker, automationsWorker, thumbnailsWorker, ...(motionWorker ? [motionWorker] : [])].map(
+      (worker) => worker.close(),
+    ),
   );
   const teto = new Promise<'teto'>((resolve) => {
     const t = setTimeout(() => resolve('teto'), TETO_DE_DRENO_MS);

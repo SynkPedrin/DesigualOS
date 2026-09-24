@@ -20,6 +20,21 @@ Regras que não se negociam:
 
 São sistemas separados, com memórias separadas. Documentação do node: `brain/Agentes/Otto.md`.
 
+### E um terceiro: o Otto Motion Engine
+
+`packages/otto-motion` é uma feature ISOLADA do chat do Otto: pedido de motion
+vira projeto Remotion escrito pelo Claude Opus 5.5, renderizado, revisado quadro
+a quadro e devolvido como MP4 no chat. Atrás de `OTTO_MOTION_ENABLED` (default
+`false`, e desligado o Otto se comporta exatamente como antes).
+
+Não confunda com o Otto skill (que escreve copy) nem com o Otto node (Ollama
+local). O Motion Engine não escreve legenda e não fala com o otto-node.
+
+- Manual: `packages/otto-motion/README.md`
+- Decisões e o que foi medido: `docs/architecture/otto-motion-engine.md`
+- Regra que não se negocia: o motion é gerado por `claude-opus-5-5` e **não
+  existe fallback**. Sem ele, o Otto avisa em vez de entregar peça pior.
+
 ## Fontes de informação de cliente
 
 Os brains foram migrados de `arquivos clientes/CLIENTES/` (dossiês e fichas) e dos `.md` de cliente na raiz. Essas fontes continuam sendo o registro operacional (pendências, ClickUp, contas de mídia); o brain é o registro **criativo**. Ao descobrir informação permanente de cliente, atualize o brain e ofereça registrar.

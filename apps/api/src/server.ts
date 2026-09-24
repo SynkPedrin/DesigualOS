@@ -17,6 +17,7 @@ import { registerAuthRoutes } from './auth/routes';
 import { registerChatRoutes } from './chat/routes';
 import { registerExecutionRoutes } from './executions/routes';
 import { registerStudioRoutes } from './studio/routes';
+import { registerMotionRoutes } from './motion/routes';
 import { registerCanvasDocumentRoutes } from './studio/canvas-routes';
 import { registerImageSearchRoutes } from './studio/image-search-routes';
 import { registerFontRoutes } from './studio/font-routes';
@@ -196,6 +197,7 @@ async function start(): Promise<void> {
   await app.register(registerChatRoutes);
   await app.register(registerExecutionRoutes);
   await app.register(registerStudioRoutes);
+  await app.register(registerMotionRoutes);
   await app.register(registerCanvasDocumentRoutes);
   await app.register(registerImageSearchRoutes);
   await app.register(registerFontRoutes);
