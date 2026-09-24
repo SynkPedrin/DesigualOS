@@ -6,6 +6,8 @@ import {
   stripEmDashes,
   temCorrupcaoDeIdioma,
   removerGlifosForaDoIdioma,
+  redigirIdentificadores,
+  temIdentificadorExposto,
 } from './text';
 
 /**
@@ -159,5 +161,36 @@ describe('corrupção de idioma em resposta PT-BR', () => {
 
   it('limpeza não deixa espaço antes de pontuação', () => {
     expect(removerGlifosForaDoIdioma('entrega 横跨, prazo')).toBe('entrega, prazo');
+  });
+});
+
+/**
+ * Regressão da exposição medida em 23/09/2026: o Bento citou o Client ID e o
+ * tenant de uma app registration que estava indexada no vault.
+ */
+describe('redação de identificador na resposta', () => {
+  it('esconde o valor mas mantém a frase legível', () => {
+    const t = 'A credencial Client ID `3f1849a0-8682-45df-8ea2-b74be305f98b` do tenant institutoalmada.org.';
+    const r = redigirIdentificadores(t);
+    expect(r).not.toContain('3f1849a0-8682-45df-8ea2-b74be305f98b');
+    expect(r).toContain('[não exibido]');
+    expect(r).toContain('institutoalmada.org');
+  });
+
+  it('pega a forma de tabela markdown', () => {
+    const t = '| Tenant ID | `3f1849a0-8682-45df-8ea2-b74be305f98b` |';
+    expect(temIdentificadorExposto(t)).toBe(true);
+    expect(redigirIdentificadores(t)).not.toContain('3f1849a0');
+  });
+
+  it('não mexe em UUID legítimo sem rótulo de credencial', () => {
+    const t = 'Veja o artefato em claude.ai/artifact/3f1849a0-8682-45df-8ea2-b74be305f98b';
+    expect(temIdentificadorExposto(t)).toBe(false);
+    expect(redigirIdentificadores(t)).toBe(t);
+  });
+
+  it('não mexe em texto normal', () => {
+    const t = 'Alícia tem 85 tarefas abertas em 14 clientes.';
+    expect(redigirIdentificadores(t)).toBe(t);
   });
 });

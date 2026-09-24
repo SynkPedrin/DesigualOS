@@ -147,3 +147,30 @@ export function removerGlifosForaDoIdioma(text: string): string {
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/ +([,.;:!?])/g, '$1');
 }
+
+/**
+ * Última barreira contra vazamento de identificador de aplicação/conta na
+ * resposta.
+ *
+ * A barreira REAL é o índice: o valor saiu do vault e o redator do indexador
+ * ganhou regra pra esse formato (24/09/2026). Isto aqui existe porque a fonte
+ * do Bento é um corpus que gente edita todo dia — basta alguém colar uma
+ * tabela de app registration num documento novo pra reabrir o buraco, e entre
+ * o commit e o reindex existe uma janela.
+ *
+ * Ancorado no RÓTULO, não no formato: apagar todo UUID de toda resposta
+ * destruiria link de artefato e id de documento, que são conteúdo legítimo.
+ */
+const ROTULO_COM_UUID =
+  /\b(client|tenant|account|application|app|inbox|workspace|subscription|directory)([\s_-]*id)\b([^\n]{0,20}?)([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/gi;
+
+export function redigirIdentificadores(text: string | null | undefined): string {
+  if (!text) return text ?? '';
+  return text.replace(ROTULO_COM_UUID, (_m, rotulo, id, meio) => `${rotulo}${id}${meio}[não exibido]`);
+}
+
+export function temIdentificadorExposto(text: string | null | undefined): boolean {
+  if (!text) return false;
+  ROTULO_COM_UUID.lastIndex = 0;
+  return ROTULO_COM_UUID.test(text);
+}

@@ -45,6 +45,8 @@ import {
   extractApprovalProposal,
   temCorrupcaoDeIdioma,
   removerGlifosForaDoIdioma,
+  redigirIdentificadores,
+  temIdentificadorExposto,
 } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
 import { completeTextSafely } from '@desigual-os/router';
@@ -1447,6 +1449,17 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     // [FIM_BLOCO] dos prompts de personalidade viram parágrafo aqui também.
     if (result.answer)
       result = { ...result, answer: stripMarkdownArtifacts(stripBlockMarkers(stripEmDashes(result.answer))) };
+    /**
+     * Identificador de aplicação/conta nunca sai na resposta. A barreira real é
+     * o índice (o valor saiu do vault e o redator do indexador ganhou regra),
+     * mas o corpus é editado por gente todo dia: basta alguém colar uma tabela
+     * de app registration num documento novo pra reabrir o buraco, e entre o
+     * commit e o reindex existe uma janela.
+     */
+    if (result.answer && temIdentificadorExposto(result.answer)) {
+      logger.error({ executionId, agent }, '[seguranca] identificador na resposta; redigido na borda');
+      result = { ...result, answer: redigirIdentificadores(result.answer) };
+    }
     /**
      * SOURCE_RANGE_MISMATCH, na borda (22/09/2026). A análise de tráfego do
      * Jarbas é externa (JARBAS_ASK_URL) — nenhum parsing de data ou consulta
