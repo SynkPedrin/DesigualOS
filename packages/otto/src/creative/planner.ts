@@ -399,6 +399,22 @@ function buildCreativeSpec(
  * aparecer. Curto e no fim, não em cima: é dado de produção, não a
  * manchete da entrega.
  */
+/**
+ * `entity_description` é campo livre de LLM: vem com o nome da entidade e, com
+ * frequência, uma instrução colada em inglês. Medido no front publicado em
+ * 24/09/2026: "Cosentino Logo. Must be exact match to official brand
+ * guidelines." — a nota de produção saiu carregando a instrução inteira, em
+ * outro idioma, no meio de uma frase em português. A nota precisa NOMEAR a
+ * entidade, não repassar o briefing: fica só a primeira oração.
+ */
+export function nomeDaEntidade(descricao: string | undefined | null, tipo: string | undefined | null): string {
+  const bruto = descricao?.trim();
+  if (!bruto) return `${tipo ?? 'elemento'} real mencionado no briefing`;
+  const primeiraOracao = bruto.split(/(?<=[.;:])\s+/)[0] ?? bruto;
+  const limpo = primeiraOracao.replace(/[.;:,\s]+$/, '').slice(0, 60).trim();
+  return limpo.length >= 2 ? limpo : `${tipo ?? 'elemento'} real mencionado no briefing`;
+}
+
 export function checkRealWorldFidelity(
   plan: CreativePlan,
   referenceAssets: StudioReferenceAsset[],
@@ -407,7 +423,7 @@ export function checkRealWorldFidelity(
   if (!fidelity?.requires_reference) return null;
   const hasFaithfulReference = referenceAssets.some((asset) => asset.fidelity === 'exact' || asset.fidelity === 'high');
   if (hasFaithfulReference) return null;
-  const entity = fidelity.entity_description?.trim() || `${fidelity.entity_type ?? 'elemento'} real mencionado no briefing`;
+  const entity = nomeDaEntidade(fidelity.entity_description, fidelity.entity_type);
   return `Nota de produção: sem referência de imagem fiel de ${entity} — o visual é aproximado, não o real.`;
 }
 

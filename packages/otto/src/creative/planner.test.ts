@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildImagePrompt, buildProductionSpec, checkRealWorldFidelity } from './planner.js';
+import { buildImagePrompt, buildProductionSpec, checkRealWorldFidelity, nomeDaEntidade } from './planner.js';
 import type { CreativePlan } from './schemas.js';
 import { creativePlanSchema, studioJobTypeSchema } from './schemas.js';
 
@@ -285,5 +285,33 @@ describe('buildProductionSpec', () => {
       expect(warning).not.toMatch(/^Atenção:/);
       expect(warning).toContain('a fachada real do prédio');
     });
+  });
+});
+
+/**
+ * Regressão do front publicado (24/09/2026): a nota de fidelidade saiu com a
+ * instrução do briefing colada em inglês —
+ * "sem referência de imagem fiel de Cosentino Logo. Must be exact match to
+ * official brand guidelines., o visual é aproximado".
+ */
+describe('nome da entidade na nota de produção', () => {
+  it('corta a instrução colada depois do nome', () => {
+    expect(nomeDaEntidade('Cosentino Logo. Must be exact match to official brand guidelines.', 'logo')).toBe(
+      'Cosentino Logo',
+    );
+  });
+
+  it('mantém nome simples intacto', () => {
+    expect(nomeDaEntidade('fachada do Jardim Europa V', 'building')).toBe('fachada do Jardim Europa V');
+  });
+
+  it('cai no genérico quando não há descrição', () => {
+    expect(nomeDaEntidade('', 'produto')).toBe('produto real mencionado no briefing');
+    expect(nomeDaEntidade(null, null)).toBe('elemento real mencionado no briefing');
+  });
+
+  it('não deixa a nota virar parágrafo', () => {
+    const longo = 'A'.repeat(200);
+    expect(nomeDaEntidade(longo, 'logo').length).toBeLessThanOrEqual(60);
   });
 });
