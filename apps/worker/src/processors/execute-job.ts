@@ -34,10 +34,18 @@ import {
 } from '@desigual-os/tool-gateway';
 import {
   ehPerguntaDeFonteAnterior,
+  montarProveniencia,
   responderFonteAnterior,
   type ProvenienciaDaResposta,
 } from './response-provenance.js';
-import { stripBlockMarkers, stripMarkdownArtifacts, withPersonality, extractApprovalProposal } from '@desigual-os/types';
+import {
+  stripBlockMarkers,
+  stripMarkdownArtifacts,
+  withPersonality,
+  extractApprovalProposal,
+  temCorrupcaoDeIdioma,
+  removerGlifosForaDoIdioma,
+} from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
 import { completeTextSafely } from '@desigual-os/router';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
@@ -551,6 +559,49 @@ async function recordAuditLog(
     result: result.status,
     metadata: { execution_id: executionId, sources: result.sources, error: result.error ?? null },
   });
+}
+
+/**
+ * Proveniência no CAMINHO DIRETO (loop desligado), que é o que roda em
+ * produção. Antes, `metadata.agentic.provenance` só era escrito dentro do
+ * dispatch agêntico — com AGENT_LOOP_V2 off o registro nunca existia, e
+ * "de onde você tirou isso?" caía no caminho normal: a pergunta virava
+ * consulta vetorial e voltava com a origem de um documento qualquer que
+ * casasse com a FRASE (medido em 23/09/2026: respondeu sobre comentários do
+ * Instagram de @tg_tavares, "paternidade e Gonzagão").
+ *
+ * Aqui não existe grounding por claim — isso é do loop. O que existe é o que
+ * o turno de fato usou: o bloco operacional (ClickUp consultado ao vivo,
+ * já filtrado por pessoa/cliente) e os documentos que o node devolveu em
+ * `sources`. Registra fonte, nunca raciocínio.
+ */
+function provenienciaDoCaminhoDireto(params: {
+  agent: AgentName;
+  operationalContext: string | undefined;
+  sources: string[];
+  em: string;
+}): ProvenienciaDaResposta | null {
+  const evidence: Array<{ type?: string; source?: string; sourceId?: string; summary?: string; retrievedAt?: string }> = [];
+
+  // Bloco operacional presente = o ClickUp foi consultado NESTE turno. O
+  // caminho que monta esse bloco (operational-context.ts) só o produz depois
+  // de uma leitura real da ferramenta, então isto não é inferência.
+  if (params.operationalContext && params.operationalContext.trim().length > 0) {
+    evidence.push({
+      type: 'clickup_task',
+      source: 'clickup',
+      sourceId: 'operational-context',
+      retrievedAt: params.em,
+    });
+  }
+
+  for (const [i, s] of params.sources.entries()) {
+    if (!s || s.trim().length === 0) continue;
+    evidence.push({ type: 'document', source: `vault:${s}`.slice(0, 200), sourceId: `src${i}`, summary: s.slice(0, 200), retrievedAt: params.em });
+  }
+
+  if (evidence.length === 0) return null;
+  return montarProveniencia({ claims: [], evidence, agente: params.agent, em: params.em });
 }
 
 /** Fecha o ciclo User -> Conversation da seção 6.3: a resposta final também vira mensagem. */
@@ -1201,6 +1252,49 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         operationalContext,
         clientFeedbackHistory,
       );
+      /**
+       * Resposta com glifo fora do idioma é DESCARTADA e regerada, não
+       * remendada: o modelo local (família Qwen) troca uma palavra portuguesa
+       * por uma chinesa sob carga, e o resto da resposta costuma sair certo na
+       * segunda amostragem. Duas tentativas; a limpeza só entra se as duas
+       * falharem, pra que caractere chinês nunca chegue em quem está operando.
+       */
+      for (let tentativa = 1; tentativa <= 2 && temCorrupcaoDeIdioma(result.answer); tentativa++) {
+        logger.warn({ executionId, agent, tentativa }, '[idioma] resposta com glifo fora do idioma; regerando');
+        const nova = await callNode(
+          agent,
+          executionId,
+          mensagemComDialogo,
+          contextRefs,
+          logger,
+          conversationId ?? undefined,
+          clientBrandKit,
+          attachments,
+          operationalContext,
+          clientFeedbackHistory,
+        ).catch(() => null);
+        if (nova?.answer && !temCorrupcaoDeIdioma(nova.answer)) {
+          result = nova;
+          break;
+        }
+        if (nova?.answer) result = nova;
+      }
+      if (temCorrupcaoDeIdioma(result.answer)) {
+        logger.error({ executionId, agent }, '[idioma] regeneração não resolveu; aplicando limpeza de última instância');
+        result = { ...result, answer: removerGlifosForaDoIdioma(result.answer ?? '') };
+      }
+      // Registro de fonte do turno que ACABOU de responder. Só no caminho
+      // direto: quando o loop está ligado ele monta a sua, por claim, e
+      // sobrescrever aqui trocaria a proveniência fina pela grossa.
+      const prov = provenienciaDoCaminhoDireto({
+        agent,
+        operationalContext,
+        sources: result.sources ?? [],
+        em: new Date().toISOString(),
+      });
+      if (prov) {
+        result = { ...result, metadata: { ...(result.metadata ?? {}), agentic: { provenance: prov } } };
+      }
     }
     // Regra de ouro de craft: bot nunca usa travessão. Aplicado na borda,
     // porque os prompts dos agentes vivem nas máquinas deles. Os marcadores

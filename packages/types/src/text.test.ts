@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractApprovalProposal, stripBlockMarkers, stripEmDashes } from './text';
+import {
+  extractApprovalProposal,
+  stripBlockMarkers,
+  stripEmDashes,
+  temCorrupcaoDeIdioma,
+  removerGlifosForaDoIdioma,
+} from './text';
 
 /**
  * A regra "sem travessão" roda na BORDA: todo texto de agente passa por stripEmDashes antes de
@@ -125,5 +131,33 @@ describe('stripEmDashes preserva citação', () => {
   it('nenhuma sentinela vaza pro texto final', () => {
     const saida = stripEmDashes('"a - b" e "c \u2014 d" fora \u2014 dentro');
     expect(saida).not.toMatch(/[\u0011\u0012\u0013]/);
+  });
+});
+
+describe('corrupção de idioma em resposta PT-BR', () => {
+  it('detecta o caso real medido no front (横跨 no meio da frase)', () => {
+    expect(temCorrupcaoDeIdioma('Alicia tem 85 tarefas abertas横跨 14 clientes')).toBe(true);
+  });
+
+  it('não acusa português normal, com acento e emoji', () => {
+    expect(temCorrupcaoDeIdioma('Alícia tem 85 tarefas abertas em 14 clientes 🚨 prazo 15/08')).toBe(false);
+  });
+
+  it('não acusa texto vazio nem nulo', () => {
+    expect(temCorrupcaoDeIdioma('')).toBe(false);
+    expect(temCorrupcaoDeIdioma(null)).toBe(false);
+  });
+
+  it('pega cirílico e hangul também', () => {
+    expect(temCorrupcaoDeIdioma('prazo привет')).toBe(true);
+    expect(temCorrupcaoDeIdioma('prazo 안녕')).toBe(true);
+  });
+
+  it('limpeza de última instância tira o glifo e fecha o espaço', () => {
+    expect(removerGlifosForaDoIdioma('85 tarefas abertas 横跨 14 clientes')).toBe('85 tarefas abertas 14 clientes');
+  });
+
+  it('limpeza não deixa espaço antes de pontuação', () => {
+    expect(removerGlifosForaDoIdioma('entrega 横跨, prazo')).toBe('entrega, prazo');
   });
 });

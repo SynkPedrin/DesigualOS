@@ -114,3 +114,36 @@ export function extractApprovalProposal(text: string): string | null {
   const proposal = match?.[1]?.trim();
   return proposal ? proposal : null;
 }
+
+/**
+ * Glifos que NUNCA deveriam aparecer numa resposta em português: CJK
+ * (chinês/japonês), Hangul e Cirílico. Os modelos locais da casa são da
+ * família Qwen, treinados majoritariamente em chinês/inglês, e sob carga eles
+ * trocam uma palavra portuguesa por uma chinesa no meio da frase sem nenhum
+ * outro sinal de erro. Medido no front publicado em 23/09/2026, resposta real
+ * do Bento: "Alicia tem 85 tarefas abertas横跨 14 clientes" (横跨 = "abrangendo").
+ *
+ * Detecção existe pra REGERAR a resposta, não pra apagar caractere: apagar
+ * deixa "85 tarefas abertas 14 clientes", que lê como frase quebrada e ainda
+ * por cima esconde que o modelo falhou. Ver o uso em execute-job.ts.
+ */
+const GLIFOS_FORA_DO_IDIOMA =
+  /[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯Ѐ-ӿ]/u;
+
+export function temCorrupcaoDeIdioma(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return GLIFOS_FORA_DO_IDIOMA.test(text);
+}
+
+/**
+ * Último recurso, só depois de a regeneração falhar: tira os glifos e fecha o
+ * espaço duplo que sobra. Entregar uma frase com um buraco ainda é melhor do
+ * que entregar caractere chinês pra quem está trabalhando em português — mas
+ * isto é rede de segurança, não a estratégia.
+ */
+export function removerGlifosForaDoIdioma(text: string): string {
+  return text
+    .replace(new RegExp(GLIFOS_FORA_DO_IDIOMA.source, 'gu'), '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/ +([,.;:!?])/g, '$1');
+}
