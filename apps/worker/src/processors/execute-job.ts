@@ -1379,6 +1379,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       }
       // Depois da montagem do contexto, senão a linha se perde na remontagem.
       if (sufixoDeCliente) mensagemComDialogo = `${mensagemComDialogo}${sufixoDeCliente}`;
+      if (agent === 'jarbas' || agent === 'suzy') {
+        logger.info(
+          { executionId, agent, enviado: mensagemComDialogo.slice(0, 300) },
+          '[cliente] texto enviado ao agente externo',
+        );
+      }
 
       result = await callNode(
         agent,
