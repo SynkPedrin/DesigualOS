@@ -1,6 +1,7 @@
 import type { OperationalScope } from './resolve-scope';
 import { zonedDayStart } from './resolve-temporal';
 import { textoExternoSeguro } from './texto-externo';
+import { APRESENTACAO_HUMANA } from './selection';
 
 /**
  * build-operational-context.ts — transforma o escopo resolvido em DADO REAL de operação,
@@ -47,6 +48,13 @@ export interface OperationalContextDeps {
 export interface OperationalContext {
   /** Bloco de texto pronto pro prompt. `null` quando não havia o que buscar. */
   block: string | null;
+  /**
+   * As tasks EXATAMENTE como exibidas no bloco (ordem e recorte do teto por
+   * cliente), com o nome do cliente já resolvido. É o que vira o snapshot de
+   * seleção da conversa (ver selection.ts): sem isto, "a segunda" não tinha
+   * como saber qual task era a segunda.
+   */
+  listedTasks: Array<OperationalTaskLike & { clientName: string | null }>;
   /** Números crus, pra quem quiser responder sem LLM (rota tool-only) ou pra log. */
   summary: {
     total: number;
@@ -63,9 +71,16 @@ export interface OperationalContext {
 
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
-function formatDueDate(ms: number | null, timeZone = 'America/Sao_Paulo'): string {
+function formatDueDate(ms: number | null, timeZone = 'America/Sao_Paulo', now?: Date): string {
   if (!ms) return 'sem prazo';
-  return new Intl.DateTimeFormat('pt-BR', { timeZone, day: '2-digit', month: '2-digit' }).format(new Date(ms));
+  // Ano explícito quando o prazo NÃO é deste ano: "12/04" solto, sem âncora de
+  // ano, foi lido pelo agente como "próximas semanas" sobre uma task de abril
+  // (medido em 24/09/2026). Com ano, a data fala por si.
+  const comAno = now ? new Date(ms).getFullYear() !== now.getFullYear() : false;
+  const opcoes: Intl.DateTimeFormatOptions = comAno
+    ? { timeZone, day: '2-digit', month: '2-digit', year: 'numeric' }
+    : { timeZone, day: '2-digit', month: '2-digit' };
+  return new Intl.DateTimeFormat('pt-BR', opcoes).format(new Date(ms));
 }
 
 /**
@@ -78,14 +93,14 @@ export async function buildOperationalContext(
   now: Date = new Date(),
 ): Promise<OperationalContext> {
   if (!scope.operational || scope.kind === 'NONE' || scope.kind === 'AMBIGUOUS') {
-    return { block: null, summary: null, failure: null };
+    return { block: null, listedTasks: [], summary: null, failure: null };
   }
 
   let clients: Array<{ id: string; name: string; clickupListId: string | null }>;
   try {
     clients = await deps.listAuthorizedClients();
   } catch (error) {
-    return { block: null, summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})` };
+    return { block: null, listedTasks: [], summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})` };
   }
 
   // Escopo de cliente(s): só as listas daqueles clientes. Escopo GLOBAL e
@@ -100,6 +115,7 @@ export async function buildOperationalContext(
   if (listIds.length === 0) {
     return {
       block: null,
+      listedTasks: [],
       summary: null,
       failure:
         scope.kind === 'GLOBAL'
@@ -117,8 +133,19 @@ export async function buildOperationalContext(
       ...(scope.kind === 'PERSON' && scope.person?.memberIds?.length ? { assigneeIds: scope.person.memberIds } : {}),
     });
   } catch (error) {
-    return { block: null, summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})` };
+    return { block: null, listedTasks: [], summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})` };
   }
+
+  /**
+   * "ABERTAS" É ABERTAS DE VERDADE (24/09/2026). O ClickUp devolve status do
+   * tipo `done` (ex: "pronto") mesmo com include_closed=false — são tasks
+   * ENCERRADAS na prática, e listá-las como abertas misturou trabalho fechado
+   * no meio de "tasks abertas" numa conversa real. Filtradas aqui, com a
+   * contagem declarada no bloco pra o número bater com o ClickUp.
+   */
+  const encerradas = result.tasks.filter((t) => t.statusType === 'done' || t.statusType === 'closed');
+  const tasksAbertas = result.tasks.filter((t) => t.statusType !== 'done' && t.statusType !== 'closed');
+  result = { ...result, tasks: tasksAbertas };
 
   const nomePorLista = new Map(alvo.filter((c) => c.clickupListId).map((c) => [c.clickupListId!, c.name]));
   // "Atrasada" = venceu num dia ANTERIOR, não "venceu antes deste instante". Bug pego em
@@ -163,6 +190,7 @@ export async function buildOperationalContext(
         `Nenhuma tarefa aberta${janela} em ${onde}.`,
         'Isto é resultado real de consulta, não ausência de acesso: pode afirmar que não há nada.',
       ].join('\n'),
+      listedTasks: [],
       summary,
       failure: null,
     };
@@ -170,6 +198,11 @@ export async function buildOperationalContext(
 
   const linhas: string[] = [];
   linhas.push('DADOS AO VIVO DO CLICKUP (consultados agora, valem mais que qualquer memória sua):');
+  // Âncora temporal explícita: sem a data de hoje no bloco, o agente estimava
+  // "próximas semanas" sobre prazos de meses atrás (medido em 24/09/2026).
+  linhas.push(
+    `Hoje é ${new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(now)}. Compare prazos com ESTA data.`,
+  );
   const janela = scope.temporal ? ` (janela: ${scope.temporal.label.replace('-', ' ')})` : '';
   /**
    * ESCOPO DO NÚMERO, dito antes do número.
@@ -199,7 +232,10 @@ export async function buildOperationalContext(
   if (overdue > 0) linhas.push(`${overdue} já passou do prazo.`);
   if (unassigned > 0) linhas.push(`${unassigned} sem responsável definido.`);
   if (result.truncated) {
-    linhas.push('ATENÇÃO: a consulta atingiu o teto de páginas — o número acima é um MÍNIMO, não o total. Diga isso se for citar quantidade.');
+    linhas.push('Se for citar quantidade, diga que encontrou PELO MENOS esse número (a consulta corta no limite de páginas). Fale isso em linguagem normal, sem jargão técnico.');
+  }
+  if (encerradas.length > 0) {
+    linhas.push(`(${encerradas.length} task(s) já concluídas/prontas ficaram FORA desta lista de abertas — não as apresente como pendentes.)`);
   }
   /**
    * PRAZO NÃO É DATA DE EVENTO.
@@ -216,6 +252,8 @@ export async function buildOperationalContext(
     'PRAZO é data de entrega da TAREFA, nunca data de evento, de veiculação ou de campanha. Se pedirem a data de um evento e ela não estiver escrita em outro lugar, ela NÃO é conhecida: peça ou marque [A CONFIRMAR], não deduza de um prazo.',
   );
   linhas.push('');
+  linhas.push(...APRESENTACAO_HUMANA);
+  linhas.push('');
 
   /**
    * TETO POR CLIENTE no panorama multi-cliente. Sem ele, o panorama GLOBAL da
@@ -230,6 +268,7 @@ export async function buildOperationalContext(
    */
   const TETO_POR_CLIENTE = scope.kind === 'GLOBAL' || scope.kind === 'MULTI_CLIENT' ? 12 : Number.MAX_SAFE_INTEGER;
 
+  const listedTasks: Array<OperationalTaskLike & { clientName: string | null }> = [];
   for (const { clientName } of byClient) {
     const tasks = [...porCliente.get(clientName)!].sort((a, b) => {
       const pa = PRIORITY_ORDER[a.priority ?? 'normal'] ?? 2;
@@ -250,7 +289,7 @@ export async function buildOperationalContext(
       const partes = [
         `- ${textoExternoSeguro(t.name) || 'sem nome'}`,
         `status: ${textoExternoSeguro(t.status) || 'sem status'}`,
-        `prazo: ${formatDueDate(t.dueDate)}`,
+        `prazo: ${formatDueDate(t.dueDate, 'America/Sao_Paulo', now)}`,
         t.assignees.length
           ? `resp: ${t.assignees.map((a) => textoExternoSeguro(a, 60)).filter(Boolean).join(', ') || 'ninguém'}`
           : 'resp: ninguém',
@@ -258,9 +297,12 @@ export async function buildOperationalContext(
       if (t.priority) partes.push(`prioridade: ${t.priority}`);
       if (t.dueDate !== null && t.dueDate < inicioDeHoje && !concluida(t)) partes.push('ATRASADA');
       linhas.push(partes.join(' | '));
+      // O snapshot de seleção replica ESTA ordem: é ela que o usuário viu, e é
+      // contra ela que "a segunda" resolve depois.
+      listedTasks.push({ ...t, clientName });
     }
     linhas.push('');
   }
 
-  return { block: linhas.join('\n').trimEnd(), summary, failure: null };
+  return { block: linhas.join('\n').trimEnd(), listedTasks, summary, failure: null };
 }

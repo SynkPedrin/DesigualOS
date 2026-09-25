@@ -374,6 +374,64 @@ describe('parseAgentLoopFlag (AGENT_LOOP_V2 por agente)', () => {
   });
 });
 
+/**
+ * Sequestro medido ao vivo em 24/09/2026: "Crie um motion..." do Otto era
+ * interceptado pelo guard do Bento como escrita no ClickUp e o turno nunca
+ * chegava no motion guard (que vem depois no pipeline por desenho). A correção
+ * é a pré-detecção `isMotionTurnBeforeBentoGuard`, cuja saída é a ÚNICA coisa
+ * entre o turno e o tryBentoActionGuard (`if (... && !motionPre)`). Estes testes
+ * provam o desvio sem montar o job inteiro: o que a função desvia do Bento é
+ * exatamente o que a MESMA chamada `detectMotionIntent` entrega ao tryMotionGuard
+ * como portão de entrada — detectou aqui = o motion guard assume logo abaixo.
+ */
+describe('desvio motion -> guard do Bento (isMotionTurnBeforeBentoGuard)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('pedido de motion com agente otto e flag ligada: NÃO vai pro guard do Bento...', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie um motion para a campanha de setembro.')).toBe(true);
+  }, IMPORT_A_FRIO_MS);
+
+  it('...e a MESMA detecção é o portão do tryMotionGuard — o turno desviado cai nele', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { detectMotionIntent } = await import('@desigual-os/otto-motion');
+    // tryMotionGuard decide assumir o turno por esta chamada idêntica (sem
+    // sessão ativa é o caminho de criação — ver motion-guard.ts). Se a
+    // pré-detecção acendeu, esta acende junto: não existe "desvia do Bento e
+    // cai no limbo".
+    const intent = detectMotionIntent('Crie um motion para a campanha de setembro.', { hasActiveSession: false });
+    expect(intent?.kind).toBe('create');
+  });
+
+  it('pedido normal de task ("crie uma task...") continua indo pro guard do Bento', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie uma task pra revisar o carrossel da Elite')).toBe(false);
+    expect(isMotionTurnBeforeBentoGuard('bento', 'crie uma task de revisão no ClickUp')).toBe(false);
+  });
+
+  it('com a flag desligada o comportamento é o antigo: até pedido de motion vai pro guard do Bento', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'false');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie um motion para a campanha de setembro.')).toBe(false);
+  });
+
+  it('flag ausente (não "true") também é o comportamento antigo', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', '');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie um motion de 15s')).toBe(false);
+  });
+
+  it('pedido de motion com OUTRO agente não desvia — a pré-detecção é exclusiva do otto', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('bento', 'Crie um motion para a campanha de setembro.')).toBe(false);
+  });
+});
+
 describe('limitarContexto', () => {
   it('junta as partes que existem e ignora vazio', async () => {
     const { limitarContexto } = await import('./execute-job.js');

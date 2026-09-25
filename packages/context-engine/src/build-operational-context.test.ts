@@ -143,10 +143,14 @@ describe('buildOperationalContext', () => {
     expect(r.block).toMatch(/valem mais que qualquer memória/i);
   });
 
-  it('resultado truncado avisa que o número é um MÍNIMO (nunca finge total)', async () => {
+  it('resultado truncado avisa que o número é um MÍNIMO (nunca finge total), em instrução de linguagem natural', async () => {
     const d = deps({ queryTasks: vi.fn(async () => ({ tasks: [task()], truncated: true })) });
     const r = await buildOperationalContext(scope(), d, NOW);
-    expect(r.block).toMatch(/MÍNIMO, não o total/);
+    // A regra sobrevive (é piso, não total); o que mudou em 24/09/2026 é a
+    // FORMA: instrução de falar natural, sem jargão de banco ("truncado",
+    // "MÍNIMO") que o agente papagaiava pro usuário.
+    expect(r.block).toMatch(/PELO MENOS/);
+    expect(r.block).not.toMatch(/MÍNIMO, não o total/);
     expect(r.summary?.truncated).toBe(true);
   });
 

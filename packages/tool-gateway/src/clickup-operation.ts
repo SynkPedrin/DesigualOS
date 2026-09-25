@@ -223,22 +223,38 @@ export async function queryOperationTasks(
 ): Promise<OperationTaskPage> {
   const listIds = query.listIds ?? [];
   if (listIds.length > LIST_IDS_POR_LOTE) {
+    const lotes: string[][] = [];
+    for (let i = 0; i < listIds.length; i += LIST_IDS_POR_LOTE) {
+      lotes.push(listIds.slice(i, i + LIST_IDS_POR_LOTE));
+    }
+    /**
+     * Lotes em PARALELO com teto (24/09/2026): eram sequenciais — 6 lotes ×
+     * ~5,5s ≈ 33s de consulta, e o POST /chat estourava o timeout de 30s do
+     * front: o balão ficava preso em "pensando" com a resposta JÁ gravada no
+     * banco (medido no aceite ao vivo, primeira listagem do fluxo de
+     * continuidade). 3 lotes simultâneos (1-3 req cada) ficam longe do rate
+     * limit e cortam a espera a ~1/3.
+     */
+    const CONCORRENCIA_LOTES = 3;
     const acumuladas: OperationTask[] = [];
     const vistos = new Set<string>();
     let truncatedTotal = false;
     let pagesTotal = 0;
-    for (let i = 0; i < listIds.length; i += LIST_IDS_POR_LOTE) {
-      const lote = listIds.slice(i, i + LIST_IDS_POR_LOTE);
-      const parcial = await queryOperationTasks(config, { ...query, listIds: lote });
-      // Dedup por id: uma task não pode ser contada duas vezes se aparecer
-      // em dois lotes (subtask cuja lista caiu noutro lote).
-      for (const t of parcial.tasks) {
-        if (vistos.has(t.id)) continue;
-        vistos.add(t.id);
-        acumuladas.push(t);
+    for (let i = 0; i < lotes.length; i += CONCORRENCIA_LOTES) {
+      const grupo = await Promise.all(
+        lotes.slice(i, i + CONCORRENCIA_LOTES).map((lote) => queryOperationTasks(config, { ...query, listIds: lote })),
+      );
+      for (const parcial of grupo) {
+        // Dedup por id: uma task não pode ser contada duas vezes se aparecer
+        // em dois lotes (subtask cuja lista caiu noutro lote).
+        for (const t of parcial.tasks) {
+          if (vistos.has(t.id)) continue;
+          vistos.add(t.id);
+          acumuladas.push(t);
+        }
+        truncatedTotal = truncatedTotal || parcial.truncated;
+        pagesTotal += parcial.pagesFetched;
       }
-      truncatedTotal = truncatedTotal || parcial.truncated;
-      pagesTotal += parcial.pagesFetched;
     }
     return { tasks: acumuladas, truncated: truncatedTotal, pagesFetched: pagesTotal };
   }

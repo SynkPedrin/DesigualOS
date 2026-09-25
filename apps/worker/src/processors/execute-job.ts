@@ -8,6 +8,7 @@ import {
   type ExecuteResponse,
 } from '@desigual-os/node-protocol';
 import { creativePlanSchema, productionSpecSchema, type ProductionSpec } from '@desigual-os/otto';
+import { detectMotionIntent, ottoMotionEnabled, type CampaignBrief } from '@desigual-os/otto-motion';
 import {
   AGENT_TIMEOUT_MS,
   AGENT_MAX_ATTEMPTS,
@@ -58,6 +59,12 @@ import { tryMotionGuard } from './motion-guard';
 import { loadSeniorRuntimeContext } from './senior-runtime-context';
 import { detectSmallTalk } from './small-talk';
 import { registrarConhecimentoDoTurno } from './knowledge-statement';
+import {
+  answerFromExecutionState,
+  detectExecutionStatusQuestion,
+  loadLatestExecutionState,
+} from './execution-record';
+import { responderBriefingDoItemEmFoco } from './selection-read';
 import { looksLikeCreativeFeedback } from './conversation-artifact';
 import {
   checkDateRangeMatch,
@@ -927,6 +934,21 @@ async function publishMessageDelta(params: {
  * enquanto o defeito era de infraestrutura. São reações opostas: uma a pessoa
  * refaz a pergunta, a outra ela vai ligar uma máquina.
  */
+/**
+ * Pré-detecção do desvio motion→Bento (sequestro medido ao vivo em 24/09/2026):
+ * "Crie um motion..." do Otto era classificado pelo guard do Bento como escrita
+ * no ClickUp e o turno nunca chegava no motion guard, que vem depois no pipeline
+ * por desenho. Esta função é a ÚNICA condição que separa os dois caminhos —
+ * extraída como função pura (regex, sem I/O) exatamente pra o teste de unidade
+ * provar o desvio sem montar o job inteiro. É a MESMA chamada que tryMotionGuard
+ * faria daqui a pouco: true aqui = o motion guard assume o turno logo abaixo.
+ * Com OTTO_MOTION_ENABLED != 'true' devolve false e o fluxo fica byte a byte
+ * como antes da correção.
+ */
+export function isMotionTurnBeforeBentoGuard(agent: AgentName, message: string): boolean {
+  return agent === 'otto' && ottoMotionEnabled() ? detectMotionIntent(message, { hasActiveSession: false }) !== null : false;
+}
+
 export function failureAnswerFor(agent: AgentName, error: string | null | undefined): string {
   const label = agent.charAt(0).toUpperCase() + agent.slice(1);
   const detalhe = (error ?? '').trim();
@@ -970,7 +992,7 @@ export async function processAgentJob(job: Job<AgentJobData>, logger: Logger): P
 }
 
 async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promise<void> {
-  const { executionDbId, executionId, agent, message, contextRefs, conversationId, attachments, operationalContext } = data;
+  const { executionDbId, executionId, agent, message, contextRefs, conversationId, attachments, operationalContext, motionBrief } = data;
 
   const [runningExecution] = await db
     .update(schema.executions)
@@ -1066,6 +1088,55 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     }
   }
 
+  /**
+   * ESTADO DE EXECUÇÃO (24/09/2026), depois da proveniência e antes de
+   * small-talk: "já lançou pro Pedro no ClickUp?" é pergunta sobre o RECIBO do
+   * turno anterior, não sobre o mundo. Sem este caminho ela caía no serviço
+   * remoto sem memória, que respondia "De qual cliente você quer saber as
+   * tasks do ClickUp?" logo depois de uma mutação real — a falha de
+   * continuidade medida ao vivo. A resposta sai do registro gravado
+   * (YES/PARTIAL/NO com ids e motivos), nunca de uma consulta nova; sem
+   * registro de execução na conversa, devolve null e o turno segue normal.
+   */
+  if (!guardedResult && agent === 'bento' && conversationId && detectExecutionStatusQuestion(message)) {
+    const estado = await loadLatestExecutionState(conversationId).catch(() => null);
+    if (estado) {
+      logger.info({ executionId, agent, kind: estado.kind }, '[execução] status respondido do registro da conversa');
+      guardedResult = {
+        execution_id: executionId,
+        agent,
+        status: 'completed',
+        answer: answerFromExecutionState(estado, message),
+        sources: [],
+        tool_calls: [],
+        usage: { input_tokens: 0, output_tokens: 0 },
+        metadata: { fast_path: 'execution_status', execucao: estado.kind === 'executed' ? estado.record : undefined },
+      };
+    }
+  }
+
+  /**
+   * "qual o briefing dela?" — leitura endereçada do comentário de briefing da
+   * task em FOCO (a que "a segunda" acabou de apontar). Sem isto o turno caía
+   * no serviço remoto, que nunca viu o briefing gravado e improvisava um.
+   */
+  if (!guardedResult && agent === 'bento' && conversationId) {
+    const briefingFoco = await responderBriefingDoItemEmFoco(conversationId, message).catch(() => null);
+    if (briefingFoco) {
+      logger.info({ executionId, agent }, '[seleção] briefing do item em foco lido do comentário real');
+      guardedResult = {
+        execution_id: executionId,
+        agent,
+        status: 'completed',
+        answer: briefingFoco,
+        sources: [],
+        tool_calls: [],
+        usage: { input_tokens: 0, output_tokens: 0 },
+        metadata: { fast_path: 'selection_focus_briefing' },
+      };
+    }
+  }
+
   const smallTalk = !guardedResult ? detectSmallTalk(message, agent) : null;
   if (smallTalk) {
     logger.info({ executionId, agent, kind: smallTalk.kind }, "[small-talk] resposta direta, sem retrieval");
@@ -1081,7 +1152,15 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     };
   }
 
-  if (!guardedResult && (agent === 'bento' || agent === 'otto')) {
+  // "Crie um motion" NÃO é pedido de task: medido ao vivo em 24/09/2026, o
+  // guard do Bento classificava o pedido de motion do Otto como escrita no
+  // ClickUp e respondia "Não criei a task" — o turno nunca chegava no motion
+  // guard, que está depois deste bloco por desenho. A pré-detecção é a mesma
+  // chamada pura (regex, sem I/O) que tryMotionGuard faria daqui a pouco; com
+  // a flag desligada `motionPre` é false e este if fica byte a byte como antes.
+  const motionPre = isMotionTurnBeforeBentoGuard(agent, message);
+
+  if (!guardedResult && (agent === 'bento' || agent === 'otto') && !motionPre) {
     const [jobUser] = runningExecution?.userId
       ? await db.select().from(schema.users).where(eq(schema.users.id, runningExecution.userId))
       : [];    const agencyClient = await db
@@ -1138,6 +1217,20 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   // palavra, exatamente como antes. Com OTTO_MOTION_ENABLED != 'true' a
   // primeira linha de tryMotionGuard devolve null e este bloco é um no-op.
   if (!guardedResult) {
+    // projectId real: `executions` não tem coluna de projeto, mas a CONVERSA
+    // tem (chat vinculado a projeto). Uma query extra só no caminho do Otto —
+    // pros outros agentes o guard devolveria null na segunda linha e a leitura
+    // seria desperdiçada. Falha aqui vira null (comportamento anterior), nunca
+    // derruba o turno.
+    const motionProjectId =
+      agent === 'otto' && conversationId
+        ? ((await db
+            .select({ projectId: schema.conversations.projectId })
+            .from(schema.conversations)
+            .where(eq(schema.conversations.id, conversationId))
+            .limit(1)
+            .catch(() => [] as { projectId: string | null }[]))[0]?.projectId ?? null)
+        : null;
     const motion = await tryMotionGuard({
       agent,
       message,
@@ -1145,7 +1238,11 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       conversationId: conversationId ?? null,
       clientId: runningExecution?.clientId ?? null,
       userId: runningExecution?.userId ?? null,
-      projectId: null,
+      projectId: motionProjectId,
+      // Briefing do card de briefing (validado por zod na borda, POST /chat).
+      // O cast é seguro: o job data só carrega o que a rota já validou contra
+      // o contrato do campaignBriefSchema.
+      brief: motionBrief as CampaignBrief | undefined,
       attachments: (attachments ?? []).map((a) => ({
         url: a.url,
         filename: a.filename,
