@@ -88,6 +88,97 @@ for the checkpoint commits, prefixed `checkpoint:`)
 - No `OPENAI_API_KEY` present in this environment. All OpenAI code paths must
   degrade to an explicit "not configured" error, never silently fall back.
 
+## COMPLETED (round 2, same session continuation)
+
+- **`/ready`** (`acfef27`): `apps/api/src/health/ready-routes.ts`, registered
+  in `server.ts`. Zero-cost: DB ping, `readWorkerHealth()`, presence-only
+  checks for `OPENAI_API_KEY` / ClickUp MCP OAuth config / shared ClickUp
+  key, feature flags. Never calls OpenAI or ClickUp MCP.
+- **RBAC P1-04** (`acfef27`): `packages/database/src/seed.ts` — `jarbas`/
+  `clickup` and `suzy`/`clickup` downgraded from `write` to `read` in the
+  `AGENT_TOOLS` matrix, with a backfill `UPDATE` for already-seeded DBs
+  (same pattern as the existing `requiresApproval` backfill). Runtime
+  behavior unchanged (neither agent writes ClickUp today) — pure permission
+  correction, per explicit instruction not to touch Jarbas beyond RBAC.
+- **Cost ledger** (`dbbedf9`): new table `ai_usage_ledger` in
+  `packages/database/src/schema/costs.ts` (org/user/agent/conversation/
+  model/provider/input+cached+output tokens/cost_usd/request_type/
+  tool_steps/metadata). Migration `database/migrations/0042_add_ai_usage_ledger.sql`
+  generated via `drizzle-kit generate` (offline, snapshot-based — **not
+  applied to the live DB yet**, run `pnpm db:migrate` when ready).
+  `packages/openai-provider/src/ledger.ts`: `recordOpenAIUsage()`,
+  `dailySpendUsd()`, `monthlySpendUsd()`, `monthlySpendByModel()`,
+  `monthlySpendByAgent()`, `currentBudgetTier()` (integrates real spend with
+  `pickModel`/`budgetTierFromUsage`).
+- **Otto → OpenAI (P0.1, partial)** (`f71d67a`): `packages/otto/src/llm/openai-provider.ts`
+  implements the existing `OttoLLMProvider` interface (chat/chatJson/
+  healthCheck) on top of `@desigual-os/openai-provider`, no `tools` given to
+  the model (safe-complete.ts pattern). `OTTO_LLM_PROVIDER` default flipped
+  from `'ollama'` to `'openai'` in `packages/otto/src/llm/config.ts`; Ollama
+  is now the explicit rollback (`OTTO_LLM_PROVIDER=ollama`).
+  `nodes/otto-node/src/execute.ts` `createDefaultDeps` branches on
+  `config.otto.provider` — fixed at boot, never switched at runtime on
+  failure. **Real behavior change**: any environment without
+  `OPENAI_API_KEY` (every dev environment today) now has Otto's LLM calls
+  throw `OttoLLMError` immediately instead of talking to local Ollama,
+  unless `OTTO_LLM_PROVIDER=ollama` is set. This is what section 26
+  ("quality degradation must be explicit") asks for, but flag it to Pedro.
+  402 otto tests + 74 otto-node tests green (1 test adjusted for the new
+  default), typecheck green, zero network in tests.
+- **Bento → OpenAI: NOT DONE.** Bento's runtime does not go through an
+  `OttoLLMProvider`-shaped abstraction — it talks to a remote node/service
+  via `packages/tool-gateway/src/bento-qa-client.ts` /
+  `agent-ask-client.ts` and structured guard code
+  (`apps/worker/src/processors/bento-action-guard.ts`, 2185 lines). Wiring
+  OpenAI as Bento's brain is a materially bigger change (new agent loop per
+  section 20, not a provider swap) and was not attempted this round —
+  budget was spent on the lower-risk, additive pieces first. This is the
+  single biggest remaining gap for "OpenAI is the principal provider" to be
+  true end-to-end.
+
+## COMPLETED (round 3, same session continuation)
+
+- **ClickUp MCP tool wiring + OAuth** (`362adc5`): confirmed real endpoint
+  metadata live from `https://mcp.clickup.com/.well-known/oauth-authorization-server`
+  (zero-cost, unauthenticated, not OpenAI/ClickUp API — just reading public
+  discovery JSON): `/oauth/authorize`, `/oauth/token`, `/oauth/register`
+  (RFC 7591 dynamic client registration), public client (`token_endpoint_auth_methods_supported: ["none"]`),
+  PKCE S256 required. Implemented:
+  - `packages/tool-gateway/src/clickup-mcp-oauth.ts`: PKCE pair, dynamic
+    client registration, authorize URL builder, code exchange. **Distinct**
+    from `clickup-oauth.ts` (personal ClickUp API OAuth, fixed client
+    secret) per explicit mission instruction — do not merge them.
+  - `packages/openai-provider/src/responses-client.ts`: `ResponsesToolDefinition`
+    is now a real `function | mcp` union, type-checked against the
+    **actual installed SDK** (`openai@4.104.0`) `Tool` type — no
+    `as never`/unsafe cast hiding a mismatch (there was one: `strict` was
+    missing on the function tool shape; fixed for real, not cast away).
+  - `packages/openai-provider/src/clickup-mcp-tool.ts`: `buildClickUpMcpTool(token)`
+    — the actual "OpenAI Responses → remote MCP tool → ClickUp MCP" wiring
+    the mission asks for. Tool discovery/selection is native to the
+    Responses API; **no regex-to-tool mapping was written**.
+  - `apps/api/src/integrations/clickup-mcp-routes.ts`: `/integrations/clickup-mcp/authorize`
+    + `/callback`. Token stored in the existing `integration_connections`
+    table with `provider: 'clickup_mcp'` (distinct row from personal
+    ClickUp OAuth). `getClickUpMcpAccessToken(userId)` returns the
+    decrypted token or `null`.
+  - **NOT DONE / NOT CALLABLE YET**: nothing actually calls
+    `buildClickUpMcpTool` + `callResponses` together against a real
+    conversation — that's the missing last wire (Bento still doesn't run
+    through the Responses API at all, see below). No live network call was
+    made to `mcp.clickup.com`'s OAuth endpoints (register/authorize/token)
+    from this session — only the public `.well-known` read.
+
+## CLICKUP MCP AUTH REQUIRED
+
+Once this is deployed (API reachable at a real `API_PUBLIC_URL`, `FRONTEND_URL`,
+`NODE_SECRET` set): an authenticated user opens
+`GET /integrations/clickup-mcp/authorize`, follows the returned
+`authorize_url`, logs into ClickUp, and authorizes the workspace. That's
+the exact human action — nothing else blocks it structurally. Until that
+happens, `getClickUpMcpAccessToken` returns `null` for everyone and no MCP
+tool call can be built.
+
 ## FILES CHANGED
 
 (fill in as commits land — check `git log --oneline` and `git diff main...HEAD --stat`
@@ -161,13 +252,45 @@ All 39 mission sections. Concretely, in priority order:
       architecture", "do not modify Jarbas/Suzy behavior beyond the
       permission correction").
 
-## NEXT EXACT STEP
+## NEXT EXACT STEP (as of round 3)
 
-Implement `packages/openai-provider` (Responses API wrapper +
-`resolveOpenAICredential`) and the model router with budget enforcement,
-since these are additive, low-risk, and unblock the cost-ledger work. Then
-typecheck that package only (`pnpm --filter <pkg> typecheck`), commit
-`checkpoint: openai provider`, and move to `/ready`.
+The single biggest remaining gap: **Bento does not run through the OpenAI
+Responses API at all.** Everything built so far (provider, model router,
+cost ledger, MCP tool, MCP OAuth) is real and typechecked but unwired from
+Bento's actual request path. Bento today is
+`apps/worker/src/processors/execute-job.ts` → `bento-action-guard.ts`
+(2185 lines) → remote node/service via `tool-gateway/bento-qa-client.ts` /
+`agent-ask-client.ts` — NOT an LLM-provider abstraction like Otto has. This
+is a new agent loop (section 20), not a provider swap, and is the correct
+next step but is materially riskier (biggest, most load-bearing files in
+the repo). Concretely, in order:
+
+1. Read (narrowly — do not re-read the whole file) how
+   `bento-action-guard.ts` currently decides `write_authorized` and what it
+   passes to the executor, to find the seam where a `callResponses` +
+   `buildClickUpMcpTool` call could replace/augment the remote-node call
+   without breaking `createManyTasks`/read-back/execution-record.
+2. Build the structured-action contract (P0.9): model receives
+   {user message, focused resource, selected resources, client, last
+   execution, available MCP tools} and returns a structured proposal
+   (operation/resourceId/changes) — this is new code, additive, can be
+   built and unit-tested BEFORE wiring it into the guard.
+3. Build the policy layer (P0.10) that validates that structured proposal
+   (tenant/org/client/permission/mutation budget/duplicate/destructive
+   scope) — also additive, testable in isolation.
+4. Only then wire steps 2+3 into `bento-action-guard.ts`, behind a feature
+   flag (same pattern as `BENTO_MULTI_ACTION_WRITE`/`OTTO_MOTION_ENABLED`),
+   so the existing verified path keeps working if the flag is off.
+5. Single-write-provider guarantee (P0.11), unified envelope (P0.12,
+   `execution-record.ts` may already be close — check before building),
+   read-back (P0.13, likely already covered by existing `createManyTasks`
+   read-back — verify, don't rebuild), idempotency (P0.14), sources
+   (P0.16) — these mostly fall out of steps 2-4 once the new loop exists;
+   they are not separately buildable without it.
+
+Do NOT attempt step 4 (the actual `bento-action-guard.ts` edit) without a
+clear, narrow plan for exactly which lines change — that file is the one
+most likely to break production Bento if edited carelessly.
 
 ## KNOWN BLOCKERS
 
