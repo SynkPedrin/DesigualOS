@@ -1,22 +1,22 @@
 import type { FastifyInstance } from 'fastify';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   buildClickUpMcpAuthorizeUrl,
+  CLICKUP_MCP_PROVIDER,
   exchangeClickUpMcpCode,
   generatePkcePair,
+  getClickUpMcpAccessToken,
   registerMcpClient,
 } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth } from '../auth/middleware';
-import { decryptToken, encryptToken } from '../lib/token-crypto';
+import { encryptToken } from '../lib/token-crypto';
 
 const logger = createLogger({ service: 'integrations-clickup-mcp' });
 const STATE_TTL_MS = 10 * 60 * 1000;
 
-/** Provider distinto de `clickup` (API pessoal) — mesma tabela, chave diferente (seção 13). */
-export const CLICKUP_MCP_PROVIDER = 'clickup_mcp';
+export { CLICKUP_MCP_PROVIDER, getClickUpMcpAccessToken };
 
 function stateSecret(): string {
   const secret = process.env.NODE_SECRET;
@@ -141,17 +141,3 @@ export async function registerClickUpMcpOAuthRoutes(app: FastifyInstance): Promi
   });
 }
 
-/**
- * Token decifrado da conexão MCP deste usuário, ou `null` se ainda não
- * autorizou (o call site trata `null` como "CLICKUP MCP AUTH REQUIRED",
- * nunca como fallback silencioso pro gateway legado — a decisão de fallback
- * é da camada de política, não deste helper).
- */
-export async function getClickUpMcpAccessToken(userId: string): Promise<string | null> {
-  const [connection] = await db
-    .select()
-    .from(schema.integrationConnections)
-    .where(and(eq(schema.integrationConnections.userId, userId), eq(schema.integrationConnections.provider, CLICKUP_MCP_PROVIDER)));
-  if (!connection || connection.status !== 'connected') return null;
-  return decryptToken(connection.accessTokenEncrypted);
-}

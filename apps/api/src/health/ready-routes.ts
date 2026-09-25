@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { sql } from 'drizzle-orm';
-import { db } from '@desigual-os/database';
+import { eq, and, sql } from 'drizzle-orm';
+import { db, schema } from '@desigual-os/database';
 import { readWorkerHealth } from '@desigual-os/orchestrator';
 import { isOpenAICredentialConfigured } from '@desigual-os/openai-provider';
+import { CLICKUP_MCP_PROVIDER } from '@desigual-os/tool-gateway';
 
 /**
  * /ready — readiness operacional (P1-06 da auditoria de 25/09/2026, seção 28
@@ -65,14 +66,43 @@ export async function registerReadyRoutes(app: FastifyInstance): Promise<void> {
       process.env.CLICKUP_API_KEY?.trim() && process.env.CLICKUP_TEAM_ID?.trim(),
     );
 
+    // "Ao menos um colaborador já autorizou" — /ready é do serviço como um
+    // todo, não de um usuário específico; a autorização MCP é por
+    // colaborador (mesma decisão de design do ClickUp pessoal), então isto
+    // é um sinal de "o fluxo já foi usado pelo menos uma vez", não "todo
+    // mundo está conectado". Leitura pura (COUNT), zero custo.
+    let clickUpMcpAuthorized = false;
+    try {
+      const [row] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.integrationConnections)
+        .where(and(eq(schema.integrationConnections.provider, CLICKUP_MCP_PROVIDER), eq(schema.integrationConnections.status, 'connected')));
+      clickUpMcpAuthorized = (row?.n ?? 0) > 0;
+    } catch {
+      clickUpMcpAuthorized = false;
+    }
+
     const featureFlags = {
       otto_motion_enabled: process.env.OTTO_MOTION_ENABLED === 'true',
       bento_multi_action_write: process.env.BENTO_MULTI_ACTION_WRITE === 'true',
+      bento_openai_core_enabled: process.env.BENTO_OPENAI_CORE_ENABLED === 'true',
+    };
+
+    // Seção 9 do "BENTO FINAL RELEASE GATE": estados exatos pedidos, além
+    // do `checks` detalhado que já existia (mantido pra não quebrar quem já
+    // lê este endpoint).
+    const states = {
+      openai: isOpenAICredentialConfigured() ? ('configured' as const) : ('missing' as const),
+      clickup_mcp: clickUpMcpAuthorized ? ('authorized' as const) : ('missing' as const),
+      database: checks.database ? ('ready' as const) : ('missing' as const),
+      worker: checks.worker_heartbeat ? ('ready' as const) : ('missing' as const),
+      queue: checks.queue ? ('ready' as const) : ('missing' as const),
     };
 
     reply.code(overallOk ? 200 : 503);
     return {
       ready: overallOk,
+      states,
       checks,
       feature_flags: featureFlags,
       timestamp: new Date().toISOString(),

@@ -241,6 +241,9 @@ importers:
       '@desigual-os/node-protocol':
         specifier: workspace:*
         version: link:../../packages/node-protocol
+      '@desigual-os/openai-provider':
+        specifier: workspace:*
+        version: link:../../packages/openai-provider
       '@desigual-os/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator

@@ -58,6 +58,16 @@ export interface ResponsesResult {
   responseId: string;
   outputText: string;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
+  /**
+   * §1/§3 do "BENTO FINAL RELEASE GATE": chamadas reais de tool MCP feitas
+   * PELA OPENAI durante este turno (server-side — `require_approval:
+   * 'never'` significa que a OpenAI já executou a tool contra
+   * `mcp.clickup.com` e devolveu o resultado aqui, não é uma proposta pro
+   * caller executar). O chamador usa `output`/`error` pra montar o
+   * `WriteEnvelope` e o read-back, e `server_label` pra saber qual server
+   * respondeu (útil quando mais de um MCP estiver plugado no futuro).
+   */
+  mcpCalls: Array<{ id: string; serverLabel: string; name: string; arguments: string; output: string | null; error: string | null }>;
   usage: UsageTokens;
   model: OpenAIModelId;
 }
@@ -99,6 +109,17 @@ export async function callResponses(
       .filter((item): item is Extract<typeof item, { type: 'function_call' }> => item.type === 'function_call')
       .map((item) => ({ id: item.call_id ?? item.id, name: item.name, arguments: item.arguments }));
 
+    const mcpCalls = (response.output ?? [])
+      .filter((item): item is Extract<typeof item, { type: 'mcp_call' }> => item.type === 'mcp_call')
+      .map((item) => ({
+        id: item.id,
+        serverLabel: item.server_label,
+        name: item.name,
+        arguments: item.arguments,
+        output: item.output ?? null,
+        error: item.error ?? null,
+      }));
+
     const usage: UsageTokens = {
       inputTokens: response.usage?.input_tokens ?? 0,
       cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
@@ -109,6 +130,7 @@ export async function callResponses(
       responseId: response.id,
       outputText: response.output_text ?? '',
       toolCalls,
+      mcpCalls,
       usage,
       model: request.model,
     };

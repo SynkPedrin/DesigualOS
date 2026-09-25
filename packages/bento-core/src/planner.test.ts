@@ -37,6 +37,7 @@ describe('proposeBentoAction (mockado — zero chamada real)', () => {
         reasoning: 'pedido singular',
       }),
       toolCalls: [],
+      mcpCalls: [],
       usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 20 },
       model: 'gpt-5.6-terra',
     });
@@ -67,6 +68,7 @@ describe('proposeBentoAction (mockado — zero chamada real)', () => {
       responseId: 'r2',
       outputText: JSON.stringify({ intent: 'invalid_intent' }),
       toolCalls: [],
+      mcpCalls: [],
       usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 },
       model: 'gpt-5.6-terra',
     });

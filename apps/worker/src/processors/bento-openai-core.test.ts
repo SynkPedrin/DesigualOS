@@ -31,6 +31,10 @@ vi.mock('./write-target', () => ({
   resolveWriteTarget: vi.fn(async () => ({ status: 'resolved', clientId: 'c1', clientName: 'Cliente', listId: 'L1', candidates: [], reason: 'ok' })),
 }));
 vi.mock('./bento-update-executor', () => ({ executeTaskUpdate: vi.fn() }));
+// selectWriteProvider bate no banco real (getClickUpMcpAccessToken) — mockado
+// pra LEGACY_GATEWAY aqui, que é o comportamento coberto por este arquivo de
+// teste. O caminho MCP tem suíte própria em bento-mcp-executor.test.ts.
+vi.mock('./bento-mcp-executor', () => ({ selectWriteProvider: vi.fn(async () => ({ provider: 'LEGACY_GATEWAY' })), executeViaMcp: vi.fn() }));
 
 import { proposeBentoAction, validateBentoAction } from '@desigual-os/bento-core';
 import { createVerifiedSeniorTask } from '@desigual-os/tool-gateway';

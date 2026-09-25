@@ -14,6 +14,7 @@ import { resolveWriteTarget } from './write-target';
 import { executeTaskUpdate } from './bento-update-executor';
 import { loadResourceState, persistResourceState, applyExecutionToState } from './bento-resource-state';
 import { loadLatestExecutionState, sameExecutionAlreadyDone } from './execution-record';
+import { selectWriteProvider, executeViaMcp } from './bento-mcp-executor';
 
 /**
  * bento-openai-core.ts — o loop novo pedido em "BENTO CORE CUTOVER":
@@ -143,26 +144,68 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
     }
   }
 
-  // §7: single write provider. MCP fica PRONTO (buildClickUpMcpTool) mas só
-  // vira o provider real depois que o OAuth do MCP for autorizado (ver
-  // CLICKUP MCP AUTH REQUIRED no handoff) — até lá, LEGACY_GATEWAY é o único
-  // provider que este código executa de fato, nunca os dois pra uma mesma
-  // mutação.
+  // §2 do "BENTO FINAL RELEASE GATE": seleção real de provider. MCP é
+  // PRIMARY quando o usuário já autorizou o OAuth (token presente);
+  // LEGACY_GATEWAY só quando MCP não está autorizado ainda; UNSUPPORTED
+  // quando nem uma coisa nem outra cobre a operação. Nunca os dois pra uma
+  // mesma mutação — o resultado desta seleção é usado para EXATAMENTE um
+  // caminho de execução abaixo.
+  const providerSelection = await selectWriteProvider(action.intent, params.seniorToolContext.userId);
+  if (providerSelection.provider === 'UNSUPPORTED') {
+    return envelopeToExecuteResponse('bento', { success: false, verified: false, provider: null, resourceIds: [], operation: action.intent, changes: {}, error: providerSelection.reason, retryable: false, sources: [] }, 'Essa ação ainda não tem um jeito seguro e verificado de executar.');
+  }
+
+  // create_task precisa da lista de destino em QUALQUER provider (MCP
+  // também precisa saber em qual lista criar).
+  const target =
+    action.intent === 'create_task'
+      ? await resolveWriteTarget({
+          message: params.message,
+          ...(params.organizationId ? { organizationId: params.organizationId } : {}),
+          executionClientId: params.clientId,
+        })
+      : null;
+  if (action.intent === 'create_task' && (target?.status !== 'resolved' || !target.listId)) {
+    return envelopeToExecuteResponse('bento', { success: false, verified: false, provider: null, resourceIds: [], operation: 'create_task', changes: {}, error: `write_target_${target?.status}: ${target?.reason}`, retryable: false, sources: [] }, 'Não consegui identificar o cliente/lista de destino dessa task.');
+  }
+
+  if (providerSelection.provider === 'MCP') {
+    const envelope = await executeViaMcp({
+      action,
+      resolvedResourceId: decision.resolvedResourceId,
+      listId: target?.listId ?? null,
+      mcpToken: providerSelection.mcpToken,
+      legacyReadConfig: config,
+      logger: params.logger,
+    });
+    if (envelope.success) {
+      const newState = applyExecutionToState(resourceState, {
+        operation: envelope.operation,
+        resourceIds: envelope.resourceIds,
+        verified: envelope.verified,
+        created: action.intent === 'create_task',
+        title: action.changes?.title ?? null,
+      });
+      await persistResourceState(params.conversationId, newState);
+    }
+    return envelopeToExecuteResponse(
+      'bento',
+      envelope,
+      envelope.success
+        ? `Feito via ClickUp MCP${envelope.verified ? ', confirmado' : ' (não consegui reler pra confirmar)'}.`
+        : `Não consegui executar via ClickUp MCP: ${envelope.error}`,
+    );
+  }
+
+  // provider === 'LEGACY_GATEWAY' — caminho de baixo, inalterado desde a
+  // entrega anterior (executores já verificados em produção).
   const provider = 'LEGACY_GATEWAY' as const;
 
   if (action.intent === 'create_task') {
-    const target = await resolveWriteTarget({
-      message: params.message,
-      ...(params.organizationId ? { organizationId: params.organizationId } : {}),
-      executionClientId: params.clientId,
-    });
-    if (target.status !== 'resolved' || !target.listId) {
-      return envelopeToExecuteResponse('bento', { success: false, verified: false, provider, resourceIds: [], operation: 'create_task', changes: {}, error: `write_target_${target.status}: ${target.reason}`, retryable: false, sources: [] }, 'Não consegui identificar o cliente/lista de destino dessa task.');
-    }
     const result = await createVerifiedSeniorTask(
       config,
       params.seniorToolContext,
-      { listId: target.listId, name: action.changes?.title ?? 'Nova demanda', description: action.changes?.description ?? '' },
+      { listId: target!.listId!, name: action.changes?.title ?? 'Nova demanda', description: action.changes?.description ?? '' },
       new MutationBudget(),
     );
     if (!result.success) {

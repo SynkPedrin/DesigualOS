@@ -1,5 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { and, eq } from 'drizzle-orm';
+import { db, schema } from '@desigual-os/database';
+import { decryptToken } from './token-crypto.js';
 
 /**
  * OAuth do ClickUp MCP (seção 12/13 da missão de release OpenAI + ClickUp
@@ -141,4 +144,28 @@ export async function exchangeClickUpMcpCode(params: {
     refreshToken: parsed.refresh_token ?? null,
     expiresInSeconds: parsed.expires_in ?? null,
   };
+}
+
+/** Provider distinto de `clickup` (API pessoal) — mesma tabela `integration_connections`, chave diferente. */
+export const CLICKUP_MCP_PROVIDER = 'clickup_mcp';
+
+/**
+ * Fonte única do token MCP decifrado, consumida por `apps/api` (rotas de
+ * OAuth) e `apps/worker` (bento-openai-core.ts, pra montar
+ * `buildClickUpMcpTool` antes de uma chamada real). Antes desta função
+ * existir, `apps/api/src/integrations/clickup-mcp-routes.ts` tinha uma
+ * cópia local — apps não podem importar uns aos outros, só pacotes
+ * compartilhados, então a lógica vive aqui agora.
+ *
+ * `null` significa "sem autorização ainda" — o chamador trata isso como
+ * CLICKUP MCP AUTH REQUIRED, nunca como fallback silencioso pro gateway
+ * legado (essa decisão é de quem chama, não deste helper).
+ */
+export async function getClickUpMcpAccessToken(userId: string): Promise<string | null> {
+  const [connection] = await db
+    .select()
+    .from(schema.integrationConnections)
+    .where(and(eq(schema.integrationConnections.userId, userId), eq(schema.integrationConnections.provider, CLICKUP_MCP_PROVIDER)));
+  if (!connection || connection.status !== 'connected') return null;
+  return decryptToken(connection.accessTokenEncrypted);
 }
