@@ -96,29 +96,16 @@ export async function tryMotionGuard(params: MotionGuardParams): Promise<Execute
       return respond(params, session, ackForUpdate(params.message), intent);
     }
 
-    if (!params.clientId) {
-      // §26 — erro amigável com o próximo passo, não 500. Não abre sessão:
-      // motion sem cliente não tem marca, e adivinhar a marca é exatamente o
-      // que o CLAUDE.md deste projeto proíbe.
-      return plainAnswer(
-        params,
-        'Pra fazer o motion eu preciso saber de qual cliente é a peça — sem isso eu não tenho marca, cor nem material pra trabalhar. Seleciona o cliente aqui no chat e eu começo.',
-        { motion_blocked: 'no_client' },
-      );
-    }
-
     let brief = params.brief;
     let briefWasAutoExtracted = false;
 
     if (intent.kind === 'create' && !brief) {
       // CHAT-FIRST (adendo "Otto Motion via chat direto, sem formulário"):
-      // antes de abrir o card, tenta montar o briefing sozinho a partir do
-      // que a pessoa já escreveu. Só cai pro card se a extração falhar ou
-      // não trouxer direção nenhuma (§briefHasDirection) — nunca abre o
-      // card quando o pedido já está claro, e crucialmente NUNCA perde os
-      // anexos deste turno pra um turno futuro de resposta ao card.
+      // antes de abrir o card OU de exigir cliente, tenta montar o briefing
+      // sozinho a partir do que a pessoa já escreveu. Nunca perde os anexos
+      // deste turno pra um turno futuro de resposta ao card.
       const extracted = await extractCampaignBriefFromMessage(params.message, logger).catch((error: unknown) => {
-        logger.warn({ executionId, error }, 'Motion: extração automática de briefing falhou; caindo pro card');
+        logger.warn({ executionId, error }, 'Motion: extração automática de briefing falhou; seguindo sem briefing estruturado');
         return null;
       });
 
@@ -129,15 +116,41 @@ export async function tryMotionGuard(params: MotionGuardParams): Promise<Execute
           { executionId, campaignName: extracted.campaignName ?? null },
           'Motion: briefing extraído automaticamente do chat — pulando o card',
         );
-      } else {
-        // PEDIDO DE BRIEFING (card) — fallback, comportamento anterior
-        // preservado byte a byte quando a extração não tem o que trabalhar.
-        const summary = await summarizeClientContext(params.clientId).catch((error: unknown) => {
-          logger.warn({ executionId, error }, 'Motion: resumo do contexto do cliente falhou; respondendo genérico');
-          return null;
-        });
-        return briefRequest(params, intent, summary);
       }
+    }
+
+    // §AD_HOC (regra nova): cliente NÃO é obrigatório quando o próprio pedido
+    // já traz contexto — anexos do turno ou briefing com direção real. A
+    // prioridade é exatamente essa: anexo/prompt decidem ANTES de perguntar
+    // por cliente. Só bloqueia quando NADA disso existe.
+    const hasUsableAttachments = params.attachments.length > 0;
+    const hasEnoughContext = hasUsableAttachments || briefHasDirection(brief ?? null);
+
+    if (!params.clientId && !hasEnoughContext) {
+      // §26 — erro amigável com o próximo passo, não 500. Aqui SIM falta
+      // tudo: sem cliente, sem anexo, sem direção nenhuma no texto — não há
+      // marca, cor nem material pra trabalhar, e perguntar é a única saída
+      // honesta (nunca inventar branding, nunca assumir um cliente sem
+      // evidência).
+      return plainAnswer(
+        params,
+        'Pra fazer esse motion eu preciso de mais contexto: seleciona um cliente aqui no chat, OU me manda mais detalhe do que você quer (produto, oferta, tom) e/ou uma imagem de referência.',
+        { motion_blocked: 'insufficient_context' },
+      );
+    }
+
+    if (intent.kind === 'create' && !brief && params.clientId) {
+      // PEDIDO DE BRIEFING (card) — fallback, só quando HÁ cliente mas a
+      // extração não trouxe nenhuma direção (o card é montado a partir do
+      // acervo do CLIENTE via summarizeClientContext, então só faz sentido
+      // quando existe um cliente pra consultar). No modo AD_HOC (sem
+      // cliente) isto nunca é alcançado: hasEnoughContext já teria bloqueado
+      // acima, ou já há anexo/direção suficiente pra seguir direto.
+      const summary = await summarizeClientContext(params.clientId).catch((error: unknown) => {
+        logger.warn({ executionId, error }, 'Motion: resumo do contexto do cliente falhou; respondendo genérico');
+        return null;
+      });
+      return briefRequest(params, intent, summary);
     }
 
     const session = await createMotion(

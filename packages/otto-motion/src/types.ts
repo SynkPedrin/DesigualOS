@@ -81,7 +81,8 @@ export const QUALITY_PRESETS = {
 
 export interface MotionSession {
   id: string;
-  clientId: string;
+  /** `null` no modo AD_HOC — ver client-context/resolver.ts `resolveAdHocContext`. */
+  clientId: string | null;
   conversationId: string | null;
   projectId: string | null;
   requestedBy: string | null;
@@ -140,7 +141,14 @@ export const TECHNICAL_SCORE_FLOOR = 95;
 
 /** §14 — a superfície que o Otto enxerga. Ele não sabe o que é Remotion. */
 export interface CreateMotionInput {
-  clientId: string;
+  /**
+   * Briefing da campanha (§4). Separado do `prompt` de propósito: o prompt é
+   * a frase que a pessoa digitou, o briefing é o dado estruturado que ela
+   * confirmou no card — e é dele que saem os LOCKED FACTS.
+   */
+  brief?: import('./brief/schema.js').CampaignBrief | undefined;
+  /** `null` = modo AD_HOC (adendo chat-first): sem cliente selecionado, gera só com prompt + anexos. */
+  clientId: string | null;
   conversationId: string | null;
   projectId: string | null;
   requestedBy: string | null;
@@ -184,4 +192,29 @@ export interface MotionStatusView {
   error: string | null;
   errorCode: string | null;
   updatedAt: string;
+  /**
+   * Todas as versões em motion_renders (preview e final), em ordem. §41:
+   * versão anterior nunca é destruída, e escondê-la aqui impediria voltar pra
+   * V1 depois de uma V2 pior.
+   */
+  versions: MotionRenderVersion[];
+  /** Nome do cliente (join em clients). Null se o registro sumiu. */
+  clientName: string | null;
+  /** metadata.brief.campaignName — null em peça institucional, sem briefing. */
+  campaignName: string | null;
+  /** Resumo do material preparado (metadata.assets_summary). Null antes de PREPARING_ASSETS. */
+  assets: MotionAssetsSummary | null;
+}
+
+export interface MotionRenderVersion {
+  version: number;
+  quality: MotionQuality;
+  url: string | null;
+  createdAt: Date;
+}
+
+export interface MotionAssetsSummary {
+  logo: boolean;
+  images: number;
+  videos: number;
 }

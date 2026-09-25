@@ -302,6 +302,13 @@
       "when": 1790346852970,
       "tag": "0042_add_ai_usage_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790365632822,
+      "tag": "0043_motion_ad_hoc_nullable_client",
+      "breakpoints": true
     }
   ]
 }

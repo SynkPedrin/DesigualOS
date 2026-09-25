@@ -14,10 +14,23 @@ import {
   updateMotion,
   userMessageFor,
 } from '@desigual-os/otto-motion';
-import { requireAuth } from '../auth/middleware';
+import { requireAuth, type AuthenticatedUser } from '../auth/middleware';
 import { hasClientAccess } from '../lib/access';
 
 const logger = createLogger({ service: 'api:motion' });
+
+/**
+ * Modo AD_HOC (adendo chat-first, regra nova: clientId opcional em
+ * MotionSession): sem cliente não há workspace de equipe pra herdar acesso
+ * de `hasClientAccess` — a peça é pessoal de quem pediu. Só o autor
+ * (`requestedBy`) acessa; master real de organização continua fora do
+ * escopo desta rota (mesma superfície de antes, só não crasha mais com
+ * clientId null).
+ */
+async function hasMotionAccess(user: AuthenticatedUser, session: { clientId: string | null; requestedBy: string | null }): Promise<boolean> {
+  if (session.clientId) return hasClientAccess(user, session.clientId);
+  return session.requestedBy === user.id;
+}
 
 const updateSchema = z.object({ instruction: z.string().min(3).max(4000) });
 
@@ -48,7 +61,7 @@ export async function registerMotionRoutes(app: FastifyInstance): Promise<void> 
     }
 
     const [session] = await db
-      .select({ clientId: schema.motionSessions.clientId })
+      .select({ clientId: schema.motionSessions.clientId, requestedBy: schema.motionSessions.requestedBy })
       .from(schema.motionSessions)
       .where(eq(schema.motionSessions.id, request.params.id))
       .limit(1);
@@ -57,7 +70,7 @@ export async function registerMotionRoutes(app: FastifyInstance): Promise<void> 
       reply.code(404);
       return { error: 'Motion não encontrado' };
     }
-    if (!(await hasClientAccess(user, session.clientId))) {
+    if (!(await hasMotionAccess(user, session))) {
       reply.code(403);
       return { error: 'Sem acesso a este cliente' };
     }
@@ -83,7 +96,7 @@ export async function registerMotionRoutes(app: FastifyInstance): Promise<void> 
       const body = updateSchema.parse(request.body);
 
       const [session] = await db
-        .select({ clientId: schema.motionSessions.clientId })
+        .select({ clientId: schema.motionSessions.clientId, requestedBy: schema.motionSessions.requestedBy })
         .from(schema.motionSessions)
         .where(eq(schema.motionSessions.id, request.params.id))
         .limit(1);
@@ -91,7 +104,7 @@ export async function registerMotionRoutes(app: FastifyInstance): Promise<void> 
         reply.code(404);
         return { error: 'Motion não encontrado' };
       }
-      if (!(await hasClientAccess(user, session.clientId))) {
+      if (!(await hasMotionAccess(user, session))) {
         reply.code(403);
         return { error: 'Sem acesso a este cliente' };
       }
@@ -118,7 +131,7 @@ export async function registerMotionRoutes(app: FastifyInstance): Promise<void> 
       return { error: 'Not authenticated' };
     }
     const [session] = await db
-      .select({ clientId: schema.motionSessions.clientId })
+      .select({ clientId: schema.motionSessions.clientId, requestedBy: schema.motionSessions.requestedBy })
       .from(schema.motionSessions)
       .where(eq(schema.motionSessions.id, request.params.id))
       .limit(1);
@@ -126,7 +139,7 @@ export async function registerMotionRoutes(app: FastifyInstance): Promise<void> 
       reply.code(404);
       return { error: 'Motion não encontrado' };
     }
-    if (!(await hasClientAccess(user, session.clientId))) {
+    if (!(await hasMotionAccess(user, session))) {
       reply.code(403);
       return { error: 'Sem acesso a este cliente' };
     }

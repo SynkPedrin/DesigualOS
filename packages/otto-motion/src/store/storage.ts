@@ -13,8 +13,13 @@ import { MotionError } from '../errors.js';
 const BUCKET = 'studio-assets';
 const UPLOAD_ATTEMPTS = 3;
 
-export function motionStoragePath(clientId: string, motionId: string, version: number, quality: string): string {
-  return `motions/${clientId}/${motionId}/v${version}-${quality}.mp4`;
+/**
+ * `clientId` null no modo AD_HOC (adendo chat-first) — usa a pasta literal
+ * `ad-hoc` no storage, não um id de cliente inventado. `motionId` já é
+ * único, então não há colisão entre peças avulsas de conversas diferentes.
+ */
+export function motionStoragePath(clientId: string | null, motionId: string, version: number, quality: string): string {
+  return `motions/${clientId ?? 'ad-hoc'}/${motionId}/v${version}-${quality}.mp4`;
 }
 
 export async function uploadMotionFile(params: {

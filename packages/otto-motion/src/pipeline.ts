@@ -2,12 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '@desigual-os/logging';
 import { publishWsEvent } from '@desigual-os/orchestrator';
-import { resolveClientContext } from './client-context/resolver.js';
+import { resolveClientContext, resolveAdHocContext } from './client-context/resolver.js';
 import { prepareAssets } from './client-context/prepare-assets.js';
 import { hasUsableVisuals, selectAssets } from './client-context/asset-index.js';
+import { buildRelevanceTerms } from './client-context/relevance.js';
+import type { CampaignBrief } from './brief/schema.js';
+import { extractLockedFacts, findLockedFactViolations, type LockedFact, type LockedFactViolation } from './brief/locked-facts.js';
 import { MotionError, isMotionError, userMessageFor } from './errors.js';
 import { MOTION_MODEL_ID } from './model.js';
-import { buildCreationPrompt, buildFixPrompt, buildPatchPrompt, buildVisualQaPrompt } from './prompts/briefing.js';
+import { buildCreationPrompt, buildFixPrompt, buildLockedFactFixPrompt, buildPatchPrompt, buildVisualQaPrompt } from './prompts/briefing.js';
 import { MOTION_PATCH_SYSTEM_PROMPT, MOTION_SYSTEM_PROMPT } from './prompts/system.js';
 import { runClaudeCode } from './providers/claude-code.js';
 import { bundleMotion } from './render/bundle.js';
@@ -88,8 +91,9 @@ async function execute(params: {
     filename: string;
     contentType: string;
   }[];
-
-  const context = await resolveClientContext(session.clientId, storedReferences);
+  // AD_HOC (adendo chat-first): sem clientId, não há brain/brand kit/acervo
+  // pra buscar no banco — só o que a pessoa anexou neste turno.
+  const context = session.clientId ? await resolveClientContext(session.clientId, storedReferences) : resolveAdHocContext(storedReferences);
   await writeJson(workspace.contextFile, {
     brand: context.brand,
     sources: context.sources,
@@ -99,7 +103,19 @@ async function execute(params: {
 
   // ---- 2. ASSETS (§11/§31) -------------------------------------------------
   await stage(session, 'preparing_assets');
-  const selection = selectAssets(context.assets);
+  const metadataInicial = await store.getMetadata(motionId);
+  const brief = (metadataInicial.brief ?? null) as CampaignBrief | null;
+  const lockedFacts = (metadataInicial.locked_facts ?? extractLockedFacts(brief)) as LockedFact[];
+
+  // §8 — relevância antes de recência. Ver client-context/relevance.ts pro
+  // caso real que motivou isto.
+  const relevanceTerms = buildRelevanceTerms({
+    clientName: context.brand.name,
+    products: context.brand.products,
+    briefText: [brief?.campaignName, brief?.objective, brief?.offer?.name, brief?.notes].filter(Boolean).join(' '),
+    userMessage: session.prompt,
+  });
+  const selection = selectAssets(context.assets, undefined, relevanceTerms);
   const prepared = await prepareAssets({ workspace, assets: selection.selected, logger });
 
   if (mode === 'create' && !hasUsableVisuals(prepared.assets) && context.assets.length === 0) {
@@ -116,6 +132,14 @@ async function execute(params: {
       selected: prepared.assets.map((asset) => ({ kind: asset.kind, path: asset.projectPath, origin: asset.origin })),
       skipped: selection.skipped,
       failed: prepared.failed,
+      used_relevance: selection.usedRelevance,
+    },
+    // Resumo do material que de fato entrou no workspace (não do que foi
+    // selecionado): é o que o statusView mostra sem varrer o manifest inteiro.
+    assets_summary: {
+      logo: prepared.assets.some((asset) => asset.kind === 'logo'),
+      images: prepared.assets.filter((asset) => asset.kind === 'image').length,
+      videos: prepared.assets.filter((asset) => asset.kind === 'video').length,
     },
   });
 
@@ -131,8 +155,7 @@ async function execute(params: {
   await writeScaffold(workspace, scaffold);
 
   // ---- 4. OPUS 5.5 ESCREVE O MOTION (§5/§19) ------------------------------
-  const storedMetadata = await store.getMetadata(motionId);
-  let summary = (storedMetadata.lastSummary as string | null) ?? '';
+  let summary = ((await store.getMetadata(motionId)).lastSummary as string | null) ?? '';
   let costUsd = 0;
 
   if (mode === 'render') {
@@ -143,13 +166,14 @@ async function execute(params: {
     await stage(session, mode === 'create' ? 'planning' : 'coding');
     const prompt =
       mode === 'create'
-        ? buildCreationPrompt({ session, context, assets: prepared.assets })
+        ? buildCreationPrompt({ session, context, assets: prepared.assets, brief, lockedFacts })
         : buildPatchPrompt({
             instruction: instruction ?? '',
             session,
             context,
             assets: prepared.assets,
             previousSummary: summary === '' ? null : summary,
+            lockedFacts,
           });
 
     await stage(session, 'coding');
@@ -218,7 +242,7 @@ async function execute(params: {
   // mesmo que já foi revisado, e pagar outra passada de Opus pra reconfirmar
   // o que não mudou seria gasto sem pergunta. O QA técnico continua valendo —
   // ele é medição do ARQUIVO, e o arquivo é novo.
-  let visual = mode === 'render' ? null : await runVisualQa({ workspace, frames, session, context, logger, motionId });
+  let visual = mode === 'render' ? null : await runVisualQa({ workspace, frames, session, context, logger, motionId, lockedFacts });
   if (visual) costUsd += visual.costUsd;
 
   let technical = await runTechnicalQa({
@@ -238,21 +262,42 @@ async function execute(params: {
   const maxFixes = mode === 'render' ? 0 : MAX_VISUAL_FIXES;
   for (let pass = 1; pass <= maxFixes; pass += 1) {
     const gate = shouldBlockDelivery({ technicalScore: technical.score, visual: visual?.report ?? null });
-    if (!gate.blocked) break;
+    // §16 — a terceira camada dos locked facts: a única que não depende de o
+    // modelo cooperar. Violação aqui entra no loop de fix como qualquer
+    // reprovação de QA.
+    const violations = await lockedFactViolations(workspace, lockedFacts);
+    if (!gate.blocked && violations.length === 0) break;
 
-    logger.info({ motionId, pass, reason: gate.reason }, 'Motion: QA pediu correção');
-    await stage(session, 'fixing', gate.reason ?? undefined);
+    const reason = [
+      gate.reason,
+      violations.length > 0 ? `${violations.length} valor(es) comercial(is) fora do briefing` : null,
+    ]
+      .filter(Boolean)
+      .join('; ');
+    logger.info({ motionId, pass, reason }, 'Motion: QA pediu correção');
+    await stage(session, 'fixing', reason);
 
     // A passada de QA visual JÁ corrige o código (o prompt manda corrigir).
-    // Quando o bloqueio é só técnico, é preciso um pedido explícito.
-    if (visual?.report.verdict !== 'REQUIRES_FIX' || pass > 1) {
+    // Pedido explícito quando o bloqueio é só técnico — e SEMPRE quando há
+    // locked fact violado, porque a correção precisa do valor exato ao lado,
+    // e o revisor visual pode ter deixado a divergência passar.
+    const visualJaCorrigiu = visual?.report.verdict === 'REQUIRES_FIX' && pass === 1;
+    if (!visualJaCorrigiu || violations.length > 0) {
+      const technicalLines = [gate.reason, ...technical.failures.map((f) => `${f.label}: ${f.detail}`)]
+        .filter(Boolean)
+        .join('\n');
+      const prompt =
+        violations.length > 0
+          ? [
+              buildLockedFactFixPrompt({ violations, facts: lockedFacts, attempt: pass, maxAttempts: MAX_VISUAL_FIXES }),
+              gate.blocked ? `\n# TAMBÉM PENDENTE NESTA PASSADA\n${technicalLines}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n')
+          : buildFixPrompt({ error: technicalLines, attempt: pass, maxAttempts: MAX_VISUAL_FIXES });
       const fix = await runClaudeCode({
         cwd: workspace.project,
-        prompt: buildFixPrompt({
-          error: [gate.reason, ...technical.failures.map((f) => `${f.label}: ${f.detail}`)].filter(Boolean).join('\n'),
-          attempt: pass,
-          maxAttempts: MAX_VISUAL_FIXES,
-        }),
+        prompt,
         systemPrompt: MOTION_PATCH_SYSTEM_PROMPT,
         timeoutMs: FIX_TIMEOUT_MS,
         maxBudgetUsd: MAX_BUDGET_USD,
@@ -279,7 +324,7 @@ async function execute(params: {
 
     await stage(session, 'reviewing');
     const reframes = await extractReviewFrames({ workspace, serveUrl });
-    visual = await runVisualQa({ workspace, frames: reframes, session, context, logger, motionId });
+    visual = await runVisualQa({ workspace, frames: reframes, session, context, logger, motionId, lockedFacts });
     if (visual) costUsd += visual.costUsd;
     technical = await runTechnicalQa({
       file: repreview.file,
@@ -296,6 +341,18 @@ async function execute(params: {
   }
 
   const finalGate = shouldBlockDelivery({ technicalScore: technical.score, visual: visual?.report ?? null });
+  const violacoesRestantes = await lockedFactViolations(workspace, lockedFacts);
+  if (violacoesRestantes.length > 0) {
+    // §16 — preço errado no perfil de um cliente é o pior desfecho que este
+    // módulo pode produzir. Esgotadas as passadas de fix, o job FALHA: nunca
+    // se entrega render com locked fact violado. A mensagem lista as
+    // violações porque "não passou no QA" sozinho não dá condição de agir.
+    const lista = violacoesRestantes.map((violation) => violation.detail).join('; ');
+    throw new MotionError('QA_FAILED', `A peça ficou com valor diferente do confirmado no briefing (${lista}) e eu não vou entregar assim.`, {
+      detail: `locked facts violados: ${lista}`,
+      actions: [{ label: 'Tentar de novo', action: 'retry' }],
+    });
+  }
   if (technical.score < 95) {
     // §44: technical < 95 NÃO conclui. Diferente do visual, isto não é gosto:
     // é o arquivo não sendo o que foi pedido.
@@ -387,8 +444,9 @@ async function runVisualQa(params: {
   context: Awaited<ReturnType<typeof resolveClientContext>>;
   logger: Logger;
   motionId: string;
+  lockedFacts: readonly LockedFact[];
 }): Promise<{ report: VisualQaReport; costUsd: number } | null> {
-  const { workspace, frames, session, context, logger, motionId } = params;
+  const { workspace, frames, session, context, logger, motionId, lockedFacts } = params;
 
   /**
    * Apaga o veredito da passada anterior ANTES de pedir o novo.
@@ -408,6 +466,7 @@ async function runVisualQa(params: {
       session,
       brandName: context.brand.name,
       colors: context.brand.colors,
+      lockedFacts,
     }),
     systemPrompt: MOTION_PATCH_SYSTEM_PROMPT,
     timeoutMs: QA_TIMEOUT_MS,
@@ -433,7 +492,8 @@ async function runVisualQa(params: {
   return { report, costUsd: run.costUsd };
 }
 
-async function missingStaticFiles(workspace: MotionWorkspace): Promise<string[]> {
+/** Todo o código-fonte que o agente escreveu (o src/ do projeto gerado). */
+async function readProjectSources(workspace: MotionWorkspace): Promise<{ path: string; content: string }[]> {
   const src = path.join(workspace.project, 'src');
   const sources: { path: string; content: string }[] = [];
   const walk = async (dir: string): Promise<void> => {
@@ -446,7 +506,24 @@ async function missingStaticFiles(workspace: MotionWorkspace): Promise<string[]>
     }
   };
   await walk(src);
-  return findMissingStaticFiles(sources, path.join(workspace.project, 'public'));
+  return sources;
+}
+
+async function missingStaticFiles(workspace: MotionWorkspace): Promise<string[]> {
+  return findMissingStaticFiles(await readProjectSources(workspace), path.join(workspace.project, 'public'));
+}
+
+/**
+ * §16 — a camada dos locked facts que não depende de o modelo cooperar:
+ * varredura programática do código gerado. Sem fatos travados (briefing
+ * vazio) o gate é no-op — não há valor comercial confirmado pra comparar.
+ */
+async function lockedFactViolations(
+  workspace: MotionWorkspace,
+  facts: readonly LockedFact[],
+): Promise<LockedFactViolation[]> {
+  if (facts.length === 0) return [];
+  return findLockedFactViolations(await readProjectSources(workspace), facts);
 }
 
 async function stage(session: MotionSession, status: MotionStatus, detail?: string): Promise<void> {

@@ -26,6 +26,46 @@ import { MotionError } from '../errors.js';
  * Todas READ-ONLY (§11). Nada aqui escreve, renomeia ou apaga nada do
  * cliente: o resolver só lê e o pipeline COPIA pro workspace.
  */
+/**
+ * §AD_HOC (adendo "Otto Motion via chat direto, sem formulário", regra
+ * nova: clientId não é obrigatório quando o próprio pedido já traz contexto
+ * suficiente via anexo). Sem cliente não há brain, brand kit nem acervo —
+ * só o que a pessoa anexou NESTE turno. Isso é dado real (a foto existe),
+ * não invenção: o `missing` abaixo deixa explícito que não há marca
+ * registrada, exatamente a mesma disciplina de "não alucinar" que
+ * `resolveClientContext` já aplica pro caminho com cliente.
+ */
+export function resolveAdHocContext(references: readonly MotionReference[]): ClientMotionContext {
+  const assets: MotionAsset[] = references.map((reference) => ({
+    kind: 'reference',
+    sourceUrl: reference.url,
+    filename: reference.filename,
+    contentType: reference.contentType,
+    origin: 'anexo do turno',
+  }));
+
+  return {
+    clientId: null,
+    brand: {
+      name: 'Peça avulsa',
+      slug: 'ad-hoc',
+      positioning: null,
+      audience: null,
+      toneOfVoice: null,
+      colors: [],
+      fonts: [],
+      approvedCtas: [],
+      restrictions: [],
+      products: [],
+      gaps: [],
+    },
+    assets,
+    briefing: null,
+    sources: references.length > 0 ? ['referências que você anexou'] : [],
+    missing: ['cliente não selecionado — sem brain, brand kit ou acervo; o motion usa só o que foi anexado neste turno'],
+  };
+}
+
 export async function resolveClientContext(
   clientId: string,
   references: readonly MotionReference[] = [],
@@ -118,6 +158,7 @@ export async function resolveClientContext(
       filename: schema.studioAssets.filename,
       storageUrl: schema.studioAssets.storageUrl,
       metadata: schema.studioAssets.metadata,
+      prompt: schema.studioAssets.prompt,
     })
     .from(schema.studioAssets)
     .where(eq(schema.studioAssets.clientId, clientId))
@@ -135,6 +176,7 @@ export async function resolveClientContext(
       origin: 'studio_assets',
       width: dimensions?.width,
       height: dimensions?.height,
+      prompt: asset.prompt,
     });
   }
   if (studioAssets.length > 0) sources.push(`acervo do Studio (${studioAssets.length} peças)`);

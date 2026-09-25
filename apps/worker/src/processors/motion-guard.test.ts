@@ -196,11 +196,14 @@ describe('C/G — motion novo COM briefing (§47-C, §47-G)', () => {
     expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ durationSeconds: 15 });
   });
 
-  it('sem cliente selecionado, explica e NÃO abre sessão', async () => {
+  it('sem cliente selecionado MAS com briefing já com direção (§AD_HOC): cria mesmo assim, sem pedir cliente', async () => {
+    // Mudança de comportamento intencional (adendo chat-first, regra nova):
+    // clientId deixou de ser obrigatório quando o pedido já tem contexto —
+    // um brief com direção real conta como contexto suficiente.
     const result = await tryMotionGuard(params({ clientId: null, brief: briefFixture }));
-    expect(mocks.createMotion).not.toHaveBeenCalled();
-    expect(result?.metadata?.motion_blocked).toBe('no_client');
-    expect(result?.answer).toContain('cliente');
+    expect(mocks.createMotion).toHaveBeenCalledOnce();
+    expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ clientId: null, brief: briefFixture });
+    expect(result?.metadata?.motion_blocked).toBeUndefined();
   });
 });
 
@@ -254,10 +257,11 @@ describe('pedido de briefing — create SEM card preenchido', () => {
     expect(result?.answer).toContain('ainda não tem material');
   });
 
-  it('sem cliente selecionado, o bloqueio de cliente vem ANTES do pedido de briefing', async () => {
+  it('sem cliente, sem anexo e sem direção nenhuma no texto: bloqueia pedindo mais contexto (não abre o card, que depende de cliente)', async () => {
     const result = await tryMotionGuard(params({ clientId: null }));
-    expect(result?.metadata?.motion_blocked).toBe('no_client');
+    expect(result?.metadata?.motion_blocked).toBe('insufficient_context');
     expect(result?.metadata?.motion_brief_request).toBeUndefined();
+    expect(mocks.createMotion).not.toHaveBeenCalled();
   });
 });
 
@@ -314,6 +318,64 @@ describe('CHAT-FIRST — extração automática de briefing (adendo release, sem
   it('brief já vindo do card (formulário) continua tendo prioridade — nunca chama a extração', async () => {
     await tryMotionGuard(params({ brief: briefFixture }));
     expect(mocks.extractCampaignBriefFromMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('AD_HOC — motion sem cliente selecionado (adendo "cliente não pode ficar acima dos anexos")', () => {
+  it('CASO OBRIGATÓRIO: sem cliente + prompt completo + 3 anexos → cria direto, NUNCA pede cliente, NUNCA abre card', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue({
+      objective: 'Anunciar e valorizar a venda do trator',
+      offer: { name: 'Trator John Deere', price: 'R$ 400.000' },
+      tone: 'Premium, cinematográfico',
+    });
+    const attachments = [
+      { url: 'https://x/trator.jpg', filename: 'trator.jpg', contentType: 'image/jpeg' },
+      { url: 'https://x/logo.png', filename: 'logo.png', contentType: 'image/png' },
+      { url: 'https://x/campo.jpg', filename: 'campo.jpg', contentType: 'image/jpeg' },
+    ];
+    const result = await tryMotionGuard(
+      params({
+        clientId: null,
+        attachments,
+        message:
+          'Crie um motion promocional para venda deste trator John Deere por R$ 400.000 para a Expo Agro. Use obrigatoriamente as imagens anexadas. Formato 9:16, 15 segundos, premium e cinematográfico.',
+      }),
+    );
+
+    expect(result?.metadata?.motion_blocked).toBeUndefined();
+    expect(result?.metadata?.motion_brief_request).toBeUndefined();
+    expect(mocks.createMotion).toHaveBeenCalledOnce();
+    const call = mocks.createMotion.mock.calls[0]?.[0];
+    expect(call).toMatchObject({ clientId: null, references: attachments });
+    expect(result?.metadata?.motion).toBeDefined();
+  });
+
+  it('sem cliente, mas com anexos (mesmo que a extração de texto não ache direção): ainda cria ad-hoc, nunca pede cliente', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue({}); // sem direção nenhuma
+    const attachments = [{ url: 'https://x/produto.jpg', filename: 'produto.jpg', contentType: 'image/jpeg' }];
+    const result = await tryMotionGuard(params({ clientId: null, attachments, message: 'faz um motion com essa imagem' }));
+
+    expect(result?.metadata?.motion_blocked).toBeUndefined();
+    expect(mocks.createMotion).toHaveBeenCalledOnce();
+    expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ clientId: null, references: attachments });
+  });
+
+  it('sem cliente, sem anexo, mas com direção real no texto: ainda cria ad-hoc, nunca pede cliente', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue({ objective: 'Vender agora', offer: { price: 'R$ 99' } });
+    const result = await tryMotionGuard(params({ clientId: null, message: 'motion pra vender por R$ 99' }));
+
+    expect(result?.metadata?.motion_blocked).toBeUndefined();
+    expect(mocks.createMotion).toHaveBeenCalledOnce();
+    expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ clientId: null });
+  });
+
+  it('não gera cliente falso: sem cliente e SEM nenhum contexto, bloqueia pedindo mais informação, nunca infere um cliente', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue(null);
+    const result = await tryMotionGuard(params({ clientId: null, message: 'faz um motion' }));
+
+    expect(mocks.createMotion).not.toHaveBeenCalled();
+    expect(result?.metadata?.motion_blocked).toBe('insufficient_context');
+    expect(result?.answer).not.toContain('Cliente Teste');
   });
 });
 

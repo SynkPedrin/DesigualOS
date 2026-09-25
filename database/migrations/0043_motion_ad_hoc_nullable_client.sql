@@ -1,0 +1,1 @@
+ALTER TABLE "motion_sessions" ALTER COLUMN "client_id" DROP NOT NULL;

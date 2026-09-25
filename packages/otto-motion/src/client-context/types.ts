@@ -38,6 +38,13 @@ export interface MotionAsset {
   contentType: string;
   /** De onde veio: client_brand_kits, studio_assets, project_files, anexo do turno. */
   origin: string;
+  /**
+   * O prompt que gerou o asset, quando existe. É o melhor descritor que o
+   * acervo tem: diz o que a imagem MOSTRA, enquanto o nome do arquivo
+   * ("STU-MTUZW37633E81A-2.png") não diz nada. A seleção por relevância (§8)
+   * depende dele.
+   */
+  prompt?: string | null | undefined;
   width?: number | undefined;
   height?: number | undefined;
   sizeBytes?: number | undefined;
@@ -48,7 +55,8 @@ export interface MotionAsset {
 }
 
 export interface ClientMotionContext {
-  clientId: string;
+  /** `null` no modo AD_HOC (adendo chat-first): motion sem cliente selecionado, só com anexos do turno. */
+  clientId: string | null;
   brand: BrandIdentity;
   assets: MotionAsset[];
   /** Texto do brain/dossiê, cru. O Opus lê melhor do que qualquer resumo meu. */

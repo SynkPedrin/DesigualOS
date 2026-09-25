@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@desigual-os/logging';
 import { ottoMotionEnabled } from './flag.js';
+import { resolveBriefFormat, type CampaignBrief } from './brief/schema.js';
+import { extractLockedFacts } from './brief/locked-facts.js';
 import { MotionError } from './errors.js';
 import { MOTION_MODEL_ID } from './model.js';
 import { checkClaudeConnection } from './providers/connection.js';
@@ -65,16 +67,26 @@ export async function createMotion(input: CreateMotionInput, logger: Logger): Pr
   assertEnabled();
   await assertProviderReady();
 
-  if (!input.clientId) {
-    throw new MotionError('NO_CLIENT', 'Preciso saber de qual cliente é esse motion. Selecione o cliente no chat.', {
-      detail: 'createMotion sem clientId',
-    });
-  }
+  // Modo AD_HOC (adendo chat-first, regra nova): clientId agora é opcional
+  // aqui de propósito. A DECISÃO de exigir cliente ou seguir sem ele é do
+  // CALLER (motion-guard.ts), que já sabe se o pedido trouxe anexo/direção
+  // suficiente — createMotion só executa o que foi decidido, não impõe
+  // outra regra por trás.
 
   // Um id só para a sessão e para o diretório do job: é o que garante que
   // `workspaceFor(session.id)` no pipeline abre o workspace que acabou de ser
   // criado, e não um vizinho vazio.
   const motionId = randomUUID();
+  // O briefing manda no formato: ele é a decisão mais explícita e mais
+  // recente da pessoa sobre a peça (§6).
+  const brief: CampaignBrief | null = input.brief ?? null;
+  const resolvido = resolveBriefFormat(brief, {
+    format: input.format,
+    durationSeconds: input.durationSeconds,
+    fps: input.fps,
+  });
+  const lockedFacts = extractLockedFacts(brief);
+
   const workspace = await createWorkspace(motionId);
   const session = await store.createSession({
     id: motionId,
@@ -84,13 +96,17 @@ export async function createMotion(input: CreateMotionInput, logger: Logger): Pr
     requestedBy: input.requestedBy,
     workspacePath: workspace.root,
     prompt: input.prompt,
-    durationSeconds: clampDuration(input.durationSeconds),
-    fps: input.fps ?? DEFAULT_FPS,
-    format: input.format ?? DEFAULT_MOTION_FORMAT,
+    durationSeconds: clampDuration(resolvido.duration),
+    fps: resolvido.fps,
+    format: resolvido.aspectRatio,
     model: MOTION_MODEL_ID,
     metadata: {
       references: input.references ?? [],
       execution_id: input.executionId,
+      brief,
+      // Gravados junto porque o QA (§16) precisa comparar o que foi
+      // entregue com o que foi PEDIDO, e o briefing pode ser editado depois.
+      locked_facts: lockedFacts,
     },
   });
 

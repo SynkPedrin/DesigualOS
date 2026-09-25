@@ -21,9 +21,15 @@ export const motionSessions = pgTable(
   'motion_sessions',
   {
     ...idColumn,
-    clientId: uuid('client_id')
-      .notNull()
-      .references(() => clients.id, { onDelete: 'cascade' }),
+    /**
+     * Nullable desde o modo AD_HOC (adendo "Otto Motion via chat direto"):
+     * um motion pode nascer só de prompt + anexos, sem cliente selecionado,
+     * quando o próprio pedido já traz marca/produto/cenário via anexo. Sem
+     * cliente, não há brand kit nem acervo — o pipeline usa só o que a
+     * pessoa anexou naquele turno (ver client-context/resolver.ts,
+     * ramo ad-hoc). `onDelete: cascade` só se aplica quando preenchido.
+     */
+    clientId: uuid('client_id').references(() => clients.id, { onDelete: 'cascade' }),
     conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
     requestedBy: uuid('requested_by').references(() => users.id, { onDelete: 'set null' }),

@@ -1,13 +1,15 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   MOTION_FORMATS,
   TERMINAL_MOTION_STATUSES,
   UI_STAGE,
+  type MotionAssetsSummary,
   type MotionFormat,
   type MotionFps,
   type MotionQuality,
   type MotionQualityScore,
+  type MotionRenderVersion,
   type MotionSession,
   type MotionStatus,
   type MotionStatusView,
@@ -52,7 +54,8 @@ export async function createSession(input: {
    * apontava pra um lugar que ninguém mais abria.
    */
   id: string;
-  clientId: string;
+  /** `null` no modo AD_HOC. */
+  clientId: string | null;
   conversationId: string | null;
   projectId: string | null;
   requestedBy: string | null;
@@ -217,10 +220,56 @@ export async function latestRenders(motionId: string): Promise<{ preview: string
   return { preview, final };
 }
 
+/** Valida o que veio do jsonb: metadata é livre e um shape errado não pode derrubar o status. */
+function parseAssetsSummary(value: unknown): MotionAssetsSummary | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const summary = value as Record<string, unknown>;
+  if (typeof summary.logo !== 'boolean') return null;
+  if (typeof summary.images !== 'number' || typeof summary.videos !== 'number') return null;
+  return { logo: summary.logo, images: summary.images, videos: summary.videos };
+}
+
 export async function statusView(motionId: string): Promise<MotionStatusView | null> {
   const session = await getSession(motionId);
   if (!session) return null;
-  const renders = await latestRenders(motionId);
+
+  // Três leituras independentes em paralelo: o status é chamado em polling e
+  // cada round-trip sequencial a mais é latência visível no chat.
+  const [renderRows, clientRows, metadata] = await Promise.all([
+    db
+      .select({
+        version: schema.motionRenders.version,
+        quality: schema.motionRenders.quality,
+        storageUrl: schema.motionRenders.storageUrl,
+        createdAt: schema.motionRenders.createdAt,
+      })
+      .from(schema.motionRenders)
+      .where(eq(schema.motionRenders.motionSessionId, motionId))
+      .orderBy(asc(schema.motionRenders.version), asc(schema.motionRenders.createdAt)),
+    // AD_HOC (session.clientId null): sem cliente pra buscar, nem vale a
+    // query — clientName sai null abaixo, o mesmo resultado de uma busca
+    // vazia, só sem o round-trip ao banco.
+    session.clientId
+      ? db.select({ name: schema.clients.name }).from(schema.clients).where(eq(schema.clients.id, session.clientId)).limit(1)
+      : Promise.resolve([]),
+    getMetadata(motionId),
+  ]);
+
+  const versions: MotionRenderVersion[] = renderRows.map((row) => ({
+    version: row.version,
+    quality: row.quality as MotionQuality,
+    url: row.storageUrl,
+    createdAt: row.createdAt,
+  }));
+  // Os campos previewUrl/finalUrl continuam sendo a versão MAIS RECENTE — a
+  // web já consome assim; a lista completa fica em `versions`.
+  const latest = (quality: MotionQuality): string | null =>
+    [...versions].reverse().find((row) => row.quality === quality && row.url)?.url ?? null;
+
+  const brief = metadata.brief as { campaignName?: unknown } | undefined;
+  const campaignName =
+    typeof brief?.campaignName === 'string' && brief.campaignName.trim() !== '' ? brief.campaignName : null;
+
   return {
     motionId: session.id,
     status: session.status,
@@ -232,11 +281,15 @@ export async function statusView(motionId: string): Promise<MotionStatusView | n
     width: session.width,
     height: session.height,
     renderVersion: session.renderVersion,
-    previewUrl: renders.preview,
-    finalUrl: renders.final,
+    previewUrl: latest('preview'),
+    finalUrl: latest('final'),
     error: session.error,
     errorCode: session.errorCode,
     updatedAt: session.updatedAt.toISOString(),
+    versions,
+    clientName: clientRows[0]?.name ?? null,
+    campaignName,
+    assets: parseAssetsSummary(metadata.assets_summary),
   };
 }
 
