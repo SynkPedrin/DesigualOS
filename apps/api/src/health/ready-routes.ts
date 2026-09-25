@@ -49,13 +49,13 @@ export async function registerReadyRoutes(app: FastifyInstance): Promise<void> {
     // sozinho; ele é informativo para o gate de release.
     checks.openai_credential_configured = isOpenAICredentialConfigured();
 
-    // ClickUp MCP OAuth: presença de configuração mínima pro fluxo (client
-    // id/secret do MCP), não um token específico de usuário — a autorização
-    // em si é por colaborador (ver clickup-oauth.ts) e não bloqueia o /ready
-    // do serviço como um todo.
-    checks.clickup_mcp_oauth_configured = Boolean(
-      process.env.CLICKUP_MCP_CLIENT_ID?.trim() && process.env.CLICKUP_MCP_CLIENT_SECRET?.trim(),
-    );
+    // ClickUp MCP OAuth: o servidor MCP usa client PÚBLICO com registration
+    // dinâmica (RFC 7591) — não há client_id/secret fixo pra checar
+    // presença. O único pré-requisito de infra é NODE_SECRET (assina o
+    // state do fluxo, ver apps/api/src/integrations/clickup-mcp-routes.ts);
+    // a autorização em si é por colaborador e não bloqueia o /ready do
+    // serviço como um todo.
+    checks.clickup_mcp_oauth_infra_ready = Boolean(process.env.NODE_SECRET?.trim());
 
     // Fallback compartilhado do ClickUp (gateway legado) segue contando como
     // "ClickUp está acessível", independente do MCP ainda não estar

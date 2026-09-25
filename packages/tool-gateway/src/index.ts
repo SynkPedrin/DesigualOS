@@ -1,5 +1,6 @@
 export * from './clickup-client';
 export * from './clickup-oauth';
+export * from './clickup-mcp-oauth';
 export * from './bento-qa-client';
 export * from './agent-ask-client';
 export * from './attributed-task';

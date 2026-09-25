@@ -15,12 +15,33 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * OpenAI). Toda cobertura de teste deve mockar `OpenAI` / injetar um client
  * fake via `createOpenAIClient` overload de teste, nunca bater na rede.
  */
-export interface ResponsesToolDefinition {
+export interface ResponsesFunctionToolDefinition {
   type: 'function';
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** SDK exige explícito (sem default silencioso): `true` força o modelo a obedecer o schema à risca. */
+  strict: boolean;
 }
+
+/**
+ * Tool nativa de MCP remoto da Responses API (seção 12/14/17 da missão): a
+ * OpenAI conecta no servidor MCP, DESCOBRE as tools expostas por ele em
+ * runtime e o modelo escolhe semanticamente qual usar — nada disto é
+ * hardcoded aqui. Formato confirmado no SDK instalado (`openai@4.104.0`,
+ * `Tool.Mcp`): `server_label`/`server_url`/`headers`/`allowed_tools`/
+ * `require_approval`. Ver `buildClickUpMcpTool` em `mcp.ts`.
+ */
+export interface ResponsesMcpToolDefinition {
+  type: 'mcp';
+  server_label: string;
+  server_url: string;
+  headers?: Record<string, string>;
+  allowed_tools?: string[];
+  require_approval?: 'always' | 'never' | Record<string, unknown>;
+}
+
+export type ResponsesToolDefinition = ResponsesFunctionToolDefinition | ResponsesMcpToolDefinition;
 
 export interface ResponsesRequest {
   model: OpenAIModelId;
@@ -71,7 +92,7 @@ export async function callResponses(
       input: request.input,
       max_output_tokens: request.maxOutputTokens,
       ...(request.previousResponseId ? { previous_response_id: request.previousResponseId } : {}),
-      tools: request.tools as never,
+      ...(request.tools ? { tools: request.tools } : {}),
     });
 
     const toolCalls = (response.output ?? [])
