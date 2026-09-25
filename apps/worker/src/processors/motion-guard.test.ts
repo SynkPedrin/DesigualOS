@@ -15,6 +15,12 @@ const mocks = vi.hoisted(() => ({
   findConversationMotion: vi.fn<(conversationId: string) => Promise<unknown>>(async () => null),
   createMotion: vi.fn(),
   updateMotion: vi.fn(),
+  summarizeClientContext: vi.fn(),
+  // extractCampaignBriefFromMessage bate na OpenAI de verdade (chat-first,
+  // adendo de release) — NUNCA pode rodar sem mock numa suíte unitária.
+  // Default `null` preserva o comportamento anterior a este mock existir:
+  // cai pro card, byte a byte, em todo teste que não sobrescrever isto.
+  extractCampaignBriefFromMessage: vi.fn<() => Promise<unknown>>(async () => null),
 }));
 
 vi.mock('@desigual-os/otto-motion', async () => {
@@ -26,6 +32,8 @@ vi.mock('@desigual-os/otto-motion', async () => {
     findConversationMotion: mocks.findConversationMotion,
     createMotion: mocks.createMotion,
     updateMotion: mocks.updateMotion,
+    summarizeClientContext: mocks.summarizeClientContext,
+    extractCampaignBriefFromMessage: mocks.extractCampaignBriefFromMessage,
   };
 });
 
@@ -79,12 +87,33 @@ const sessionFixture = {
   updatedAt: new Date(),
 };
 
+// Briefing mínimo válido (contrato do card): o que separa "criar de verdade"
+// de "pedir o briefing" desde que o guard passou a exigir o card preenchido.
+const briefFixture = {
+  campaignName: 'Campanha de Setembro',
+  objective: 'Gerar leads',
+};
+
+const summaryFixture = {
+  clientName: 'Fratelli',
+  hasBrandKit: true,
+  logoUrl: 'https://storage/logo.png',
+  colors: ['#111111'],
+  fonts: ['Work Sans'],
+  images: 7,
+  videos: 2,
+  totalAssets: 9,
+  hasBrain: true,
+};
+
 beforeEach(() => {
   mocks.ottoMotionEnabled.mockReturnValue(true);
   mocks.detectMotionIntent.mockReturnValue({ kind: 'create', reason: 'teste', durationSeconds: 15, format: undefined, fps: undefined });
   mocks.findConversationMotion.mockResolvedValue(null);
   mocks.createMotion.mockResolvedValue(sessionFixture);
   mocks.updateMotion.mockResolvedValue(sessionFixture);
+  mocks.summarizeClientContext.mockResolvedValue(summaryFixture);
+  mocks.extractCampaignBriefFromMessage.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -121,7 +150,7 @@ describe('fronteira do agente', () => {
 describe('B/D — provider fora do ar (§47-B, §47-D)', () => {
   it('Opus 5.5 indisponível vira resposta explicada, nunca um modelo menor', async () => {
     mocks.createMotion.mockRejectedValue(new MotionModelUnavailableError('CLI 2.1.263'));
-    const result = await tryMotionGuard(params());
+    const result = await tryMotionGuard(params({ brief: briefFixture }));
     expect(result?.status).toBe('completed');
     expect(result?.answer).toContain('Opus 5.5');
     expect(result?.metadata?.motion_error).toBe('OPUS_UNAVAILABLE');
@@ -133,35 +162,158 @@ describe('B/D — provider fora do ar (§47-B, §47-D)', () => {
     mocks.createMotion.mockRejectedValue(
       new MotionError('PROVIDER_DISCONNECTED', 'O Claude Code está instalado, mas sem conta conectada.'),
     );
-    const result = await tryMotionGuard(params());
+    const result = await tryMotionGuard(params({ brief: briefFixture }));
     expect(result?.metadata?.motion_error).toBe('PROVIDER_DISCONNECTED');
   });
 
   it('erro inesperado NÃO sobe — subir faria o BullMQ recriar o motion no retry', async () => {
     mocks.createMotion.mockRejectedValue(new Error('boom'));
-    const result = await tryMotionGuard(params());
+    const result = await tryMotionGuard(params({ brief: briefFixture }));
     expect(result?.status).toBe('completed');
     expect(result?.metadata?.motion_error).toBe('INTERNAL');
   });
 });
 
-describe('C/G — motion novo (§47-C, §47-G)', () => {
+describe('C/G — motion novo COM briefing (§47-C, §47-G)', () => {
   it('cria a sessão e devolve o bloco que a UI usa pro player', async () => {
-    const result = await tryMotionGuard(params());
+    const result = await tryMotionGuard(params({ brief: briefFixture }));
     expect(mocks.createMotion).toHaveBeenCalledOnce();
     expect(result?.metadata?.motion).toMatchObject({ motion_id: 'motion-1', format: '9:16', duration_seconds: 15 });
   });
 
+  it('repassa o briefing do card pro motor, byte a byte', async () => {
+    await tryMotionGuard(params({ brief: briefFixture }));
+    expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ brief: briefFixture });
+  });
+
+  it('o ack cita a campanha do briefing', async () => {
+    const result = await tryMotionGuard(params({ brief: briefFixture }));
+    expect(result?.answer).toContain('Campanha de Setembro');
+  });
+
   it('repassa a duração que a classificação leu do pedido', async () => {
-    await tryMotionGuard(params());
+    await tryMotionGuard(params({ brief: briefFixture }));
     expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ durationSeconds: 15 });
   });
 
   it('sem cliente selecionado, explica e NÃO abre sessão', async () => {
-    const result = await tryMotionGuard(params({ clientId: null }));
+    const result = await tryMotionGuard(params({ clientId: null, brief: briefFixture }));
     expect(mocks.createMotion).not.toHaveBeenCalled();
     expect(result?.metadata?.motion_blocked).toBe('no_client');
     expect(result?.answer).toContain('cliente');
+  });
+});
+
+describe('pedido de briefing — create SEM card preenchido', () => {
+  it('NÃO abre sessão: responde com o pedido de briefing que a web usa pra desenhar o card', async () => {
+    const result = await tryMotionGuard(params());
+    expect(mocks.createMotion).not.toHaveBeenCalled();
+    expect(result?.metadata?.fast_path).toBe('motion_request');
+    expect(result?.metadata?.motion_intent).toBe('create');
+    expect(result?.metadata?.motion_brief_request).toMatchObject({ client_id: 'client-1' });
+    expect(result?.metadata?.motion).toBeUndefined();
+  });
+
+  it('o prefill carrega o que a detecção leu da frase (duração, formato, fps)', async () => {
+    mocks.detectMotionIntent.mockReturnValue({ kind: 'create', reason: 'teste', durationSeconds: 20, format: '16:9', fps: 60 });
+    const result = await tryMotionGuard(params());
+    expect(result?.metadata?.motion_brief_request).toMatchObject({
+      prefill: { duration: 20, aspectRatio: '16:9', fps: 60 },
+    });
+  });
+
+  it('a resposta apresenta o que já existe do cliente', async () => {
+    const result = await tryMotionGuard(params());
+    expect(mocks.summarizeClientContext).toHaveBeenCalledWith('client-1');
+    expect(result?.answer).toContain('Fratelli');
+    expect(result?.answer).toContain('7 imagens');
+    expect(result?.answer).toContain('informações desta campanha');
+  });
+
+  it('falha no resumo degrada pra texto genérico sem quebrar o turno', async () => {
+    mocks.summarizeClientContext.mockRejectedValue(new Error('connection refused'));
+    const result = await tryMotionGuard(params());
+    expect(result?.status).toBe('completed');
+    expect(result?.metadata?.motion_brief_request).toBeDefined();
+    expect(result?.answer).not.toContain('Fratelli');
+    expect(result?.answer).toContain('informações desta campanha');
+  });
+
+  it('cliente sem material nenhum ainda recebe o card', async () => {
+    mocks.summarizeClientContext.mockResolvedValue({
+      ...summaryFixture,
+      hasBrandKit: false,
+      logoUrl: null,
+      images: 0,
+      videos: 0,
+      totalAssets: 0,
+      hasBrain: false,
+    });
+    const result = await tryMotionGuard(params());
+    expect(result?.metadata?.motion_brief_request).toBeDefined();
+    expect(result?.answer).toContain('ainda não tem material');
+  });
+
+  it('sem cliente selecionado, o bloqueio de cliente vem ANTES do pedido de briefing', async () => {
+    const result = await tryMotionGuard(params({ clientId: null }));
+    expect(result?.metadata?.motion_blocked).toBe('no_client');
+    expect(result?.metadata?.motion_brief_request).toBeUndefined();
+  });
+});
+
+describe('CHAT-FIRST — extração automática de briefing (adendo release, sem formulário)', () => {
+  it('extração com direção suficiente: cria direto, NUNCA abre o card', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue({
+      campaignName: 'Expo Agro',
+      objective: 'Vender agora',
+      offer: { price: 'R$ 400.000' },
+      tone: 'Premium / cinematográfico',
+    });
+    const result = await tryMotionGuard(params({ message: 'Crie um motion promocional muito forte para venda de um trator John Deere. Valor: R$ 400.000.' }));
+
+    expect(mocks.createMotion).toHaveBeenCalledOnce();
+    expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ brief: { campaignName: 'Expo Agro' } });
+    expect(result?.metadata?.motion_brief_request).toBeUndefined();
+    expect(result?.metadata?.motion).toBeDefined();
+  });
+
+  it('os anexos do MESMO turno chegam no createMotion — nunca se perdem pra um turno de card', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue({ campaignName: 'Expo Agro', objective: 'Vender agora' });
+    const attachments = [
+      { url: 'https://x/trator.jpg', filename: 'trator.jpg', contentType: 'image/jpeg' },
+      { url: 'https://x/logo.png', filename: 'logo_johndeere.png', contentType: 'image/png' },
+      { url: 'https://x/campo.jpg', filename: 'campo.jpg', contentType: 'image/jpeg' },
+    ];
+    await tryMotionGuard(params({ message: 'motion do trator com essas imagens', attachments }));
+
+    expect(mocks.createMotion.mock.calls[0]?.[0]).toMatchObject({ references: attachments });
+  });
+
+  it('a resposta lista as referências visuais detectadas quando há anexos', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue({ campaignName: 'Expo Agro', objective: 'Vender agora' });
+    const attachments = [{ url: 'https://x/trator.jpg', filename: 'trator.jpg', contentType: 'image/jpeg' }];
+    const result = await tryMotionGuard(params({ attachments }));
+    expect(result?.answer).toContain('Referências visuais detectadas');
+    expect(result?.answer).toContain('trator.jpg');
+  });
+
+  it('extração sem direção nenhuma (texto vago): cai pro card, comportamento anterior preservado', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue({});
+    const result = await tryMotionGuard(params({ message: 'faz um motion' }));
+    expect(mocks.createMotion).not.toHaveBeenCalled();
+    expect(result?.metadata?.motion_brief_request).toBeDefined();
+  });
+
+  it('falha na extração (ex: sem credencial OpenAI): cai pro card, nunca quebra o turno', async () => {
+    mocks.extractCampaignBriefFromMessage.mockResolvedValue(null);
+    const result = await tryMotionGuard(params({ message: 'faz um motion' }));
+    expect(mocks.createMotion).not.toHaveBeenCalled();
+    expect(result?.metadata?.motion_brief_request).toBeDefined();
+  });
+
+  it('brief já vindo do card (formulário) continua tendo prioridade — nunca chama a extração', async () => {
+    await tryMotionGuard(params({ brief: briefFixture }));
+    expect(mocks.extractCampaignBriefFromMessage).not.toHaveBeenCalled();
   });
 });
 
@@ -201,7 +353,7 @@ describe('resiliência da ponte', () => {
   });
 
   it('conversa nova (sem id) ainda consegue criar motion', async () => {
-    const result = await tryMotionGuard(params({ conversationId: null }));
+    const result = await tryMotionGuard(params({ conversationId: null, brief: briefFixture }));
     expect(mocks.findConversationMotion).not.toHaveBeenCalled();
     expect(result?.metadata?.motion).toBeDefined();
   });

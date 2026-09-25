@@ -2,13 +2,18 @@ import type { ExecuteResponse } from '@desigual-os/node-protocol';
 import type { AgentName } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
 import {
+  briefHasDirection,
   createMotion,
   detectMotionIntent,
+  extractCampaignBriefFromMessage,
   findConversationMotion,
   isMotionError,
   ottoMotionEnabled,
+  summarizeClientContext,
   updateMotion,
   userMessageFor,
+  type CampaignBrief,
+  type ClientContextSummary,
   type MotionIntent,
   type MotionSession,
 } from '@desigual-os/otto-motion';
@@ -34,6 +39,13 @@ export interface MotionGuardParams {
   clientId: string | null;
   userId: string | null;
   projectId: string | null;
+  /**
+   * Briefing estruturado do card de briefing (POST /chat `motion_brief` → job
+   * data `motionBrief`). AUSENTE num pedido de criação novo é o que dispara o
+   * card: em vez de abrir uma sessão com brief vazio, o guard responde com
+   * `metadata.motion_brief_request` e a web desenha o formulário.
+   */
+  brief?: CampaignBrief | undefined;
   attachments: { url: string; filename: string; contentType: string }[];
   logger: Logger;
 }
@@ -95,6 +107,39 @@ export async function tryMotionGuard(params: MotionGuardParams): Promise<Execute
       );
     }
 
+    let brief = params.brief;
+    let briefWasAutoExtracted = false;
+
+    if (intent.kind === 'create' && !brief) {
+      // CHAT-FIRST (adendo "Otto Motion via chat direto, sem formulário"):
+      // antes de abrir o card, tenta montar o briefing sozinho a partir do
+      // que a pessoa já escreveu. Só cai pro card se a extração falhar ou
+      // não trouxer direção nenhuma (§briefHasDirection) — nunca abre o
+      // card quando o pedido já está claro, e crucialmente NUNCA perde os
+      // anexos deste turno pra um turno futuro de resposta ao card.
+      const extracted = await extractCampaignBriefFromMessage(params.message, logger).catch((error: unknown) => {
+        logger.warn({ executionId, error }, 'Motion: extração automática de briefing falhou; caindo pro card');
+        return null;
+      });
+
+      if (extracted && briefHasDirection(extracted)) {
+        brief = extracted;
+        briefWasAutoExtracted = true;
+        logger.info(
+          { executionId, campaignName: extracted.campaignName ?? null },
+          'Motion: briefing extraído automaticamente do chat — pulando o card',
+        );
+      } else {
+        // PEDIDO DE BRIEFING (card) — fallback, comportamento anterior
+        // preservado byte a byte quando a extração não tem o que trabalhar.
+        const summary = await summarizeClientContext(params.clientId).catch((error: unknown) => {
+          logger.warn({ executionId, error }, 'Motion: resumo do contexto do cliente falhou; respondendo genérico');
+          return null;
+        });
+        return briefRequest(params, intent, summary);
+      }
+    }
+
     const session = await createMotion(
       {
         clientId: params.clientId,
@@ -103,6 +148,7 @@ export async function tryMotionGuard(params: MotionGuardParams): Promise<Execute
         requestedBy: params.userId,
         executionId,
         prompt: params.message,
+        ...(brief ? { brief } : {}),
         ...(intent.durationSeconds !== undefined ? { durationSeconds: intent.durationSeconds } : {}),
         ...(intent.format !== undefined ? { format: intent.format } : {}),
         ...(intent.fps !== undefined ? { fps: intent.fps } : {}),
@@ -111,7 +157,7 @@ export async function tryMotionGuard(params: MotionGuardParams): Promise<Execute
       logger,
     );
 
-    return respond(params, session, ackForCreate(session), intent);
+    return respond(params, session, ackForCreate(session, brief, briefWasAutoExtracted, params.attachments), intent);
   } catch (error) {
     // Falha aqui vira RESPOSTA, não exceção: o §26 é explícito, e deixar
     // subir marcaria a execution como failed e o BullMQ reprocessaria o
@@ -126,12 +172,100 @@ export async function tryMotionGuard(params: MotionGuardParams): Promise<Execute
   }
 }
 
-function ackForCreate(session: MotionSession): string {
+/**
+ * Recibo do que foi ENTENDIDO, não um formulário disfarçado de mensagem —
+ * mesma régua do adendo chat-first: "Otto deve ser objetivo", mostrando os
+ * campos que ele já capturou (auto-extraídos ou do card) em vez de abrir
+ * mais perguntas. `briefWasAutoExtracted` decide só o texto de abertura;
+ * o corpo com os campos é o mesmo formato pros dois casos.
+ */
+function ackForCreate(
+  session: MotionSession,
+  brief: CampaignBrief | undefined,
+  briefWasAutoExtracted: boolean,
+  attachments: { url: string; filename: string; contentType: string }[] = [],
+): string {
+  const abertura = briefWasAutoExtracted
+    ? `🎬 Entendi. Vou gerar${brief?.campaignName ? ` o motion da campanha "${brief.campaignName}"` : ' um motion'} com base no que você escreveu.`
+    : brief?.campaignName
+      ? `Vou fazer o motion da campanha "${brief.campaignName}" — peça de ${session.durationSeconds} segundos em ${session.format} (${session.width}x${session.height}).`
+      : `Vou fazer. Peça de ${session.durationSeconds} segundos em ${session.format} (${session.width}x${session.height}).`;
+
+  if (!briefWasAutoExtracted) {
+    return [abertura, '', 'Estou lendo a marca e separando o material do cliente agora. Te mostro o preview assim que a primeira versão sair.'].join('\n');
+  }
+
+  const campos: string[] = [];
+  if (brief?.objective) campos.push(`Objetivo: ${brief.objective}`);
+  if (brief?.offer?.price) campos.push(`Valor: ${brief.offer.price}`);
+  if (brief?.offer?.condition) campos.push(`Condição: ${brief.offer.condition}`);
+  if (brief?.cta) campos.push(`CTA: ${brief.cta}`);
+  campos.push(`Formato: ${session.format}`);
+  campos.push(`Duração: ${session.durationSeconds}s`);
+  if (brief?.tone) campos.push(`Tom: ${brief.tone}`);
+
+  const referencias = attachments.length > 0 ? ['', 'Referências visuais detectadas:', ...attachments.map((a) => `- ${a.filename}`)] : [];
+
   return [
-    `Vou fazer. Peça de ${session.durationSeconds} segundos em ${session.format} (${session.width}x${session.height}).`,
+    abertura,
     '',
-    'Estou lendo a marca e separando o material do cliente agora. Te mostro o preview assim que a primeira versão sair.',
+    ...campos,
+    ...referencias,
+    '',
+    attachments.length > 0
+      ? 'Estou usando o que você anexou como referência obrigatória e separando o resto do material do cliente agora. Te mostro o preview assim que a primeira versão sair.'
+      : 'Estou lendo a marca e separando o material do cliente agora. Te mostro o preview assim que a primeira versão sair.',
   ].join('\n');
+}
+
+/**
+ * Resposta do caso "create sem brief": NÃO abre sessão, só devolve o pedido de
+ * briefing que a web usa pra desenhar o card. O prefill vem do que a detecção
+ * leu da frase ("motion de 15s em 16:9 a 60fps") pra pessoa não redigitar.
+ */
+function briefRequest(params: MotionGuardParams, intent: MotionIntent, summary: ClientContextSummary | null): ExecuteResponse {
+  const prefill: Record<string, unknown> = {};
+  if (intent.durationSeconds !== undefined) prefill.duration = intent.durationSeconds;
+  if (intent.format !== undefined) prefill.aspectRatio = intent.format;
+  if (intent.fps !== undefined) prefill.fps = intent.fps;
+
+  return {
+    execution_id: params.executionId,
+    agent: 'otto',
+    status: 'completed',
+    answer: briefRequestAnswer(summary),
+    sources: [],
+    tool_calls: [],
+    usage: { input_tokens: 0, output_tokens: 0 },
+    metadata: {
+      fast_path: 'motion_request',
+      motion_intent: 'create',
+      motion_intent_reason: intent.reason,
+      motion_brief_request: {
+        client_id: params.clientId,
+        prefill,
+      },
+    },
+  };
+}
+
+function briefRequestAnswer(summary: ClientContextSummary | null): string {
+  const fechamento = 'Pra montar o anúncio preciso só das informações desta campanha.';
+  if (!summary) {
+    return `Pra montar o anúncio preciso das informações desta campanha — preenche o card e eu começo a produzir.`;
+  }
+  const achados: string[] = [];
+  if (summary.hasBrandKit) achados.push('✓ identidade visual');
+  if (summary.logoUrl) achados.push('✓ logo');
+  if (summary.images > 0) achados.push(`✓ ${summary.images} ${summary.images === 1 ? 'imagem' : 'imagens'}`);
+  if (summary.videos > 0) achados.push(`✓ ${summary.videos} ${summary.videos === 1 ? 'vídeo' : 'vídeos'}`);
+  if (summary.hasBrain) achados.push('✓ brain criativo');
+  const nome = summary.clientName;
+  if (achados.length === 0) {
+    return `O cliente ${nome ?? 'selecionado'} ainda não tem material registrado (identidade, logo, imagens) — dá pra começar mesmo assim, mas o resultado sai melhor com o acervo em dia. ${fechamento}`;
+  }
+  const intro = nome ? `Encontrei os materiais da ${nome}` : 'Encontrei os materiais do cliente selecionado';
+  return `${intro}: ${achados.join(' ')}. ${fechamento}`;
 }
 
 function ackForUpdate(instruction: string): string {

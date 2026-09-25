@@ -30,6 +30,8 @@ export {
   type MotionFps,
   type MotionQualityScore,
   type MotionReference,
+  type MotionRenderVersion,
+  type MotionAssetsSummary,
   type MotionSession,
   type MotionStatus,
   type MotionStatusView,
@@ -52,7 +54,19 @@ export {
   type ProviderConnection,
   type ProviderState,
 } from './providers/connection.js';
+export {
+  QUOTA_UNAVAILABLE_MESSAGE,
+  clearQuotaState,
+  readQuotaState,
+  recordQuotaUnavailable,
+  type ClaudeQuotaState,
+} from './providers/quota-state.js';
 export { resolveClientContext } from './client-context/resolver.js';
+// Leitura barata (só contagens) usada pelo guard do chat pra montar o card de
+// briefing — o resolveClientContext acima continua sendo o dossiê completo do pipeline.
+export { summarizeClientContext, type ClientContextSummary } from './client-context/summary.js';
+export { campaignBriefSchema, briefHasDirection, type CampaignBrief } from './brief/schema.js';
+export { extractCampaignBriefFromMessage } from './brief/extract.js';
 /**
  * Superfície para scripts de prova e para quem precisa rodar o pipeline fora
  * da fila (ver apps/worker/scripts/motion-e2e.mts). O caminho normal continua

@@ -726,6 +726,9 @@ importers:
       '@desigual-os/logging':
         specifier: workspace:*
         version: link:../logging
+      '@desigual-os/openai-provider':
+        specifier: workspace:*
+        version: link:../openai-provider
       '@desigual-os/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
