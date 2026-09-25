@@ -30,3 +30,14 @@ export {
 } from './responses-client.js';
 
 export { BUDGET_CONFIG } from './budget.js';
+
+export {
+  recordOpenAIUsage,
+  dailySpendUsd,
+  monthlySpendUsd,
+  monthlySpendByModel,
+  monthlySpendByAgent,
+  currentBudgetTier,
+  type RecordUsageParams,
+  type SpendBreakdownRow,
+} from './ledger.js';

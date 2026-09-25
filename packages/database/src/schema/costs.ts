@@ -1,9 +1,11 @@
-import { bigint, date, index, integer, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, index, integer, jsonb, numeric, pgTable, text, timestamp, uuid, date } from 'drizzle-orm/pg-core';
 import { idColumn } from './_shared';
 import { agentNameEnum } from './enums';
 import { clients } from './clients';
 import { executions } from './execution';
 import { users } from './identity';
+import { conversations } from './conversation';
+import { organizations } from './organizations';
 
 export const tokenUsage = pgTable(
   'token_usage',
@@ -73,3 +75,48 @@ export const economyRecords = pgTable('economy_records', {
   savedPercentage: numeric('saved_percentage', { precision: 5, scale: 2 }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Ledger de uso da OpenAI (missão de release OpenAI + ClickUp MCP, seção
+ * 11). Diferente de `cost_records` (genérico, um valor em USD por evento,
+ * qualquer provider): esta tabela grava o USO REAL retornado pela OpenAI
+ * (input/cached/output tokens, seção 10 sobre prompt caching) por chamada,
+ * o suficiente pra reconstruir gasto diário/mensal/por-agente/por-modelo
+ * sem depender de estimativa pré-request (seção 11: "custo deve ser
+ * computado do uso real, não de estimativa").
+ *
+ * `organizationId`/`conversationId` ficam nullable de propósito: nem toda
+ * chamada nasce dentro de uma conversa (ex: automação) ou tem organização
+ * resolvida no momento da gravação; perder a linha de custo por causa disso
+ * seria pior que gravar com FK parcial.
+ */
+export const aiUsageLedger = pgTable(
+  'ai_usage_ledger',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'set null' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    agent: agentNameEnum('agent'),
+    conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
+    /** 'gpt-5.6-luna' | 'gpt-5.6-terra' | 'gpt-5.6-sol' | outro provider futuro. Texto livre de propósito. */
+    model: text('model').notNull(),
+    provider: text('provider').notNull().default('openai'),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    cachedInputTokens: integer('cached_input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    costUsd: numeric('cost_usd', { precision: 12, scale: 6 }).notNull(),
+    /** 'chat' | 'tool_planning' | 'creative' | 'classification' etc — natureza da chamada, não o agente. */
+    requestType: text('request_type').notNull(),
+    toolSteps: integer('tool_steps').notNull().default(0),
+    /** Metadados livres (ex: modelo pedido vs. modelo servido após downgrade de orçamento). */
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    createdAtIdx: index('ai_usage_ledger_created_at_idx').on(table.createdAt),
+    orgCreatedAtIdx: index('ai_usage_ledger_org_created_at_idx').on(table.organizationId, table.createdAt),
+    agentIdx: index('ai_usage_ledger_agent_idx').on(table.agent),
+    modelIdx: index('ai_usage_ledger_model_idx').on(table.model),
+    conversationIdx: index('ai_usage_ledger_conversation_id_idx').on(table.conversationId),
+  }),
+);

@@ -295,6 +295,13 @@
       "when": 1790256990800,
       "tag": "0041_fast_onslaught",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790346852970,
+      "tag": "0042_add_ai_usage_ledger",
+      "breakpoints": true
     }
   ]
 }
