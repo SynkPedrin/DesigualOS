@@ -49,12 +49,22 @@ const AGENT_TOOLS: Array<{
   // o enforcement de verdade.
   { agent: 'jarbas', tool: 'meta_ads', access: 'write', requiresApproval: true },
   { agent: 'jarbas', tool: 'google_ads', access: 'write' },
-  { agent: 'jarbas', tool: 'clickup', access: 'write' },
+  // P1-04 da auditoria forense (25/09/2026): a arquitetura de release
+  // OpenAI+ClickUp MCP concentra escrita operacional no Bento (e handoff
+  // aprovado do Otto); Jarbas não tem write nenhum de ClickUp na sua
+  // própria lógica hoje, então a permissão era uma superfície de risco sem
+  // uso — não corrigido antes por instrução explícita de não mexer em
+  // Jarbas fora de RBAC compartilhado. Isto É a correção de RBAC pedida:
+  // downgrade pra leitura, nenhuma mudança de comportamento (o runtime do
+  // Jarbas já não escrevia).
+  { agent: 'jarbas', tool: 'clickup', access: 'read' },
   { agent: 'jarbas', tool: 'studio', access: 'write' },
 
   { agent: 'suzy', tool: 'instagram', access: 'write', requiresApproval: true },
   { agent: 'suzy', tool: 'whatsapp', access: 'write' },
-  { agent: 'suzy', tool: 'clickup', access: 'write' },
+  // Mesma correção P1-04 acima, mesmo raciocínio: Suzy não escreve ClickUp
+  // no runtime atual.
+  { agent: 'suzy', tool: 'clickup', access: 'read' },
   { agent: 'suzy', tool: 'meta_ads', access: 'none' },
 
   { agent: 'studio', tool: 'gpu', access: 'write' },
@@ -154,6 +164,25 @@ async function main(): Promise<void> {
       .update(schema.agentTools)
       .set({ requiresApproval: true })
       .where(and(eq(schema.agentTools.agentId, agent.id), eq(schema.agentTools.tool, tool)));
+  }
+
+  // Mesmo raciocínio de backfill acima, para P1-04: um banco seedado ANTES
+  // desta correção já tem `access: 'write'` gravado em jarbas/clickup e
+  // suzy/clickup, e onConflictDoNothing não tocaria essas linhas. Downgrade
+  // explícito pra 'read' — nunca 'none', porque consulta/leitura de ClickUp
+  // por esses agentes não é o que a auditoria sinalizou como risco.
+  logger.info('Corrigindo access de jarbas/clickup e suzy/clickup em bancos já seedados (RBAC P1-04)');
+  const clickupWriteDowngrade: Array<{ agent: 'jarbas' | 'suzy'; tool: string }> = [
+    { agent: 'jarbas', tool: 'clickup' },
+    { agent: 'suzy', tool: 'clickup' },
+  ];
+  for (const { agent: agentName, tool } of clickupWriteDowngrade) {
+    const agent = agentsByName.get(agentName);
+    if (!agent) continue;
+    await db
+      .update(schema.agentTools)
+      .set({ access: 'read' })
+      .where(and(eq(schema.agentTools.agentId, agent.id), eq(schema.agentTools.tool, tool), eq(schema.agentTools.access, 'write')));
   }
 
   logger.info('Seed complete');

@@ -10,6 +10,7 @@ import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/l
 import { getSchemaVersion } from '@desigual-os/database';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
+import { registerReadyRoutes } from './health/ready-routes';
 import { startHealthCheckRetention, startHealthSweep } from './health/scheduler';
 import { startAgentProbe } from './health/probe-scheduler';
 import { startWorkerWatchdog } from './health/worker-watchdog';
@@ -151,7 +152,16 @@ async function start(): Promise<void> {
   // multipart uploads included). Bearer token in Authorization, never cookies - no
   // credentials:true needed.
   await app.register(corsPlugin, {
-    origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+    // Lista separada por vírgula: o front local de dev (localhost:3000) e o
+    // front publicado (Vercel) são os dois legítimos. Valor único continua
+    // valendo como antes — o split de uma string sem vírgula devolve ela mesma.
+    // (24/09/2026: uma edição do .env trocou FRONTEND_URL pra localhost e o
+    // front publicado inteiro ficou preso em "Carregando..." — o preflight
+    // passou a devolver a origem errada e o Chrome bloqueou TUDO.)
+    origin: (process.env.FRONTEND_URL ?? 'http://localhost:3000')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
     allowedHeaders: ['Authorization', 'Content-Type'],
   });
   // Private Network Access (14/09/2026, medido no smoke de produção): quando a
@@ -193,6 +203,7 @@ async function start(): Promise<void> {
   await app.register(multipartPlugin, { limits: { fileSize: 25 * 1024 * 1024 } });
   await app.register(registerNodeRoutes);
   await app.register(registerHealthRoutes);
+  await app.register(registerReadyRoutes);
   await app.register(registerAuthRoutes);
   await app.register(registerChatRoutes);
   await app.register(registerExecutionRoutes);
