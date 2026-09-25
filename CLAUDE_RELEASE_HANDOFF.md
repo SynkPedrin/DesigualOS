@@ -23,6 +23,32 @@ are the highest-risk, highest-read-cost files in the repo):
 (updated as work lands — see git log on this branch `feat/otto-motion-engine`
 for the checkpoint commits, prefixed `checkpoint:`)
 
+- **`packages/openai-provider`** (commit `9f74fa2`): new additive package.
+  - `credential.ts`: `resolveOpenAICredential()` / `isOpenAICredentialConfigured()`,
+    env-only (`OPENAI_API_KEY`), throws `OpenAICredentialMissingError` — no
+    silent fallback. Confirmed: **no Supabase-stored OpenAI credential exists
+    in this repo today** (mission text assumed one existed; only
+    `otto-motion` reads `OPENAI_API_KEY` from env for an unrelated purpose).
+  - `models.ts`: `OPENAI_MODELS` (luna/terra/sol → real `gpt-5.6-*` ids),
+    real pricing table (confirmed live via developers.openai.com/api/docs/pricing,
+    2026-09-25), `budgetTierFromUsage()` (5-tier ladder from mission §6),
+    `pickModel(taskKind, budgetTier)` (never auto-escalates, only downgrades,
+    never silently swaps provider at 100%+), `computeOpenAICost()` (bills
+    cached tokens at cached rate), `OUTPUT_TOKEN_LIMITS`, `MAX_TOOL_STEPS=6`.
+  - `responses-client.ts`: thin Responses API wrapper, stable-prefix
+    `instructions` + dynamic `input` (caching-friendly per §10), one retry
+    only on retryable errors (429/5xx/timeout), returns real usage
+    (input/cached/output) for the cost ledger to consume.
+  - `budget.ts`: `BUDGET_CONFIG` reads `MONTHLY_TOTAL_BUDGET_USD=14.05` /
+    `MONTHLY_OPERATIONAL_CAP_USD=12.00` / `EMERGENCY_RESERVE_USD=2.05` /
+    `DAILY_TARGET_USD=0.40` from env with those exact defaults.
+  - Tests: `models.test.ts`, 6 tests, **all pure functions, zero network,
+    zero OpenAI cost**. `pnpm --filter @desigual-os/openai-provider
+    typecheck` and `test` both green.
+  - **Not yet wired into any caller** (Bento/Otto/router don't import this
+    package yet — that's the next step, and it's where the actual
+    integration risk lives).
+
 - Repo recon done once (do NOT re-audit): key files are
   - `apps/api/src/server.ts` (Fastify bootstrap, route registration, `/health`)
   - `packages/tool-gateway/src/clickup-oauth.ts` (existing ClickUp **personal
