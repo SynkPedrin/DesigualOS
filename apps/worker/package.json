@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@desigual-os/bento-core": "workspace:*",
     "@desigual-os/context-engine": "workspace:*",
     "@desigual-os/database": "workspace:*",
     "@desigual-os/logging": "workspace:*",

@@ -55,6 +55,7 @@ import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispa
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard } from './bento-action-guard';
+import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
 import { tryMotionGuard } from './motion-guard';
 import { loadSeniorRuntimeContext } from './senior-runtime-context';
 import { detectSmallTalk } from './small-talk';
@@ -1178,7 +1179,30 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
           .limit(1)
           .catch(() => [])
       : [];
-    const guarded = await tryBentoActionGuard({
+    // BENTO CORE CUTOVER (missão de release OpenAI + ClickUp MCP): caminho
+    // novo (packages/bento-core), atrás de BENTO_OPENAI_CORE_ENABLED
+    // (default desligado). Com a flag off, `runBentoOpenAiCore` devolve
+    // `null` na primeira linha e este bloco é um no-op — o guard antigo
+    // abaixo segue rodando byte a byte como antes. Só `agent === 'bento'`:
+    // Otto não faz parte deste cutover.
+    if (!guardedResult && agent === 'bento' && bentoOpenAiCoreEnabled() && conversationId) {
+      const core = await runBentoOpenAiCore({
+        message,
+        conversationId,
+        organizationId: null,
+        clientId: runningExecution?.clientId ?? null,
+        seniorToolContext: await loadSeniorRuntimeContext(executionDbId),
+        logger,
+      }).catch((error: unknown) => {
+        logger.error({ error, executionId }, '[bento-openai-core] falhou, sem fallback silencioso pro guard antigo enquanto a flag estiver ligada');
+        return failedAgentResponse(agent, 'Não consegui processar essa ação pelo novo runtime. Nada foi executado.');
+      });
+      if (core) {
+        guardedResult = { ...core, agent, execution_id: executionId };
+      }
+    }
+
+    const guarded = !guardedResult ? await tryBentoActionGuard({
       message,
       conversationId: conversationId ?? null,
       userName: jobUser?.name ?? jobUser?.email ?? 'usuário',
@@ -1204,7 +1228,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     }).catch((error: unknown) => {
       logger.error({ error, executionId }, 'Senior action guard failed');
       return failedAgentResponse(agent, 'Não consegui verificar a ação. Não vou confirmar a criação; confira a task antes de tentar novamente.');
-    });
+    }) : null;
     if (guarded) {
       guardedResult = { ...guarded, agent, execution_id: executionId };
     }
