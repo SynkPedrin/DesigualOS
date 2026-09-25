@@ -275,6 +275,56 @@ change to the agency's primary operational agent. Recommend tackling them
 as follow-up work items, one at a time, each independently flaggable, after
 the core cutover has run as a real canary.
 
+## COMPLETED (round 5 — BENTO FINAL RELEASE GATE)
+
+- **`OPENAI_API_KEY` is now configured** in this environment's `.env` (Pedro
+  provided it directly in chat and explicitly declined rotation despite
+  being told the risk — respected, not re-litigated). Never printed/logged
+  by any code in this session; `.env` is gitignored. `isOpenAICredentialConfigured()`
+  now returns `true`.
+- **ClickUp MCP is now genuinely wired as the primary provider**, not just
+  compiled (`b6bf933`): `bento-openai-core.ts` calls
+  `selectWriteProvider(intent, userId)` before every create/update/comment
+  dispatch. MCP is chosen when `getClickUpMcpAccessToken` finds an
+  authorized token; legacy gateway is the fallback only when no token
+  exists yet; `UNSUPPORTED` blocks explicitly for anything neither path
+  covers. `executeViaMcp()` actually calls `buildClickUpMcpTool` +
+  `callResponses`, reads the real `mcp_call` output items the SDK returns
+  (types confirmed against the installed `openai@4.104.0`, not invented),
+  and does an independent **read-only** read-back (`getTask`) when a legacy
+  config is available — never a duplicate write.
+- **Cost ledger migration applied to the live database** — `pnpm db:migrate`
+  ran for real, `ai_usage_ledger` confirmed to exist (0 rows), no data lost
+  (every prior migration was already applied; Postgres just NOTICE'd
+  "already exists" for the shared migration-tracking objects).
+- **`/ready` now returns the exact requested `states` block**
+  (`openai: configured|missing`, `clickup_mcp: authorized|missing` — a
+  real `COUNT` against `integration_connections`, `database/worker/queue: ready|missing`)
+  alongside the previous detailed `checks`, still zero-cost/zero-OpenAI.
+- **`token-crypto.ts` moved** to `packages/tool-gateway` (was
+  `apps/api`-only) so the worker can decrypt the MCP token too;
+  `apps/api`'s copy is now a one-line re-export, no call site changed.
+- **Build: FAIL, pre-existing, out of scope.** `pnpm --filter @desigual-os/api build`
+  and `...worker build` both fail with `No loader is configured for ".node" files`
+  bundling `@rspack/binding-darwin-arm64`. Traced with `pnpm why -r`:
+  the chain is `@desigual-os/otto-motion → @remotion/bundler → @rspack/core`
+  — a native addon that `build.mjs`'s "bundle everything, node_modules
+  included" strategy can't handle. **This dependency already existed at
+  commit `525e91c`, before this mission started** — it is not a regression
+  from anything in this session, and fixing it would mean touching the
+  Motion Engine's dependency tree, explicitly out of bounds. Typecheck
+  (which is my actual scope) is green across every package touched, apps
+  included.
+- `BENTO_OPENAI_CORE_ENABLED` **remains `false`**. Per the explicit
+  instruction this round: only flip it after MCP wiring PASS (done), build
+  PASS (blocked, pre-existing/out-of-scope), migration PASS (done),
+  OpenAI credential READY (done). Build is the one gate not met, and it's
+  not something this session can fix without violating "don't touch Motion
+  Engine" — flagged to Pedro as a separate decision (accept the pre-existing
+  build gap and flip the flag anyway, since typecheck+tests are the actual
+  proof of correctness for the new code paths, or fix the Motion Engine
+  bundling first).
+
 ## FILES CHANGED
 
 (fill in as commits land — check `git log --oneline` and `git diff main...HEAD --stat`
