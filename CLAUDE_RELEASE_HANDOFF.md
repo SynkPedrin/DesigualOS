@@ -179,6 +179,102 @@ the exact human action — nothing else blocks it structurally. Until that
 happens, `getClickUpMcpAccessToken` returns `null` for everyone and no MCP
 tool call can be built.
 
+## COMPLETED (round 4 — BENTO CORE CUTOVER)
+
+**The release blocker from the round-3 report is closed, behind a flag.**
+Bento now has a real path: USER MESSAGE → `ConversationResourceState` →
+OpenAI Responses (planner, no tools) → structured action → deterministic
+policy → single write provider → existing verified executor (create/
+update/comment, each with real read-back) → persisted resource state.
+
+- **`packages/bento-core`** (`5221a55`): new additive package —
+  `StructuredAction` (zod schema: intent/target/changes/requestedCardinality/
+  reasoning), `ConversationResourceState`, `WriteEnvelope`,
+  `evaluateCardinality` (P0-01 fix: `planned > requested` without explicit
+  confirmation = blocked), `proposeBentoAction()` (Responses call with
+  **zero tools** — same rule as `safe-complete.ts`/Otto's provider, the
+  model cannot mutate anything from this call even if the input text
+  contains an imperative), `validateBentoAction()` +
+  `resolveTargetResourceId()` (100% deterministic, resolution priority
+  exactly per spec: explicit id → focused → single selection → last
+  execution → **null = ask for clarification, never global search**).
+  12 tests, all mocked, zero network.
+- **`apps/worker/src/processors/bento-resource-state.ts`** (`05bb498`):
+  persists `ConversationResourceState` in the existing (previously unused)
+  `conversation_context` table — no new migration. Append-only, same
+  pattern as `execution-record.ts`/`selection.ts`.
+- **`apps/worker/src/processors/bento-openai-core.ts`** (`05bb498`): the
+  actual orchestration, **reusing already-verified production primitives**
+  instead of duplicating logic: `loadSeniorRuntimeContext` (RBAC/authority),
+  `resolveWriteTarget` (client/list resolution), `createVerifiedSeniorTask`
+  (create, has read-back), `executeTaskUpdate` (update, has per-field
+  read-back), `createTaskComment`+`getTaskComments` (comment + verify),
+  `loadLatestExecutionState`+`sameExecutionAlreadyDone` (idempotency,
+  P0.14). `provider` is **always `'LEGACY_GATEWAY'` in this delivery** —
+  the MCP tool (`buildClickUpMcpTool`) is wired and ready, but real
+  provider selection waits for ClickUp MCP OAuth to actually be authorized
+  (round 3) and a live-verified round trip, which cannot happen in this
+  session (zero paid calls). Scope: `create_task`/`update_task`/
+  `comment_task` only — `read_tasks`/`get_task`/`analyze_tasks` return
+  `null` on purpose (the pre-existing continuity fixes from round 1
+  already cover reads/analysis well; rebuilding them here was out of
+  scope for this specific blocker).
+- **`apps/worker/src/processors/execute-job.ts`**: **one** isolated
+  conditional insertion, `if (!guardedResult && agent === 'bento' &&
+  bentoOpenAiCoreEnabled() && conversationId)`, placed immediately before
+  the existing `tryBentoActionGuard` call. Verified byte-for-byte
+  unchanged behavior with the flag off: **all 790 worker tests pass
+  unmodified**, including the 34 `execute-job.test.ts` and 207
+  `bento-action-guard`/`bento-action-execution` tests.
+
+### Why the flag (`BENTO_OPENAI_CORE_ENABLED`) stays OFF in this delivery
+
+There is no `OPENAI_API_KEY` in this environment, and the only way to
+verify the new path end-to-end would be a real paid OpenAI call — forbidden
+by the mission. Flipping the default to ON for the agent that runs the
+agency's real day-to-day operation, with zero live verification possible,
+would be irresponsible — this is the same reasoning already applied to
+Otto, but the stakes here are materially higher (Bento is the
+revenue-critical agent). **Turning the flag on is a deliberate, separate
+operational decision** — not a blocker in the code. When `OPENAI_API_KEY`
+exists, the recommended sequence is: enable the flag for one internal
+test conversation first (not the shared Tammy line), watch the ledger, then
+open it up. That first flagged conversation is the real canary for this
+specific piece, on top of the mission's own "first real message" canary.
+
+## SUPER-AGENT ADDENDUM — what's covered now vs. explicitly deferred
+
+Per the addendum ("Bento = agency operations super-agent, don't build a
+dead-end ClickUp chatbot, but don't expand scope past the release
+blocker"), here's the honest split:
+
+**Already present, load-bearing for the super-agent shape:**
+- `ConversationResourceState` (short-term/working memory: focus, selection,
+  recent create/update, last execution) — `bento-resource-state.ts`.
+- Structured planning + policy separation (§2/§5 of the core spec) means
+  the "reasoning core" is already decoupled from ClickUp specifically —
+  `StructuredAction`'s `intent` enum is the seam where new intents (people,
+  projects, other tools) get added without rearchitecting.
+- Episodic execution memory already exists independently
+  (`execution-record.ts`, pre-dates this session) and idempotency reuses it.
+- Cost-aware model invocation exists (`pickModel`/`budgetTierFromUsage`) —
+  the planner already asks for the cheaper tier by default for this
+  request kind (`clickup_write` → Terra), so the super-agent's "don't burn
+  credits on everything" requirement has its foundation.
+
+**Explicitly NOT built this round (per addendum §23, "do not expand scope
+past the core cutover"):** operational world model beyond resource state,
+memory layers beyond short-term+episodic (no semantic/people-profile
+memory), proactivity/event-driven reasoning, fact/inference/recommendation
+labeling, commitments/follow-up tracking, daily-operations view. These are
+real, correctly identified as the actual product vision, and the seams
+above (`StructuredAction.intent`, the tool-plug point in
+`bento-openai-core.ts`) were deliberately kept open for them — but building
+them now would be scope creep on top of an already-large, unverified
+change to the agency's primary operational agent. Recommend tackling them
+as follow-up work items, one at a time, each independently flaggable, after
+the core cutover has run as a real canary.
+
 ## FILES CHANGED
 
 (fill in as commits land — check `git log --oneline` and `git diff main...HEAD --stat`
