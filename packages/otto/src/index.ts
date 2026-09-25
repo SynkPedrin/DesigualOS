@@ -2,6 +2,7 @@ export { loadOttoConfig } from './llm/config.js';
 export type { OttoConfig } from './llm/config.js';
 
 export { createOttoLLMProvider, OttoLLMError } from './llm/ollama-provider.js';
+export { createOttoOpenAIProvider, type OttoOpenAIProviderConfig } from './llm/openai-provider.js';
 export { extractJsonPayload, parseJsonLoose } from './llm/json-extract.js';
 export type {
   OttoChatMessage,

@@ -16,11 +16,13 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.3",
     "@desigual-os/logging": "workspace:*",
+    "@desigual-os/openai-provider": "workspace:*",
     "zod": "^3.23.8",
     "@desigual-os/types": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",
+    "fastify": "^4.28.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
   }
