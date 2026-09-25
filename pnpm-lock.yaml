@@ -485,6 +485,34 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@25.0.1(canvas@2.11.2))(lightningcss@1.32.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(terser@5.51.2)(tsx@4.23.13)
 
+  packages/bento-core:
+    dependencies:
+      '@desigual-os/logging':
+        specifier: workspace:*
+        version: link:../logging
+      '@desigual-os/openai-provider':
+        specifier: workspace:*
+        version: link:../openai-provider
+      '@desigual-os/types':
+        specifier: workspace:*
+        version: link:../types
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.5.0
+        version: 22.20.1
+      fastify:
+        specifier: ^4.28.0
+        version: 4.29.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@25.0.1(canvas@2.11.2))(lightningcss@1.32.0)(msw@2.15.0(@types/node@22.20.1)(typescript@5.9.3))(terser@5.51.2)(tsx@4.23.13)
+
   packages/context-engine:
     dependencies:
       '@desigual-os/database':
