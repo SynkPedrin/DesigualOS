@@ -199,13 +199,25 @@ export async function executeTaskUpdate(params: {
       outcomes.push({ field: 'start', label: '🚦 Início', changed: false, skippedAsAlready: true, verified: true, error: null });
     } else {
       put.startDate = fields.startDate;
-      outcomes.push({ field: 'start', label: '🚦 Início', changed: true, skippedAsAlready: false, verified: false, error: null });
+      const inicioAlvo = fields.startDate;
+      // Sem `check`, o read-back nunca confirma e a resposta acusa falso
+      // alarme: medido no ClickUp real em 28/09/2026, o início ENTROU e o
+      // Bento disse "escrito, mas a releitura não confirmou".
+      outcomes.push({ field: 'start', label: '🚦 Início', changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.startDate === inicioAlvo });
     }
   }
 
   if (fields.timeEstimate !== undefined) {
     put.timeEstimate = fields.timeEstimate;
-    outcomes.push({ field: 'estimate', label: '⏱️ Estimativa', changed: true, skippedAsAlready: false, verified: false, error: null });
+    const estimativaAlvo = fields.timeEstimate;
+    /**
+     * O ClickUp aceita `time_estimate` com 200 e IGNORA o campo quando o
+     * ClickApp "Time Estimates" está desligado no space — conferido batendo
+     * direto na API em 28/09/2026: PUT 200, releitura devolve null. É
+     * exatamente o tipo de sucesso falso que este sistema existe pra não
+     * repassar, então o read-back decide, e a explicação diz o que fazer.
+     */
+    outcomes.push({ field: 'estimate', label: '⏱️ Estimativa', changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.timeEstimate === estimativaAlvo });
   }
 
   if (fields.priority !== undefined) {
@@ -407,65 +419,18 @@ export async function executeTaskUpdate(params: {
   }
 
 
-  // 3. TUDO JÁ ESTAVA CERTO — não reescreve (idempotência, regra §8/§17).
-  const mudancas = outcomes.filter((o) => o.changed);
-  const falhasDeCampo = outcomes.filter((o) => o.error);
-  const briefingPendente = fields.briefAddition !== undefined;
-  if (mudancas.length === 0 && falhasDeCampo.length === 0 && !briefingPendente) {
-    const linhas = ['✅ Já estava assim — não alterei novamente.', '', nomeTask, ''];
-    for (const o of outcomes) {
-      const valor =
-        o.field === 'due' && fields.dueDate
-          ? dataBR(fields.dueDate)
-          : o.field === 'assignee' && member
-            ? member.username
-            : o.field === 'priority' && fields.priority
-              ? PRIORIDADE_LABEL[fields.priority]
-              : o.field === 'status'
-                ? (atual.status ?? '')
-                : '';
-      linhas.push(`${o.label}: ${valor} (já era esse)`);
-    }
-    linhas.push('', `🔄 ClickUp: estado atual lido agora, sem nova escrita`);
-    return respond(linhas.join('\n'), true, {
-      guard: 'bento-action',
-      action: 'update_idempotent_noop',
-      task_id: taskId,
-      verified: true,
-      execucao: execucaoDe(taskId, nomeTask, true, member, fields, outcomes.map((o) => `${o.label}: ${valorDoCampo(o, fields, member, {})} (já era esse)`)),
-    });
-  }
-
-  // 4. ESCRITA — um PUT com tudo que mudou; briefing é acréscimo separado.
-  const CAMPOS_DO_PUT = new Set(['assignee', 'due', 'priority', 'status', 'title', 'description', 'remove_assignee', 'replace_assignee', 'start', 'estimate']);
-  if (Object.keys(put).length > 0) {
-    try {
-      await updateTask(config, taskId, {
-        ...(put.dueDate !== undefined ? { dueDate: put.dueDate as number | null } : {}),
-        ...(put.priority !== undefined ? { priority: put.priority as 1 | 2 | 3 | 4 } : {}),
-        ...(put.status !== undefined ? { status: put.status as string } : {}),
-        ...(put.name !== undefined ? { name: put.name as string } : {}),
-        ...(put.description !== undefined ? { description: put.description as string } : {}),
-        ...(put.addAssignees !== undefined ? { addAssignees: put.addAssignees as number[] } : {}),
-        ...(put.removeAssignees !== undefined ? { removeAssignees: put.removeAssignees as number[] } : {}),
-        ...(put.startDate !== undefined ? { startDate: put.startDate as number } : {}),
-        ...(put.timeEstimate !== undefined ? { timeEstimate: put.timeEstimate as number } : {}),
-      });
-      record('clickup.update_task', `${Object.keys(put).join('+')} -> ${taskId}`, true);
-      escreveu = true;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      record('clickup.update_task', `-> ${taskId}`, false, detail);
-      for (const o of outcomes.filter((o) => o.changed && CAMPOS_DO_PUT.has(o.field))) o.error = detail;
-      logger.warn({ task_id: taskId, error: detail }, '[update] ClickUp recusou o PUT');
-    }
-  }
-
   /* ------------------------------------------------------------------ *
    * 28/09/2026 — o que NÃO cabe no PUT /task: tag, dependência, campo
    * personalizado e checklist são endpoints próprios do ClickUp. Cada um
    * reporta seu próprio resultado, e falha de um não derruba os outros:
    * quem pediu três coisas prefere duas feitas e uma explicada a um "não".
+   *
+   * RODA ANTES do early-return de "já estava assim" logo abaixo, e isso não
+   * é detalhe de ordem: medido no ClickUp real no mesmo dia, "marca essa task
+   * com a tag qa-teste" chegava lá com `outcomes` vazio (nenhum campo de PUT
+   * foi pedido) e era respondido "✅ Já estava assim" sem nunca ter tentado
+   * aplicar a tag. Todo pedido precisa virar outcome ANTES de alguém concluir
+   * que não havia pedido nenhum.
    * ------------------------------------------------------------------ */
   for (const tag of fields.addTags ?? []) {
     if (atual.tags.some((t) => t.toLowerCase() === tag.trim().toLowerCase())) {
@@ -535,7 +500,17 @@ export async function executeTaskUpdate(params: {
       }
       record('clickup.create_checklist', `${nome} (${criados}/${fields.checklistItems.length}) -> ${taskId}`, true);
       escreveu = true;
-      outcomes.push({ field: 'checklist', label: `☑️ Checklist "${nome}"`, changed: true, skippedAsAlready: false, verified: criados === fields.checklistItems.length, error: criados === fields.checklistItems.length ? null : `${criados}/${fields.checklistItems.length} itens criados` });
+      const itensAlvo = fields.checklistItems;
+      outcomes.push({
+        field: 'checklist',
+        label: `☑️ Checklist "${nome}"`,
+        changed: true,
+        skippedAsAlready: false,
+        verified: false,
+        error: criados === itensAlvo.length ? null : `${criados}/${itensAlvo.length} itens criados`,
+        // Confere na task relida, não na resposta da criação.
+        check: (relida) => relida.checklists.some((c) => c.name === nome && itensAlvo.every((i) => c.items.includes(i))),
+      });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       record('clickup.create_checklist', `${nome} -> ${taskId}`, false, detail);
@@ -558,6 +533,61 @@ export async function executeTaskUpdate(params: {
       const detail = error instanceof Error ? error.message : String(error);
       record('clickup.add_dependency', `${campo}=${alvo} -> ${taskId}`, false, detail);
       outcomes.push({ field: campo, label: `${rotulo} ${alvo}`, changed: false, skippedAsAlready: false, verified: false, error: detail });
+    }
+  }
+
+
+  // 3. TUDO JÁ ESTAVA CERTO — não reescreve (idempotência, regra §8/§17).
+  const mudancas = outcomes.filter((o) => o.changed);
+  const falhasDeCampo = outcomes.filter((o) => o.error);
+  const briefingPendente = fields.briefAddition !== undefined;
+  if (mudancas.length === 0 && falhasDeCampo.length === 0 && !briefingPendente) {
+    const linhas = ['✅ Já estava assim — não alterei novamente.', '', nomeTask, ''];
+    for (const o of outcomes) {
+      const valor =
+        o.field === 'due' && fields.dueDate
+          ? dataBR(fields.dueDate)
+          : o.field === 'assignee' && member
+            ? member.username
+            : o.field === 'priority' && fields.priority
+              ? PRIORIDADE_LABEL[fields.priority]
+              : o.field === 'status'
+                ? (atual.status ?? '')
+                : '';
+      linhas.push(`${o.label}: ${valor} (já era esse)`);
+    }
+    linhas.push('', `🔄 ClickUp: estado atual lido agora, sem nova escrita`);
+    return respond(linhas.join('\n'), true, {
+      guard: 'bento-action',
+      action: 'update_idempotent_noop',
+      task_id: taskId,
+      verified: true,
+      execucao: execucaoDe(taskId, nomeTask, true, member, fields, outcomes.map((o) => `${o.label}: ${valorDoCampo(o, fields, member, {})} (já era esse)`)),
+    });
+  }
+
+  // 4. ESCRITA — um PUT com tudo que mudou; briefing é acréscimo separado.
+  const CAMPOS_DO_PUT = new Set(['assignee', 'due', 'priority', 'status', 'title', 'description', 'remove_assignee', 'replace_assignee', 'start', 'estimate']);
+  if (Object.keys(put).length > 0) {
+    try {
+      await updateTask(config, taskId, {
+        ...(put.dueDate !== undefined ? { dueDate: put.dueDate as number | null } : {}),
+        ...(put.priority !== undefined ? { priority: put.priority as 1 | 2 | 3 | 4 } : {}),
+        ...(put.status !== undefined ? { status: put.status as string } : {}),
+        ...(put.name !== undefined ? { name: put.name as string } : {}),
+        ...(put.description !== undefined ? { description: put.description as string } : {}),
+        ...(put.addAssignees !== undefined ? { addAssignees: put.addAssignees as number[] } : {}),
+        ...(put.removeAssignees !== undefined ? { removeAssignees: put.removeAssignees as number[] } : {}),
+        ...(put.startDate !== undefined ? { startDate: put.startDate as number } : {}),
+        ...(put.timeEstimate !== undefined ? { timeEstimate: put.timeEstimate as number } : {}),
+      });
+      record('clickup.update_task', `${Object.keys(put).join('+')} -> ${taskId}`, true);
+      escreveu = true;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      record('clickup.update_task', `-> ${taskId}`, false, detail);
+      for (const o of outcomes.filter((o) => o.changed && CAMPOS_DO_PUT.has(o.field))) o.error = detail;
+      logger.warn({ task_id: taskId, error: detail }, '[update] ClickUp recusou o PUT');
     }
   }
 

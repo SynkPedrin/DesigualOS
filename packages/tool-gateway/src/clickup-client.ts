@@ -460,6 +460,10 @@ const taskDetailSchema = z.object({
   start_date: z.union([z.string(), z.number(), z.null()]).optional(),
   time_estimate: z.union([z.string(), z.number(), z.null()]).optional(),
   tags: z.array(z.object({ name: z.string() })).optional().default([]),
+  checklists: z
+    .array(z.object({ name: z.string().nullish(), items: z.array(z.object({ name: z.string().nullish() })).optional().default([]) }))
+    .optional()
+    .default([]),
   list: z.object({ id: z.string() }).nullish(),
   assignees: z
     .array(z.object({ id: z.number(), username: z.string().nullish() }))
@@ -489,6 +493,8 @@ export interface TaskDetail {
   timeEstimate: number | null;
   /** Tags aplicadas, em minúsculo como o ClickUp devolve. */
   tags: string[];
+  /** Checklists da task — o read-back precisa deles pra CONFERIR, não supor. */
+  checklists: Array<{ name: string; items: string[] }>;
   listId: string | null;
   assignees: Array<{ id: number; username: string | null }>;
   /** Corpo da task — é onde o bloco de REFERÊNCIAS/MATERIAIS é conferido. */
@@ -528,6 +534,7 @@ export async function getTask(config: ClickUpConfig, taskId: string): Promise<Ta
     startDate: numeroOuNull(raw.start_date),
     timeEstimate: numeroOuNull(raw.time_estimate),
     tags: (raw.tags ?? []).map((t) => t.name),
+    checklists: (raw.checklists ?? []).map((c) => ({ name: c.name ?? '', items: (c.items ?? []).map((i) => i.name ?? '') })),
     listId: raw.list?.id ?? null,
     assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),
     description: raw.description ?? raw.text_content ?? '',

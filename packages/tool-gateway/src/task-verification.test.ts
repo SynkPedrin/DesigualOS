@@ -11,6 +11,7 @@ const base: TaskDetail = {
   startDate: null,
   timeEstimate: null,
   tags: [],
+  checklists: [],
   listId: 'L1',
   assignees: [{ id: 42, username: 'pedro' }],
   description: '',

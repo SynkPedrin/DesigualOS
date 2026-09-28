@@ -123,10 +123,43 @@ function hashOf(text: string): string {
 }
 
 /**
+ * Forma canônica de TODOS os campos do pedido, pra chave de idempotência.
+ *
+ * Medido no ClickUp real em 28/09/2026: a versão anterior listava os campos um
+ * a um (título, responsável, prazo, descrição, comentário) e os campos novos
+ * — tag, prioridade, estimativa, início, checklist, campo personalizado,
+ * dependência — ficaram de fora. Consequência: "marca com a tag X", "estima
+ * 2h" e "põe urgente" na MESMA task geravam a MESMA chave, e a idempotência
+ * descartava a segunda e a terceira como "já tinha feito isso" sem nunca
+ * tocar o ClickUp. Três pedidos diferentes, uma execução.
+ *
+ * Agora a chave percorre o objeto inteiro: campo que o plano passar a carregar
+ * entra sozinho. Nome de pessoa e título entram normalizados (pra "Matheus
+ * Sain" e "matheus sain" contarem como o mesmo pedido); o resto entra em forma
+ * estável, com chaves e listas ordenadas pra que a ordem não invente
+ * diferença. Nada disso é persistido em claro — só o hash sai daqui.
+ */
+function canonicalizeChanges(changes: StructuredAction['changes']): unknown {
+  if (!changes) return null;
+  const entradas = Object.entries(changes)
+    .filter(([, v]) => v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0))
+    .map<[string, unknown]>(([k, v]) => {
+      if ((k === 'title' || k === 'assignee') && typeof v === 'string') return [k, normalizeTaskName(v)];
+      if (typeof v === 'string') return [k, v.trim().toLowerCase()];
+      if (Array.isArray(v)) return [k, v.map((x) => String(x).trim().toLowerCase()).sort()];
+      if (typeof v === 'object') {
+        return [k, Object.entries(v as Record<string, unknown>).map(([a, b]) => `${a.trim().toLowerCase()}=${String(b).trim().toLowerCase()}`).sort()];
+      }
+      return [k, v];
+    })
+    .sort(([a], [b]) => a.localeCompare(b));
+  return Object.fromEntries(entradas);
+}
+
+/**
  * Chave estável da operação lógica (D.3/F-03): retry do MESMO pedido (mesmo
  * conversationId + intent + alvo/lista + argumentos) regenera a MESMA chave.
- * O argsHash NUNCA carrega conteúdo bruto — títulos/pessoas entram
- * normalizados e o resto como hash.
+ * O argsHash NUNCA carrega conteúdo bruto — o que sai daqui já é hash.
  */
 function stableOperationKey(params: {
   conversationId: string;
@@ -134,17 +167,11 @@ function stableOperationKey(params: {
   listId: string | null;
   resolvedResourceId: string | null;
 }): { operationId: string; argsHash: string } {
-  const changes = params.action.changes;
   const canonical = JSON.stringify({
     intent: params.action.intent,
     list: params.listId,
     target: params.resolvedResourceId,
-    title: changes?.title ? normalizeTaskName(changes.title) : null,
-    assignee: changes?.assignee ? normalizeTaskName(changes.assignee) : null,
-    assigneeOperation: changes?.assigneeOperation ?? null,
-    due: changes?.dueDate ?? null,
-    description: changes?.description ? hashOf(changes.description) : null,
-    comment: changes?.comment ? hashOf(changes.comment) : null,
+    changes: canonicalizeChanges(params.action.changes),
   });
   const argsHash = hashOf(canonical);
   return { operationId: `bento-op:${hashOf(`${params.conversationId}|${canonical}`)}`, argsHash };
