@@ -21,7 +21,17 @@ vi.mock('@desigual-os/bento-core', async () => {
 });
 vi.mock('@desigual-os/tool-gateway', async () => {
   const actual = await vi.importActual<typeof import('@desigual-os/tool-gateway')>('@desigual-os/tool-gateway');
-  return { ...actual, createVerifiedSeniorTask: vi.fn(), createTaskComment: vi.fn(async () => ({ id: 'c1' })), getTaskComments: vi.fn(async () => []), uploadTaskAttachment: vi.fn(async () => ({ id: 'a1' })) };
+  return {
+    ...actual,
+    createVerifiedSeniorTask: vi.fn(),
+    createTaskComment: vi.fn(async () => ({ id: 'c1' })),
+    getTaskComments: vi.fn(async () => []),
+    uploadTaskAttachment: vi.fn(async () => ({ id: 'a1' })),
+    // O membro do ClickUp cujo e-mail está cadastrado no usuário do Desigual OS.
+    findMemberByEmail: vi.fn(async (_c: unknown, email: string) =>
+      email === 'pedro@institutoalmada.org' ? { id: 1, email, username: 'Pedro Gabriel', profilePicture: null, initials: null, color: null } : null,
+    ),
+  };
 });
 vi.mock('./bento-resource-state', () => ({
   loadResourceState: vi.fn(async () => ({
@@ -98,5 +108,45 @@ describe('tammy-regression-20260928: a cerca de QA não pode trancar a operaçã
     const r = await rodar('qa-bot@institutoalmada.org', 'Colormaq');
     expect(executeTaskUpdate).not.toHaveBeenCalled();
     expect(r?.status).toBe('failed');
+  });
+});
+
+describe('auto-atribuição no core: e-mail do ClickUp manda sobre o nome de exibição', () => {
+  beforeEach(() => {
+    vi.mocked(proposeBentoAction).mockReset().mockResolvedValue({
+      ...UPDATE,
+      changes: { assignee: 'D. Carvalho' },
+    });
+    vi.mocked(executeTaskUpdate).mockReset().mockResolvedValue({
+      execution_id: '', agent: 'bento', status: 'completed', answer: 'ok',
+      sources: [], tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 },
+    });
+    process.env.BENTO_OPENAI_CORE_ENABLED = 'true';
+    process.env.CLICKUP_API_KEY = 'k';
+    process.env.CLICKUP_TEAM_ID = 't';
+    delete process.env.CLICKUP_TEST_LIST_ID;
+  });
+
+  async function pedirAutoAtribuicao(requesterName: string | null, requesterClickUpEmail: string | null) {
+    await runBentoOpenAiCore({
+      message: 'Agora me coloque também como responsável nessa tarefa',
+      conversationId: 'conv1', organizationId: 'org1', clientId: 'c1',
+      clientName: 'D. Carvalho', userEmail: 'quem@institutoalmada.org', userName: 'quem pediu',
+      requesterName, requesterClickUpEmail,
+      seniorToolContext: seniorCtx, logger: fakeLogger,
+    });
+    return vi.mocked(executeTaskUpdate).mock.calls[0]?.[0].fields.personName;
+  }
+
+  it('sem e-mail cadastrado, vale o nome — o caso da Tammy', async () => {
+    expect(await pedirAutoAtribuicao('tammy', null)).toBe('tammy');
+  });
+
+  it('com e-mail cadastrado, vale o username do ClickUp — a conta "super" é "Pedro Gabriel" lá', async () => {
+    expect(await pedirAutoAtribuicao('super', 'pedro@institutoalmada.org')).toBe('Pedro Gabriel');
+  });
+
+  it('o nome do cliente NUNCA chega ao ClickUp como responsável', async () => {
+    expect(await pedirAutoAtribuicao('tammy', null)).not.toBe('D. Carvalho');
   });
 });

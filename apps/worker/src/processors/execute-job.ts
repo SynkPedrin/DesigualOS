@@ -1253,6 +1253,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         userName: jobUser?.name ?? jobUser?.email ?? 'a operação',
         userEmail: jobUser?.email ?? null,
         requesterName: jobUser?.name ?? null,
+        requesterClickUpEmail: jobUser?.clickupEmail ?? null,
         attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
         briefingWriter: async (prompt) => (await completeTextSafely(prompt, logger)) ?? (await completeTextViaOllama(prompt, logger)),
         logger,

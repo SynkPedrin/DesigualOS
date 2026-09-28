@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Logger } from '@desigual-os/logging';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
-import { createTaskComment, getTaskComments, normalizeTaskName, type SeniorToolContext } from '@desigual-os/tool-gateway';
+import { createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, type SeniorToolContext } from '@desigual-os/tool-gateway';
 import { createVerifiedSeniorTask, MutationBudget } from '@desigual-os/tool-gateway';
 import {
   proposeBentoAction,
@@ -206,6 +206,13 @@ export interface BentoOpenAiCoreParams {
    */
   requesterName?: string | null;
   /**
+   * E-mail de quem pediu NO CLICKUP, quando cadastrado (`users.clickup_email`).
+   * Tem precedência sobre o nome na auto-atribuição: o nome de exibição do
+   * Desigual OS nem sempre é o username do ClickUp — a conta `super` se chama
+   * "super" aqui e é "Pedro Gabriel" lá, e por nome não resolveria.
+   */
+  requesterClickUpEmail?: string | null;
+  /**
    * E-mail de quem pediu. É o que distingue uma pessoa da operação do bot de
    * QA, e por isso decide se a cerca de lista do `write-scope` vale para esta
    * escrita. Ver a construção do `config` abaixo.
@@ -299,6 +306,14 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       clientName: params.clientName,
     });
     if (correcao.motivo) {
+      // Quando existe e-mail do ClickUp cadastrado, ele MANDA: nome de
+      // exibição é apelido, e-mail é identidade. Só custa uma chamada nos
+      // turnos de auto-atribuição, e os membros já vêm de cache.
+      if (correcao.motivo === 'auto_atribuicao' && params.requesterClickUpEmail) {
+        const cfgLeitura = getClickUpConfigOrNull();
+        const porEmail = cfgLeitura ? await findMemberByEmail(cfgLeitura, params.requesterClickUpEmail).catch(() => null) : null;
+        if (porEmail) correcao.assignee = porEmail.username;
+      }
       params.logger.info(
         { conversationId: params.conversationId, de: action.changes.assignee ?? null, para: correcao.assignee, motivo: correcao.motivo },
         '[bento-openai-core] responsável corrigido antes da escrita',
