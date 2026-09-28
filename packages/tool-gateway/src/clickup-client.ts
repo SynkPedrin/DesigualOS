@@ -222,6 +222,10 @@ export interface CreateTaskParams {
   /** Epoch em ms (formato do ClickUp). */
   dueDate?: number;
   tags?: string[];
+  /** Id da task-mãe: é assim que o ClickUp cria SUBTAREFA (28/09/2026). */
+  parent?: string;
+  /** Epoch ms. */
+  startDate?: number;
 }
 
 export interface CreatedTask {
@@ -240,6 +244,8 @@ export async function createTask(config: ClickUpConfig, params: CreateTaskParams
       assignees: params.assigneeId ? [params.assigneeId] : undefined,
       priority: params.priority,
       due_date: params.dueDate,
+      start_date: params.startDate,
+      parent: params.parent,
       tags: params.tags && params.tags.length > 0 ? params.tags : undefined,
     }),
   });
@@ -263,6 +269,10 @@ export interface UpdateTaskParams {
   dueDate?: number | null;
   addAssignees?: number[];
   removeAssignees?: number[];
+  /** Epoch ms. Null limpa. Campo separado do vencimento (28/09/2026). */
+  startDate?: number | null;
+  /** Estimativa em MILISSEGUNDOS, que é a unidade do ClickUp. Null limpa. */
+  timeEstimate?: number | null;
 }
 
 export async function updateTask(config: ClickUpConfig, taskId: string, params: UpdateTaskParams): Promise<void> {
@@ -273,6 +283,8 @@ export async function updateTask(config: ClickUpConfig, taskId: string, params: 
   if (params.status !== undefined) body.status = params.status;
   if (params.priority !== undefined) body.priority = params.priority;
   if (params.dueDate !== undefined) body.due_date = params.dueDate;
+  if (params.startDate !== undefined) body.start_date = params.startDate;
+  if (params.timeEstimate !== undefined) body.time_estimate = params.timeEstimate;
   if (params.addAssignees?.length || params.removeAssignees?.length) {
     body.assignees = {
       ...(params.addAssignees?.length ? { add: params.addAssignees } : {}),
@@ -445,6 +457,9 @@ const taskDetailSchema = z.object({
    */
   priority: z.object({ id: z.coerce.number().int().min(1).max(4) }).nullish(),
   due_date: z.union([z.string(), z.number(), z.null()]).optional(),
+  start_date: z.union([z.string(), z.number(), z.null()]).optional(),
+  time_estimate: z.union([z.string(), z.number(), z.null()]).optional(),
+  tags: z.array(z.object({ name: z.string() })).optional().default([]),
   list: z.object({ id: z.string() }).nullish(),
   assignees: z
     .array(z.object({ id: z.number(), username: z.string().nullish() }))
@@ -469,6 +484,11 @@ export interface TaskDetail {
   /** 1=urgent, 2=high, 3=normal, 4=low (escala do ClickUp); null = sem prioridade definida. */
   priority: 1 | 2 | 3 | 4 | null;
   dueDate: number | null;
+  /** Início e estimativa (ms) — lidos pro read-back, 28/09/2026. */
+  startDate: number | null;
+  timeEstimate: number | null;
+  /** Tags aplicadas, em minúsculo como o ClickUp devolve. */
+  tags: string[];
   listId: string | null;
   assignees: Array<{ id: number; username: string | null }>;
   /** Corpo da task — é onde o bloco de REFERÊNCIAS/MATERIAIS é conferido. */
@@ -483,6 +503,13 @@ export interface TaskDetail {
  * status, prazo e responsáveis reais, que é o que o guard compara com o que
  * a ação prometeu antes de dizer "validada".
  */
+/** ClickUp devolve epoch/estimativa como string, número ou null, sem padrão. */
+function numeroOuNull(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function getTask(config: ClickUpConfig, taskId: string): Promise<TaskDetail> {
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
     headers: { Authorization: config.apiKey },
@@ -498,6 +525,9 @@ export async function getTask(config: ClickUpConfig, taskId: string): Promise<Ta
     status: raw.status?.status ?? null,
     priority: (raw.priority?.id as 1 | 2 | 3 | 4 | undefined) ?? null,
     dueDate: due != null && Number.isFinite(due) ? due : null,
+    startDate: numeroOuNull(raw.start_date),
+    timeEstimate: numeroOuNull(raw.time_estimate),
+    tags: (raw.tags ?? []).map((t) => t.name),
     listId: raw.list?.id ?? null,
     assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),
     description: raw.description ?? raw.text_content ?? '',
@@ -554,4 +584,147 @@ export async function replyToComment(config: ClickUpConfig, taskId: string, pare
   // O id da resposta precisa voltar pro chamador: o webhook a registra como
   // "já respondida" pra não responder à própria resposta (loop infinito).
   return createdCommentSchema.parse(await response.json()).id;
+}
+
+/* ------------------------------------------------------------------ */
+/* 28/09/2026 — primitivas que faltavam pro Bento operar o ClickUp     */
+/* inteiro. Todas passam por assertTaskInScope: a cerca de escrita     */
+/* vale pra elas como vale pro PUT /task.                             */
+/* ------------------------------------------------------------------ */
+
+/** Nome de tag é case-insensitive no ClickUp e não aceita barra. */
+function tagSegura(tag: string): string {
+  return encodeURIComponent(tag.trim());
+}
+
+export async function addTaskTag(config: ClickUpConfig, taskId: string, tag: string): Promise<void> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/tag/${tagSegura(tag)}`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    // A tag precisa existir NO SPACE antes de ser aplicada. O erro cru do
+    // ClickUp não diz isso, e quem lê a resposta fica sem saber o que fazer.
+    throw new Error(
+      detail.includes('not found') || response.status === 404
+        ? `A tag "${tag}" não existe neste space do ClickUp. Crie a tag no space antes de aplicá-la.`
+        : `ClickUp add tag failed (${response.status}): ${detail}`,
+    );
+  }
+}
+
+export async function removeTaskTag(config: ClickUpConfig, taskId: string, tag: string): Promise<void> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/tag/${tagSegura(tag)}`, {
+    method: 'DELETE',
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) throw new Error(`ClickUp remove tag failed (${response.status}): ${await response.text()}`);
+}
+
+/**
+ * Dependência entre tasks. `dependsOn` = esta task espera a outra;
+ * `dependencyOf` = a outra espera esta. Os dois nomes são os do ClickUp, e
+ * inverter os dois é o erro clássico — por isso não existe um "linkTasks"
+ * genérico aqui.
+ */
+export async function addTaskDependency(
+  config: ClickUpConfig,
+  taskId: string,
+  params: { dependsOn?: string; dependencyOf?: string },
+): Promise<void> {
+  if (!params.dependsOn && !params.dependencyOf) throw new Error('addTaskDependency exige dependsOn OU dependencyOf');
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/dependency`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(params.dependsOn ? { depends_on: params.dependsOn } : {}),
+      ...(params.dependencyOf ? { dependency_of: params.dependencyOf } : {}),
+    }),
+  });
+  if (!response.ok) throw new Error(`ClickUp add dependency failed (${response.status}): ${await response.text()}`);
+}
+
+export interface ClickUpCustomField {
+  id: string;
+  name: string;
+  type: string;
+  /** Opções de dropdown/label, quando o campo tem. */
+  options: Array<{ id: string; name: string }>;
+}
+
+const customFieldsSchema = z.object({
+  fields: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      type: z.string(),
+      type_config: z
+        .object({ options: z.array(z.object({ id: z.string(), name: z.string().nullish(), label: z.string().nullish() })).nullish() })
+        .nullish(),
+    }),
+  ),
+});
+
+/** Campos personalizados DA LISTA — é onde eles são definidos no ClickUp. */
+export async function listCustomFields(config: ClickUpConfig, listId: string): Promise<ClickUpCustomField[]> {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${listId}/field`, {
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) throw new Error(`ClickUp list custom fields failed (${response.status}): ${await response.text()}`);
+  const parsed = customFieldsSchema.parse(await response.json());
+  return parsed.fields.map((f) => ({
+    id: f.id,
+    name: f.name,
+    type: f.type,
+    options: (f.type_config?.options ?? []).map((o) => ({ id: o.id, name: o.name ?? o.label ?? '' })),
+  }));
+}
+
+/**
+ * Escreve UM campo personalizado. O `value` já vai no formato que aquele tipo
+ * de campo espera (id da opção em dropdown, epoch ms em data, número em
+ * number) — quem traduz do texto humano é a camada de cima, que enxerga as
+ * opções reais do campo.
+ */
+export async function setCustomFieldValue(
+  config: ClickUpConfig,
+  taskId: string,
+  fieldId: string,
+  value: unknown,
+): Promise<void> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/field/${fieldId}`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (!response.ok) throw new Error(`ClickUp set custom field failed (${response.status}): ${await response.text()}`);
+}
+
+/** Cria um checklist na task e devolve o id, pra popular os itens. */
+export async function createChecklist(config: ClickUpConfig, taskId: string, name: string): Promise<string> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/checklist`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) throw new Error(`ClickUp create checklist failed (${response.status}): ${await response.text()}`);
+  const json = (await response.json()) as { checklist?: { id?: string } };
+  const id = json.checklist?.id;
+  if (!id) throw new Error('ClickUp criou o checklist mas não devolveu o id');
+  return id;
+}
+
+export async function addChecklistItem(config: ClickUpConfig, checklistId: string, name: string): Promise<void> {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/checklist/${checklistId}/checklist_item`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) throw new Error(`ClickUp add checklist item failed (${response.status}): ${await response.text()}`);
 }

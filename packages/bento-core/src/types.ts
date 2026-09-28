@@ -90,6 +90,27 @@ export const structuredActionSchema = z.object({
        * caminho de escrita, não o modelo.
        */
       priority: z.string().optional(),
+      /* --- 28/09/2026: o resto do ClickUp que o Bento não alcançava --- */
+      /** Data de INÍCIO, separada do vencimento. Mesmo formato do dueDate. */
+      startDate: z.string().optional(),
+      /** Estimativa em linguagem natural ("2h", "30min", "1 dia"). */
+      timeEstimate: z.string().optional(),
+      /** Tags a aplicar e a tirar. A tag precisa existir no space. */
+      addTags: z.array(z.string()).optional(),
+      removeTags: z.array(z.string()).optional(),
+      /** Campos personalizados por NOME ("Etapa": "Aprovação"). O executor
+       * resolve nome→id e valor→opção lendo a lista; o modelo não chuta id. */
+      customFields: z.record(z.string(), z.string()).optional(),
+      /** Itens de checklist. `checklistName` nomeia o bloco. */
+      checklistName: z.string().optional(),
+      checklistItems: z.array(z.string()).optional(),
+      /** Dependência: esta task ESPERA a outra, ou a outra espera esta. */
+      dependsOnTaskId: z.string().optional(),
+      dependencyOfTaskId: z.string().optional(),
+      /** Id da task-mãe: create_task com isto preenchido cria SUBTAREFA. */
+      parentTaskId: z.string().optional(),
+      /** Responder NA THREAD de um comentário específico. */
+      replyToCommentId: z.string().optional(),
       comment: z.string().optional(),
     })
     .nullable(),

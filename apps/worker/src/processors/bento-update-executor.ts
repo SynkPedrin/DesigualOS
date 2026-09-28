@@ -1,12 +1,20 @@
 import {
+  addChecklistItem,
+  addTaskDependency,
+  addTaskTag,
+  createChecklist,
   getTask,
+  listCustomFields,
   listStatusesForTask,
+  removeTaskTag,
   resolveMemberByName,
+  setCustomFieldValue,
   updateTask,
   uploadTaskAttachment,
   type ClickUpConfig,
   type TaskDetail,
 } from '@desigual-os/tool-gateway';
+import { ehFalhaDeCampo, explicarFalhaDeCampo, resolverCampoPersonalizado } from './bento-field-values';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
 import type { Logger } from '@desigual-os/logging';
 import type { ExecutionRecord } from './execution-record';
@@ -57,6 +65,22 @@ export interface TaskUpdateFields {
   generateTitle?: boolean;
   /** "coloca a imagem nela" — anexo da conversa na MESMA task. */
   attachImage?: boolean;
+  /* --- 28/09/2026: o resto do ClickUp --- */
+  /** Data de INÍCIO (epoch ms), separada do vencimento. */
+  startDate?: number;
+  /** Estimativa em ms (já convertida de "2h" pela camada de cima). */
+  timeEstimate?: number;
+  /** Tags a aplicar/tirar. Precisam existir no space. */
+  addTags?: string[];
+  removeTags?: string[];
+  /** Campos personalizados por NOME, como a pessoa falou. */
+  customFields?: Record<string, string>;
+  /** Checklist novo na task. */
+  checklistName?: string;
+  checklistItems?: string[];
+  /** Dependência: esta task espera a outra / a outra espera esta. */
+  dependsOnTaskId?: string;
+  dependencyOfTaskId?: string;
 }
 
 interface FieldOutcome {
@@ -168,6 +192,20 @@ export async function executeTaskUpdate(params: {
       const alvo = fields.dueDate;
       outcomes.push({ field: 'due', label: '📅 Prazo', changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.dueDate !== null && mesmoDia(relida.dueDate, alvo) });
     }
+  }
+
+  if (fields.startDate !== undefined) {
+    if (atual.startDate === fields.startDate) {
+      outcomes.push({ field: 'start', label: '🚦 Início', changed: false, skippedAsAlready: true, verified: true, error: null });
+    } else {
+      put.startDate = fields.startDate;
+      outcomes.push({ field: 'start', label: '🚦 Início', changed: true, skippedAsAlready: false, verified: false, error: null });
+    }
+  }
+
+  if (fields.timeEstimate !== undefined) {
+    put.timeEstimate = fields.timeEstimate;
+    outcomes.push({ field: 'estimate', label: '⏱️ Estimativa', changed: true, skippedAsAlready: false, verified: false, error: null });
   }
 
   if (fields.priority !== undefined) {
@@ -399,7 +437,7 @@ export async function executeTaskUpdate(params: {
   }
 
   // 4. ESCRITA — um PUT com tudo que mudou; briefing é acréscimo separado.
-  const CAMPOS_DO_PUT = new Set(['assignee', 'due', 'priority', 'status', 'title', 'description', 'remove_assignee', 'replace_assignee']);
+  const CAMPOS_DO_PUT = new Set(['assignee', 'due', 'priority', 'status', 'title', 'description', 'remove_assignee', 'replace_assignee', 'start', 'estimate']);
   if (Object.keys(put).length > 0) {
     try {
       await updateTask(config, taskId, {
@@ -410,6 +448,8 @@ export async function executeTaskUpdate(params: {
         ...(put.description !== undefined ? { description: put.description as string } : {}),
         ...(put.addAssignees !== undefined ? { addAssignees: put.addAssignees as number[] } : {}),
         ...(put.removeAssignees !== undefined ? { removeAssignees: put.removeAssignees as number[] } : {}),
+        ...(put.startDate !== undefined ? { startDate: put.startDate as number } : {}),
+        ...(put.timeEstimate !== undefined ? { timeEstimate: put.timeEstimate as number } : {}),
       });
       record('clickup.update_task', `${Object.keys(put).join('+')} -> ${taskId}`, true);
       escreveu = true;
@@ -418,6 +458,106 @@ export async function executeTaskUpdate(params: {
       record('clickup.update_task', `-> ${taskId}`, false, detail);
       for (const o of outcomes.filter((o) => o.changed && CAMPOS_DO_PUT.has(o.field))) o.error = detail;
       logger.warn({ task_id: taskId, error: detail }, '[update] ClickUp recusou o PUT');
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 28/09/2026 — o que NÃO cabe no PUT /task: tag, dependência, campo
+   * personalizado e checklist são endpoints próprios do ClickUp. Cada um
+   * reporta seu próprio resultado, e falha de um não derruba os outros:
+   * quem pediu três coisas prefere duas feitas e uma explicada a um "não".
+   * ------------------------------------------------------------------ */
+  for (const tag of fields.addTags ?? []) {
+    if (atual.tags.some((t) => t.toLowerCase() === tag.trim().toLowerCase())) {
+      outcomes.push({ field: `tag:${tag}`, label: `🏷️ Tag "${tag}"`, changed: false, skippedAsAlready: true, verified: true, error: null });
+      continue;
+    }
+    try {
+      await addTaskTag(config, taskId, tag);
+      record('clickup.add_tag', `${tag} -> ${taskId}`, true);
+      escreveu = true;
+      outcomes.push({ field: `tag:${tag}`, label: `🏷️ Tag "${tag}"`, changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.tags.some((t) => t.toLowerCase() === tag.trim().toLowerCase()) });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      record('clickup.add_tag', `${tag} -> ${taskId}`, false, detail);
+      outcomes.push({ field: `tag:${tag}`, label: `🏷️ Tag "${tag}"`, changed: false, skippedAsAlready: false, verified: false, error: detail });
+    }
+  }
+
+  for (const tag of fields.removeTags ?? []) {
+    try {
+      await removeTaskTag(config, taskId, tag);
+      record('clickup.remove_tag', `${tag} -> ${taskId}`, true);
+      escreveu = true;
+      outcomes.push({ field: `untag:${tag}`, label: `🏷️ Tag "${tag}" removida`, changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => !relida.tags.some((t) => t.toLowerCase() === tag.trim().toLowerCase()) });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      record('clickup.remove_tag', `${tag} -> ${taskId}`, false, detail);
+      outcomes.push({ field: `untag:${tag}`, label: `🏷️ Tag "${tag}" removida`, changed: false, skippedAsAlready: false, verified: false, error: detail });
+    }
+  }
+
+  if (fields.customFields && Object.keys(fields.customFields).length > 0) {
+    // Os campos são definidos POR LISTA — sem a lista da task não há o que
+    // resolver, e inventar id de campo é exatamente o que não pode acontecer.
+    const listaDaTask = atual.listId;
+    const disponiveis = listaDaTask ? await listCustomFields(config, listaDaTask).catch(() => null) : null;
+    for (const [nome, valor] of Object.entries(fields.customFields)) {
+      if (!disponiveis) {
+        outcomes.push({ field: `cf:${nome}`, label: `🧩 ${nome}`, changed: false, skippedAsAlready: false, verified: false, error: 'não consegui ler os campos personalizados dessa lista' });
+        continue;
+      }
+      const resolvido = resolverCampoPersonalizado(disponiveis, nome, valor);
+      if (ehFalhaDeCampo(resolvido)) {
+        outcomes.push({ field: `cf:${nome}`, label: `🧩 ${nome}`, changed: false, skippedAsAlready: false, verified: false, error: explicarFalhaDeCampo(resolvido) });
+        continue;
+      }
+      try {
+        await setCustomFieldValue(config, taskId, resolvido.fieldId, resolvido.value);
+        record('clickup.set_custom_field', `${resolvido.fieldName}=${resolvido.rotulo} -> ${taskId}`, true);
+        escreveu = true;
+        outcomes.push({ field: `cf:${nome}`, label: `🧩 ${resolvido.fieldName}`, changed: true, skippedAsAlready: false, verified: false, error: null });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        record('clickup.set_custom_field', `${resolvido.fieldName} -> ${taskId}`, false, detail);
+        outcomes.push({ field: `cf:${nome}`, label: `🧩 ${resolvido.fieldName}`, changed: false, skippedAsAlready: false, verified: false, error: detail });
+      }
+    }
+  }
+
+  if (fields.checklistItems && fields.checklistItems.length > 0) {
+    const nome = fields.checklistName?.trim() || 'Checklist';
+    try {
+      const checklistId = await createChecklist(config, taskId, nome);
+      let criados = 0;
+      for (const item of fields.checklistItems) {
+        await addChecklistItem(config, checklistId, item).then(() => { criados += 1; }).catch(() => undefined);
+      }
+      record('clickup.create_checklist', `${nome} (${criados}/${fields.checklistItems.length}) -> ${taskId}`, true);
+      escreveu = true;
+      outcomes.push({ field: 'checklist', label: `☑️ Checklist "${nome}"`, changed: true, skippedAsAlready: false, verified: criados === fields.checklistItems.length, error: criados === fields.checklistItems.length ? null : `${criados}/${fields.checklistItems.length} itens criados` });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      record('clickup.create_checklist', `${nome} -> ${taskId}`, false, detail);
+      outcomes.push({ field: 'checklist', label: `☑️ Checklist "${nome}"`, changed: false, skippedAsAlready: false, verified: false, error: detail });
+    }
+  }
+
+  for (const [campo, rotulo, params] of [
+    ['depends_on', '🔗 Depende de', { dependsOn: fields.dependsOnTaskId }],
+    ['dependency_of', '🔗 Bloqueia', { dependencyOf: fields.dependencyOfTaskId }],
+  ] as Array<[string, string, { dependsOn?: string; dependencyOf?: string }]>) {
+    const alvo = params.dependsOn ?? params.dependencyOf;
+    if (!alvo) continue;
+    try {
+      await addTaskDependency(config, taskId, params);
+      record('clickup.add_dependency', `${campo}=${alvo} -> ${taskId}`, true);
+      escreveu = true;
+      outcomes.push({ field: campo, label: `${rotulo} ${alvo}`, changed: true, skippedAsAlready: false, verified: false, error: null });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      record('clickup.add_dependency', `${campo}=${alvo} -> ${taskId}`, false, detail);
+      outcomes.push({ field: campo, label: `${rotulo} ${alvo}`, changed: false, skippedAsAlready: false, verified: false, error: detail });
     }
   }
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Logger } from '@desigual-os/logging';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
-import { createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, type SeniorToolContext } from '@desigual-os/tool-gateway';
+import { createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, replyToComment, type SeniorToolContext } from '@desigual-os/tool-gateway';
 import { createVerifiedSeniorTask, MutationBudget } from '@desigual-os/tool-gateway';
 import {
   proposeBentoAction,
@@ -21,6 +21,7 @@ import { resolveFromLegacySelectionSnapshot } from './bento-legacy-selection-bri
 import { attachMaterials, buildTaskBriefing, type TaskAttachmentInput } from './bento-task-briefing';
 import { corrigirResponsavel } from './bento-self-assignment';
 import { desviarStatusQueEhPrioridade, mapPrioridade } from './bento-priority';
+import { parseEstimativa } from './bento-field-values';
 
 /**
  * bento-openai-core.ts — o loop novo pedido em "BENTO CORE CUTOVER":
@@ -573,6 +574,13 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
         description: briefing?.markdown ?? action.changes?.description ?? '',
         ...(action.changes?.assignee ? { assigneeName: action.changes.assignee } : {}),
         ...(createDueDate !== null ? { dueDate: createDueDate } : {}),
+        /* --- 28/09/2026: prioridade, tags, subtarefa e início já na criação --- */
+        ...(mapPrioridade(action.changes?.priority) ? { priority: mapPrioridade(action.changes?.priority)! } : {}),
+        ...(action.changes?.addTags?.length ? { tags: action.changes.addTags } : {}),
+        ...(action.changes?.parentTaskId ? { parent: action.changes.parentTaskId } : {}),
+        ...(action.changes?.startDate && parseDueDateMs(action.changes.startDate)
+          ? { startDate: parseDueDateMs(action.changes.startDate)! }
+          : {}),
       },
       new MutationBudget(),
     );
@@ -612,9 +620,20 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       return envelopeToExecuteResponse('bento', { success: false, verified: false, provider, resourceIds: [decision.resolvedResourceId], operation: 'comment_task', changes: {}, error: 'comentário vazio', retryable: false, sources: [] }, 'Não recebi o texto do comentário.');
     }
     try {
-      const created = await createTaskComment(config, decision.resolvedResourceId, text);
+      /**
+       * RESPOSTA NA THREAD (28/09/2026). Comentário solto e resposta a um
+       * comentário são coisas diferentes pra quem lê a task: a segunda
+       * preserva o fio da conversa. `replyToComment` já existia no cliente e
+       * nunca tinha sido usada.
+       */
+      const respondendo = action.changes?.replyToCommentId?.trim();
+      const created = respondendo
+        ? { id: await replyToComment(config, decision.resolvedResourceId, respondendo, text) }
+        : await createTaskComment(config, decision.resolvedResourceId, text);
       const comments = await getTaskComments(config, decision.resolvedResourceId).catch(() => []);
-      const verified = comments.some((c) => c.id === created.id);
+      // Resposta em thread não aparece na listagem de comentários raiz; sem
+      // conseguir reler, o honesto é não afirmar verificação.
+      const verified = respondendo ? Boolean(created.id) : comments.some((c) => c.id === created.id);
       const newState = applyExecutionToState(effectiveResourceState, { operation: 'comment_task', resourceIds: [decision.resolvedResourceId], verified, created: false });
       await persistResourceState(params.conversationId, newState);
       const envelope: WriteEnvelope = { success: true, verified, provider, resourceIds: [decision.resolvedResourceId], operation: 'comment_task', changes: { comment: text }, error: null, retryable: false, sources: [`CLICKUP_TASK:${decision.resolvedResourceId}`, `CLICKUP_COMMENT:${created.id}`] };
@@ -654,6 +673,21 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       // Prioridade (28/09/2026): o executor já sabia escrever o campo; faltava
       // o plano carregá-lo. Palavra que não mapeia vira ausência, não chute.
       ...(mapPrioridade(action.changes?.priority) ? { priority: mapPrioridade(action.changes?.priority)! } : {}),
+      /* --- 28/09/2026, onda 2: o resto do ClickUp --- */
+      ...(action.changes?.startDate && parseDueDateMs(action.changes.startDate)
+        ? { startDate: parseDueDateMs(action.changes.startDate)! }
+        : {}),
+      ...(parseEstimativa(action.changes?.timeEstimate) ? { timeEstimate: parseEstimativa(action.changes?.timeEstimate)! } : {}),
+      ...(action.changes?.addTags?.length ? { addTags: action.changes.addTags } : {}),
+      ...(action.changes?.removeTags?.length ? { removeTags: action.changes.removeTags } : {}),
+      ...(action.changes?.customFields && Object.keys(action.changes.customFields).length > 0
+        ? { customFields: action.changes.customFields }
+        : {}),
+      ...(action.changes?.checklistItems?.length
+        ? { checklistItems: action.changes.checklistItems, ...(action.changes.checklistName ? { checklistName: action.changes.checklistName } : {}) }
+        : {}),
+      ...(action.changes?.dependsOnTaskId ? { dependsOnTaskId: action.changes.dependsOnTaskId } : {}),
+      ...(action.changes?.dependencyOfTaskId ? { dependencyOfTaskId: action.changes.dependencyOfTaskId } : {}),
     },
     // Era `() => undefined`: o core aceitava o pedido e depois não sabia
     // traduzir status nenhum, então nada mudava. Reusa o mapeador do guard.

@@ -63,6 +63,9 @@ export interface CreateSeniorTaskParams {
   priority?: 1 | 2 | 3 | 4;
   dueDate?: number;
   tags?: string[];
+  /** 28/09/2026: subtarefa (task-mãe) e data de início. */
+  parent?: string;
+  startDate?: number;
 }
 
 function permitted(context: SeniorToolContext): boolean {
@@ -139,7 +142,8 @@ export async function createVerifiedSeniorTask(
   try {
     created = await createTask(config, { listId: params.listId, name: params.name, description: params.description,
       ...(assignee ? { assigneeId: assignee.id } : {}), ...(params.priority !== undefined ? { priority: params.priority } : {}),
-      ...(params.dueDate !== undefined ? { dueDate: params.dueDate } : {}), ...(params.tags !== undefined ? { tags: params.tags } : {}) });
+      ...(params.dueDate !== undefined ? { dueDate: params.dueDate } : {}), ...(params.tags !== undefined ? { tags: params.tags } : {}),
+      ...(params.parent !== undefined ? { parent: params.parent } : {}), ...(params.startDate !== undefined ? { startDate: params.startDate } : {}) });
   } catch (error) {
     return { success: false, errorCode: 'write_failed', message: error instanceof Error ? error.message : String(error), retryable: true };
   }
