@@ -1251,6 +1251,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
         // escrito em prosa. Mesmas fontes que o guard legado já usava.
         clientName: clienteDaExecucao?.name ?? null,
         userName: jobUser?.name ?? jobUser?.email ?? 'a operação',
+        userEmail: jobUser?.email ?? null,
         attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
         briefingWriter: async (prompt) => (await completeTextSafely(prompt, logger)) ?? (await completeTextViaOllama(prompt, logger)),
         logger,

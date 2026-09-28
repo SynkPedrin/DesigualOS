@@ -11,7 +11,7 @@ import {
   type StructuredAction,
   type WriteEnvelope,
 } from '@desigual-os/bento-core';
-import { getClickUpConfigOrNull, mapStatusHintToRealStatus } from './bento-action-guard';
+import { ehQaBot, getClickUpConfigOrNull, mapStatusHintToRealStatus, podeEscreverEmProducao } from './bento-action-guard';
 import { resolveWriteTarget } from './write-target';
 import { executeTaskUpdate } from './bento-update-executor';
 import { loadResourceState, persistResourceState, applyExecutionToState } from './bento-resource-state';
@@ -197,6 +197,12 @@ export interface BentoOpenAiCoreParams {
   clientName?: string | null;
   /** Quem pediu — vai pro briefing como origem da demanda. */
   userName?: string | null;
+  /**
+   * E-mail de quem pediu. É o que distingue uma pessoa da operação do bot de
+   * QA, e por isso decide se a cerca de lista do `write-scope` vale para esta
+   * escrita. Ver a construção do `config` abaixo.
+   */
+  userEmail?: string | null;
   /** Material que veio junto do pedido (print, arquivo). Vira anexo na task. */
   attachments?: TaskAttachmentInput[] | undefined;
   /**
@@ -317,7 +323,32 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
     );
   }
 
-  const config = getClickUpConfigOrNull();
+  /**
+   * A CERCA DE QA E A VÁLVULA DE ESCAPE (28/09/2026, achado com a Tammy).
+   *
+   * `write-scope.ts` tranca a escrita na lista de QA quando
+   * CLICKUP_TEST_LIST_ID está na env, e tem uma válvula prevista pra produção:
+   * `writeScope.authorizedForProduction`, que o guard legado monta em duas
+   * chamadas (ver bento-action-guard.ts:1462 e :1729). Este caminho novo
+   * montava o config CRU — sem `writeScope` — então TODA escrita dele era
+   * tratada como se fosse do bot de QA. Para a Tammy, mexer em qualquer task
+   * real voltava "Escrita BLOQUEADA: fora do escopo de teste".
+   *
+   * A regra é a mesma do legado, e é declarada aqui em vez de herdada por
+   * acidente: pessoa autenticada da operação escreve na operação; bot de QA
+   * continua trancado na lista de QA, e só no cliente de QA.
+   */
+  const ehBotDeQa = ehQaBot(params.userEmail ?? null);
+  if (!podeEscreverEmProducao({ userEmail: params.userEmail ?? null, clientName: params.clientName ?? null })) {
+    return envelopeToExecuteResponse(
+      'bento',
+      { success: false, verified: false, provider: null, resourceIds: [], operation: action.intent, changes: {}, error: 'escrita não autorizada para este cliente', retryable: false, sources: [] },
+      'Não tenho autorização de escrita para esse cliente.',
+    );
+  }
+
+  const configBase = getClickUpConfigOrNull();
+  const config = configBase ? { ...configBase, writeScope: { authorizedForProduction: !ehBotDeQa } } : null;
   if (!config) {
     return envelopeToExecuteResponse('bento', { success: false, verified: false, provider: null, resourceIds: [], operation: action.intent, changes: {}, error: 'ClickUp não configurado (CLICKUP_API_KEY/CLICKUP_TEAM_ID ausentes)', retryable: false, sources: [] }, 'ClickUp não está configurado neste ambiente.');
   }

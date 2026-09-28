@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-vi.mock('./bento-action-guard', () => ({ loadSelectionSnapshot: vi.fn() }));
+vi.mock('./bento-action-guard', () => ({
+  // A cerca de QA (write-scope) vive no guard; o core consulta estes dois pra
+  // decidir se a escrita é da operação ou do bot de QA. Ver
+  // tammy-regression-20260928-escopo-de-escrita.test.ts.
+  ehQaBot: (email: string | null) => email === 'qa-bot@institutoalmada.org',
+  podeEscreverEmProducao: () => true,
+ loadSelectionSnapshot: vi.fn() }));
 
 import { loadSelectionSnapshot } from './bento-action-guard.js';
 import { resolveFromLegacySelectionSnapshot } from './bento-legacy-selection-bridge.js';

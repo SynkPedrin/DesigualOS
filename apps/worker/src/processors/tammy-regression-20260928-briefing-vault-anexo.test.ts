@@ -31,6 +31,12 @@ vi.mock('@desigual-os/tool-gateway', async () => {
   };
 });
 vi.mock('./bento-action-guard', () => ({
+  // A cerca de QA (write-scope) vive no guard; o core consulta estes dois pra
+  // decidir se a escrita é da operação ou do bot de QA. Ver
+  // tammy-regression-20260928-escopo-de-escrita.test.ts.
+  ehQaBot: (email: string | null) => email === 'qa-bot@institutoalmada.org',
+  podeEscreverEmProducao: () => true,
+
   getClickUpConfigOrNull: vi.fn(() => ({ apiKey: 'k', teamId: 't' })),
   loadSelectionSnapshot: vi.fn(async () => null),
   mapStatusHintToRealStatus: (hint: string, statuses: string[]) =>

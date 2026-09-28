@@ -9,6 +9,12 @@ vi.mock('@desigual-os/tool-gateway', async () => {
   return { ...actual, createVerifiedSeniorTask: vi.fn(), createTaskComment: vi.fn(), getTaskComments: vi.fn() };
 });
 vi.mock('./bento-action-guard', () => ({
+  // A cerca de QA (write-scope) vive no guard; o core consulta estes dois pra
+  // decidir se a escrita é da operação ou do bot de QA. Ver
+  // tammy-regression-20260928-escopo-de-escrita.test.ts.
+  ehQaBot: (email: string | null) => email === 'qa-bot@institutoalmada.org',
+  podeEscreverEmProducao: () => true,
+
   getClickUpConfigOrNull: vi.fn(() => ({ apiKey: 'k', teamId: 't' })),
   loadSelectionSnapshot: vi.fn(async () => null),
   // Mapeador real de status (hint pt-BR -> coluna da lista); o core passa ele
