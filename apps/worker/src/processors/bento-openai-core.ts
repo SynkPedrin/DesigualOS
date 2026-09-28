@@ -21,6 +21,7 @@ import { resolveFromLegacySelectionSnapshot } from './bento-legacy-selection-bri
 import { attachMaterials, buildTaskBriefing, type TaskAttachmentInput } from './bento-task-briefing';
 import { corrigirResponsavel } from './bento-self-assignment';
 import { desviarStatusQueEhPrioridade, mapPrioridade } from './bento-priority';
+import { observacoesDoPedido, observacoesProativas } from './bento-proatividade';
 import { parseEstimativa } from './bento-field-values';
 
 /**
@@ -634,6 +635,10 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       briefing ? `📋 Briefing de ${briefing.deliveryType === 'generic' ? 'entrega operacional' : briefing.deliveryType} anexado na descrição.` : null,
       briefing?.missingCritical.length ? `⚠️ Falta confirmar: ${briefing.missingCritical.join(', ')}.` : null,
       anexados.length ? `📎 ${subiram}/${anexados.length} anexo(s) na task.` : null,
+      // A task já foi relida pela criação verificada. Dizer o que se vê nela
+      // custa zero e é a diferença entre um executor e um colega — ver
+      // bento-proatividade.ts. Nunca executa nada por conta própria.
+      ...observacoesProativas({ task: result.data as unknown as import('@desigual-os/tool-gateway').TaskDetail | null }),
     ].filter(Boolean) as string[];
 
     return envelopeToExecuteResponse('bento', envelope, linhas.join('\n'), executionRecordFromEnvelope(envelope, recordExtras));
@@ -775,11 +780,26 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
     });
   }
 
+  /**
+   * O QUE O PEDIDO REVELA (28/09/2026). No update, reler a task só pra observar
+   * custaria uma chamada a mais no turno — e latência já é problema conhecido
+   * aqui. Então a observação sai do PRÓPRIO PEDIDO, que é de graça: prazo
+   * marcado pra trás, ou o último responsável saindo. Ver bento-proatividade.ts.
+   */
+  const observacoes = verified
+    ? observacoesDoPedido({
+        dueDateMs: action.changes?.dueDate ? parseDueDateMs(action.changes.dueDate) : null,
+        removeuResponsavel: action.changes?.assigneeOperation === 'remove',
+      })
+    : [];
+  const answerComObservacao = observacoes.length > 0 ? `${response.answer}\n\n${observacoes.join('\n')}` : response.answer;
+
   // D.4: o executor já grava `execucao` (operation 'update' — o dedup casa
   // pelo alias); aqui o recibo ganha a chave estável da operação e o provider.
   const execucaoAnterior = response.metadata?.execucao;
   return {
     ...response,
+    answer: answerComObservacao,
     sources: resourceIds.map((id) => `CLICKUP_TASK:${id}`),
     metadata: {
       ...response.metadata,
