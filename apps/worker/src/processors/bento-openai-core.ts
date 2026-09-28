@@ -19,6 +19,7 @@ import { loadLatestExecutionState, sameExecutionAlreadyDone, type ExecutionRecor
 import { selectWriteProvider, executeViaMcp, parseDueDateMs, type McpWriteEnvelope } from './bento-mcp-executor';
 import { resolveFromLegacySelectionSnapshot } from './bento-legacy-selection-bridge';
 import { attachMaterials, buildTaskBriefing, type TaskAttachmentInput } from './bento-task-briefing';
+import { corrigirResponsavel } from './bento-self-assignment';
 
 /**
  * bento-openai-core.ts — o loop novo pedido em "BENTO CORE CUTOVER":
@@ -198,6 +199,13 @@ export interface BentoOpenAiCoreParams {
   /** Quem pediu — vai pro briefing como origem da demanda. */
   userName?: string | null;
   /**
+   * O nome CADASTRADO de quem pediu, ou null. Diferente de `userName`, que tem
+   * fallback genérico pro briefing: aqui um fallback viraria um responsável
+   * inexistente, então não havendo nome o certo é não atribuir. Ver
+   * bento-self-assignment.ts.
+   */
+  requesterName?: string | null;
+  /**
    * E-mail de quem pediu. É o que distingue uma pessoa da operação do bot de
    * QA, e por isso decide se a cerca de lista do `write-scope` vale para esta
    * escrita. Ver a construção do `config` abaixo.
@@ -271,6 +279,35 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
   // exclusão, então a continuidade do core novo não fica com foco morto.
   if (action.intent === 'read_tasks' || action.intent === 'get_task' || action.intent === 'analyze_tasks' || action.intent === 'delete_task') {
     return null;
+  }
+
+  /**
+   * QUEM É O RESPONSÁVEL não pode depender do modelo acertar o pronome.
+   *
+   * 28/09/2026, com a Tammy: "Agora me coloque também como responsável nessa
+   * tarefa" virou `assignee: "D. Carvalho"` — o nome do CLIENTE. O planner tem
+   * o cliente no contexto e não tinha quem estava falando, então preencheu o
+   * "me" com o único nome próprio à mão. Ver bento-self-assignment.ts: a
+   * correção é determinística e roda ANTES da policy, pra que tudo daqui pra
+   * baixo (validação, chave de idempotência, execução) enxergue o mesmo dado.
+   */
+  if (action.changes) {
+    const correcao = corrigirResponsavel({
+      message: params.message,
+      assignee: action.changes.assignee,
+      requesterName: params.requesterName ?? null,
+      clientName: params.clientName,
+    });
+    if (correcao.motivo) {
+      params.logger.info(
+        { conversationId: params.conversationId, de: action.changes.assignee ?? null, para: correcao.assignee, motivo: correcao.motivo },
+        '[bento-openai-core] responsável corrigido antes da escrita',
+      );
+      action = {
+        ...action,
+        changes: { ...action.changes, ...(correcao.assignee ? { assignee: correcao.assignee } : { assignee: undefined }) },
+      };
+    }
   }
 
   if (!params.seniorToolContext) {
