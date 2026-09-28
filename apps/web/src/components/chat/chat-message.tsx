@@ -8,11 +8,12 @@ import { MarkdownLite } from '@/lib/markdown-lite';
 import { AGENT_META } from '@/lib/agent-meta';
 import { ThinkingSteps } from './thinking-steps';
 import { MotionCard, type ChatMotionRef } from './motion-card';
+import { MotionBriefCard } from './motion-brief-card';
 import { useTypewriter } from '@/hooks/use-typewriter';
 import { formatClockTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { AgentName, ExecutionStatus } from '@desigual-os/types';
-import type { TeamMember } from '@/lib/api/contracts';
+import type { ChatMotionBriefRequestWire, TeamMember } from '@/lib/api/contracts';
 
 /** Anexo de mensagem persistida (attachment_url/type/filename do backend). */
 export interface ChatUiAttachment {
@@ -38,6 +39,10 @@ export interface ChatUiMessage {
   liveSteps?: string[] | undefined;
   /** Otto Motion Engine: presente, o balão ganha o player abaixo do texto. */
   motion?: ChatMotionRef | null | undefined;
+  /** Pedido de briefing do motion: presente, o balão ganha o formulário
+   * (MotionBriefCard). `conversationId` é o fio onde o briefing é enviado. */
+  motionBriefRequest?: ChatMotionBriefRequestWire | null | undefined;
+  conversationId?: string | null | undefined;
   createdAt?: string | undefined;
 }
 
@@ -211,6 +216,10 @@ export function ChatMessage({
               <MarkdownLite text={streamedContent} />
 
               {message.motion ? <MotionCard reference={message.motion} /> : null}
+
+              {message.motionBriefRequest ? (
+                <MotionBriefCard request={message.motionBriefRequest} conversationId={message.conversationId ?? null} />
+              ) : null}
 
               {message.sources && message.sources.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">

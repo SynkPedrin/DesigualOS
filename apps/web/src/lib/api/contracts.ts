@@ -342,6 +342,31 @@ export interface ChatAttachmentWire {
   contentType: string;
 }
 
+/** Briefing estruturado do Otto Motion Engine (card de briefing no chat).
+ * Chave snake_case no envelope, conteúdo camelCase — contrato congelado com o
+ * backend (24/09/2026). Só os campos preenchidos vão no POST. */
+export interface MotionBriefWire {
+  campaignName?: string;
+  objective?: string;
+  offer?: {
+    name?: string;
+    price?: string;
+    originalPrice?: string;
+    installments?: number;
+    installmentValue?: string;
+    discount?: string;
+    condition?: string;
+  };
+  cta?: string;
+  audience?: string;
+  platform?: string;
+  aspectRatio?: string;
+  duration?: number;
+  fps?: 24 | 30 | 60;
+  tone?: string;
+  notes?: string;
+}
+
 export interface ChatRequestWire {
   message: string;
   client_id: string | null;
@@ -352,6 +377,9 @@ export interface ChatRequestWire {
   attachment?: ChatAttachmentWire | undefined;
   /** Até 10 anexos (imagens/documentos), colados ou selecionados no composer. */
   attachments?: ChatAttachmentWire[] | undefined;
+  /** Briefing do MotionBriefCard: dispara a geração de motion com contexto
+   * estruturado em vez de depender só do texto livre da mensagem. */
+  motion_brief?: MotionBriefWire | undefined;
 }
 
 /** POST /uploads — upload genérico (anexo do composer do chat). Só hospeda e devolve a URL. */
@@ -1100,6 +1128,19 @@ export interface ChatMotionRefWire {
   height?: number;
 }
 
+/** Pedido de briefing gravado em messages.metadata.motion_brief_request:
+ * a mensagem assistente vira um card de briefing (MotionBriefCard) em vez de
+ * texto puro. `prefill` já traz o que o Otto inferiu do pedido. */
+export interface ChatMotionBriefRequestWire {
+  client_id: string;
+  prefill: {
+    campaignName?: string;
+    duration?: number;
+    fps?: 24 | 30 | 60;
+    aspectRatio?: string;
+  };
+}
+
 export interface ConversationMessageWire {
   id: string;
   role: 'user' | 'assistant';
@@ -1112,6 +1153,7 @@ export interface ConversationMessageWire {
    * com attachment_url preenchido em mensagens antigas de antes desta coluna. */
   attachments?: ChatAttachmentWire[];
   motion?: ChatMotionRefWire | null;
+  motion_brief_request?: ChatMotionBriefRequestWire | null;
   created_at: ISODateString;
 }
 
@@ -1125,6 +1167,7 @@ export interface ConversationMessage {
   attachmentFilename: string | null;
   attachments: ChatAttachmentWire[];
   motion: ChatMotionRefWire | null;
+  motionBriefRequest: ChatMotionBriefRequestWire | null;
   createdAt: ISODateString;
 }
 
@@ -1153,6 +1196,7 @@ export function mapConversationMessage(wire: ConversationMessageWire): Conversat
     attachmentFilename: wire.attachment_filename,
     attachments,
     motion: wire.motion ?? null,
+    motionBriefRequest: wire.motion_brief_request ?? null,
     createdAt: wire.created_at,
   };
 }

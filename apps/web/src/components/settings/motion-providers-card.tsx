@@ -53,6 +53,12 @@ function ProviderCard({
   testing?: boolean;
 }) {
   const style = STATE_STYLE[provider.state] ?? STATE_STYLE.ERROR!;
+  // Limite de uso do Opus 5.5 (quota semanal): a message do wire já traz o
+  // texto exato ("O Claude Opus 5.5 está indisponível — limite de uso
+  // atingido.") e o detail guarda a data de reset. Vai em caixa de aviso,
+  // não na linha cinza de sempre: é o estado que exige ação quando a quota
+  // renovar, não uma observação qualquer.
+  const opusDown = provider.state === 'OPUS_UNAVAILABLE';
 
   return (
     <Surface level="grafite" className="flex flex-col gap-3 p-4">
@@ -70,7 +76,13 @@ function ProviderCard({
         </div>
       </div>
 
-      <p className="text-xs leading-relaxed text-branco-cru/65">{provider.message}</p>
+      {opusDown ? (
+        <p className="rounded-md border border-aviso/40 bg-aviso/10 px-2.5 py-2 text-xs leading-relaxed text-aviso">
+          {provider.message}
+        </p>
+      ) : (
+        <p className="text-xs leading-relaxed text-branco-cru/65">{provider.message}</p>
+      )}
 
       {provider.remedy ? (
         <p className="rounded-md border border-grafite-elevado bg-carbono/40 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-branco-cru/70">
@@ -91,14 +103,24 @@ function ProviderCard({
       ) : null}
 
       {onTest ? (
-        <button
-          type="button"
-          onClick={onTest}
-          disabled={testing}
-          className="self-start rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru/80 transition-colors hover:border-roxo-eletrico/60 hover:text-branco-cru disabled:opacity-50"
-        >
-          {testing ? 'Testando…' : 'Testar Opus 5.5'}
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={onTest}
+            disabled={testing}
+            className="self-start rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru/80 transition-colors hover:border-roxo-eletrico/60 hover:text-branco-cru disabled:opacity-50"
+          >
+            {testing ? 'Testando…' : 'Testar conexão'}
+          </button>
+          {opusDown ? (
+            // O teste é um probe REAL: é ele quem limpa o estado de quota e
+            // reabilita o motor quando o limite semanal renova (ver
+            // packages/otto-motion/src/providers/connection.ts).
+            <p className="text-[11px] leading-relaxed text-branco-cru/50">
+              Quando a quota renovar, teste a conexão para reabilitar.
+            </p>
+          ) : null}
+        </>
       ) : null}
     </Surface>
   );

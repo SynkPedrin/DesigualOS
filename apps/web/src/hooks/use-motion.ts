@@ -5,6 +5,19 @@ import { apiFetch } from '@/lib/api/client';
  * Studio — lista invertida, pra um status novo nunca congelar a tela). */
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
+export interface MotionVersionWire {
+  version: number;
+  quality: string;
+  url: string | null;
+  createdAt: string;
+}
+
+export interface MotionAssetsWire {
+  logo: boolean;
+  images: number;
+  videos: number;
+}
+
 export interface MotionStatusWire {
   motionId: string;
   status: string;
@@ -21,6 +34,12 @@ export interface MotionStatusWire {
   error: string | null;
   errorCode: string | null;
   updatedAt: string;
+  /** Campos novos do GET /motion/:id (contrato 24/09/2026). Opcionais enquanto
+   * o backend termina de publicar — a UI trata ausência como null/vazio. */
+  versions?: MotionVersionWire[] | undefined;
+  clientName?: string | null | undefined;
+  campaignName?: string | null | undefined;
+  assets?: MotionAssetsWire | null | undefined;
 }
 
 export function useMotion(motionId: string | null) {

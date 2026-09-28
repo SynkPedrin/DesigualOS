@@ -51,6 +51,12 @@ export function useRealtimeEvents(): void {
           break;
         case 'studio.job.progress':
           queryClient.invalidateQueries({ queryKey: ['studio', 'jobs'] });
+          // Motion Engine (publishStage em otto-motion/pipeline.ts): o payload
+          // carrega kind 'motion' + motion_id. Invalidar a query do card faz o
+          // player atualizar na hora em vez de esperar o próximo poll de 4s.
+          if (event.payload.kind === 'motion' && typeof event.payload.motion_id === 'string') {
+            queryClient.invalidateQueries({ queryKey: ['motion', event.payload.motion_id] });
+          }
           if (event.payload.status === 'completed') {
             queryClient.invalidateQueries({ queryKey: ['studio', 'assets'] });
           }
