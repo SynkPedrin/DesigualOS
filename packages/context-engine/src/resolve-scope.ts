@@ -239,6 +239,39 @@ const OPERATIONAL_MARKERS = [
 ];
 
 /**
+ * ORDEM DE ESCRITA: o turno que MUDA a operação, não o que a lê.
+ *
+ * Medido ao vivo em 28/09/2026, com anexo, no chat real: "cria a task X pra
+ * Matheus Sain (...) prazo pra amanhã" batia em dois marcadores de leitura
+ * ("task" e "amanhã"), o chamador varria as listas dos 52 clientes autorizados
+ * no ClickUp ANTES de enfileirar, e o POST /chat levava 186s. O fetch do
+ * frontend aborta em 120s: a task era criada no ClickUp e a pessoa ficava
+ * olhando "pensando" pra sempre. Efeito colateral sem resposta é o pior modo de
+ * falha que este sistema tem.
+ *
+ * A varredura ali era desperdício puro: quem manda criar/mudar/apagar não está
+ * perguntando o estado da operação, e o worker resolve o alvo da escrita pela
+ * própria memória de recurso do turno. O "prazo pra amanhã" da frase é ATRIBUTO
+ * da task que vai nascer, não janela de consulta.
+ *
+ * Verbo no imperativo, começo de palavra. Conservador de propósito: a supressão
+ * só vale quando NÃO há pergunta nem marcador de panorama/global/agregado na
+ * mensagem — "cria a task e me diz o que mais vence amanhã" continua lendo.
+ */
+const WRITE_ORDER_RE =
+  /(^|[\s,;:.!])(cria|crie|criar|cadastra|cadastre|lanca|lance|lancar|abre|abra|abrir|adiciona|adicione|atribui|atribua|atribuir|delega|delegue|separa|separe|poe|poem|coloca|coloque|move|mova|mover|muda|mude|mudar|altera|altere|alterar|atualiza|atualize|renomeia|renomeie|edita|edite|marca|marque|fecha|feche|fechar|conclui|conclua|concluir|finaliza|finalize|apaga|apague|apagar|deleta|delete|deletar|exclui|exclua|excluir|remove|remova|remover)\b/;
+
+/**
+ * Interrogação explícita: "?" ou pronome/advérbio de pergunta abrindo trecho.
+ *
+ * "como" fica de fora de propósito: em ordem de escrita ele é comparativo, não
+ * pergunta — "marca essa demanda COMO concluída". As frases em que "como"
+ * pergunta de verdade ("como estamos?", "como que tá") ou já têm "?" ou já são
+ * PANORAMA_MARKERS, e nenhuma delas carrega verbo de escrita.
+ */
+const QUESTION_RE = /\?|(^|[\s,;:.!])(o que|oque|quais|qual|quantas|quantos|quem|quando|onde|por que|porque)\b/;
+
+/**
  * Perguntas agregadas sem cliente nomeado ("quantas tasks...", "o que vence..."). São o
  * caso mais comum de escopo global e o que mais gerava "de qual cliente?".
  */
@@ -447,14 +480,26 @@ export async function resolveOperationalScope(
   const herdaDoAnterior = Boolean(anterior?.operational) && ehFollowUpEliptico(message);
   if (herdaDoAnterior) signals.push('herdado:follow-up');
 
+  // Ver WRITE_ORDER_RE: ordem de escrita sem pergunta junto não gasta consulta
+  // ao vivo no ClickUp. O panorama/global/agregado ganha da supressão — quem
+  // pede as duas coisas na mesma frase quer as duas.
+  const ordemDeEscrita =
+    WRITE_ORDER_RE.test(flat) &&
+    !QUESTION_RE.test(flat) &&
+    panoramaHits.length === 0 &&
+    globalHits.length === 0 &&
+    aggregateHits.length === 0;
+  if (ordemDeEscrita) signals.push('escrita:sem-consulta');
+
   const operational =
-    operationalHits.length > 0 ||
-    aggregateHits.length > 0 ||
-    briefingHits.length > 0 ||
-    // Pedir o panorama É pedir o estado da operação, mesmo sem dizer "tarefa".
-    panoramaHits.length > 0 ||
-    herdaDoAnterior ||
-    temporal !== null;
+    !ordemDeEscrita &&
+    (operationalHits.length > 0 ||
+      aggregateHits.length > 0 ||
+      briefingHits.length > 0 ||
+      // Pedir o panorama É pedir o estado da operação, mesmo sem dizer "tarefa".
+      panoramaHits.length > 0 ||
+      herdaDoAnterior ||
+      temporal !== null);
   const comparative = comparativeHits.length > 0;
   const briefing = briefingHits.length > 0;
 

@@ -475,3 +475,47 @@ describe('follow-up elíptico herda a ENTIDADE, não só a intenção', () => {
     expect(r.clients[0]?.name).toBe('3Net');
   });
 });
+
+/**
+ * 28/09/2026 — medido no chat real, com anexo. "cria a task X pra Fulano (...)
+ * prazo pra amanhã" batia em "task" e em "amanhã", o chamador varria as listas
+ * dos 52 clientes autorizados ANTES de enfileirar, e o POST /chat levava 186s.
+ * O fetch do frontend aborta em 120s: a task nascia no ClickUp e a pessoa ficava
+ * em "pensando" pra sempre. Ordem de escrita não é pedido de leitura.
+ */
+describe('ordem de escrita não gasta consulta ao vivo', () => {
+  it.each([
+    'cria a task do carrossel pra Matheus Sain, prazo pra amanhã',
+    'muda o prazo dessa task para sexta',
+    'coloca a Jamile também nessa tarefa',
+    'apaga essa task',
+    'fecha a task do layout',
+    'marca essa demanda como concluída',
+    'renomeia essa tarefa para Carrossel v2',
+  ])('%s -> operational=false', async (m) => {
+    const r = await resolveOperationalScope(m, new Date(), null);
+    expect(r.operational).toBe(false);
+    expect(r.signals).toContain('escrita:sem-consulta');
+  });
+
+  it.each([
+    'quais tasks vencem amanhã?',
+    'o que tá pegando hoje',
+    'me atualiza',
+    'quantas tarefas estão atrasadas',
+    'todas as tasks da agência que vencem amanhã',
+  ])('%s -> continua lendo (operational=true)', async (m) => {
+    const r = await resolveOperationalScope(m, new Date(), null);
+    expect(r.operational).toBe(true);
+  });
+
+  it('pedir as duas coisas na mesma frase mantém a leitura', async () => {
+    const r = await resolveOperationalScope('cria a task do carrossel e me diz o que mais vence amanhã', new Date(), null);
+    expect(r.operational).toBe(true);
+  });
+
+  it('"criação" não é ordem de escrita — palavra inteira, não prefixo', async () => {
+    const r = await resolveOperationalScope('quais tarefas estão na criação essa semana?', new Date(), null);
+    expect(r.operational).toBe(true);
+  });
+});

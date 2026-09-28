@@ -5,9 +5,11 @@ import { db, schema } from '@desigual-os/database';
 import {
   buildContext,
   formatContextForPrompt,
+  parseSelectionSnapshot,
   resolveClientFromText,
   resolveDefaultProjectForClient,
   type EstadoDoTurnoAnterior,
+  type SelectionSnapshot,
 } from '@desigual-os/context-engine';
 import { route, type RouterDecision } from '@desigual-os/router';
 import { dispatchChatMessage, touchConversation } from '@desigual-os/orchestrator';
@@ -20,7 +22,7 @@ import {
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
-import { formatOperationalContextForPrompt, resolveOperationalTurn } from '../lib/operational-context';
+import { formatOperationalContextForPrompt, resolveOperationalTurn, type OperationalTurn } from '../lib/operational-context';
 import {
   agenteAceitaBlocoNaMensagem,
   contextoGeralVaiNaMensagem,
@@ -43,6 +45,40 @@ const chatAttachmentSchema = z.object({
   placement: z.enum(STUDIO_BRAND_PLACEMENTS).optional(),
 });
 
+/**
+ * Briefing estruturado do card de motion (fluxo "Gerar Motion" do chat).
+ *
+ * ESPELHO do `campaignBriefSchema` de @desigual-os/otto-motion, reescrito aqui
+ * em vez de importado: a API está em zod v3 e o otto-motion em zod v4, e um
+ * schema v4 NÃO compõe dentro de um z.object v3 (internals diferentes, quebra
+ * em runtime). O contrato é único e congelado com o frontend — se um lado
+ * mudar, os dois mudam. Limites idênticos aos do schema de origem
+ * (packages/otto-motion/src/brief/schema.ts).
+ */
+const motionBriefOfferSchema = z.object({
+  name: z.string().trim().min(1).max(160).optional(),
+  price: z.string().trim().max(40).optional(),
+  originalPrice: z.string().trim().max(40).optional(),
+  installments: z.string().trim().max(40).optional(),
+  installmentValue: z.string().trim().max(40).optional(),
+  discount: z.string().trim().max(40).optional(),
+  condition: z.string().trim().max(240).optional(),
+});
+
+const motionBriefSchema = z.object({
+  campaignName: z.string().trim().max(160).optional(),
+  objective: z.string().trim().max(240).optional(),
+  offer: motionBriefOfferSchema.optional(),
+  cta: z.string().trim().max(120).optional(),
+  audience: z.string().trim().max(400).optional(),
+  platform: z.string().trim().max(80).optional(),
+  aspectRatio: z.enum(['9:16', '4:5', '1:1', '16:9']).optional(),
+  duration: z.number().int().min(2).max(120).optional(),
+  fps: z.union([z.literal(24), z.literal(30), z.literal(60)]).optional(),
+  tone: z.string().trim().max(120).optional(),
+  notes: z.string().trim().max(2000).optional(),
+});
+
 const chatRequestSchema = z.object({
   message: z.string().min(1),
   client_id: z.string().uuid().nullable().optional(),
@@ -55,7 +91,51 @@ const chatRequestSchema = z.object({
   // compatibilidade com clientes antigos. Ver normalização em `attachments`
   // logo abaixo do parse.
   attachments: z.array(chatAttachmentSchema).max(10).optional(),
+  // Card de briefing do Motion Engine preenchido ("Gerar Motion"). Sem ele, um
+  // pedido de motion recebe de volta o PEDIDO de briefing (metadata
+  // motion_brief_request) em vez de abrir sessão — ver motion-guard.ts no worker.
+  motion_brief: motionBriefSchema.optional(),
 });
+
+/**
+ * Teto de tempo para o trabalho que acontece ANTES do 202 do POST /chat.
+ *
+ * Não é "aumentar timeout" — é o contrário. O fetch do frontend aborta em 120s
+ * (ver API_FETCH_TIMEOUT_MS no client da web) e, em 28/09/2026, uma criação de
+ * task com anexo gastou 186s aqui varrendo o ClickUp: a task nasceu e a pessoa
+ * nunca viu a resposta. Silêncio com efeito colateral é o pior desfecho
+ * possível, então o ack tem prazo e o prazo é menor que o do navegador.
+ *
+ * Estourar o prazo NÃO inventa dado: devolve o turno sem contexto operacional e
+ * com a falha declarada, que é o mesmo caminho já usado quando o ClickUp está
+ * fora do ar. O agente admite que não conseguiu ler, e a conversa continua.
+ */
+const PRAZO_ACK_MS = Number(process.env.CHAT_ACK_DEADLINE_MS ?? 25_000);
+
+async function comPrazoDeAck(
+  promessa: Promise<OperationalTurn>,
+  log: { warn: (obj: object, msg: string) => void },
+): Promise<OperationalTurn> {
+  let timer: NodeJS.Timeout | undefined;
+  const estouro = new Promise<'PRAZO'>((resolve) => {
+    timer = setTimeout(() => resolve('PRAZO'), PRAZO_ACK_MS);
+  });
+  try {
+    // A promessa original segue rodando em background se estourar; o que se
+    // abandona é a ESPERA por ela, não a consulta (que ainda aquece o cache).
+    const vencedor = await Promise.race([promessa, estouro]);
+    if (vencedor !== 'PRAZO') return vencedor;
+    log.warn({ prazoMs: PRAZO_ACK_MS }, '[chat] contexto operacional não chegou no prazo do ack; seguindo sem ele');
+    return {
+      scope: { kind: 'NONE', clients: [], ambiguous: [], temporal: null, operational: false, comparative: false, briefing: false, person: null, signals: ['ack:prazo-estourado'], confidence: 0 },
+      context: { block: null, listedTasks: [], summary: null, failure: 'não consegui consultar o ClickUp a tempo neste turno' },
+      briefingBlock: null,
+      selection: null,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function manualDecision(agent: AgentName): RouterDecision {
   return {
@@ -96,6 +176,9 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         body.project_id ?? '',
         body.message,
         ...attachments.map((a) => a.url),
+        // O brief entra na chave: dois "Gerar Motion" com cards diferentes
+        // não são o mesmo pedido, mesmo com a mesma mensagem texto.
+        ...(body.motion_brief ? [JSON.stringify(body.motion_brief)] : []),
       ]);
       const existing = await claimIdempotency(idemKey);
       if (existing !== null) {
@@ -269,6 +352,31 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
       const escopoAnterior =
         (anteriores[0]?.metadata as { escopo?: EstadoDoTurnoAnterior } | null)?.escopo ?? null;
 
+      /**
+       * A SELEÇÃO DA CONVERSA (24/09/2026): as tasks que um turno anterior
+       * listou, com ids/títulos/clientes/prazos e o motivo da seleção. É o
+       * referente de "delas", "cada uma", "a segunda" — sem isto, o follow-up
+       * caía numa consulta GLOBAL sem filtro (1209 tasks) logo depois de uma
+       * lista de 10. Sobrevive a reload porque vive na metadata da mensagem,
+       * não em memória de processo. Falha na leitura não derruba o chat: sem
+       * seleção, o turno segue o comportamento anterior.
+       */
+      const comSelecao = (await db
+        .execute(
+          sql`select metadata from messages
+              where conversation_id = ${conversationId}::uuid
+              order by created_at desc limit 12`,
+        )
+        .catch(() => [] as unknown[])) as unknown as Array<{ metadata: Record<string, unknown> | null }>;
+      let selecaoAnterior: SelectionSnapshot | null = null;
+      for (const linha of comSelecao) {
+        const parsed = parseSelectionSnapshot((linha.metadata as { selecao?: unknown } | null)?.selecao);
+        if (parsed) {
+          selecaoAnterior = parsed;
+          break;
+        }
+      }
+
       const [userMessage] = await db
         .insert(schema.messages)
         .values({
@@ -351,7 +459,10 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         // O estado anterior vai INTEIRO. Remontar o objeto campo a campo aqui
         // descartava `person`/`clients` — a entidade era gravada no turno e
         // jogada fora na leitura, e o follow-up caía em GLOBAL (1209 tasks).
-        resolveOperationalTurn(body.message, user, new Date(), escopoAnterior),
+        comPrazoDeAck(
+          resolveOperationalTurn(body.message, user, new Date(), escopoAnterior, selecaoAnterior),
+          request.log,
+        ),
       ]);
       const contextBlock = formatContextForPrompt(context);
       // O Bento NÃO recebe o bloco de contexto, e isso é deliberado.
@@ -406,6 +517,10 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
                 person: operationalTurn.scope.person ?? null,
                 clients: operationalTurn.scope.clients,
               },
+              // O CONJUNTO listado vai junto: é ele que "delas"/"a segunda"
+              // resolvem. Turno sem listagem nova não toca no campo — a
+              // seleção anterior continua valendo pra referência.
+              ...(operationalTurn.selection ? { selecao: operationalTurn.selection } : {}),
             },
           })
           .where(eq(schema.messages.id, userMessage.id))
@@ -462,6 +577,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         decision,
         ...(attachments.length ? { attachments } : {}),
         ...(operacionalApartado ? { operationalContext: operacionalApartado } : {}),
+        ...(body.motion_brief ? { motionBrief: body.motion_brief } : {}),
       });
 
       if (result.status === 'unavailable') {

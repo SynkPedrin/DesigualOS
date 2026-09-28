@@ -69,8 +69,38 @@ Toda a cadeia boa (recuperação de contexto real → briefing por tipo de entre
 
 ---
 
+## INC-003 — P0 · Task criada no ClickUp e a pessoa nunca vê a resposta
+
+**Comportamento observado (ciclo real, 28/09/2026 17:52):** pedido de criação com imagem anexada. O chat ficou em "pensando" indefinidamente; `POST /chat` levou **186s** e o fetch do frontend abortou em 120s (`net::ERR_ABORTED`). A task **foi criada no ClickUp mesmo assim**. Efeito colateral sem resposta é o pior desfecho que este sistema tem — pior que erro, porque a pessoa reenvia.
+
+**Causa raiz (medida):** é o gargalo do INC-001 chegando ao teto. A frase *"cria a task X pra Matheus Sain (...) prazo pra amanhã"* bate em dois marcadores de LEITURA — `operacional:task` e `tempo:amanha` — então o `resolveOperationalTurn` varria as listas dos **52 clientes autorizados** no ClickUp **antes de enfileirar**. Medido isolado: **18,2s quente, ~180s frio**. E era desperdício puro: quem manda criar não está perguntando o estado da operação, e o "prazo pra amanhã" da frase é **atributo da task que vai nascer**, não janela de consulta.
+
+**Correção aplicada (duas camadas, ambas compartilhadas — nada específico do Bento):**
+
+| # | Arquivo | Mudança |
+|---|---|---|
+| 1 | `packages/context-engine/src/resolve-scope.ts` | **Ordem de escrita não gasta consulta ao vivo.** Verbo de escrita no imperativo + nenhuma pergunta + nenhum marcador de panorama/global/agregado → `operational: false`, sinal `escrita:sem-consulta`. Conservador: *"cria a task e me diz o que mais vence amanhã"* continua lendo. |
+| 2 | `apps/api/src/chat/routes.ts` | **Prazo de ack** (`CHAT_ACK_DEADLINE_MS`, 25s). Não é aumentar timeout — é o contrário: o teto do servidor passa a ser menor que o do navegador (120s). Estourar devolve o turno com a falha declarada, o mesmo caminho de quando o ClickUp está fora do ar; o agente admite que não leu, e nunca inventa. |
+
+**Validação (ciclo real no ClickUp, lista QA, após a correção):**
+
+| Turno | antes | depois |
+|---|---|---|
+| CREATE com anexo | 186s → **abortado** | **52,5s**, respondido |
+| "fecha essa task" | — | **72,7s**, respondido |
+
+E o resultado no ClickUp (`86bc8uvk7`, conferido pela API antes de apagar): briefing de 10 seções na descrição com campos vindos do dossiê, `qa-referencia.png` anexado, responsável Matheus Sain, prazo correto, status `complete`, comentário *"Status alterado para 'concluída' a pedido de QA Bot, via Desigual OS."*, zero duplicata.
+
+**Testes:** 14 casos novos em `resolve-scope.test.ts` (7 ordens de escrita suprimem, 5 leituras continuam lendo, frase mista continua lendo, `"criação"` não é `"cria"`). Suítes: **243/243 context-engine · 1015/1015 worker · 116/116 API**, typecheck limpo.
+
+**Status:** FECHADO.
+
+---
+
 ## Status corrente
 
-- Incidentes: 2 · P0 abertos: 0 · P1 abertos: 1 (gargalo `resolveOperationalTurn` síncrono) · P2: 0
-- PAUSE TAMMY QA: **não** — nenhum side effect incorreto observado (nada de task errada, duplicada, cross-client ou falso sucesso)
-- **Ação manual pendente:** reiniciar o worker para carregar INC-002.
+- Incidentes: 3 · P0 abertos: 0 · P1 abertos: 1 · P2 abertos: 1
+- **P1 aberto:** `ai_usage_ledger` nunca é escrito (`recordOpenAIUsage` existe e não é chamado) — custo por turno não é mensurável. Não afeta operação.
+- **P2 aberto:** no briefing, a seção ENTREGÁVEIS às vezes recebe o molde cru `chave: valor` do preenchedor de lacunas em vez da lista de peças. Sujeira de leitura, não erro de dado.
+- Latência corrente medida: `oi` 10s · CREATE com anexo+briefing 52s · UPDATE de status 73s. Acima da meta (<15s), **abaixo do teto do navegador** — a pessoa sempre recebe resposta.
+- PAUSE TAMMY QA: **não** — nenhum side effect incorreto em nenhum ciclo (nada de task errada, duplicada, cross-client ou falso sucesso).
