@@ -129,7 +129,27 @@ function updateTaskHasMaterialChange(changes: StructuredAction['changes']): bool
     // "fecha essa task" não traz título, prazo nem responsável — sem contar
     // status como mudança material, a policy respondia `content_missing` e a
     // conclusão nunca acontecia (destravado em 28/09/2026).
-    Boolean(changes.status?.trim())
+    Boolean(changes.status?.trim()) ||
+    /**
+     * E O MESMO VALE PRA TODO CAMPO NOVO. Medido com a Tammy no mesmo dia:
+     * "altere o status dessa task para urgente" virou prioridade (correto),
+     * e aí a policy disse "não identifiquei o que devo alterar" — porque
+     * `priority` não estava nesta lista. É a MESMA falha que o status tinha,
+     * repetida por um campo novo ter nascido sem entrar aqui.
+     *
+     * Esta função é a lista de "o que conta como pedido de mudança". Campo
+     * que o plano carrega e não aparece aqui é campo que o Bento aceita e
+     * depois finge não ter entendido.
+     */
+    Boolean(changes.priority?.trim()) ||
+    Boolean(changes.startDate?.trim()) ||
+    Boolean(changes.timeEstimate?.trim()) ||
+    Boolean(changes.addTags?.length) ||
+    Boolean(changes.removeTags?.length) ||
+    Boolean(changes.customFields && Object.keys(changes.customFields).length > 0) ||
+    Boolean(changes.checklistItems?.length) ||
+    Boolean(changes.dependsOnTaskId?.trim()) ||
+    Boolean(changes.dependencyOfTaskId?.trim())
   );
 }
 

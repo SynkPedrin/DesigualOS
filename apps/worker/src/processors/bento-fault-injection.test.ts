@@ -214,8 +214,11 @@ describe('CASO 1 — create com resposta perdida + retry do job', () => {
     expect(envelopeOf(attempt1).retryable).toBe(true);
     // Estado NÃO persistido em falha (bento-openai-core.ts:236-238) — correto.
     expect(persistResourceState).not.toHaveBeenCalled();
-    // status 'failed' → execute-job.ts:2016-2027 faz throw → o BullMQ
-    // re-tenta o JOB INTEIRO (não existe retry parcial dentro do core).
+    // Falha RETENTÁVEL (retryable: true) → execute-job.ts não grava a
+    // resposta e deixa o erro subir → o BullMQ re-tenta o JOB INTEIRO (não
+    // existe retry parcial dentro do core). Desde 28/09/2026 a distinção é
+    // explícita: recusa entendida é respondida e encerra; só o que é
+    // transitório volta pra fila — ver execute-job-nao-duplica.test.ts.
 
     // Tentativa 2 (retry BullMQ): o executor legado tem reconcile-first
     // (senior-operation.ts:114-136 — cobertura direta em
@@ -408,8 +411,8 @@ describe('CASO 3 — MCP falha após o planner propor update_task', () => {
     // única vez, antes, em bento-openai-core.ts:178).
     expect(createVerifiedSeniorTask).not.toHaveBeenCalled();
     expect(executeTaskUpdate).not.toHaveBeenCalled();
-    // status 'failed' → execute-job.ts:2016-2027 throw → retry BullMQ do job.
-    // Como update via MCP é naturalmente idempotente (mesmo alvo, mesmo
+    // Falha RETENTÁVEL → execute-job.ts deixa subir e o BullMQ re-tenta o
+    // job. Como update via MCP é naturalmente idempotente (mesmo alvo, mesmo
     // campo), o retry aqui é seguro — diferente do CASO 1b (create).
   });
 

@@ -317,3 +317,46 @@ describe('C.2/F-02/F-05 — invariante anti UPDATE→CREATE na camada policy', (
     expect(decision.possibleDuplicate).toBe(false);
   });
 });
+
+/**
+ * 28/09/2026, com a Tammy: "altere o status dessa task para urgente" virou
+ * changes.priority (certo) e a policy respondeu "não identifiquei o que devo
+ * alterar" — porque `priority` não contava como mudança material. É a MESMA
+ * falha que o status tinha, repetida por um campo novo nascer sem entrar na
+ * lista. Este bloco existe pra que o próximo campo não repita: cada um dos
+ * campos que o plano carrega tem que autorizar a escrita sozinho.
+ */
+describe('todo campo do plano conta como pedido de mudança', () => {
+  const alvo = { resourceType: 'CLICKUP_TASK' as const, resourceId: 'T1' };
+
+  function permite(changes: NonNullable<StructuredAction['changes']>) {
+    return validateBentoAction(
+      action({ intent: 'update_task', target: alvo, changes, requestedCardinality: 0 }),
+      emptyResourceState(),
+      basePolicyCtx,
+    ).allowed;
+  }
+
+  it.each<[string, NonNullable<StructuredAction['changes']>]>([
+    ['prioridade (o caso da Tammy)', { priority: 'urgente' }],
+    ['data de início', { startDate: '2026-10-05' }],
+    ['estimativa', { timeEstimate: '2h' }],
+    ['tag aplicada', { addTags: ['urgente-cliente'] }],
+    ['tag removida', { removeTags: ['rascunho'] }],
+    ['campo personalizado', { customFields: { Etapa: 'Aprovação' } }],
+    ['checklist', { checklistItems: ['revisar texto', 'exportar'] }],
+    ['dependência', { dependsOnTaskId: 'T9' }],
+    ['dependência inversa', { dependencyOfTaskId: 'T9' }],
+    ['status (o destravamento anterior)', { status: 'concluída' }],
+  ])('%s autoriza a escrita sozinho', (_nome, changes) => {
+    expect(permite(changes)).toBe(true);
+  });
+
+  it('pedido sem NENHUM campo continua pedindo esclarecimento', () => {
+    expect(permite({})).toBe(false);
+  });
+
+  it('e tag/checklist vazios não são pedido', () => {
+    expect(permite({ addTags: [], checklistItems: [] })).toBe(false);
+  });
+});

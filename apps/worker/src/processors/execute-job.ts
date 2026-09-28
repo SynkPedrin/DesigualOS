@@ -1018,11 +1018,21 @@ export async function processAgentJob(job: Job<AgentJobData>, logger: Logger): P
   if (job.data.workflowId !== undefined && job.data.stepIndex !== undefined) {
     await processWorkflowStep(job.data, logger);
   } else {
-    await processSingleAgentJob(job.data, logger);
+    // A tentativa vai junto: é ela que decide se uma falha RETENTÁVEL ainda
+    // vale um retry (e então a resposta não é gravada ainda) ou se já é a
+    // última (e aí a pessoa precisa receber a resposta). Ver o fim de
+    // processSingleAgentJob.
+    await processSingleAgentJob(job.data, logger, { feitas: job.attemptsMade ?? 0, maximo: job.opts?.attempts ?? 1 });
   }
 }
 
-async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promise<void> {
+interface Tentativa {
+  /** Quantas tentativas JÁ falharam antes desta (BullMQ `attemptsMade`). */
+  feitas: number;
+  maximo: number;
+}
+
+async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentativa: Tentativa = { feitas: 0, maximo: 1 }): Promise<void> {
   const { executionDbId, executionId, agent, message, contextRefs, conversationId, attachments, operationalContext, motionBrief } = data;
 
   const [runningExecution] = await db
@@ -1826,6 +1836,31 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
   // sem isto ele morria aqui e o chat mostrava "reformule a pergunta" pra uma
   // queda de infraestrutura. Ver failureAnswerFor.
   const failureAnswer = result.status === 'failed' ? failureAnswerFor(agent, result.error) : null;
+
+  /**
+   * REPETIR RESPOSTA ≠ REPETIR TENTATIVA (28/09/2026, relato da Tammy: toda
+   * recusa aparecia DUAS vezes no chat, ~13s de intervalo).
+   *
+   * O que acontecia: no fim desta função, `status: 'failed'` virava `throw`.
+   * Com `attempts: 2`, o BullMQ reprocessava o job INTEIRO — e a segunda
+   * volta gravava a mesma resposta de novo. Só as falhas duplicavam, que é
+   * exatamente o que ela viu.
+   *
+   * Mas matar o retry por inteiro custaria caro: timeout de rede no meio de
+   * uma criação é falha transitória e MERECE outra tentativa. A distinção
+   * certa não é falha × sucesso, é:
+   *
+   *   - RETENTÁVEL e ainda há tentativa → não grava resposta, deixa subir;
+   *   - recusa entendida (não retentável) ou última tentativa → grava a
+   *     resposta e encerra o job.
+   *
+   * `retryable` é o campo que o próprio envelope de escrita já declara.
+   * Ausente = não retentável: na dúvida, falar com a pessoa uma vez vale
+   * mais que tentar de novo às cegas.
+   */
+  const envelopeDaEscrita = result.metadata?.write_envelope as { retryable?: boolean } | undefined;
+  const falhaRetentavel = result.status === 'failed' && envelopeDaEscrita?.retryable === true;
+  const vaiReprocessar = falhaRetentavel && tentativa.feitas + 1 < tentativa.maximo;
   // callNode() já teve sucesso aqui - o agente já respondeu de verdade (e no
   // caso de Jarbas/Suzy, uma resposta real pode já ter saído no WhatsApp do
   // lead). Tudo daqui pra baixo é só gravação/pós-processamento: se algo
@@ -1853,7 +1888,11 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
 
     await recordTokenUsage(executionDbId, result);
     await recordAuditLog(agent, executionId, result);
-    await recordAssistantMessage(conversationId, agent, result.answer, result.metadata);
+    // Ver `vaiReprocessar`: enquanto ainda há retry pela frente, a resposta
+    // NÃO é gravada — senão a pessoa lê a mesma coisa uma vez por tentativa.
+    if (!vaiReprocessar) {
+      await recordAssistantMessage(conversationId, agent, result.answer, result.metadata);
+    }
     // Sem isso, GET /executions/:id sempre devolvia steps: [] pro caminho de
     // agente único (só processWorkflowStep grava execution_steps) - o balão
     // do chat lê execution.steps.at(-1) e ficava vazio mesmo quando o agente
@@ -1927,20 +1966,35 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
       done: true,
     });
   }
-  await publishWsEvent({
-    type: 'execution.completed',
-    payload: { execution_id: executionId, agent, status: result.status },
-  });
-  await notifyChatCompletion(
-    execution?.userId ?? runningExecution?.userId,
-    agent,
-    conversationId,
-    result.status === 'failed' ? 'failed' : 'completed',
-    result.answer ?? failureAnswer,
-  );
+  // Enquanto o job ainda vai voltar pra fila, o turno NÃO terminou: anunciar
+  // conclusão aqui tira o "pensando" da tela e depois a resposta chega de
+  // novo pela tentativa seguinte. Silêncio até a decisão final.
+  if (!vaiReprocessar) {
+    await publishWsEvent({
+      type: 'execution.completed',
+      payload: { execution_id: executionId, agent, status: result.status },
+    });
+    await notifyChatCompletion(
+      execution?.userId ?? runningExecution?.userId,
+      agent,
+      conversationId,
+      result.status === 'failed' ? 'failed' : 'completed',
+      result.answer ?? failureAnswer,
+    );
+  }
 
-  if (result.status === 'failed') {
+  if (vaiReprocessar) {
+    logger.warn(
+      { executionId, agent, error: result.error, tentativa: tentativa.feitas + 1, de: tentativa.maximo },
+      '[execute-job] falha retentável; resposta NÃO gravada, deixando o job voltar pra fila',
+    );
     throw new Error(result.error ?? 'Node reported failure');
+  }
+  if (result.status === 'failed') {
+    logger.warn(
+      { executionId, agent, error: result.error },
+      '[execute-job] falha entendida e respondida; job encerrado sem retry (não duplica a resposta)',
+    );
   }
 }
 
