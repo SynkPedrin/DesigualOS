@@ -51,19 +51,26 @@ describe('detectKnowledgeStatement', () => {
   });
 
   /**
-   * OTTO_GENERIC_FEEDBACK_IMPROVES — documenta a ARMADILHA real (22/09/2026):
-   * "Ficou genérico." e "Agora gostei." não são pergunta e não têm verbo de
-   * pedido, então ESTA função registra as duas como conhecimento — é
-   * exatamente por isso que `execute-job.ts` precisa checar
-   * `looksLikeCreativeFeedback` ANTES de chamar `registrarConhecimentoDoTurno`
-   * quando o agente é o Otto (ver conversation-artifact.test.ts). Sem esse
-   * desvio, a resposta virava "Registrado: - Ficou genérico." e o Otto nunca
-   * chegava a reescrever o draft — a task final usava esse "Registrado" como
-   * se fosse o conteúdo aprovado.
+   * OTTO_GENERIC_FEEDBACK_IMPROVES — a ARMADILHA de 22/09/2026 ("Ficou
+   * genérico." e "Agora gostei." viravam "Registrado: ..." e o Otto nunca
+   * reescrevia o draft) hoje tem DUAS defesas:
+   *
+   * 1. Na fonte (26/09/2026, F-20): o filtro de relevância do
+   *    extractEpisodeCandidates exige 2 termos de conteúdo além do marcador —
+   *    feedback vazio assim nem chega a ser candidato, então ESTA função
+   *    devolve null.
+   * 2. No caller (a original): `execute-job.ts` checa `looksLikeCreativeFeedback`
+   *    ANTES de chamar `registrarConhecimentoDoTurno` quando o agente é o Otto
+   *    (ver conversation-artifact.test.ts). Continua necessária: feedback COM
+   *    conteúdo ("Ficou genérico, refaz com outro ângulo.") passa pelo filtro
+   *    e deve ir pra revisão do draft, não pro registro.
    */
-  it('ARMADILHA: "Ficou genérico."/"Agora gostei." SERIAM registradas aqui — por isso o caller precisa desviar antes', () => {
-    expect(detectKnowledgeStatement('Ficou genérico.', 'Cliente Teste 7')).not.toBeNull();
-    expect(detectKnowledgeStatement('Agora gostei.', 'Cliente Teste 7')).not.toBeNull();
+  it('feedback vazio não registra nem aqui (filtro de relevância na fonte); o desvio do caller segue pra feedback com conteúdo', () => {
+    expect(detectKnowledgeStatement('Ficou genérico.', 'Cliente Teste 7')).toBeNull();
+    expect(detectKnowledgeStatement('Agora gostei.', 'Cliente Teste 7')).toBeNull();
+    // Com conteúdo, a frase ainda SERIA registrada aqui — é por isso que o
+    // caller continua precisando desviar antes.
+    expect(detectKnowledgeStatement('Ficou genérico, refaz com outro ângulo.', 'Cliente Teste 7')).not.toBeNull();
   });
 
   /**

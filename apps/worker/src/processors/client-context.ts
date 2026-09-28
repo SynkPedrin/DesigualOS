@@ -148,6 +148,8 @@ export async function resolveClientTurnContext(params: {
 
   let clientId = params.executionClientId ?? null;
   let clientName: string | null = null;
+  // Ambiente do cliente do turno; preenchido junto com o nome, na mesma query.
+  let ambienteResolvido = 'production';
 
   if (!clientId && doTexto?.matches?.length === 1) {
     clientId = doTexto.matches[0]!.id;
@@ -161,16 +163,22 @@ export async function resolveClientTurnContext(params: {
 
   if (clientId) {
     const [c] = await db
-      .select({ id: schema.clients.id, name: schema.clients.name })
+      .select({ id: schema.clients.id, name: schema.clients.name, environment: schema.clients.environment })
       .from(schema.clients)
       .where(eq(schema.clients.id, clientId))
       .catch(() => []);
     clientName = c?.name ?? null;
+    ambienteResolvido = c?.environment === 'qa' ? 'qa' : 'production';
     if (!c) clientId = null;
   }
 
   let profile: string | null = null;
   if (clientId) {
+    // O ambiente vem do PRÓPRIO cliente (resolvido na consulta acima, zero
+    // custo extra): turno sobre cliente de QA lê só dossiê de QA. O fallback
+    // 'production' é o lado seguro do isolamento — QA nunca vaza pra produção.
+    // (F-12, auditoria de 26/09/2026: sem este filtro, dossiê de homologação
+    // entrava no contexto de produção.)
     const rows = await db
       .select({ content: schema.memories.content, metadata: schema.memories.metadata })
       .from(schema.memories)
@@ -179,6 +187,7 @@ export async function resolveClientTurnContext(params: {
           eq(schema.memories.clientId, clientId),
           eq(schema.memories.status, 'active'),
           inArray(schema.memories.kind, ['client.profile']),
+          eq(schema.memories.environment, ambienteResolvido),
         ),
       )
       .catch(() => []);

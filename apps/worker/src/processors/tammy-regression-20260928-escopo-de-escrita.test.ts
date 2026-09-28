@@ -57,6 +57,7 @@ vi.mock('./briefing-retrieval', () => ({
 }));
 
 import { proposeBentoAction, type StructuredAction } from '@desigual-os/bento-core';
+import { createTaskComment } from '@desigual-os/tool-gateway';
 import { executeTaskUpdate } from './bento-update-executor.js';
 import { runBentoOpenAiCore } from './bento-openai-core.js';
 
@@ -148,5 +149,43 @@ describe('auto-atribuição no core: e-mail do ClickUp manda sobre o nome de exi
 
   it('o nome do cliente NUNCA chega ao ClickUp como responsável', async () => {
     expect(await pedirAutoAtribuicao('tammy', null)).not.toBe('D. Carvalho');
+  });
+});
+
+describe('identidade e procedência da escrita (relato da Tammy, 28/09/2026)', () => {
+  beforeEach(() => {
+    vi.mocked(createTaskComment).mockClear();
+    vi.mocked(executeTaskUpdate).mockReset().mockResolvedValue({
+      execution_id: '', agent: 'bento', status: 'completed', answer: 'ok',
+      sources: [], tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 },
+      metadata: { verified: true },
+    });
+    process.env.BENTO_OPENAI_CORE_ENABLED = 'true';
+    process.env.CLICKUP_API_KEY = 'chave-da-agencia';
+    process.env.CLICKUP_TEAM_ID = 't';
+    delete process.env.CLICKUP_TEST_LIST_ID;
+    delete process.env.CLICKUP_BOT_API_KEY;
+  });
+
+  it('sem CLICKUP_BOT_API_KEY nada muda — segue a chave da agência', async () => {
+    vi.mocked(proposeBentoAction).mockReset().mockResolvedValue({ ...UPDATE, changes: { assignee: 'Tammy' } });
+    await rodar('tammy@institutoalmada.org', 'D. Carvalho');
+    expect(vi.mocked(executeTaskUpdate).mock.calls[0]?.[0].config.apiKey).toBe('chave-da-agencia');
+  });
+
+  it('com CLICKUP_BOT_API_KEY, a escrita sai com a identidade do Bento', async () => {
+    process.env.CLICKUP_BOT_API_KEY = 'chave-do-bento';
+    vi.mocked(proposeBentoAction).mockReset().mockResolvedValue({ ...UPDATE, changes: { assignee: 'Tammy' } });
+    await rodar('tammy@institutoalmada.org', 'D. Carvalho');
+    expect(vi.mocked(executeTaskUpdate).mock.calls[0]?.[0].config.apiKey).toBe('chave-do-bento');
+  });
+
+  it('mudança de responsável deixa rastro de quem pediu na própria task', async () => {
+    vi.mocked(proposeBentoAction).mockReset().mockResolvedValue({ ...UPDATE, changes: { assignee: 'Tammy' } });
+    await rodar('tammy@institutoalmada.org', 'D. Carvalho');
+    const comentario = vi.mocked(createTaskComment).mock.calls[0]?.[2] ?? '';
+    expect(comentario).toContain('Responsável');
+    expect(comentario).toContain('Tammy');
+    expect(comentario).toContain('Bento');
   });
 });

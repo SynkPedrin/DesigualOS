@@ -1140,8 +1140,23 @@ export function ehMaterialDeDemanda(texto: string): boolean {
   return true;
 }
 
+/**
+ * IDENTIDADE DAS ESCRITAS DO BENTO (28/09/2026, relato da Tammy).
+ *
+ * O ClickUp atribui toda ação ao DONO DO TOKEN. Com a chave pessoal do Pedro,
+ * a Tammy recebeu "Pedro atribuiu essa task a você" quando quem atribuiu foi o
+ * Bento, a pedido dela. A notificação mente sobre quem agiu, e num time sênior
+ * isso vira decisão errada — a pessoa responde ao humano errado.
+ *
+ * A conta "Bento Desigual" já existe no workspace (membro 112266418). Basta um
+ * token pessoal dela em CLICKUP_BOT_API_KEY e TODA escrita do Bento passa a
+ * aparecer como Bento. Sem a variável, nada muda: continua a chave de sempre.
+ *
+ * Vale para o Bento e só pra ele — Otto, Jarbas, Suzy, Studio e as automações
+ * montam o config por conta própria e seguem com a chave da agência.
+ */
 export function getClickUpConfigOrNull(): ClickUpConfig | null {
-  const apiKey = process.env.CLICKUP_API_KEY;
+  const apiKey = process.env.CLICKUP_BOT_API_KEY?.trim() || process.env.CLICKUP_API_KEY;
   const teamId = process.env.CLICKUP_TEAM_ID;
   if (!apiKey || !teamId) return null;
   return { apiKey, teamId };

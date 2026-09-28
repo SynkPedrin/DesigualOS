@@ -4,6 +4,7 @@ import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import { buildContext, formatContextForPrompt } from '@desigual-os/context-engine';
 import { dispatchChatMessage, touchConversation, type AutomationJobData } from '@desigual-os/orchestrator';
+import { resolveEnvironment } from './environment';
 import type { RouterDecision } from '@desigual-os/router';
 import type { AgentName } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
@@ -115,6 +116,9 @@ export async function processAutomationJob(
     clientId: automation.clientId,
     conversationId,
     agent: automation.agent,
+    // buildContext resolve o ambiente pelo cliente quando omitido; aqui ele já
+    // está resolvido pelo mesmo helper do resto do worker, então viaja explícito.
+    environment: await resolveEnvironment(automation.clientId).catch(() => 'production' as const),
   });
   const contextBlock = formatContextForPrompt(context);
   const messageWithContext = contextBlock

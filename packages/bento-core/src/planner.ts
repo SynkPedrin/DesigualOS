@@ -61,7 +61,7 @@ Responda SOMENTE com um JSON no formato:
 {
   "intent": "read_tasks" | "get_task" | "create_task" | "update_task" | "comment_task" | "delete_task" | "analyze_tasks",
   "target": { "resourceType": "CLICKUP_TASK", "resourceId": "<id ou null>" } | null,
-  "changes": { "title"?, "description"?, "dueDate"?, "assignee"?, "assigneeOperation"?, "status"?, "comment"? } | null,
+  "changes": { "title"?, "description"?, "dueDate"?, "assignee"?, "assigneeOperation"?, "status"?, "priority"?, "comment"? } | null,
   "requestedCardinality": <número de ENTIDADES que o pedido pede — nunca o número de atributos/linhas do briefing>,
   "reasoning": "<explicação curta e auditável>"
 }
@@ -70,6 +70,7 @@ Regras que não se negociam:
 - "cria um título pra ela" / "cria um briefing nessa" / "atualiza X" sobre um recurso que já existe no estado da conversa é update_task, NUNCA create_task.
 - "cria uma task nova" é create_task.
 - "apaga essa task" / "exclui essa demanda" / "deleta ela" é delete_task, NUNCA update_task — apagar não é um tipo de atualização.
+- PRIORIDADE não é STATUS. "urgente", "alta", "normal", "baixa" (e "prioriza isso", "deixa como urgente", "baixa a prioridade") vão em changes.priority, nunca em changes.status — mesmo quando a pessoa disser a palavra "status". Status é a coluna do fluxo (aberto, em revisão, aprovado, pronto); prioridade é o nível de urgência.
 - "fecha essa task" / "marca como concluída" / "finaliza isso" / "põe em andamento" / "manda pra revisão" é update_task com changes.status preenchido com o estado pedido em português ("concluída", "em andamento", "em revisão", "aberta"). Não invente o nome da coluna do ClickUp — quem traduz é o executor, que lê os status reais daquela lista.
 - Responsável é operação de primeira classe: preencha changes.assignee com o nome da pessoa E changes.assigneeOperation com a operação:
   - "tira o Matheus dela" / "remove o Matheus" → assigneeOperation="remove" (update_task, nunca outra coisa);

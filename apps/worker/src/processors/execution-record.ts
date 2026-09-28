@@ -33,6 +33,15 @@ export interface ExecutionRecord {
   titles?: Record<string, string>;
   /** Valores legíveis dos campos alterados ("📅 Prazo: 28/09/2026"). */
   changes?: string[];
+  /**
+   * Chave estável da operação lógica (core novo, D.3/F-03): conversationId +
+   * intent + hash dos argumentos. Retry do mesmo job regenera a mesma chave.
+   */
+  operationId?: string;
+  /** Provedor que executou a escrita ('MCP' | 'LEGACY_GATEWAY'). */
+  provider?: string;
+  /** Hash sha256 dos argumentos da ação — NUNCA os argumentos brutos (podem conter conteúdo sensível). */
+  argsHash?: string;
 }
 
 export type ExecutionState =
@@ -68,6 +77,9 @@ export function parseExecutionRecord(raw: unknown): ExecutionRecord | null {
     ...(typeof r.selectionReason === 'string' ? { selectionReason: r.selectionReason } : {}),
     ...(typeof r.titles === 'object' && r.titles !== null ? { titles: r.titles as Record<string, string> } : {}),
     ...(Array.isArray(r.changes) ? { changes: r.changes.filter((c): c is string => typeof c === 'string') } : {}),
+    ...(typeof r.operationId === 'string' ? { operationId: r.operationId } : {}),
+    ...(typeof r.provider === 'string' ? { provider: r.provider } : {}),
+    ...(typeof r.argsHash === 'string' ? { argsHash: r.argsHash } : {}),
   };
 }
 

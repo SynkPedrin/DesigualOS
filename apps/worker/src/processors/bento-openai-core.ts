@@ -20,6 +20,7 @@ import { selectWriteProvider, executeViaMcp, parseDueDateMs, type McpWriteEnvelo
 import { resolveFromLegacySelectionSnapshot } from './bento-legacy-selection-bridge';
 import { attachMaterials, buildTaskBriefing, type TaskAttachmentInput } from './bento-task-briefing';
 import { corrigirResponsavel } from './bento-self-assignment';
+import { desviarStatusQueEhPrioridade, mapPrioridade } from './bento-priority';
 
 /**
  * bento-openai-core.ts — o loop novo pedido em "BENTO CORE CUTOVER":
@@ -299,9 +300,19 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
    * baixo (validação, chave de idempotência, execução) enxergue o mesmo dado.
    */
   if (action.changes) {
+    // `action` é reatribuído abaixo; o snapshot fixa o que o planner propôs.
+    const propostas = action.changes;
+    // Prioridade pedida como "status" é desviada antes da policy — ver
+    // bento-priority.ts. "altere o status pra urgente" é pedido legítimo.
+    const desvio = desviarStatusQueEhPrioridade({ status: propostas.status, priority: propostas.priority });
+    if (desvio.desviado) {
+      params.logger.info({ conversationId: params.conversationId, de: propostas.status, para: desvio.priority }, '[bento-openai-core] "status" pedido era prioridade');
+      action = { ...action, changes: { ...propostas, status: undefined, priority: desvio.priority } };
+    }
+
     const correcao = corrigirResponsavel({
       message: params.message,
-      assignee: action.changes.assignee,
+      assignee: propostas.assignee,
       requesterName: params.requesterName ?? null,
       clientName: params.clientName,
     });
@@ -315,12 +326,12 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
         if (porEmail) correcao.assignee = porEmail.username;
       }
       params.logger.info(
-        { conversationId: params.conversationId, de: action.changes.assignee ?? null, para: correcao.assignee, motivo: correcao.motivo },
+        { conversationId: params.conversationId, de: propostas.assignee ?? null, para: correcao.assignee, motivo: correcao.motivo },
         '[bento-openai-core] responsável corrigido antes da escrita',
       );
       action = {
         ...action,
-        changes: { ...action.changes, ...(correcao.assignee ? { assignee: correcao.assignee } : { assignee: undefined }) },
+        changes: { ...(action.changes ?? propostas), ...(correcao.assignee ? { assignee: correcao.assignee } : { assignee: undefined }) },
       };
     }
   }
@@ -640,6 +651,9 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       // Status destravado (28/09/2026): "fecha essa task" chega aqui como
       // hint em português e o executor traduz pro status REAL da lista.
       ...(action.changes?.status?.trim() ? { statusHint: action.changes.status } : {}),
+      // Prioridade (28/09/2026): o executor já sabia escrever o campo; faltava
+      // o plano carregá-lo. Palavra que não mapeia vira ausência, não chute.
+      ...(mapPrioridade(action.changes?.priority) ? { priority: mapPrioridade(action.changes?.priority)! } : {}),
     },
     // Era `() => undefined`: o core aceitava o pedido e depois não sabia
     // traduzir status nenhum, então nada mudava. Reusa o mapeador do guard.
@@ -664,13 +678,36 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
    * parecer que o agente concluiu por conta própria. Best-effort: o comentário
    * é rastro, não a escrita em si; falhar aqui não invalida a mudança.
    */
-  if (verified && action.changes?.status?.trim() && decision.resolvedResourceId) {
+  /**
+   * E O MESMO VALE PRA RESPONSÁVEL (28/09/2026, relato da Tammy).
+   *
+   * O ClickUp atribui toda escrita ao DONO DO TOKEN, então a notificação que
+   * chega pra pessoa diz que quem a colocou na task foi o dono da chave — não
+   * o Bento, nem quem realmente pediu. A identidade certa se resolve com um
+   * token da conta "Bento Desigual" (ver CLICKUP_BOT_API_KEY em
+   * bento-action-guard.ts); enquanto ele não existe, o rastro na própria task
+   * é o que impede a operação de ler o histórico errado.
+   */
+  const procedencias: string[] = [];
+  if (action.changes?.status?.trim()) {
+    procedencias.push(`Status alterado para "${action.changes.status}"`);
+  }
+  if (action.changes?.assignee?.trim()) {
+    const verbo =
+      action.changes.assigneeOperation === 'remove'
+        ? 'removido'
+        : action.changes.assigneeOperation === 'replace'
+          ? 'trocado para'
+          : 'definido como';
+    procedencias.push(`Responsável ${verbo} "${action.changes.assignee}"`);
+  }
+  if (verified && procedencias.length > 0 && decision.resolvedResourceId) {
     await createTaskComment(
       config,
       decision.resolvedResourceId,
-      `Status alterado para "${action.changes.status}" a pedido de ${params.userName ?? 'a operação'}, via Desigual OS.`,
+      `${procedencias.join('; ')} a pedido de ${params.userName ?? 'a operação'}, via Desigual OS (Bento).`,
     ).catch((error: unknown) => {
-      params.logger.warn({ error, taskId: decision.resolvedResourceId }, '[bento-openai-core] não consegui registrar a procedência do status (a mudança valeu)');
+      params.logger.warn({ error, taskId: decision.resolvedResourceId }, '[bento-openai-core] não consegui registrar a procedência (a mudança valeu)');
       return null;
     });
   }

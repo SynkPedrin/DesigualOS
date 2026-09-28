@@ -80,6 +80,16 @@ export const structuredActionSchema = z.object({
        * Destravado em 28/09/2026 junto da remoção do hard deny de conclusão.
        */
       status: z.string().optional(),
+      /**
+       * PRIORIDADE, em linguagem natural ("urgente", "alta", "normal",
+       * "baixa"). Nasceu do relato da Tammy em 28/09/2026: ela pediu "altere o
+       * status dessa task para urgente" e levou a lista de status válidos de
+       * volta. Estava certo em recusar — "urgente" não é status — e errado em
+       * parar ali: prioridade é um campo do ClickUp que o executor já sabia
+       * escrever, só não existia no plano. Quem traduz pro número 1-4 é o
+       * caminho de escrita, não o modelo.
+       */
+      priority: z.string().optional(),
       comment: z.string().optional(),
     })
     .nullable(),
