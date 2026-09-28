@@ -38,13 +38,13 @@ function stateSecret(): string {
  * qualquer um poderia forjar um state e amarrar a própria conta do ClickUp
  * ao usuário de outra pessoa.
  */
-function buildOAuthState(userId: string): string {
+export function buildOAuthState(userId: string): string {
   const payload = `${userId}.${Date.now() + STATE_TTL_MS}`;
   const signature = createHmac('sha256', stateSecret()).update(payload).digest('base64url');
   return `${Buffer.from(payload).toString('base64url')}.${signature}`;
 }
 
-function parseOAuthState(state: string): { userId: string } | null {
+export function parseOAuthState(state: string): { userId: string } | null {
   const [payloadPart, signature] = state.split('.');
   if (!payloadPart || !signature) return null;
 
@@ -59,7 +59,7 @@ function parseOAuthState(state: string): { userId: string } | null {
   return { userId };
 }
 
-function frontendUrl(path: string): string {
+export function frontendUrl(path: string): string {
   const base = (process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
   return `${base}${path}`;
 }

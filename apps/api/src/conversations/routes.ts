@@ -233,6 +233,9 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
           // (apps/worker/src/processors/motion-guard.ts). Sai aqui pra que
           // recarregar a página continue mostrando o player, e não só o texto.
           motion: (row.metadata as { motion?: unknown })?.motion ?? null,
+          // Card de briefing (24/09/2026): gravado em metadata.motion_brief_request
+          // pelo mesmo guard; sem expor aqui o formulário nunca renderiza no chat.
+          motion_brief_request: (row.metadata as { motion_brief_request?: unknown })?.motion_brief_request ?? null,
           created_at: row.createdAt.toISOString(),
         })),
       };

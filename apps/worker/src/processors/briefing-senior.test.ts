@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { elaboracaoAceitavel, elaborarBriefingSenior, costurar } from './briefing-senior';
+
+type Escritor = (prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>;
 import type { ComposedBriefing } from './briefing-composer';
 
 /**
@@ -64,13 +66,13 @@ const composto = {
 
 describe('elaboração: tenta de novo, e desiste em silêncio', () => {
   it('pede raciocínio com teto ALTO — 700 tokens era a causa do briefing raso', async () => {
-    const escritor = vi.fn(async () => ANALISE_BOA);
+    const escritor = vi.fn<Escritor>(async () => ANALISE_BOA);
     await elaborarBriefingSenior({ composto, mensagem: 'cria o carrossel', clientName: 'Colormaq', escritor, logger: fakeLogger });
     expect(escritor.mock.calls[0]?.[1]).toMatchObject({ maxTokens: 1800 });
   });
 
   it('primeira volta rasa vira UMA retentativa mais exigente', async () => {
-    const escritor = vi.fn()
+    const escritor = vi.fn<Escritor>()
       .mockResolvedValueOnce('## LEITURA DA DEMANDA\nraso')
       .mockResolvedValueOnce(ANALISE_BOA);
     const r = await elaborarBriefingSenior({ composto, mensagem: 'x', clientName: 'Colormaq', escritor, logger: fakeLogger });
@@ -79,19 +81,19 @@ describe('elaboração: tenta de novo, e desiste em silêncio', () => {
   });
 
   it('duas voltas ruins: não anexa nada — a ficha já é entregável sozinha', async () => {
-    const escritor = vi.fn(async () => 'conteúdo alinhado com a marca');
+    const escritor = vi.fn<Escritor>(async () => 'conteúdo alinhado com a marca');
     expect(await elaborarBriefingSenior({ composto, mensagem: 'x', clientName: 'C', escritor, logger: fakeLogger })).toBeNull();
   });
 
   it('escritor que falha não derruba o briefing', async () => {
-    const escritor = vi.fn(async () => { throw new Error('timeout'); });
+    const escritor = vi.fn<Escritor>(async () => { throw new Error('timeout'); });
     expect(await elaborarBriefingSenior({ composto, mensagem: 'x', clientName: 'C', escritor, logger: fakeLogger })).toBeNull();
   });
 
   it('o modelo só pode raciocinar sobre os fatos apurados, e é instruído a declarar lacuna', async () => {
-    const escritor = vi.fn(async () => ANALISE_BOA);
+    const escritor = vi.fn<Escritor>(async () => ANALISE_BOA);
     await elaborarBriefingSenior({ composto, mensagem: 'x', clientName: 'Colormaq', escritor, logger: fakeLogger });
-    const prompt = escritor.mock.calls[0]![0] as string;
+    const prompt = escritor.mock.calls[0]![0];
     expect(prompt).toContain('NÃO tem informação nova sobre o cliente');
     expect(prompt).toContain('[CONFIRMAR:');
     expect(prompt).toContain('SÊNIOR');

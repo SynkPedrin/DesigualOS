@@ -11,6 +11,7 @@ import { useUpdateMe, useUploadAvatar } from '@/hooks/use-update-me';
 import { useTheme } from '@/hooks/use-theme';
 import { useHoverSound } from '@/hooks/use-hover-sound';
 import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';
+import { NotionIntegrationSection } from '@/components/settings/notion-integration-card';
 import { MotionProvidersSection } from '@/components/settings/motion-providers-card';
 import { ApiRequestError } from '@/lib/api/client';
 import { LANGUAGES, THEMES, type Language, type Theme } from '@/lib/api/contracts';
@@ -220,6 +221,7 @@ export default function SettingsPage() {
 
           <section className="p-5">
             <ClickUpIntegrationSection />
+            <NotionIntegrationSection />
           </section>
 
           <section className="p-5">

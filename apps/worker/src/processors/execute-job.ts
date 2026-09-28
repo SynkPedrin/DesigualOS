@@ -57,6 +57,7 @@ import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './
 import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation, getClickUpConfigOrNull, ehQaBot } from './bento-action-guard';
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
 import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-executor';
+import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
 import { resolveWriteTarget } from './write-target';
 import { clearResourceFocusIfDeleted } from './bento-resource-state';
 import { tryMotionGuard } from './motion-guard';
@@ -1872,6 +1873,28 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     });
     await notifyChatCompletion(runningExecution?.userId, agent, conversationId, 'failed', null);
     throw error;
+  }
+
+  /**
+   * `@notion` (28/09/2026, pedido da operação): "só quando o colaborador
+   * quiser e solicitar no chat, ou colocando @notion".
+   *
+   * Roda DEPOIS do turno, sobre a resposta que a pessoa já vai ler, e nunca
+   * no lugar dela: o Notion recebe o que saiu, não uma segunda geração. Por
+   * isso é a última coisa do turno, e falhar aqui acrescenta uma linha de
+   * explicação em vez de derrubar o que o Bento fez.
+   */
+  if (agent === 'bento' && result.status === 'completed' && result.answer && pedeNotion(message)) {
+    const exportado = await exportarParaNotion({
+      userId: runningExecution?.userId ?? '',
+      titulo: tituloParaNotion(message, null),
+      markdown: result.answer,
+      logger,
+    }).catch((error: unknown) => {
+      logger.warn({ error, executionId }, '[bento-notion] export falhou; a resposta do turno continua valendo');
+      return null;
+    });
+    if (exportado) result = { ...result, answer: `${result.answer}\n\n${exportado.linha}` };
   }
 
   const now = new Date();

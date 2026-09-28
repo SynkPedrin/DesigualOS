@@ -840,6 +840,21 @@ export function mapClientMemory(wire: ClientMemoryWire): ClientMemory {
  * O client_secret vive SÓ no backend: o frontend nunca vê token nenhum, só
  * pede a URL de autorização e manda o browser pra lá.
  */
+/**
+ * Conexão do Notion, por PESSOA (28/09/2026). `destinos` é o que a integração
+ * enxerga no workspace de quem conectou: conectar sem liberar nenhuma página é
+ * o erro silencioso mais provável aqui, e a tela precisa dizer isso antes do
+ * primeiro `@notion` falhar.
+ */
+export interface NotionIntegrationStatusWire {
+  connected: boolean;
+  /** false = o Orchestrator não tem NOTION_CLIENT_ID/SECRET/REDIRECT_URI. */
+  configured: boolean;
+  workspace_name?: string | null;
+  connected_at?: ISODateString | null;
+  destinos: Array<{ id: string; title: string }>;
+}
+
 export interface ClickUpIntegrationStatusWire {
   connected: boolean;
   /** false = o Orchestrator não tem CLICKUP_CLIENT_ID/SECRET configurados. */

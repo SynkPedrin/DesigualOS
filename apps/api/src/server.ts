@@ -31,6 +31,7 @@ import { registerAdminRoutes } from './admin/routes';
 import { registerClickUpRoutes } from './clickup/routes';
 import { registerIntegrationRoutes } from './integrations/routes';
 import { registerClickUpMcpOAuthRoutes } from './integrations/clickup-mcp-routes';
+import { registerNotionRoutes } from './integrations/notion-routes';
 import { registerNotificationRoutes } from './notifications/routes';
 import { registerMessageRoutes } from './messages/routes';
 import { registerTeamRoutes } from './team/routes';
@@ -221,6 +222,7 @@ async function start(): Promise<void> {
   await app.register(registerAdminRoutes);
   await app.register(registerClickUpRoutes);
   await app.register(registerIntegrationRoutes);
+  await app.register(registerNotionRoutes);
   await app.register(registerClickUpMcpOAuthRoutes);
   await app.register(registerNotificationRoutes);
   await app.register(registerMessageRoutes);
