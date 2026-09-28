@@ -4,6 +4,7 @@ import { classifyDeliveryType, composeBriefing, pendingCriticalFields } from './
 import { extractLabeledFacts, mergeFacts } from './briefing-facts';
 import { retrieveBriefingContext } from './briefing-retrieval';
 import { evaluateBriefing } from './briefing-quality';
+import { costurar, elaborarBriefingSenior } from './briefing-senior';
 import type { DeliveryType } from './briefing-schema';
 
 /**
@@ -48,7 +49,7 @@ export interface BuildTaskBriefingParams {
    * só para ler o PRÓPRIO pedido e preencher campo crítico que o parser de
    * rótulo não pega por estar escrito em prosa. Nunca inventa dado de cliente.
    */
-  briefingWriter?: ((prompt: string) => Promise<string | null>) | undefined;
+  briefingWriter?: ((prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>) | undefined;
   attachments?: TaskAttachmentInput[] | undefined;
   logger: Logger;
 }
@@ -138,6 +139,24 @@ export async function buildTaskBriefing(params: BuildTaskBriefingParams): Promis
     }
   }
 
+  /**
+   * A LEITURA SÊNIOR DA DEMANDA (28/09/2026). Até aqui o briefing é a ficha:
+   * fatos apurados, com procedência. Um sênior não precisa da ficha, precisa
+   * do que ela implica — ver briefing-senior.ts. Fato e leitura ficam
+   * separados de propósito: o de cima tem fonte, o de baixo tem raciocínio, e
+   * o raciocínio não pode afirmar fato novo.
+   */
+  const elaboracao = params.briefingWriter
+    ? await elaborarBriefingSenior({
+        composto,
+        mensagem: params.message,
+        clientName: params.clientName,
+        escritor: params.briefingWriter,
+        logger: params.logger,
+      }).catch(() => null)
+    : null;
+  const markdownFinal = costurar(composto, elaboracao);
+
   const qa = evaluateBriefing(composto, { clientName: params.clientName });
   params.logger.info(
     {
@@ -147,12 +166,13 @@ export async function buildTaskBriefing(params: BuildTaskBriefingParams): Promis
       executavel: qa.executable,
       fontes: contexto.sourcesConsulted,
       lacunas_criticas: composto.missingCritical,
+      leitura_senior: elaboracao ? `ok (tentativa ${elaboracao.tentativas})` : 'não anexada',
     },
     '[bento-task-briefing] briefing montado',
   );
 
   return {
-    markdown: composto.markdown,
+    markdown: markdownFinal,
     deliveryType: composto.deliveryType,
     missingCritical: composto.missingCritical,
     sourcesConsulted: contexto.sourcesConsulted,

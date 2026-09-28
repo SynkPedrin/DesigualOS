@@ -255,7 +255,7 @@ export interface BentoOpenAiCoreParams {
    * briefing pra ler o próprio pedido. Sem ele o briefing ainda sai — só não
    * recupera campo crítico escrito em prosa.
    */
-  briefingWriter?: ((prompt: string) => Promise<string | null>) | undefined;
+  briefingWriter?: ((prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>) | undefined;
 }
 
 export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise<ExecuteResponse | null> {

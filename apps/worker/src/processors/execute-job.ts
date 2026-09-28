@@ -1308,7 +1308,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         requesterName: jobUser?.name ?? null,
         requesterClickUpEmail: jobUser?.clickupEmail ?? null,
         attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
-        briefingWriter: async (prompt) => (await completeTextSafely(prompt, logger)) ?? (await completeTextViaOllama(prompt, logger)),
+        briefingWriter: async (prompt, opts) => (await completeTextSafely(prompt, logger, opts)) ?? (await completeTextViaOllama(prompt, logger)),
         logger,
       }).catch((error: unknown) => {
         logger.error({ error, executionId }, '[bento-openai-core] falhou, sem fallback silencioso pro guard antigo enquanto a flag estiver ligada');

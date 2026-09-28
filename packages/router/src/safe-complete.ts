@@ -25,6 +25,17 @@ import type { FastifyBaseLogger } from 'fastify';
 
 const TIMEOUT_MS = 15_000;
 
+/**
+ * O prazo acompanha o ORÇAMENTO de tokens (28/09/2026). Com 15s fixos, um
+ * pedido de 1800 tokens — a leitura sênior do briefing — estourava e voltava
+ * `null`, e o chamador seguia sem elaboração nenhuma: o briefing voltava raso
+ * em silêncio, que é exatamente o defeito que a elaboração existe pra corrigir.
+ * Falha silenciosa que reproduz o bug original é o pior modo de falhar.
+ */
+function prazoPara(maxTokens: number): number {
+  return maxTokens > 1000 ? 45_000 : TIMEOUT_MS;
+}
+
 export async function completeTextSafely(
   prompt: string,
   logger: FastifyBaseLogger,
@@ -36,13 +47,15 @@ export async function completeTextSafely(
     return null;
   }
 
-  const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS, maxRetries: 0 });
+  const maxTokens = opts?.maxTokens ?? 700;
+  const timeoutMs = prazoPara(maxTokens);
+  const client = new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 0 });
 
   let response;
   try {
     response = await client.messages.create({
       model: 'claude-sonnet-5',
-      max_tokens: opts?.maxTokens ?? 700,
+      max_tokens: maxTokens,
       // Sem `tools`: nenhuma ferramenta disponível pro modelo nesta chamada,
       // então nada que o texto de entrada diga vira ação real — mesmo que o
       // prompt contenha, dentro de uma citação, algo que pareça uma ordem.
@@ -52,7 +65,7 @@ export async function completeTextSafely(
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'APIConnectionTimeoutError') {
-      logger.warn({ timeoutMs: TIMEOUT_MS }, 'completeTextSafely timed out');
+      logger.warn({ timeoutMs, maxTokens }, 'completeTextSafely timed out');
       return null;
     }
     logger.warn({ error: error instanceof Error ? error.message : String(error) }, 'completeTextSafely failed');
