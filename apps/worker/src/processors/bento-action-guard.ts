@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   createTaskComment,
@@ -12,6 +12,7 @@ import {
   verifyTaskState,
   type ClickUpConfig,
   type ExpectedTaskState,
+  type TaskDetail,
   type TaskVerification,
 } from '@desigual-os/tool-gateway';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
@@ -176,8 +177,21 @@ export function isTaskDeleteRequestForTest(message: string): boolean {
   return isTaskDeleteRequest(message);
 }
 
+/**
+ * QA 28/09/2026 (achado ao vivo — é literalmente o script de teste da
+ * missão de release): "agora apaga ela" NÃO tinha DELETE_OBJECT_TASK (nenhum
+ * "task"/"tarefa"/... na frase, só o pronome) e caía fora — a exigência
+ * antiga tratava DELETE_OBJECT_TASK como obrigatório, quando ele só precisa
+ * ser um SINAL POSITIVO opcional. REFERENCE_WORDS já garante que há um
+ * referente; DELETE_OBJECT_FIELD já exclui "apaga o briefing dela" (edição
+ * de campo). Sem nenhum objeto CITADO (nem task, nem campo), o pronome
+ * sozinho aponta pra a própria task — é a leitura mais natural de "apaga
+ * ela"/"deleta isso".
+ */
 function isTaskDeleteRequest(message: string): boolean {
-  return DELETE_REQUEST.test(message) && REFERENCE_WORDS.test(message) && DELETE_OBJECT_TASK.test(message) && !DELETE_OBJECT_FIELD.test(message);
+  if (!DELETE_REQUEST.test(message) || !REFERENCE_WORDS.test(message)) return false;
+  if (DELETE_OBJECT_FIELD.test(message)) return false;
+  return true;
 }
 
 /** Marcador auto-contido no texto da própria pergunta de confirmação — não
@@ -580,6 +594,224 @@ export function decideFallbackIntent(message: string, lastTaskId: string | null)
   return { kind: 'intent', intent: criacaoPadrao(message) };
 }
 
+/* ================================================================== */
+/* ETAPA 1 DA CONVERGÊNCIA (ADR-bento-core-convergence, 26/09/2026):   */
+/* kill switch de escrita externa (F-01) + checkpoint anti UPDATE→     */
+/* CREATE (F-02). As duas peças dividem o MESMO vocabulário de         */
+/* detecção — um phrasing que escapa de uma não pode escapar da outra. */
+/* ================================================================== */
+
+/**
+ * KILL SWITCH DE ESCRITA EXTERNA (F-01, P0 — forense 26/09/2026).
+ *
+ * O defeito medido no harness B.4 (bento-guard-matrix.test.ts): 16 de 31
+ * phrasings naturais de UPDATE morriam no portão 1 (`READ_ONLY`) e caíam no
+ * `return null` — que despacha a mensagem pro serviço externo bento-qa. O
+ * bento-qa é OPACO: tem credencial real de escrita no ClickUp, nenhuma
+ * idempotência conhecida, payload de 3 campos sem task_id de retorno e sem
+ * estado de conversa (ver bento-qa-client.ts e o ADR, seção 2). O Desigual
+ * OS não tem como saber se ele vai ler ou escrever — e o incidente real
+ * documentado no cabeçalho deste arquivo prova que ele escreve.
+ *
+ *   BENTO_EXTERNAL_WRITE_ENABLED=false (DEFAULT) → nenhuma mensagem com
+ *     potencial de escrita sai pelo fallback externo: o guard responde
+ *     esclarecimento/bloqueio explícito em vez de devolver null.
+ *   BENTO_EXTERNAL_WRITE_ENABLED=true → comportamento legado (rollback
+ *     operacional apenas; reativa F-01 — ver ADR, seção 7: a Etapa 1 é
+ *     permanente e não participa de rollback).
+ *
+ * À prova de esquecimento: o default é FECHADO. Esquecer a flag em ambiente
+ * novo mantém o externo somente-leitura; abrir exige ato explícito.
+ */
+export function externalWriteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return LIGADO.has((env.BENTO_EXTERNAL_WRITE_ENABLED ?? '').trim().toLowerCase());
+}
+
+/** Referentes que REFERENCE_WORDS não cobre: "nela", "aquilo", "que você acabou de...". */
+const REFERENTE_EXTRA_RE = /\b(nela|nele|nisso|disso|daquilo|naquilo|aquilo)\b|\bque (você|voce|vc|a gente) acabou de\b|\bacabamos de\b/i;
+/** Campo de task citado na frase — verbo de ação + campo = escrita, nunca leitura. */
+const CAMPO_DE_TASK_RE = /\b(task|tasks|tarefa|tarefas|demanda|demandas|card|cards|item|itens|prazo|vencimento|data|entrega|deadline|status|respons[áa]vel|t[íi]tulo|prioridade|briefing|brief|descri[çc][ãa]o|coment[áa]rio|anexo|imagem|print|foto)\b/i;
+/** Marcador temporal — verbo de agendamento + isto = mudança de prazo ("joga pra sexta"). */
+const DESTINO_TEMPORAL_RE = /\b(hoje|amanh[ãa]|segunda|ter[cç]a|quarta|quinta|sexta|s[áa]bado|domingo|semana|fim do m[êe]s|\d{1,2}\/\d{1,2})\b/i;
+/** Destino de lugar solto — só conta com verbo de despacho ("coloca fulano lá").
+ * Lookahead em vez de `\b` final: "á" não é word char no JS, então `\b` depois
+ * de "lá" nunca casa no fim da frase. */
+const DESTINO_LUGAR_RE = /\b(lá|ali)(?![a-záàâãéêíóôõúç])/i;
+/**
+ * Verbo de ACRÉSCIMO sobre recurso existente ("adiciona o Matheus também").
+ * Separado do VERBO_EDICAO porque "adiciona" não é edição de campo — é a
+ * frase-canônico do F-02 (virava CREATE local via `criacaoPadrao`).
+ * `[a-z]*` antes do `\b` final: sem ele, "adicion"+\b não casa "adiciona" (o
+ * `a` seguinte é word char) — mesma armadilha documentada em UPDATE_BRIEF.
+ * `\b` no INÍCIO também: sem ele "demanda" casaria "manda" por dentro.
+ */
+const VERBO_ACRESCIMO_RE = /\b(adicion|acrescent|increment|inclu|complement)[a-z]*\b/i;
+/** Verbo de DESPACHO mutável — só conta com qualificador (referente/campo/pessoa/lugar). */
+const VERBO_DESPACHO_MUTAVEL_RE = /\b(coloc(a|ar|ue)|bot(a|e|ar)|p[oõ](e|em|nha)|tir(a|e|ar)|pass(a|ar|e)|jog(a|ar|ue)|lan[cç](a|e|ar)|mand(a|e|ar)|faz|fa[cç]a|marc(a|ar|ue)|atribu(i|ir|a|ar|em)|design(a|e|ar)|deleg(a|ue|ar)|anex(a|e|ar))\b/i;
+/** Verbo de AGENDAMENTO — só conta com marcador temporal ("bota pra terça").
+ * `reagend[a-z]*`/`remarc[a-z]*`: prefixo + `\b` não casa "reagenda"/"remarcar". */
+const VERBO_AGENDAMENTO_RE = /\b(reagend[a-z]*|remarc[a-z]*|adi(a|ar|e)|empurr(a|e|ar)|bot(a|e|ar)|p[oõ](e|em|nha)|jog(a|ar|ue)|coloc(a|ar|ue)|pass(a|ar|e)|troc(a|ar|ue)|mud(a|e|ar)|faz)\b/i;
+/**
+ * Pergunta clara de leitura — referente sem verbo de ação ("o que falta nessa
+ * task?", "e a segunda?") é consulta e segue pro externo normalmente. Sem a
+ * marca de pergunta, o mesmo referente solto ("nessa mesma task") é tratado
+ * como potencial de escrita: o externo não tem estado de conversa e o F-01
+ * já provou que meta-pedido vira task real lá.
+ */
+const PERGUNTA_CLARA_RE = /\?\s*$|^\s*(o que|qual|quais|quem|como|quando|onde|por\s*que|porque|quant[ao]s?|cad[êe]|será|existe|há|tem)\b/i;
+/** Reação/feedback puro sobre o recurso ("gostei dessa task") não é escrita. */
+const REACAO_PURA_RE = /^\s*(gostei|adorei|amei|odiei|detestei|curti|perfeito|[óo]timo|bom|legal|show|valeu|obrigad[oa]|ok|beleza|isso a[ií]|exato|concordo|discordo)\b/i;
+/** Leitura dirigida ao próprio usuário ("me passa", "me manda", "me atualiza aí"). */
+const LEITURA_DIRIGIDA_RE = /\bme\s+(mostra|mostre|lista|liste|exibe|exiba|traz|traga|conta|conte|explica|explique|fala|fale|diz|diga|passa|passe|manda|mande|atualiza|atualize|resume|resuma)\b/i;
+
+export interface WritePotential {
+  /** Rótulos dos sinais que dispararam — vão pro trace estruturado. */
+  signals: string[];
+}
+
+/**
+ * POTENCIAL DE ESCRITA — o classificador compartilhado do kill switch (F-01),
+ * do checkpoint anti UPDATE→CREATE (F-02) e do desvio do fast_path de
+ * conhecimento (F-14, via `looksLikeMutationOnResource`).
+ *
+ * Devolve null quando a mensagem é claramente leitura/pergunta/conversa —
+ * essas seguem pro bento-qa normalmente. Devolve os sinais quando a frase
+ * carrega verbo de ação sobre recurso (edição, acréscimo, despacho,
+ * agendamento, destruição, criação) ou referente a recurso sem marca de
+ * pergunta. A régua é CONSERVADORA de propósito: o falso positivo aqui vira
+ * um pedido de esclarecimento honesto; o falso negativo vira escrita cega
+ * num serviço sem idempotência.
+ *
+ * Prova da régua nos dois lados (bateria B.4 + leituras reais do bento-qa):
+ *   potencial: "coloca o Matheus nela", "troca o responsável pra Sofia",
+ *     "bota pra terça", "joga pra sexta-feira", "empurra ela pra semana que
+ *     vem", "adiciona o Matheus também", "nessa mesma task".
+ *   leitura: "quais tasks vencem hoje?", "me atualiza aí", "me atualiza
+ *     sobre a Cliente Teste 7", "qual o briefing dela?", "gostei dessa
+ *     task", "manda o relatório da semana".
+ */
+export function detectExternalWritePotential(message: string): WritePotential | null {
+  const texto = message.trim();
+  if (texto.length === 0) return null;
+
+  const temReferente = REFERENCE_WORDS.test(texto) || REFERENTE_FOCO_RE.test(texto) || REFERENTE_EXTRA_RE.test(texto);
+  const temCampo = CAMPO_DE_TASK_RE.test(texto);
+  const temPessoa = extractPersonName(texto) !== null;
+  const temTemporal = DESTINO_TEMPORAL_RE.test(texto);
+  const ehPerguntaClara = PERGUNTA_CLARA_RE.test(texto);
+
+  const signals: string[] = [];
+  // Verbo de edição explícito qualificado ("troca o responsável pra Sofia").
+  if (VERBO_EDICAO.test(texto) && (temReferente || temCampo || temPessoa || temTemporal)) signals.push('verbo_edicao');
+  // Campo de edição reconhecido pelo MESMO coletor que alimenta o update do
+  // guard (prazo/prioridade/status/título/briefing/anexo/remoção) — "bota
+  // pra terça" tem campo de prazo mesmo sem referente. `personName` SOZINHO
+  // não conta: o extrator solto casa nome dentro de qualquer frase de
+  // criação ("separa a demanda do cliente novo" vira pessoa "cliente novo"
+  // pelo "manda" dentro de "demanda") — pessoa solta é sinal fraco demais.
+  const camposColetados = collectFieldUpdates(texto);
+  if (Object.keys(camposColetados).some((k) => k !== 'personName')) signals.push('campo_de_edicao');
+  // Acréscimo sobre recurso existente ("adiciona o Matheus também").
+  if (VERBO_ACRESCIMO_RE.test(texto) && (temReferente || temCampo || temPessoa || /\btamb[ée]m\b/i.test(texto))) signals.push('verbo_acrescimo');
+  // Despacho mutável qualificado ("coloca o Matheus nela", "faz ela pra amanhã").
+  if (VERBO_DESPACHO_MUTAVEL_RE.test(texto) && (temReferente || temCampo || temPessoa || DESTINO_LUGAR_RE.test(texto))) signals.push('verbo_despacho');
+  // Agendamento ("joga pra sexta-feira", "empurra ela pra semana que vem").
+  if (VERBO_AGENDAMENTO_RE.test(texto) && temTemporal) signals.push('verbo_agendamento');
+  // Destruição ("apaga essa task") — o fluxo de confirmação mora DEPOIS do
+  // portão 1; sem este sinal o pedido de delete ia direto pro externo.
+  if (DELETE_REQUEST.test(texto) && (temReferente || DELETE_OBJECT_TASK.test(texto))) signals.push('verbo_destrutivo');
+  // Criação/despacho explícito de task que o portão 1 não autorizou — melhor
+  // esclarecer e criar LOCAL (com read-back) do que deixar o externo criar.
+  if (CREATE_TASK.test(texto) && /\b(task|tarefa|tarefas|demanda|demandas|card)\b/i.test(texto)) signals.push('verbo_criacao');
+  // Referente a recurso SEM verbo e SEM marca de pergunta ("nessa mesma
+  // task") — o externo não sabe do que se está falando e pode inventar.
+  if (!ehPerguntaClara && temReferente && !REACAO_PURA_RE.test(texto)) signals.push('referente_sem_verbo');
+
+  if (signals.length === 0) return null;
+  // Leitura dirigida ao próprio usuário sem nenhum qualificador de recurso:
+  // "me atualiza sobre a Cliente Teste 7" — o nome do cliente não torna a
+  // frase uma escrita.
+  if (LEITURA_DIRIGIDA_RE.test(texto) && !temReferente && !temCampo && !temTemporal && !DELETE_REQUEST.test(texto)) return null;
+  return { signals };
+}
+
+/**
+ * F-14 (P1, forense 26/09/2026 — provado ao vivo T05/T12): o fast_path de
+ * registro de conhecimento (`registrarConhecimentoDoTurno`, execute-job.ts)
+ * capturava "troca o responsável pra Sofia" e "corrige a task que você
+ * acabou de criar" como se fossem ENSINO ("Registrado: ..."), e a mutação
+ * real nunca acontecia. Verbo de ação sobre recurso é MUTAÇÃO, não
+ * conhecimento — o caller usa esta função pra deixar o turno seguir pro
+ * core/guard. Feedback genuíno ("ficou genérico", "gostei", "anota que o
+ * cliente prefere X") não casa aqui e continua capturado.
+ */
+export function looksLikeMutationOnResource(message: string): boolean {
+  return detectExternalWritePotential(message) !== null;
+}
+
+/**
+ * Criação SUBORDINADA não é ordem de criação: "a task que você acabou de
+ * criar" fala de uma task que JÁ EXISTE — o "criar" ali é passado, não
+ * pedido. Sem esta exclusão, o sinal explícito de criação (CREATE_TASK)
+ * casaria nessas frases e o checkpoint abaixo deixaria o create passar.
+ */
+const CRIACAO_SUBORDINADA_RE = /(acab\w+\s+de|sem|de|deix\w+\s+de)\s+cri(ar|e|a|em)\b/i;
+
+export interface AntiCreateVerdict {
+  allowed: boolean;
+  /** Sinais que sustentaram o bloqueio — vão pro trace estruturado. */
+  signals: string[];
+}
+
+/**
+ * CHECKPOINT ÚNICO ANTI UPDATE→CREATE (F-02, P0 — forense 26/09/2026).
+ *
+ * A falha medida no harness B.4: "adiciona o Matheus também" não casa com
+ * nenhum UPDATE_* nem com REFERENCE_WORDS, caía em `criacaoPadrao` e NASCIA
+ * UMA TASK NOVA (createTask=1) num pedido que era atribuição sobre a task em
+ * foco. Não é problema de regex — é arquitetura: nenhuma estrutura impedia
+ * um pedido de alteração de terminar num caminho que cria.
+ *
+ * A guarda é ESTRUTURAL e fica no único ponto por onde TODO create do guard
+ * passa (inclusive o multi — `createManyTasks` mora logo abaixo do call site
+ * em tryBentoActionGuard). PROIBIDO criar quando as três condições valem:
+ *
+ *   (a) há referente a recurso existente NA CONVERSA (lastTaskId, foco da
+ *       seleção, ou referência explícita tipo "nessa task");
+ *   (b) a mensagem NÃO carrega sinal explícito de criação nova ("cria uma
+ *       task...", "crie...") — quem pede criação em voz alta tem direito a
+ *       ela mesmo numa conversa com task recente;
+ *   (c) a mensagem carrega sinal de mutação sobre o existente (mesmo
+ *       vocabulário do kill switch) ou referente na própria frase.
+ *
+ * O bloqueio NÃO cria nada e responde esclarecimento — a mesma resposta
+ * honesta do invariante de 25/09/2026 que este checkpoint substitui e
+ * amplia (o antigo só enxergava VERBO_EDICAO; "adiciona o Matheus também"
+ * passava por ele).
+ */
+export function assertNotUpdateMisroutedAsCreate(params: {
+  message: string;
+  lastTaskId: string | null;
+  hasSelectionFocus: boolean;
+}): AntiCreateVerdict {
+  const { message } = params;
+  const temRecursoExistente =
+    params.lastTaskId !== null || params.hasSelectionFocus || EXPLICIT_TASK_REFERENCE.test(message);
+  if (!temRecursoExistente) return { allowed: true, signals: [] };
+  if (CREATE_TASK.test(message) && !CRIACAO_SUBORDINADA_RE.test(message)) return { allowed: true, signals: [] };
+
+  const potencial = detectExternalWritePotential(message);
+  const signals = [...(potencial?.signals ?? [])];
+  if (
+    (REFERENCE_WORDS.test(message) || REFERENTE_FOCO_RE.test(message) || REFERENTE_EXTRA_RE.test(message)) &&
+    !signals.includes('referente_na_mensagem')
+  ) {
+    signals.push('referente_na_mensagem');
+  }
+  if (signals.length === 0) return { allowed: true, signals: [] };
+  return { allowed: false, signals };
+}
+
 /**
  * P0-01 (22/09/2026): só reconhecia "revisão" ou "pronto/concluído" —
  * "altere essa task para em andamento" não mapeava pra nenhum status real e
@@ -619,6 +851,29 @@ function endOfDay(date: Date): Date {
   const end = new Date(date);
   end.setHours(23, 59, 59, 999);
   return end;
+}
+
+/**
+ * QA 28/09/2026: quando o BENTO_OPENAI_CORE_ENABLED está ligado, o planner
+ * (LLM) roda ANTES deste guard — e uma resposta pura de confirmação ("sim,
+ * confirmo") não carrega nenhum verbo de exclusão, então o planner não tem
+ * como saber que está diante de uma confirmação pendente e classifica
+ * errado (achado ao vivo: virou "não identifiquei o que devo alterar").
+ * Checagem determinística, sem LLM, que `execute-job.ts` usa para desviar
+ * do core DIRETO pro guard legado quando a ÚLTIMA resposta do assistente é
+ * a própria pergunta de confirmação de delete — só então "sim"/"confirmo"
+ * tem uma chance de ser interpretado corretamente.
+ */
+export async function hasPendingDeleteConfirmation(conversationId: string | null): Promise<boolean> {
+  if (!conversationId) return false;
+  const [lastAssistant] = await db
+    .select({ content: schema.messages.content })
+    .from(schema.messages)
+    .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.role, 'assistant')))
+    .orderBy(desc(schema.messages.createdAt))
+    .limit(1)
+    .catch(() => []);
+  return Boolean(lastAssistant?.content && DELETE_CONFIRM_TASK_ID.test(lastAssistant.content));
 }
 
 async function loadConversationContext(
@@ -1042,8 +1297,23 @@ async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, log
   const record = (tool: string, input: string, ok: boolean, error?: string) => {
     toolCalls.push({ tool, input_summary: input, ok, duration_ms: Math.round(performance.now() - start), ...(error ? { error } : {}) });
   };
-  const existiaAntes = await taskExiste(config, taskId);
-  if (existiaAntes === null) {
+  // LATÊNCIA (P1 ao vivo, 28/09/2026): taskExiste() é literalmente getTask()
+  // por dentro (linha ~1217) descartando o resultado — só pra saber se
+  // existe — e o getTask() logo abaixo repetia a MESMA chamada de rede de
+  // novo, só pra pegar `.name`. Uma leitura só decide os três ramos (existe
+  // com dado / 404 / erro desconhecido) sem perder nenhuma distinção que já
+  // existia; o read-back de AUSÊNCIA depois do delete continua sendo uma
+  // segunda chamada de verdade, porque verifica um estado diferente (depois
+  // da mutação), não o mesmo antes de mutar nada.
+  let antes: TaskDetail | null = null;
+  let lookupFailed = false;
+  try {
+    antes = await getTask(config, taskId);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (!/\(404\)/.test(detail)) lookupFailed = true;
+  }
+  if (lookupFailed) {
     return guardResponse({
       ok: false,
       toolCalls,
@@ -1051,21 +1321,12 @@ async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, log
       metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, errorCode: 'CLICKUP_LOOKUP_FAILED', verified: false },
     });
   }
-  if (!existiaAntes) {
+  if (!antes) {
     return guardResponse({
       ok: true,
       toolCalls,
       answer: `Não encontrei mais a task (${taskId}) no ClickUp — já pode ter sido apagada antes.`,
       metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, reason: 'task_nao_encontrada' },
-    });
-  }
-  const antes = await getTask(config, taskId).catch(() => null);
-  if (!antes) {
-    return guardResponse({
-      ok: false,
-      toolCalls,
-      answer: `Não consegui reler a task (${taskId}) pra confirmar o nome antes de apagar. Não apaguei nada; tenta de novo.`,
-      metadata: { guard: 'bento-action', action: 'delete', task_id: taskId, errorCode: 'CLICKUP_LOOKUP_FAILED', verified: false },
     });
   }
   try {
@@ -1252,30 +1513,14 @@ export async function tryBentoActionGuard(params: {
    */
   const ehCorrecaoDeDelete = detectDeleteScopeCorrection(message);
 
-  // HARD DENY. Concluir/fechar trabalho humano não é uma permissão que alguém
-  // possa ligar: o Bento não sabe se o designer terminou o layout, e um status
-  // "pronto" que ninguém verificou faz a operação inteira planejar em cima de
-  // uma mentira. A recusa é curta, diz o que ELE pode fazer e para por aí.
-  if (acao.kind === 'FORBIDDEN_ACTION') {
-    logger.info(
-      { intent_classification: acao.kind, write_authorized: false, write_reason: acao.reason },
-      '[guard] ação proibida: concluir/fechar trabalho humano'
-    );
-    return guardResponse({
-      ok: true,
-      toolCalls: [],
-      answer:
-        'Não marco trabalho de pessoa como concluído — não tenho como saber se ficou pronto, e um status errado aí atrapalha todo mundo que planeja em cima dele. ' +
-        'Quem entregou pode fechar, ou você me confirma e eu registro num comentário. Organizar, comentar, atribuir e criar demanda eu faço na hora.',
-      metadata: {
-        guard: 'bento-action',
-        action: 'denied_forbidden',
-        intent_classification: acao.kind,
-        write_authorized: false,
-        write_reason: acao.reason,
-      },
-    });
-  }
+  // O HARD DENY de "concluir/fechar trabalho humano" foi REMOVIDO em
+  // 28/09/2026 por decisão da operação: o Bento atende um time sênior, e
+  // quando a pessoa manda fechar a decisão é dela. O risco que o deny cobria
+  // (status falso quebrando o planejamento de todo mundo) agora é coberto por
+  // procedência — o fechamento registra quem pediu e o read-back confirma o
+  // status real no ClickUp. `FORBIDDEN_ACTION` continua no tipo porque nada
+  // mais o produz; se voltar a existir uma fronteira de verdade, ela reaparece
+  // aqui com a recusa explícita.
 
   /**
    * NEGAÇÃO EXPLÍCITA nunca pode seguir pro agente remoto. Achado real no
@@ -1308,7 +1553,16 @@ export async function tryBentoActionGuard(params: {
     });
   }
 
-  if (!acao.writeAuthorized && !ehCorrecaoDeDelete) {
+  // QA 28/09/2026 (achado ao vivo — script de teste da missão): "agora apaga
+  // ela" não bate em NENHUM padrão de classifyActionIntent (não é
+  // update/comment/create reconhecido), então `acao.writeAuthorized` fica
+  // false e o kill switch abaixo respondia esclarecimento genérico — a
+  // detecção REAL de delete (isTaskDeleteRequest, mais abaixo no arquivo)
+  // nunca era alcançada. Mesmo desvio que `ehCorrecaoDeDelete` já usa: um
+  // pedido de exclusão de verdade não é "escrita não reconhecida", é uma
+  // categoria própria com seu próprio fluxo de confirmação logo adiante.
+  const ehPedidoDeDelete = isTaskDeleteRequest(message);
+  if (!acao.writeAuthorized && !ehCorrecaoDeDelete && !ehPedidoDeDelete) {
     /**
      * EXCEÇÃO DE REPETIÇÃO (24/09/2026): "faz igual nas outras" / "faz o mesmo
      * nela" tem verbo fraco ("faz") e não passa no portão — mas a ORDEM real
@@ -1322,11 +1576,57 @@ export async function tryBentoActionGuard(params: {
         ? await selectionSnapshotExists(conversationId)
         : false;
     if (!ehRepeticaoDeSelecao) {
+      /**
+       * KILL SWITCH DE ESCRITA EXTERNA (F-01, P0 — Etapa 1 da convergência).
+       * Este `return null` despachava a mensagem pro bento-qa EXTERNO, que é
+       * opaco (tem credencial real de escrita, zero idempotência conhecida)
+       * — 16/31 UPDATE-intent da bateria B.4 caíam aqui. Com
+       * BENTO_EXTERNAL_WRITE_ENABLED=false (default), mensagem com potencial
+       * de escrita NÃO devolve null: vira esclarecimento/bloqueio explícito
+       * aqui mesmo, com trace estruturado. Leitura/pergunta clara segue pro
+       * externo normalmente.
+       */
+      if (!externalWriteEnabled()) {
+        const potencial = detectExternalWritePotential(message);
+        if (potencial) {
+          logger.warn(
+            {
+              intent_classification: acao.kind,
+              write_authorized: false,
+              write_reason: acao.reason,
+              branch: 'blocked_external_write_fallback',
+              signals: potencial.signals,
+              metric: 'bento_fallback_external_write_blocked_total',
+            },
+            '[guard] kill switch: mensagem com potencial de escrita NÃO segue pro bento-qa externo; respondendo esclarecimento'
+          );
+          return guardResponse({
+            ok: true,
+            toolCalls: [],
+            answer:
+              'Entendi que isso parece uma alteração no ClickUp, mas não consegui confirmar com segurança o que mudar e em qual task — então não executei nada por aqui nem despachei pra fora. ' +
+              'Reformula pra mim? Por exemplo: "muda o prazo da task pra amanhã", "atribui a task pro Pedro" ou "atualiza o briefing dela".',
+            metadata: {
+              guard: 'bento-action',
+              action: 'blocked_external_write_fallback',
+              intent_classification: acao.kind,
+              write_authorized: false,
+              write_reason: acao.reason,
+              branch: 'blocked_external_write_fallback',
+              signals: potencial.signals,
+            },
+          });
+        }
+      }
       logger.info(
         { intent_classification: acao.kind, write_authorized: false, write_reason: acao.reason },
         '[guard] pedido sem autorização de escrita; segue para análise'
       );
       // null = segue pro agente, que ANALISA e responde. Nenhuma escrita aqui.
+      // ATENÇÃO (F-01): o "agente" é o bento-qa externo — SOMENTE-LEITURA por
+      // política. Só chega aqui o que não tem potencial de escrita (kill
+      // switch acima) ou o que a operação deliberadamente reabriu com
+      // BENTO_EXTERNAL_WRITE_ENABLED=true (rollback; reativa F-01).
       return null;
     }
     logger.info({ executionHint: 'repeat' }, '[guard] repetição de operação da conversa; segue pro caminho de escrita validado');
@@ -1394,7 +1694,38 @@ export async function tryBentoActionGuard(params: {
   }
 
   const configBase = getClickUpConfigOrNull();
-  if (!configBase) return null;
+  if (!configBase) {
+    /**
+     * KILL SWITCH (F-01): quem chegou até aqui passou pelo portão 1 como
+     * ESCRITA (ou exceção de repetição). Sem config ClickUp local o guard não
+     * pode executar — mas devolver null mandaria esse pedido de escrita pro
+     * bento-qa externo (opaco, sem idempotência). Com a escrita externa
+     * desabilitada, a resposta honesta é falhar fechado aqui mesmo.
+     */
+    if (!externalWriteEnabled()) {
+      logger.warn(
+        { intent_classification: acao.kind, branch: 'blocked_external_write_fallback', metric: 'bento_fallback_external_write_blocked_total' },
+        '[guard] kill switch: escrita autorizada sem config ClickUp local; NÃO despachando pro bento-qa externo'
+      );
+      return guardResponse({
+        ok: false,
+        toolCalls: [],
+        answer:
+          'Não consegui validar a configuração do ClickUp aqui no Orchestrator, então não executei a alteração nem despachei ela pra fora. ' +
+          'Avisa o time de plataforma pra revisar as credenciais do ClickUp no worker.',
+        metadata: {
+          guard: 'bento-action',
+          action: 'blocked_external_write_fallback',
+          intent_classification: acao.kind,
+          write_authorized: false,
+          write_reason: 'CLICKUP_API_KEY/CLICKUP_TEAM_ID ausentes no worker',
+          errorCode: 'CLICKUP_CONFIG_MISSING',
+          verified: false,
+        },
+      });
+    }
+    return null;
+  }
   const config: ClickUpConfig = { ...configBase, writeScope: { authorizedForProduction: !ehQaBot(params.userEmail ?? null) } };
 
   const context = await loadConversationContext(conversationId, params.seniorToolContext?.agent, config);
@@ -1668,23 +1999,25 @@ export async function tryBentoActionGuard(params: {
   }
 
   /**
-   * INVARIANTE DURO (25/09/2026, incidente D. Carvalho): task EXISTENTE +
-   * verbo de edição NUNCA vira CREATE. Se a mensagem tem verbo de edição e
-   * aponta pra algo que já existe (foco resolvido, seleção da conversa ou
-   * referência explícita) e mesmo assim a classificação decidiu "create",
-   * a decisão está ERRADA — a resposta é esclarecimento, nunca criação.
-   * Este portão é a última linha de defesa: mesmo que tudo rio acima falhe,
-   * nenhuma task nova nasce de um pedido de alteração.
+   * CHECKPOINT ÚNICO ANTI UPDATE→CREATE (F-02, P0 — forense 26/09/2026).
+   * Substitui e amplia o invariante de 25/09/2026 (incidente D. Carvalho),
+   * que só enxergava VERBO_EDICAO: "adiciona o Matheus também" passava por
+   * ele e nascia uma task nova (medido no harness B.4, createTask=1). Este é
+   * o ÚNICO portão por onde TODO create do guard passa — inclusive o multi
+   * (`createManyTasks` logo abaixo). A regra mora em
+   * `assertNotUpdateMisroutedAsCreate`: com recurso existente na conversa e
+   * sem sinal explícito de criação nova, sinal de mutação = PROIBIDO criar.
    */
   if (intent.kind === 'create') {
-    const apontaExistente =
-      context.lastTaskId !== null ||
-      (context.selection !== null && referenciaSelecao !== null) ||
-      EXPLICIT_TASK_REFERENCE.test(message);
-    if (VERBO_EDICAO.test(message) && apontaExistente) {
+    const veredito = assertNotUpdateMisroutedAsCreate({
+      message,
+      lastTaskId: context.lastTaskId,
+      hasSelectionFocus: context.selection !== null && referenciaSelecao !== null,
+    });
+    if (!veredito.allowed) {
       logger.warn(
-        { intent_classification: acao.kind, task_id: context.lastTaskId },
-        '[guard] INVARIANTE: pedido de edição sobre task existente classificado como create — bloqueado',
+        { intent_classification: acao.kind, task_id: context.lastTaskId, signals: veredito.signals, metric: 'bento_invariant_update_create_blocked_total' },
+        '[guard] CHECKPOINT anti UPDATE→CREATE: pedido de alteração sobre recurso existente classificado como create — bloqueado',
       );
       return guardResponse({
         ok: true,
@@ -1692,7 +2025,7 @@ export async function tryBentoActionGuard(params: {
         answer:
           'Entendi que você quer ALTERAR uma task que já existe, não criar uma nova — então não criei nada. ' +
           'Me confirma qual task da lista (o número ou o nome) e o que mudar, que eu altero ela mesma.',
-        metadata: { guard: 'bento-action', action: 'blocked_update_never_create', write_authorized: false, task_id: context.lastTaskId },
+        metadata: { guard: 'bento-action', action: 'blocked_update_never_create', write_authorized: false, task_id: context.lastTaskId, signals: veredito.signals },
       });
     }
   }

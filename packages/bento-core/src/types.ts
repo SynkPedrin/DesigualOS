@@ -53,7 +53,7 @@ export function emptyResourceState(): ConversationResourceState {
 
 /** §2 da missão: a ÚNICA coisa que o modelo produz — nunca uma mutação direta. */
 export const structuredActionSchema = z.object({
-  intent: z.enum(['read_tasks', 'get_task', 'create_task', 'update_task', 'comment_task', 'analyze_tasks']),
+  intent: z.enum(['read_tasks', 'get_task', 'create_task', 'update_task', 'comment_task', 'delete_task', 'analyze_tasks']),
   target: z
     .object({
       resourceType: z.literal('CLICKUP_TASK'),
@@ -67,6 +67,19 @@ export const structuredActionSchema = z.object({
       description: z.string().optional(),
       dueDate: z.string().optional(),
       assignee: z.string().optional(),
+      /**
+       * D.11/F-17: operação sobre o responsável, de primeira classe.
+       * Ausente = 'add' (default semântico — compatível com o comportamento
+       * histórico do executor, que sempre adicionava a pessoa indicada).
+       */
+      assigneeOperation: z.enum(['add', 'remove', 'replace']).optional(),
+      /**
+       * Status pedido em linguagem natural ("concluída", "em andamento", "em
+       * revisão"). Quem traduz pro status REAL da lista é o executor, lendo os
+       * status que aquela lista tem — o modelo nunca inventa nome de coluna.
+       * Destravado em 28/09/2026 junto da remoção do hard deny de conclusão.
+       */
+      status: z.string().optional(),
       comment: z.string().optional(),
     })
     .nullable(),

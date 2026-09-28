@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /** Linha "dona" da lista consultada por resolveTaskClientAuthorization — cada teste ajusta. */
 let donoDaLista: { id: string; organizationId: string | null } | null = null;
+/** Conteúdo da "última mensagem do assistente" pra hasPendingDeleteConfirmation — cada teste ajusta. */
+let ultimaMensagemAssistente: string | null = null;
 
 vi.mock('drizzle-orm', () => ({
   eq: (col: { __col?: string }, value: unknown) => ({ op: 'eq', col: col?.__col, value }),
+  and: (...conds: unknown[]) => ({ op: 'and', conds }),
   desc: (col: unknown) => col,
 }));
 
@@ -16,11 +19,19 @@ vi.mock('@desigual-os/database', () => ({
           limit: () => ({
             catch: () => Promise.resolve(donoDaLista ? [donoDaLista] : []),
           }),
+          orderBy: () => ({
+            limit: () => ({
+              catch: () => Promise.resolve(ultimaMensagemAssistente !== null ? [{ content: ultimaMensagemAssistente }] : []),
+            }),
+          }),
         }),
       }),
     }),
   },
-  schema: { clients: { id: { __col: 'id' }, organizationId: { __col: 'organizationId' }, clickupListId: { __col: 'clickupListId' } } },
+  schema: {
+    clients: { id: { __col: 'id' }, organizationId: { __col: 'organizationId' }, clickupListId: { __col: 'clickupListId' } },
+    messages: { conversationId: { __col: 'conversationId' }, role: { __col: 'role' }, content: { __col: 'content' }, createdAt: { __col: 'createdAt' } },
+  },
 }));
 
 /**
@@ -179,6 +190,37 @@ describe('DELETE: pedido, confirmação e alvo pendente', () => {
     expect(isDeleteRequestForTest('apaga')).toBe(false);
   });
 
+  /**
+   * isTaskDeleteRequestForTest é a checagem REAL usada pelo dispatcher
+   * (isDeleteRequestForTest acima é mais ampla, só serve de sinal pro kill
+   * switch). QA 28/09/2026: "agora apaga ela" — literalmente o script de
+   * teste da missão — falhava aqui porque a exigência antiga tornava
+   * DELETE_OBJECT_TASK ("task"/"tarefa"/...) obrigatório; sem a palavra
+   * explícita, o pronome sozinho não bastava e a mensagem caía num
+   * esclarecimento genérico em vez de abrir a confirmação de exclusão.
+   */
+  describe('isTaskDeleteRequestForTest — a checagem real do dispatcher (objeto TASK opcional, objeto CAMPO exclui)', () => {
+    it.each(['apaga essa task', 'deleta essa demanda', 'exclui a task do Pedro', 'agora apaga ela', 'deleta isso', 'exclui essa'])(
+      '"%s" é pedido de exclusão DA TASK',
+      async (msg) => {
+        const { isTaskDeleteRequestForTest } = await import('./bento-action-guard.js');
+        expect(isTaskDeleteRequestForTest(msg)).toBe(true);
+      },
+    );
+
+    it.each(['apaga o briefing dela', 'remove o prazo dessa task', 'tira o responsável', 'apaga a descrição'])(
+      '"%s" é destruição de CAMPO, nunca da task inteira', async (msg) => {
+        const { isTaskDeleteRequestForTest } = await import('./bento-action-guard.js');
+        expect(isTaskDeleteRequestForTest(msg)).toBe(false);
+      },
+    );
+
+    it('"apaga" sozinho, sem referente nenhum, não é pedido executável (alvo ambíguo)', async () => {
+      const { isTaskDeleteRequestForTest } = await import('./bento-action-guard.js');
+      expect(isTaskDeleteRequestForTest('apaga')).toBe(false);
+    });
+  });
+
   it.each(['sim', 'sim, confirmo', 'confirmo', 'confirmado', 'pode apagar', 'pode deletar', 'isso mesmo', 'com certeza'])(
     '"%s" é reconhecido como confirmação afirmativa',
     async (msg) => {
@@ -204,6 +246,38 @@ describe('DELETE: pedido, confirmação e alvo pendente', () => {
   it('mensagem qualquer sem o marcador não tem alvo pendente nenhum — "sim" solto nunca apaga por acidente', async () => {
     const { extractPendingDeleteTaskIdForTest } = await import('./bento-action-guard.js');
     expect(extractPendingDeleteTaskIdForTest('Atribuído e CONFIRMADO por leitura no ClickUp: a task (86bc999zz) agora é de Pedro.')).toBeNull();
+  });
+
+  /**
+   * QA 28/09/2026: achado ao vivo no teste de aceite — com o core novo
+   * ligado, "sim, confirmo" chegava ao planner (LLM) ANTES do guard legado,
+   * e sem verbo de exclusão nenhum o planner classificava errado ("não
+   * identifiquei o que devo alterar"), então a segunda volta do delete
+   * nunca completava. hasPendingDeleteConfirmation é a checagem
+   * determinística que execute-job.ts usa pra desviar do core reto pro
+   * guard legado quando isto for true.
+   */
+  describe('hasPendingDeleteConfirmation — desvia o core quando a última resposta é a própria pergunta de confirmação', () => {
+    afterEach(() => {
+      ultimaMensagemAssistente = null;
+    });
+
+    it('true quando a última mensagem do assistente carrega o marcador', async () => {
+      const { hasPendingDeleteConfirmation, buildDeleteConfirmMarkerForTest } = await import('./bento-action-guard.js');
+      ultimaMensagemAssistente = `Tem certeza que quer apagar a task "X" (86bc556zm)?\n\n${buildDeleteConfirmMarkerForTest('86bc556zm')}`;
+      expect(await hasPendingDeleteConfirmation('conv-1')).toBe(true);
+    });
+
+    it('false quando a última mensagem do assistente é uma resposta qualquer sem o marcador', async () => {
+      const { hasPendingDeleteConfirmation } = await import('./bento-action-guard.js');
+      ultimaMensagemAssistente = 'Task atualizada e conferida por releitura.';
+      expect(await hasPendingDeleteConfirmation('conv-1')).toBe(false);
+    });
+
+    it('false quando não há conversationId', async () => {
+      const { hasPendingDeleteConfirmation } = await import('./bento-action-guard.js');
+      expect(await hasPendingDeleteConfirmation(null)).toBe(false);
+    });
   });
 
   /**
@@ -518,5 +592,191 @@ describe('P0-01: UPDATE nunca vira CREATE — unknown operation = no mutation', 
       expect(decisao.kind).toBe('intent');
       if (decisao.kind === 'intent') expect(decisao.intent.kind).toBe('create');
     });
+  });
+});
+
+/**
+ * ETAPA 1 DA CONVERGÊNCIA (26/09/2026, ADR-bento-core-convergence) — testes
+ * unitários das três peças novas: kill switch de escrita externa (F-01),
+ * detector de potencial de escrita (vocabulário compartilhado), checkpoint
+ * anti UPDATE→CREATE (F-02) e o desvio do fast_path de conhecimento (F-14).
+ * Os harnesses ponta a ponta (guard responde vs devolve null) ficam em
+ * bento-guard-matrix.test.ts.
+ */
+describe('externalWriteEnabled — kill switch F-01, default FECHADO', () => {
+  it('flag ausente é false (à prova de esquecimento: ambiente novo nasce protegido)', async () => {
+    const { externalWriteEnabled } = await import('./bento-action-guard.js');
+    expect(externalWriteEnabled({})).toBe(false);
+  });
+
+  it('só abre com valor explícito afirmativo; qualquer outra coisa é false', async () => {
+    const { externalWriteEnabled } = await import('./bento-action-guard.js');
+    expect(externalWriteEnabled({ BENTO_EXTERNAL_WRITE_ENABLED: 'true' })).toBe(true);
+    expect(externalWriteEnabled({ BENTO_EXTERNAL_WRITE_ENABLED: '1' })).toBe(true);
+    expect(externalWriteEnabled({ BENTO_EXTERNAL_WRITE_ENABLED: 'sim' })).toBe(true);
+    expect(externalWriteEnabled({ BENTO_EXTERNAL_WRITE_ENABLED: 'false' })).toBe(false);
+    expect(externalWriteEnabled({ BENTO_EXTERNAL_WRITE_ENABLED: 'yesplease' })).toBe(false);
+    expect(externalWriteEnabled({ BENTO_EXTERNAL_WRITE_ENABLED: '' })).toBe(false);
+  });
+});
+
+describe('detectExternalWritePotential — o vocabulário do kill switch', () => {
+  const COM_POTENCIAL = [
+    // Os 16 phrasings que caíam no fallback externo (evidência B.4):
+    'coloca o Matheus nela',
+    'altera aquilo que acabamos de criar',
+    'não, tira o Matheus dela',
+    'corrige a task que você acabou de criar',
+    'bota pra terça',
+    'muda isso',
+    'faz ela pra amanhã',
+    'coloca fulano lá',
+    'coloca prioridade alta nela',
+    'marca essa como urgente',
+    'joga pra sexta-feira',
+    'empurra ela pra semana que vem',
+    'edita a anterior',
+    'corrige o briefing dela',
+    'reagenda pra segunda',
+    'incrementa o briefing com isso',
+    // Referente solto sem marca de pergunta (o externo não tem estado):
+    'nessa mesma task',
+    'nessa aí',
+  ];
+
+  const LEITURA_CLARA = [
+    'quais tasks vencem hoje?',
+    'me atualiza aí',
+    'me atualiza sobre a Cliente Teste 7',
+    'qual o briefing dela?',
+    'o que falta nessa task?',
+    'e a segunda?',
+    'manda o relatório da semana',
+    'me passa o resumo da operação',
+    'gostei dessa task',
+    'ficou genérico',
+    'anota que o cliente prefere um tom mais formal',
+    'decidimos que a comunicação vai priorizar legado e permanência',
+    'como está a operação da semana?',
+  ];
+
+  for (const frase of COM_POTENCIAL) {
+    it(`potencial de escrita: "${frase}"`, async () => {
+      const { detectExternalWritePotential } = await import('./bento-action-guard.js');
+      const resultado = detectExternalWritePotential(frase);
+      expect(resultado, `deveria detectar potencial de escrita`).not.toBeNull();
+      expect(resultado!.signals.length).toBeGreaterThan(0);
+    });
+  }
+
+  for (const frase of LEITURA_CLARA) {
+    it(`leitura clara segue pro externo: "${frase}"`, async () => {
+      const { detectExternalWritePotential } = await import('./bento-action-guard.js');
+      expect(detectExternalWritePotential(frase)).toBeNull();
+    });
+  }
+});
+
+describe('looksLikeMutationOnResource — desvio do fast_path de conhecimento (F-14)', () => {
+  const MUTACAO = [
+    // T05/T12 EXATOS (prova ao vivo, 26/09/2026):
+    'troca o responsável pra Sofia',
+    'corrige a task que você acabou de criar',
+    // 6 variações do mesmo lado:
+    'muda o prazo dela pra amanhã',
+    'coloca o Matheus nela',
+    'tira o Matheus dela',
+    'atualiza o briefing dessa task',
+    'adiciona isso no briefing',
+    'bota essa como urgente',
+  ];
+
+  const FEEDBACK_OU_ENSINO = [
+    'ficou genérico',
+    'gostei',
+    'anota que o cliente prefere um tom mais formal',
+    'decidimos que a comunicação da Cosentino vai priorizar legado',
+    'o cliente mudou o posicionamento da marca',
+    'daqui pra frente o tom é mais direto',
+    'registra que a Cosentino aprovou a linha criativa',
+    'o cliente prefere que a gente troque o tom das peças',
+  ];
+
+  for (const frase of MUTACAO) {
+    it(`mutação sobre recurso NÃO vira conhecimento: "${frase}"`, async () => {
+      const { looksLikeMutationOnResource } = await import('./bento-action-guard.js');
+      expect(looksLikeMutationOnResource(frase)).toBe(true);
+    });
+  }
+
+  for (const frase of FEEDBACK_OU_ENSINO) {
+    it(`feedback/ensino genuíno continua capturado: "${frase}"`, async () => {
+      const { looksLikeMutationOnResource } = await import('./bento-action-guard.js');
+      expect(looksLikeMutationOnResource(frase)).toBe(false);
+    });
+  }
+});
+
+describe('assertNotUpdateMisroutedAsCreate — checkpoint estrutural anti UPDATE→CREATE (F-02)', () => {
+  it('os 6 casos obrigatórios são PROIBIDOS de criar com task em foco na conversa', async () => {
+    const { assertNotUpdateMisroutedAsCreate } = await import('./bento-action-guard.js');
+    const proibidos = [
+      'adiciona o Matheus também',
+      'coloca isso',
+      'muda aquilo',
+      'corrige a anterior',
+      'nessa mesma task',
+      'altera aquilo que acabamos de criar',
+    ];
+    for (const frase of proibidos) {
+      const veredito = assertNotUpdateMisroutedAsCreate({ message: frase, lastTaskId: 'qa9foco001', hasSelectionFocus: false });
+      expect(veredito.allowed, `"${frase}" foi permitido criar`).toBe(false);
+      expect(veredito.signals.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('"cria uma task de revisão do carrossel" (sem referente) cria normal, mesmo com task em foco', async () => {
+    const { assertNotUpdateMisroutedAsCreate } = await import('./bento-action-guard.js');
+    const veredito = assertNotUpdateMisroutedAsCreate({
+      message: 'cria uma task de revisão do carrossel',
+      lastTaskId: 'qa9foco001',
+      hasSelectionFocus: true,
+    });
+    expect(veredito.allowed).toBe(true);
+  });
+
+  it('sem recurso existente na conversa, qualquer frase passa (o checkpoint não inventa referente)', async () => {
+    const { assertNotUpdateMisroutedAsCreate } = await import('./bento-action-guard.js');
+    expect(
+      assertNotUpdateMisroutedAsCreate({ message: 'adiciona o Matheus também', lastTaskId: null, hasSelectionFocus: false }).allowed,
+    ).toBe(true);
+    expect(
+      assertNotUpdateMisroutedAsCreate({ message: 'separa a demanda pro Gui', lastTaskId: null, hasSelectionFocus: false }).allowed,
+    ).toBe(true);
+  });
+
+  it('create legítimo sem verbo "criar" e sem referente não é bloqueado (workflow da operação preservado)', async () => {
+    const { assertNotUpdateMisroutedAsCreate } = await import('./bento-action-guard.js');
+    // "separa a demanda" é o phrasing real de criação da operação — não pode
+    // ser confundido com UPDATE mesmo havendo task recente na conversa.
+    // (Sem pessoa nomeada de propósito: com "pro Gui" o guard classifica a
+    // frase como update_assignee pelo vocabulário próprio dele e ela nunca
+    // chega a ser candidata a create — não é caso deste checkpoint.)
+    const veredito = assertNotUpdateMisroutedAsCreate({
+      message: 'separa a demanda do cliente novo',
+      lastTaskId: 'qa9foco001',
+      hasSelectionFocus: false,
+    });
+    expect(veredito.allowed).toBe(true);
+  });
+
+  it('criação SUBORDINADA ("que acabamos de criar") não é sinal de criação nova', async () => {
+    const { assertNotUpdateMisroutedAsCreate } = await import('./bento-action-guard.js');
+    const veredito = assertNotUpdateMisroutedAsCreate({
+      message: 'corrige a task que você acabou de criar',
+      lastTaskId: 'qa9foco001',
+      hasSelectionFocus: false,
+    });
+    expect(veredito.allowed).toBe(false);
   });
 });

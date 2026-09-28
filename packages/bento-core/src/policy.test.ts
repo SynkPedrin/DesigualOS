@@ -94,3 +94,226 @@ describe('validateBentoAction — P0-01 (cardinalidade) e P0-02 (referência) da
     expect(decision.allowed).toBe(true);
   });
 });
+
+const estadoComFoco = () => ({
+  ...emptyResourceState(),
+  focusedResource: { resourceType: 'CLICKUP_TASK' as const, resourceId: 'T1', title: 'Task focada' },
+});
+
+describe('D.11/F-17 — operações de responsável (assignee_add/remove/replace)', () => {
+  it('"tira o Matheus dela" → update_task + assigneeOperation remove + pessoa → permitido', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'update_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { assignee: 'Matheus', assigneeOperation: 'remove' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'não, tira o Matheus dela' },
+    );
+    expect(decision.allowed).toBe(true);
+    expect(decision.resolvedResourceId).toBe('T1');
+  });
+
+  it('"coloca o Matheus nela" → assigneeOperation add com pessoa → permitido', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'update_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { assignee: 'Matheus', assigneeOperation: 'add' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'coloca o Matheus nela' },
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('"troca o responsável pra Sofia" → assigneeOperation replace com pessoa → permitido', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'update_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { assignee: 'Sofia', assigneeOperation: 'replace' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'troca o responsável pra Sofia' },
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('negativo: "tira o Matheus" SEM pessoa identificada → esclarecimento, nunca noop silencioso', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'update_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { assigneeOperation: 'remove' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'tira ele dela' },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('assignee_unresolved');
+  });
+
+  it('assignee sem operação explícita continua válido (default semântico = add, compatível com o executor)', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'update_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { assignee: 'Matheus' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      basePolicyCtx,
+    );
+    expect(decision.allowed).toBe(true);
+  });
+});
+
+describe('D.12/F-18 — sem conteúdo material vira esclarecimento, NUNCA placeholder', () => {
+  it('T11 exato: comment_task com placeholder "observação não especificada" → bloqueado', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'comment_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { comment: 'observação não especificada' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'coloca essa observação naquela demanda' },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('content_missing');
+  });
+
+  it('variação: comment_task sem campo comment nenhum → bloqueado', () => {
+    const decision = validateBentoAction(
+      action({ intent: 'comment_task', target: { resourceType: 'CLICKUP_TASK', resourceId: null }, changes: null, requestedCardinality: 0 }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'comenta isso nela' },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('content_missing');
+  });
+
+  it('variação: comment_task com comentário só de espaços → bloqueado', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'comment_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { comment: '   ' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'coloca uma observação nessa task' },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('content_missing');
+  });
+
+  it('variação: update_task de briefing sem nenhum campo concreto → bloqueado', () => {
+    const decision = validateBentoAction(
+      action({ intent: 'update_task', target: { resourceType: 'CLICKUP_TASK', resourceId: null }, changes: null, requestedCardinality: 0 }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'atualiza o briefing dela' },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('content_missing');
+  });
+
+  it('"adiciona no briefing: incluir legendas acessíveis" → conteúdo material presente → permitido', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'update_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { description: 'incluir legendas acessíveis' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'adiciona no briefing: incluir legendas acessíveis' },
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('comment_task com texto real → permitido', () => {
+    const decision = validateBentoAction(
+      action({
+        intent: 'comment_task',
+        target: { resourceType: 'CLICKUP_TASK', resourceId: null },
+        changes: { comment: 'cliente pediu pra trocar o CTA' },
+        requestedCardinality: 0,
+      }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'comenta na task: cliente pediu pra trocar o CTA' },
+    );
+    expect(decision.allowed).toBe(true);
+  });
+});
+
+describe('C.2/F-02/F-05 — invariante anti UPDATE→CREATE na camada policy', () => {
+  it('"adiciona o Matheus também" com foco existente NUNCA vira create → bloqueado pra esclarecimento', () => {
+    const decision = validateBentoAction(
+      action({ intent: 'create_task', changes: { title: 'Matheus' } }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'adiciona o Matheus também' },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('create_blocked_update_signal');
+  });
+
+  it('verbo de edição + referente explícito bloqueia mesmo sem foco no estado', () => {
+    const decision = validateBentoAction(
+      action({ intent: 'create_task', changes: { title: 'observação' } }),
+      emptyResourceState(),
+      { ...basePolicyCtx, message: 'coloca essa observação naquela demanda' },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('create_blocked_update_signal');
+  });
+
+  it('"cria uma task nova de revisão" (sinal explícito de criação) continua criando, mesmo com foco', () => {
+    const decision = validateBentoAction(
+      action({ intent: 'create_task', changes: { title: 'revisão' } }),
+      estadoComFoco(),
+      { ...basePolicyCtx, message: 'cria uma task nova de revisão' },
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('sem ctx.message a guarda fica desligada (fail-open documentado — caller antigo)', () => {
+    const decision = validateBentoAction(
+      action({ intent: 'create_task', changes: { title: 'Matheus' } }),
+      estadoComFoco(),
+      basePolicyCtx,
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('create com título normalizado idêntico a recentCreatedResources → possibleDuplicate sinalizado, execução continua liberada', () => {
+    const state = {
+      ...emptyResourceState(),
+      recentCreatedResources: [{ resourceType: 'CLICKUP_TASK' as const, resourceId: 'T9', title: '  Post X  ' }],
+    };
+    const decision = validateBentoAction(
+      action({ intent: 'create_task', changes: { title: 'post x' } }),
+      state,
+      { ...basePolicyCtx, message: 'cria a task post x' },
+    );
+    expect(decision.allowed).toBe(true);
+    expect(decision.possibleDuplicate).toBe(true);
+  });
+
+  it('título diferente dos recursos recentes → possibleDuplicate false', () => {
+    const state = {
+      ...emptyResourceState(),
+      recentCreatedResources: [{ resourceType: 'CLICKUP_TASK' as const, resourceId: 'T9', title: 'Post X' }],
+    };
+    const decision = validateBentoAction(action({ intent: 'create_task', changes: { title: 'Post Y' } }), state, basePolicyCtx);
+    expect(decision.allowed).toBe(true);
+    expect(decision.possibleDuplicate).toBe(false);
+  });
+});

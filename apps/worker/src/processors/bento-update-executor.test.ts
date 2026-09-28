@@ -133,4 +133,26 @@ describe('executeTaskUpdate — conteúdo/título/anexo na MESMA task', () => {
     expect(chamadas.put).toHaveLength(0);
     expect(res.answer).toContain('Já estava assim');
   });
+
+  it('replacePersonName (assigneeOperation replace, F-17): adiciona a pessoa e remove os OUTROS num PUT só — nunca remove ela mesma', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    estado.assignees = [
+      { id: 123, username: 'Pedro Gabriel' },
+      { id: 456, username: 'Bruna' },
+    ];
+    const res = await executeTaskUpdate(base({ replacePersonName: 'Pedro' }));
+    // O bug do desenho "personName + removePersonName:''" removeria TODOS,
+    // inclusive o Pedro já atribuído. replacePersonName exclui ele da remoção.
+    expect(chamadas.put).toEqual([{ addAssignees: [123], removeAssignees: [456] }]);
+    expect(res.status).toBe('completed');
+    expect(res.answer).toContain('somente Pedro Gabriel');
+  });
+
+  it('replacePersonName quando a pessoa JÁ é a única responsável: zero escrita (idempotente)', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    estado.assignees = [{ id: 123, username: 'Pedro Gabriel' }];
+    const res = await executeTaskUpdate(base({ replacePersonName: 'Pedro' }));
+    expect(chamadas.put).toHaveLength(0);
+    expect(res.answer).toContain('Já estava assim');
+  });
 });

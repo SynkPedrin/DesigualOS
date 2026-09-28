@@ -41,7 +41,7 @@ export async function completeTextSafely(
   let response;
   try {
     response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-5',
       max_tokens: opts?.maxTokens ?? 700,
       // Sem `tools`: nenhuma ferramenta disponível pro modelo nesta chamada,
       // então nada que o texto de entrada diga vira ação real — mesmo que o

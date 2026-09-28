@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { emptyResourceState, type ConversationResourceState, type SelectedResourceRef } from '@desigual-os/bento-core';
 
@@ -49,7 +49,7 @@ export async function loadResourceState(conversationId: string): Promise<Convers
   const [row] = await db
     .select({ payload: schema.conversationContext.payload })
     .from(schema.conversationContext)
-    .where(eq(schema.conversationContext.conversationId, conversationId))
+    .where(and(eq(schema.conversationContext.conversationId, conversationId), eq(schema.conversationContext.contextType, CONTEXT_TYPE)))
     .orderBy(desc(schema.conversationContext.createdAt))
     .limit(1)
     .catch(() => []);
@@ -62,6 +62,31 @@ export async function persistResourceState(conversationId: string, state: Conver
     contextType: CONTEXT_TYPE,
     payload: { ...state, updatedAt: new Date().toISOString() } as Record<string, unknown>,
   });
+}
+
+/**
+ * INV-10: depois de um DELETE confirmado (hoje sempre via
+ * bento-action-guard.ts `executeConfirmedDelete`, que já tem confirmação +
+ * read-back de ausência), o recurso apagado nunca pode continuar como foco
+ * ativo do ConversationResourceState novo — mesmo quando o delete em si foi
+ * executado pelo caminho legado. Sem isto, um "apaga essa task" seguido de
+ * "coloca X na mesma" (com BENTO_OPENAI_CORE_ENABLED ligado) resolveria o
+ * alvo contra uma task que não existe mais. Idempotente: chamar de novo pro
+ * mesmo resourceId já ausente do foco é um no-op silencioso (não grava linha
+ * nova à toa).
+ */
+export async function clearResourceFocusIfDeleted(conversationId: string, deletedResourceId: string): Promise<void> {
+  const state = await loadResourceState(conversationId);
+  const stillReferenced =
+    state.focusedResource?.resourceId === deletedResourceId || state.selectedResources.some((r) => r.resourceId === deletedResourceId);
+  if (!stillReferenced) return;
+  const cleaned: ConversationResourceState = {
+    ...state,
+    focusedResource: state.focusedResource?.resourceId === deletedResourceId ? null : state.focusedResource,
+    selectedResources: state.selectedResources.filter((r) => r.resourceId !== deletedResourceId),
+    lastExecution: { operation: 'delete_task', resourceIds: [deletedResourceId], verified: true, at: new Date().toISOString() },
+  };
+  await persistResourceState(conversationId, cleaned);
 }
 
 /** Atualiza o estado após um write bem-sucedido — chamado uma vez por operação verificada. */

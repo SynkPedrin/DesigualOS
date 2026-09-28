@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, uploadTaskAttachment } from './clickup-client';
+import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, resolveMemberByName, uploadTaskAttachment } from './clickup-client';
 
 /**
  * Cobertura do timeout de rede adicionado na auditoria de production
@@ -11,6 +11,37 @@ import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, uploadTas
 const CONFIG = { apiKey: 'pk_fake', teamId: 'T1' };
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('resolveMemberByName — rede de segurança contra verbo colado no nome (achado real de QA 25/09/2026)', () => {
+  const membros = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ team: { members: [{ user: { id: 1, username: 'Jamile Galdino', email: 'j@x.com', profilePicture: null } }] } }),
+      })),
+    );
+
+  it('"remove Jamile Galdino" resolve pro membro "Jamile Galdino" (não procura por um membro chamado "remove Jamile Galdino")', async () => {
+    membros();
+    const resolution = await resolveMemberByName(CONFIG, 'remove Jamile Galdino');
+    expect(resolution.status).toBe('resolved');
+    if (resolution.status === 'resolved') expect(resolution.member.username).toBe('Jamile Galdino');
+  });
+
+  it('"tira a Jamile Galdino" também resolve (verbo + preposição)', async () => {
+    membros();
+    const resolution = await resolveMemberByName(CONFIG, 'tira a Jamile Galdino');
+    expect(resolution.status).toBe('resolved');
+  });
+
+  it('nome sem verbo continua resolvendo normalmente (sem falso positivo na stripagem)', async () => {
+    membros();
+    const resolution = await resolveMemberByName(CONFIG, 'Jamile Galdino');
+    expect(resolution.status).toBe('resolved');
+  });
+});
 
 describe('timeout de rede nos fetches do ClickUp', () => {
   it('getTeamMembers sai com AbortSignal de timeout', async () => {

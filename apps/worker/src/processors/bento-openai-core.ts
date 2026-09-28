@@ -1,20 +1,24 @@
+import { createHash } from 'node:crypto';
 import type { Logger } from '@desigual-os/logging';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
-import { createTaskComment, getTaskComments, type SeniorToolContext } from '@desigual-os/tool-gateway';
+import { createTaskComment, getTaskComments, normalizeTaskName, type SeniorToolContext } from '@desigual-os/tool-gateway';
 import { createVerifiedSeniorTask, MutationBudget } from '@desigual-os/tool-gateway';
 import {
   proposeBentoAction,
   validateBentoAction,
   BentoPlannerError,
   type ConversationResourceState,
+  type StructuredAction,
   type WriteEnvelope,
 } from '@desigual-os/bento-core';
-import { getClickUpConfigOrNull } from './bento-action-guard';
+import { getClickUpConfigOrNull, mapStatusHintToRealStatus } from './bento-action-guard';
 import { resolveWriteTarget } from './write-target';
 import { executeTaskUpdate } from './bento-update-executor';
 import { loadResourceState, persistResourceState, applyExecutionToState } from './bento-resource-state';
-import { loadLatestExecutionState, sameExecutionAlreadyDone } from './execution-record';
-import { selectWriteProvider, executeViaMcp } from './bento-mcp-executor';
+import { loadLatestExecutionState, sameExecutionAlreadyDone, type ExecutionRecord } from './execution-record';
+import { selectWriteProvider, executeViaMcp, parseDueDateMs, type McpWriteEnvelope } from './bento-mcp-executor';
+import { resolveFromLegacySelectionSnapshot } from './bento-legacy-selection-bridge';
+import { attachMaterials, buildTaskBriefing, type TaskAttachmentInput } from './bento-task-briefing';
 
 /**
  * bento-openai-core.ts — o loop novo pedido em "BENTO CORE CUTOVER":
@@ -42,7 +46,7 @@ export function bentoOpenAiCoreEnabled(): boolean {
   return process.env.BENTO_OPENAI_CORE_ENABLED === 'true';
 }
 
-function envelopeToExecuteResponse(agent: 'bento', envelope: WriteEnvelope, humanAnswer: string): ExecuteResponse {
+function envelopeToExecuteResponse(agent: 'bento', envelope: WriteEnvelope, humanAnswer: string, executionRecord?: ExecutionRecord): ExecuteResponse {
   return {
     execution_id: '',
     agent,
@@ -55,7 +59,125 @@ function envelopeToExecuteResponse(agent: 'bento', envelope: WriteEnvelope, huma
     metadata: {
       guard: 'bento-openai-core',
       write_envelope: envelope as unknown as Record<string, unknown>,
+      // D.4/F-04: TODA execução do caminho novo grava o ExecutionRecord no
+      // mesmo formato que o dedup (execution-record.ts) já lê — sem isto o
+      // dedup ficava morto pras escritas do próprio core (fault-injection 2c).
+      ...(executionRecord ? { execucao: executionRecord as unknown as Record<string, unknown> } : {}),
     },
+  };
+}
+
+/** Razões novas da policy (C.2/D.11/D.12) viram esclarecimentos específicos, não o prefixo genérico. */
+function clarificationFor(reason: string, intent: StructuredAction['intent']): string {
+  if (reason.startsWith('target_unresolved')) {
+    return 'Não identifiquei de qual task você está falando — pode me lembrar qual é (nome ou link)?';
+  }
+  if (reason.startsWith('create_blocked_update_signal')) {
+    return 'Pelo que entendi você quer ALTERAR uma task que já existe, não criar uma nova — e não vou criar nada sem ter certeza. É pra atualizar qual task? Me confirma o nome ou o link.';
+  }
+  if (reason.startsWith('assignee_unresolved')) {
+    return 'De quem você está falando? Me diz o nome da pessoa (ex.: "tira o Matheus dela", "passa pra Sofia").';
+  }
+  if (reason.startsWith('content_missing')) {
+    return intent === 'comment_task'
+      ? 'Não recebi o texto do comentário — qual conteúdo devo registrar na task?'
+      : 'Não identifiquei o que exatamente devo alterar — me diz o campo e o valor (título, prazo, responsável, briefing...)?';
+  }
+  return `Não posso executar essa ação agora: ${reason}`;
+}
+
+/** Resposta honesta do caminho MCP (F-08/D.5/D.6): nunca success pleno sem verificação, incerteza explícita. */
+function mcpHumanAnswer(envelope: McpWriteEnvelope): string {
+  if (!envelope.success) {
+    if (envelope.error?.startsWith('write_unconfirmed_resource')) {
+      return 'A criação foi enviada ao ClickUp, mas não consegui identificar a task criada pra confirmar. Antes de pedir de novo, dá uma olhada na lista — se ela estiver lá, me avisa (não quero criar duplicada).';
+    }
+    return `Não consegui executar via ClickUp MCP: ${envelope.error}`;
+  }
+  if (envelope.wasExisting) {
+    return `Essa task já existia (https://app.clickup.com/t/${envelope.resourceIds[0]}) — não criei outra.`;
+  }
+  if (envelope.verified) return 'Feito via ClickUp MCP, confirmado por releitura.';
+  if (envelope.readback && !envelope.readback.unavailable && envelope.readback.mismatches.length > 0) {
+    return `Executei via ClickUp MCP, mas a releitura encontrou divergências: ${envelope.readback.mismatches.join('; ')}. Confira a task antes de seguir.`;
+  }
+  return 'Feito via ClickUp MCP (não consegui reler pra confirmar — verifique a task).';
+}
+
+/* ------------------------------------------------------------------ */
+/* D.3/D.4 — chave estável da operação + ExecutionRecord do caminho novo */
+/* ------------------------------------------------------------------ */
+
+/** O guard antigo grava operation 'update'/'create_tasks'; o core grava o intent. O dedup precisa casar os dois dialetos. */
+const OPERATION_ALIAS: Record<string, string> = { update: 'update_task', create_tasks: 'create_task' };
+
+function canonicalOperation(operation: string): string {
+  return OPERATION_ALIAS[operation] ?? operation;
+}
+
+function hashOf(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+/**
+ * Chave estável da operação lógica (D.3/F-03): retry do MESMO pedido (mesmo
+ * conversationId + intent + alvo/lista + argumentos) regenera a MESMA chave.
+ * O argsHash NUNCA carrega conteúdo bruto — títulos/pessoas entram
+ * normalizados e o resto como hash.
+ */
+function stableOperationKey(params: {
+  conversationId: string;
+  action: StructuredAction;
+  listId: string | null;
+  resolvedResourceId: string | null;
+}): { operationId: string; argsHash: string } {
+  const changes = params.action.changes;
+  const canonical = JSON.stringify({
+    intent: params.action.intent,
+    list: params.listId,
+    target: params.resolvedResourceId,
+    title: changes?.title ? normalizeTaskName(changes.title) : null,
+    assignee: changes?.assignee ? normalizeTaskName(changes.assignee) : null,
+    assigneeOperation: changes?.assigneeOperation ?? null,
+    due: changes?.dueDate ?? null,
+    description: changes?.description ? hashOf(changes.description) : null,
+    comment: changes?.comment ? hashOf(changes.comment) : null,
+  });
+  const argsHash = hashOf(canonical);
+  return { operationId: `bento-op:${hashOf(`${params.conversationId}|${canonical}`)}`, argsHash };
+}
+
+/**
+ * ExecutionRecord do caminho novo (D.4/F-04), compatível com
+ * `sameExecutionAlreadyDone`: sucesso SÓ entra em successIds quando houve
+ * verificação — escrita enviada sem releitura confirmada fica em failedIds
+ * (honesto pro "já fez?" e seguro pro dedup: update repete, create é
+ * protegido pelo reconcile-first).
+ */
+function executionRecordFromEnvelope(
+  envelope: WriteEnvelope,
+  extras: { operationId: string; argsHash: string; title: string | null; assigneeName: string | null },
+): ExecutionRecord {
+  const confirmed = envelope.success && envelope.verified;
+  const titles: Record<string, string> = {};
+  if (extras.title) for (const id of envelope.resourceIds) titles[id] = extras.title;
+  return {
+    executionId: `core:${extras.operationId}`,
+    operation: envelope.operation,
+    taskIds: envelope.resourceIds,
+    targetPerson: extras.assigneeName ? { name: extras.assigneeName, memberId: null, username: extras.assigneeName } : null,
+    successIds: confirmed ? envelope.resourceIds : [],
+    failedIds: confirmed
+      ? []
+      : envelope.resourceIds.length > 0
+        ? envelope.resourceIds.map((id) => ({ id, title: extras.title ?? id, reason: envelope.error ?? 'escrita enviada, releitura não confirmou' }))
+        : [{ id: '', title: extras.title ?? '(sem identificador)', reason: envelope.error ?? 'operação não confirmada' }],
+    timestamp: new Date().toISOString(),
+    verification: envelope.resourceIds.map((taskId) => ({ taskId, ...(extras.assigneeName ? { assigneeVerified: confirmed } : {}) })),
+    titles,
+    operationId: extras.operationId,
+    ...(envelope.provider ? { provider: envelope.provider } : {}),
+    argsHash: extras.argsHash,
   };
 }
 
@@ -66,21 +188,58 @@ export interface BentoOpenAiCoreParams {
   clientId: string | null;
   seniorToolContext: SeniorToolContext | null;
   logger: Logger;
+  /**
+   * Nome do cliente ativo da conversa. Era `null` hardcoded na chamada do
+   * planner: o modelo planejava a demanda sem saber de quem ela é, então o
+   * título saía genérico e nada do dossiê podia ser usado. Quem tem esse dado
+   * é a execução (execute-job.ts), então ele entra por aqui.
+   */
+  clientName?: string | null;
+  /** Quem pediu — vai pro briefing como origem da demanda. */
+  userName?: string | null;
+  /** Material que veio junto do pedido (print, arquivo). Vira anexo na task. */
+  attachments?: TaskAttachmentInput[] | undefined;
+  /**
+   * Completador de texto sem ferramenta (`completeTextSafely`), usado só pelo
+   * briefing pra ler o próprio pedido. Sem ele o briefing ainda sai — só não
+   * recupera campo crítico escrito em prosa.
+   */
+  briefingWriter?: ((prompt: string) => Promise<string | null>) | undefined;
 }
 
 export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise<ExecuteResponse | null> {
   if (!bentoOpenAiCoreEnabled()) return null;
 
+  // LATÊNCIA (P1 ao vivo, 28/09/2026): medição pura, não muda nenhum branch
+  // de controle — só instrumenta ONDE o tempo do turno vai. `total_ms` no
+  // finally cobre TODO caminho de saída (early return incluso); as marcas
+  // por etapa dentro do corpo são adicionadas nos pontos que já existiam.
+  const __turnStart = performance.now();
+  try {
+    return await runBentoOpenAiCoreTimed(params);
+  } finally {
+    params.logger.info(
+      { conversationId: params.conversationId, total_ms: Math.round(performance.now() - __turnStart) },
+      '[bento-openai-core] latência total do turno',
+    );
+  }
+}
+
+async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<ExecuteResponse | null> {
   const resourceState: ConversationResourceState = await loadResourceState(params.conversationId);
 
   let action;
+  const __plannerStart = performance.now();
   try {
     action = await proposeBentoAction({
       message: params.message,
       resourceState,
-      clientName: null,
+      // O planner precisa saber de QUEM é a demanda: sem isso o título sai
+      // genérico e o briefing não tem como puxar o dossiê do cliente certo.
+      clientName: params.clientName ?? null,
       logger: params.logger as never,
     });
+    params.logger.info({ conversationId: params.conversationId, planner_ms: Math.round(performance.now() - __plannerStart) }, '[bento-openai-core] planner respondeu');
   } catch (error) {
     // §26/§15 da missão: falha de credencial/estrutura é EXPLÍCITA, nunca cai
     // silenciosamente pro guard antigo enquanto a flag estiver ligada — quem
@@ -93,7 +252,18 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
 
   // Fora do escopo desta primeira wiring (ver comentário de topo) — cai pro
   // guard antigo, que já cobre leitura/análise.
-  if (action.intent === 'read_tasks' || action.intent === 'get_task' || action.intent === 'analyze_tasks') {
+  //
+  // delete_task fica de propósito no caminho antigo (bento-action-guard.ts
+  // `executeConfirmedDelete`): ele já tem confirmação em duas voltas,
+  // read-back de AUSÊNCIA pós-delete e idempotência ("já tinha sido apagada")
+  // — reescrevê-lo aqui, sem MCP nem policy próprios para delete nesta
+  // versão, seria introduzir um segundo caminho pra um side effect
+  // destrutivo sem o mesmo nível de prova (fail-safe default: preferir o
+  // caminho já comprovado a um write path novo e sem MCP_SUPPORTED_INTENTS
+  // (bento-mcp-executor.ts) equivalente). O foco do ConversationResourceState
+  // é limpo pelo bridge em execute-job.ts assim que o guard confirma a
+  // exclusão, então a continuidade do core novo não fica com foco morto.
+  if (action.intent === 'read_tasks' || action.intent === 'get_task' || action.intent === 'analyze_tasks' || action.intent === 'delete_task') {
     return null;
   }
 
@@ -105,21 +275,45 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
     );
   }
 
-  const decision = validateBentoAction(action, resourceState, {
+  // PONTE COM O SNAPSHOT ANTIGO (P0 25/09/2026, incidente D. Carvalho item
+  // 11): o ConversationResourceState novo só é populado por escritas feitas
+  // por ESTE caminho — uma listagem respondida pelo caminho antigo
+  // (callBento) nunca passa por aqui. Sem isto, "item 11" respondido há dois
+  // turnos ficava invisível pro update, mesmo com o snapshot antigo
+  // (metadata.selecao) já tendo o id real gravado corretamente. Só tenta
+  // quando o estado novo está REALMENTE vazio (nunca sobrescreve foco/seleção
+  // já resolvidos por este caminho) e só para intents que precisam de alvo.
+  let effectiveResourceState = resourceState;
+  if (
+    (action.intent === 'update_task' || action.intent === 'comment_task') &&
+    !resourceState.focusedResource &&
+    resourceState.selectedResources.length === 0 &&
+    params.conversationId
+  ) {
+    const bridged = await resolveFromLegacySelectionSnapshot(params.conversationId, params.message, params.logger).catch((error: unknown) => {
+      params.logger.warn({ error }, '[bento-openai-core] ponte com snapshot antigo falhou');
+      return null;
+    });
+    if (bridged) {
+      effectiveResourceState = { ...resourceState, focusedResource: bridged.resource };
+    }
+  }
+
+  const decision = validateBentoAction(action, effectiveResourceState, {
     actorHasClickUpWrite: params.seniorToolContext.permissions.some((p) => p.resource === 'clickup' && p.action === 'write'),
     agentHasClickUpWrite: true, // agent_tools já checado no boot da execução (loadSeniorRuntimeContext); ver RBAC seção do handoff
     mutationsThisExecution: 0,
     maxMutationsPerExecution: 10,
     explicitMultiActionConfirmed: false,
+    // C.2/F-02/F-05: sem a mensagem a guarda anti UPDATE→CREATE fica DESLIGADA.
+    message: params.message,
   });
 
   if (!decision.allowed) {
     return envelopeToExecuteResponse(
       'bento',
       { success: false, verified: false, provider: null, resourceIds: [], operation: action.intent, changes: {}, error: decision.reason, retryable: false, sources: [] },
-      decision.reason.startsWith('target_unresolved')
-        ? 'Não identifiquei de qual task você está falando — pode me lembrar qual é (nome ou link)?'
-        : `Não posso executar essa ação agora: ${decision.reason}`,
+      clarificationFor(decision.reason, action.intent),
     );
   }
 
@@ -128,19 +322,47 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
     return envelopeToExecuteResponse('bento', { success: false, verified: false, provider: null, resourceIds: [], operation: action.intent, changes: {}, error: 'ClickUp não configurado (CLICKUP_API_KEY/CLICKUP_TEAM_ID ausentes)', retryable: false, sources: [] }, 'ClickUp não está configurado neste ambiente.');
   }
 
-  // §14: idempotência — mesma operação sobre o mesmo recurso já confirmada
-  // na conversa não repete a escrita.
-  if (decision.resolvedResourceId) {
-    const lastState = await loadLatestExecutionState(params.conversationId).catch(() => null);
+  // §14 + D.4/F-04/F-05: idempotência — mesma operação já confirmada na
+  // conversa não repete a escrita. Update/comment casam por (operação,
+  // recurso); create casa por (operação, título normalizado) — o filtro
+  // antigo exigia resolvedResourceId, que create nunca tem (dedup morto).
+  //
+  // QA 28/09/2026: sameExecutionAlreadyDone só comparava operação+recurso —
+  // DUAS chamadas de update_task DISTINTAS sobre a MESMA task (ex.: primeiro
+  // "coloca o Fulano", depois "muda o prazo pra sexta") batiam nesse mesmo
+  // par e a segunda mutação, legítima e diferente, era descartada como
+  // "já tinha feito isso" sem nunca tocar o ClickUp (achado ao vivo no teste
+  // de aceite). Corrigido: exige também o argsHash do PEDIDO ATUAL igual ao
+  // argsHash gravado — retry do MESMO pedido continua deduplicado, um pedido
+  // diferente sobre o mesmo recurso não é mais engolido.
+  const currentArgsHash = stableOperationKey({ conversationId: params.conversationId, action, listId: null, resolvedResourceId: decision.resolvedResourceId }).argsHash;
+  const lastState = await loadLatestExecutionState(params.conversationId).catch(() => null);
+  if (lastState?.kind === 'executed' && canonicalOperation(lastState.record.operation) === action.intent) {
+    const record = lastState.record;
+    // Recibo do guard ANTIGO nunca teve argsHash (formato pré-existente) —
+    // sem o campo, mantém o dedup grosseiro de sempre (compat); com o campo
+    // presente (sempre o caso pro caminho novo), exige bater com o pedido atual.
     if (
-      lastState?.kind === 'executed' &&
-      sameExecutionAlreadyDone(lastState.record, { operation: action.intent, taskIds: [decision.resolvedResourceId], memberId: null })
+      decision.resolvedResourceId &&
+      (record.argsHash === undefined || record.argsHash === currentArgsHash) &&
+      sameExecutionAlreadyDone(record, { operation: record.operation, taskIds: [decision.resolvedResourceId], memberId: null })
     ) {
       return envelopeToExecuteResponse(
         'bento',
         { success: true, verified: true, provider: 'LEGACY_GATEWAY', resourceIds: [decision.resolvedResourceId], operation: action.intent, changes: {}, error: null, retryable: false, sources: [`CLICKUP_TASK:${decision.resolvedResourceId}`] },
         'Já tinha feito isso — não repeti a mutação pra não duplicar.',
       );
+    }
+    if (action.intent === 'create_task' && record.failedIds.length === 0 && record.successIds.length > 0) {
+      const wanted = action.changes?.title ? normalizeTaskName(action.changes.title) : null;
+      const matchedId = wanted ? record.successIds.find((id) => record.titles?.[id] && normalizeTaskName(record.titles[id]) === wanted) : undefined;
+      if (matchedId) {
+        return envelopeToExecuteResponse(
+          'bento',
+          { success: true, verified: true, provider: 'LEGACY_GATEWAY', resourceIds: [matchedId], operation: 'create_task', changes: {}, error: null, retryable: false, sources: [`CLICKUP_TASK:${matchedId}`] },
+          `Já tinha criado essa task (https://app.clickup.com/t/${matchedId}) — não criei outra.`,
+        );
+      }
     }
   }
 
@@ -169,17 +391,33 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
     return envelopeToExecuteResponse('bento', { success: false, verified: false, provider: null, resourceIds: [], operation: 'create_task', changes: {}, error: `write_target_${target?.status}: ${target?.reason}`, retryable: false, sources: [] }, 'Não consegui identificar o cliente/lista de destino dessa task.');
   }
 
+  // D.3/D.4: chave estável da operação lógica — retry do mesmo job regenera
+  // a mesma chave (vai na instrução MCP e no ExecutionRecord).
+  const { operationId, argsHash } = stableOperationKey({
+    conversationId: params.conversationId,
+    action,
+    listId: target?.listId ?? null,
+    resolvedResourceId: decision.resolvedResourceId,
+  });
+  const recordExtras = { operationId, argsHash, title: action.changes?.title ?? null, assigneeName: action.changes?.assignee ?? null };
+
   if (providerSelection.provider === 'MCP') {
+    const __mcpStart = performance.now();
     const envelope = await executeViaMcp({
       action,
       resolvedResourceId: decision.resolvedResourceId,
       listId: target?.listId ?? null,
       mcpToken: providerSelection.mcpToken,
       legacyReadConfig: config,
+      operationId,
+      possibleDuplicate: decision.possibleDuplicate,
       logger: params.logger,
     });
-    if (envelope.success) {
-      const newState = applyExecutionToState(resourceState, {
+    params.logger.info({ conversationId: params.conversationId, mcp_exec_ms: Math.round(performance.now() - __mcpStart), verified: envelope.verified }, '[bento-openai-core] executeViaMcp respondeu');
+    // F-08: foco só com id REAL — success com resourceIds vazios não registra
+    // estado (era o foco perdido do CASO 5/6b da fault injection).
+    if (envelope.success && envelope.resourceIds.length > 0) {
+      const newState = applyExecutionToState(effectiveResourceState, {
         operation: envelope.operation,
         resourceIds: envelope.resourceIds,
         verified: envelope.verified,
@@ -188,13 +426,7 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
       });
       await persistResourceState(params.conversationId, newState);
     }
-    return envelopeToExecuteResponse(
-      'bento',
-      envelope,
-      envelope.success
-        ? `Feito via ClickUp MCP${envelope.verified ? ', confirmado' : ' (não consegui reler pra confirmar)'}.`
-        : `Não consegui executar via ClickUp MCP: ${envelope.error}`,
-    );
+    return envelopeToExecuteResponse('bento', envelope, mcpHumanAnswer(envelope), executionRecordFromEnvelope(envelope, recordExtras));
   }
 
   // provider === 'LEGACY_GATEWAY' — caminho de baixo, inalterado desde a
@@ -202,22 +434,78 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
   const provider = 'LEGACY_GATEWAY' as const;
 
   if (action.intent === 'create_task') {
+    // F-XX/QA 28/09/2026: assignee e dueDate do pedido ("...pra fulano...
+    // prazo pra amanhã") não eram repassados pro create LEGACY_GATEWAY —
+    // achado ao vivo no teste de aceite (task nascia só com título, sem
+    // responsável nem prazo, mesmo o planner tendo extraído os dois campos
+    // corretamente em `action.changes`). createVerifiedSeniorTask já resolve
+    // assigneeName (com ambiguidade/não-encontrado honestos) e aplica
+    // dueDate com read-back — só faltava passar os dois adiante.
+    const createDueDate = action.changes?.dueDate ? parseDueDateMs(action.changes.dueDate) : null;
+    const tituloDaTask = action.changes?.title ?? 'Nova demanda';
+
+    /**
+     * BRIEFING DE VERDADE (queixa da operação, 28/09/2026): a task nascia com
+     * a linha curta que o planner escreveu. Quem ia executar não recebia
+     * objetivo, público, formato, entregável nem critério de aprovação — e o
+     * dossiê do cliente (vault, via `memories`) nunca era lido neste caminho.
+     * Agora passa pela MESMA cadeia do caminho legado: recupera contexto real,
+     * monta por tipo de entrega, declara lacuna em vez de inventar.
+     */
+    const briefing = await buildTaskBriefing({
+      message: params.message,
+      taskTitle: tituloDaTask,
+      clientId: params.clientId,
+      clientName: params.clientName ?? null,
+      assigneeName: action.changes?.assignee ?? null,
+      dueDateMs: createDueDate,
+      requestedBy: params.userName ?? 'a operação',
+      config,
+      briefingWriter: params.briefingWriter,
+      attachments: params.attachments,
+      logger: params.logger,
+    }).catch((error: unknown) => {
+      params.logger.warn({ error }, '[bento-openai-core] briefing falhou; cria com a descrição do pedido em vez de travar a demanda');
+      return null;
+    });
+
+    const __createStart = performance.now();
     const result = await createVerifiedSeniorTask(
       config,
       params.seniorToolContext,
-      { listId: target!.listId!, name: action.changes?.title ?? 'Nova demanda', description: action.changes?.description ?? '' },
+      {
+        listId: target!.listId!,
+        name: tituloDaTask,
+        description: briefing?.markdown ?? action.changes?.description ?? '',
+        ...(action.changes?.assignee ? { assigneeName: action.changes.assignee } : {}),
+        ...(createDueDate !== null ? { dueDate: createDueDate } : {}),
+      },
       new MutationBudget(),
     );
+    params.logger.info({ conversationId: params.conversationId, legacy_create_ms: Math.round(performance.now() - __createStart) }, '[bento-openai-core] createVerifiedSeniorTask respondeu');
     if (!result.success) {
       return envelopeToExecuteResponse('bento', { success: false, verified: false, provider, resourceIds: [], operation: 'create_task', changes: {}, error: result.message, retryable: result.retryable, sources: [] }, `Não consegui criar a task: ${result.message}`);
     }
+    // MATERIAL DO PEDIDO VAI JUNTO: print/arquivo que a pessoa mandou no chat
+    // sobe pra task. Best-effort — o anexo já está como referência no
+    // briefing, então falha de upload degrada, não invalida a criação.
+    const anexados = params.attachments?.length
+      ? await attachMaterials(config, result.resourceId, params.attachments, params.logger)
+      : [];
+
     const newState = applyExecutionToState(resourceState, { operation: 'create_task', resourceIds: [result.resourceId], verified: result.verified, created: !result.wasExisting, title: action.changes?.title ?? null });
     await persistResourceState(params.conversationId, newState);
-    return envelopeToExecuteResponse(
-      'bento',
-      { success: true, verified: result.verified, provider, resourceIds: [result.resourceId], operation: 'create_task', changes: { title: action.changes?.title ?? null }, error: null, retryable: false, sources: [`CLICKUP_TASK:${result.resourceId}`] },
+    const envelope: WriteEnvelope = { success: true, verified: result.verified, provider, resourceIds: [result.resourceId], operation: 'create_task', changes: { title: action.changes?.title ?? null }, error: null, retryable: false, sources: [`CLICKUP_TASK:${result.resourceId}`] };
+
+    const subiram = anexados.filter((a) => a.ok).length;
+    const linhas = [
       result.wasExisting ? `Essa task já existia (${result.resourceUrl}) — não criei outra.` : `Criei a task: ${result.resourceUrl}`,
-    );
+      briefing ? `📋 Briefing de ${briefing.deliveryType === 'generic' ? 'entrega operacional' : briefing.deliveryType} anexado na descrição.` : null,
+      briefing?.missingCritical.length ? `⚠️ Falta confirmar: ${briefing.missingCritical.join(', ')}.` : null,
+      anexados.length ? `📎 ${subiram}/${anexados.length} anexo(s) na task.` : null,
+    ].filter(Boolean) as string[];
+
+    return envelopeToExecuteResponse('bento', envelope, linhas.join('\n'), executionRecordFromEnvelope(envelope, recordExtras));
   }
 
   if (!decision.resolvedResourceId) {
@@ -233,13 +521,10 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
       const created = await createTaskComment(config, decision.resolvedResourceId, text);
       const comments = await getTaskComments(config, decision.resolvedResourceId).catch(() => []);
       const verified = comments.some((c) => c.id === created.id);
-      const newState = applyExecutionToState(resourceState, { operation: 'comment_task', resourceIds: [decision.resolvedResourceId], verified, created: false });
+      const newState = applyExecutionToState(effectiveResourceState, { operation: 'comment_task', resourceIds: [decision.resolvedResourceId], verified, created: false });
       await persistResourceState(params.conversationId, newState);
-      return envelopeToExecuteResponse(
-        'bento',
-        { success: true, verified, provider, resourceIds: [decision.resolvedResourceId], operation: 'comment_task', changes: { comment: text }, error: null, retryable: false, sources: [`CLICKUP_TASK:${decision.resolvedResourceId}`, `CLICKUP_COMMENT:${created.id}`] },
-        'Comentário adicionado.',
-      );
+      const envelope: WriteEnvelope = { success: true, verified, provider, resourceIds: [decision.resolvedResourceId], operation: 'comment_task', changes: { comment: text }, error: null, retryable: false, sources: [`CLICKUP_TASK:${decision.resolvedResourceId}`, `CLICKUP_COMMENT:${created.id}`] };
+      return envelopeToExecuteResponse('bento', envelope, 'Comentário adicionado.', executionRecordFromEnvelope(envelope, recordExtras));
     } catch (error) {
       const messageText = error instanceof Error ? error.message : 'falha desconhecida';
       return envelopeToExecuteResponse('bento', { success: false, verified: false, provider, resourceIds: [decision.resolvedResourceId], operation: 'comment_task', changes: {}, error: messageText, retryable: true, sources: [] }, `Não consegui comentar: ${messageText}`);
@@ -247,29 +532,79 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
   }
 
   // update_task
+  const __updateStart = performance.now();
   const response = await executeTaskUpdate({
     config,
     taskId: decision.resolvedResourceId,
-    knownTaskName: resourceState.focusedResource?.title ?? null,
+    knownTaskName: effectiveResourceState.focusedResource?.title ?? null,
     fields: {
       ...(action.changes?.title ? { newTitle: action.changes.title } : {}),
       ...(action.changes?.description ? { replaceDescription: action.changes.description } : {}),
-      ...(action.changes?.assignee ? { personName: action.changes.assignee } : {}),
+      // QA 28/09/2026: dueDate do planner não era repassado pro update
+      // LEGACY_GATEWAY — "muda o prazo pra sexta" respondia "já estava
+      // assim" porque `fields` nunca carregava a data nova nenhuma vez.
+      ...(action.changes?.dueDate && parseDueDateMs(action.changes.dueDate) !== null
+        ? { dueDate: parseDueDateMs(action.changes.dueDate)! }
+        : {}),
+      // D.11/F-17: assigneeOperation de primeira classe — remove/replace/add.
+      ...(action.changes?.assignee
+        ? action.changes.assigneeOperation === 'remove'
+          ? { removePersonName: action.changes.assignee }
+          : action.changes.assigneeOperation === 'replace'
+            ? { replacePersonName: action.changes.assignee }
+            : { personName: action.changes.assignee }
+        : {}),
+      // Status destravado (28/09/2026): "fecha essa task" chega aqui como
+      // hint em português e o executor traduz pro status REAL da lista.
+      ...(action.changes?.status?.trim() ? { statusHint: action.changes.status } : {}),
     },
-    mapStatus: () => undefined,
+    // Era `() => undefined`: o core aceitava o pedido e depois não sabia
+    // traduzir status nenhum, então nada mudava. Reusa o mapeador do guard.
+    mapStatus: mapStatusHintToRealStatus,
     logger: params.logger,
   });
+  params.logger.info({ conversationId: params.conversationId, legacy_update_ms: Math.round(performance.now() - __updateStart) }, '[bento-openai-core] executeTaskUpdate respondeu');
 
   const resourceIds = decision.resolvedResourceId ? [decision.resolvedResourceId] : [];
   const verified = response.status === 'completed';
   if (verified) {
-    const newState = applyExecutionToState(resourceState, { operation: 'update_task', resourceIds, verified: true, created: false });
+    const newState = applyExecutionToState(effectiveResourceState, { operation: 'update_task', resourceIds, verified: true, created: false });
     await persistResourceState(params.conversationId, newState);
   }
 
+  /**
+   * PROCEDÊNCIA DO FECHAMENTO (28/09/2026). O hard deny de "concluir trabalho
+   * humano" caiu, mas o risco que ele cobria não some sozinho: um status
+   * "pronto" sem dono faz a operação planejar em cima de uma mentira. Então
+   * toda mudança de status verificada deixa registrado QUEM pediu — o
+   * histórico da task passa a dizer "fechada a pedido de fulano", em vez de
+   * parecer que o agente concluiu por conta própria. Best-effort: o comentário
+   * é rastro, não a escrita em si; falhar aqui não invalida a mudança.
+   */
+  if (verified && action.changes?.status?.trim() && decision.resolvedResourceId) {
+    await createTaskComment(
+      config,
+      decision.resolvedResourceId,
+      `Status alterado para "${action.changes.status}" a pedido de ${params.userName ?? 'a operação'}, via Desigual OS.`,
+    ).catch((error: unknown) => {
+      params.logger.warn({ error, taskId: decision.resolvedResourceId }, '[bento-openai-core] não consegui registrar a procedência do status (a mudança valeu)');
+      return null;
+    });
+  }
+
+  // D.4: o executor já grava `execucao` (operation 'update' — o dedup casa
+  // pelo alias); aqui o recibo ganha a chave estável da operação e o provider.
+  const execucaoAnterior = response.metadata?.execucao;
   return {
     ...response,
     sources: resourceIds.map((id) => `CLICKUP_TASK:${id}`),
-    metadata: { ...response.metadata, guard: 'bento-openai-core', provider },
+    metadata: {
+      ...response.metadata,
+      guard: 'bento-openai-core',
+      provider,
+      ...(typeof execucaoAnterior === 'object' && execucaoAnterior !== null
+        ? { execucao: { ...(execucaoAnterior as Record<string, unknown>), operationId, provider, argsHash } }
+        : {}),
+    },
   };
 }

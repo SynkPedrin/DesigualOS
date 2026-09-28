@@ -54,8 +54,9 @@ import { completeTextSafely } from '@desigual-os/router';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
-import { tryBentoActionGuard } from './bento-action-guard';
+import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation } from './bento-action-guard';
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
+import { clearResourceFocusIfDeleted } from './bento-resource-state';
 import { tryMotionGuard } from './motion-guard';
 import { loadSeniorRuntimeContext } from './senior-runtime-context';
 import { detectSmallTalk } from './small-talk';
@@ -243,6 +244,24 @@ async function completeTextViaOllama(prompt: string, logger: Logger): Promise<st
   }
 }
 
+/**
+ * SOMENTE-LEITURA POR POLÍTICA (F-01, P0 — forense 26/09/2026, ADR
+ * bento-core-convergence Etapa 1). O bento-qa é um serviço EXTERNO e opaco:
+ * tem credencial real de escrita no ClickUp, payload de 3 campos, nenhuma
+ * idempotency key, nenhum task_id de retorno e nenhum estado de conversa —
+ * o Desigual OS não tem como saber se ele vai ler ou escrever. Por isso o
+ * contrato deste caminho é LEITURA: quem decide o que entra aqui é o guard
+ * (`tryBentoActionGuard`), que com `BENTO_EXTERNAL_WRITE_ENABLED=false`
+ * (default) bloqueia no próprio guard toda mensagem com potencial de escrita
+ * em vez de devolver null pra cá. Não existe rollback desse princípio:
+ * reabrir a flag reativa F-01 (ver ADR, seção 7).
+ *
+ * OBSERVABILIDADE DO RISCO RESIDUAL: mesmo assim, este ponto classifica o
+ * payload antes de enviar e conta (log estruturado, métrica
+ * `bento_fallback_external_write_potential_total`) quantas mensagens com
+ * potencial de escrita AINDA assim seriam enviadas — é o sinal de que o
+ * vocabulário do kill switch ficou pra trás de um phrasing novo. Meta: 0.
+ */
 export async function callBento(message: string, logger: Logger, operationalContext?: string): Promise<ExecuteResponse> {
   const url = process.env.BENTO_QA_URL ?? 'http://100.93.182.83:8791';
   const token = process.env.BENTO_QA_TOKEN;
@@ -257,6 +276,17 @@ export async function callBento(message: string, logger: Logger, operationalCont
       usage: { input_tokens: 0, output_tokens: 0 },
       error: 'BENTO_QA_TOKEN not configured on the Orchestrator worker',
     };
+  }
+
+  // Risco residual (ver docstring): mensagem com potencial de escrita chegando
+  // aqui é furo do vocabulário do guard, não caminho legítimo — conta e segue
+  // (o bloqueio estrutural mora no guard; aqui seria tarde pra decidir).
+  const potencialEscrita = detectExternalWritePotential(message);
+  if (potencialEscrita) {
+    logger.warn(
+      { signals: potencialEscrita.signals, metric: 'bento_fallback_external_write_potential_total' },
+      '[bento-qa] mensagem com potencial de escrita seguindo pro serviço externo — deveria ter sido bloqueada no guard (BENTO_EXTERNAL_WRITE_ENABLED=false)'
+    );
   }
 
   try {
@@ -1032,19 +1062,34 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
    * fosse o conteúdo aprovado. Escopado a `otto`: é onde existe loop de
    * draft/feedback; Bento não tem esse padrão de conversa.
    */
+  /**
+   * F-14 (P1, forense 26/09/2026 — provado ao vivo): "troca o responsável pra
+   * Sofia" (T05) e "corrige a task que você acabou de criar" (T12) eram
+   * capturados AQUI como `knowledge_statement` ("Registrado: ...") e a
+   * mutação real nunca acontecia — o turno nem chegava no core/guard. Verbo
+   * de ação sobre recurso (troca/corrige/muda/atualiza/tira/coloca) com
+   * referente ou campo de task é MUTAÇÃO, não ensino: `looksLikeMutationOnResource`
+   * (mesmo vocabulário do kill switch F-01, em bento-action-guard.ts) desvia
+   * o turno do registro e deixa ele seguir. Feedback genuíno ("ficou
+   * genérico", "gostei", "anota que o cliente prefere X") não casa e
+   * continua sendo capturado.
+   */
+  const mutacaoSobreRecurso = looksLikeMutationOnResource(message);
   const registro =
     agent === 'otto' && looksLikeCreativeFeedback(message)
       ? null
-      : await registrarConhecimentoDoTurno({
-          message,
-          clientId: runningExecution?.clientId ?? null,
-          clientName: null,
-          userId: runningExecution?.userId ?? null,
-          agent,
-          conversationId: conversationId ?? null,
-          executionId,
-          logger,
-        }).catch(() => null);
+      : mutacaoSobreRecurso
+        ? null
+        : await registrarConhecimentoDoTurno({
+            message,
+            clientId: runningExecution?.clientId ?? null,
+            clientName: null,
+            userId: runningExecution?.userId ?? null,
+            agent,
+            conversationId: conversationId ?? null,
+            executionId,
+            logger,
+          }).catch(() => null);
   if (registro) {
     logger.info({ executionId, agent, tipos: registro.tipos }, '[registro] afirmação registrada sem passar pelo loop');
     guardedResult = {
@@ -1185,13 +1230,29 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     // `null` na primeira linha e este bloco é um no-op — o guard antigo
     // abaixo segue rodando byte a byte como antes. Só `agent === 'bento'`:
     // Otto não faz parte deste cutover.
-    if (!guardedResult && agent === 'bento' && bentoOpenAiCoreEnabled() && conversationId) {
+    // QA 28/09/2026: uma confirmação pendente de delete ("sim, confirmo")
+    // não carrega verbo nenhum pro planner reconhecer — só o guard legado
+    // sabe que a última resposta dele foi a pergunta de confirmação. Sem
+    // este desvio, o core tentava planejar uma ação do nada e respondia
+    // esclarecimento genérico, e a exclusão nunca completava a segunda
+    // volta (achado ao vivo no teste de aceite).
+    const pendingDelete = !guardedResult && agent === 'bento' && conversationId ? await hasPendingDeleteConfirmation(conversationId).catch(() => false) : false;
+    if (!guardedResult && agent === 'bento' && bentoOpenAiCoreEnabled() && conversationId && !pendingDelete) {
       const core = await runBentoOpenAiCore({
         message,
         conversationId,
         organizationId: null,
         clientId: runningExecution?.clientId ?? null,
         seniorToolContext: await loadSeniorRuntimeContext(executionDbId),
+        // Contexto operacional que o core não recebia (28/09/2026): sem o nome
+        // do cliente o planner planejava no escuro e o briefing não tinha como
+        // puxar o dossiê; sem os anexos o print do pedido nunca chegava na
+        // task; sem o `briefingWriter` o briefing não recuperava campo crítico
+        // escrito em prosa. Mesmas fontes que o guard legado já usava.
+        clientName: clienteDaExecucao?.name ?? null,
+        userName: jobUser?.name ?? jobUser?.email ?? 'a operação',
+        attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
+        briefingWriter: async (prompt) => (await completeTextSafely(prompt, logger)) ?? (await completeTextViaOllama(prompt, logger)),
         logger,
       }).catch((error: unknown) => {
         logger.error({ error, executionId }, '[bento-openai-core] falhou, sem fallback silencioso pro guard antigo enquanto a flag estiver ligada');
@@ -1231,6 +1292,16 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger): Promis
     }) : null;
     if (guarded) {
       guardedResult = { ...guarded, agent, execution_id: executionId };
+      // INV-10: um delete confirmado pelo guard legado precisa derrubar o
+      // foco do ConversationResourceState NOVO também — independente de
+      // BENTO_OPENAI_CORE_ENABLED estar ligado nesta execução, a próxima
+      // pode estar. Ver bento-resource-state.ts `clearResourceFocusIfDeleted`.
+      const guardMeta = guarded.metadata as { action?: string; task_id?: string; verified?: boolean } | undefined;
+      if (conversationId && guardMeta?.action === 'delete' && guardMeta.verified && guardMeta.task_id) {
+        await clearResourceFocusIfDeleted(conversationId, guardMeta.task_id).catch((error: unknown) => {
+          logger.warn({ error, executionId }, '[bento-resource-state] falha ao limpar foco pós-delete (não bloqueia a resposta)');
+        });
+      }
     }
   }
 

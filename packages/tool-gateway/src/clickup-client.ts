@@ -128,12 +128,24 @@ export async function findMemberByEmail(config: ClickUpConfig, email: string): P
   return members.find((member) => member.email.toLowerCase() === email.toLowerCase()) ?? null;
 }
 
+/**
+ * Rede de segurança contra o planejador (LLM) devolver o verbo da operação
+ * junto do nome ("remove Jamile Galdino" em vez de só "Jamile Galdino") —
+ * achado real em QA (25/09/2026): a busca por membro falhava porque
+ * procurava um funcionário chamado literalmente "remove Jamile Galdino".
+ * Ponto único de normalização (usado por resolveMemberByName E
+ * findMemberByName) — corrige o problema pra qualquer caller, não só o que
+ * o expôs primeiro.
+ */
+const LEADING_OPERATION_VERB_RE = /^(tira|retira|remov\w*|exclu\w*|apaga|adicion\w*|acrescent\w*|coloca|bota|p[õo]e|ponha|inclu\w*|troca|substitu\w*)\s+(o|a|os|as|do|da|de)?\s*/i;
+
 function normalizePersonName(text: string): string {
-  return text
+  const base = text
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .trim();
+  return base.replace(LEADING_OPERATION_VERB_RE, '').trim();
 }
 
 /**

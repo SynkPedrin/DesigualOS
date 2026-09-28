@@ -87,6 +87,16 @@ const ORDINAIS: Record<string, number> = {
 
 const ORDINAL_RE =
   /\b(primeir[ao]|segund[ao]|terceir[ao]|quart[ao]|quint[ao]|sext[ao]|s[eé]tim[ao]|oitav[ao]|non[ao]|d[eé]cim[ao])\b/i;
+/**
+ * Ordinal COMPOSTO (P0 25/09/2026, TESTE 6 do incidente D. Carvalho): "a
+ * décima primeira" = 11ª, não a 10ª. Sem isto, `ORDINAL_RE` casava só
+ * "décima" (posição 9, a 10ª) e ignorava "primeira" em silêncio — resolução
+ * confiante pro item ERRADO, pior que não resolver. Checado ANTES do
+ * ORDINAL_RE simples: precisa consumir as duas palavras antes que a
+ * primeira sozinha "vença" o match.
+ */
+const ORDINAL_COMPOSTO_RE =
+  /\bd[eé]cim[ao]\s+(primeir[ao]|segund[ao]|terceir[ao]|quart[ao]|quint[ao]|sext[ao]|s[eé]tim[ao]|oitav[ao]|non[ao])\b/i;
 // `\b` do JS é ASCII: não enxerga fronteira antes de "ú". Lookbehind com o
 // alfabeto completo, senão "a última" nunca casa.
 const ULTIMA_RE = /(?<![a-zà-ú])([uú]ltim[ao]|pen[uú]ltim[ao])(?![a-zà-ú])/i;
@@ -195,6 +205,15 @@ export function detectSelectionReference(message: string): SelectionReference | 
     if (posicao !== undefined) return { kind: 'exclude', position: posicao };
     if (/^[uú]ltim[ao]$/.test(alvo)) return { kind: 'exclude', position: 'last' };
     if (/^pen[uú]ltim[ao]$/.test(alvo)) return { kind: 'exclude', position: 'penultimate' };
+  }
+
+  // Composto ANTES do simples: "décima primeira" tem que consumir as duas
+  // palavras antes de "décima" sozinha vencer o match (ver comentário de
+  // ORDINAL_COMPOSTO_RE).
+  const composto = limpo.match(ORDINAL_COMPOSTO_RE);
+  if (composto) {
+    const posicaoUnidade = ORDINAIS[composto[1]!.toLowerCase()];
+    if (posicaoUnidade !== undefined) return { kind: 'ordinal', position: 10 + posicaoUnidade };
   }
 
   const ordinal = limpo.match(ORDINAL_RE);

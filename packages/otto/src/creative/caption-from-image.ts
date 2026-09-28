@@ -92,7 +92,7 @@ export async function generateImageCaption(input: GenerateImageCaptionInput): Pr
 
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-5',
     max_tokens: 512,
     system: buildSystemPrompt(input.brandKit),
     messages: [

@@ -45,6 +45,14 @@ export interface TaskUpdateFields {
   clearDueDate?: boolean;
   /** "remove o Pedro dela" ('' = remove todos os responsáveis atuais). */
   removePersonName?: string;
+  /**
+   * "troca o responsável pra Sofia" (assigneeOperation 'replace' do core novo):
+   * adiciona a pessoa indicada e remove TODOS os outros responsáveis atuais,
+   * num PUT só. Diferente de personName (só adiciona) + removePersonName: ''
+   * (removeria inclusive ela se já estivesse atribuída — medido no desenho
+   * da correção F-17, 26/09/2026).
+   */
+  replacePersonName?: string;
   /** "crie um título pra task" — gerado do conteúdo pedido. */
   generateTitle?: boolean;
   /** "coloca a imagem nela" — anexo da conversa na MESMA task. */
@@ -278,6 +286,32 @@ export async function executeTaskUpdate(params: {
     }
   }
 
+  if (fields.replacePersonName !== undefined) {
+    const resolucao = await resolveMemberByName(config, fields.replacePersonName).catch(() => null);
+    if (resolucao?.status !== 'resolved') {
+      outcomes.push({ field: 'replace_assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${fields.replacePersonName}" entre os membros do ClickUp` });
+    } else {
+      const novaPessoa = resolucao.member;
+      const removidos = atual.assignees.filter((a) => a.id !== novaPessoa.id).map((a) => a.id);
+      if (removidos.length === 0 && atual.assignees.some((a) => a.id === novaPessoa.id)) {
+        outcomes.push({ field: 'replace_assignee', label: '👤 Responsável', changed: false, skippedAsAlready: true, verified: true, error: null });
+      } else {
+        put.addAssignees = [novaPessoa.id];
+        if (removidos.length > 0) put.removeAssignees = removidos;
+        const novaPessoaId = novaPessoa.id;
+        outcomes.push({
+          field: 'replace_assignee',
+          label: `👤 Responsável (somente ${novaPessoa.username})`,
+          changed: true,
+          skippedAsAlready: false,
+          verified: false,
+          error: null,
+          check: (relida) => relida.assignees.some((a) => a.id === novaPessoaId) && !relida.assignees.some((a) => removidos.includes(a.id)),
+        });
+      }
+    }
+  }
+
   if (fields.generateTitle) {
     const tituloGerado = textoGerado && textoGerado.length <= 90 && !textoGerado.includes('\n') ? textoGerado : null;
     const titulo = tituloGerado
@@ -365,7 +399,7 @@ export async function executeTaskUpdate(params: {
   }
 
   // 4. ESCRITA — um PUT com tudo que mudou; briefing é acréscimo separado.
-  const CAMPOS_DO_PUT = new Set(['assignee', 'due', 'priority', 'status', 'title', 'description', 'remove_assignee']);
+  const CAMPOS_DO_PUT = new Set(['assignee', 'due', 'priority', 'status', 'title', 'description', 'remove_assignee', 'replace_assignee']);
   if (Object.keys(put).length > 0) {
     try {
       await updateTask(config, taskId, {
@@ -481,6 +515,8 @@ function valorDoCampo(o: FieldOutcome, fields: TaskUpdateFields, member: { id: n
       return member?.username ?? '';
     case 'remove_assignee':
       return 'removido';
+    case 'replace_assignee':
+      return 'ficou como único responsável';
     case 'priority':
       return fields.priority ? PRIORIDADE_LABEL[fields.priority]! : '';
     case 'status':
