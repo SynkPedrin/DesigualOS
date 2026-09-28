@@ -19,6 +19,9 @@ vi.mock('./bento-action-guard', () => ({
 
   getClickUpConfigOrNull: vi.fn(() => ({ apiKey: 'k', teamId: 't' })),
   loadSelectionSnapshot: vi.fn(async () => null),
+  // Desde 28/09/2026 a ponte lê pelo wrapper que também atravessa a conversa
+  // (memória do chat novo) — ver bento-memoria-entre-conversas.test.ts.
+  loadSelectionSnapshotComFallback: vi.fn(async () => null),
   // Mapeador real de status (hint pt-BR -> coluna da lista); o core passa ele
   // pro executeTaskUpdate desde o destravamento da conclusão (28/09/2026).
   mapStatusHintToRealStatus: (hint: string, statuses: string[]) =>
@@ -64,7 +67,7 @@ vi.mock('./bento-mcp-executor', () => ({
 
 import { proposeBentoAction, validateBentoAction } from '@desigual-os/bento-core';
 import { createVerifiedSeniorTask } from '@desigual-os/tool-gateway';
-import { loadSelectionSnapshot } from './bento-action-guard.js';
+import { loadSelectionSnapshotComFallback } from './bento-action-guard.js';
 import { executeTaskUpdate } from './bento-update-executor.js';
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core.js';
 import type { SelectionSnapshot } from '@desigual-os/context-engine';
@@ -275,7 +278,7 @@ describe('PONTE COM SNAPSHOT ANTIGO — item 11 nunca vira task_id literal', () 
       requestedCardinality: 0,
       reasoning: 'item 11',
     });
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(snapshot15());
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: snapshot15(), origem: 'conversa' });
     vi.mocked(executeTaskUpdate).mockResolvedValue({
       execution_id: '',
       agent: 'bento',
@@ -290,7 +293,7 @@ describe('PONTE COM SNAPSHOT ANTIGO — item 11 nunca vira task_id literal', () 
 
   afterEach(() => {
     delete process.env.BENTO_OPENAI_CORE_ENABLED;
-    vi.mocked(loadSelectionSnapshot).mockReset();
+    vi.mocked(loadSelectionSnapshotComFallback).mockReset();
     vi.mocked(executeTaskUpdate).mockReset();
   });
 

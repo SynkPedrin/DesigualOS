@@ -387,7 +387,9 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
     resourceState.selectedResources.length === 0 &&
     params.conversationId
   ) {
-    const bridged = await resolveFromLegacySelectionSnapshot(params.conversationId, params.message, params.logger).catch((error: unknown) => {
+    // O userId abre a memória entre conversas: sem ele a ponte só enxerga este
+    // chat, e um chat novo nasce cego pro que a pessoa acabou de fazer.
+    const bridged = await resolveFromLegacySelectionSnapshot(params.conversationId, params.message, params.logger, params.seniorToolContext.userId).catch((error: unknown) => {
       params.logger.warn({ error }, '[bento-openai-core] ponte com snapshot antigo falhou');
       return null;
     });

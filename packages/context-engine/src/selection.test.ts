@@ -227,3 +227,41 @@ describe('formatSelectionBlock', () => {
     expect(block).toContain('tasks que vencem hoje, 24/09/2026');
   });
 });
+
+/**
+ * 28/09/2026 — a guarda de "dia da semana × ordinal" existia só pra SEGUNDA,
+ * com o comentário afirmando que ela era a única ambígua. Não é: quarta,
+ * quinta e sexta também são dia da semana, e são exatamente como uma agência
+ * marca prazo. Medido: "muda o prazo da DC_Caderno 2027_Layout pra sexta"
+ * resolvia a SEXTA task da lista e ignorava o nome escrito na frase — pedido
+ * de prazo virando escrita na task errada.
+ */
+describe('dia da semana não é ordinal', () => {
+  it.each([
+    'joga o prazo pra sexta',
+    'muda pra quarta',
+    'deixa pra quinta',
+    'passa pra segunda',
+    'até sexta',
+    'na quarta',
+    'entrega até quinta',
+  ])('%s -> não é referência ordinal', (m) => {
+    const ref = detectSelectionReference(m);
+    expect(ref?.kind === 'ordinal' ? `ordinal:${(ref as { position: number }).position}` : (ref?.kind ?? 'nenhuma')).not.toMatch(/^ordinal/);
+  });
+
+  it.each([
+    ['muda o prazo da segunda', 1],
+    ['muda o prazo da sexta', 5],
+    ['abre a quarta', 3],
+    ['a quinta task', 4],
+  ])('%s continua sendo posição — possessivo e artigo não são data', (m, pos) => {
+    const ref = detectSelectionReference(m as string);
+    expect(ref).toMatchObject({ kind: 'ordinal', position: pos });
+  });
+
+  it('a frase com as DUAS coisas lê cada uma no seu lugar', () => {
+    // "a segunda" é o item; "pra sexta" é o prazo.
+    expect(detectSelectionReference('muda a segunda pra sexta')).toMatchObject({ kind: 'ordinal', position: 1 });
+  });
+});

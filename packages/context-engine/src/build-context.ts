@@ -69,6 +69,15 @@ export async function buildContext(params: {
   projectId?: string | null;
   /** Agente que vai responder, quando já decidido (chat/routes.ts roda o Router antes de montar o contexto). Sem isso, sem aprendizados recentes no contexto - não dá pra saber de qual agente buscar. */
   agent?: AgentName | null;
+  /**
+   * Ambiente do turno (F-12, auditoria de 26/09/2026): sem este filtro, memória
+   * de QA entrava no contexto de produção pelas duas queries de `memories`
+   * abaixo. Quando omitido, é RESOLVIDO do cliente do turno (a query de cliente
+   * já acontece de qualquer jeito) — nunca assumido cegamente. O fallback
+   * 'production' só é alcançado quando não há cliente de onde resolver, e
+   * coincide com o default do resto da stack de cognição.
+   */
+  environment?: string;
 }): Promise<ExecutionContext> {
   // As buscas abaixo não dependem uma da outra; rodar em paralelo
   // (Promise.all) em vez de sequencial corta essa chamada, que acontece em
@@ -86,23 +95,37 @@ export async function buildContext(params: {
     : [];
   const agentId = agentRow[0]?.id ?? null;
 
+  // O ambiente viaja com o cliente: a query de cliente já existia no lote,
+  // então resolver custa zero round-trips a mais — basta selecionar a coluna.
+  const clientRowsPromise = params.clientId
+    ? Promise.all([
+        db
+          .select({ name: schema.clients.name, environment: schema.clients.environment })
+          .from(schema.clients)
+          .where(eq(schema.clients.id, params.clientId)),
+        db
+          .select({ toneOfVoice: schema.clientBrandKits.toneOfVoice })
+          .from(schema.clientBrandKits)
+          .where(eq(schema.clientBrandKits.clientId, params.clientId)),
+      ])
+    : null;
+  const ambientePromise: Promise<string> = params.environment
+    ? Promise.resolve(params.environment)
+    : clientRowsPromise
+      ? clientRowsPromise.then(
+          ([clientes]) => clientes[0]?.environment ?? 'production',
+          // Sem cliente legível, o lado seguro do isolamento é produção:
+          // memória de QA fica de fora, nunca o contrário.
+          () => 'production',
+        )
+      : Promise.resolve('production');
+
   const [userRow, clientRows, recentRows, profileRows, fileRows, learningRows] = await Promise.all([
     db
       .select({ name: schema.users.name })
       .from(schema.users)
       .where(eq(schema.users.id, params.userId)),
-    params.clientId
-      ? Promise.all([
-          db
-            .select({ name: schema.clients.name })
-            .from(schema.clients)
-            .where(eq(schema.clients.id, params.clientId)),
-          db
-            .select({ toneOfVoice: schema.clientBrandKits.toneOfVoice })
-            .from(schema.clientBrandKits)
-            .where(eq(schema.clientBrandKits.clientId, params.clientId)),
-        ])
-      : null,
+    clientRowsPromise,
     params.conversationId
       ? db
           .select({
@@ -119,24 +142,30 @@ export async function buildContext(params: {
           .limit(RECENT_MESSAGES_LIMIT)
       : Promise.resolve([]),
     params.clientId
-      ? db
-          .select({ content: schema.memories.content })
-          .from(schema.memories)
-          .where(
-            and(
-              eq(schema.memories.clientId, params.clientId),
-              eq(schema.memories.kind, CLIENT_PROFILE_KIND),
-              // Só fato ATIVO. Sem isto, memória aposentada (status 'superseded') e fato
-              // vencido (expires_at no passado) continuavam entrando no prompt — o que
-              // anularia toda a supersessão do memory-engine, porque quem monta o contexto
-              // é esta consulta e não a recuperação de lá.
-              eq(schema.memories.status, 'active'),
-              or(isNull(schema.memories.expiresAt), sql`${schema.memories.expiresAt} > now()`),
-            ),
-          )
-          .orderBy(desc(schema.memories.updatedAt))
-          .limit(1)
-          .catch(() => [] as { content: string }[])
+      ? (async () => {
+          const ambiente = await ambientePromise;
+          return db
+            .select({ content: schema.memories.content })
+            .from(schema.memories)
+            .where(
+              and(
+                eq(schema.memories.clientId, params.clientId!),
+                eq(schema.memories.kind, CLIENT_PROFILE_KIND),
+                // Só fato ATIVO. Sem isto, memória aposentada (status 'superseded') e fato
+                // vencido (expires_at no passado) continuavam entrando no prompt — o que
+                // anularia toda a supersessão do memory-engine, porque quem monta o contexto
+                // é esta consulta e não a recuperação de lá.
+                eq(schema.memories.status, 'active'),
+                or(isNull(schema.memories.expiresAt), sql`${schema.memories.expiresAt} > now()`),
+                // ISOLAMENTO DE AMBIENTE (F-12): dossiê de homologação (QA) não
+                // entra num turno de produção, nem dossiê real num turno de QA.
+                eq(schema.memories.environment, ambiente),
+              ),
+            )
+            .orderBy(desc(schema.memories.updatedAt))
+            .limit(1)
+            .catch(() => [] as { content: string }[]);
+        })()
       : Promise.resolve([]),
     params.projectId
       ? db
@@ -156,33 +185,39 @@ export async function buildContext(params: {
           .catch(() => [] as ProjectFileContext[])
       : Promise.resolve([]),
     agentId
-      ? db
-          .select({ content: schema.memories.content })
-          .from(schema.memories)
-          .where(
-            and(
-              eq(schema.memories.agentId, agentId),
-              ne(schema.memories.kind, CLIENT_PROFILE_KIND),
-              eq(schema.memories.status, 'active'),
-              or(isNull(schema.memories.expiresAt), sql`${schema.memories.expiresAt} > now()`),
-              // ESCOPO DE CLIENTE (16/09/2026). Antes, o filtro era só por
-              // agente: os 3 aprendizados mais importantes do Otto entravam em
-              // TODO turno, de qualquer cliente. Medido ao vivo: um episódio de
-              // avaliação sobre "campanha de aniversário de loja de tênis"
-              // entrou num pedido sobre a campanha Europa V (Cosentino) e o
-              // modelo ancorou no cliente errado, escrevendo para o Top Tennis
-              // Club. Aprendizado de outro cliente dentro do turno é vazamento
-              // entre contas, não memória.
-              params.clientId
-                ? or(eq(schema.memories.clientId, params.clientId), isNull(schema.memories.clientId))
-                : isNull(schema.memories.clientId),
-            ),
-          )
-          // Importância primeiro: com orçamento de 3 aprendizados, o que entra deve ser o
-          // que mais importa, não só o mais recente.
-          .orderBy(sql`COALESCE(${schema.memories.importance}, 0.5) DESC`, desc(schema.memories.updatedAt))
-          .limit(RECENT_LEARNINGS_LIMIT)
-          .catch(() => [] as { content: string }[])
+      ? (async () => {
+          const ambiente = await ambientePromise;
+          return db
+            .select({ content: schema.memories.content })
+            .from(schema.memories)
+            .where(
+              and(
+                eq(schema.memories.agentId, agentId),
+                ne(schema.memories.kind, CLIENT_PROFILE_KIND),
+                eq(schema.memories.status, 'active'),
+                or(isNull(schema.memories.expiresAt), sql`${schema.memories.expiresAt} > now()`),
+                // Mesmo isolamento de ambiente do dossiê (F-12): aprendizado
+                // gravado em homologação não vaza pro turno real.
+                eq(schema.memories.environment, ambiente),
+                // ESCOPO DE CLIENTE (16/09/2026). Antes, o filtro era só por
+                // agente: os 3 aprendizados mais importantes do Otto entravam em
+                // TODO turno, de qualquer cliente. Medido ao vivo: um episódio de
+                // avaliação sobre "campanha de aniversário de loja de tênis"
+                // entrou num pedido sobre a campanha Europa V (Cosentino) e o
+                // modelo ancorou no cliente errado, escrevendo para o Top Tennis
+                // Club. Aprendizado de outro cliente dentro do turno é vazamento
+                // entre contas, não memória.
+                params.clientId
+                  ? or(eq(schema.memories.clientId, params.clientId), isNull(schema.memories.clientId))
+                  : isNull(schema.memories.clientId),
+              ),
+            )
+            // Importância primeiro: com orçamento de 3 aprendizados, o que entra deve ser o
+            // que mais importa, não só o mais recente.
+            .orderBy(sql`COALESCE(${schema.memories.importance}, 0.5) DESC`, desc(schema.memories.updatedAt))
+            .limit(RECENT_LEARNINGS_LIMIT)
+            .catch(() => [] as { content: string }[]);
+        })()
       : Promise.resolve([]),
   ]);
 

@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gt } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   createTaskComment,
@@ -1172,6 +1172,56 @@ async function selectionSnapshotExists(conversationId: string): Promise<boolean>
 }
 
 /** Leitura leve do snapshot de seleção (só banco, sem ClickUp). */
+/**
+ * O MESMO SNAPSHOT, QUANDO A CONVERSA É NOVA (28/09/2026, relato da Tammy).
+ *
+ * Ela listou tarefas num chat, mexeu numa delas, abriu OUTRO chat e mandou o
+ * pedido já com o NOME da task. O Bento não sabia de nada — não porque falte
+ * memória no sistema, mas porque a memória que existe (`metadata.selecao`, a
+ * mesma que resolve "item 11" e nome de task) é lida só dentro da conversa
+ * corrente. Chat novo, leitura vazia, e a ponte determinística que já
+ * funcionava nem chegava a rodar.
+ *
+ * Aqui a leitura passa a atravessar a conversa: não achando snapshot no chat
+ * atual, pega o mais recente DESSA PESSOA, em qualquer conversa, dentro de uma
+ * janela curta. É a mesma estrutura e o mesmo dado — muda só o alcance.
+ *
+ * A janela é curta de propósito. Memória operacional envelhece: a lista de
+ * ontem não descreve a operação de hoje, e ressuscitar um conjunto velho é
+ * pior que não ter conjunto nenhum.
+ */
+const JANELA_MEMORIA_ENTRE_CONVERSAS_HORAS = 12;
+
+export interface SnapshotComOrigem {
+  snapshot: SelectionSnapshot;
+  /** 'conversa' = deste chat. 'outra_conversa' = herdado; o chamador decide o que aceitar. */
+  origem: 'conversa' | 'outra_conversa';
+}
+
+export async function loadSelectionSnapshotComFallback(
+  conversationId: string,
+  userId: string | null,
+): Promise<SnapshotComOrigem | null> {
+  const daConversa = await loadSelectionSnapshot(conversationId);
+  if (daConversa) return { snapshot: daConversa, origem: 'conversa' };
+  if (!userId) return null;
+
+  const desde = new Date(Date.now() - JANELA_MEMORIA_ENTRE_CONVERSAS_HORAS * 3_600_000);
+  const linhas = await db
+    .select({ metadata: schema.messages.metadata })
+    .from(schema.messages)
+    .innerJoin(schema.conversations, eq(schema.conversations.id, schema.messages.conversationId))
+    .where(and(eq(schema.conversations.userId, userId), gt(schema.messages.createdAt, desde)))
+    .orderBy(desc(schema.messages.createdAt))
+    .limit(40)
+    .catch(() => []);
+  for (const l of linhas) {
+    const parsed = parseSelectionSnapshot((l.metadata as { selecao?: unknown } | null)?.selecao);
+    if (parsed) return { snapshot: parsed, origem: 'outra_conversa' };
+  }
+  return null;
+}
+
 export async function loadSelectionSnapshot(conversationId: string): Promise<SelectionSnapshot | null> {
   const linhas = await db
     .select({ metadata: schema.messages.metadata })

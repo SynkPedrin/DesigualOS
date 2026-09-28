@@ -6,9 +6,14 @@ vi.mock('./bento-action-guard', () => ({
   // tammy-regression-20260928-escopo-de-escrita.test.ts.
   ehQaBot: (email: string | null) => email === 'qa-bot@institutoalmada.org',
   podeEscreverEmProducao: () => true,
- loadSelectionSnapshot: vi.fn() }));
+ loadSelectionSnapshot: vi.fn(),
+  // 28/09/2026: a ponte passou a ler pelo wrapper que também atravessa a
+  // conversa (memória do chat novo). Aqui ele devolve o mesmo snapshot dos
+  // testes, marcado como vindo DESTA conversa — o alcance entre conversas tem
+  // cobertura própria em bento-memoria-entre-conversas.test.ts.
+  loadSelectionSnapshotComFallback: vi.fn() }));
 
-import { loadSelectionSnapshot } from './bento-action-guard.js';
+import { loadSelectionSnapshotComFallback } from './bento-action-guard.js';
 import { resolveFromLegacySelectionSnapshot } from './bento-legacy-selection-bridge.js';
 import type { SelectionSnapshot, SelectedTaskRef } from '@desigual-os/context-engine';
 
@@ -50,10 +55,10 @@ function fifteenTaskSnapshot(): SelectionSnapshot {
 }
 
 describe('resolveFromLegacySelectionSnapshot — P0 25/09/2026 (item 11)', () => {
-  beforeEach(() => vi.mocked(loadSelectionSnapshot).mockReset());
+  beforeEach(() => vi.mocked(loadSelectionSnapshotComFallback).mockReset());
 
   it('TESTE 1: "altere o item 11 para 28 de setembro" resolve pro id real do display_index 11, nunca faz lookup por "11"', async () => {
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(fifteenTaskSnapshot());
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: fifteenTaskSnapshot(), origem: 'conversa' });
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'altere o item 11 para 28 de setembro', fakeLogger);
     expect(result?.resource.resourceId).toBe('t11');
     expect(result?.resource.title).toBe('DC_Agrishow_Edições_Pacotes Pós-Vendas');
@@ -61,44 +66,44 @@ describe('resolveFromLegacySelectionSnapshot — P0 25/09/2026 (item 11)', () =>
   });
 
   it('TESTE 3: "mude o item 3" resolve o índice 3 da lista', async () => {
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(fifteenTaskSnapshot());
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: fifteenTaskSnapshot(), origem: 'conversa' });
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'mude o item 3', fakeLogger);
     expect(result?.resource.resourceId).toBe('t3');
   });
 
   it('TESTE 4: uma lista NOVA substitui a anterior — "item 3" usa a lista atual, não uma antiga (garantido por loadSelectionSnapshot sempre ler a mais recente)', async () => {
     const listaNova: SelectionSnapshot = { ...fifteenTaskSnapshot(), tasks: [task({ id: 'novo-1' }), task({ id: 'novo-2' }), task({ id: 'novo-3', title: 'Task da lista nova' })] };
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(listaNova);
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: listaNova, origem: 'conversa' });
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'item 3', fakeLogger);
     expect(result?.resource.resourceId).toBe('novo-3');
   });
 
   it('TESTE 5: índice inexistente ("item 99") não resolve — chamador deve pedir esclarecimento, nunca mutar', async () => {
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(fifteenTaskSnapshot());
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: fifteenTaskSnapshot(), origem: 'conversa' });
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'item 99', fakeLogger);
     expect(result).toBeNull();
   });
 
   it('TESTE 6: "a décima primeira" (ordinal por extenso) resolve pro mesmo item 11', async () => {
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(fifteenTaskSnapshot());
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: fifteenTaskSnapshot(), origem: 'conversa' });
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'altere a décima primeira para dia 28', fakeLogger);
     expect(result?.resource.resourceId).toBe('t11');
   });
 
   it('TESTE 7: referência por NOME da task resolve pra mesma resource (sem precisar de índice)', async () => {
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(fifteenTaskSnapshot());
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: fifteenTaskSnapshot(), origem: 'conversa' });
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'altere a data da DC_Agrishow_Edições_Pacotes Pós-Vendas', fakeLogger);
     expect(result?.resource.resourceId).toBe('t11');
   });
 
   it('sem snapshot nenhum: devolve null, nunca lança', async () => {
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(null);
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue(null);
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'item 11', fakeLogger);
     expect(result).toBeNull();
   });
 
   it('mensagem sem nenhuma referência estrutural nem título mencionado: devolve null (só consulta o banco, zero LLM)', async () => {
-    vi.mocked(loadSelectionSnapshot).mockResolvedValue(fifteenTaskSnapshot());
+    vi.mocked(loadSelectionSnapshotComFallback).mockResolvedValue({ snapshot: fifteenTaskSnapshot(), origem: 'conversa' });
     const result = await resolveFromLegacySelectionSnapshot('conv-1', 'oi, tudo bem?', fakeLogger);
     expect(result).toBeNull();
   });

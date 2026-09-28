@@ -100,7 +100,7 @@ const ORDINAL_COMPOSTO_RE =
 // `\b` do JS é ASCII: não enxerga fronteira antes de "ú". Lookbehind com o
 // alfabeto completo, senão "a última" nunca casa.
 const ULTIMA_RE = /(?<![a-zà-ú])([uú]ltim[ao]|pen[uú]ltim[ao])(?![a-zà-ú])/i;
-/** Palavras de TEMPO que tornam "segunda"/"última" data, não ordinal. Só
+/** Palavras de TEMPO que tornam "segunda"/"sexta"/"última" data, não ordinal. Só
  * locativos/temporais (na/no/em/pra...): "da segunda" é POSSESSIVO — item 2
  * da lista ("muda o prazo DA SEGUNDA"), nunca data. */
 const CONTEXTO_TEMPORAL_RE = /(?:^|\s)(na|no|em|pra|pro|para|at[eé])\s*$|-feira|\b(semana|m[eê]s|vez)\s*$/;
@@ -220,10 +220,23 @@ export function detectSelectionReference(message: string): SelectionReference | 
   if (ordinal) {
     const antes = limpo.slice(0, ordinal.index ?? 0);
     const depois = limpo.slice((ordinal.index ?? 0) + ordinal[0].length);
-    // A guarda de preposição ("na segunda" = dia) só vale pra SEGUNDA — é a
-    // única que é dia da semana. "volta na primeira" é posição, não data.
-    const ehSegunda = /^segund[ao]$/i.test(ordinal[1]!);
-    if ((!ehSegunda || !CONTEXTO_TEMPORAL_RE.test(antes)) && !/^\s+(passad|pr[óo]xim|que vem)/i.test(depois)) {
+    /**
+     * A guarda de preposição ("na segunda" = dia) valia SÓ pra segunda, com o
+     * comentário afirmando que ela "é a única que é dia da semana". Não é:
+     * QUARTA, QUINTA e SEXTA também são, e são justamente como uma agência
+     * marca prazo — "joga pra sexta", "até quinta", "na quarta".
+     *
+     * Medido em 28/09/2026: "muda o prazo da DC_Caderno 2027_Layout pra sexta"
+     * resolvia a SEXTA task da lista e ignorava o nome escrito na frase. Um
+     * pedido de PRAZO virava escrita na task errada — e "pra sexta" é a frase
+     * mais comum que existe aqui.
+     *
+     * "da segunda"/"da sexta" continuam sendo posição: o possessivo não está
+     * na lista de temporais, e é assim que se fala do item da lista ("muda o
+     * prazo DA SEGUNDA").
+     */
+    const ehDiaDaSemana = /^(segund|quart|quint|sext)[ao]$/i.test(ordinal[1]!);
+    if ((!ehDiaDaSemana || !CONTEXTO_TEMPORAL_RE.test(antes)) && !/^\s+(passad|pr[óo]xim|que vem)/i.test(depois)) {
       const posicao = ORDINAIS[ordinal[1]!.toLowerCase()];
       if (posicao !== undefined) return { kind: 'ordinal', position: posicao };
     }
