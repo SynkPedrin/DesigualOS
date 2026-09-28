@@ -54,8 +54,10 @@ import { completeTextSafely } from '@desigual-os/router';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
-import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation } from './bento-action-guard';
+import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation, getClickUpConfigOrNull, ehQaBot } from './bento-action-guard';
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
+import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-executor';
+import { resolveWriteTarget } from './write-target';
 import { clearResourceFocusIfDeleted } from './bento-resource-state';
 import { tryMotionGuard } from './motion-guard';
 import { loadSeniorRuntimeContext } from './senior-runtime-context';
@@ -1247,6 +1249,47 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     // esclarecimento genérico, e a exclusão nunca completava a segunda
     // volta (achado ao vivo no teste de aceite).
     const pendingDelete = !guardedResult && agent === 'bento' && conversationId ? await hasPendingDeleteConfirmation(conversationId).catch(() => false) : false;
+    /**
+     * SEGMENTAÇÃO DE CAMPANHA (28/09/2026, pedido da operação): "a partir da
+     * campanha, divide as responsabilidades e lança uma task pra cada um, com
+     * o briefing individual de cada função".
+     *
+     * Corre ANTES do core porque é outra forma de pedido: o core planeja UMA
+     * ação, e aqui o pedido é N tasks de funções diferentes. O gatilho é
+     * explícito e conservador (ver pedeSegmentacaoDeCampanha) — falso positivo
+     * aqui transformaria "cria a task do carrossel" em cinco tasks com donos
+     * diferentes. Não reconhecendo nada segmentável, devolve null e o turno
+     * segue pro caminho de sempre, byte a byte como antes.
+     */
+    if (!guardedResult && agent === 'bento' && conversationId && !pendingDelete && pedeSegmentacaoDeCampanha(message)) {
+      const alvo = await resolveWriteTarget({ message, executionClientId: runningExecution?.clientId ?? null }).catch(() => null);
+      const cfgCampanha = getClickUpConfigOrNull();
+      const ctxSenior = cfgCampanha ? await loadSeniorRuntimeContext(executionDbId).catch(() => null) : null;
+      if (alvo?.status === 'resolved' && alvo.listId && cfgCampanha && ctxSenior) {
+        const campanha = await executarCampanha({
+          mensagem: message,
+          clientName: clienteDaExecucao?.name ?? alvo.clientName ?? null,
+          listId: alvo.listId,
+          config: { ...cfgCampanha, writeScope: { authorizedForProduction: !ehQaBot(jobUser?.email ?? null) } },
+          seniorToolContext: ctxSenior,
+          escritor: async (prompt) => (await completeTextSafely(prompt, logger)) ?? (await completeTextViaOllama(prompt, logger)),
+          logger,
+        }).catch((error: unknown) => {
+          logger.warn({ error }, '[bento-campanha] falhou; turno segue pelo caminho normal');
+          return null;
+        });
+        if (campanha) {
+          guardedResult = {
+            execution_id: executionId, agent, status: 'completed',
+            answer: campanha.pergunta ?? campanha.resposta ?? '',
+            sources: campanha.criadas.map((c) => `CLICKUP_TASK:${c.id}`),
+            tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 },
+            metadata: { guard: 'bento-campanha', criadas: campanha.criadas.length, aguardando_dono: campanha.pergunta !== null },
+          };
+        }
+      }
+    }
+
     if (!guardedResult && agent === 'bento' && bentoOpenAiCoreEnabled() && conversationId && !pendingDelete) {
       const core = await runBentoOpenAiCore({
         message,
