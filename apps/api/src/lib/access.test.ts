@@ -72,3 +72,19 @@ describe('canDeleteCanvasDocument', () => {
     expect(canDeleteCanvasDocument(c.user, null)).toBe(false);
   });
 });
+
+import { authorizedClientIds } from './access';
+
+/**
+ * A prova de que esta função resolve a carteira inteira numa query só está na
+ * medição ao vivo registrada no comentário dela (29/09/2026: 22s em série →
+ * uma ida ao banco). O que dá pra travar aqui sem banco é a borda que evita a
+ * query inútil — e ela importa: o caminho da integração do ClickUp chama isto
+ * com lista vazia.
+ */
+describe('authorizedClientIds', () => {
+  it('lista vazia não vai ao banco', async () => {
+    const u = { id: 'user-a', email: 'a@test', name: 'a', roles: [], permissions: [] } as unknown as AuthenticatedUser;
+    expect(await authorizedClientIds(u, [])).toEqual(new Set());
+  });
+});

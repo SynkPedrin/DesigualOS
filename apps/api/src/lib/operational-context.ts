@@ -1,8 +1,10 @@
 import { isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
+  buildChangeContext,
   buildOperationalBriefing,
   buildOperationalContext,
+  pedeMudanca,
   buildSelectionSnapshot,
   detectSelectionReference,
   formatBriefingForPrompt,
@@ -16,9 +18,10 @@ import {
   type SelectionSnapshot,
 } from '@desigual-os/context-engine';
 import { findMemberByName, getTask, queryOperationTasks } from '@desigual-os/tool-gateway';
+import { eventsSince } from '@desigual-os/orchestrator';
 import { createLogger } from '@desigual-os/logging';
 import type { AuthenticatedUser } from '../auth/middleware';
-import { hasClientAccess } from './access';
+import { authorizedClientIds } from './access';
 
 const logger = createLogger({ service: 'operational-context' });
 
@@ -27,11 +30,12 @@ const logger = createLogger({ service: 'operational-context' });
  * ClickUp (tool-gateway), e devolve o bloco de dado ao vivo pra injetar no turno.
  *
  * É aqui que "escopo global" ganha significado de autorização: a lista de clientes vem do
- * banco e passa por `hasClientAccess` cliente por cliente. Hoje aquela função devolve
- * `true` pra todo mundo por decisão registrada do produto (cliente é compartilhado pelo
- * time), então na prática é a carteira inteira — mas o filtro é aplicado do mesmo jeito,
- * pra que no dia em que ela voltar a restringir, "a operação inteira" passe a significar
- * "tudo que ESTE usuário pode ver" sem precisar mexer aqui.
+ * banco e passa por `authorizedClientIds`, que aplica a MESMA fronteira do
+ * `hasClientAccess` numa query só (era uma por cliente, em série, e custava 22s do turno —
+ * a medição está em access.ts). Hoje o critério devolve a carteira inteira por decisão
+ * registrada do produto (cliente é compartilhado pelo time), mas o filtro é aplicado do
+ * mesmo jeito, pra que no dia em que ele voltar a restringir, "a operação inteira" passe a
+ * significar "tudo que ESTE usuário pode ver" sem precisar mexer aqui.
  */
 
 function getClickUpConfig(): { apiKey: string; teamId: string } | null {
@@ -75,16 +79,24 @@ async function listAuthorizedClients(
 
   if (principal === CLICKUP_INTEGRATION) return rows;
 
-  const autorizados: Array<{ id: string; name: string; clickupListId: string | null }> = [];
-  for (const row of rows) {
-    if (await hasClientAccess(principal, row.id)) autorizados.push(row);
-  }
-  return autorizados;
+  // Uma query, não uma por cliente: o for em série custava 22s do turno (ver
+  // authorizedClientIds em access.ts, com a medição).
+  const permitidos = await authorizedClientIds(principal, rows.map((r) => r.id));
+  return rows.filter((row) => permitidos.has(row.id));
 }
 
 export interface OperationalTurn {
   scope: OperationalScope;
   context: OperationalContext;
+  /**
+   * Preenchido quando a pergunta é sobre MUDANÇA ("o que mudou desde ontem?").
+   *
+   * Sai do event store próprio (`operational_events`), que guardava 633
+   * acontecimentos e não tinha um único leitor — `eventsSince()` existia desde
+   * sempre com ZERO chamadores. É a resposta que uma IA externa ligada ao
+   * ClickUp não consegue dar: ela vê o estado de agora, não a trajetória.
+   */
+  changeBlock: string | null;
   /** Preenchido quando o usuário pediu BRIEFING: substitui a lista crua de tarefas por um
    * briefing estruturado (prioridades, riscos, lacunas), com procedência por campo. */
   briefingBlock: string | null;
@@ -174,7 +186,9 @@ async function resolveSelectionTurn(params: {
       'A referência não aponta pra nenhuma delas — me diga o número ou o nome da task dentro dessa lista.',
     ].join('\n');
     return {
-      context: { block, listedTasks: [], summary: null, failure: null },
+      // `openTasks` vazio de propósito: este caminho responde pela SELEÇÃO da
+      // conversa, e nenhum briefing nasce dele — ver `briefingBlock: null` abaixo.
+      context: { block, listedTasks: [], openTasks: [], summary: null, failure: null },
       selection: atualizada,
     };
   }
@@ -188,6 +202,7 @@ async function resolveSelectionTurn(params: {
     context: {
       block: formatSelectionBlock({ snapshot: selection, focusTaskId, now: params.now }) + sufixo,
       listedTasks: [],
+      openTasks: [],
       summary: null,
       failure: null,
     },
@@ -250,26 +265,28 @@ export async function resolveOperationalTurn(
         { scope: scope.kind, signals: scope.signals, selection: selecaoTurn.selection.reason, tasks: selecaoTurn.selection.tasks.length, focus: selecaoTurn.selection.focusTaskId },
         'Follow-up resolvido contra a seleção da conversa (sem consulta global)',
       );
-      return { scope, context: selecaoTurn.context, briefingBlock: null, selection: selecaoTurn.selection };
+      return { scope, context: selecaoTurn.context, briefingBlock: null, changeBlock: null, selection: selecaoTurn.selection };
     }
   }
 
   if (!scope.operational || scope.kind === 'NONE' || scope.kind === 'AMBIGUOUS') {
-    return { scope, context: { block: null, listedTasks: [], summary: null, failure: null }, briefingBlock: null, selection: null };
+    return { scope, context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: null }, briefingBlock: null, changeBlock: null, selection: null };
   }
 
   const config = getClickUpConfig();
   if (!config) {
     return {
       scope,
-      context: { block: null, listedTasks: [], summary: null, failure: 'ClickUp não está configurado neste ambiente' },
+      context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: 'ClickUp não está configurado neste ambiente' },
       briefingBlock: null,
+      changeBlock: null,
       selection: null,
     };
   }
 
-  // As tarefas buscadas são reaproveitadas pelo briefing (uma consulta, dois usos).
-  let tarefasBuscadas: Awaited<ReturnType<typeof queryOperationTasks>>['tasks'] = [];
+  // Uma consulta, dois usos: o bloco de dado ao vivo e o briefing. O conjunto
+  // que o briefing recebe sai de `context.openTasks` (ver nota abaixo), não
+  // daqui — o que precisa atravessar o callback é só o sinal de truncamento.
   let truncado = false;
   const clientesAutorizados = await listAuthorizedClients(principal).catch(() => []);
 
@@ -300,10 +317,12 @@ export async function resolveOperationalTurn(
         context: {
           block: null,
           listedTasks: [],
+          openTasks: [],
           summary: null,
           failure: `não encontrei ninguém chamado "${scope.person.name}" entre os membros do ClickUp`,
         },
         briefingBlock: null,
+        changeBlock: null,
         selection: null,
       };
     }
@@ -317,7 +336,6 @@ export async function resolveOperationalTurn(
       listAuthorizedClients: async () => clientesAutorizados,
       queryTasks: async (query) => {
         const result = await queryOperationTasks(config, query);
-        tarefasBuscadas = result.tasks;
         truncado = result.truncated;
         return { tasks: result.tasks, truncated: result.truncated };
       },
@@ -333,9 +351,28 @@ export async function resolveOperationalTurn(
     const nomePorLista = new Map(
       clientesAutorizados.filter((c) => c.clickupListId).map((c) => [c.clickupListId!, c.name]),
     );
+    /**
+     * AS ABERTAS, NUNCA A LISTA CRUA (29/09/2026).
+     *
+     * `tarefasBuscadas` é o que o ClickUp devolveu, e ele devolve tarefa com
+     * status do tipo `done` mesmo com include_closed=false. O bloco de dado ao
+     * vivo filtra isso desde 24/09 e declara a contagem; o briefing, montado no
+     * MESMO turno e a partir da MESMA consulta, continuava lendo o cru.
+     *
+     * Os dois discordavam por 3x: o bloco dizia "411 tarefa(s) aberta(s) ...
+     * (811 já concluídas ficaram FORA desta lista — não as apresente como
+     * pendentes)" e o briefing dizia "1222 tarefa(s)". Quem vence é o briefing
+     * (ver a linha `briefingBlock ?? ...` em chat/routes.ts), então o número
+     * errado era o que ia ao modelo — e ele obedeceu: medido ao vivo, o Bento
+     * respondeu "sobrecarregado com 1222 tarefas ativas" num briefing executivo.
+     *
+     * O conjunto filtrado agora vem do próprio builder (`context.openTasks`),
+     * e não de um segundo filtro aqui: um filtro duplicado volta a divergir na
+     * primeira vez que a regra de "encerrada" mudar de um lado só.
+     */
     const briefing = buildOperationalBriefing({
       clientName: scope.kind === 'CLIENT' ? (scope.clients[0]?.name ?? null) : null,
-      tasks: tarefasBuscadas,
+      tasks: context.openTasks,
       clientNameByListId: nomePorLista,
       temporalLabel: scope.temporal?.label ?? null,
       truncated: truncado,
@@ -369,9 +406,52 @@ export async function resolveOperationalTurn(
         })
       : null;
 
+  /**
+   * O QUE MUDOU — do event store próprio, não do estado atual.
+   *
+   * Só quando a pergunta é sobre mudança (`pedeMudanca`): o bloco é caro de
+   * ler e ruim de mandar sempre, porque "o que mudou" e "o que está aberto"
+   * são perguntas diferentes e misturá-las faz o modelo responder uma pela
+   * outra — que é exatamente o defeito medido (a resposta a "o que mudou nos
+   * últimos 7 dias?" era a lista do que VENCE na janela).
+   *
+   * A janela vem do próprio pedido quando ele traz uma; sem isso, 7 dias.
+   * Falha aqui nunca derruba o turno: perde-se o bloco de mudança, não a
+   * resposta — e perder em silêncio seria repetir o defeito que esta auditoria
+   * encontrou, então a falha é logada.
+   */
+  let changeBlock: string | null = null;
+  if (pedeMudanca(message)) {
+    const desde = scope.temporal?.from ? new Date(scope.temporal.from) : new Date(now.getTime() - 7 * 86_400_000);
+    try {
+      const eventos = await eventsSince(desde, scope.kind === 'CLIENT' ? (scope.clients[0]?.id ?? null) : null);
+      const mudanca = buildChangeContext({
+        eventos: eventos.map((e) => ({
+          type: e.type,
+          entityId: e.entityId,
+          clientId: e.clientId,
+          actor: e.actor,
+          occurredAt: e.occurredAt,
+        })),
+        tasks: context.openTasks,
+        clientNameById: new Map(clientesAutorizados.map((c) => [c.id, c.name])),
+        now,
+        janelaLabel: scope.temporal?.label.replace('-', ' ') ?? 'últimos 7 dias',
+      });
+      changeBlock = mudanca.block;
+      logger.info(
+        { eventos: mudanca.totalEventos, criadas: mudanca.criadas, atualizadas: mudanca.atualizadas, naoResolvidas: mudanca.naoResolvidas },
+        'Bloco de mudança montado a partir do event store',
+      );
+    } catch (error) {
+      logger.warn({ err: error }, 'Não consegui ler o event store para montar o bloco de mudança');
+    }
+  }
+
   logger.info(
     {
       scope: scope.kind,
+      changeBlock: changeBlock ? changeBlock.length : 0,
       signals: scope.signals,
       confidence: scope.confidence,
       clients: scope.clients.map((c) => c.name),
@@ -385,7 +465,7 @@ export async function resolveOperationalTurn(
     'Escopo operacional resolvido',
   );
 
-  return { scope, context, briefingBlock, selection };
+  return { scope, context, briefingBlock, changeBlock, selection };
 }
 
 /**

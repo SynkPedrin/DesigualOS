@@ -17,6 +17,53 @@ export async function hasClientAccess(user: AuthenticatedUser, clientId: string)
   return Boolean(row);
 }
 
+/**
+ * A MESMA fronteira do `hasClientAccess` acima, resolvida de uma vez só.
+ *
+ * Existe por uma medição, não por elegância. `listAuthorizedClients`
+ * (operational-context.ts) chamava `hasClientAccess` num for de 58 clientes, em
+ * série, e era chamado duas vezes por turno. Medido em 29/09/2026 contra o
+ * banco de produção:
+ *
+ *   select dos 58 clientes ............  2.564ms
+ *   58 x hasClientAccess em série ..... 21.982ms   <- aqui
+ *   as mesmas 58 em paralelo ..........  8.309ms
+ *   resolveOperationalScope ...........    195ms
+ *
+ * O turno inteiro levava 24 a 30s contra um prazo de ack de 25s (ver
+ * PRAZO_ACK_MS em chat/routes.ts), e o sintoma pra quem usava era "não consegui
+ * consultar o ClickUp a tempo neste turno" numa pergunta trivial — com o
+ * ClickUp respondendo normalmente, porque a varredura dele leva 6s e nunca foi
+ * o problema. Era ida e volta ao banco: ~380ms cada, 58 vezes, em fila.
+ *
+ * Paralelizar resolveria pela metade e continuaria sendo 58 queries. Uma só
+ * responde a mesma pergunta, e a fronteira não muda: o critério é idêntico ao
+ * de cima (membership ativo na organização do cliente), só que avaliado em
+ * conjunto. Devolver um Set em vez de boolean é o que deixa o chamador manter
+ * a ordem e o formato que ele já tinha.
+ */
+export async function authorizedClientIds(
+  user: AuthenticatedUser,
+  clientIds: string[],
+): Promise<Set<string>> {
+  if (clientIds.length === 0) return new Set();
+  const rows = await db
+    .select({ clientId: schema.clients.id })
+    .from(schema.clients)
+    .innerJoin(schema.organizationMembers, eq(schema.organizationMembers.organizationId, schema.clients.organizationId))
+    .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
+    .where(
+      and(
+        inArray(schema.clients.id, clientIds),
+        eq(schema.organizationMembers.userId, user.id),
+        eq(schema.users.active, true),
+        isNull(schema.users.deletedAt),
+        isNull(schema.clients.deletedAt),
+      ),
+    );
+  return new Set(rows.map((r) => r.clientId));
+}
+
 /** Organizações de que o usuário é membro ativo. Base de todo escopo de tenant. */
 export async function organizationIdsForUser(userId: string): Promise<string[]> {
   const rows = await db
