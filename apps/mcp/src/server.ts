@@ -17,6 +17,7 @@ import { registrarToolsDeIdentidadeEClientes } from './tools/identity-clients.js
 import { registrarToolsDeTarefa } from './tools/tasks.js';
 import { registrarToolsDeMemoriaEEventos } from './tools/memory-events.js';
 import { registrarToolsDeOperacao } from './tools/operation.js';
+import { registrarToolsV1 } from './tools/v1.js';
 import type { ContextoDaTool } from './tools/kit.js';
 import { renderConsentPage } from './consent-page.js';
 
@@ -91,7 +92,32 @@ function montarServidor(): McpServer {
   registrarToolsDeTarefa(deps);
   registrarToolsDeMemoriaEEventos(deps);
   registrarToolsDeOperacao(deps);
+  registrarToolsV1(deps);
   return server;
+}
+
+/**
+ * UM `McpServer` NOVO POR REQUISIÇÃO (29/09/2026).
+ *
+ * O SDK é explícito: "Already connected to a transport. Call close() before
+ * connecting to a new transport, or use a separate Protocol instance per
+ * connection." Antes, `montarServidor()` rodava UMA vez no boot e cada
+ * requisição chamava `server.connect(transport)` no MESMO objeto. Funcionava
+ * em chamadas isoladas — o `res.on('close')` fechava a transporte antes da
+ * próxima chegar — e quebrava sob chamadas rápidas em sequência ou
+ * concorrentes: a segunda `connect()` chegava antes do `close()` da primeira
+ * terminar de desconectar, e o servidor devolvia 500 em toda chamada seguinte
+ * a um `initialize`. Foi pego pela bateria de aceite (scripts/aceite.mts,
+ * seção de concorrência) e pelo e2e rodando várias tools em sequência — os
+ * dois fazem o que o produto promete: várias pessoas, várias chamadas, ao
+ * mesmo tempo.
+ *
+ * `montarServidor()` só registra 33 tools em memória — nenhuma I/O — então
+ * criar um por requisição custa microssegundos, não é otimização prematura
+ * sendo sacrificada.
+ */
+function montarServidorPorRequisicao(): McpServer {
+  return montarServidor();
 }
 
 function montarProviders(organizationId: string): ProviderSet {
@@ -114,6 +140,16 @@ function montarProviders(organizationId: string): ProviderSet {
 
 async function main(): Promise<void> {
   const app = express();
+  /**
+   * TRUST PROXY (29/09/2026). O servidor roda atrás de um proxy reverso —
+   * o túnel Cloudflare em desenvolvimento, e o mesmo em produção — que injeta
+   * `X-Forwarded-For`. Sem isto, o rate limiter do SDK (dentro de
+   * `mcpAuthRouter`) rejeita o cabeçalho como inconsistente: ele existe, mas
+   * o Express não foi instruído a confiar nele. `1` confia no primeiro salto
+   * — o próprio proxy — sem abrir a porta para um cliente forjar o cabeçalho
+   * e escapar do limite de taxa.
+   */
+  app.set('trust proxy', 1);
   app.use(cors({ origin: true, exposedHeaders: ['Mcp-Session-Id', 'WWW-Authenticate'] }));
   app.use(express.json({ limit: '2mb' }));
 
@@ -178,8 +214,6 @@ async function main(): Promise<void> {
     res.json({ redirect_to: resultado.redirectTo });
   });
 
-  const server = montarServidor();
-
   app.post(
     '/mcp',
     requireBearerAuth({ verifier: oauth, requiredScopes: [], resourceMetadataUrl: `${URL_PUBLICA}/.well-known/oauth-protected-resource` }),
@@ -221,6 +255,10 @@ async function main(): Promise<void> {
       // Transporte sem estado: uma instância por requisição. Simples de operar
       // e imune a vazamento de sessão entre funcionários.
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      // O SERVIDOR também é por requisição — ver a nota de
+      // `montarServidorPorRequisicao`. É o par do transporte: um Protocol não
+      // aceita um segundo connect(), então não pode haver um sem o outro.
+      const server = montarServidorPorRequisicao();
       res.on('close', () => { void transport.close(); });
 
       await contextoDaRequisicao.run(contexto, async () => {
@@ -244,7 +282,22 @@ async function main(): Promise<void> {
     if (!res.headersSent) res.status(500).json({ error: 'server_error' });
   });
 
-  app.listen(PORTA, () => {
+  /**
+   * BIND EXPLÍCITO EM TODAS AS INTERFACES (29/09/2026).
+   *
+   * Sem host explícito, o Node escuta só em IPv4 por padrão em algumas
+   * versões/plataformas. O túnel Cloudflare resolve "localhost" para "::1"
+   * (IPv6) antes de tentar IPv4, e a conexão morre com
+   * "dial tcp [::1]:3010: connect: connection refused" — intermitente,
+   * porque depende de qual endereço o resolvedor devolve primeiro. `curl
+   * 127.0.0.1` sempre funcionava, escondendo o problema até o túnel público
+   * ser testado de novo depois do servidor reiniciar.
+   *
+   * "0.0.0.0" força IPv4 em todas as interfaces, que é o que o túnel local
+   * precisa. Não expõe mais do que já estava exposto: a porta já não tinha
+   * autenticação de rede nenhuma antes do OAuth do MCP decidir quem entra.
+   */
+  app.listen(PORTA, '0.0.0.0', () => {
     logger.info(
       { porta: PORTA, url_publica: URL_PUBLICA, endpoint: `${URL_PUBLICA}/mcp` },
       'DESIGUAL OS MCP no ar',

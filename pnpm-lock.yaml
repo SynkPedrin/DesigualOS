@@ -120,6 +120,9 @@ importers:
       '@desigual-os/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@desigual-os/context-engine':
+        specifier: workspace:*
+        version: link:../../packages/context-engine
       '@desigual-os/database':
         specifier: workspace:*
         version: link:../../packages/database
