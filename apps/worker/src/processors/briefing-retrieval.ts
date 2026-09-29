@@ -1,7 +1,7 @@
 import { db, schema } from '@desigual-os/database';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { getTaskComments, type ClickUpConfig } from '@desigual-os/tool-gateway';
-import { extractLabeledFacts, mergeFacts, type BriefingFact } from './briefing-facts';
+import { extractLabeledFacts, extractSectionFacts, mergeFacts, type BriefingFact } from './briefing-facts';
 
 /**
  * briefing-retrieval.ts — busca o contexto REAL antes de escrever o briefing.
@@ -81,7 +81,15 @@ export async function retrieveBriefingContext(
         daMemoria.push({ field: 'proibidos', value: m.content, source: 'memória do cliente', sourceId: m.id });
         daMemoria.push(...extractLabeledFacts(m.content, 'memória do cliente', m.id));
       } else {
+        /**
+         * AS DUAS FORMAS, nesta ordem (28/09/2026). O rótulo de linha
+         * ("Público: X") é mais específico que a seção inteira, então vem
+         * primeiro e vence pelo merge. Antes só existia o rótulo, e um dossiê
+         * de 12.000 caracteres escrito em "## Quem é" + prosa rendia ZERO
+         * fatos: o conhecimento do cliente nunca chegava ao briefing.
+         */
         doDossie.push(...extractLabeledFacts(m.content, 'dossiê do cliente', m.id));
+        doDossie.push(...extractSectionFacts(m.content, 'dossiê do cliente', m.id));
       }
     }
     if (memorias.length > 0) sourcesConsulted.push(`memória do cliente (${memorias.length})`);
