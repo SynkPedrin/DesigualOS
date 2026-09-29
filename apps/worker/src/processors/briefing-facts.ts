@@ -83,24 +83,36 @@ const ROTULOS: Array<{ field: string; re: RegExp }> = [
  * título, não numa linha "Público: ...". Conhecimento rico entrando, campo
  * vazio saindo — era esta a causa do briefing raso, junto com o modelo.
  */
+/**
+ * Seções que existem no vault e NÃO são conhecimento de briefing.
+ *
+ * "Lacunas a preencher" aparece em 45 dossiês e lista o que FALTA — vira
+ * pendência, não fato; mapeá-la por acidente injetaria "falta público, falta
+ * tom" no briefing como se fosse informação. "Fontes", "Automações" e
+ * "Serviços prestados pela Desigual" descrevem a relação comercial e a
+ * infraestrutura, não o cliente que a peça precisa entender.
+ */
+const SECOES_IGNORADAS =
+  /^(lacunas?( a preencher)?|fontes?|[úu]ltima atualiza[çc][ãa]o|servi[çc]os prestados pela desigual|ias? e agentes( envolvidos)?|automa[çc][õo]es|integra[çc][õo]es|pend[êe]ncias|evid[êe]ncias encontradas|riscos problemas|solu[çc][õo]es implementadas|identifica[çc][ãa]o)$/i;
+
 const ROTULOS_DE_SECAO: Array<{ field: string; re: RegExp }> = [
-  { field: 'produto', re: /^(quem [ée]|sobre|identidade|o neg[óo]cio|empresa|contexto do cliente)$/i },
+  { field: 'produto', re: /^(quem [ée]|sobre|identidade|o neg[óo]cio|neg[óo]cio|empresa|cliente|contexto do cliente|o que o cliente faz|resumo|resumo executivo)$/i },
   { field: 'publico', re: /^(p[úu]blico|p[úu]blico-alvo|para quem|personas?|audi[êe]ncia|quem compra)$/i },
-  { field: 'tom', re: /^(tom de voz|voz da marca|como falamos|linguagem)$/i },
+  { field: 'tom', re: /^(tom de voz|voz da marca|voz verbal|como falamos|linguagem)$/i },
   { field: 'posicionamento', re: /^(posicionamento|como nos posicionamos|concorr[êe]ncia|concorrentes|mercado)$/i },
-  { field: 'dores', re: /^(dores|dor do cliente|problemas|o que incomoda)$/i },
+  { field: 'dores', re: /^(dores|dor do cliente|problemas|o que incomoda|principais necessidades|necessidades)$/i },
   { field: 'desejos', re: /^(desejos|o que querem|aspira[çc][õo]es)$/i },
   { field: 'objecoes', re: /^(obje[çc][õo]es|barreiras|por que n[ãa]o compram)$/i },
   { field: 'diferenciais', re: /^(diferenciais|vantagens|por que n[óo]s|benef[íi]cios)$/i },
-  { field: 'proibidos', re: /^(o que evitar|evitar|n[ãa]o fazer|proibido|restri[çc][õo]es|nunca)$/i },
-  { field: 'obrigatorios', re: /^(obrigat[óo]rio|sempre|must have|o que n[ãa]o pode faltar)$/i },
-  { field: 'oferta', re: /^(oferta|planos?|produtos? e pre[çc]os?|portf[óo]lio)$/i },
+  { field: 'proibidos', re: /^(o que evitar|evitar|n[ãa]o fazer|proibido|restri[çc][õo]es|nunca|anti-?patterns?( espec[íi]ficos)?)$/i },
+  { field: 'obrigatorios', re: /^(obrigat[óo]rio|sempre|must have|o que n[ãa]o pode faltar|provas e dados autorizados|provas autorizadas)$/i },
+  { field: 'oferta', re: /^(oferta|planos?|produtos? e pre[çc]os?|portf[óo]lio|servi[çc]os contratados)$/i },
   { field: 'objetivo', re: /^(objetivo|objetivos|meta|metas|o que buscamos)$/i },
   { field: 'canal', re: /^(canais|canal|onde publicamos|m[íi]dias)$/i },
-  { field: 'cta', re: /^(cta|chamada para a[çc][ãa]o|como convertemos)$/i },
+  { field: 'cta', re: /^(ctas?( aprovados?)?|chamada para a[çc][ãa]o|como convertemos)$/i },
   { field: 'mensagem', re: /^(mensagem|mensagem principal|promessa|proposta de valor)$/i },
-  { field: 'historico', re: /^(hist[óo]rico|campanhas anteriores|o que j[áa] rodou)$/i },
-  { field: 'estilo', re: /^(estilo|dire[çc][ãa]o visual|identidade visual|refer[êe]ncias visuais)$/i },
+  { field: 'historico', re: /^(hist[óo]rico.*|campanhas anteriores|o que j[áa] rodou|projetos e hist[óo]rico|projetos atuais)$/i },
+  { field: 'estilo', re: /^(estilo|dire[çc][ãa]o visual|identidade visual|refer[êe]ncias visuais|padr[ãa]o-?ouro)$/i },
   { field: 'localizacao', re: /^(pra[çc]a|regi[ãa]o|cidades?|onde atuamos|cobertura)$/i },
   { field: 'aprovacao', re: /^(aprova[çc][ãa]o|quem aprova|fluxo de aprova[çc][ãa]o)$/i },
 ];
@@ -156,7 +168,7 @@ export function extractSectionFacts(texto: string, source: string, sourceId?: st
 
   const fechar = (): void => {
     if (!tituloAtual) return;
-    const alvo = ROTULOS_DE_SECAO.find((r) => r.re.test(tituloAtual!));
+    const alvo = SECOES_IGNORADAS.test(tituloAtual) ? undefined : ROTULOS_DE_SECAO.find((r) => r.re.test(tituloAtual!));
     const valor = corpoLimpo(corpo);
     // Seção com uma palavra solta não é fato; é cabeçalho órfão.
     if (alvo && valor.length >= 12 && !VAZIO.test(valor) && !fatos.some((f) => f.field === alvo.field)) {

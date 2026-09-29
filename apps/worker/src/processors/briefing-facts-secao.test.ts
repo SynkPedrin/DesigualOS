@@ -107,3 +107,49 @@ describe('as duas formas convivem, e a mais específica vence', () => {
     expect(juntos.map((f) => f.field).sort()).toEqual(['proibidos', 'publico']);
   });
 });
+
+/**
+ * Os títulos abaixo são os REAIS do vault, medidos em 28/09/2026 varrendo os
+ * 101 dossiês: 398 títulos distintos, e estes são os de maior frequência. A
+ * primeira versão do extrator de seção não mapeava nenhum deles — o vault
+ * tinha o dado e o briefing dizia "[CONFIRMAR: ...]".
+ */
+describe('os títulos que o vault usa de verdade', () => {
+  it.each([
+    ['CTAs aprovados', 'cta', 29],
+    ['Voz verbal', 'tom', 29],
+    ['Anti-patterns específicos', 'proibidos', 45],
+    ['Projetos e histórico', 'historico', 44],
+    ['Principais necessidades', 'dores', 19],
+    ['Provas e dados autorizados', 'obrigatorios', 29],
+    ['O que o cliente faz', 'produto', 21],
+    ['Serviços contratados', 'oferta', 18],
+    ['Padrão-ouro', 'estilo', 29],
+  ])('"## %s" (%s, %ix no vault)', (titulo, field) => {
+    const r = extractSectionFacts(`## ${titulo}\nConteúdo real suficiente para contar como fato.`, 's');
+    expect(r[0]?.field).toBe(field);
+  });
+});
+
+describe('o que o vault tem e NÃO é conhecimento de briefing', () => {
+  it('"Lacunas a preencher" lista o que FALTA — nunca vira fato', () => {
+    // 45 dossiês têm esta seção. Mapeá-la injetaria "falta público, falta tom"
+    // no briefing como se fosse informação sobre o cliente.
+    const r = extractSectionFacts('## Lacunas a preencher\n- Público: [FALTA]\n- Tom: [FALTA]', 's');
+    expect(r).toEqual([]);
+  });
+
+  it.each([
+    'Fontes',
+    'Última atualização',
+    'Serviços prestados pela Desigual',
+    'IAs e agentes envolvidos',
+    'Automações',
+    'Integrações',
+    'Pendências',
+    'Identificação',
+  ])('"## %s" descreve a relação ou a infra, não o cliente', (titulo) => {
+    const r = extractSectionFacts(`## ${titulo}\nTexto qualquer com tamanho suficiente aqui.`, 's');
+    expect(r).toEqual([]);
+  });
+});
