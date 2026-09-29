@@ -28,6 +28,8 @@ export interface SingleAgentDispatchParams {
   operationalContext?: string;
   /** Ver AgentJobData.motionBrief. */
   motionBrief?: MotionBriefPayload;
+  /** Ver AgentJobData.clienteDoEscopo. */
+  clienteDoEscopo?: string;
 }
 
 /**
@@ -39,7 +41,7 @@ export interface SingleAgentDispatchParams {
 export async function createAndEnqueueExecution(
   params: SingleAgentDispatchParams,
 ): Promise<ChatResult> {
-  const { message, userId, clientId, conversationId, decision, attachments, operationalContext, motionBrief } = params;
+  const { message, userId, clientId, conversationId, decision, attachments, operationalContext, motionBrief, clienteDoEscopo } = params;
 
   const healthyNode = await findHealthyNodeForAgent(decision.primary_agent);
   if (!healthyNode) {
@@ -106,6 +108,7 @@ export async function createAndEnqueueExecution(
         ...(attachments?.length ? { attachments } : {}),
         ...(operationalContext ? { operationalContext } : {}),
         ...(motionBrief ? { motionBrief } : {}),
+        ...(clienteDoEscopo ? { clienteDoEscopo } : {}),
         conversationId,
       },
       {

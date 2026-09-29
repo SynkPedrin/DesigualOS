@@ -67,6 +67,7 @@ import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama, tasksDoEstadoEmCache } from './bento-panorama';
 import { blocoDeFrentes } from './bento-padrao-de-task';
 import { blocoRelacional, explicacaoParaPessoa } from './bento-arvore';
+import { escopoOperacional } from '@desigual-os/context-engine';
 import { ehPerguntaOperacional, montarAtaDeReuniao, pedeAtaDeReuniao, responderOperacional } from './bento-resposta-operacional';
 import { documentosEmTexto, lerDocumentos } from './bento-documentos';
 import { confirmacaoDeAprendizado, detectarRegraDeBriefing, registrarRegra } from './bento-aprendizado';
@@ -1187,7 +1188,7 @@ interface Tentativa {
 }
 
 async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentativa: Tentativa = { feitas: 0, maximo: 1 }): Promise<void> {
-  const { executionDbId, executionId, agent, message, contextRefs, conversationId, attachments, operationalContext, motionBrief } = data;
+  const { executionDbId, executionId, agent, message, contextRefs, conversationId, attachments, operationalContext, motionBrief, clienteDoEscopo } = data;
 
   const [runningExecution] = await db
     .update(schema.executions)
@@ -1553,17 +1554,33 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
      */
     if (!guardedResult && agent === 'bento' && conversationId && pedePanorama(message)) {
       const cfgPanorama = getClickUpConfigOrNull();
-      const listas = cfgPanorama
-        ? (
-            await db
-              .select({ id: schema.clients.clickupListId })
-              .from(schema.clients)
-              .where(isNull(schema.clients.deletedAt))
-              .catch(() => [])
-          )
-            .map((c) => c.id)
-            .filter((id): id is string => Boolean(id))
+      /**
+       * FIXTURE DE QA FORA DO PANORAMA (29/09/2026).
+       *
+       * Medido numa resposta real: "teste" aparecia com 27 atrasadas e 27 sem
+       * responsável ao lado de Cosentino e D. Carvalho, junto com "Cliente
+       * Teste 7" e "Lista QA". Quem lê aquilo pra decidir o dia da equipe não
+       * tem como saber que são fixture — e num relatório que a pessoa lê sobre
+       * a própria agência, é a primeira coisa que salta.
+       *
+       * Este select montava a própria lista de clientes, direto da tabela, sem
+       * passar pelo caminho da API — então a correção feita lá não alcançava o
+       * panorama. `escopoOperacional` é a MESMA função, pra não existirem duas
+       * definições de "o que é cliente".
+       *
+       * Ela tira fixture e MANTÉM o trabalho interno da casa: aquelas tarefas
+       * são de alguém, e escondê-las trocaria um erro por outro pior.
+       */
+      const linhasDeCliente = cfgPanorama
+        ? await db
+            .select({ id: schema.clients.clickupListId, name: schema.clients.name })
+            .from(schema.clients)
+            .where(isNull(schema.clients.deletedAt))
+            .catch(() => [])
         : [];
+      const listas = escopoOperacional(linhasDeCliente)
+        .map((c) => c.id)
+        .filter((id): id is string => Boolean(id));
       if (cfgPanorama && listas.length > 0) {
         const res = await queryOperationTasks(cfgPanorama, { listIds: listas, limit: 500 } as never).catch(
           (error: unknown) => {
@@ -1584,9 +1601,32 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
            * (bento-arvore.ts): o que concentra o risco, o que não é o problema,
            * e a oferta de reorganizar. Determinística, sem chamada de modelo.
            */
+          /**
+           * O RECORTE VEM DO ESCOPO, não da frase.
+           *
+           * A primeira versão procurava o nome do cliente dentro da mensagem, e
+           * isso resolveu só metade: o follow-up elíptico continuou quebrado.
+           * Medido ao vivo em 29/09/2026, na mesma conversa:
+           *
+           *   "me fala da Cosentino"     -> resposta da Cosentino, correta
+           *   "e o que tá travado lá?"   -> panorama da AGÊNCIA INTEIRA
+           *
+           * E o pior não é o erro, é a forma dele: a segunda resposta não
+           * parece quebrada. Quem lê vê "Agência Desigual: 34 atrasadas /
+           * teste: 27 / Cosentino: 24" achando que é o que está travado NA
+           * Cosentino. É resposta de outra pergunta, sem nada na tela avisando
+           * que o recorte mudou.
+           *
+           * O escopo já resolvia certo (kind=CLIENT, sinal "herdado:follow-up")
+           * e o worker não tinha acesso a ele — agora tem, por
+           * `clienteDoEscopo`. A frase fica como REFORÇO, pro caso de o escopo
+           * não ter vindo: ninguém repete o nome do cliente na segunda frase,
+           * então o caminho do escopo é o comum e o da frase é a exceção.
+           */
           const nomeCliente = clienteDaExecucao?.name ?? null;
           const citado =
-            nomeCliente && stripAccentsLower(message).includes(stripAccentsLower(nomeCliente)) ? nomeCliente : null;
+            clienteDoEscopo ??
+            (nomeCliente && stripAccentsLower(message).includes(stripAccentsLower(nomeCliente)) ? nomeCliente : null);
           const tasksDoRecorte = citado ? res.tasks.filter((t) => t.listName === citado) : res.tasks;
           const explicacao = citado
             ? explicacaoParaPessoa({ clientName: citado, tasks: tasksDoRecorte })

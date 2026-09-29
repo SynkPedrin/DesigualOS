@@ -612,6 +612,19 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         ...(attachments.length ? { attachments } : {}),
         ...(operacionalApartado ? { operationalContext: operacionalApartado } : {}),
         ...(body.motion_brief ? { motionBrief: body.motion_brief } : {}),
+        /**
+         * O cliente que o ESCOPO resolveu, quando o turno é de cliente. Vai
+         * separado do `clientId` de propósito: aquele é o cliente SELECIONADO
+         * na tela (ou o da conversa) e não muda com a pergunta; este é o
+         * recorte DESTE turno, e some quando a pergunta é global.
+         *
+         * Sem ele, "e o que tá travado lá?" depois de "me fala da Cosentino"
+         * era respondido com o panorama da agência inteira — ver
+         * AgentJobData.clienteDoEscopo.
+         */
+        ...(operationalTurn.scope.kind === 'CLIENT' && operationalTurn.scope.clients[0]?.name
+          ? { clienteDoEscopo: operationalTurn.scope.clients[0].name }
+          : {}),
       });
 
       if (result.status === 'unavailable') {

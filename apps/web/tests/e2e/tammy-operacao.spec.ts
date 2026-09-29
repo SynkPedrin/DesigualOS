@@ -157,6 +157,54 @@ test.describe('Tammy em operação — o sistema dura o expediente?', () => {
   });
 
   /**
+   * A ELIPSE, que é como a pessoa realmente fala. Ela nomeia o cliente uma vez
+   * e depois diz "lá", "nela", "e aí" — ninguém repete o nome na segunda frase.
+   *
+   * Medido ao vivo em 29/09/2026, na mesma conversa:
+   *
+   *   "me fala da Cosentino"     -> resposta da Cosentino, correta
+   *   "e o que tá travado lá?"   -> panorama da AGÊNCIA INTEIRA
+   *
+   * O escopo resolvia certo (kind=CLIENT, sinal "herdado:follow-up"); o worker
+   * é que procurava o nome do cliente dentro de "e o que tá travado lá?".
+   *
+   * O que torna esse defeito pior que uma resposta vazia: ele não PARECE
+   * quebrado. Quem lê vê "Agência Desigual: 34 atrasadas / teste: 27 /
+   * Cosentino: 24" achando que é o que está travado na Cosentino. É resposta de
+   * outra pergunta, e nada na tela avisa que o recorte mudou.
+   */
+  test('PERSONA 6 — elipse: nomeia o cliente uma vez e depois diz "lá"', async ({ page }) => {
+    await login(page);
+    await novoChat(page, 'Bento');
+    await falar(page, 'oi');
+    await selecionaCliente(page, CLIENTE_COM_ARVORE);
+
+    const r1 = await falar(page, `me fala da ${CLIENTE_COM_ARVORE}`, 240_000);
+    log('t1 nomeia o cliente', r1);
+    expect(conferir('t1', r1.texto)).toEqual([]);
+
+    const r2 = await falar(page, 'e o que tá travado lá?', 240_000);
+    log('t2 elipse', r2);
+    expect(conferir('t2', r2.texto)).toEqual([]);
+
+    /**
+     * A prova é NEGATIVA e é a que importa: a resposta não pode trazer a
+     * carteira. Se aparecer outro cliente na lista, o recorte vazou — e é
+     * justamente o que a pessoa não tem como perceber lendo.
+     */
+    const outrosClientes = ['Agência Desigual', 'D. Carvalho', '3Net', 'Elite'];
+    for (const outro of outrosClientes) {
+      expect(
+        r2.texto.toLowerCase().includes(outro.toLowerCase()),
+        `"lá" virou a agência inteira: a resposta cita ${outro}`,
+      ).toBe(false);
+    }
+    expect(r2.texto.toLowerCase(), 'a resposta deveria ser sobre o cliente do turno anterior').toContain(
+      CLIENTE_COM_ARVORE.toLowerCase(),
+    );
+  });
+
+  /**
    * O limite. Duas coisas têm que acontecer juntas: recusar, e recusar sem
    * inventar número. Medido: ele explicava certo que não há campo de receita e
    * concluía "Logo, R$ 0,00 faturado registrado no sistema".

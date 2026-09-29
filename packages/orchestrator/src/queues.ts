@@ -128,6 +128,24 @@ export interface AgentJobData {
   /** Briefing do card de motion, quando o turno é um "Gerar Motion" com o card
    * preenchido. O tryMotionGuard (worker) usa pra chamar createMotion com brief. */
   motionBrief?: MotionBriefPayload;
+  /**
+   * O cliente que o ESCOPO deste turno resolveu, quando ele é de cliente.
+   *
+   * Existe porque o worker não tinha como saber disso e estava adivinhando pelo
+   * texto da frase. Medido ao vivo em 29/09/2026, mesma conversa:
+   *
+   *   "me fala da Cosentino"     -> resposta da Cosentino, correta
+   *   "e o que tá travado lá?"   -> panorama da AGÊNCIA INTEIRA
+   *
+   * O escopo estava certo nos dois (kind=CLIENT, clients=["Cosentino"], sinal
+   * "herdado:follow-up"); quem errou foi o worker, procurando o nome do cliente
+   * dentro de "e o que tá travado lá?". Ninguém repete o nome do cliente na
+   * segunda frase, então esse é o caso COMUM, não a exceção.
+   *
+   * Ausente quando o turno é global — e é isso que preserva "como tá a operação
+   * hoje?" respondendo pela agência mesmo com um cliente selecionado na tela.
+   */
+  clienteDoEscopo?: string;
   // Presentes só quando este job é uma etapa de workflow (Fase 10).
   workflowId?: string;
   stepIndex?: number;
