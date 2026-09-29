@@ -323,6 +323,33 @@ async function completeTextViaOllama(prompt: string, logger: Logger): Promise<st
  * potencial de escrita AINDA assim seriam enviadas — é o sinal de que o
  * vocabulário do kill switch ficou pra trás de um phrasing novo. Meta: 0.
  */
+/**
+ * A falha passa se eu esperar, ou é o mesmo resultado tentando de novo?
+ *
+ * Medido em 29/09/2026 numa bateria de uso livre (16 turnos seguidos, uma
+ * conversa só): 3 dos 16 voltaram "Ollama 502" e 1 voltou "ocupado respondendo
+ * outra pergunta, tenta em alguns segundos". O nó de perguntas atende UMA por
+ * vez, e turnos em sequência — que é o que duas pessoas usando ao mesmo tempo
+ * produzem — batem nisso. Os dois serviços estavam de pé o tempo todo.
+ *
+ * Quem sabia que era transitório era o próprio serviço: ele literalmente
+ * mandou "tenta em alguns segundos". Ninguém tentava.
+ *
+ * `timeout` fica DE FORA de propósito: já esperou o teto inteiro, e repetir
+ * dobraria a espera de quem está olhando pra tela. `auth` e `sem-fonte`
+ * também: tentar de novo dá exatamente a mesma resposta.
+ */
+export function falhaTransitoriaDoBentoQA(error: unknown): boolean {
+  const kind = error instanceof BentoQAError ? error.kind : null;
+  if (kind === 'auth' || kind === 'sem-fonte' || kind === 'timeout') return false;
+  if (kind === 'rede') return true;
+  const texto = error instanceof Error ? error.message : String(error);
+  return /\b(ocupado|busy|overload|sobrecarreg|502|503|504|ECONNRESET|EAI_AGAIN|socket hang up)\b/i.test(texto);
+}
+
+/** Espera entre tentativas. Curta: o que está na frente na fila é uma pergunta, não um lote. */
+const REESPERA_BENTO_QA_MS = [2_500, 6_000];
+
 export async function callBento(message: string, logger: Logger, operationalContext?: string): Promise<ExecuteResponse> {
   const url = process.env.BENTO_QA_URL ?? 'http://100.93.182.83:8791';
   const token = process.env.BENTO_QA_TOKEN;
@@ -350,44 +377,62 @@ export async function callBento(message: string, logger: Logger, operationalCont
     );
   }
 
-  try {
-    // BL-23 (auditoria forense 12/09/2026): sem timeoutMs explícito o cliente
-    // usava o default de 100s, não os 120s declarados pro Bento em
-    // AGENT_TIMEOUT_MS — execução lenta legítima morria 20s antes do teto
-    // pensado. Agora o timeout é o mesmo valor declarado na tabela.
-    const { text, citations } = await askBentoQA(
-      { url, token, channel: 'whatsapp', timeoutMs: AGENT_TIMEOUT_MS.bento },
-      message,
-      operationalContext,
-    );
-    return {
-      execution_id: '',
-      agent: 'bento',
-      status: 'completed',
-      answer: text,
-      sources: citations.map((c) => c.path),
-      tool_calls: [],
-      usage: { input_tokens: 0, output_tokens: 0 },
-    };
-  } catch (error) {
-    const message2 =
-      error instanceof BentoQAError
-        ? error.message
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    logger.error({ error: message2 }, 'bento-qa dispatch failed');
-    return {
-      execution_id: '',
-      agent: 'bento',
-      status: 'failed',
-      answer: null,
-      sources: [],
-      tool_calls: [],
-      usage: { input_tokens: 0, output_tokens: 0 },
-      error: message2,
-    };
+  let ultimoErro: unknown = null;
+  // Uma ida + duas reesperas. A leitura é idempotente (este caminho é o de
+  // PERGUNTA; escrita é bloqueada bem antes), então repetir não tem efeito
+  // colateral nenhum.
+  for (let tentativa = 0; tentativa <= REESPERA_BENTO_QA_MS.length; tentativa++) {
+    try {
+      // BL-23 (auditoria forense 12/09/2026): sem timeoutMs explícito o cliente
+      // usava o default de 100s, não os 120s declarados pro Bento em
+      // AGENT_TIMEOUT_MS — execução lenta legítima morria 20s antes do teto
+      // pensado. Agora o timeout é o mesmo valor declarado na tabela.
+      const { text, citations } = await askBentoQA(
+        { url, token, channel: 'whatsapp', timeoutMs: AGENT_TIMEOUT_MS.bento },
+        message,
+        operationalContext,
+      );
+      if (tentativa > 0) {
+        logger.info({ tentativa }, '[bento-qa] respondeu na reespera — a falha anterior era passageira');
+      }
+      return {
+        execution_id: '',
+        agent: 'bento',
+        status: 'completed',
+        answer: text,
+        sources: citations.map((c) => c.path),
+        tool_calls: [],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+    } catch (error) {
+      ultimoErro = error;
+      const espera = REESPERA_BENTO_QA_MS[tentativa];
+      if (espera === undefined || !falhaTransitoriaDoBentoQA(error)) break;
+      logger.warn(
+        { tentativa: tentativa + 1, esperaMs: espera, error: (error as Error).message },
+        '[bento-qa] falha passageira; esperando pra tentar de novo',
+      );
+      await new Promise((r) => setTimeout(r, espera));
+    }
   }
+
+  const message2 =
+    ultimoErro instanceof BentoQAError
+      ? ultimoErro.message
+      : ultimoErro instanceof Error
+        ? ultimoErro.message
+        : String(ultimoErro);
+  logger.error({ error: message2 }, 'bento-qa dispatch failed');
+  return {
+    execution_id: '',
+    agent: 'bento',
+    status: 'failed',
+    answer: null,
+    sources: [],
+    tool_calls: [],
+    usage: { input_tokens: 0, output_tokens: 0 },
+    error: message2,
+  };
 }
 
 const AGENTES_ASK_DEFAULT_URL: Record<'jarbas' | 'suzy', string> = {
@@ -1041,12 +1086,54 @@ export function isMotionTurnBeforeBentoGuard(agent: AgentName, message: string):
   return agent === 'otto' && ottoMotionEnabled() ? detectMotionIntent(message, { hasActiveSession: false }) !== null : false;
 }
 
+/**
+ * Falha de INFRAESTRUTURA, traduzida pra quem está trabalhando.
+ *
+ * A regra que criou esta função continua valendo: nunca mandar a pessoa
+ * reformular uma pergunta que não tem defeito, quando o defeito é da máquina.
+ * O que estava errado era o outro extremo — o motivo cru ia inteiro pra tela.
+ *
+ * Bateria de uso livre de 29/09/2026, o que a pessoa lia no chat:
+ *
+ *   "Não consegui responder agora: Ollama 502"
+ *   "Não consegui responder agora: ocupado respondendo outra pergunta, tenta em alguns segundos"
+ *
+ * Nenhuma das duas frases é acionável por quem usa. A primeira nomeia um
+ * componente que a pessoa não sabe o que é; a segunda manda ela fazer à mão o
+ * que o sistema deveria ter feito sozinho (e agora faz, ver
+ * falhaTransitoriaDoBentoQA).
+ *
+ * O detalhe técnico não some: continua no log e no `errorCode` do step, que é
+ * onde quem cuida do sistema procura. Aqui fica o que a pessoa pode FAZER.
+ */
+const INFRA_CONHECIDA: Array<{ re: RegExp; texto: string }> = [
+  {
+    re: /\b(ocupado|busy|overload|sobrecarreg|502|503|504)\b/i,
+    texto: 'O motor de respostas está congestionado neste momento. Já tentei de novo por baixo e não liberou. Manda a pergunta outra vez em um minuto que deve ir.',
+  },
+  {
+    re: /\b(n[ãa]o respondeu em \d+s|timeout|timed out)\b/i,
+    texto: 'A consulta passou do tempo que eu tenho pra responder. Se a pergunta for ampla, me dá um recorte (um cliente, uma semana) que eu consigo.',
+  },
+  {
+    re: /\b(rede|ECONNREFUSED|ECONNRESET|EAI_AGAIN|socket hang up|n[ãa]o consegui falar com)\b/i,
+    texto: 'Perdi a conexão com o serviço que responde as perguntas. Não é a sua pergunta, é a máquina. Vale avisar quem cuida do sistema se continuar.',
+  },
+  {
+    re: /\b(auth|401|403|token)\b/i,
+    texto: 'Minha credencial de acesso a esse serviço não está sendo aceita. Isso eu não resolvo sozinho: precisa de quem cuida do sistema.',
+  },
+];
+
 export function failureAnswerFor(agent: AgentName, error: string | null | undefined): string {
   const label = agent.charAt(0).toUpperCase() + agent.slice(1);
   const detalhe = (error ?? '').trim();
-  return detalhe
-    ? `Não consegui responder agora: ${detalhe}`
-    : `Não consegui responder agora e ${label} não informou o motivo.`;
+  if (!detalhe) return `Não consegui responder agora e ${label} não informou o motivo.`;
+  const conhecida = INFRA_CONHECIDA.find((c) => c.re.test(detalhe));
+  if (conhecida) return conhecida.texto;
+  // Motivo que ninguém classificou ainda: vai cru, de propósito. Esconder o
+  // desconhecido atrás de "algo deu errado" é como se perde o próximo defeito.
+  return `Não consegui responder agora: ${detalhe}`;
 }
 
 async function notifyChatCompletion(

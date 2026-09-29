@@ -317,13 +317,40 @@ describe('callAgentesDesigual (Jarbas/Suzy)', () => {
  * era um HTTP 502 do bento-qa ("o motor de texto não respondeu em 30s").
  */
 describe('failureAnswerFor', () => {
-  it('repassa o motivo real do agente em vez de culpar a pergunta', async () => {
+  /**
+   * O princípio não mudou: nunca culpar a pergunta por defeito de máquina. O
+   * que mudou foi o outro extremo, encontrado na bateria de uso livre de
+   * 29/09/2026 — o motivo cru ia inteiro pra tela, e a pessoa lia "Não consegui
+   * responder agora: Ollama 502". Não dá pra agir sobre isso.
+   */
+  it('traduz falha de infraestrutura em algo que a pessoa possa fazer', async () => {
     const { failureAnswerFor } = await import('./execute-job.js');
 
-    expect(failureAnswerFor('bento', 'HTTP 502')).toBe('Não consegui responder agora: HTTP 502');
-    expect(failureAnswerFor('bento', 'o Bento não respondeu em 100s')).toBe(
-      'Não consegui responder agora: o Bento não respondeu em 100s',
-    );
+    for (const cru of ['HTTP 502', 'Ollama 502', 'ocupado respondendo outra pergunta, tenta em alguns segundos']) {
+      const texto = failureAnswerFor('bento', cru);
+      expect(texto).toContain('congestionado');
+      expect(texto.toLowerCase()).not.toContain('ollama');
+      expect(texto).not.toContain('502');
+    }
+
+    expect(failureAnswerFor('bento', 'o Bento não respondeu em 100s')).toContain('passou do tempo');
+  });
+
+  it('nunca manda reformular a pergunta quando o defeito é da máquina', async () => {
+    const { failureAnswerFor } = await import('./execute-job.js');
+    for (const cru of ['HTTP 503', 'ECONNRESET', 'o Bento não respondeu em 100s']) {
+      expect(failureAnswerFor('bento', cru)).not.toMatch(/reformul|reescrev/i);
+    }
+  });
+
+  /**
+   * Motivo que ninguém classificou vai cru DE PROPÓSITO. Trocar o desconhecido
+   * por "algo deu errado" é como se perde o próximo defeito: some da tela e não
+   * aparece em lugar nenhum.
+   */
+  it('motivo desconhecido continua aparecendo inteiro', async () => {
+    const { failureAnswerFor } = await import('./execute-job.js');
+    expect(failureAnswerFor('bento', 'coluna x não existe')).toBe('Não consegui responder agora: coluna x não existe');
   });
 
   it('agente que falhou sem informar motivo diz exatamente isso, e nomeia quem falhou', async () => {
@@ -453,4 +480,97 @@ describe('limitarContexto', () => {
     const { limitarContexto } = await import('./execute-job.js');
     expect(limitarContexto(['x'.repeat(80_000)])).toMatch(/CONTEXTO TRUNCADO/);
   }, 30_000);
+});
+
+/**
+ * Bateria de uso livre, 29/09/2026: 16 turnos seguidos numa conversa só, como
+ * uma pessoa usa de verdade. Quatro deles morreram em falha passageira do nó de
+ * perguntas, que atende UMA pergunta por vez — e um deles veio com o serviço
+ * dizendo, com todas as letras, "tenta em alguns segundos". Ninguém tentava.
+ */
+describe('falhaTransitoriaDoBentoQA', () => {
+  it('o que passa se esperar: congestionamento, queda de rede, 5xx', async () => {
+    const { falhaTransitoriaDoBentoQA } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('Ollama 502', 'bento'))).toBe(true);
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('ocupado respondendo outra pergunta', 'bento'))).toBe(true);
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('não consegui falar com o Bento (fetch failed)', 'rede'))).toBe(true);
+    expect(falhaTransitoriaDoBentoQA(new Error('socket hang up'))).toBe(true);
+  });
+
+  it('o que NÃO passa: credencial, resposta sem fonte, e o teto de tempo', async () => {
+    const { falhaTransitoriaDoBentoQA } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('HTTP 401', 'auth'))).toBe(false);
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('respondeu sem fonte resolvível', 'sem-fonte'))).toBe(false);
+    // Já esperou o teto inteiro: repetir dobra a espera de quem olha pra tela.
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('o Bento não respondeu em 120s', 'timeout'))).toBe(false);
+  });
+
+  it('erro que ninguém previu não vira retentativa às cegas', async () => {
+    const { falhaTransitoriaDoBentoQA } = await import('./execute-job.js');
+    expect(falhaTransitoriaDoBentoQA(new Error('coluna x não existe'))).toBe(false);
+  });
+});
+
+/**
+ * A prova do que a bateria de uso livre expôs: a pergunta que morria em
+ * "Ollama 502" volta a ser respondida sozinha, sem ninguém apertar nada.
+ */
+describe('callBento reespera a falha passageira', () => {
+  const logger = fakeLogger();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    mockAskBentoQA.mockReset();
+  });
+
+  it('502 na primeira ida, resposta na segunda: a pessoa recebe a resposta', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('BENTO_QA_TOKEN', 'token-teste');
+    const { callBento } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+    mockAskBentoQA
+      .mockRejectedValueOnce(new BentoQAError('Ollama 502', 'bento'))
+      .mockResolvedValueOnce({ text: '411 tarefas abertas.', citations: [{ n: 1, path: 'clickup' }] });
+
+    const promessa = callBento('quantas tarefas?', logger);
+    await vi.advanceTimersByTimeAsync(3_000);
+    const result = await promessa;
+
+    expect(result.status).toBe('completed');
+    expect(result.answer).toBe('411 tarefas abertas.');
+    expect(mockAskBentoQA).toHaveBeenCalledTimes(2);
+  }, IMPORT_A_FRIO_MS);
+
+  it('congestionado nas três idas: desiste, e o que chega na tela é acionável', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('BENTO_QA_TOKEN', 'token-teste');
+    const { callBento, failureAnswerFor } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+    mockAskBentoQA.mockRejectedValue(new BentoQAError('ocupado respondendo outra pergunta', 'bento'));
+
+    const promessa = callBento('quantas tarefas?', logger);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await promessa;
+
+    expect(result.status).toBe('failed');
+    expect(mockAskBentoQA).toHaveBeenCalledTimes(3);
+    expect(failureAnswerFor('bento', result.error)).toContain('congestionado');
+  }, IMPORT_A_FRIO_MS);
+
+  it('credencial recusada NÃO é reesperada: três tentativas dariam três vezes o mesmo não', async () => {
+    vi.stubEnv('BENTO_QA_TOKEN', 'token-teste');
+    const { callBento } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+    mockAskBentoQA.mockRejectedValue(new BentoQAError('HTTP 401', 'auth'));
+
+    const result = await callBento('oi', logger);
+
+    expect(result.status).toBe('failed');
+    expect(mockAskBentoQA).toHaveBeenCalledTimes(1);
+  }, IMPORT_A_FRIO_MS);
 });
