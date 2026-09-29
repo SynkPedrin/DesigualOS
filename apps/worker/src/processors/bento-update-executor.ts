@@ -290,6 +290,13 @@ export async function executeTaskUpdate(params: {
      * direto na API em 28/09/2026: PUT 200, releitura devolve null. É
      * exatamente o tipo de sucesso falso que este sistema existe pra não
      * repassar, então o read-back decide, e a explicação diz o que fazer.
+     *
+     * NÃO TROQUE ESTE `===` POR TOLERÂNCIA. Em 29/09/2026 os outros três checks
+     * deste arquivo (início, seguidor, checklist) foram afrouxados porque eram
+     * estritos demais e reprovavam escrita boa. Este é o caso oposto e a
+     * rigidez é o mecanismo: é comparando com o valor exato que se percebe o
+     * `null` de um campo silenciosamente ignorado. Afrouxar aqui apaga a
+     * detecção e devolve o sucesso falso que ela existe pra pegar.
      */
     outcomes.push({ field: 'estimate', label: '⏱️ Estimativa', changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.timeEstimate === estimativaAlvo });
   }

@@ -1,3 +1,4 @@
+import { ehInterno } from '@desigual-os/context-engine';
 /**
  * bento-panorama.ts — a leitura sênior da operação, não a lista dela.
  *
@@ -211,8 +212,29 @@ export function metricasEmTexto(m: MetricasDaOperacao): string {
     for (const p of m.sobrecarga) linhas.push(`- ${p.pessoa}: ${p.naSemana} / ${p.atrasadas} / ${p.clientes.length}`);
   }
   if (m.porCliente.length > 0) {
-    linhas.push('', 'Por cliente (atrasadas / sem dono / vencendo na semana):');
-    for (const c of m.porCliente) linhas.push(`- ${c.cliente}: ${c.atrasadas} / ${c.semDono} / ${c.vencendoNaSemana}`);
+    /**
+     * A CASA NÃO É CLIENTE, TAMBÉM AQUI (29/09/2026).
+     *
+     * O bloco de dado ao vivo já separava (build-operational-context.ts), mas o
+     * panorama monta a própria apresentação e continuava imprimindo
+     * "- Agência Desigual: 34 / 17 / 0" no meio da carteira, entre Cosentino e
+     * D. Carvalho. Medido numa resposta real a "como tá a operação hoje?".
+     *
+     * A carteira do gestor não inclui a própria agência. O trabalho dela
+     * continua listado — são 170 tarefas que alguém faz — mas embaixo e
+     * rotulado, para que "meus clientes estão com 34 atrasadas" não seja lido
+     * sobre trabalho que é da casa.
+     */
+    const daCarteira = m.porCliente.filter((c) => !ehInterno(c.cliente));
+    const daCasa = m.porCliente.filter((c) => ehInterno(c.cliente));
+    if (daCarteira.length > 0) {
+      linhas.push('', 'Por cliente (atrasadas / sem dono / vencendo na semana):');
+      for (const c of daCarteira) linhas.push(`- ${c.cliente}: ${c.atrasadas} / ${c.semDono} / ${c.vencendoNaSemana}`);
+    }
+    if (daCasa.length > 0) {
+      linhas.push('', 'Frentes INTERNAS da agência (não são cliente — não some na carteira):');
+      for (const c of daCasa) linhas.push(`- ${c.cliente}: ${c.atrasadas} / ${c.semDono} / ${c.vencendoNaSemana}`);
+    }
   }
   return linhas.join('\n');
 }

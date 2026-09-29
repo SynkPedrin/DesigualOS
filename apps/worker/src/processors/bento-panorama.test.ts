@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apurarMetricas, metricasEmTexto, montarPanorama, numerosInventados, panoramaEmResposta } from './bento-panorama';
+import { apurarMetricas, metricasEmTexto, montarPanorama, numerosInventados, panoramaEmResposta, type MetricasDaOperacao } from './bento-panorama';
 
 type Escritor = (prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>;
 import type { OperationTask } from '@desigual-os/tool-gateway';
@@ -303,5 +303,50 @@ describe('a leitura não pode inventar número', () => {
     const p = await montarPanorama({ tasks: [task({ dueDate: dia(-1) })], escritor, agora: HOJE });
     expect(escritor).toHaveBeenCalledTimes(2);
     expect(p.leitura).toContain('a maioria');
+  });
+});
+
+/**
+ * A CASA NÃO É CLIENTE, TAMBÉM NO PANORAMA (29/09/2026).
+ *
+ * Medido numa resposta real a "como tá a operação hoje?": "- Agência Desigual:
+ * 34 / 17 / 0" apareceu no meio da carteira, entre Cosentino e D. Carvalho. O
+ * bloco de dado ao vivo já separava; o panorama monta a própria apresentação e
+ * ficou para trás.
+ */
+describe('panorama separa carteira de frente interna', () => {
+  const medidas: MetricasDaOperacao = {
+    total: 100, atrasadas: 40, semDono: 20, abandonadas: 10, venceHoje: 2,
+    venceNaSemana: 8, semPrazo: 5, sobrecarga: [], gargalos: [],
+    porCliente: [
+      { cliente: 'Cosentino', atrasadas: 24, semDono: 31, vencendoNaSemana: 0 },
+      { cliente: 'Agência Desigual', atrasadas: 34, semDono: 17, vencendoNaSemana: 0 },
+      { cliente: 'D. Carvalho', atrasadas: 12, semDono: 20, vencendoNaSemana: 6 },
+    ],
+  };
+
+  it('a agência sai da lista de clientes e ganha bloco próprio', () => {
+    const texto = metricasEmTexto(medidas);
+    const linhaCarteira = texto.indexOf('Por cliente (');
+    const linhaInterna = texto.indexOf('Frentes INTERNAS');
+    expect(linhaInterna).toBeGreaterThan(linhaCarteira);
+    // e a agência está DEPOIS do cabeçalho interno, não antes
+    expect(texto.indexOf('Agência Desigual')).toBeGreaterThan(linhaInterna);
+  });
+
+  it('o trabalho da casa continua com os números — não some', () => {
+    const texto = metricasEmTexto(medidas);
+    expect(texto).toContain('Agência Desigual: 34 / 17 / 0');
+  });
+
+  it('a instrução diz para não somar na carteira', () => {
+    expect(metricasEmTexto(medidas)).toContain('não são cliente');
+  });
+
+  it('sem frente interna, nenhum cabeçalho extra aparece', () => {
+    const soCarteira: MetricasDaOperacao = { ...medidas, porCliente: [{ cliente: 'Cosentino', atrasadas: 1, semDono: 0, vencendoNaSemana: 0 }] };
+    const texto = metricasEmTexto(soCarteira);
+    expect(texto).not.toContain('Frentes INTERNAS');
+    expect(texto).toContain('Por cliente (');
   });
 });
