@@ -115,6 +115,23 @@ function statusMatches(status: string | null, hints: string[]): boolean {
   return hints.some((h) => flat.includes(h.normalize('NFD').replace(/[̀-ͯ]/g, '')));
 }
 
+/**
+ * Categoria funcional do status, pro vocabulário REAL da operação — não o
+ * nome da coluna do ClickUp, que varia por cliente. Reusa os mesmos hints que
+ * já regem risco/prioridade no briefing (BLOCKED_HINTS/APPROVAL_HINTS/
+ * PRODUCTION_HINTS acima); exportado como função única em vez de expor os
+ * três arrays soltos, pra quem chama não precisar saber a ordem de
+ * precedência (bloqueado vence de aprovação, que vence de produção).
+ */
+export type CategoriaDeStatus = 'blocked' | 'approval' | 'production' | 'other';
+
+export function classificarStatusFuncional(status: string | null): CategoriaDeStatus {
+  if (statusMatches(status, BLOCKED_HINTS)) return 'blocked';
+  if (statusMatches(status, APPROVAL_HINTS)) return 'approval';
+  if (statusMatches(status, PRODUCTION_HINTS)) return 'production';
+  return 'other';
+}
+
 function formatDate(ms: number | null): string {
   if (!ms) return 'sem prazo';
   return new Intl.DateTimeFormat('pt-BR', { timeZone: OPERATION_TIMEZONE, day: '2-digit', month: '2-digit' }).format(

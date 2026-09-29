@@ -18,6 +18,7 @@ import { registrarToolsDeTarefa } from './tools/tasks.js';
 import { registrarToolsDeMemoriaEEventos } from './tools/memory-events.js';
 import { registrarToolsDeOperacao } from './tools/operation.js';
 import { registrarToolsV1 } from './tools/v1.js';
+import { registrarToolsV2 } from './tools/v2.js';
 import type { ContextoDaTool } from './tools/kit.js';
 import { renderConsentPage } from './consent-page.js';
 
@@ -99,6 +100,7 @@ function montarServidor(): McpServer {
   registrarToolsDeMemoriaEEventos(deps);
   registrarToolsDeOperacao(deps);
   registrarToolsV1(deps);
+  registrarToolsV2(deps);
   return server;
 }
 

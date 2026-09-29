@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildOperationalBriefing, formatBriefingForPrompt, rankPriorities, scoreTaskPriority, computeNextBestActions } from './briefing-engine';
+import { buildOperationalBriefing, formatBriefingForPrompt, rankPriorities, scoreTaskPriority, computeNextBestActions, classificarStatusFuncional } from './briefing-engine';
 import type { OperationalTaskLike } from './build-operational-context';
 
 const NOW = new Date('2026-09-10T04:30:00.000Z'); // 01:30 local, quinta
@@ -348,5 +348,29 @@ describe('formatBriefingForPrompt inclui priorização e próximas ações', () 
     const prompt = formatBriefingForPrompt(b);
     expect(prompt).toMatch(/PRIORIZAÇÃO/);
     expect(prompt).toMatch(/PRÓXIMAS AÇÕES/);
+  });
+});
+
+describe('classificarStatusFuncional — vocabulário real, não coluna do ClickUp', () => {
+  it('reconhece as três categorias funcionais', () => {
+    expect(classificarStatusFuncional('Bloqueado')).toBe('blocked');
+    expect(classificarStatusFuncional('Aguardando cliente')).toBe('approval');
+    expect(classificarStatusFuncional('Em produção')).toBe('production');
+    expect(classificarStatusFuncional('Backlog')).toBe('other');
+  });
+
+  it('status ausente é other, nunca lança', () => {
+    expect(classificarStatusFuncional(null)).toBe('other');
+  });
+
+  it('bloqueado vence de aprovação quando o texto do status casa os dois', () => {
+    // "bloqueado aguardando revisão do cliente" tem hint de blocked E de
+    // approval — a precedência é a mesma que já rege o briefing.
+    expect(classificarStatusFuncional('bloqueado, aguardando revisão do cliente')).toBe('blocked');
+  });
+
+  it('acento e caixa não mudam a classificação', () => {
+    expect(classificarStatusFuncional('TRAVADO')).toBe('blocked');
+    expect(classificarStatusFuncional('revisão')).toBe('approval');
   });
 });
