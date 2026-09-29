@@ -91,6 +91,23 @@ export async function exportarParaNotion(params: {
   markdown: string;
   logger: Logger;
 }): Promise<ResultadoNotion> {
+  /**
+   * A PORTA PRECISA EXISTIR ANTES DE CONVIDAR ALGUÉM A ENTRAR.
+   *
+   * Sem `NOTION_CLIENT_ID`, o botão "Conectar Notion" não funciona — e mandar a
+   * pessoa até lá era um beco: ela clica, não acontece nada, e conclui que o
+   * sistema está quebrado. Funcionalidade ausente custa menos que promessa
+   * quebrada, então enquanto a credencial não existe o Bento diz isso, e diz o
+   * que falta pra existir.
+   */
+  if (!process.env.NOTION_CLIENT_ID?.trim()) {
+    return {
+      linha:
+        '📄 A integração com o Notion ainda não está ligada neste ambiente — falta o Admin cadastrar as credenciais. Enquanto isso eu não consigo criar a página; me avisa se quiser o conteúdo colado aqui pra você levar na mão.',
+      url: null,
+    };
+  }
+
   const token = await escolherToken(params.userId, params.logger);
   if (!token) {
     return {

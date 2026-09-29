@@ -55,7 +55,14 @@ export interface BuildTaskBriefingParams {
 }
 
 export interface BuiltTaskBriefing {
+  /** O briefing FACTUAL, pronto agora. É com ele que a task nasce. */
   markdown: string;
+  /**
+   * O mesmo briefing com a LEITURA SÊNIOR costurada, quando ela chegar (20-30s).
+   * Sai como promessa porque a pessoa que pediu a task quer o link; a análise é
+   * pra quem vai executar, e essa abre a task depois. Ver o comentário no corpo.
+   */
+  comLeituraSenior: Promise<string>;
   deliveryType: DeliveryType;
   missingCritical: string[];
   sourcesConsulted: string[];
@@ -146,16 +153,28 @@ export async function buildTaskBriefing(params: BuildTaskBriefingParams): Promis
    * separados de propósito: o de cima tem fonte, o de baixo tem raciocínio, e
    * o raciocínio não pode afirmar fato novo.
    */
-  const elaboracao = params.briefingWriter
-    ? await elaborarBriefingSenior({
+  /**
+   * A leitura sênior sai COMO PROMESSA, não como espera (29/09/2026).
+   *
+   * Medido: ela custa 20-30s, e somava direto no tempo que a pessoa fica
+   * olhando "pensando" — criação passou de ~50s pra ~80s. Quem pede uma task
+   * quer o link; a análise é pra quem vai executar, e essa pessoa vai abrir a
+   * task depois.
+   *
+   * Então o briefing FACTUAL volta na hora e a elaboração continua correndo.
+   * Quem chamou decide o que fazer com ela: o caminho de criação usa isso pra
+   * criar a task com os fatos e completar a descrição em seguida, sem ninguém
+   * esperando na frente do chat.
+   */
+  const elaboracaoPendente = params.briefingWriter
+    ? elaborarBriefingSenior({
         composto,
         mensagem: params.message,
         clientName: params.clientName,
         escritor: params.briefingWriter,
         logger: params.logger,
       }).catch(() => null)
-    : null;
-  const markdownFinal = costurar(composto, elaboracao);
+    : Promise.resolve(null);
 
   const qa = evaluateBriefing(composto, { clientName: params.clientName });
   params.logger.info(
@@ -166,13 +185,22 @@ export async function buildTaskBriefing(params: BuildTaskBriefingParams): Promis
       executavel: qa.executable,
       fontes: contexto.sourcesConsulted,
       lacunas_criticas: composto.missingCritical,
-      leitura_senior: elaboracao ? `ok (tentativa ${elaboracao.tentativas})` : 'não anexada',
+
     },
     '[bento-task-briefing] briefing montado',
   );
 
   return {
-    markdown: markdownFinal,
+    markdown: composto.markdown,
+    /**
+     * O MESMO briefing, com a leitura sênior costurada — quando ela chegar.
+     * Quem cria a task escreve o factual agora e completa a descrição depois;
+     * quem só quer o texto pode esperar aqui.
+     */
+    comLeituraSenior: elaboracaoPendente.then((e) => {
+      if (e) params.logger.info({ task: params.taskTitle, tentativas: e.tentativas }, '[bento-task-briefing] leitura sênior pronta');
+      return costurar(composto, e);
+    }),
     deliveryType: composto.deliveryType,
     missingCritical: composto.missingCritical,
     sourcesConsulted: contexto.sourcesConsulted,

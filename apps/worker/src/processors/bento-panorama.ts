@@ -276,6 +276,12 @@ export function __limparCacheDoEstado(): void {
   cache = null;
 }
 
+/**
+ * Teto da consulta. Bater nele significa que os números descrevem uma FATIA,
+ * e um número truncado apresentado como total é pior que nenhum número.
+ */
+export const TETO_DE_TASKS = 500;
+
 export async function estadoDaOperacaoEmTexto(
   buscar: () => Promise<OperationTask[]>,
   agora: Date = new Date(),
@@ -286,12 +292,16 @@ export async function estadoDaOperacaoEmTexto(
   if (tasks.length === 0) return null;
 
   const m = apurarMetricas(tasks, agora);
+  const truncado = tasks.length >= TETO_DE_TASKS;
   const texto = [
-    'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp, não é estimativa):',
+    truncado
+      ? `ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp — ATENÇÃO: a consulta bateu no teto de ${TETO_DE_TASKS} tarefas, então estes números descrevem uma FATIA da operação, não o total):`
+      : 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp, não é estimativa):',
     metricasEmTexto(m),
     '',
     'Use estes números quando a pergunta tocar a operação. NÃO invente número que não esteja aqui,',
     'e NÃO repita a lista inteira — cite só o que a pergunta pedir.',
+    truncado ? 'Se citar um total, diga que é do recorte consultado, não da operação inteira.' : '',
   ].join('\n');
   cache = { em: agora.getTime(), texto };
   return texto;

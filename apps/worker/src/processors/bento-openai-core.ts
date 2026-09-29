@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Logger } from '@desigual-os/logging';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
-import { createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, replyToComment, type SeniorToolContext } from '@desigual-os/tool-gateway';
+import { createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, replyToComment, updateTask, type SeniorToolContext } from '@desigual-os/tool-gateway';
 import { createVerifiedSeniorTask, MutationBudget } from '@desigual-os/tool-gateway';
 import {
   proposeBentoAction,
@@ -625,6 +625,29 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       ? await attachMaterials(config, result.resourceId, params.attachments, params.logger)
       : [];
 
+    /**
+     * A LEITURA SÊNIOR COMPLETA A TASK DEPOIS (29/09/2026).
+     *
+     * A task nasce com o briefing factual — que já é entregável — e a análise
+     * entra na descrição quando fica pronta, 20-30s depois. Quem pediu recebe o
+     * link agora; quem vai executar abre a task mais tarde e encontra tudo.
+     *
+     * Deliberadamente sem `await`: esperar aqui era exatamente o que fazia a
+     * criação passar de ~50s pra ~80s. Falhar aqui não tira nada de ninguém —
+     * a descrição factual continua lá.
+     */
+    if (briefing) {
+      void briefing.comLeituraSenior
+        .then(async (completo) => {
+          if (completo === briefing.markdown) return;
+          await updateTask(config, result.resourceId, { description: completo });
+          params.logger.info({ task: result.resourceId }, '[bento-openai-core] leitura sênior gravada na descrição');
+        })
+        .catch((error: unknown) => {
+          params.logger.warn({ error, task: result.resourceId }, '[bento-openai-core] leitura sênior não entrou na descrição (a task segue válida)');
+        });
+    }
+
     const newState = applyExecutionToState(resourceState, { operation: 'create_task', resourceIds: [result.resourceId], verified: result.verified, created: !result.wasExisting, title: action.changes?.title ?? null });
     await persistResourceState(params.conversationId, newState);
     const envelope: WriteEnvelope = { success: true, verified: result.verified, provider, resourceIds: [result.resourceId], operation: 'create_task', changes: { title: action.changes?.title ?? null }, error: null, retryable: false, sources: [`CLICKUP_TASK:${result.resourceId}`] };
@@ -632,7 +655,9 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
     const subiram = anexados.filter((a) => a.ok).length;
     const linhas = [
       result.wasExisting ? `Essa task já existia (${result.resourceUrl}) — não criei outra.` : `Criei a task: ${result.resourceUrl}`,
-      briefing ? `📋 Briefing de ${briefing.deliveryType === 'generic' ? 'entrega operacional' : briefing.deliveryType} anexado na descrição.` : null,
+      briefing
+        ? `📋 Briefing de ${briefing.deliveryType === 'generic' ? 'entrega operacional' : briefing.deliveryType} na descrição — a leitura sênior entra nela em instantes.`
+        : null,
       briefing?.missingCritical.length ? `⚠️ Falta confirmar: ${briefing.missingCritical.join(', ')}.` : null,
       anexados.length ? `📎 ${subiram}/${anexados.length} anexo(s) na task.` : null,
       // A task já foi relida pela criação verificada. Dizer o que se vê nela

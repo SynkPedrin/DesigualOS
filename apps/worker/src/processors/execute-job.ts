@@ -65,6 +65,7 @@ import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core'
 import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-executor';
 import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama } from './bento-panorama';
+import { ehPerguntaOperacional, responderOperacional } from './bento-resposta-operacional';
 import { queryOperationTasks } from '@desigual-os/tool-gateway';
 import { resolveWriteTarget } from './write-target';
 import { clearResourceFocusIfDeleted } from './bento-resource-state';
@@ -1304,6 +1305,48 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     // esclarecimento genérico, e a exclusão nunca completava a segunda
     // volta (achado ao vivo no teste de aceite).
     const pendingDelete = !guardedResult && agent === 'bento' && conversationId ? await hasPendingDeleteConfirmation(conversationId).catch(() => false) : false;
+    /**
+     * PERGUNTA SOBRE A OPERAÇÃO responde com GPT (29/09/2026).
+     *
+     * Criar e alterar já usavam GPT; responder saía pelo `bento-qa` externo,
+     * outro modelo. Aqui a fatia OPERACIONAL passa a ser respondida com os
+     * números que o próprio sistema apurou — ver bento-resposta-operacional.ts.
+     * Pergunta de conhecimento (vault) continua indo pro serviço externo, que
+     * é onde existe busca vetorial.
+     *
+     * Devolver null é o caminho normal: quem não é desta fatia segue como antes.
+     */
+    if (!guardedResult && agent === 'bento' && ehPerguntaOperacional(message) && !pedePanorama(message)) {
+      const cfgResposta = getClickUpConfigOrNull();
+      const estado = cfgResposta
+        ? await estadoDaOperacaoEmTexto(async () => {
+            const listas = (
+              await db.select({ id: schema.clients.clickupListId }).from(schema.clients).where(isNull(schema.clients.deletedAt))
+            )
+              .map((c) => c.id)
+              .filter((id): id is string => Boolean(id));
+            if (listas.length === 0) return [];
+            return (await queryOperationTasks(cfgResposta, { listIds: listas, limit: 500 } as never)).tasks;
+          }).catch(() => null)
+        : null;
+      const resposta = await responderOperacional({
+        pergunta: message,
+        estadoDaOperacao: estado,
+        contextoOperacional: operationalContext ?? null,
+        escritor: async (prompt, opts) =>
+          (await completeTextSafely(prompt, logger, opts)) ?? (await completeTextViaOpenAI(prompt, logger, opts)),
+        logger,
+      }).catch(() => null);
+      if (resposta) {
+        logger.info({ executionId }, '[bento-resposta-operacional] pergunta operacional respondida com GPT');
+        guardedResult = {
+          execution_id: executionId, agent, status: 'completed', answer: resposta,
+          sources: ['CLICKUP_OPERATION'], tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 },
+          metadata: { guard: 'bento-resposta-operacional' },
+        };
+      }
+    }
+
     /**
      * PANORAMA DA OPERAÇÃO (28/09/2026, pedido da operação: "um gerenciador,
      * não um executor de task").

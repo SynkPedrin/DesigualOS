@@ -206,3 +206,19 @@ describe('estado da operação como contexto de todo turno', () => {
     expect(await estadoDaOperacaoEmTexto(async () => [], HOJE)).toBeNull();
   });
 });
+
+describe('número truncado é declarado, nunca apresentado como total', () => {
+  it('batendo no teto, o bloco avisa que é uma fatia', async () => {
+    __limparCacheDoEstado();
+    const muitas = Array.from({ length: 500 }, () => task({ dueDate: dia(-1) }));
+    const t = await estadoDaOperacaoEmTexto(async () => muitas, HOJE);
+    expect(t).toContain('teto de 500');
+    expect(t).toContain('FATIA');
+  });
+
+  it('abaixo do teto, nada de ressalva — o número é o total', async () => {
+    __limparCacheDoEstado();
+    const t = await estadoDaOperacaoEmTexto(async () => [task({ dueDate: dia(-1) })], HOJE);
+    expect(t).not.toContain('FATIA');
+  });
+});
