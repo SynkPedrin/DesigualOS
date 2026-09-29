@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import {
@@ -64,6 +64,8 @@ import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnR
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
 import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-executor';
 import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
+import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama } from './bento-panorama';
+import { queryOperationTasks } from '@desigual-os/tool-gateway';
 import { resolveWriteTarget } from './write-target';
 import { clearResourceFocusIfDeleted } from './bento-resource-state';
 import { tryMotionGuard } from './motion-guard';
@@ -1303,6 +1305,58 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     // volta (achado ao vivo no teste de aceite).
     const pendingDelete = !guardedResult && agent === 'bento' && conversationId ? await hasPendingDeleteConfirmation(conversationId).catch(() => false) : false;
     /**
+     * PANORAMA DA OPERAÇÃO (28/09/2026, pedido da operação: "um gerenciador,
+     * não um executor de task").
+     *
+     * "Como tá a operação hoje?" devolvia 50 linhas de tarefa, e ninguém lê 50
+     * linhas. Aqui vira número apurado + leitura do que ele significa — ver
+     * bento-panorama.ts. É LEITURA PURA: não escreve nada em lugar nenhum, e
+     * por isso corre antes de qualquer caminho de escrita sem risco.
+     */
+    if (!guardedResult && agent === 'bento' && conversationId && pedePanorama(message)) {
+      const cfgPanorama = getClickUpConfigOrNull();
+      const listas = cfgPanorama
+        ? (
+            await db
+              .select({ id: schema.clients.clickupListId })
+              .from(schema.clients)
+              .where(isNull(schema.clients.deletedAt))
+              .catch(() => [])
+          )
+            .map((c) => c.id)
+            .filter((id): id is string => Boolean(id))
+        : [];
+      if (cfgPanorama && listas.length > 0) {
+        const res = await queryOperationTasks(cfgPanorama, { listIds: listas, limit: 500 } as never).catch(
+          (error: unknown) => {
+            logger.warn({ error }, '[bento-panorama] consulta ao ClickUp falhou');
+            return null;
+          },
+        );
+        if (res) {
+          const panorama = await montarPanorama({
+            tasks: res.tasks,
+            escritor: async (prompt, opts) =>
+              (await completeTextSafely(prompt, logger, opts)) ??
+              (await completeTextViaOpenAI(prompt, logger, opts)) ??
+              (await completeTextViaOllama(prompt, logger)),
+          });
+          logger.info(
+            { tasks: panorama.metricas.total, atrasadas: panorama.metricas.atrasadas, leitura: panorama.leitura !== null },
+            '[bento-panorama] panorama montado',
+          );
+          guardedResult = {
+            execution_id: executionId, agent, status: 'completed',
+            answer: panoramaEmResposta(panorama),
+            sources: ['CLICKUP_OPERATION'], tool_calls: [],
+            usage: { input_tokens: 0, output_tokens: 0 },
+            metadata: { guard: 'bento-panorama', tasks: panorama.metricas.total },
+          };
+        }
+      }
+    }
+
+    /**
      * SEGMENTAÇÃO DE CAMPANHA (28/09/2026, pedido da operação): "a partir da
      * campanha, divide as responsabilidades e lança uma task pra cada um, com
      * o briefing individual de cada função".
@@ -1726,6 +1780,39 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             const totalClientes = await contarClientes().catch(() => 0);
             const blocoCliente = formatClientBlock(clienteDoTurno, totalClientes);
             if (blocoCliente) partesDeContexto.push(blocoCliente);
+
+            /**
+             * O ESTADO DA OPERAÇÃO EM TODO TURNO (28/09/2026, pedido da
+             * operação: "quero que ele saiba de tudo sobre todos os clientes e
+             * todas as ações do ClickUp").
+             *
+             * O dossiê do cliente já chegava aqui; o que faltava era o ESTADO
+             * — quantas atrasadas, quem está sobrecarregado, qual cliente está
+             * descoberto. Sem isso o Bento responde sobre o cliente sem saber
+             * como a conta dele está indo.
+             *
+             * Custo zero por turno: a apuração é cacheada (ver
+             * estadoDaOperacaoEmTexto). Varrer as listas a cada pergunta era o
+             * que fazia o turno levar minutos.
+             */
+            if (agent === 'bento') {
+              const cfgEstado = getClickUpConfigOrNull();
+              if (cfgEstado) {
+                const estado = await estadoDaOperacaoEmTexto(async () => {
+                  const listas = (
+                    await db
+                      .select({ id: schema.clients.clickupListId })
+                      .from(schema.clients)
+                      .where(isNull(schema.clients.deletedAt))
+                  )
+                    .map((c) => c.id)
+                    .filter((id): id is string => Boolean(id));
+                  if (listas.length === 0) return [];
+                  return (await queryOperationTasks(cfgEstado, { listIds: listas, limit: 500 } as never)).tasks;
+                }).catch(() => null);
+                if (estado) partesDeContexto.push(estado);
+              }
+            }
           }
           if (clienteDoTurno.clientId && !refsDoTurno.some((r) => r.startsWith('client:'))) {
             refsDoTurno = [...refsDoTurno, `client:${clienteDoTurno.clientId}`];
