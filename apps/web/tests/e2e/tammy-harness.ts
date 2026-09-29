@@ -38,8 +38,23 @@ export async function novoChat(page: Page, agente?: 'Bento' | 'Otto' | 'Jarbas' 
   const novo = page.getByRole('button', { name: /novo chat/i });
   if (await novo.isVisible().catch(() => false)) await novo.click();
   if (agente) {
+    /**
+     * FALHA SE O CHIP NÃO ESTIVER LÁ, em vez de seguir em silêncio.
+     *
+     * A versão anterior fazia `if (visible) click()`. Quando o chip não
+     * renderizava a tempo, o teste seguia sem agente escolhido, o roteador
+     * decidia sozinho e a pergunta ia parar no Jarbas — e a falha aparecia
+     * como se fosse bug do Bento. Aconteceu em 29/09/2026 e me fez caçar um
+     * defeito de produto que era, em parte, o teste não fazendo o que dizia.
+     *
+     * (A caçada valeu: o roteador REALMENTE mandava "o que está em risco hoje"
+     * pro Jarbas, e isso virou regra em packages/router/src/rules.ts. Mas isso
+     * é sorte, não método — teste que mente sobre o que fez é o mesmo erro do
+     * medidor que relata falha falsa.)
+     */
     const chip = page.getByRole('button', { name: new RegExp(`^${agente}\\b`, 'i') });
-    if (await chip.isVisible().catch(() => false)) await chip.click();
+    await expect(chip, `o chip do agente ${agente} não apareceu`).toBeVisible({ timeout: 20_000 });
+    await chip.click();
   }
 }
 

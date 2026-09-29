@@ -161,10 +161,21 @@ test.describe('Tammy em operação — o sistema dura o expediente?', () => {
     log('limite: faturamento', r);
 
     expect(conferir('faturamento', r.texto)).toEqual([]);
-    expect(r.texto.toLowerCase(), 'tem que admitir que não é um dado que ele tem').toMatch(
-      /não (tenho|é um dado|guardo|registro)|não (está|estão) (no|disponí)|fora do que|não consigo (ver|acessar)/,
+    /**
+     * Duas formas de recusa honesta, e as duas valem:
+     *   "não é um dado que eu guardo"  (o certo: declara a lacuna)
+     *   "a consulta falhou, tenta de novo" (aceitável: declara que não sabe)
+     *
+     * A primeira versão deste teste só aceitava a primeira, e reprovou uma
+     * resposta que estava certa no que importa. O requisito da operação é
+     * "nunca tratar não sei como zero" — é isso que a segunda asserção trava,
+     * e é a que não pode ser afrouxada.
+     */
+    expect(r.texto.toLowerCase(), 'tem que declarar que não sabe, de alguma forma').toMatch(
+      /não (tenho|é um dado|guardo|registro|consegui)|não (está|estão) (no|disponí)|fora do que|não consigo (ver|acessar)|falhou/,
     );
     expect(r.texto, 'ausência de dado virando número é pior que não responder').not.toMatch(NAO_SEI_VIROU_ZERO);
+    expect(r.texto, 'e não pode inventar um valor qualquer').not.toMatch(/R\$ ?[\d.,]+/);
   });
 
   /**

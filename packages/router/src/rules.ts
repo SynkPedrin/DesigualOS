@@ -190,6 +190,29 @@ export const ROUTING_RULES: RoutingRule[] = [
       // de mídia. Sem isto dependia do classifier e virava esclarecimento.
       'pegando fogo',
       'pegar fogo',
+      /**
+       * RISCO é pergunta de operação, não de mídia paga.
+       *
+       * Medido em 29/09/2026, com o classificador local 3B decidindo:
+       *
+       *   "o que está em risco hoje"              -> jarbas, confiança 1.0
+       *   "o que está em risco na Cosentino?"     -> jarbas, confiança 0.8
+       *
+       * Ou seja: sem a pessoa escolher o Bento na mão, a pergunta central da
+       * gestão da operação ia parar no agente de mídia, e a análise causal
+       * (bento-arvore.ts) ficava inalcançável pela forma mais natural de
+       * perguntar. Apareceu nas personas da Tammy rodando no navegador, que é
+       * onde ninguém clica em chip de agente antes de perguntar.
+       *
+       * Regra determinística ganha de palpite de modelo 3B: "risco" aqui é
+       * sempre operação. Pergunta de mídia usa outro vocabulário (CPA, ROAS,
+       * investimento, campanha no Meta) e continua com o Jarbas.
+       */
+      'em risco',
+      'risco da operação',
+      'riscos da operação',
+      'algum risco',
+      'que risco',
     ],
     primaryAgent: 'bento',
     requiredTools: ['clickup'],

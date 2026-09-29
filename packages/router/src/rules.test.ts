@@ -118,3 +118,34 @@ describe('AUTO: frases coloquiais decidem por regra', () => {
     expect(matchRule('quantos leads tivemos esse mês? qual o cpl')?.rule.primaryAgent).toBe('jarbas');
   });
 });
+
+/**
+ * Medido em 29/09/2026 com o classificador local decidindo (a pessoa não
+ * escolheu agente nenhum, que é o caso normal):
+ *
+ *   "o que está em risco hoje"           -> jarbas, confiança 1.0
+ *   "o que está em risco na Cosentino?"  -> jarbas, confiança 0.8
+ *
+ * A pergunta central da gestão da operação ia pro agente de mídia, e a análise
+ * causal ficava inalcançável pela forma mais natural de perguntar. Apareceu nas
+ * personas da Tammy no navegador, onde ninguém clica em chip antes de falar.
+ */
+describe('risco é pergunta de operação, não de mídia paga', () => {
+  it.each([
+    'o que está em risco hoje',
+    'o que está em risco na Cosentino? me explica o porquê',
+    'tem algum risco pra essa semana',
+    'quais os riscos da operação',
+  ])('%s -> bento', (m) => {
+    const r = matchRule(m);
+    expect(r?.rule.primaryAgent, `"${m}" precisa ir pro Bento`).toBe('bento');
+  });
+
+  /** Mídia continua com o Jarbas: o vocabulário dela é outro. */
+  it.each(['qual o CPA da campanha', 'como está o ROAS esse mês', 'quanto investimos no Meta'])(
+    '%s NÃO vira operação por causa desta regra',
+    (m) => {
+      expect(matchRule(m)?.rule.primaryAgent).not.toBe('bento');
+    },
+  );
+});
