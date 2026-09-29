@@ -15,7 +15,8 @@
     "REAL_OPUS_E2E": "pnpm --filter web exec tsx scripts/motion-e2e-ui.mts",
     "db:generate": "pnpm --filter @desigual-os/database db:generate",
     "db:migrate": "pnpm --filter @desigual-os/database db:migrate",
-    "db:seed": "pnpm --filter @desigual-os/database db:seed"
+    "db:seed": "pnpm --filter @desigual-os/database db:seed",
+    "start": "pnpm --filter @desigual-os/mcp exec tsx src/server.ts"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",

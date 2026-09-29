@@ -1,0 +1,35 @@
+# Dockerfile.mcp — NÃO É O CAMINHO USADO EM PRODUÇÃO (29/09/2026).
+#
+# O deploy real no Railway usa detecção automática (Railpack): ele lê
+# package.json na raiz, vê "pnpm" pelo pnpm-workspace.yaml, e roda o script
+# "start" da raiz — que por sua vez filtra pro pacote certo:
+#
+#   "start": "pnpm --filter @desigual-os/mcp exec tsx src/server.ts"
+#
+# Tentei forçar este Dockerfile via `railway.toml` (builder=DOCKERFILE) e via
+# a variável RAILWAY_DOCKERFILE_PATH — nenhum dos dois foi respeitado pela
+# versão do Railpack em uso; ele sempre voltava pro autodetect. Em vez de
+# insistir sob deadline, segui o caminho que o autodetect já sabia fazer:
+# ele só faltava um "start" script na raiz apontando pro pacote certo, e
+# com isso resolveu sozinho.
+#
+# Este arquivo fica como referência caso o Railway volte a respeitar
+# Dockerfile custom no futuro, ou para deploy em outro provedor que exija
+# um Dockerfile explícito. Hoje ele NÃO É EXECUTADO por nada.
+
+FROM node:20-alpine
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@9.9.0 --activate
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
+COPY packages/auth ./packages/auth
+COPY packages/database ./packages/database
+COPY packages/logging ./packages/logging
+COPY packages/mcp-domain ./packages/mcp-domain
+COPY packages/tool-gateway ./packages/tool-gateway
+COPY packages/types ./packages/types
+COPY packages/context-engine ./packages/context-engine
+COPY apps/mcp ./apps/mcp
+RUN pnpm install
+ENV NODE_ENV=production
+WORKDIR /app/apps/mcp
+CMD ["node_modules/.bin/tsx", "src/server.ts"]

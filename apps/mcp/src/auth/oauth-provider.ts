@@ -38,7 +38,18 @@ import { organizacaoUnicaDoUsuario } from './principal.js';
  * todos. Aqui cada funcionário tem o token dele, com o papel dele.
  */
 
-const TEMPO_DE_CODIGO_MS = 60_000;
+/**
+ * 10 MINUTOS, não 60 segundos (29/09/2026).
+ *
+ * O primeiro valor tratava o pedido "em voo" como um clique: usuário chega,
+ * clica, autoriza, pronto. Errado — é uma pessoa lendo a tela, DIGITANDO
+ * e-mail e senha, e às vezes hesitando. Medido ao vivo: 60s expirava o
+ * pedido no meio da digitação, e a pessoa via "Pedido de autorização
+ * expirado" — uma mensagem sobre TEMPO, mas com senha e e-mail visíveis na
+ * tela, foi lida como "a senha está errada". As credenciais nunca estavam
+ * erradas; o relógio é que era curto demais para um humano de verdade.
+ */
+const TEMPO_DE_CODIGO_MS = 10 * 60_000;
 
 /** Store de clientes registrados dinamicamente (RFC 7591). */
 class ClientesRegistrados implements OAuthRegisteredClientsStore {
@@ -95,8 +106,9 @@ export class DesigualOAuthProvider implements OAuthServerProvider {
   private readonly _clients = new ClientesRegistrados();
   /**
    * Pedidos de autorização em voo, guardados só até a pessoa voltar da tela de
-   * login. Em memória de propósito: vivem 60 segundos, e persistir isso criaria
-   * uma tabela cujo único conteúdo é lixo na manhã seguinte.
+   * login. Em memória de propósito: vivem TEMPO_DE_CODIGO_MS (10 minutos), e
+   * persistir isso criaria uma tabela cujo único conteúdo é lixo na manhã
+   * seguinte.
    */
   private readonly emVoo = new Map<string, { params: AuthorizationParams; clientId: string; criadoEm: number }>();
 

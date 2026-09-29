@@ -35,7 +35,13 @@ import { renderConsentPage } from './consent-page.js';
  */
 
 const logger = createLogger({ service: 'desigual-mcp' });
-const PORTA = Number(process.env.MCP_PORT ?? 3010);
+/**
+ * PORT antes de MCP_PORT (29/09/2026). Railway (e a maioria dos PaaS) injeta
+ * `PORT` e espera que o processo escute nela — não é opcional, é como o
+ * balanceador deles encontra o serviço. `MCP_PORT` continua valendo local,
+ * onde não há PORT nenhuma injetada.
+ */
+const PORTA = Number(process.env.PORT ?? process.env.MCP_PORT ?? 3010);
 const URL_PUBLICA_BASE = process.env.MCP_PUBLIC_URL ?? `http://localhost:${PORTA}`;
 const URL_PUBLICA = URL_PUBLICA_BASE;
 /**
