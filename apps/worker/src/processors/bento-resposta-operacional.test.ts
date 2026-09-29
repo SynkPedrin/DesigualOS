@@ -15,11 +15,29 @@ describe('o que é pergunta operacional, e o que não é', () => {
   it.each([
     'quantas tarefas estão atrasadas?',
     'quem está sobrecarregado essa semana',
-    'tem alguma demanda sem responsável?',
-    'o que vence amanhã?',
-    'qual cliente tem mais task parada',
-  ])('%s -> responde aqui', (m) => {
+    // A pergunta real da auditoria: tem o substantivo operacional junto.
+    'quantas tarefas estão atrasadas e quem está com mais coisa na mão?',
+    'qual a carga da equipe essa semana',
+  ])('%s -> responde aqui (é agregado)', (m) => {
     expect(ehPerguntaOperacional(m)).toBe(true);
+  });
+
+  /**
+   * Medido na auditoria de 29/09/2026: estas oito perguntas vieram parar aqui e
+   * em seis delas a resposta foi "não dá pra identificar", enquanto o serviço
+   * externo respondia com nome de cliente, de pessoa e de tarefa. O que eu
+   * tenho é agregado; quem pede ITEM precisa de quem enxerga task a task.
+   */
+  it.each([
+    'quais tarefas estão bloqueadas por outras tarefas?',
+    'quais projetos internos parecem abandonados?',
+    'quais tarefas dependem do Endrigo?',
+    'o que está parado há mais tempo?',
+    'qual tarefa está mais antiga?',
+    'me mostra as tarefas sem responsável',
+    'quais clientes estão com entregas atrasadas?',
+  ])('%s -> NÃO intercepta: pede item, e eu só tenho número', (m) => {
+    expect(ehPerguntaOperacional(m)).toBe(false);
   });
 
   it.each([

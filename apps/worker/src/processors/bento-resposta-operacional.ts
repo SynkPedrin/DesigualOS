@@ -23,9 +23,32 @@
 
 import type { Logger } from '@desigual-os/logging';
 
-/** Interrogação explícita ou pedido de leitura. */
-const PERGUNTA_RE =
-  /\?|(^|\s)(quant[ao]s?|quem|qual|quais|onde|quando|por que|porque|o que|me diz|me fala|me mostra|tem alguma|existe algum)\b/i;
+/**
+ * O QUE ESTE ARQUIVO SABE RESPONDER, e o que NÃO — medido na auditoria de
+ * 29/09/2026 e corrigido por causa dela.
+ *
+ * A primeira versão interceptava qualquer pergunta com vocabulário de tarefa, e
+ * o resultado foi pior que o caminho antigo. Oito perguntas da auditoria vieram
+ * parar aqui; em seis delas a resposta honesta foi "não dá pra identificar",
+ * enquanto o serviço externo (que tem busca vetorial no vault e consulta task a
+ * task) respondia com nome de cliente, de pessoa e de tarefa.
+ *
+ * O que eu tenho é AGREGADO: contagem, carga por pessoa, concentração. Não
+ * tenho tarefa a tarefa, nem idade de cada uma, nem dependência. Então:
+ *
+ *   intercepto  "quantas estão atrasadas?", "quem está sobrecarregado?"
+ *   NÃO         "QUAIS tarefas...", "o que está parado há mais tempo",
+ *               "quais projetos...", "quais dependem do Endrigo"
+ *
+ * Responder pior que o caminho que já existia é a única coisa que uma camada
+ * nova não pode fazer.
+ */
+const AGREGADO_RE =
+  /(^|\s)(quant[ao]s?|quem\s+(est[áa]|ta|tá)\s+(mais\s+)?(sobrecarreg|com mais)|qual\s+a\s+carga|quanta\s+coisa)/i;
+
+/** Pede item específico: nome de tarefa, de projeto, ordem, idade. Não é meu. */
+const PEDE_ITEM_RE =
+  /(^|\s)(quais|qual\s+(tarefa|task|projeto|campanha|cliente|demanda)|liste|lista|me mostra|me d[áa] a lista|h[áa] mais tempo|mais antig|desde quando|o que est[áa] (parado|travado|bloquead))/i;
 
 /**
  * PEDIDO DE ATA / DESDOBRAMENTO DE REUNIÃO (29/09/2026).
@@ -120,7 +143,10 @@ const PASSADO_RE =
  */
 export function ehPerguntaOperacional(mensagem: string): boolean {
   if (PASSADO_RE.test(mensagem)) return false;
-  return PERGUNTA_RE.test(mensagem) && OPERACIONAL_RE.test(mensagem);
+  // Pedido de ITEM específico vai pro caminho antigo, que enxerga tarefa a
+  // tarefa. Aqui só fica o que se responde com número agregado.
+  if (PEDE_ITEM_RE.test(mensagem)) return false;
+  return AGREGADO_RE.test(mensagem) && OPERACIONAL_RE.test(mensagem);
 }
 
 const BARRA = `Você é o gerente de operação de uma agência de mídia digital, respondendo a quem decide.

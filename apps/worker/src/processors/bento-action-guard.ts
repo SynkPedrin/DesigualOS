@@ -21,6 +21,7 @@ import { classifyDeliveryType, composeBriefing, pendingCriticalFields } from './
 import { extractLabeledFacts, mergeFacts } from './briefing-facts';
 import { evaluateBriefing } from './briefing-quality';
 import { retrieveBriefingContext } from './briefing-retrieval';
+import { ehPedidoDeLeitura } from '@desigual-os/bento-core';
 import { classifyActionIntent } from './action-intent';
 import { classifyActionIntentV2 } from './action-intent-v2';
 import { buildDeliverableTitle, buildItemTitle, buildOperationalTitle, resolveWriteTarget } from './write-target';
@@ -693,6 +694,21 @@ export interface WritePotential {
 export function detectExternalWritePotential(message: string): WritePotential | null {
   const texto = message.trim();
   if (texto.length === 0) return null;
+
+  /**
+   * O OBJETO DECIDE (29/09/2026). `VERBO_DESPACHO_MUTAVEL_RE` contém `fa[cç]a`
+   * e `CAMPO_DE_TASK_RE` contém `briefing` — então "Faça um briefing executivo
+   * completo da agência" casava os dois e virava `verbo_despacho`. Com o kill
+   * switch externo fechado (o default), a pergunta executiva mais importante
+   * do benchmark era recusada como se fosse mutação.
+   *
+   * `classificarAcesso` só abre leitura quando o objeto do pedido é texto e
+   * não há recurso nem referente na frase: "coloca esse briefing na task" e
+   * "atualiza o briefing dela" continuam caindo nas regras abaixo, byte a byte
+   * como antes. Ver access-level.test.ts — o corpus das vizinhas perigosas
+   * existe justamente pra travar isso.
+   */
+  if (ehPedidoDeLeitura(texto)) return null;
 
   const temReferente = REFERENCE_WORDS.test(texto) || REFERENTE_FOCO_RE.test(texto) || REFERENTE_EXTRA_RE.test(texto);
   const temCampo = CAMPO_DE_TASK_RE.test(texto);

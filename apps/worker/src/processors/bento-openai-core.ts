@@ -4,6 +4,7 @@ import type { ExecuteResponse } from '@desigual-os/node-protocol';
 import { createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, replyToComment, updateTask, type SeniorToolContext } from '@desigual-os/tool-gateway';
 import { createVerifiedSeniorTask, MutationBudget } from '@desigual-os/tool-gateway';
 import {
+  classificarAcesso,
   proposeBentoAction,
   validateBentoAction,
   BentoPlannerError,
@@ -283,6 +284,32 @@ export async function runBentoOpenAiCore(params: BentoOpenAiCoreParams): Promise
 }
 
 async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<ExecuteResponse | null> {
+  /**
+   * LEITURA NÃO PASSA PELO PLANNER DE ESCRITA (29/09/2026).
+   *
+   * O planner é obrigado a devolver UMA das sete operações de ClickUp — não
+   * existe saída "isto não é ação". Medido: "Faça um briefing executivo
+   * completo da agência" voltou `create_task`, com o raciocínio "criar uma
+   * nova task para elaborar o briefing", e o usuário recebeu "Não tenho
+   * autorização de escrita para esse cliente" no lugar do briefing.
+   *
+   * A pergunta certa não é qual mutação é esta, é se é mutação. Quando o
+   * objeto do pedido é texto e não há recurso na frase, o core se abstém aqui
+   * e o turno segue pro caminho de leitura — sem gastar a chamada do planner
+   * e sem a chance de ele ler um pedido de análise como criação.
+   *
+   * Só ABRE leitura: `classificarAcesso` nunca devolve READ para frase com
+   * verbo de mutação sobre recurso, e a máquina de escrita segue intocada.
+   */
+  const acesso = classificarAcesso(params.message);
+  if (acesso.nivel === 'READ' || acesso.nivel === 'PROPOSE') {
+    params.logger.info(
+      { conversationId: params.conversationId, nivel: acesso.nivel, objeto: acesso.objeto, sinais: acesso.sinais, motivo: acesso.motivo },
+      '[bento-openai-core] pedido de leitura: core se abstém sem chamar o planner de escrita',
+    );
+    return null;
+  }
+
   const resourceState: ConversationResourceState = await loadResourceState(params.conversationId);
 
   let action;
