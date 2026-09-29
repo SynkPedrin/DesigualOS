@@ -20,6 +20,40 @@ const SAUDACAO = new RegExp(`^(oi+|ol[áa]|e a[íi]|opa|fala|bom dia|boa tarde|b
 const CORTESIA = new RegExp(`^(obrigad[oa]|valeu|vlw|show|beleza|blz|perfeito|ok|okay|entendi|massa|top|legal|bacana|isso|certo)${FIM}`, 'i');
 const TUDO_BEM = new RegExp(`^(tudo bem|tudo bom|como vai|como voc[êe] est[áa]|td bem|td bom)${FIM}`, 'i');
 
+/**
+ * O que pode SOBRAR depois da saudação e a frase ainda ser só cortesia.
+ *
+ * Bateria de uso livre, 29/09/2026, primeiro turno da conversa:
+ *
+ *   "oi, como ta a operação hoje"
+ *   -> "Oi! Tô por aqui. Me diz o que você precisa da operação que eu puxo."
+ *
+ * O `pedePanorama` reconhecia a frase (conferido: devolve true), e o turno
+ * nunca chegou lá — este atalho respondeu antes. A causa era a lista de
+ * palavras abaixo, que não tem "operação", nem "time", nem "equipe", nem
+ * "agência". Lista de palavras nunca vai estar completa: a próxima pessoa
+ * escreve "oi, como tá o pau da barraca hoje" e cai no mesmo buraco.
+ *
+ * A regra estrutural não depende de vocabulário: se depois da saudação sobra
+ * conteúdo que não é outra cortesia, a frase carrega pedido e vai pelo caminho
+ * normal, com evidência. É a mesma regra que o cabeçalho deste arquivo já
+ * declarava e que a implementação não cumpria.
+ */
+function restoDepoisDaCortesia(texto: string): string {
+  let resto = texto.trim();
+  // Tira saudações e cortesias encadeadas: "oi, bom dia, tudo bem?" é tudo
+  // cortesia, e o que importa é o que sobra DEPOIS de todas elas.
+  for (let i = 0; i < 4; i++) {
+    const antes = resto;
+    for (const re of [SAUDACAO, TUDO_BEM, CORTESIA]) {
+      const m = re.exec(resto);
+      if (m) resto = resto.slice(m[0].length).replace(/^[\s,.!?;:]+/, '');
+    }
+    if (resto === antes) break;
+  }
+  return resto.replace(/[\s,.!?;:]+$/g, '');
+}
+
 /** Sinal de que NÃO é small talk, por mais curta que a frase seja. */
 const TEM_TRABALHO =
   /(tasks?|tarefas?|prazos?|clientes?|campanhas?|posts?|copy|briefings?|reels|carross[eé]is?|carrossel|clickup|relat[óo]rios?|m[ée]tricas?|or[çc]amentos?|status|entregas?|aprova|atrasad|vencem?|prioriz|organiz|fato|hip[óo]tese|fonte|tirou|comparad|per[íi]odo|dados?|de onde|veio de)/i;
@@ -92,6 +126,8 @@ export function detectSmallTalk(message: string, agent: AgentName): SmallTalk | 
   if (texto === null) return null;
   if (texto.length > 40) return null;
   if (TEM_TRABALHO.test(texto)) return null;
+  // Sobrou pergunta depois do "oi"? Então não era um "oi".
+  if (restoDepoisDaCortesia(texto).length > 0) return null;
 
   // Mais de uma frase com conteúdo também sai do fast path.
   const semPontuacao = texto.replace(/[!?.,;:]+$/g, '').trim();

@@ -90,3 +90,34 @@ describe('pergunta sobre fato/fonte nunca é small talk', () => {
     expect(detectSmallTalk('isso', 'jarbas')).not.toBeNull();
   });
 });
+
+/**
+ * Bateria de uso livre, 29/09/2026. O PRIMEIRO turno da conversa, que é o que
+ * dá o tom pra pessoa, foi engolido por este atalho:
+ *
+ *   "oi, como ta a operação hoje" -> "Oi! Tô por aqui. Me diz o que você precisa"
+ *
+ * O gatilho do panorama reconhecia a frase; o turno nunca chegou nele.
+ */
+describe('saudação com pedido colado não é saudação', () => {
+  it('o caso medido: cumprimento + pergunta sobre a operação', () => {
+    expect(detectSmallTalk('oi, como ta a operação hoje', 'bento')).toBeNull();
+  });
+
+  it('vale pra vocabulário que nenhuma lista de palavras teria', () => {
+    for (const m of [
+      'oi, como ta o pau da barraca',
+      'bom dia, e a Elite?',
+      'e aí, sobrou alguma coisa pra hoje',
+      'opa, cadê o Junior',
+    ]) {
+      expect(detectSmallTalk(m, 'bento')).toBeNull();
+    }
+  });
+
+  it('cortesia pura continua no atalho — inclusive encadeada', () => {
+    for (const m of ['oi', 'Oi!', 'bom dia', 'oi, tudo bem?', 'oi, bom dia', 'obrigado', 'valeu!']) {
+      expect(detectSmallTalk(m, 'bento')).not.toBeNull();
+    }
+  });
+});
