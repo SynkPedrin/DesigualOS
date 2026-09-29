@@ -348,3 +348,24 @@ describe('openTasks — o conjunto que sustenta os números', () => {
     expect(ctx.failure).toContain('a consulta ao ClickUp falhou');
   });
 });
+
+/**
+ * Medido duas vezes nas personas da Tammy no navegador (29/09/2026),
+ * perguntando quanto a agência faturou com um cliente:
+ *
+ *   "Logo, R$ 0,00 faturado registrado no sistema."
+ *   "zero. os dados consultados no ClickUp hoje mostram apenas o volume de
+ *    tarefas... não há nenhum campo ou métrica financeira nesse retorno."
+ *
+ * Nas duas o raciocínio estava certo e a conclusão inverteu o sinal. A segunda
+ * abre com a palavra "zero" e explica depois — quem lê rápido entende que o
+ * cliente faturou zero, e isso vira fato citável.
+ */
+describe('ausência de dado financeiro não pode virar zero', () => {
+  it('o bloco declara a lacuna e proíbe o número', async () => {
+    const ctx = await buildOperationalContext(scope({ kind: 'GLOBAL' }), deps(), NOW);
+    expect(ctx.block).toContain('AUSÊNCIA DE DADO NÃO É ZERO');
+    expect(ctx.block).toContain('faturamento');
+    expect(ctx.block).toContain('nunca abra a resposta com um número');
+  });
+});

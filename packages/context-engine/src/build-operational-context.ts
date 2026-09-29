@@ -267,6 +267,27 @@ export async function buildOperationalContext(
   linhas.push(
     'PRAZO é data de entrega da TAREFA, nunca data de evento, de veiculação ou de campanha. Se pedirem a data de um evento e ela não estiver escrita em outro lugar, ela NÃO é conhecida: peça ou marque [A CONFIRMAR], não deduza de um prazo.',
   );
+  /**
+   * AUSÊNCIA DE DADO NÃO É ZERO — o defeito mais caro desta lista, porque o
+   * resultado é um fato citável e errado.
+   *
+   * Medido duas vezes em 29/09/2026, nas personas da Tammy no navegador,
+   * perguntando quanto a agência faturou com um cliente:
+   *
+   *   "Logo, R$ 0,00 faturado registrado no sistema."
+   *   "zero. os dados consultados no ClickUp hoje mostram apenas o volume de
+   *    tarefas... não há nenhum campo ou métrica financeira nesse retorno."
+   *
+   * Nas duas o raciocínio estava CERTO e a conclusão inverteu o sinal: a
+   * segunda abre com a palavra "zero" e só depois explica que não existe o
+   * campo. Quem lê rápido entende que o cliente faturou zero.
+   *
+   * Vale para qualquer coisa que a operação não guarda: receita, faturamento,
+   * custo, verba, horas trabalhadas, contrato.
+   */
+  linhas.push(
+    'AUSÊNCIA DE DADO NÃO É ZERO. Isto aqui é operação (tarefa, prazo, responsável, status) e não tem NENHUM dado financeiro: nem faturamento, nem receita, nem custo, nem verba, nem valor de contrato, nem horas. Se perguntarem qualquer um desses, a resposta começa dizendo que não é um dado que você tem. NUNCA responda 0, zero, R$ 0,00 ou "nenhum" para dizer "não sei" — e nunca abra a resposta com um número quando a resposta real é que o dado não existe.',
+  );
   linhas.push('');
   linhas.push(...APRESENTACAO_HUMANA);
   linhas.push('');
