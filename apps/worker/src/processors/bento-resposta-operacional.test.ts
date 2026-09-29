@@ -179,7 +179,16 @@ describe('ata do dia', () => {
   it('proíbe afirmar que uma task existe sem ver o nome dela', async () => {
     const escritor = vi.fn<Escritor>(async () => '## O QUE FICOU DECIDIDO\n- algo suficientemente longo aqui.');
     await montarAtaDeReuniao({ pergunta: 'ata', material: 'x', estadoDaOperacao: null, escritor, logger: fakeLogger });
-    expect(escritor.mock.calls[0]![0]).toContain('NUNCA afirme que existe uma task sem ver o nome dela');
+    expect(escritor.mock.calls[0]![0]).toContain('Nunca afirme que existe uma tarefa sem ver o nome dela');
+  });
+
+  it('o prompt proíbe título markdown e travessão — a ata é lida no chat', async () => {
+    const escritor = vi.fn<Escritor>(async () => 'texto suficientemente longo para passar no piso.');
+    await montarAtaDeReuniao({ pergunta: 'ata', material: 'x', estadoDaOperacao: null, escritor, logger: fakeLogger });
+    const prompt = escritor.mock.calls[0]![0];
+    expect(prompt).toContain('NUNCA use # de título markdown');
+    expect(prompt).toContain('NUNCA use travessão');
+    expect(prompt).toContain('do jeito que se fala numa agência');
   });
 
   it('escritor mudo devolve null — sem ata inventada', async () => {
