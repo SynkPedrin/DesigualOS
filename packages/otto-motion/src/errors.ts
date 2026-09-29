@@ -57,8 +57,14 @@ export class MotionModelUnavailableError extends MotionError {
   constructor(detail: string) {
     super(
       'OPUS_UNAVAILABLE',
-      'O Claude está conectado, mas o Claude Opus 5.5 não está disponível neste worker. ' +
-        'Sem ele eu não gero o motion — um modelo menor entregaria outra coisa, e esconder isso seria pior.',
+      // Limite de uso é um caso à parte: "reconecte o Claude" não resolve
+      // nada — a conta está conectada, o que acabou foi a quota. A frase
+      // curta diz exatamente isso; a data de reset fica no detail, que é
+      // onde o card de settings e o log buscam o porquê.
+      /limit|quota|credit/i.test(detail)
+        ? 'O Claude Opus 5.5 está indisponível — limite de uso atingido.'
+        : 'O Claude está conectado, mas o Claude Opus 5.5 não está disponível neste worker. ' +
+            'Sem ele eu não gero o motion — um modelo menor entregaria outra coisa, e esconder isso seria pior.',
       {
         actions: [{ label: 'Reconectar Claude', action: 'reconnect_claude' }],
         detail,

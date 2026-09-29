@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { MIN_CLAUDE_CODE_VERSION, MOTION_MODEL_ID, versionAtLeast } from '../model.js';
 import { childEnv } from './claude-code.js';
+import { QUOTA_UNAVAILABLE_MESSAGE, clearQuotaState, readQuotaState, recordQuotaUnavailable } from './quota-state.js';
 
 /** §8 — os estados que a UI precisa distinguir. */
 export const PROVIDER_STATES = [
@@ -73,7 +74,7 @@ interface AuthStatus {
  * válida). Sem ela, o usuário veria "Conectado" e o motion falharia depois,
  * no meio do job, sem ninguém entender por quê.
  */
-export async function checkClaudeConnection(): Promise<ProviderConnection> {
+export async function checkClaudeConnection(options: { ignoreQuotaState?: boolean } = {}): Promise<ProviderConnection> {
   const checkedAt = new Date().toISOString();
   const base = { provider: 'claude' as const, model: MOTION_MODEL_ID, checkedAt };
 
@@ -123,6 +124,28 @@ export async function checkClaudeConnection(): Promise<ProviderConnection> {
     };
   }
 
+  // Limite de uso gravado por uma sessão anterior (ver quota-state.ts): a
+  // conta está OK, a CLI está OK, mas o Opus 5.5 não responde até o reset.
+  // Falhar fechado AQUI — antes de o guard do chat abrir sessão — é o que
+  // impede uma fila de jobs de bater na mesma parede um por um. O probe
+  // (ignoreQuotaState) pula este atalho de propósito: ele É a prova de que a
+  // quota voltou.
+  if (!options.ignoreQuotaState) {
+    const quota = await readQuotaState();
+    if (quota) {
+      return {
+        ...base,
+        state: 'OPUS_UNAVAILABLE',
+        message: quota.message,
+        remedy:
+          'Aguarde a liberação do limite da conta (o detalhe informa a data de reset) e depois use "Testar conexão" para reabilitar o Motion Engine.',
+        account: auth.email ?? null,
+        motionCapable: false,
+        details: { installed: true, version, loggedIn: true, quotaDetail: quota.detail, quotaRecordedAt: quota.recordedAt },
+      };
+    }
+  }
+
   return {
     ...base,
     state: 'CONNECTED',
@@ -149,7 +172,10 @@ export async function checkClaudeConnection(): Promise<ProviderConnection> {
  * carregamento de tela.
  */
 export async function probeOpusModel(): Promise<ProviderConnection> {
-  const connection = await checkClaudeConnection();
+  // ignoreQuotaState: o probe é o caminho de REABILITAÇÃO. Se ele respeitasse
+  // o estado gravado, "Testar conexão" nunca rodaria o turno real e a quota
+  // jamais seria limpa — o motor ficaria travado até alguém apagar o arquivo.
+  const connection = await checkClaudeConnection({ ignoreQuotaState: true });
   if (connection.state !== 'CONNECTED') return connection;
 
   const run = await new Promise<{ stdout: string; stderr: string }>((resolve) => {
@@ -206,6 +232,20 @@ export async function probeOpusModel(): Promise<ProviderConnection> {
   const usedOpus = Object.keys(parsed.modelUsage ?? {}).includes(MOTION_MODEL_ID);
   if (parsed.is_error === true || !usedOpus) {
     const message = parsed.result ?? 'sem detalhe';
+    // Limite de uso detectado no turno real: grava o estado pra que TODAS as
+    // leituras seguintes (guard do chat, card de settings) falhem fechado sem
+    // gastar outra chamada, e responde com a frase exata que a UI espera.
+    if (/(weekly|daily|usage|rate) limit|quota exceeded|credit balance/i.test(message)) {
+      await recordQuotaUnavailable(message.slice(0, 500)).catch(() => undefined);
+      return {
+        ...connection,
+        state: 'OPUS_UNAVAILABLE',
+        message: QUOTA_UNAVAILABLE_MESSAGE,
+        remedy: 'Aguarde a liberação do limite da conta (o detalhe informa a data de reset).',
+        motionCapable: false,
+        details: { ...connection.details, quotaDetail: message.slice(0, 500) },
+      };
+    }
     const expired = /expired|unauthorized|401|log ?in/i.test(message);
     const denied = /forbidden|403|access denied|not allowed|permission/i.test(message);
     return {
@@ -221,6 +261,9 @@ export async function probeOpusModel(): Promise<ProviderConnection> {
     };
   }
 
+  // Sucesso real no Opus 5.5: se havia quota gravada, ela acabou de ser
+  // refutada por um fato — apaga e o motor volta a operar sozinho.
+  await clearQuotaState().catch(() => undefined);
   return connection;
 }
 

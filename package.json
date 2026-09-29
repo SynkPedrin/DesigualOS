@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "REAL_OPUS_E2E": "pnpm --filter web exec tsx scripts/motion-e2e-ui.mts",
     "db:generate": "pnpm --filter @desigual-os/database db:generate",
     "db:migrate": "pnpm --filter @desigual-os/database db:migrate",
     "db:seed": "pnpm --filter @desigual-os/database db:seed"

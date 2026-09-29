@@ -6,7 +6,7 @@ import type { QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
 import { estimateCost } from '@desigual-os/token-engine';
 import { findHealthyNodeForAgent } from './discovery';
 import { generateExecutionId } from './execution-id';
-import { AGENT_MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue } from './queues';
+import { AGENT_MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue, type MotionBriefPayload } from './queues';
 import type { ChatResult } from './result';
 
 const COMPLEXITY_TO_PRIORITY: Record<string, QueuePriority> = {
@@ -26,6 +26,8 @@ export interface SingleAgentDispatchParams {
   attachments?: StudioReferenceAsset[];
   /** Ver AgentJobData.operationalContext. */
   operationalContext?: string;
+  /** Ver AgentJobData.motionBrief. */
+  motionBrief?: MotionBriefPayload;
 }
 
 /**
@@ -37,7 +39,7 @@ export interface SingleAgentDispatchParams {
 export async function createAndEnqueueExecution(
   params: SingleAgentDispatchParams,
 ): Promise<ChatResult> {
-  const { message, userId, clientId, conversationId, decision, attachments, operationalContext } = params;
+  const { message, userId, clientId, conversationId, decision, attachments, operationalContext, motionBrief } = params;
 
   const healthyNode = await findHealthyNodeForAgent(decision.primary_agent);
   if (!healthyNode) {
@@ -103,6 +105,7 @@ export async function createAndEnqueueExecution(
         contextRefs: decision.context,
         ...(attachments?.length ? { attachments } : {}),
         ...(operationalContext ? { operationalContext } : {}),
+        ...(motionBrief ? { motionBrief } : {}),
         conversationId,
       },
       {

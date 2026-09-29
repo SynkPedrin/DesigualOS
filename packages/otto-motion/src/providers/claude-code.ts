@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import type { Logger } from '@desigual-os/logging';
 import { MOTION_MODEL_ID, assertModelActuallyUsed, assertMotionModel } from '../model.js';
 import { MotionError, MotionModelUnavailableError } from '../errors.js';
+import { recordQuotaUnavailable } from './quota-state.js';
 
 /**
  * §6 — Claude Code como worker programático, NÃO a API cobrada por token, e
@@ -227,7 +228,22 @@ export async function runClaudeCode(options: ClaudeCodeRunOptions): Promise<Clau
   // (com "reconecte o Claude"), não um "erro genérico do motion".
   if (parsed.is_error === true) {
     const message = parsed.result ?? 'erro sem descrição';
-    if (/does not support this model|unrecognized_model|model.*not (available|found)/i.test(message)) {
+    // Limite de uso (semanal/diário) É indisponibilidade do Opus 5.5, não
+    // falha genérica: medido ao vivo em 24/09/2026, a conta no teto semanal
+    // virava CODEGEN_FAILED e o chat dizia "não conseguiu concluir" — sem o
+    // motivo real (e a data de reset) a pessoa não sabe o que fazer.
+    const quotaHit = /(weekly|daily|usage|rate) limit|quota exceeded|credit balance/i.test(message);
+    if (quotaHit) {
+      // Persiste ANTES de lançar: sem o arquivo, o próximo job abriria outra
+      // sessão só pra bater na mesma parede. Com ele, o checkClaudeConnection
+      // falha fechado em milissegundos, sem gastar chamada nenhuma. O erro
+      // de escrita não pode mascarar o erro original — daí o catch mudo.
+      await recordQuotaUnavailable(message.slice(0, 500)).catch(() => undefined);
+    }
+    if (
+      /does not support this model|unrecognized_model|model.*not (available|found)/i.test(message) ||
+      quotaHit
+    ) {
       throw new MotionModelUnavailableError(message.slice(0, 500));
     }
     throw new MotionError('CODEGEN_FAILED', 'O Claude Code não conseguiu concluir esta etapa do motion.', {

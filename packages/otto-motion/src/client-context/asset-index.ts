@@ -1,3 +1,4 @@
+import { rankAssets, type RelevanceTerms } from './relevance.js';
 import type { MotionAsset, MotionAssetKind } from './types.js';
 
 /**
@@ -32,6 +33,8 @@ export interface AssetSelection {
   selected: MotionAsset[];
   /** O que ficou de fora e por quê — vai pro log e pro metadata da sessão. */
   skipped: { filename: string; reason: string }[];
+  /** Houve sinal de relevância? Falso = o acervo inteiro pontuou zero. */
+  usedRelevance: boolean;
 }
 
 export interface AssetBudget {
@@ -60,10 +63,25 @@ export function inferAssetKind(contentType: string, filename: string, origin: st
 export function selectAssets(
   assets: readonly MotionAsset[],
   budget: AssetBudget = DEFAULT_ASSET_BUDGET,
+  terms?: RelevanceTerms | undefined,
 ): AssetSelection {
+  // Relevância (§8) entra ANTES de tipo e origem porque é o critério que
+  // separa "material deste cliente" de "material que estava guardado no
+  // registro deste cliente" — e escolher a foto errada é pior do que escolher
+  // a menos recente.
+  const scores = new Map<string, number>();
+  let usedRelevance = false;
+  if (terms) {
+    const { ranked, hasSignal } = rankAssets(assets, terms);
+    usedRelevance = hasSignal;
+    if (hasSignal) for (const item of ranked) scores.set(item.asset.sourceUrl, item.score);
+  }
+
   const ordered = [...assets].sort((a, b) => {
     const byKind = KIND_PRIORITY[a.kind] - KIND_PRIORITY[b.kind];
     if (byKind !== 0) return byKind;
+    const byScore = (scores.get(b.sourceUrl) ?? 0) - (scores.get(a.sourceUrl) ?? 0);
+    if (byScore !== 0) return byScore;
     const byOrigin = (ORIGIN_PRIORITY[a.origin] ?? 9) - (ORIGIN_PRIORITY[b.origin] ?? 9);
     if (byOrigin !== 0) return byOrigin;
     // Empate: a maior resolução ganha. Foto pequena esticada num 1080x1920
@@ -101,12 +119,19 @@ export function selectAssets(
       skipped.push({ filename: asset.filename, reason: `acima do orçamento de ${asset.kind}` });
       continue;
     }
+    // Com sinal de relevância no acervo, foto que não casa com NADA (nem
+    // marca, nem briefing) fica de fora. É a regra que impede material de
+    // outro cliente, guardado no registro errado, de entrar na peça.
+    if (usedRelevance && (asset.kind === 'image' || asset.kind === 'video') && (scores.get(asset.sourceUrl) ?? 0) === 0) {
+      skipped.push({ filename: asset.filename, reason: 'não casa com a marca nem com o briefing' });
+      continue;
+    }
     seen.add(asset.sourceUrl);
     used[asset.kind] += 1;
     selected.push(asset);
   }
 
-  return { selected, skipped };
+  return { selected, skipped, usedRelevance };
 }
 
 /** Há material visual utilizável? Decide entre seguir e devolver NO_ASSETS (§26/§47-E). */

@@ -1,6 +1,7 @@
 import type { RouterDecision } from '@desigual-os/router';
 import type { StudioReferenceAsset } from '@desigual-os/types';
 import { createAndEnqueueExecution } from './chat-service';
+import type { MotionBriefPayload } from './queues';
 import type { ChatResult } from './result';
 import { startWorkflow } from './workflow-service';
 
@@ -11,6 +12,8 @@ export interface DispatchParams {
   conversationId: string | null;
   decision: RouterDecision;
   attachments?: StudioReferenceAsset[];
+  /** Briefing do card de motion (POST /chat `motion_brief`). Ver AgentJobData.motionBrief. */
+  motionBrief?: MotionBriefPayload;
 }
 
 /**

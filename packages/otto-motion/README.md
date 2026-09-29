@@ -44,6 +44,17 @@ Medido em 24/09/2026: com o Claude Code 2.1.263 a API respondia
 Por isso a mensagem de `OPUS_UNAVAILABLE` manda atualizar/reconectar em vez de
 sugerir outro modelo.
 
+**Limite de uso é indisponibilidade.** Quando uma sessão falha por limite
+(semanal/diário/crédito), o provider grava `claude-quota-state.json` na raiz do
+runtime (`OTTO_MOTION_RUNTIME_DIR` ou `runtime/` do pacote) antes de lançar.
+Dali em diante `checkClaudeConnection` devolve `OPUS_UNAVAILABLE` com "O
+Claude Opus 5.5 está indisponível — limite de uso atingido." **sem gastar
+chamada nenhuma** — o guard do chat falha fechado em vez de enfileirar jobs
+pra bater na mesma parede. Quem reabilita é o "Testar conexão" das settings:
+o `probeOpusModel` ignora o estado gravado, roda um turno real e, no sucesso,
+apaga o arquivo. Não há TTL: a data de reset viaja no `detail`, e parsear
+texto de erro pra expirar sozinho seria frágil por definição.
+
 ## Segurança
 
 O agente escreve e o sistema executa — nunca o contrário. A sessão do Claude
@@ -139,7 +150,7 @@ src/
   errors.ts          erro com código estável + texto que vai pro chat
   intent/            MOTION_DESIGN vs generative video / edição / imagem
   client-context/    resolver, parser de brain, seleção de assets, cópia
-  providers/         Claude Code como worker, estados de conexão
+  providers/         Claude Code como worker, estados de conexão, estado de quota
   prompts/           direção criativa, patch, QA visual
   render/            scaffold, bundle, render, frames
   qa/                técnico (medição) e visual (inspeção)

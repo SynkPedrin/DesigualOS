@@ -78,6 +78,39 @@ export const AGENT_MAX_ATTEMPTS: Record<AgentName, number> = {
   otto: MAX_ATTEMPTS,
 };
 
+/**
+ * Briefing estruturado do card de motion (POST /chat campo `motion_brief`).
+ *
+ * Espelho declarado do `campaignBriefSchema` de @desigual-os/otto-motion,
+ * copiado aqui de propósito: o otto-motion JÁ depende do orchestrator (pelas
+ * filas), então importar o tipo de lá criaria um ciclo de dependência entre
+ * pacotes. O contrato é validado por zod na borda (apps/api/src/chat/routes.ts)
+ * antes de chegar aqui — este tipo é só o envelope que atravessa a fila.
+ */
+export interface MotionBriefOfferPayload {
+  name?: string | undefined;
+  price?: string | undefined;
+  originalPrice?: string | undefined;
+  installments?: string | undefined;
+  installmentValue?: string | undefined;
+  discount?: string | undefined;
+  condition?: string | undefined;
+}
+
+export interface MotionBriefPayload {
+  campaignName?: string | undefined;
+  objective?: string | undefined;
+  offer?: MotionBriefOfferPayload | undefined;
+  cta?: string | undefined;
+  audience?: string | undefined;
+  platform?: string | undefined;
+  aspectRatio?: string | undefined;
+  duration?: number | undefined;
+  fps?: 24 | 30 | 60 | undefined;
+  tone?: string | undefined;
+  notes?: string | undefined;
+}
+
 export interface AgentJobData {
   executionDbId: string;
   executionId: string;
@@ -92,6 +125,9 @@ export interface AgentJobData {
    * inteira como consulta vetorial e o detector de ClickUp dele intercepta pedindo cliente
    * quando o dado cita vários — ver askBentoComContextoOperacional no bento-qa. */
   operationalContext?: string;
+  /** Briefing do card de motion, quando o turno é um "Gerar Motion" com o card
+   * preenchido. O tryMotionGuard (worker) usa pra chamar createMotion com brief. */
+  motionBrief?: MotionBriefPayload;
   // Presentes só quando este job é uma etapa de workflow (Fase 10).
   workflowId?: string;
   stepIndex?: number;

@@ -1,4 +1,6 @@
 import type { ClientMotionContext, MotionAsset } from '../client-context/types.js';
+import type { CampaignBrief } from '../brief/schema.js';
+import { renderLockedFactsBlock, type LockedFact, type LockedFactViolation } from '../brief/locked-facts.js';
 import type { MotionSession } from '../types.js';
 
 /**
@@ -13,30 +15,37 @@ export function buildCreationPrompt(params: {
   session: Pick<MotionSession, 'prompt' | 'durationSeconds' | 'fps' | 'width' | 'height' | 'format'>;
   context: ClientMotionContext;
   assets: readonly MotionAsset[];
+  brief: CampaignBrief | null;
+  lockedFacts: readonly LockedFact[];
 }): string {
-  const { session, context, assets } = params;
+  const { session, context, assets, brief, lockedFacts } = params;
   const { brand } = context;
 
+  /**
+   * Quatro camadas, nesta ordem (§6). A ordem não é estética: o que vem
+   * depois pesa mais na leitura, e LOCKED FACTS precisa vir perto do fim,
+   * logo antes da direção do usuário — é o bloco que não pode ser esquecido
+   * no meio de 3 mil palavras de contexto de marca.
+   */
   return [
-    `# PEDIDO`,
-    session.prompt.trim(),
-    '',
-    `# ESPECIFICAÇÃO DA PEÇA`,
-    `- Formato: ${session.format} (${session.width}x${session.height})`,
-    `- Duração: ${session.durationSeconds}s a ${session.fps}fps (${Math.round(session.durationSeconds * session.fps)} frames)`,
-    `- Esses números já estão em src/config.ts. Importe de lá.`,
-    '',
-    `# MARCA: ${brand.name}`,
+    `# BRAND CONTEXT — ${brand.name}`,
     line('Posicionamento', brand.positioning),
     line('Público', brand.audience),
     line('Tom de voz', brand.toneOfVoice),
     listLine('Paleta', brand.colors, 'a marca não tem paleta registrada — componha com neutros e a cor dominante das fotos do cliente'),
     listLine('Tipografia', brand.fonts, 'a marca não tem tipografia registrada — escolha uma que sirva ao tom e diga qual escolheu'),
-    listLine('CTAs aprovados', brand.approvedCtas, 'nenhum CTA aprovado — use um neutro, nunca uma promessa'),
+    listLine('CTAs aprovados', brand.approvedCtas, 'nenhum CTA aprovado registrado'),
     listLine('Restrições', brand.restrictions, 'nenhuma restrição registrada'),
     listLine('Produtos', brand.products, 'nenhum produto listado'),
     '',
     assetsBlock(assets),
+    '',
+    briefBlock(brief),
+    '',
+    `# ESPECIFICAÇÃO DA PEÇA`,
+    `- Formato: ${session.format} (${session.width}x${session.height})`,
+    `- Duração: ${session.durationSeconds}s a ${session.fps}fps (${Math.round(session.durationSeconds * session.fps)} frames)`,
+    `- Esses números já estão em src/config.ts. Importe de lá.`,
     '',
     context.missing.length > 0
       ? `# O QUE NÃO EXISTE NA FONTE\n${context.missing.map((item) => `- ${item}`).join('\n')}\n\nNão preencha nada disso por dedução. Contorne e relate.`
@@ -45,11 +54,48 @@ export function buildCreationPrompt(params: {
     `# BRIEFING BRUTO DO CLIENTE`,
     context.briefing ?? '(não há briefing registrado para este cliente)',
     '',
+    renderLockedFactsBlock(lockedFacts),
+    '',
+    `# USER DIRECTION`,
+    session.prompt.trim(),
+    '',
     `# SUA TAREFA`,
     `Escreva PENSAMENTO.md com o storyboard e o timing, depois escreva src/Motion.tsx (e os arquivos de apoio que quiser em src/).`,
   ]
     .filter((part) => part !== '')
     .join('\n');
+}
+
+/** §6 — a camada da campanha, separada da camada da marca. */
+function briefBlock(brief: CampaignBrief | null): string {
+  if (!brief) {
+    return [
+      '# CAMPAIGN BRIEF',
+      '',
+      '(não informado — a peça é institucional)',
+      '',
+      'Sem briefing, não invente oferta, preço, prazo nem promessa. Trabalhe com o que a marca é.',
+    ].join('\n');
+  }
+  const offer = brief.offer;
+  const linhas = [
+    ['Campanha', brief.campaignName],
+    ['Objetivo', brief.objective],
+    ['Oferta', offer?.name],
+    ['Condição', offer?.condition],
+    ['CTA', brief.cta],
+    ['Público', brief.audience],
+    ['Plataforma', brief.platform],
+    ['Tom', brief.tone],
+  ]
+    .filter((pair): pair is [string, string] => Boolean(pair[1]?.trim()))
+    .map(([label, value]) => `- ${label}: ${value}`);
+
+  return [
+    '# CAMPAIGN BRIEF',
+    ...(linhas.length > 0 ? linhas : ['(sem campos preenchidos)']),
+    ...(brief.notes?.trim() ? ['', '**Observação de quem pediu:**', brief.notes.trim()] : []),
+  ].join('\n');
 }
 
 /** §42 — o patch recebe projeto atual + contexto do motion + pedido, nada mais. */
@@ -60,8 +106,9 @@ export function buildPatchPrompt(params: {
   assets: readonly MotionAsset[];
   /** Resumo do que a passada anterior entregou, pro agente não reler tudo às cegas. */
   previousSummary: string | null;
+  lockedFacts: readonly LockedFact[];
 }): string {
-  const { instruction, session, context, assets, previousSummary } = params;
+  const { instruction, session, context, assets, previousSummary, lockedFacts } = params;
   return [
     `# AJUSTE PEDIDO`,
     instruction.trim(),
@@ -79,8 +126,11 @@ export function buildPatchPrompt(params: {
     '',
     assetsBlock(assets),
     '',
+    renderLockedFactsBlock(lockedFacts),
+    '',
     `# SUA TAREFA`,
     `Aplique SÓ o ajuste pedido, na menor superfície possível. Não recrie a peça.`,
+    `Os LOCKED FACTS continuam valendo: "mais agressivo" muda peso, escala, tempo e entrada — nunca o valor.`,
   ]
     .filter((part) => part !== '')
     .join('\n');
@@ -98,7 +148,9 @@ export function buildVisualQaPrompt(params: {
   session: Pick<MotionSession, 'durationSeconds' | 'width' | 'height' | 'format'>;
   brandName: string;
   colors: readonly string[];
+  lockedFacts?: readonly LockedFact[] | undefined;
 }): string {
+  const lockedFacts = params.lockedFacts ?? [];
   return [
     `# REVISÃO VISUAL`,
     `Você vai olhar o preview do motion que você mesmo fez e reprovar o que estiver errado. Seja o revisor mais chato da agência — é mais barato ser duro agora do que depois de publicado.`,
@@ -122,7 +174,13 @@ export function buildVisualQaPrompt(params: {
     `- CTA presente, legível e com tempo de leitura`,
     `- Consistência entre as cenas`,
     `- Frame preto ou vazio que não seja intencional`,
+    // Preço errado lido no quadro é o defeito que a varredura de código não
+    // alcança (valor montado em runtime); o revisor visual é a segunda rede.
+    ...(lockedFacts.length > 0
+      ? [`- Preço, porcentagem, datas e CTA batem EXATAMENTE com os LOCKED FACTS abaixo — dígito por dígito`]
+      : []),
     '',
+    ...(lockedFacts.length > 0 ? [renderLockedFactsBlock(lockedFacts), ''] : []),
     `# RESPOSTA`,
     `Escreva o veredito em QA.md no projeto, neste formato exato:`,
     '',
@@ -160,6 +218,36 @@ export function buildFixPrompt(params: { error: string; attempt: number; maxAtte
     '',
     `Conserte a causa. Não contorne desligando funcionalidade, não apague a cena que estava dando erro, e não reescreva a peça.`,
     `Lembre: nenhuma dependência nova pode ser instalada, e os assets vivem em public/assets via staticFile().`,
+  ].join('\n');
+}
+
+/**
+ * §16 — a varredura programática achou valor comercial fora do briefing.
+ *
+ * Prompt separado do de build de propósito: "A BUILD FALHOU" ensinaria o
+ * agente a procurar erro de compilação onde o problema é copy. A instrução
+ * lista cada violação com o valor travado ao lado, porque "há um preço errado"
+ * sem dizer QUAL preço e qual o certo produz passada de fix às cegas.
+ */
+export function buildLockedFactFixPrompt(params: {
+  violations: readonly LockedFactViolation[];
+  facts: readonly LockedFact[];
+  attempt: number;
+  maxAttempts: number;
+}): string {
+  return [
+    `# LOCKED FACTS VIOLADOS (tentativa ${params.attempt} de ${params.maxAttempts})`,
+    '',
+    'A verificação automática comparou o texto da peça com os valores travados no briefing e encontrou divergência:',
+    '',
+    ...params.violations.map((violation) => `- ${violation.detail}`),
+    '',
+    'Os valores corretos são exatamente estes:',
+    '',
+    ...params.facts.map((fact) => `- **${fact.label}:** \`${fact.value}\``),
+    '',
+    'Corrija o texto na tela para bater dígito por dígito com os valores acima, **sem alterar mais nada**:',
+    'mesma composição, mesmo timing, mesmas cores. Se um fato estiver certo, não toque nele.',
   ].join('\n');
 }
 
