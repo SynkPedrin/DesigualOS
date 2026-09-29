@@ -21,6 +21,24 @@ export interface VerifiedTaskResult {
   data: TaskDetail;
   assignedTo: { id: number; username: string } | null;
   /**
+   * Preenchido quando o nome do responsável NÃO resolveu. A task nasce mesmo
+   * assim, sem dono, e isto é a pergunta que falta fazer.
+   *
+   * Relato da Tammy (29/09/2026): ela pediu a ata, desmembrou as demandas, e na
+   * hora de subir a task o nome "Guilherme" não bateu com o cadastro ("Gui").
+   * O sistema abortou a criação inteira — "não gerou a task nem o briefing".
+   * Perder o trabalho todo por causa de um nome é troca ruim: o briefing custou
+   * o turno, o nome custa uma pergunta.
+   */
+  responsavelPendente?: {
+    /** O nome como a pessoa falou. */
+    pedido: string;
+    /** Um parecido, quando existe exatamente um. É a pergunta "é ele?". */
+    sugerido: { id: number; username: string } | null;
+    /** Vários parecidos: a pergunta vira "qual deles?". */
+    candidatos: string[];
+  };
+  /**
    * true quando esta chamada encontrou uma task já existente (mesma lista,
    * mesmo nome) e devolveu ela em vez de criar outra — nunca invenção, é o
    * próprio ramo de idempotência abaixo. Sem este campo o caller não tinha
@@ -90,17 +108,52 @@ export async function createVerifiedSeniorTask(
   let assignee: { id: number; username: string; email: string } | null = null;
   if (params.assigneeEmail) {
     const member = await findMemberByEmail(config, params.assigneeEmail);
-    if (!member) return { success: false, errorCode: 'assignee_not_found', message: `No ClickUp member matches ${params.assigneeEmail}`, retryable: false };
+    if (!member) return { success: false, errorCode: 'assignee_not_found', message: `Não achei ninguém no ClickUp com o e-mail ${params.assigneeEmail}.`, retryable: false };
     assignee = member;
   }
+  let responsavelPendente: VerifiedTaskResult['responsavelPendente'];
   if (params.assigneeName) {
-    // Name resolution is intentionally done through the typed resolver so an
-    // ambiguous first name cannot silently select the wrong collaborator.
+    // A resolução passa pelo resolvedor tipado de propósito: um primeiro nome
+    // ambíguo não pode escolher colaborador em silêncio.
     const { resolveMemberByName } = await import('./clickup-client');
     const resolution = await resolveMemberByName(config, params.assigneeName);
-    if (resolution.status === 'not_found') return { success: false, errorCode: 'assignee_not_found', message: `No ClickUp member matches ${params.assigneeName}`, retryable: false };
-    if (resolution.status === 'ambiguous') return { success: false, errorCode: 'assignee_ambiguous', message: `More than one ClickUp member matches ${params.assigneeName}`, retryable: false, candidates: resolution.candidates };
-    assignee = resolution.member;
+
+    /**
+     * O NOME NÃO RESOLVEU: a task continua, SEM dono, e a pergunta vai junto.
+     *
+     * Antes isto devolvia erro e a criação nem acontecia. Medido no uso real da
+     * Tammy: ata pronta, demandas desmembradas, e tudo descartado porque
+     * "Guilherme" não é "Gui" no cadastro. O briefing custou o turno; o nome
+     * custa uma pergunta.
+     *
+     * Sem responsável a task aparece no painel como "sem dono", que é uma coisa
+     * que o sistema já sabe cobrar — e é muito melhor que não existir.
+     */
+    if (resolution.status === 'resolved') {
+      assignee = resolution.member;
+    } else if (resolution.status === 'sugestao') {
+      responsavelPendente = {
+        pedido: params.assigneeName,
+        sugerido: { id: resolution.sugerido.id, username: resolution.sugerido.username },
+        candidatos: [],
+      };
+    } else if (resolution.status === 'ambiguous') {
+      responsavelPendente = {
+        pedido: params.assigneeName,
+        sugerido: null,
+        candidatos: resolution.candidates.map((c) => c.username).filter(Boolean),
+      };
+    } else {
+      const { getTeamMembers } = await import('./clickup-client');
+      responsavelPendente = {
+        pedido: params.assigneeName,
+        sugerido: null,
+        candidatos: (await getTeamMembers(config).catch(() => []))
+          .map((m) => m.username)
+          .filter((n): n is string => Boolean(n))
+          .slice(0, 10),
+      };
+    }
   }
 
   // The retry can arrive after ClickUp committed the POST but before the
@@ -135,7 +188,7 @@ export async function createVerifiedSeniorTask(
     }
     const verification = verifyTaskState(actual, expected);
     if (!verification.ok) return { success: false, errorCode: 'verification_failed', message: verification.mismatches.join('; '), retryable: true };
-    return { success: true, resourceId: actual.id, resourceUrl: `https://app.clickup.com/t/${actual.id}`, verified: true, data: actual, assignedTo: assignee, wasExisting: true };
+    return { success: true, resourceId: actual.id, resourceUrl: `https://app.clickup.com/t/${actual.id}`, verified: true, data: actual, assignedTo: assignee, ...(responsavelPendente ? { responsavelPendente } : {}), wasExisting: true };
   }
 
   let created: CreatedTask;
@@ -159,7 +212,7 @@ export async function createVerifiedSeniorTask(
   }
   const verification = verifyTaskState(actual, expected);
   if (!verification.ok) return { success: false, errorCode: 'verification_failed', message: verification.mismatches.join('; '), retryable: true };
-  return { success: true, resourceId: created.id, resourceUrl: created.url, verified: true, data: actual, assignedTo: assignee, wasExisting: false };
+  return { success: true, resourceId: created.id, resourceUrl: created.url, verified: true, data: actual, assignedTo: assignee, ...(responsavelPendente ? { responsavelPendente } : {}), wasExisting: false };
 }
 
 export function seniorResultSummary(result: SeniorTaskResult): string {

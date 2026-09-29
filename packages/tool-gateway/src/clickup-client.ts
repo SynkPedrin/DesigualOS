@@ -156,6 +156,14 @@ function normalizePersonName(text: string): string {
  */
 export type MemberResolution =
   | { status: 'resolved'; member: ClickUpMember; matchedBy: 'full' | 'first_name' | 'prefix' | 'contained' }
+  /**
+   * Achou UM parecido e não tem certeza. Não é resolução e não é ausência: é
+   * pergunta. "Não encontrei o Guilherme, achei o Gui — é ele?"
+   *
+   * Existe porque atribuir tarefa à pessoa errada é pior que não atribuir, e
+   * porque a decisão é de quem está pedindo, não do sistema.
+   */
+  | { status: 'sugestao'; sugerido: ClickUpMember }
   | { status: 'ambiguous'; candidates: ClickUpMember[] }
   | { status: 'not_found'; candidates: [] };
 
@@ -173,6 +181,35 @@ export async function resolveMemberByName(config: ClickUpConfig, name: string): 
   const wanted = normalizePersonName(name);
   if (!wanted) return { status: 'not_found', candidates: [] };
 
+  /**
+   * APELIDO CADASTRADO: o caso inverso dos quatro níveis abaixo.
+   *
+   * Todos eles assumem que o nome REGISTRADO é maior ou igual ao falado ("Gui"
+   * acha "Gui Fulano"). Falta quando a pessoa está no ClickUp só pelo apelido e
+   * quem fala usa o nome inteiro.
+   *
+   * Relato da Tammy (29/09/2026): ela pediu a ata, desmembrou as demandas, e na
+   * hora de subir a task veio "No ClickUp member matches Guilherme". No
+   * workspace ele está como "Gui" (gui@segundocerebro.pro). A demanda estava
+   * certa, o nome estava certo, e a task não subiu.
+   *
+   * ELE SUGERE, NÃO RESOLVE. Correção da operação no mesmo dia: "ele não achou
+   * o Gui, ele tem que perguntar — não encontrei o Guilherme, achei o Gui, é
+   * ele?". Atribuir tarefa por semelhança de nome é o tipo de acerto que
+   * ninguém confere e o tipo de erro que ninguém percebe.
+   *
+   * A trava de forma, mesmo pra sugerir: só vale pra membro cadastrado com UM
+   * token de 3 letras ou mais. Isso descarta "Gi" (2
+   * letras) e qualquer nome composto, como "Ana Luiza", que senão engoliria
+   * "Anabela". Fica no ÚLTIMO nível: qualquer casamento mais direto ganha dele.
+   */
+  const primeiroFalado = wanted.split(' ')[0] ?? '';
+  const porApelido = members.filter((m) => {
+    const registrado = normalizePersonName(m.username);
+    if (registrado.includes(' ') || registrado.length < 3) return false;
+    return primeiroFalado.length > registrado.length && primeiroFalado.startsWith(registrado);
+  });
+
   const niveis: Array<{ matchedBy: 'full' | 'first_name' | 'prefix' | 'contained'; hits: ClickUpMember[] }> = [
     { matchedBy: 'full', hits: members.filter((m) => normalizePersonName(m.username) === wanted) },
     { matchedBy: 'first_name', hits: members.filter((m) => normalizePersonName(m.username).split(' ')[0] === wanted.split(' ')[0]) },
@@ -187,6 +224,10 @@ export async function resolveMemberByName(config: ClickUpConfig, name: string): 
     if (nivel.hits.length === 1) return { status: 'resolved', member: nivel.hits[0]!, matchedBy: nivel.matchedBy };
     if (nivel.hits.length > 1) return { status: 'ambiguous', candidates: nivel.hits };
   }
+
+  // Nenhum casamento direto: o apelido só SUGERE. Quem confirma é a pessoa.
+  if (porApelido.length === 1) return { status: 'sugestao', sugerido: porApelido[0]! };
+
   return { status: 'not_found', candidates: [] };
 }
 
@@ -206,6 +247,38 @@ export async function findMemberByName(config: ClickUpConfig, name: string): Pro
 
   const contained = members.filter((m) => normalizePersonName(m.username).includes(wanted));
   if (contained.length === 1) return contained[0]!;
+
+  /**
+   * O APELIDO CADASTRADO, que é o caso inverso de todos os quatro acima.
+   *
+   * Os anteriores assumem que o nome REGISTRADO é maior ou igual ao falado
+   * ("Gui" acha "Gui Fulano"). Falta quando a pessoa está cadastrada só pelo
+   * apelido e quem fala usa o nome inteiro.
+   *
+   * Relato da operação (29/09/2026): a Tammy pediu pra subir uma task e o
+   * sistema respondeu "No ClickUp member matches Guilherme". No ClickUp ele
+   * está como "Gui" (gui@segundocerebro.pro). A demanda estava certa, o nome
+   * estava certo, e a task não subiu.
+   *
+   * A TRAVA, porque errar a pessoa é pior que não achar: só vale para membro
+   * cadastrado com UM token de pelo menos 3 letras. Isso exclui de propósito:
+   *
+   *   "Gi" (2 letras)  — está no workspace e "gi" não é prefixo de "guilherme",
+   *                      mas 2 letras casariam demais em outros nomes;
+   *   "Ana Luiza"      — dois tokens, então "Anabela" não vira "Ana Luiza";
+   *   "Gabriel Prado" e "Gabriel Serafim Sena" — dois tokens cada, e mesmo se
+   *                      fossem um só, dariam dois candidatos e cairiam fora
+   *                      pela regra de candidato único.
+   *
+   * Candidato único ou nada: com dois, quem tem que perguntar é o agente.
+   */
+  const primeiroFalado = wanted.split(' ')[0] ?? '';
+  const apelido = members.filter((m) => {
+    const registrado = normalizePersonName(m.username);
+    if (registrado.includes(' ') || registrado.length < 3) return false;
+    return primeiroFalado.length > registrado.length && primeiroFalado.startsWith(registrado);
+  });
+  if (apelido.length === 1) return apelido[0]!;
 
   return null;
 }

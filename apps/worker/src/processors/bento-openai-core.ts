@@ -693,6 +693,26 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
         ? `📋 Briefing de ${briefing.deliveryType === 'generic' ? 'entrega operacional' : briefing.deliveryType} na descrição — a leitura sênior entra nela em instantes.`
         : null,
       briefing?.missingCritical.length ? `⚠️ Falta confirmar: ${briefing.missingCritical.join(', ')}.` : null,
+      /**
+       * O RESPONSÁVEL QUE NÃO RESOLVEU VIRA PERGUNTA, não erro.
+       *
+       * Relato da Tammy (29/09/2026): ata pronta, demandas desmembradas, e na
+       * hora de subir a task o nome "Guilherme" não bateu com o cadastro
+       * ("Gui"). O sistema abortava a criação inteira — "não gerou a task nem o
+       * briefing". Agora a task nasce com o briefing, sem dono, e a pergunta
+       * vai na mesma resposta.
+       *
+       * A sugestão é sempre pergunta, nunca atribuição: correção dita pela
+       * operação no mesmo dia — "ele tem que perguntar: não encontrei o
+       * Guilherme, achei o Gui, é ele?".
+       */
+      result.responsavelPendente
+        ? result.responsavelPendente.sugerido
+          ? `👤 Não encontrei "${result.responsavelPendente.pedido}" no ClickUp. Achei "${result.responsavelPendente.sugerido.username}" — é ele(a)? Confirma que eu atribuo. A task ficou sem responsável por enquanto.`
+          : result.responsavelPendente.candidatos.length > 0
+            ? `👤 Não encontrei "${result.responsavelPendente.pedido}" no ClickUp. Quem está lá: ${result.responsavelPendente.candidatos.join(', ')}. Me diz qual é que eu atribuo — a task ficou sem responsável.`
+            : `👤 Não encontrei "${result.responsavelPendente.pedido}" no ClickUp, então a task ficou sem responsável. Me manda o nome como ele aparece lá, ou o e-mail.`
+        : null,
       anexados.length ? `📎 ${subiram}/${anexados.length} anexo(s) na task.` : null,
       // A task já foi relida pela criação verificada. Dizer o que se vê nela
       // custa zero e é a diferença entre um executor e um colega — ver

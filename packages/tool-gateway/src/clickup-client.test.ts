@@ -189,3 +189,77 @@ describe('uploadTaskAttachment recusa SSRF antes de qualquer fetch', () => {
     }
   });
 });
+
+/**
+ * Relato da Tammy (29/09/2026), no fluxo que mais importa: ela pediu a ata,
+ * desmembrou as demandas e, na hora de subir a task, leu "No ClickUp member
+ * matches Guilherme". No ClickUp ele está como "Gui".
+ *
+ * O elenco aqui é o REAL do workspace, com as duas armadilhas que tornam
+ * casamento aproximado perigoso: existe "Gi" além de "Gui", e existem dois
+ * "Gabriel".
+ */
+describe('apelido cadastrado: a pessoa fala o nome inteiro, o ClickUp tem o apelido', () => {
+  const equipe = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          team: {
+            members: [
+              { user: { id: 10, username: 'Gui', email: 'gui@x.com', profilePicture: null } },
+              { user: { id: 11, username: 'Gi', email: 'gi@x.com', profilePicture: null } },
+              { user: { id: 12, username: 'Gabriel Prado', email: 'gp@x.com', profilePicture: null } },
+              { user: { id: 13, username: 'Gabriel Serafim Sena', email: 'gs@x.com', profilePicture: null } },
+              { user: { id: 14, username: 'Ana Luiza', email: 'al@x.com', profilePicture: null } },
+              { user: { id: 15, username: 'Tammy', email: 't@x.com', profilePicture: null } },
+            ],
+          },
+        }),
+      })),
+    );
+
+  /**
+   * Correção da operação no mesmo dia, e é a parte que importa: ele NÃO deve
+   * atribuir. "Ele não achou o Gui, ele tem que perguntar — não encontrei o
+   * Guilherme, achei o Gui, é ele?"
+   *
+   * Atribuir tarefa por semelhança de nome é o tipo de acerto que ninguém
+   * confere e o tipo de erro que ninguém percebe.
+   */
+  it('o caso da Tammy: "Guilherme" SUGERE o "Gui", e não atribui sozinho', async () => {
+    equipe();
+    const r = await resolveMemberByName(CONFIG, 'Guilherme');
+    expect(r.status).toBe('sugestao');
+    if (r.status === 'sugestao') expect(r.sugerido.username).toBe('Gui');
+  });
+
+  /** "Gi" tem 2 letras e não pode virar chave de casamento de nome nenhum. */
+  it('apelido de 2 letras não casa: "Gilberto" não vira "Gi"', async () => {
+    equipe();
+    expect((await resolveMemberByName(CONFIG, 'Gilberto')).status).toBe('not_found');
+  });
+
+  /** Nome composto não é apelido: senão "Anabela" viraria "Ana Luiza". */
+  it('nome cadastrado com dois tokens não entra na regra', async () => {
+    equipe();
+    expect((await resolveMemberByName(CONFIG, 'Anabela')).status).toBe('not_found');
+  });
+
+  it('o casamento exato continua ganhando do apelido', async () => {
+    equipe();
+    const r = await resolveMemberByName(CONFIG, 'Gui');
+    expect(r.status).toBe('resolved');
+    if (r.status === 'resolved') expect(r.matchedBy).toBe('full');
+  });
+
+  /** Dois Gabriel: pergunta, nunca escolhe. Errar a pessoa é pior que não achar. */
+  it('nome que serve pra duas pessoas continua ambíguo', async () => {
+    equipe();
+    const r = await resolveMemberByName(CONFIG, 'Gabriel');
+    expect(r.status).toBe('ambiguous');
+    if (r.status === 'ambiguous') expect(r.candidates).toHaveLength(2);
+  });
+});

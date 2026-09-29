@@ -199,6 +199,13 @@ export async function createOneTask(
         out.candidates = membro.candidates.map((c) => c.username);
         return out;
       }
+      if (membro.status === 'sugestao') {
+        // Um parecido não é a pessoa: pergunta. Ver bento-selection-executor.
+        out.status = 'blocked';
+        out.blockedBy = 'PERSON_AMBIGUOUS';
+        out.candidates = [membro.sugerido.username];
+        return out;
+      }
       if (membro.status === 'not_found') {
         out.status = 'blocked';
         out.blockedBy = 'PERSON_NOT_FOUND';

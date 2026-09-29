@@ -280,6 +280,19 @@ export async function executeSelectionMutation(params: SelectionMutationParams):
         { guard: 'bento-action', action: 'assignee_nao_encontrado', write_authorized: false },
       );
     }
+    /**
+     * Achou UM parecido: pergunta antes de atribuir. Pedido da operação
+     * (29/09/2026): "ele não achou o Gui, ele tem que perguntar — não encontrei
+     * o Guilherme, achei o Gui, é ele?". Atribuir por semelhança de nome é o
+     * tipo de acerto que ninguém confere e o tipo de erro que ninguém percebe.
+     */
+    if (resolucao.status === 'sugestao') {
+      return respond(
+        `Não encontrei "${personName}" no ClickUp. Achei "${resolucao.sugerido.username}" — é ele(a)? Se for, eu atribuo. Não alterei nada ainda.`,
+        true,
+        { guard: 'bento-action', action: 'assignee_sugestao', write_authorized: false },
+      );
+    }
     if (resolucao.status === 'ambiguous') {
       return respond(
         `"${personName}" casa com mais de uma pessoa no ClickUp (${resolucao.candidates.map((c) => c.username).join(', ')}). Me diz qual delas é que eu atribuo.`,

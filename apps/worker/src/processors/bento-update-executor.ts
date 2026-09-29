@@ -232,6 +232,9 @@ export async function executeTaskUpdate(params: {
       const resolucao = await resolveMemberByName(config, personName).catch(() => null);
       if (!resolucao || resolucao.status === 'not_found') {
         outcomes.push({ field: 'assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${personName}" entre os membros do ClickUp` });
+      } else if (resolucao.status === 'sugestao') {
+        // Pergunta em vez de atribuir por semelhança. Ver bento-selection-executor.
+        outcomes.push({ field: 'assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${personName}"; achei "${resolucao.sugerido.username}" — é ele(a)?` });
       } else if (resolucao.status === 'ambiguous') {
         outcomes.push({ field: 'assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `"${personName}" casa com mais de uma pessoa (${resolucao.candidates.map((c) => c.username).join(', ')})` });
       } else {
@@ -403,6 +406,8 @@ export async function executeTaskUpdate(params: {
       if (resolucao?.status === 'resolved') {
         idsARemover = [resolucao.member.id];
         rotuloRemocao = resolucao.member.username;
+      } else if (resolucao?.status === 'sugestao') {
+        outcomes.push({ field: 'remove_assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${fields.removePersonName}"; achei "${resolucao.sugerido.username}" — é ele(a)?` });
       } else {
         outcomes.push({ field: 'remove_assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${fields.removePersonName}" entre os membros do ClickUp` });
       }
@@ -420,7 +425,8 @@ export async function executeTaskUpdate(params: {
   if (fields.replacePersonName !== undefined) {
     const resolucao = await resolveMemberByName(config, fields.replacePersonName).catch(() => null);
     if (resolucao?.status !== 'resolved') {
-      outcomes.push({ field: 'replace_assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${fields.replacePersonName}" entre os membros do ClickUp` });
+      const quase = resolucao?.status === 'sugestao' ? `; achei "${resolucao.sugerido.username}" — é ele(a)?` : ' entre os membros do ClickUp';
+      outcomes.push({ field: 'replace_assignee', label: '👤 Responsável', changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${fields.replacePersonName}"${quase}` });
     } else {
       const novaPessoa = resolucao.member;
       const removidos = atual.assignees.filter((a) => a.id !== novaPessoa.id).map((a) => a.id);
