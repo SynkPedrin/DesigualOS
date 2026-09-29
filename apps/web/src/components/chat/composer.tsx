@@ -59,6 +59,13 @@ export function Composer({
   const uploadFile = useUploadChatFile();
   const hero = variant === 'hero';
 
+  /**
+   * Botão do Notion: arma o `@notion` do próximo envio em vez de a pessoa
+   * digitar. O backend continua reconhecendo o `@notion` escrito à mão — o
+   * botão é atalho, não um segundo mecanismo.
+   */
+  const [paraNotion, setParaNotion] = useState(false);
+
   const isUploading = pendingAttachments.some((item) => item.status === 'uploading');
   const readyAttachments = pendingAttachments
     .filter((item): item is PendingAttachment & { status: 'done'; result: ChatAttachmentWire } => item.status === 'done')
@@ -133,9 +140,14 @@ export function Composer({
     // Mensagem só de anexo é válida (ex: colar uma imagem e mandar sem texto);
     // o que não pode é mandar vazio-vazio, ou enquanto algo ainda está subindo.
     if ((!trimmed && !readyAttachments.length) || disabled || isUploading) return;
-    onSend(trimmed || '(sem texto)', readyAttachments.length ? readyAttachments : undefined);
+    const texto = trimmed || '(sem texto)';
+    // O prefixo é a MESMA menção que a pessoa digitaria; nada de campo novo no
+    // wire. Se ela já escreveu @notion, não duplica.
+    const comDestino = paraNotion && !/(^|\s)@notion\b/i.test(texto) ? `@notion ${texto}` : texto;
+    onSend(comDestino, readyAttachments.length ? readyAttachments : undefined);
     setValue('');
     setPendingAttachments([]);
+    setParaNotion(false);
   }
 
   return (
@@ -203,6 +215,37 @@ export function Composer({
           )}
         >
           <Paperclip size={17} />
+        </button>
+        <button
+          type="button"
+          onClick={() => setParaNotion((v) => !v)}
+          disabled={disabled}
+          aria-pressed={paraNotion}
+          aria-label={paraNotion ? 'Não mandar para o Notion' : 'Mandar também para o Notion'}
+          title={
+            paraNotion
+              ? 'O resultado deste pedido vai virar uma página no seu Notion. Clique pra desligar.'
+              : 'Mandar o resultado deste pedido também pro seu Notion'
+          }
+          className={cn(
+            'flex shrink-0 items-center justify-center rounded-md transition-all disabled:opacity-40',
+            paraNotion ? 'bg-roxo-eletrico/20 ring-1 ring-roxo-eletrico' : 'hover:bg-grafite-elevado',
+            hero ? 'size-10' : 'size-9',
+          )}
+        >
+          {/* A marca do Notion é preta com miolo branco: num chip claro ela fica
+              correta nos dois temas, sem inventar uma variante que a Notion não
+              publicou. Opacidade menor quando desligado, pra não competir com o
+              clipe e o enviar. */}
+          <span
+            className={cn(
+              'flex items-center justify-center rounded-[4px] bg-branco-cru transition-opacity',
+              hero ? 'size-6' : 'size-5',
+              paraNotion ? 'opacity-100' : 'opacity-60',
+            )}
+          >
+            <img src="/brand/notion.png" alt="" width={hero ? 18 : 15} height={hero ? 18 : 15} />
+          </span>
         </button>
         <textarea
           ref={textareaRef}
