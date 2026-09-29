@@ -33,6 +33,38 @@ Testes: `bento-core` 102/102, `context-engine` 270/270, `api` 116/116, `worker` 
 
 ---
 
+## FECHADO no fim do dia 29/09
+
+| # | O quê | Commit | Prova |
+|---|---|---|---|
+| — | Briefing contava concluída como aberta | `7194802` | 1222 → 411, os dois blocos concordam |
+| — | "Faça um briefing" recusado como escrita | `7194802` | Q20: 51 chars `failed` → 2.667, cobertura 3/3 |
+| — | Portão léxico de leitura | `7194802` | **9/21 → 21/21** perguntas consultam a operação |
+| — | Briefing descartava a listagem | `7194802` | 29.920 chars voltaram ao prompt |
+| — | Event store nunca lido | `7194802` | "138 tarefas: 105 novas e 33 alteradas" |
+| P0-1 | Latência / prazo de ack | (sessão paralela) | era N+1 (58 queries em série, 21.982ms), não o ClickUp. Turno caiu de 24-30s para 1,6-9,8s |
+| P1-5 | Fixture de QA na carteira | `e4fa45d` | carteira 49 · internos 6 · fixtures 3 |
+| P1-7 | Projetos internos como cliente | `e4fa45d` | "15 clientes da carteira mais 2 frentes internas" |
+| P1-6 | Pessoa resolvida como cliente | `4d942a4` | "dependem do Endrigo" → PERSON; era o último com 0 tarefas |
+| F-08 | Read-back reprovando escrita boa | `4d942a4` | início/seguidor/checklist, 13 casos novos |
+| — | Roteamento sem `agent_hint` | `4d5f54f` + `fafb29a` | 32/32 |
+
+## AINDA ABERTO, e por quê
+
+| # | O quê | Por que não fiz |
+|---|---|---|
+| P0-2 | `AGENT_LOOP_V2` desligado — ContextPack, grounding e memória não chegam ao Bento | Mudança de arquitetura em caminho quente. Precisa de janela de release própria e de medição antes/depois, não de um commit no fim do dia |
+| P0-3 | `retrieveHandler` não recupera nada (`agentic-dispatch.ts:896`) | Depende do P0-2: ligar o loop primeiro, medir, e só então fazer o passo buscar de verdade |
+| P0-4 | Pessoa sem função; relação só `TASK_ASSIGNEE`; `last_seen_at` 13 dias atrasado | Falta decidir a FONTE. Derivar função de padrão de tarefa é inferência, e inferência virando fato é o defeito que C-15/C-16 documentam |
+| — | Espelho local do ClickUp (`clickup_tasks` = 0 linhas) | O trabalho grande. Resolve latência, histórico, estrutura do workspace e os 6 clientes sem lista, de uma vez |
+| — | Evento sem autor nem campo alterado | O webhook não grava. Sem isso, "quem mexeu?" continua sem resposta honesta |
+| — | `updatesState` retornado e ignorado → zero sinal proativo | Consequência do anterior |
+| — | Memória por `ILIKE` com teto de 6 a 12, sem embeddings | Precisa de decisão de infra (pgvector) |
+| — | Cadastro duplicado: `Case #0` ×2, `Biofit`/`BIO FIT`, `Colpar`/`Colpar Brasil` | Limpeza de dado, não código. É decisão de quem é dono da carteira |
+| — | `apps/mcp` sem teste; token inválido devolve 500 | O MCP inteiro está fora do deploy, declarado no commit `5b45152` |
+
+---
+
 ## P0 — o que está quebrado AGORA
 
 ### 1. O prazo de ack de 25s derruba a consulta GLOBAL · REGRESSÃO INTRODUZIDA POR MIM
