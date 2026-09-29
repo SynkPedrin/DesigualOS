@@ -641,7 +641,18 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       ...observacoesProativas({ task: result.data as unknown as import('@desigual-os/tool-gateway').TaskDetail | null }),
     ].filter(Boolean) as string[];
 
-    return envelopeToExecuteResponse('bento', envelope, linhas.join('\n'), executionRecordFromEnvelope(envelope, recordExtras));
+    /**
+     * O DOCUMENTO do turno, pra quem quiser levá-lo embora (`@notion`).
+     *
+     * A resposta do chat é um recibo — "criei a task: <link>". O conteúdo que
+     * vale é o BRIEFING, e ele mora na descrição da task. Sem isto, exportar
+     * o turno pro Notion criava uma página com duas linhas de recibo, que foi
+     * exatamente o que aconteceu no primeiro teste real (28/09/2026).
+     */
+    const resposta = envelopeToExecuteResponse('bento', envelope, linhas.join('\n'), executionRecordFromEnvelope(envelope, recordExtras));
+    return briefing
+      ? { ...resposta, metadata: { ...resposta.metadata, documento: { titulo: tituloDaTask, markdown: briefing.markdown } } }
+      : resposta;
   }
 
   if (!decision.resolvedResourceId) {

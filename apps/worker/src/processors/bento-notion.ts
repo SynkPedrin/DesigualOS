@@ -41,6 +41,33 @@ export function semMencaoNotion(mensagem: string): string {
   return mensagem.replace(MENCAO_RE, '$1').replace(/\s{2,}/g, ' ').trim();
 }
 
+export interface TokenEscolhido {
+  token: string;
+  /** 'pessoal' = OAuth de quem pediu. 'agencia' = token único, enquanto o OAuth não existe. */
+  origem: 'pessoal' | 'agencia';
+}
+
+/**
+ * QUAL TOKEN USAR — e por que existem dois.
+ *
+ * O certo é o pessoal: a página nasce no workspace de quem pediu, assinada por
+ * quem pediu. Mas o OAuth por pessoa exige uma integração PÚBLICA criada no
+ * portal do Notion, que é ato do dono da conta, não deste código. Enquanto ela
+ * não existe, `@notion` simplesmente não funcionaria pra ninguém.
+ *
+ * Então: token pessoal quando a pessoa conectou; senão o token da agência
+ * (`NOTION_API_KEY`), que é uma integração interna e escreve num workspace só.
+ * O fallback é declarado na resposta ao usuário — "no Notion da agência" em
+ * vez de "no seu Notion" —, porque a diferença de ONDE o arquivo nasce importa
+ * pra quem vai procurá-lo depois.
+ */
+export async function escolherToken(userId: string, logger: Logger, env: NodeJS.ProcessEnv = process.env): Promise<TokenEscolhido | null> {
+  const pessoal = userId ? await tokenDoUsuario(userId, logger) : null;
+  if (pessoal) return { token: pessoal, origem: 'pessoal' };
+  const agencia = env.NOTION_API_KEY?.trim();
+  return agencia ? { token: agencia, origem: 'agencia' } : null;
+}
+
 async function tokenDoUsuario(userId: string, logger: Logger): Promise<string | null> {
   const [linha] = await db
     .select({ token: schema.integrationConnections.accessTokenEncrypted, status: schema.integrationConnections.status })
@@ -77,14 +104,15 @@ export async function exportarParaNotion(params: {
   markdown: string;
   logger: Logger;
 }): Promise<ResultadoNotion> {
-  const token = await tokenDoUsuario(params.userId, params.logger);
-  if (!token) {
+  const escolhido = await escolherToken(params.userId, params.logger);
+  if (!escolhido) {
     return {
       linha:
         '📄 Pra mandar isso pro Notion eu preciso da sua conta conectada — é uma vez só: **Configurações → Integrações → Conectar Notion**. Depois disso, `@notion` funciona direto.',
       url: null,
     };
   }
+  const { token, origem } = escolhido;
 
   const destinos = await listarDestinosNotion(token, 5).catch((error: unknown) => {
     params.logger.warn({ error }, '[bento-notion] não consegui listar destinos');
@@ -105,7 +133,13 @@ export async function exportarParaNotion(params: {
     const pagina = await criarPaginaNotion({ token, parentId: destino.id, titulo: params.titulo, markdown: params.markdown });
     params.logger.info({ userId: params.userId, destino: destino.title, pagina: pagina.id }, '[bento-notion] página criada');
     const aviso = pagina.blocosOmitidos > 0 ? ` (as últimas ${pagina.blocosOmitidos} linhas não couberam e ficaram de fora)` : '';
-    return { linha: `📄 No seu Notion, em **${destino.title}**: ${pagina.url}${aviso}`, url: pagina.url };
+    // Dizer de QUEM é o Notion não é detalhe: é onde a pessoa vai procurar depois.
+    const onde = origem === 'pessoal' ? 'No seu Notion' : 'No Notion da agência';
+    const convite =
+      origem === 'agencia'
+        ? '\nSe quiser que nasça no SEU Notion, conecte em Configurações → Integrações.'
+        : '';
+    return { linha: `📄 ${onde}, em **${destino.title}**: ${pagina.url}${aviso}${convite}`, url: pagina.url };
   } catch (error) {
     const detalhe = error instanceof Error ? error.message : String(error);
     params.logger.warn({ error: detalhe }, '[bento-notion] falha ao criar página');

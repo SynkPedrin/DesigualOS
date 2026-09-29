@@ -77,3 +77,30 @@ describe('markdown do briefing vira bloco do Notion', () => {
     expect(rich[0]!.text.content).toHaveLength(2000);
   });
 });
+
+import { escolherToken } from './bento-notion';
+import { vi } from 'vitest';
+
+const fakeLogger = { warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as import('@desigual-os/logging').Logger;
+
+/**
+ * 28/09/2026: o OAuth por pessoa exige uma integração PÚBLICA criada no portal
+ * do Notion — ato do dono da conta, não deste código. Enquanto ela não existe,
+ * `@notion` não funcionaria pra ninguém. Daí o token da agência como fallback,
+ * com a origem SEMPRE declarada na resposta: onde o arquivo nasce é o que a
+ * pessoa precisa saber pra achá-lo depois.
+ */
+describe('qual token usa, e por quê', () => {
+  it('sem ninguém conectado e sem token da agência, não há o que usar', async () => {
+    expect(await escolherToken('', fakeLogger, {} as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it('sem conexão pessoal, cai pro token da agência — e marca a origem', async () => {
+    const r = await escolherToken('', fakeLogger, { NOTION_API_KEY: 'ntn_agencia' } as NodeJS.ProcessEnv);
+    expect(r).toEqual({ token: 'ntn_agencia', origem: 'agencia' });
+  });
+
+  it('token da agência em branco não conta como configurado', async () => {
+    expect(await escolherToken('', fakeLogger, { NOTION_API_KEY: '   ' } as NodeJS.ProcessEnv)).toBeNull();
+  });
+});

@@ -81,6 +81,8 @@ export interface NotionParent {
   id: string;
   title: string;
   type: 'page' | 'database';
+  /** 'workspace' = página de topo. 'database_id' = linha dentro de um banco. */
+  parentType: string;
 }
 
 /**
@@ -89,21 +91,45 @@ export interface NotionParent {
  * o pai é o que o `search` devolver — e não achando nada, o erro diz o que
  * fazer, em vez de um 404 cru do Notion.
  */
+/**
+ * Ordena os destinos pelo que faz SENTIDO pra um briefing.
+ *
+ * Medido no workspace real em 28/09/2026: o `search` do Notion devolve
+ * primeiro as linhas de banco — num workspace com um diário, as dez
+ * primeiras eram páginas chamadas "30/09", "29/09", "28/09". Criar um
+ * briefing como filho de uma data é tecnicamente válido e operacionalmente
+ * absurdo: ninguém acha aquilo de novo.
+ *
+ * A ordem é: página de topo com o nome da operação primeiro, depois qualquer
+ * página de topo, e linha de banco por último — só quando não sobrou nada.
+ */
+function pontuacaoDeDestino(d: NotionParent): number {
+  if (d.parentType === 'database_id') return 0;
+  if (d.parentType !== 'workspace') return 1;
+  return /desigual|operac|agencia|brief/i.test(d.title) ? 3 : 2;
+}
+
 export async function listarDestinosNotion(token: string, limite = 10): Promise<NotionParent[]> {
+  // Busca AMPLA e ordena aqui: filtrar por 'page' no servidor devolvia só as
+  // linhas do diário, e a página de topo ficava de fora da primeira janela.
   const response = await fetch(`${API}/search`, {
     method: 'POST',
     headers: headers(token),
-    body: JSON.stringify({ page_size: limite, filter: { property: 'object', value: 'page' } }),
+    body: JSON.stringify({ page_size: 100 }),
   });
   if (!response.ok) throw new Error(`Notion search failed (${response.status}): ${await response.text()}`);
   const json = (await response.json()) as { results?: Array<Record<string, unknown>> };
   const out: NotionParent[] = [];
   for (const r of json.results ?? []) {
     const id = typeof r.id === 'string' ? r.id : null;
-    if (!id) continue;
-    out.push({ id, title: tituloDe(r) ?? 'Sem título', type: r.object === 'database' ? 'database' : 'page' });
+    // Só PÁGINA serve de pai pra uma página nova. Um banco exigiria montar as
+    // propriedades dele, que variam por workspace — e errar isso cria linha
+    // quebrada num banco que a operação usa de verdade.
+    if (!id || r.object !== 'page') continue;
+    const parentType = String(((r.parent as { type?: unknown } | undefined)?.type) ?? 'unknown');
+    out.push({ id, title: tituloDe(r) ?? 'Sem título', type: 'page', parentType });
   }
-  return out;
+  return out.sort((a, b) => pontuacaoDeDestino(b) - pontuacaoDeDestino(a)).slice(0, limite);
 }
 
 function tituloDe(r: Record<string, unknown>): string | null {

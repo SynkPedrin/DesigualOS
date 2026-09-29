@@ -1885,10 +1885,14 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
    * explicação em vez de derrubar o que o Bento fez.
    */
   if (agent === 'bento' && result.status === 'completed' && result.answer && pedeNotion(message)) {
+    // Prefere o DOCUMENTO do turno (o briefing) ao recibo do chat: ver o
+    // comentário em bento-openai-core.ts. Sem documento, exporta a resposta
+    // mesmo — uma análise no chat também é conteúdo que alguém quer guardar.
+    const doc = result.metadata?.documento as { titulo?: string; markdown?: string } | undefined;
     const exportado = await exportarParaNotion({
       userId: runningExecution?.userId ?? '',
-      titulo: tituloParaNotion(message, null),
-      markdown: result.answer,
+      titulo: doc?.titulo?.trim() || tituloParaNotion(message, null),
+      markdown: doc?.markdown?.trim() || result.answer,
       logger,
     }).catch((error: unknown) => {
       logger.warn({ error, executionId }, '[bento-notion] export falhou; a resposta do turno continua valendo');
