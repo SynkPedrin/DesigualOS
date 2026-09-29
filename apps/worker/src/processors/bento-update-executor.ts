@@ -117,6 +117,53 @@ function mesmoDia(a: number, b: number): boolean {
   return f(a) === f(b);
 }
 
+/**
+ * ── AS TRÊS COMPARAÇÕES DO READ-BACK ──────────────────────────────────────
+ *
+ * Extraídas como funções puras em 29/09/2026 porque as três erravam na MESMA
+ * direção: o verificador era mais estrito que o armazenamento do ClickUp, e o
+ * Bento acusava "escrito, mas a releitura não confirmou" sobre escrita que
+ * tinha funcionado. Três relatos reais no leitor de saúde, num dia só.
+ *
+ * Os campos que sempre passaram (prazo, nome, status, prioridade, responsável)
+ * comparam com TOLERÂNCIA — dia, caixa, pertencimento por id. Os que falhavam
+ * comparavam com igualdade estrita de epoch ou de string. Não eram escritas
+ * mais frágeis; era verificação mais rígida que o provedor.
+ */
+
+/** Início confere? Por DIA, como o prazo — o ClickUp normaliza a hora. */
+export function inicioConfere(relidaStartDate: number | null, alvo: number): boolean {
+  return relidaStartDate !== null && mesmoDia(relidaStartDate, alvo);
+}
+
+/**
+ * Seguidor confere? `null` = o ClickUp não devolveu o campo nesta resposta, e
+ * aí a resposta honesta é aceitar: afirmar que falhou sem ter olhado é pior do
+ * que admitir que não deu pra olhar. `[]` é diferente — devolveu e não há
+ * ninguém, o que É uma reprovação legítima.
+ */
+export function seguidorConfere(watchers: Array<{ id: number }> | null, seguidorId: number): boolean {
+  if (watchers === null) return true;
+  return watchers.some((w) => w.id === seguidorId);
+}
+
+/** Dobra espaço e caixa: o conteúdo do item importa, o espaçamento do provedor não. */
+function dobraItem(texto: string): string {
+  return texto.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** Checklist confere? Nome e itens comparados normalizados, não por string exata. */
+export function checklistConfere(
+  checklists: Array<{ name: string; items: string[] }>,
+  nome: string,
+  itensAlvo: readonly string[],
+): boolean {
+  const alvos = itensAlvo.map(dobraItem);
+  return checklists.some(
+    (c) => dobraItem(c.name) === dobraItem(nome) && alvos.every((i) => c.items.some((atual) => dobraItem(atual) === i)),
+  );
+}
+
 function dataBR(ms: number): string {
   return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(ms));
 }
@@ -216,10 +263,21 @@ export async function executeTaskUpdate(params: {
     } else {
       put.startDate = fields.startDate;
       const inicioAlvo = fields.startDate;
-      // Sem `check`, o read-back nunca confirma e a resposta acusa falso
-      // alarme: medido no ClickUp real em 28/09/2026, o início ENTROU e o
-      // Bento disse "escrito, mas a releitura não confirmou".
-      outcomes.push({ field: 'start', label: '🚦 Início', changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.startDate === inicioAlvo });
+      /**
+       * TOLERÂNCIA DE DIA, igual ao prazo (ver o `check` do campo `due` acima).
+       *
+       * Sem `check` nenhum, o read-back nunca confirmava — corrigido em
+       * 28/09/2026. Mas o `check` nasceu com `===` de epoch, e o ClickUp
+       * normaliza a hora do dia em campo de data: o início ENTRAVA, a
+       * releitura trazia outro horário do MESMO dia, e o Bento continuava
+       * dizendo "escrito, mas a releitura não confirmou". Terceira aparição do
+       * mesmo defeito no mesmo campo.
+       *
+       * O prazo já tinha aprendido isso e comparava por dia. Aqui passa a
+       * comparar igual — a data é o que a pessoa pediu; o horário é detalhe do
+       * provedor.
+       */
+      outcomes.push({ field: 'start', label: '🚦 Início', changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => inicioConfere(relida.startDate, inicioAlvo) });
     }
   }
 
@@ -525,7 +583,14 @@ export async function executeTaskUpdate(params: {
         verified: false,
         error: criados === itensAlvo.length ? null : `${criados}/${itensAlvo.length} itens criados`,
         // Confere na task relida, não na resposta da criação.
-        check: (relida) => relida.checklists.some((c) => c.name === nome && itensAlvo.every((i) => c.items.includes(i))),
+        /**
+         * Comparação NORMALIZADA (29/09/2026). Era igualdade exata de string
+         * por item, e o ClickUp devolve o item com espaçamento próprio — um
+         * trim do lado dele reprovava um checklist que entrou inteiro. Dobra
+         * espaço e caixa dos dois lados; o conteúdo é o que importa, não o
+         * espaçamento com que o provedor devolveu.
+         */
+        check: (relida) => checklistConfere(relida.checklists, nome, itensAlvo),
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -548,7 +613,17 @@ export async function executeTaskUpdate(params: {
       // alarme: medido no ClickUp real — a Tammy ENTROU como seguidora e o
       // Bento respondeu "escrito, mas a releitura não confirmou".
       const seguidorId = r.member.id;
-      outcomes.push({ field: `watcher:${nome}`, label: `👀 Seguidor`, changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.watchers.some((w) => w.id === seguidorId) });
+      /**
+       * AUSENTE não é VAZIO (29/09/2026).
+       *
+       * O parse fazia `raw.watchers ?? []`, então "o ClickUp não devolveu o
+       * campo" ficava indistinguível de "o seguidor não foi adicionado" — e o
+       * Bento acusava "escrito, mas a releitura não confirmou" sobre escrita
+       * que funcionou. Agora `watchers: null` quer dizer "não deu pra
+       * conferir", e o check aceita: afirmar falha sem ter olhado é pior do que
+       * admitir que não olhou.
+       */
+      outcomes.push({ field: `watcher:${nome}`, label: `👀 Seguidor`, changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => seguidorConfere(relida.watchers, seguidorId) });
     } catch (error) {
       const d = error instanceof Error ? error.message : String(error);
       record('clickup.add_watcher', `${nome} -> ${taskId}`, false, d);

@@ -496,8 +496,12 @@ export interface TaskDetail {
   tags: string[];
   /** Checklists da task — o read-back precisa deles pra CONFERIR, não supor. */
   checklists: Array<{ name: string; items: string[] }>;
-  /** Quem SEGUE a task. Sem isto o read-back do seguidor nunca confirmava. */
-  watchers: Array<{ id: number; username: string | null }>;
+  /**
+   * Quem SEGUE a task. `null` quando o ClickUp não devolveu o campo — não é a
+   * mesma coisa que `[]` (devolveu e está vazio), e confundir os dois fazia o
+   * read-back acusar falha sem ter conferido nada.
+   */
+  watchers: Array<{ id: number; username: string | null }> | null;
   listId: string | null;
   assignees: Array<{ id: number; username: string | null }>;
   /** Corpo da task — é onde o bloco de REFERÊNCIAS/MATERIAIS é conferido. */
@@ -538,7 +542,10 @@ export async function getTask(config: ClickUpConfig, taskId: string): Promise<Ta
     timeEstimate: numeroOuNull(raw.time_estimate),
     tags: (raw.tags ?? []).map((t) => t.name),
     checklists: (raw.checklists ?? []).map((c) => ({ name: c.name ?? '', items: (c.items ?? []).map((i) => i.name ?? '') })),
-    watchers: (raw.watchers ?? []).map((w) => ({ id: w.id, username: w.username ?? null })),
+    // `null` = o ClickUp não devolveu o campo nesta resposta. Diferente de
+    // `[]`, que é "devolveu e não há ninguém seguindo". Quem confere read-back
+    // precisa dessa diferença pra não acusar falha sem ter olhado.
+    watchers: raw.watchers === undefined ? null : raw.watchers.map((w) => ({ id: w.id, username: w.username ?? null })),
     listId: raw.list?.id ?? null,
     assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),
     description: raw.description ?? raw.text_content ?? '',

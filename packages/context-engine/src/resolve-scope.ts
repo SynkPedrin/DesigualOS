@@ -1,5 +1,6 @@
 import { resolveClientsFromText, type ClientMatch } from './resolve-client';
 import { resolveTemporalRange, type TemporalRange } from './resolve-temporal';
+import { ehPessoaComoCliente } from './natureza-do-cliente';
 
 /**
  * resolve-scope.ts — decide se a pergunta é sobre UM cliente, VÁRIOS, ou a OPERAÇÃO
@@ -366,6 +367,14 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
     /atribuid[ao]s?\s+(?:a|à|ao|pro|pra|para)\s+([a-z][a-z ]{1,29})/,
     // tasks/tarefas do/da/de + nome
     /(?:tasks?|tarefas?|demandas?|entregas?)\s+(?:do|da|de)\s+([a-z][a-z ]{1,24})/,
+    /**
+     * "quais tarefas DEPENDEM DO Endrigo?" — a pergunta de gargalo, e ela não
+     * casava em nada. O padrão acima exige "tarefas DO fulano"; aqui o verbo
+     * entra no meio e a frase escapava inteira. Medida em 29/09/2026: voltava
+     * "não tenho a lista de tarefas que dependem do Endrigo nos dados", com ele
+     * responsável por tarefa real no ClickUp.
+     */
+    /\b(?:depende[mn]?|dependendo|travad[ao]s?|parad[ao]s?|espera(?:ndo)?|aguardando)\s+(?:do|da|de|por|pelo|pela)\s+([a-z][a-z ]{1,24})/,
     // <nome> precisa/tem que (entregar|fazer|produzir)
     /\b([a-z][a-z]+)\s+(?:precisa|tem que|vai)\s+(?:entregar|fazer|produzir|criar)/,
     // o que (a|o) <nome> tem/faz/entrega hoje
@@ -380,6 +389,20 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
     // Coisas, não gente: entram por causa do follow-up nu ("e a campanha?").
     'campanha', 'campanhas', 'peca', 'peça', 'legenda', 'legendas', 'copy', 'briefing', 'proposta',
     'reuniao', 'reunião', 'conta', 'contas', 'verba', 'midia', 'mídia', 'lista', 'listas',
+    /**
+     * ETAPA DE PROCESSO, não gente. Entram com o padrão de dependência
+     * ("depende de X"): a suíte pegou "o que depende de APROVAÇÃO?" virando
+     * pergunta sobre uma pessoa chamada "aprovação". O complemento de "depende
+     * de" é pessoa OU etapa, e a frase não distingue as duas — então a lista
+     * decide, que é o mesmo critério do resto deste conjunto.
+     */
+    'aprovacao', 'aprovação', 'aprovacoes', 'revisao', 'revisão', 'validacao', 'validação',
+    'material', 'materiais', 'arquivo', 'arquivos', 'resposta', 'retorno', 'feedback',
+    'orcamento', 'orçamento', 'contrato', 'pagamento', 'assinatura', 'decisao', 'decisão',
+    'informacao', 'informação', 'dado', 'dados', 'prazo', 'prazos', 'terceiro', 'terceiros',
+    'fornecedor', 'fornecedores', 'grafica', 'gráfica', 'producao', 'produção',
+    // "travado por FALTA de contrato": o complemento é a ausência, não quem.
+    'falta', 'ausencia', 'ausência', 'atraso', 'problema', 'questao', 'questão',
   ]);
   const patterns = opcoes.comSinalOperacional
     ? [...autoSuficientes, ...dependentesDeOperacional]
@@ -410,7 +433,17 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
   for (const pattern of patterns) {
     const match = flat.match(pattern);
     const name = match?.[1]?.trim().replace(/\s+/g, ' ');
-    if (name && name.length >= 2 && !notPerson.has(name)) {
+    /**
+     * O stoplist vale para a frase INTEIRA e para o PRIMEIRO TOKEN dela.
+     *
+     * Só a frase inteira não bastava: o padrão de dependência captura vários
+     * tokens (`[a-z][a-z ]{1,24}`), então "depende de MATERIAL DO CLIENTE"
+     * escapava — "material" está na lista, "material do cliente" não. Pessoa
+     * de verdade nunca começa por uma palavra desta lista, então checar o
+     * primeiro token é seguro e fecha a família inteira de uma vez.
+     */
+    const primeiroToken = name?.split(' ')[0] ?? '';
+    if (name && name.length >= 2 && !notPerson.has(name) && !notPerson.has(primeiroToken)) {
       const candidatos = candidatosDe(name);
       // `name` é o que a resolução usa como padrão: a leitura SEM a partícula,
       // que é a certa na esmagadora maioria das vezes.
@@ -611,6 +644,40 @@ export async function resolveOperationalScope(
       signals,
     };
   }
+  /**
+   * PESSOA GANHA DE LINHA-DE-CLIENTE-QUE-É-PESSOA (29/09/2026).
+   *
+   * "Endrigo Almada" é uma linha em `clients`, com lista própria no ClickUp
+   * (os projetos pessoais dele). Então "quais tarefas dependem do Endrigo?"
+   * casava na precedência 2 como CLIENTE, consultava a lista pessoal — vazia —
+   * e respondia "não tenho a lista de tarefas que dependem do Endrigo nos
+   * dados", com ele responsável por tarefa real em outros clientes.
+   *
+   * Quem pergunta por uma PESSOA quer o que está na mão dela atravessando a
+   * carteira, não a pasta de projetos pessoais. A regra é estreita de
+   * propósito: só vale quando a linha casada está na lista curta de
+   * pessoas-viraram-cliente E a frase realmente menciona a pessoa. Cliente com
+   * nome de gente que é conta pagante (Dra. Thais Bertelli) não entra.
+   */
+  if (matches.length === 1 && ehPessoaComoCliente(matches[0]!.name)) {
+    const comoPessoa = detectPersonMention(flat, { comSinalOperacional: operational });
+    if (comoPessoa) {
+      signals.push(`pessoa-sobre-cliente:${comoPessoa.name}`);
+      return {
+        kind: 'PERSON',
+        clients: [],
+        ambiguous,
+        temporal,
+        operational: true,
+        comparative,
+        briefing,
+        person: comoPessoa,
+        confidence: 0.8,
+        signals,
+      };
+    }
+  }
+
   if (matches.length === 1) {
     return {
       kind: 'CLIENT',

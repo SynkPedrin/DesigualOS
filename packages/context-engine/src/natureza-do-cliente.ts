@@ -66,10 +66,36 @@ const INTERNOS = new Set([
   // Produto interno (o Citável), não conta contratada.
   'citavel enterprise',
   'case 0 endrigo almada citavel',
-  // Pessoas viraram linha de cliente: projetos pessoais do dono e da família.
+]);
+
+/**
+ * PESSOA que virou linha de cliente — subconjunto de INTERNO com uma
+ * consequência própria, e por isso separado.
+ *
+ * "Endrigo Almada" tem lista no ClickUp com os projetos pessoais dele. Isso faz
+ * dele trabalho interno, sim. Mas faz outra coisa também, e é a que quebrou em
+ * 29/09/2026: quando alguém pergunta "quais tarefas dependem do Endrigo?", a
+ * resolução de escopo casava o nome com esta LINHA DE CLIENTE, consultava a
+ * lista pessoal dele (vazia) e respondia "não tenho a lista de tarefas que
+ * dependem do Endrigo nos dados" — com 1.222 tarefas no ClickUp, várias com ele
+ * como responsável.
+ *
+ * Quem pergunta por uma pessoa quer o que está NA MÃO dela, atravessando
+ * clientes; não a pasta de projetos pessoais. Ver resolve-scope.ts, onde esta
+ * lista faz a detecção de PESSOA ganhar do match de cliente.
+ *
+ * Cliente cujo nome É de pessoa mas é conta pagante (Dra. Thais Bertelli,
+ * André Almada se virar cliente) NÃO entra aqui — o teste trava isso.
+ */
+const PESSOAS_COMO_CLIENTE = new Set([
   'endrigo almada',
   'andre almada',
 ]);
+
+/** A linha é uma pessoa da casa que virou registro de cliente? */
+export function ehPessoaComoCliente(nome: string): boolean {
+  return PESSOAS_COMO_CLIENTE.has(dobrar(nome));
+}
 
 /**
  * Rede de segurança ESTREITA: nome que ninguém daria a um cliente pagante.
@@ -83,7 +109,7 @@ export function naturezaDoCliente(nome: string): NaturezaDaLinha {
   const chave = dobrar(nome);
   if (chave.length === 0) return 'CLIENTE';
   if (FIXTURES.has(chave) || PADRAO_DE_FIXTURE.test(chave)) return 'FIXTURE';
-  if (INTERNOS.has(chave)) return 'INTERNO';
+  if (INTERNOS.has(chave) || PESSOAS_COMO_CLIENTE.has(chave)) return 'INTERNO';
   return 'CLIENTE';
 }
 

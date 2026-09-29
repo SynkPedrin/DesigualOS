@@ -527,3 +527,57 @@ describe('ordem de escrita não gasta consulta ao vivo', () => {
     expect(r.operational).toBe(true);
   });
 });
+
+/**
+ * PESSOA GANHA DE LINHA-DE-CLIENTE-QUE-É-PESSOA (29/09/2026).
+ *
+ * "Endrigo Almada" é linha em `clients`, com lista própria no ClickUp. Medido
+ * ao vivo: "Quais tarefas dependem do Endrigo?" resolvia CLIENT, consultava a
+ * lista pessoal (vazia) e o Bento respondia "não tenho a lista de tarefas que
+ * dependem do Endrigo nos dados" — com ele responsável por tarefa real.
+ */
+describe('pessoa citada não vira consulta à pasta pessoal dela', () => {
+  it('"Quais tarefas dependem do Endrigo?" resolve PERSON, não CLIENT', async () => {
+    const s = await resolveOperationalScope('Quais tarefas dependem do Endrigo?');
+    expect(s.kind).toBe('PERSON');
+    expect(s.operational).toBe(true);
+    expect(s.person?.name).toContain('endrigo');
+  });
+
+  it('as outras formas de gargalo também chegam na pessoa', async () => {
+    for (const frase of [
+      'o que está travado por causa do Endrigo?',
+      'quais entregas estão esperando pelo Endrigo?',
+      'o que depende do Endrigo hoje?',
+    ]) {
+      const s = await resolveOperationalScope(frase);
+      expect(s.kind, frase).toBe('PERSON');
+    }
+  });
+
+  it('CLIENTE continua sendo cliente — a regra é estreita', async () => {
+    // Só a lista curta de pessoas-viraram-cliente muda de comportamento.
+    // Qualquer outro cliente, inclusive com nome de gente, segue CLIENT.
+    const s = await resolveOperationalScope('me fala da D. Carvalho');
+    expect(s.kind).toBe('CLIENT');
+  });
+
+  it('"depende de APROVAÇÃO" não é uma pessoa chamada aprovação', async () => {
+    // Foi a suíte que pegou: o padrão de dependência capturava etapa de
+    // processo como se fosse nome.
+    const s = await resolveOperationalScope('o que depende de aprovação?');
+    expect(s.kind).not.toBe('PERSON');
+  });
+
+  it('nenhuma etapa de processo vira pessoa', async () => {
+    for (const frase of [
+      'o que depende de material do cliente?',
+      'o que está travado por falta de contrato?',
+      'quais tarefas dependem de revisão?',
+      'o que está esperando por feedback?',
+    ]) {
+      const s = await resolveOperationalScope(frase);
+      expect(s.kind, frase).not.toBe('PERSON');
+    }
+  });
+});
