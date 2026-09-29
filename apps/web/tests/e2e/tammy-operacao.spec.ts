@@ -109,9 +109,19 @@ test.describe('Tammy em operação — o sistema dura o expediente?', () => {
     expect(r.texto.toLowerCase(), 'sem separar o que não é problema, a pessoa não prioriza').toMatch(
       /não pesam igual|avulsa|menos problemas|não são o problema|por último/,
     );
-    // A lista crua é o vício antigo: 25 linhas de tarefa não é análise.
-    const linhasDeTarefa = r.texto.split('\n').filter((l) => /^\s*[*\-•]/.test(l)).length;
-    expect(linhasDeTarefa, `respondeu com ${linhasDeTarefa} linhas de lista em vez de explicar`).toBeLessThan(15);
+    /**
+     * A lista crua é o vício antigo: 25 linhas de tarefa não é análise.
+     *
+     * Conta só a EXPLICAÇÃO, não a resposta inteira. A resposta é
+     * "explicação + --- + números apurados", e o bloco de números é lista por
+     * desenho (carga por pessoa, por cliente, gargalos). Contar tudo junto
+     * reprovava uma resposta que explicou certo — medido em 29/09/2026: 21
+     * linhas no total, das quais a maioria era a evidência numérica que a
+     * própria régua pede que exista embaixo.
+     */
+    const explicacao = r.texto.split('---')[0] ?? r.texto;
+    const linhasDeTarefa = explicacao.split('\n').filter((l) => /^\s*[*\-•]/.test(l)).length;
+    expect(linhasDeTarefa, `explicou em ${linhasDeTarefa} linhas de lista em vez de raciocinar`).toBeLessThan(15);
   });
 
   /**
