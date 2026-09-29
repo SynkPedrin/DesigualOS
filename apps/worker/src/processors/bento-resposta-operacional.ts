@@ -28,6 +28,71 @@ const PERGUNTA_RE =
   /\?|(^|\s)(quant[ao]s?|quem|qual|quais|onde|quando|por que|porque|o que|me diz|me fala|me mostra|tem alguma|existe algum)\b/i;
 
 /**
+ * PEDIDO DE ATA / DESDOBRAMENTO DE REUNIÃO (29/09/2026).
+ *
+ * A Tammy sai de uma reunião com a transcrição na mão e precisa de UMA coisa:
+ * o que ficou decidido, quem faz o quê, e o que disso já existe no ClickUp.
+ * Não é pergunta de estado nem pedido de escrita — é leitura cruzada, e sem
+ * gatilho próprio caía no caminho errado.
+ */
+const ATA_RE =
+  /\b(ata|resumo da reuni[ãa]o|o que (ficou|saiu) (decidido|da reuni[ãa]o)|desdobr\w*|p[óo]s-?reuni[ãa]o|encaminhamentos?)\b/i;
+
+export function pedeAtaDeReuniao(mensagem: string, temMaterial: boolean): boolean {
+  return temMaterial && ATA_RE.test(mensagem);
+}
+
+const BARRA_ATA = `Você é o gerente de operação de uma agência de mídia digital. Acabou de receber a transcrição de uma reunião e o estado atual do ClickUp.
+
+Produza EXATAMENTE isto, nesta ordem, sem preâmbulo:
+
+## O QUE FICOU DECIDIDO
+Os pontos fechados na reunião, um por linha. Só o que a transcrição diz. Nada de "foi discutido" — decisão é o que tem dono ou consequência.
+
+## O QUE VIRA TRABALHO
+Uma linha por entregável que a reunião gerou: **entregável** — função responsável (redação/design/vídeo/tráfego) — prazo, se a reunião deu um.
+Se a reunião não disse a função ou o prazo, escreva [CONFIRMAR: ...] no lugar. Não deduza.
+
+## JÁ EXISTE NO CLICKUP?
+Cruze o que vira trabalho com as tarefas que aparecem no estado da operação. Por item: já tem task, não tem, ou não dá pra saber com o que você recebeu. NUNCA afirme que existe uma task sem ver o nome dela nos dados.
+
+## O QUE EU FARIA AGORA
+Duas ou três ações, na ordem, executáveis hoje. A primeira tem que ser a que destrava as outras.
+
+Restrições:
+- Só o que está na transcrição e nos dados. Nome de pessoa, cliente, prazo ou número que não estiver ali não existe.
+- Português do Brasil, direto. Sem adjetivo de relatório.`;
+
+export interface AtaParams {
+  pergunta: string;
+  material: string;
+  estadoDaOperacao: string | null;
+  blocoCliente?: string | null;
+  escritor: (prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>;
+  logger: Logger;
+}
+
+/** A ata do dia: decisões, trabalho gerado, o que já existe, e o próximo passo. */
+export async function montarAtaDeReuniao(params: AtaParams): Promise<string | null> {
+  const dados = [
+    `TRANSCRIÇÃO DA REUNIÃO:\n${params.material}`,
+    params.estadoDaOperacao ? `ESTADO DO CLICKUP AGORA:\n${params.estadoDaOperacao}` : null,
+    params.blocoCliente,
+  ]
+    .filter((b): b is string => Boolean(b?.trim()))
+    .join('\n\n');
+
+  const r = await params
+    .escritor(`${BARRA_ATA}\n\n${dados}\n\nPEDIDO:\n${params.pergunta}`, { maxTokens: 1600 })
+    .catch((error: unknown) => {
+      params.logger.warn({ error }, '[bento-ata] escritor falhou');
+      return null;
+    });
+  const limpa = r?.trim();
+  return limpa && limpa.length > 40 ? limpa : null;
+}
+
+/**
  * Vocabulário de ESTADO da operação — o que este arquivo sabe responder.
  *
  * "operação" ficou DE FORA de propósito: cliente batiza campanha com esse

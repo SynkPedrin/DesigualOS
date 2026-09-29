@@ -65,8 +65,9 @@ import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core'
 import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-executor';
 import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama } from './bento-panorama';
-import { ehPerguntaOperacional, responderOperacional } from './bento-resposta-operacional';
+import { ehPerguntaOperacional, montarAtaDeReuniao, pedeAtaDeReuniao, responderOperacional } from './bento-resposta-operacional';
 import { documentosEmTexto, lerDocumentos } from './bento-documentos';
+import { confirmacaoDeAprendizado, detectarRegraDeBriefing, registrarRegra } from './bento-aprendizado';
 import { queryOperationTasks } from '@desigual-os/tool-gateway';
 import { resolveWriteTarget } from './write-target';
 import { clearResourceFocusIfDeleted } from './bento-resource-state';
@@ -1331,6 +1332,75 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         { lidos: documentosDoTurno.filter((d) => d.texto).length, total: documentosDoTurno.length },
         '[bento-documentos] material do pedido lido',
       );
+    }
+
+    /**
+     * CORREÇÃO VIRA REGRA (29/09/2026), e é o ponto que a operação chamou de
+     * mais importante: "o sistema não deveria responder 'entendido'; a
+     * correção precisa virar conhecimento operacional".
+     *
+     * Roda ANTES de qualquer caminho de escrita porque é outro tipo de turno —
+     * a pessoa não está pedindo uma task, está ensinando. E a resposta DECLARA
+     * o que ficou registrado: aprendizado que ela não vê é indistinguível de
+     * "entendido". Ver bento-aprendizado.ts.
+     */
+    if (!guardedResult && agent === 'bento') {
+      const deteccao = detectarRegraDeBriefing(message);
+      if (deteccao) {
+        const gravada = await registrarRegra({
+          deteccao,
+          clientId: runningExecution?.clientId ?? null,
+          userId: runningExecution?.userId ?? null,
+          logger,
+        }).catch(() => null);
+        if (gravada) {
+          guardedResult = {
+            execution_id: executionId, agent, status: 'completed',
+            answer: confirmacaoDeAprendizado(gravada, clienteDaExecucao?.name ?? null),
+            sources: [], tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 },
+            metadata: { guard: 'bento-aprendizado', regra_id: gravada.id },
+          };
+        }
+      }
+    }
+
+    /**
+     * ATA DO DIA (29/09/2026). A pessoa sai da reunião, anexa a transcrição e
+     * pede a ata: o que ficou decidido, o que vira trabalho, o que disso já
+     * existe no ClickUp e o que fazer agora. É o cruzamento das três fontes
+     * que o sistema já tem — material lido, estado da operação e dossiê — e
+     * era a coisa que mais adiantava o dia dela.
+     */
+    if (!guardedResult && agent === 'bento' && blocoDeDocumentos && pedeAtaDeReuniao(message, true)) {
+      const cfgAta = getClickUpConfigOrNull();
+      const estadoAta = cfgAta
+        ? await estadoDaOperacaoEmTexto(async () => {
+            const listas = (
+              await db.select({ id: schema.clients.clickupListId }).from(schema.clients).where(isNull(schema.clients.deletedAt))
+            )
+              .map((c) => c.id)
+              .filter((id): id is string => Boolean(id));
+            if (listas.length === 0) return [];
+            return (await queryOperationTasks(cfgAta, { listIds: listas, limit: 500 } as never)).tasks;
+          }).catch(() => null)
+        : null;
+      const ata = await montarAtaDeReuniao({
+        pergunta: message,
+        material: blocoDeDocumentos,
+        estadoDaOperacao: estadoAta,
+        escritor: async (prompt, opts) =>
+          (await completeTextSafely(prompt, logger, opts)) ?? (await completeTextViaOpenAI(prompt, logger, opts)),
+        logger,
+      }).catch(() => null);
+      if (ata) {
+        logger.info({ executionId }, '[bento-ata] ata da reunião montada');
+        guardedResult = {
+          execution_id: executionId, agent, status: 'completed', answer: ata,
+          sources: ['MATERIAL_ANEXADO', 'CLICKUP_OPERATION'], tool_calls: [],
+          usage: { input_tokens: 0, output_tokens: 0 },
+          metadata: { guard: 'bento-ata' },
+        };
+      }
     }
 
     /**

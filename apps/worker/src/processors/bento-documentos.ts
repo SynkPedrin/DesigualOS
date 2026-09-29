@@ -15,13 +15,16 @@
  *   .docx           OOXML: zip com word/document.xml
  *   .pptx           OOXML: zip com ppt/slides/slideN.xml
  *
- * PDF fica de fora, e é uma ausência declarada: extrair texto de PDF exige uma
- * biblioteca nova (pdf-parse/pdfjs), e o repositório não tem nenhuma. Enquanto
- * não houver, o PDF continua sendo anexado na task — a pessoa só é avisada de
- * que o conteúdo dele não foi lido, em vez de o Bento fingir que leu.
+ *   .pdf            pdf-parse (29/09/2026)
+ *
+ * PDF entrou depois dos outros, e com uma ressalva que a operação precisa
+ * conhecer: PDF **escaneado** é imagem, não texto. Nesses o extrator devolve
+ * pouco ou nada, e isso é dito — "o PDF não tem texto extraível (pode ser
+ * digitalizado)" — em vez de o Bento fingir que leu uma página em branco.
  */
 
 import JSZip from 'jszip';
+import { PDFParse } from 'pdf-parse';
 import type { Logger } from '@desigual-os/logging';
 
 /** Teto por documento. Transcrição de reunião longa passa disso e é cortada. */
@@ -56,6 +59,24 @@ function textoDeXml(xml: string): string {
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/**
+ * Texto de PDF. O rodapé "-- N of M --" que a biblioteca insere entre páginas
+ * sai fora: numa ata de reunião ele vira ruído no meio da frase, e o modelo
+ * passa a tratá-lo como conteúdo.
+ */
+async function textoDePdf(buffer: ArrayBuffer): Promise<string> {
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  try {
+    const r = await parser.getText();
+    return (r.text ?? '')
+      .replace(/^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  } finally {
+    await parser.destroy?.().catch(() => undefined);
+  }
 }
 
 async function textoDeOoxml(buffer: ArrayBuffer, tipo: 'docx' | 'pptx'): Promise<string> {
@@ -102,15 +123,6 @@ export async function lerDocumentos(anexos: AnexoParaLeitura[], logger: Logger):
   for (const anexo of anexos) {
     const tipo = tipoDoArquivo(anexo.filename, anexo.contentType);
     if (tipo === 'desconhecido') continue;
-    if (tipo === 'pdf') {
-      out.push({
-        filename: anexo.filename,
-        tipo,
-        texto: null,
-        motivo: 'PDF ainda não é lido por este sistema (o arquivo foi anexado na task, mas o conteúdo não entrou na análise)',
-      });
-      continue;
-    }
     try {
       const resposta = await fetch(anexo.url, { signal: AbortSignal.timeout(20_000) });
       if (!resposta.ok) {
@@ -123,10 +135,25 @@ export async function lerDocumentos(anexos: AnexoParaLeitura[], logger: Logger):
         continue;
       }
       const buffer = await resposta.arrayBuffer();
-      const bruto = tipo === 'texto' ? new TextDecoder().decode(buffer) : await textoDeOoxml(buffer, tipo);
+      const bruto =
+        tipo === 'texto'
+          ? new TextDecoder().decode(buffer)
+          : tipo === 'pdf'
+            ? await textoDePdf(buffer)
+            : await textoDeOoxml(buffer, tipo);
       const limpo = bruto.trim();
       if (!limpo) {
-        out.push({ filename: anexo.filename, tipo, texto: null, motivo: 'o arquivo não tem texto extraível' });
+        out.push({
+          filename: anexo.filename,
+          tipo,
+          texto: null,
+          // PDF vazio quase sempre é digitalização: dizer isso poupa a pessoa
+          // de reenviar o mesmo arquivo achando que foi falha de upload.
+          motivo:
+            tipo === 'pdf'
+              ? 'o PDF não tem texto extraível (provavelmente é digitalizado/imagem — mande a versão em texto ou o .docx)'
+              : 'o arquivo não tem texto extraível',
+        });
         continue;
       }
       out.push({

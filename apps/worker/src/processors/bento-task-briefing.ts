@@ -5,6 +5,7 @@ import { extractLabeledFacts, extractSectionFacts, mergeFacts } from './briefing
 import { retrieveBriefingContext } from './briefing-retrieval';
 import { evaluateBriefing } from './briefing-quality';
 import { costurar, elaborarBriefingSenior } from './briefing-senior';
+import { regrasAplicaveis, regrasEmTexto } from './bento-aprendizado';
 import type { DeliveryType } from './briefing-schema';
 
 /**
@@ -190,11 +191,28 @@ export async function buildTaskBriefing(params: BuildTaskBriefingParams): Promis
    * criar a task com os fatos e completar a descrição em seguida, sem ninguém
    * esperando na frente do chat.
    */
+  /**
+   * AS REGRAS QUE A OPERAÇÃO JÁ CORRIGIU entram AQUI, na leitura sênior — que
+   * é onde o briefing deixa de ser ficha e vira trabalho. Sem isso, "para
+   * social sempre coloque CTA e entregável" viraria um "entendido" e nada
+   * mudaria no briefing seguinte. Ver bento-aprendizado.ts.
+   */
+  const regras = await regrasAplicaveis({
+    clientId: params.clientId,
+    deliveryType: composto.deliveryType,
+    logger: params.logger,
+  }).catch(() => []);
+  const blocoDeRegras = regrasEmTexto(regras);
+  if (blocoDeRegras) {
+    params.logger.info({ regras: regras.length, tipo: composto.deliveryType }, '[bento-task-briefing] aplicando regras aprendidas');
+  }
+
   const elaboracaoPendente = params.briefingWriter
     ? elaborarBriefingSenior({
         composto,
         mensagem: params.message,
         clientName: params.clientName,
+        regras: blocoDeRegras,
         escritor: params.briefingWriter,
         logger: params.logger,
       }).catch(() => null)

@@ -72,6 +72,8 @@ export interface ElaborarParams {
   /** O pedido original, na íntegra. */
   mensagem: string;
   clientName: string | null;
+  /** Regras que a operação já corrigiu — obrigatórias, ver bento-aprendizado.ts. */
+  regras?: string | null;
   escritor: (prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>;
   logger: Logger;
 }
@@ -113,6 +115,9 @@ export async function elaborarBriefingSenior(params: ElaborarParams): Promise<El
     '',
     'PEDIDO ORIGINAL, como a pessoa escreveu:',
     params.mensagem,
+    // As regras vêm POR ÚLTIMO de propósito: é a instrução mais recente e a
+    // que a operação corrigiu à mão, então é a que tem que vencer.
+    params.regras ? `\n${params.regras}` : '',
   ].join('\n');
 
   for (let tentativa = 1; tentativa <= 2; tentativa++) {

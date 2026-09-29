@@ -69,10 +69,35 @@ describe('o texto sai do arquivo', () => {
     expect(t).toContain('[Slide 2]');
   });
 
-  it('PDF é ausência DECLARADA, não silêncio', async () => {
-    const r = await lerDocumentos([{ url: 'u', filename: 'contrato.pdf', contentType: 'application/pdf' }], fakeLogger);
+  it('lê .pdf — o formato em que ata de reunião chega mais vezes', async () => {
+    vi.unstubAllGlobals();
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    // PDF mínimo e válido, escrito aqui pra não depender de arquivo no disco.
+    writeFileSync('/tmp/_t.pdf', `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length 92>>stream
+BT /F1 12 Tf 72 720 Td (Cliente pediu carrossel de 5 slides e um reels de 30s.) Tj ET
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+trailer<</Root 1 0 R>>`);
+    // `Buffer.buffer` do Node aponta pro POOL, com offset — fatiar é obrigatório,
+    // senão o parser recebe bytes de outro arquivo.
+    const b = readFileSync('/tmp/_t.pdf');
+    servir(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer);
+    const r = await lerDocumentos([{ url: 'u', filename: 'ata.pdf', contentType: 'application/pdf' }], fakeLogger);
+    expect(r[0]?.texto).toContain('carrossel de 5 slides');
+    // O rodapé de página que a biblioteca insere não pode virar conteúdo.
+    expect(r[0]?.texto).not.toMatch(/--\s*1\s+of\s+1\s*--/);
+  });
+
+  it('PDF digitalizado (sem texto) é dito, e diz o que fazer', async () => {
+    servir('%PDF-1.4\ntrailer<</Root 1 0 R>>');
+    const r = await lerDocumentos([{ url: 'u', filename: 'escaneado.pdf', contentType: 'application/pdf' }], fakeLogger);
     expect(r[0]?.texto).toBeNull();
-    expect(r[0]?.motivo).toContain('PDF ainda não é lido');
+    expect(r[0]?.motivo).toMatch(/digitalizado|extra[íi]vel|falha ao ler/);
   });
 
   it('imagem não entra na leitura — continua sendo só anexo', async () => {

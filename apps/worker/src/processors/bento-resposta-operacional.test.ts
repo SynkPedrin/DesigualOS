@@ -139,3 +139,54 @@ describe('um conjunto de números por vez', () => {
     expect(prompt).toContain('Colormaq');
   });
 });
+
+import { pedeAtaDeReuniao, montarAtaDeReuniao } from './bento-resposta-operacional';
+
+/**
+ * 29/09/2026: a pessoa sai da reunião com a transcrição e precisa de UMA coisa
+ * — o que ficou decidido, o que vira trabalho, o que disso já existe no
+ * ClickUp e o que fazer agora. Sem gatilho próprio isso caía na fatia errada.
+ */
+describe('ata do dia', () => {
+  it.each([
+    'me faz a ata dessa reunião',
+    'quais os desdobramentos disso?',
+    'o que ficou decidido na reunião?',
+    'monta os encaminhamentos',
+  ])('%s COM material anexado -> ata', (m) => {
+    expect(pedeAtaDeReuniao(m, true)).toBe(true);
+  });
+
+  it('SEM material anexado não é ata — não há transcrição pra ler', () => {
+    expect(pedeAtaDeReuniao('me faz a ata dessa reunião', false)).toBe(false);
+  });
+
+  it('a transcrição e o estado do ClickUp entram JUNTOS — o cruzamento é o ponto', async () => {
+    const escritor = vi.fn<Escritor>(async () => '## O QUE FICOU DECIDIDO\n- Carrossel aprovado pela Marina.');
+    await montarAtaDeReuniao({
+      pergunta: 'faz a ata',
+      material: 'Marina pediu um carrossel de 5 slides.',
+      estadoDaOperacao: 'Atrasadas: 11',
+      escritor, logger: fakeLogger,
+    });
+    const prompt = escritor.mock.calls[0]![0];
+    expect(prompt).toContain('TRANSCRIÇÃO DA REUNIÃO');
+    expect(prompt).toContain('Marina pediu um carrossel');
+    expect(prompt).toContain('ESTADO DO CLICKUP AGORA');
+    expect(prompt).toContain('Atrasadas: 11');
+  });
+
+  it('proíbe afirmar que uma task existe sem ver o nome dela', async () => {
+    const escritor = vi.fn<Escritor>(async () => '## O QUE FICOU DECIDIDO\n- algo suficientemente longo aqui.');
+    await montarAtaDeReuniao({ pergunta: 'ata', material: 'x', estadoDaOperacao: null, escritor, logger: fakeLogger });
+    expect(escritor.mock.calls[0]![0]).toContain('NUNCA afirme que existe uma task sem ver o nome dela');
+  });
+
+  it('escritor mudo devolve null — sem ata inventada', async () => {
+    const r = await montarAtaDeReuniao({
+      pergunta: 'ata', material: 'x', estadoDaOperacao: null,
+      escritor: vi.fn<Escritor>(async () => null), logger: fakeLogger,
+    });
+    expect(r).toBeNull();
+  });
+});
