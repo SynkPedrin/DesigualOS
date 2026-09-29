@@ -111,6 +111,16 @@ export const structuredActionSchema = z.object({
       parentTaskId: z.string().optional(),
       /** Responder NA THREAD de um comentário específico. */
       replyToCommentId: z.string().optional(),
+      /** Quem passa a SEGUIR a task — recebe notificação sem ser responsável. */
+      addWatchers: z.array(z.string()).optional(),
+      removeWatchers: z.array(z.string()).optional(),
+      /**
+       * Cliente em cuja lista a task passa a aparecer TAMBÉM. Não é mover: o
+       * ClickUp v2 não move e recusa tirar a task da lista de origem.
+       */
+      alsoInClient: z.string().optional(),
+      /** Horas trabalhadas, em linguagem natural ("2h", "30min"). */
+      timeSpent: z.string().optional(),
       comment: z.string().optional(),
     })
     .nullable(),

@@ -12,6 +12,7 @@ const base: TaskDetail = {
   timeEstimate: null,
   tags: [],
   checklists: [],
+  watchers: [],
   listId: 'L1',
   assignees: [{ id: 42, username: 'pedro' }],
   description: '',

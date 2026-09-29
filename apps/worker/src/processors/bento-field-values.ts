@@ -98,14 +98,55 @@ export function resolverCampoPersonalizado(
   if (!campo) return { motivo: 'campo_nao_existe', nome, disponiveis: campos.map((c) => c.name) };
 
   if (campo.options.length > 0) {
-    const valorAlvo = normaliza(valor);
-    const opcao =
-      campo.options.find((o) => normaliza(o.name) === valorAlvo) ??
-      campo.options.find((o) => normaliza(o.name).startsWith(valorAlvo));
-    if (!opcao) {
-      return { motivo: 'opcao_nao_existe', nome: campo.name, valor, disponiveis: campo.options.map((o) => o.name) };
+    /**
+     * MÚLTIPLA ESCOLHA é uma LISTA de ids; escolha única é um id só. Mandar o
+     * formato do outro faz o ClickUp aceitar e guardar errado — "Aprovação" ou
+     * some, ou vira a única etiqueta onde deveria somar. Os dois tipos de
+     * múltipla no ClickUp são `labels` e `multi_select`.
+     *
+     * Valores separados por vírgula viram vários: "Aprovação, Urgente".
+     */
+    const multipla = campo.type === 'labels' || campo.type === 'multi_select';
+    const pedidos = multipla ? valor.split(/\s*[,;]\s*/).filter((v) => v.trim()) : [valor];
+    const ids: string[] = [];
+    const rotulos: string[] = [];
+    for (const bruto of pedidos) {
+      const alvoValor = normaliza(bruto);
+      const opcao =
+        campo.options.find((o) => normaliza(o.name) === alvoValor) ??
+        campo.options.find((o) => normaliza(o.name).startsWith(alvoValor));
+      if (!opcao) {
+        return { motivo: 'opcao_nao_existe', nome: campo.name, valor: bruto, disponiveis: campo.options.map((o) => o.name) };
+      }
+      ids.push(opcao.id);
+      rotulos.push(opcao.name);
     }
-    return { fieldId: campo.id, fieldName: campo.name, value: opcao.id, rotulo: opcao.name };
+    return {
+      fieldId: campo.id,
+      fieldName: campo.name,
+      value: multipla ? ids : ids[0],
+      rotulo: rotulos.join(', '),
+    };
+  }
+
+  /**
+   * DATA em campo personalizado é epoch ms, igual ao prazo da task. Texto que
+   * não vira data é recusado — gravar 0 ou "amanhã" literal num campo de data
+   * é pior que não gravar, porque filtro e relatório passam a mentir.
+   *
+   * NÃO CONFERIDO contra o ClickUp real: este workspace não tem nenhum campo
+   * de data hoje (só `number` e `short_text`). O formato segue a documentação
+   * e o mesmo epoch que o `due_date` já usa e que foi conferido.
+   */
+  if (campo.type === 'date') {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(valor.trim());
+    const ms = iso
+      ? new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12).getTime()
+      : Number.isFinite(Number(valor))
+        ? Number(valor)
+        : NaN;
+    if (!Number.isFinite(ms)) return { motivo: 'valor_invalido', nome: campo.name, valor, tipo: campo.type };
+    return { fieldId: campo.id, fieldName: campo.name, value: ms, rotulo: valor };
   }
 
   if (campo.type === 'number' || campo.type === 'currency') {

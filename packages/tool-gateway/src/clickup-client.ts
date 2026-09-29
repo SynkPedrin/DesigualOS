@@ -460,6 +460,7 @@ const taskDetailSchema = z.object({
   start_date: z.union([z.string(), z.number(), z.null()]).optional(),
   time_estimate: z.union([z.string(), z.number(), z.null()]).optional(),
   tags: z.array(z.object({ name: z.string() })).optional().default([]),
+  watchers: z.array(z.object({ id: z.number(), username: z.string().nullish() })).optional().default([]),
   checklists: z
     .array(z.object({ name: z.string().nullish(), items: z.array(z.object({ name: z.string().nullish() })).optional().default([]) }))
     .optional()
@@ -495,6 +496,8 @@ export interface TaskDetail {
   tags: string[];
   /** Checklists da task — o read-back precisa deles pra CONFERIR, não supor. */
   checklists: Array<{ name: string; items: string[] }>;
+  /** Quem SEGUE a task. Sem isto o read-back do seguidor nunca confirmava. */
+  watchers: Array<{ id: number; username: string | null }>;
   listId: string | null;
   assignees: Array<{ id: number; username: string | null }>;
   /** Corpo da task — é onde o bloco de REFERÊNCIAS/MATERIAIS é conferido. */
@@ -535,6 +538,7 @@ export async function getTask(config: ClickUpConfig, taskId: string): Promise<Ta
     timeEstimate: numeroOuNull(raw.time_estimate),
     tags: (raw.tags ?? []).map((t) => t.name),
     checklists: (raw.checklists ?? []).map((c) => ({ name: c.name ?? '', items: (c.items ?? []).map((i) => i.name ?? '') })),
+    watchers: (raw.watchers ?? []).map((w) => ({ id: w.id, username: w.username ?? null })),
     listId: raw.list?.id ?? null,
     assignees: (raw.assignees ?? []).map((a) => ({ id: a.id, username: a.username ?? null })),
     description: raw.description ?? raw.text_content ?? '',
@@ -734,4 +738,154 @@ export async function addChecklistItem(config: ClickUpConfig, checklistId: strin
     body: JSON.stringify({ name }),
   });
   if (!response.ok) throw new Error(`ClickUp add checklist item failed (${response.status}): ${await response.text()}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* 28/09/2026 — capacidades conferidas UMA A UMA contra o ClickUp real */
+/* ------------------------------------------------------------------ */
+
+/**
+ * WATCHERS. Conferido: `PUT /task/{id}` com `{watchers:{add:[id]}}` responde
+ * 200 e o seguidor aparece na releitura. Não está no docs oficial da v2, e é
+ * por isso que foi testado antes de existir aqui.
+ */
+export async function updateTaskWatchers(
+  config: ClickUpConfig,
+  taskId: string,
+  params: { add?: number[]; remove?: number[] },
+): Promise<void> {
+  if (!params.add?.length && !params.remove?.length) return;
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
+    method: 'PUT',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      watchers: {
+        ...(params.add?.length ? { add: params.add } : {}),
+        ...(params.remove?.length ? { rem: params.remove } : {}),
+      },
+    }),
+  });
+  if (!response.ok) throw new Error(`ClickUp watchers failed (${response.status}): ${await response.text()}`);
+}
+
+/**
+ * "MOVER" NÃO EXISTE na API v2 — e isto é o achado, não uma limitação do
+ * código. Conferido em 28/09/2026: `POST /list/{destino}/task/{id}` responde
+ * 200 e a task passa a aparecer NAS DUAS listas (`locations`); o
+ * `DELETE /list/{origem}/task/{id}` da lista de origem responde **400**,
+ * porque o ClickUp não deixa remover a task da casa dela.
+ *
+ * Então a função se chama pelo que ela faz. Chamar isto de "mover" faria o
+ * agente dizer "movi" com a task em dois lugares — e alguém contando a mesma
+ * demanda duas vezes no relatório.
+ */
+export async function addTaskToList(config: ClickUpConfig, taskId: string, listId: string): Promise<void> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${listId}/task/${taskId}`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) {
+    const detalhe = await response.text();
+    throw new Error(
+      detalhe.includes('multiple lists') || response.status === 403
+        ? 'O ClickUp recusou: adicionar uma task a outra lista exige o ClickApp "Tasks in Multiple Lists" ligado no workspace.'
+        : `ClickUp add-to-list failed (${response.status}): ${detalhe}`,
+    );
+  }
+}
+
+/** Tira a task de uma lista SECUNDÁRIA. A lista de origem não pode ser removida (400). */
+export async function removeTaskFromList(config: ClickUpConfig, taskId: string, listId: string): Promise<void> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${listId}/task/${taskId}`, {
+    method: 'DELETE',
+    headers: { Authorization: config.apiKey },
+  });
+  if (!response.ok) {
+    throw new Error(
+      response.status === 400
+        ? 'O ClickUp não deixa remover a task da lista de origem dela — só de listas adicionais.'
+        : `ClickUp remove-from-list failed (${response.status}): ${await response.text()}`,
+    );
+  }
+}
+
+export interface EstruturaCriada {
+  id: string;
+  name: string;
+}
+
+/** Cria PASTA num space. Conferido: 200 e id real. */
+export async function createFolder(config: ClickUpConfig, spaceId: string, name: string): Promise<EstruturaCriada> {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/space/${spaceId}/folder`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) throw new Error(`ClickUp create folder failed (${response.status}): ${await response.text()}`);
+  const json = (await response.json()) as { id?: string; name?: string };
+  if (!json.id) throw new Error('ClickUp criou a pasta e não devolveu id');
+  return { id: json.id, name: json.name ?? name };
+}
+
+/**
+ * Cria LISTA, num space (`spaceId`) ou dentro de uma pasta (`folderId`).
+ * Conferido no space: 200 e id real.
+ */
+export async function createList(
+  config: ClickUpConfig,
+  destino: { spaceId?: string; folderId?: string },
+  name: string,
+): Promise<EstruturaCriada> {
+  const url = destino.folderId
+    ? `${CLICKUP_API_BASE}/folder/${destino.folderId}/list`
+    : `${CLICKUP_API_BASE}/space/${destino.spaceId}/list`;
+  if (!destino.folderId && !destino.spaceId) throw new Error('createList exige spaceId OU folderId');
+  const response = await fetchClickUp(url, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) throw new Error(`ClickUp create list failed (${response.status}): ${await response.text()}`);
+  const json = (await response.json()) as { id?: string; name?: string };
+  if (!json.id) throw new Error('ClickUp criou a lista e não devolveu id');
+  return { id: json.id, name: json.name ?? name };
+}
+
+/**
+ * TIME TRACKING. Conferido em 28/09/2026 e RECUSADO pelo workspace, nas duas
+ * formas — cronômetro (`/time_entries/start`) e lançamento manual
+ * (`/time_entries`): `TIMEENTRY_072 — Cannot track time for this task`.
+ *
+ * A função existe assim mesmo, e de propósito: quando o ClickApp de tempo for
+ * ligado, ela passa a funcionar sem mais nenhuma linha de código. Até lá, o
+ * erro que sobe é o do ClickUp, traduzido — o agente diz por que não deu, em
+ * vez de fingir que a operação não existe.
+ */
+export async function registrarTempo(
+  config: ClickUpConfig,
+  teamId: string,
+  params: { taskId: string; inicioMs: number; duracaoMs: number; descricao?: string },
+): Promise<void> {
+  await assertTaskInScope(config, params.taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/team/${teamId}/time_entries`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tid: params.taskId,
+      start: params.inicioMs,
+      duration: params.duracaoMs,
+      ...(params.descricao ? { description: params.descricao } : {}),
+    }),
+  });
+  if (!response.ok) {
+    const detalhe = await response.text();
+    throw new Error(
+      detalhe.includes('TIMEENTRY_072')
+        ? 'O ClickUp recusou o apontamento de horas: o controle de tempo está desligado neste workspace (ClickApp "Time Tracking").'
+        : `ClickUp time entry failed (${response.status}): ${detalhe}`,
+    );
+  }
 }

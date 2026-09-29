@@ -690,6 +690,25 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
   }
 
   // update_task
+  /**
+   * "também na lista da Colormaq" — o modelo diz o NOME do cliente, nunca o id
+   * da lista, que ele não tem como saber. A resolução é contra a carteira, e
+   * nome que não existe vira falha declarada em vez de escrita no lugar errado.
+   */
+  let listaDoClienteCitado: { listId: string; name: string } | null = null;
+  if (action.changes?.alsoInClient?.trim()) {
+    const alvoLista = await resolveWriteTarget({
+      message: action.changes.alsoInClient,
+      ...(params.organizationId ? { organizationId: params.organizationId } : {}),
+      executionClientId: null,
+    }).catch(() => null);
+    if (alvoLista?.status === 'resolved' && alvoLista.listId) {
+      listaDoClienteCitado = { listId: alvoLista.listId, name: alvoLista.clientName ?? action.changes.alsoInClient };
+    } else {
+      params.logger.warn({ pedido: action.changes.alsoInClient }, '[bento-openai-core] cliente da lista adicional não resolveu');
+    }
+  }
+
   const __updateStart = performance.now();
   const response = await executeTaskUpdate({
     config,
@@ -733,6 +752,21 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
         : {}),
       ...(action.changes?.dependsOnTaskId ? { dependsOnTaskId: action.changes.dependsOnTaskId } : {}),
       ...(action.changes?.dependencyOfTaskId ? { dependencyOfTaskId: action.changes.dependencyOfTaskId } : {}),
+      /* --- 28/09/2026, conferido endpoint a endpoint no ClickUp real --- */
+      ...(action.changes?.addWatchers?.length ? { addWatcherNames: action.changes.addWatchers } : {}),
+      ...(action.changes?.removeWatchers?.length ? { removeWatcherNames: action.changes.removeWatchers } : {}),
+      ...(parseEstimativa(action.changes?.timeSpent)
+        ? {
+            tempo: {
+              // Apontamento sem hora de início declarada conta pra trás a
+              // partir de agora: é o que "trabalhei 2h nisso" quer dizer.
+              inicioMs: Date.now() - parseEstimativa(action.changes?.timeSpent)!,
+              duracaoMs: parseEstimativa(action.changes?.timeSpent)!,
+              descricao: `Apontado por ${params.userName ?? 'a operação'} via Desigual OS`,
+            },
+          }
+        : {}),
+      ...(listaDoClienteCitado ? { addToListId: listaDoClienteCitado.listId, addToListName: listaDoClienteCitado.name } : {}),
     },
     // Era `() => undefined`: o core aceitava o pedido e depois não sabia
     // traduzir status nenhum, então nada mudava. Reusa o mapeador do guard.

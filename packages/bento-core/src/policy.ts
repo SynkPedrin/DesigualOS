@@ -118,39 +118,45 @@ function hasMaterialContent(text: string | undefined | null): boolean {
   return !PLACEHOLDER_RE.test(trimmed);
 }
 
+/**
+ * O QUE CONTA COMO PEDIDO DE MUDANÇA — e por que isto deixou de ser uma lista.
+ *
+ * Esta função já enumerava campo a campo, e a enumeração falhou DUAS VEZES no
+ * mesmo dia (28/09/2026), do mesmo jeito: um campo novo nasceu no plano e
+ * ninguém lembrou de registrá-lo aqui. Primeiro `priority` — "altere o status
+ * pra urgente" virava prioridade e a policy respondia "não identifiquei o que
+ * devo alterar". Depois `addWatchers` — "põe a Tammy como seguidora" deu
+ * exatamente a mesma resposta.
+ *
+ * Errar duas vezes igual não é descuido, é desenho ruim: uma lista paralela ao
+ * schema é uma lista que vai ficar para trás. Agora a pergunta é feita ao
+ * OBJETO — qualquer campo preenchido é um pedido —, e campo novo passa a valer
+ * sozinho, sem ninguém precisar lembrar de nada.
+ *
+ * Duas exceções, e as duas são sobre o que NÃO é pedido:
+ *   - texto de enfeite (título/descrição/comentário em branco ou placeholder)
+ *     não vira escrita — é a regra antiga de `hasMaterialContent`;
+ *   - `assigneeOperation` sozinho ("remove") sem dizer QUEM não é pedido, é
+ *     pergunta. Tem guarda própria logo abaixo, e contar aqui a mataria.
+ */
+const CAMPOS_DE_TEXTO = new Set(['title', 'description', 'comment']);
+const NAO_E_PEDIDO_SOZINHO = new Set(['assigneeOperation']);
+
 function updateTaskHasMaterialChange(changes: StructuredAction['changes']): boolean {
   if (!changes) return false;
-  return (
-    hasMaterialContent(changes.title) ||
-    hasMaterialContent(changes.description) ||
-    hasMaterialContent(changes.comment) ||
-    Boolean(changes.dueDate?.trim()) ||
-    Boolean(changes.assignee?.trim()) ||
-    // "fecha essa task" não traz título, prazo nem responsável — sem contar
-    // status como mudança material, a policy respondia `content_missing` e a
-    // conclusão nunca acontecia (destravado em 28/09/2026).
-    Boolean(changes.status?.trim()) ||
-    /**
-     * E O MESMO VALE PRA TODO CAMPO NOVO. Medido com a Tammy no mesmo dia:
-     * "altere o status dessa task para urgente" virou prioridade (correto),
-     * e aí a policy disse "não identifiquei o que devo alterar" — porque
-     * `priority` não estava nesta lista. É a MESMA falha que o status tinha,
-     * repetida por um campo novo ter nascido sem entrar aqui.
-     *
-     * Esta função é a lista de "o que conta como pedido de mudança". Campo
-     * que o plano carrega e não aparece aqui é campo que o Bento aceita e
-     * depois finge não ter entendido.
-     */
-    Boolean(changes.priority?.trim()) ||
-    Boolean(changes.startDate?.trim()) ||
-    Boolean(changes.timeEstimate?.trim()) ||
-    Boolean(changes.addTags?.length) ||
-    Boolean(changes.removeTags?.length) ||
-    Boolean(changes.customFields && Object.keys(changes.customFields).length > 0) ||
-    Boolean(changes.checklistItems?.length) ||
-    Boolean(changes.dependsOnTaskId?.trim()) ||
-    Boolean(changes.dependencyOfTaskId?.trim())
-  );
+  for (const [campo, valor] of Object.entries(changes)) {
+    if (valor === undefined || valor === null) continue;
+    if (NAO_E_PEDIDO_SOZINHO.has(campo)) continue;
+    if (CAMPOS_DE_TEXTO.has(campo)) {
+      if (hasMaterialContent(typeof valor === 'string' ? valor : null)) return true;
+      continue;
+    }
+    if (typeof valor === 'string' && valor.trim().length > 0) return true;
+    if (Array.isArray(valor) && valor.length > 0) return true;
+    if (typeof valor === 'object' && Object.keys(valor as object).length > 0) return true;
+    if (typeof valor === 'number' || typeof valor === 'boolean') return true;
+  }
+  return false;
 }
 
 /** C.2/F-05: normalização determinística pra comparar títulos (dedup de create). */

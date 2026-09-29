@@ -61,7 +61,7 @@ Responda SOMENTE com um JSON no formato:
 {
   "intent": "read_tasks" | "get_task" | "create_task" | "update_task" | "comment_task" | "delete_task" | "analyze_tasks",
   "target": { "resourceType": "CLICKUP_TASK", "resourceId": "<id ou null>" } | null,
-  "changes": { "title"?, "description"?, "dueDate"?, "startDate"?, "timeEstimate"?, "assignee"?, "assigneeOperation"?, "status"?, "priority"?, "addTags"?, "removeTags"?, "customFields"?, "checklistName"?, "checklistItems"?, "dependsOnTaskId"?, "dependencyOfTaskId"?, "parentTaskId"?, "replyToCommentId"?, "comment"? } | null,
+  "changes": { "title"?, "description"?, "dueDate"?, "startDate"?, "timeEstimate"?, "assignee"?, "assigneeOperation"?, "status"?, "priority"?, "addTags"?, "removeTags"?, "customFields"?, "checklistName"?, "checklistItems"?, "dependsOnTaskId"?, "dependencyOfTaskId"?, "parentTaskId"?, "replyToCommentId"?, "addWatchers"?, "removeWatchers"?, "alsoInClient"?, "timeSpent"?, "comment"? } | null,
   "requestedCardinality": <número de ENTIDADES que o pedido pede — nunca o número de atributos/linhas do briefing>,
   "reasoning": "<explicação curta e auditável>"
 }
@@ -70,6 +70,9 @@ Regras que não se negociam:
 - "cria um título pra ela" / "cria um briefing nessa" / "atualiza X" sobre um recurso que já existe no estado da conversa é update_task, NUNCA create_task.
 - "cria uma task nova" é create_task.
 - "apaga essa task" / "exclui essa demanda" / "deleta ela" é delete_task, NUNCA update_task — apagar não é um tipo de atualização.
+- SEGUIDOR não é RESPONSÁVEL. "avisa a Tammy dessa task", "põe a Tammy como seguidora", "deixa ela acompanhando" vai em addWatchers — quem segue recebe notificação e NÃO fica encarregado do trabalho. Só use assignee quando o pedido entrega a execução pra pessoa.
+- "coloca essa task também na lista da Colormaq" vai em alsoInClient com o nome do cliente. NUNCA diga que MOVEU: o ClickUp não move task de lista, só adiciona numa segunda.
+- HORAS TRABALHADAS ("apontei 2h nessa", "lança 30min") vão em timeSpent. Diferente de timeEstimate, que é a previsão.
 - TAGS vão em addTags/removeTags ("marca com urgente-cliente", "tira a tag rascunho"). Tag é rótulo livre; não confunda com status nem com prioridade.
 - DATA DE INÍCIO ("começa segunda", "start na quarta") vai em startDate; prazo/entrega/vencimento continua em dueDate. São campos diferentes.
 - ESTIMATIVA de esforço ("estima 2h", "leva meio dia") vai em timeEstimate, em linguagem natural — quem converte é o executor.

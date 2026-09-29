@@ -1,7 +1,10 @@
 import {
   addChecklistItem,
   addTaskDependency,
+  addTaskToList,
   addTaskTag,
+  registrarTempo,
+  updateTaskWatchers,
   createChecklist,
   getTask,
   listCustomFields,
@@ -81,6 +84,19 @@ export interface TaskUpdateFields {
   /** Dependência: esta task espera a outra / a outra espera esta. */
   dependsOnTaskId?: string;
   dependencyOfTaskId?: string;
+  /* --- 28/09/2026, conferido endpoint a endpoint contra o ClickUp real --- */
+  /** Nomes de quem passa a SEGUIR a task (notificação sem virar responsável). */
+  addWatcherNames?: string[];
+  removeWatcherNames?: string[];
+  /**
+   * Lista onde a task passa a aparecer TAMBÉM. Não é mover: o ClickUp v2 não
+   * move, e recusa (400) remover a task da lista de origem — ver
+   * addTaskToList em clickup-client.ts.
+   */
+  addToListId?: string;
+  addToListName?: string;
+  /** Apontamento de horas: {inicioMs, duracaoMs}. */
+  tempo?: { inicioMs: number; duracaoMs: number; descricao?: string };
 }
 
 interface FieldOutcome {
@@ -515,6 +531,56 @@ export async function executeTaskUpdate(params: {
       const detail = error instanceof Error ? error.message : String(error);
       record('clickup.create_checklist', `${nome} -> ${taskId}`, false, detail);
       outcomes.push({ field: 'checklist', label: `☑️ Checklist "${nome}"`, changed: false, skippedAsAlready: false, verified: false, error: detail });
+    }
+  }
+
+  for (const nome of fields.addWatcherNames ?? []) {
+    const r = await resolveMemberByName(config, nome).catch(() => null);
+    if (!r || r.status !== 'resolved') {
+      outcomes.push({ field: `watcher:${nome}`, label: `👀 Seguidor "${nome}"`, changed: false, skippedAsAlready: false, verified: false, error: `não encontrei "${nome}" entre os membros do ClickUp` });
+      continue;
+    }
+    try {
+      await updateTaskWatchers(config, taskId, { add: [r.member.id] });
+      record('clickup.add_watcher', `${r.member.username} -> ${taskId}`, true);
+      escreveu = true;
+      // Sem `check` o read-back nunca confirma e a resposta acusa falso
+      // alarme: medido no ClickUp real — a Tammy ENTROU como seguidora e o
+      // Bento respondeu "escrito, mas a releitura não confirmou".
+      const seguidorId = r.member.id;
+      outcomes.push({ field: `watcher:${nome}`, label: `👀 Seguidor`, changed: true, skippedAsAlready: false, verified: false, error: null, check: (relida) => relida.watchers.some((w) => w.id === seguidorId) });
+    } catch (error) {
+      const d = error instanceof Error ? error.message : String(error);
+      record('clickup.add_watcher', `${nome} -> ${taskId}`, false, d);
+      outcomes.push({ field: `watcher:${nome}`, label: `👀 Seguidor "${nome}"`, changed: false, skippedAsAlready: false, verified: false, error: d });
+    }
+  }
+
+  if (fields.addToListId) {
+    const destino = fields.addToListName ?? fields.addToListId;
+    try {
+      await addTaskToList(config, taskId, fields.addToListId);
+      record('clickup.add_to_list', `${destino} -> ${taskId}`, true);
+      escreveu = true;
+      // "também" é a palavra certa: a task continua na lista de origem.
+      outcomes.push({ field: 'lista', label: `📋 Também na lista "${destino}"`, changed: true, skippedAsAlready: false, verified: false, error: null });
+    } catch (error) {
+      const d = error instanceof Error ? error.message : String(error);
+      record('clickup.add_to_list', `${destino} -> ${taskId}`, false, d);
+      outcomes.push({ field: 'lista', label: `📋 Também na lista "${destino}"`, changed: false, skippedAsAlready: false, verified: false, error: d });
+    }
+  }
+
+  if (fields.tempo) {
+    try {
+      await registrarTempo(config, config.teamId, { taskId, ...fields.tempo });
+      record('clickup.time_entry', `${fields.tempo.duracaoMs}ms -> ${taskId}`, true);
+      escreveu = true;
+      outcomes.push({ field: 'tempo', label: '⏲️ Horas apontadas', changed: true, skippedAsAlready: false, verified: false, error: null });
+    } catch (error) {
+      const d = error instanceof Error ? error.message : String(error);
+      record('clickup.time_entry', `-> ${taskId}`, false, d);
+      outcomes.push({ field: 'tempo', label: '⏲️ Horas apontadas', changed: false, skippedAsAlready: false, verified: false, error: d });
     }
   }
 

@@ -18,7 +18,7 @@ function task(over: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: 't1', name: 'Task', status: 'aberto', priority: null,
     dueDate: new Date(2026, 8, 30).getTime(), startDate: null, timeEstimate: null,
-    tags: [], checklists: [], listId: 'L1',
+    tags: [], checklists: [], watchers: [], listId: 'L1',
     assignees: [{ id: 1, username: 'Gui' }], description: '', attachments: [],
     ...over,
   };

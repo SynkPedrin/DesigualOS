@@ -79,3 +79,46 @@ describe('campo personalizado: o nome que a pessoa falou vira id real', () => {
     expect(ehFalhaDeCampo(r)).toBe(true);
   });
 });
+
+/**
+ * 28/09/2026 — tipos que faltavam. Múltipla escolha e data seguem a
+ * documentação do ClickUp; NÃO foram conferidos contra o workspace real
+ * porque ele só tem `number` e `short_text` hoje. O que está travado aqui é o
+ * FORMATO, que é onde o erro silencioso mora: mandar id solto num campo de
+ * múltipla faz o ClickUp aceitar e guardar errado.
+ */
+const CAMPOS_NOVOS: ClickUpCustomField[] = [
+  { id: 'f5', name: 'Etapas', type: 'labels', options: [{ id: 'a', name: 'Briefing' }, { id: 'b', name: 'Aprovação' }] },
+  { id: 'f6', name: 'Data de veiculação', type: 'date', options: [] },
+];
+
+describe('múltipla escolha e data', () => {
+  it('múltipla devolve LISTA de ids, não um id solto', () => {
+    const r = resolverCampoPersonalizado(CAMPOS_NOVOS, 'Etapas', 'Briefing, Aprovação');
+    expect(ehFalhaDeCampo(r)).toBe(false);
+    if (!ehFalhaDeCampo(r)) {
+      expect(r.value).toEqual(['a', 'b']);
+      expect(r.rotulo).toBe('Briefing, Aprovação');
+    }
+  });
+
+  it('múltipla com um valor só continua sendo lista', () => {
+    const r = resolverCampoPersonalizado(CAMPOS_NOVOS, 'Etapas', 'Briefing');
+    if (!ehFalhaDeCampo(r)) expect(r.value).toEqual(['a']);
+  });
+
+  it('uma opção inválida no meio reprova o campo inteiro — nada pela metade', () => {
+    const r = resolverCampoPersonalizado(CAMPOS_NOVOS, 'Etapas', 'Briefing, Inexistente');
+    expect(ehFalhaDeCampo(r)).toBe(true);
+    if (ehFalhaDeCampo(r)) expect(explicarFalhaDeCampo(r)).toContain('Inexistente');
+  });
+
+  it('data em ISO vira epoch ms', () => {
+    const r = resolverCampoPersonalizado(CAMPOS_NOVOS, 'Data de veiculação', '2026-10-05');
+    if (!ehFalhaDeCampo(r)) expect(new Date(r.value as number).getDate()).toBe(5);
+  });
+
+  it('texto que não é data é RECUSADO — filtro que mente é pior que campo vazio', () => {
+    expect(ehFalhaDeCampo(resolverCampoPersonalizado(CAMPOS_NOVOS, 'Data de veiculação', 'amanhã'))).toBe(true);
+  });
+});

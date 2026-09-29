@@ -360,3 +360,50 @@ describe('todo campo do plano conta como pedido de mudança', () => {
     expect(permite({ addTags: [], checklistItems: [] })).toBe(false);
   });
 });
+
+/**
+ * A enumeração de campos materiais falhou DUAS vezes em 28/09/2026 — priority
+ * e depois addWatchers —, sempre do mesmo jeito: campo novo no plano, lista
+ * aqui para trás, e o Bento respondendo "não identifiquei o que devo alterar"
+ * logo depois de ter entendido perfeitamente.
+ *
+ * A checagem passou a ser sobre o OBJETO. Este bloco garante que ela continue
+ * assim: um campo inventado agora, que nenhuma lista conhece, precisa valer.
+ */
+describe('campo novo vale sozinho, sem ninguém precisar lembrar', () => {
+  const alvo = { resourceType: 'CLICKUP_TASK' as const, resourceId: 'T1' };
+  const permite = (changes: Record<string, unknown>) =>
+    validateBentoAction(
+      action({ intent: 'update_task', target: alvo, changes: changes as never, requestedCardinality: 0 }),
+      emptyResourceState(),
+      basePolicyCtx,
+    ).allowed;
+
+  it.each([
+    ['seguidor', { addWatchers: ['Tammy'] }],
+    ['seguidor removido', { removeWatchers: ['Tammy'] }],
+    ['lista adicional', { alsoInClient: 'Colormaq' }],
+    ['horas apontadas', { timeSpent: '2h' }],
+  ])('%s autoriza a escrita', (_n, c) => {
+    expect(permite(c)).toBe(true);
+  });
+
+  it('um campo que ainda NÃO EXISTE também valeria — é o ponto', () => {
+    expect(permite({ campoQueAindaNaoInventamos: 'algum valor' })).toBe(true);
+  });
+
+  it('texto vazio ou placeholder continua NÃO sendo pedido', () => {
+    expect(permite({ title: '   ' })).toBe(false);
+    // O placeholder que o sistema reconhece é o que o planner poderia gerar
+    // ("não especificado"), não qualquer abreviação humana.
+    expect(permite({ description: 'não especificado' })).toBe(false);
+  });
+
+  it('operação de responsável SEM a pessoa continua sendo pergunta', () => {
+    expect(permite({ assigneeOperation: 'remove' })).toBe(false);
+  });
+
+  it('lista e objeto vazios não são pedido', () => {
+    expect(permite({ addTags: [], customFields: {} })).toBe(false);
+  });
+});
