@@ -79,6 +79,12 @@ export interface RespostaOperacionalParams {
   blocoCliente?: string | null;
   /** Bloco operacional do turno (lista de tasks que a API já resolveu). */
   contextoOperacional?: string | null;
+  /**
+   * Texto dos arquivos anexados no pedido — ata de reunião, briefing do
+   * cliente, apresentação. É FONTE, do mesmo nível do dossiê: entra junto com
+   * os números em vez de disputar com eles.
+   */
+  material?: string | null;
   escritor: (prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>;
   logger: Logger;
 }
@@ -99,7 +105,7 @@ export async function responderOperacional(params: RespostaOperacionalParams): P
    * base pra todo mundo. O bloco da API só entra quando não há estado.
    */
   const numeros = params.estadoDaOperacao ?? params.contextoOperacional ?? null;
-  const dados = [numeros, params.blocoCliente]
+  const dados = [numeros, params.material, params.blocoCliente]
     .filter((b): b is string => Boolean(b?.trim()))
     .join('\n\n');
 

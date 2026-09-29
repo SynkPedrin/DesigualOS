@@ -251,6 +251,12 @@ export interface BentoOpenAiCoreParams {
   /** Material que veio junto do pedido (print, arquivo). Vira anexo na task. */
   attachments?: TaskAttachmentInput[] | undefined;
   /**
+   * TEXTO dos arquivos anexados — ata de reunião, briefing do cliente. É
+   * FONTE do briefing, não só carga: era isto que faltava pra uma transcrição
+   * de uma hora deixar de virar "[CONFIRMAR: objetivo]".
+   */
+  materialLido?: string | null;
+  /**
    * Completador de texto sem ferramenta (`completeTextSafely`), usado só pelo
    * briefing pra ler o próprio pedido. Sem ele o briefing ainda sai — só não
    * recupera campo crítico escrito em prosa.
@@ -587,6 +593,7 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       requestedBy: params.userName ?? 'a operação',
       config,
       briefingWriter: params.briefingWriter,
+      materialLido: params.materialLido ?? null,
       attachments: params.attachments,
       logger: params.logger,
     }).catch((error: unknown) => {

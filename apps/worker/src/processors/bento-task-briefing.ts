@@ -1,7 +1,7 @@
 import type { Logger } from '@desigual-os/logging';
 import { uploadTaskAttachment, type ClickUpConfig } from '@desigual-os/tool-gateway';
 import { classifyDeliveryType, composeBriefing, pendingCriticalFields } from './briefing-composer';
-import { extractLabeledFacts, mergeFacts } from './briefing-facts';
+import { extractLabeledFacts, extractSectionFacts, mergeFacts } from './briefing-facts';
 import { retrieveBriefingContext } from './briefing-retrieval';
 import { evaluateBriefing } from './briefing-quality';
 import { costurar, elaborarBriefingSenior } from './briefing-senior';
@@ -51,6 +51,13 @@ export interface BuildTaskBriefingParams {
    */
   briefingWriter?: ((prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>) | undefined;
   attachments?: TaskAttachmentInput[] | undefined;
+  /**
+   * TEXTO dos arquivos anexados no pedido (ata de reunião, briefing do
+   * cliente). Entra como a fonte de MAIOR autoridade depois do próprio pedido:
+   * o que o cliente falou na reunião de ontem vale mais que o dossiê de meses
+   * atrás. Ver bento-documentos.ts.
+   */
+  materialLido?: string | null;
   logger: Logger;
 }
 
@@ -100,6 +107,23 @@ export async function buildTaskBriefing(params: BuildTaskBriefingParams): Promis
   const referencias = [...contexto.references];
   for (const anexo of params.attachments ?? []) {
     referencias.push(`${anexo.filename} (${anexo.url})`);
+  }
+
+  /**
+   * O MATERIAL ANEXADO É FONTE, e de alta autoridade: entra logo depois do
+   * pedido e antes do dossiê. Uma ata de reunião de ontem descreve a demanda
+   * melhor que um dossiê de meses atrás — e era exatamente isso que o briefing
+   * ignorava quando o anexo era só carga.
+   */
+  const doMaterial = params.materialLido
+    ? [
+        ...extractLabeledFacts(params.materialLido, 'material anexado ao pedido'),
+        ...extractSectionFacts(params.materialLido, 'material anexado ao pedido'),
+      ]
+    : [];
+  if (doMaterial.length > 0) {
+    contexto.facts = mergeFacts(contexto.facts.slice(0, 1), doMaterial, contexto.facts);
+    contexto.sourcesConsulted.push('material anexado ao pedido');
   }
 
   const composeInput = {

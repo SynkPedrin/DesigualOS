@@ -12,24 +12,25 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@desigual-os/agent-runtime": "workspace:*",
+    "@desigual-os/auth": "workspace:*",
     "@desigual-os/bento-core": "workspace:*",
-    "@desigual-os/openai-provider": "workspace:*",
     "@desigual-os/context-engine": "workspace:*",
     "@desigual-os/database": "workspace:*",
     "@desigual-os/logging": "workspace:*",
     "@desigual-os/node-protocol": "workspace:*",
+    "@desigual-os/openai-provider": "workspace:*",
     "@desigual-os/orchestrator": "workspace:*",
     "@desigual-os/otto": "workspace:*",
+    "@desigual-os/otto-motion": "workspace:*",
     "@desigual-os/router": "workspace:*",
     "@desigual-os/tool-gateway": "workspace:*",
     "@desigual-os/types": "workspace:*",
     "bullmq": "^5.13.2",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.33.0",
-    "@desigual-os/agent-runtime": "workspace:*",
-    "sharp": "^0.33.5",
-    "@desigual-os/auth": "workspace:*",
-    "@desigual-os/otto-motion": "workspace:*"
+    "jszip": "^3.10.1",
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",

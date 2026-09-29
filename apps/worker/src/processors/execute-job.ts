@@ -66,6 +66,7 @@ import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-ex
 import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama } from './bento-panorama';
 import { ehPerguntaOperacional, responderOperacional } from './bento-resposta-operacional';
+import { documentosEmTexto, lerDocumentos } from './bento-documentos';
 import { queryOperationTasks } from '@desigual-os/tool-gateway';
 import { resolveWriteTarget } from './write-target';
 import { clearResourceFocusIfDeleted } from './bento-resource-state';
@@ -1306,6 +1307,33 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     // volta (achado ao vivo no teste de aceite).
     const pendingDelete = !guardedResult && agent === 'bento' && conversationId ? await hasPendingDeleteConfirmation(conversationId).catch(() => false) : false;
     /**
+     * O MATERIAL ANEXADO VIRA FONTE DO TURNO (29/09/2026).
+     *
+     * Até aqui o anexo era CARGA: subia pra task e ninguém abria. Uma
+     * transcrição de reunião de uma hora entrava no ClickUp e o briefing
+     * continuava dizendo "[CONFIRMAR: objetivo]" — com o objetivo escrito na
+     * ata, a dois cliques. Agora o texto é extraído e entra no turno como
+     * fonte, do lado do dossiê. Ver bento-documentos.ts.
+     *
+     * Lido uma vez e reusado: a leitura custa download + parse, e repetir isso
+     * no caminho de escrita E no de resposta pagaria duas vezes pelo mesmo.
+     */
+    const documentosDoTurno =
+      agent === 'bento' && attachments?.length
+        ? await lerDocumentos(
+            attachments.map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
+            logger,
+          ).catch(() => [])
+        : [];
+    const blocoDeDocumentos = documentosEmTexto(documentosDoTurno);
+    if (blocoDeDocumentos) {
+      logger.info(
+        { lidos: documentosDoTurno.filter((d) => d.texto).length, total: documentosDoTurno.length },
+        '[bento-documentos] material do pedido lido',
+      );
+    }
+
+    /**
      * PERGUNTA SOBRE A OPERAÇÃO responde com GPT (29/09/2026).
      *
      * Criar e alterar já usavam GPT; responder saía pelo `bento-qa` externo,
@@ -1333,6 +1361,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         pergunta: message,
         estadoDaOperacao: estado,
         contextoOperacional: operationalContext ?? null,
+        material: blocoDeDocumentos,
         escritor: async (prompt, opts) =>
           (await completeTextSafely(prompt, logger, opts)) ?? (await completeTextViaOpenAI(prompt, logger, opts)),
         logger,
@@ -1461,6 +1490,9 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         requesterName: jobUser?.name ?? null,
         requesterClickUpEmail: jobUser?.clickupEmail ?? null,
         attachments: (attachments ?? []).map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
+        // Ata de reunião, briefing do cliente, apresentação: o TEXTO do que foi
+        // anexado entra como fonte do briefing, não só como arquivo na task.
+        materialLido: blocoDeDocumentos,
         // Ordem deliberada: Claude quando há chave, senão OpenAI (a conta que a
         // operação mandou usar), e o Ollama local só como rede de segurança —
         // ele escreve, mas não respeita a proibição de inventar dado.

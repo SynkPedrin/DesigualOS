@@ -9,7 +9,9 @@ import { cn } from '@/lib/utils';
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_ATTACHMENTS = 10;
-const ATTACHMENT_ACCEPT = 'image/*,application/pdf,.md,.txt';
+/** Precisa espelhar `isAcceptedUpload` da API: divergir faz a pessoa escolher
+ * um arquivo que o servidor recusa depois de subir. */
+const ATTACHMENT_ACCEPT = 'image/*,application/pdf,.md,.txt,.csv,.vtt,.srt,.docx,.pptx';
 
 /** Um anexo em voo: some da lista se der erro, vira `ChatAttachmentWire` quando o upload termina. */
 interface PendingAttachment {
@@ -208,7 +210,7 @@ export function Composer({
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || pendingAttachments.length >= MAX_ATTACHMENTS}
           aria-label="Anexar arquivos"
-          title="Anexar até 10 arquivos (imagem, PDF, .md ou .txt, até 25MB cada) ou colar com Ctrl/Cmd+V"
+          title="Anexar até 10 arquivos (imagem, PDF, Word, PowerPoint, .md, .txt, .csv, legenda — até 25MB cada) ou colar com Ctrl/Cmd+V"
           className={cn(
             'flex shrink-0 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-40',
             hero ? 'size-10' : 'size-9',
