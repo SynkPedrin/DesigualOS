@@ -321,6 +321,24 @@ E a conclusão de MÉTODO, que vale para qualquer camada nova: **medir o preench
 
 O que saiu disso: `apps/worker/src/processors/bento-arvore.ts` monta a árvore, apura frentes e diagnostica causa de atraso a partir do `parent` que já vinha e era descartado no parse. Saída real da Cosentino: *"19 estão na mesma frente Europa V (141 de 173 já entregues); 8 não têm responsável; 7 dependem de Tammy em 4 frentes; 5 estão aguardando aprovação"*. E ele se proíbe de afirmar dependência entre tarefas — porque esse dado, esse sim, não existe.
 
+### C-16 — Instrumento que engole exceção mente na direção errada · MÉTODO · P1
+
+Em 29/09/2026, entre 10h e 15h, **três instrumentos de medição diferentes relataram falha onde o sistema tinha funcionado**:
+
+| Instrumento | O que engoliu | Como apareceu |
+|---|---|---|
+| bateria de inteligência | lia `status: completed` antes de o passo com a resposta estar legível | "0ch, cobertura 0/2" com a resposta correta gravada no banco |
+| harness de personas (Playwright) | `.catch(() => false)` no clique do chip de agente; o locator casava várias conversas e o strict mode lançava | teste seguia sem agente escolhido e a falha de roteamento aparecia como bug do Bento |
+| read-back de escrita | `startDate === alvo`, igualdade estrita onde o ClickUp normaliza a hora | "escrito, mas a releitura não confirmou" sobre escrita que funcionou |
+
+Os três têm a mesma forma e o mesmo custo: transformam **"não consegui medir"** em **"medi, e está ruim"**. E as duas coisas exigem reações opostas — a primeira pede consertar o instrumento, a segunda pede consertar o sistema. Um dia inteiro de caça a regressão inexistente sai daí.
+
+**A regra prática, formulada pela sessão que cometeu dois dos três:** instrumento que engole exceção mente na direção errada. Um medidor pode falhar em silêncio ou pode falhar alto; falhar em silêncio parece conservador e não é, porque o silêncio é lido como medição negativa.
+
+Isto não é uma observação sobre disciplina de quem escreve teste. É a mesma classe do **C-11 do diagnóstico forense** — 50 catches silenciosos no caminho do Otto, perda de até 66% do contexto sem uma linha de log. O sistema faz isso com dado; nós fizemos isso com medição. O defeito não estava no cuidado de ninguém: estava em `catch` vazio ser mais curto de escrever que `catch` que registra.
+
+E vale o registro honesto de que os dois auditores caíram, no mesmo dia, exatamente na classe que estavam auditando — esta sessão em C-15 ("a busca não devolve, logo a fonte não tem"), a outra aqui. Isso é dado sobre a classe do defeito, não sobre quem escreveu.
+
 ### C-12 — O "shared brain" está morto · ARCHITECTURE · P2
 
 `agent_messages` (A2A) tem **6 linhas**, todas de 16-17/09/2026, todas `CONTEXT_REQUEST` entre Bento e Otto. Nada desde então.
