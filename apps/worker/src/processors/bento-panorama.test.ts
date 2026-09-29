@@ -167,7 +167,7 @@ describe('estado da operação como contexto de todo turno', () => {
   beforeEach(() => __limparCacheDoEstado());
 
   it('apura uma vez e REUSA — o segundo turno não paga nada', async () => {
-    const buscar = vi.fn(async () => [task({ dueDate: dia(-1) })]);
+    const buscar = vi.fn(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }));
     const t1 = await estadoDaOperacaoEmTexto(buscar, HOJE);
     const t2 = await estadoDaOperacaoEmTexto(buscar, new Date(HOJE.getTime() + 60_000));
     expect(buscar).toHaveBeenCalledTimes(1);
@@ -175,14 +175,14 @@ describe('estado da operação como contexto de todo turno', () => {
   });
 
   it('depois do TTL, apura de novo', async () => {
-    const buscar = vi.fn(async () => [task()]);
+    const buscar = vi.fn(async () => ({ tasks: [task()], truncated: false }));
     await estadoDaOperacaoEmTexto(buscar, HOJE);
     await estadoDaOperacaoEmTexto(buscar, new Date(HOJE.getTime() + 10 * 60_000));
     expect(buscar).toHaveBeenCalledTimes(2);
   });
 
   it('o bloco traz número apurado e proíbe inventar', async () => {
-    const t = await estadoDaOperacaoEmTexto(async () => [task({ dueDate: dia(-1) })], HOJE);
+    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
     expect(t).toContain('apurado do ClickUp');
     expect(t).toContain('Atrasadas: 1');
     expect(t).toContain('NÃO invente número');
@@ -194,7 +194,7 @@ describe('estado da operação como contexto de todo turno', () => {
   });
 
   it('falha depois de um sucesso serve o último estado conhecido, em vez de nada', async () => {
-    await estadoDaOperacaoEmTexto(async () => [task({ dueDate: dia(-1) })], HOJE);
+    await estadoDaOperacaoEmTexto(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
     const depois = await estadoDaOperacaoEmTexto(
       async () => { throw new Error('502'); },
       new Date(HOJE.getTime() + 10 * 60_000),
@@ -203,7 +203,7 @@ describe('estado da operação como contexto de todo turno', () => {
   });
 
   it('operação vazia não vira bloco — não há o que dizer', async () => {
-    expect(await estadoDaOperacaoEmTexto(async () => [], HOJE)).toBeNull();
+    expect(await estadoDaOperacaoEmTexto(async () => ({ tasks: [], truncated: false }), HOJE)).toBeNull();
   });
 });
 
@@ -211,14 +211,14 @@ describe('número truncado é declarado, nunca apresentado como total', () => {
   it('batendo no teto, o bloco avisa que é uma fatia', async () => {
     __limparCacheDoEstado();
     const muitas = Array.from({ length: 500 }, () => task({ dueDate: dia(-1) }));
-    const t = await estadoDaOperacaoEmTexto(async () => muitas, HOJE);
-    expect(t).toContain('teto de 500');
+    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: muitas, truncated: true }), HOJE);
+    expect(t).toContain('truncada');
     expect(t).toContain('FATIA');
   });
 
   it('abaixo do teto, nada de ressalva — o número é o total', async () => {
     __limparCacheDoEstado();
-    const t = await estadoDaOperacaoEmTexto(async () => [task({ dueDate: dia(-1) })], HOJE);
+    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
     expect(t).not.toContain('FATIA');
   });
 });

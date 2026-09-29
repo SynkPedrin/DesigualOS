@@ -86,7 +86,24 @@ function meiaNoite(agora: Date): number {
  * Apura os números. Determinístico de ponta a ponta: mesma entrada, mesma
  * saída, e qualquer linha daqui é conferível abrindo o ClickUp.
  */
-export function apurarMetricas(tasks: OperationTask[], agora: Date = new Date()): MetricasDaOperacao {
+/**
+ * TAREFA ENTREGUE NÃO ESTÁ ATRASADA — e isto custou a credibilidade do número.
+ *
+ * Medido na auditoria de 29/09/2026 contra o workspace real: das 1.222 tarefas,
+ * 811 estão `done`. Contando todas, "atrasadas" dava 812; contando só as
+ * abertas, dá 146 — exatamente o número que o outro caminho do sistema
+ * respondia. Duas respostas diferentes pra mesma pergunta destrói a confiança
+ * mais rápido que resposta nenhuma.
+ *
+ * O ClickUp classifica o status em `open`, `custom` e `done`/`closed`. Só as
+ * duas primeiras são trabalho em aberto.
+ */
+function estaAberta(t: OperationTask): boolean {
+  return t.statusType !== 'done' && t.statusType !== 'closed';
+}
+
+export function apurarMetricas(todas: OperationTask[], agora: Date = new Date()): MetricasDaOperacao {
+  const tasks = todas.filter(estaAberta);
   const hoje = meiaNoite(agora);
   const fimDoDia = hoje + DIA_MS;
   const fimDaSemana = hoje + 7 * DIA_MS;
@@ -271,7 +288,7 @@ export function panoramaEmResposta(p: Panorama): string {
  */
 const TTL_ESTADO_MS = Number(process.env.BENTO_ESTADO_TTL_MS ?? 180_000);
 
-let cache: { em: number; texto: string } | null = null;
+let cache: { em: number; texto: string; tasks: OperationTask[] } | null = null;
 
 /** Só pra teste: zera o cache entre casos. */
 export function __limparCacheDoEstado(): void {
@@ -279,32 +296,48 @@ export function __limparCacheDoEstado(): void {
 }
 
 /**
- * Teto da consulta. Bater nele significa que os números descrevem uma FATIA,
- * e um número truncado apresentado como total é pior que nenhum número.
+ * As tarefas que sustentam o estado em cache. Existe pra que quem precisar
+ * olhar as tarefas de novo no mesmo turno — o mapa de frentes do cliente, por
+ * exemplo — não pague uma segunda varredura do ClickUp. Vazio quando o estado
+ * ainda não foi apurado neste TTL: quem chama decide se vale buscar.
  */
-export const TETO_DE_TASKS = 500;
+export function tasksDoEstadoEmCache(): OperationTask[] {
+  return cache?.tasks ?? [];
+}
+
+/**
+ * A consulta ao ClickUp diz se ela mesma foi truncada (`truncated`). A versão
+ * anterior adivinhava isso pelo TAMANHO — "passou de 500, deve estar cortado" —
+ * e avisava "estes números descrevem uma fatia" numa consulta completa de 1.222
+ * tarefas. Ressalva falsa gasta a credibilidade da resposta inteira.
+ */
+export interface ConsultaDeTasks {
+  tasks: OperationTask[];
+  truncated: boolean;
+}
 
 export async function estadoDaOperacaoEmTexto(
-  buscar: () => Promise<OperationTask[]>,
+  buscar: () => Promise<ConsultaDeTasks>,
   agora: Date = new Date(),
 ): Promise<string | null> {
   if (cache && agora.getTime() - cache.em < TTL_ESTADO_MS) return cache.texto;
-  const tasks = await buscar().catch(() => null);
-  if (!tasks) return cache?.texto ?? null;
+  const consulta = await buscar().catch(() => null);
+  if (!consulta) return cache?.texto ?? null;
+  const tasks = consulta.tasks;
   if (tasks.length === 0) return null;
 
   const m = apurarMetricas(tasks, agora);
-  const truncado = tasks.length >= TETO_DE_TASKS;
+  const truncado = consulta.truncated;
   const texto = [
     truncado
-      ? `ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp — ATENÇÃO: a consulta bateu no teto de ${TETO_DE_TASKS} tarefas, então estes números descrevem uma FATIA da operação, não o total):`
-      : 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp, não é estimativa):',
+      ? 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp — ATENÇÃO: a consulta foi truncada, então estes números descrevem uma FATIA da operação, não o total):'
+      : 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp, só tarefas EM ABERTO; entregues não contam como atrasadas):',
     metricasEmTexto(m),
     '',
     'Use estes números quando a pergunta tocar a operação. NÃO invente número que não esteja aqui,',
     'e NÃO repita a lista inteira — cite só o que a pergunta pedir.',
     truncado ? 'Se citar um total, diga que é do recorte consultado, não da operação inteira.' : '',
   ].join('\n');
-  cache = { em: agora.getTime(), texto };
+  cache = { em: agora.getTime(), texto, tasks };
   return texto;
 }

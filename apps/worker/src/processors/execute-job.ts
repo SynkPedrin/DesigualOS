@@ -64,7 +64,8 @@ import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnR
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
 import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-executor';
 import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
-import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama } from './bento-panorama';
+import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama, tasksDoEstadoEmCache } from './bento-panorama';
+import { blocoDeFrentes } from './bento-padrao-de-task';
 import { ehPerguntaOperacional, montarAtaDeReuniao, pedeAtaDeReuniao, responderOperacional } from './bento-resposta-operacional';
 import { documentosEmTexto, lerDocumentos } from './bento-documentos';
 import { confirmacaoDeAprendizado, detectarRegraDeBriefing, registrarRegra } from './bento-aprendizado';
@@ -1380,8 +1381,9 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             )
               .map((c) => c.id)
               .filter((id): id is string => Boolean(id));
-            if (listas.length === 0) return [];
-            return (await queryOperationTasks(cfgAta, { listIds: listas, limit: 500 } as never)).tasks;
+            if (listas.length === 0) return { tasks: [], truncated: false };
+            const r = await queryOperationTasks(cfgAta, { listIds: listas });
+            return { tasks: r.tasks, truncated: r.truncated };
           }).catch(() => null)
         : null;
       const ata = await montarAtaDeReuniao({
@@ -1423,8 +1425,9 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             )
               .map((c) => c.id)
               .filter((id): id is string => Boolean(id));
-            if (listas.length === 0) return [];
-            return (await queryOperationTasks(cfgResposta, { listIds: listas, limit: 500 } as never)).tasks;
+            if (listas.length === 0) return { tasks: [], truncated: false };
+            const r = await queryOperationTasks(cfgResposta, { listIds: listas });
+            return { tasks: r.tasks, truncated: r.truncated };
           }).catch(() => null)
         : null;
       const resposta = await responderOperacional({
@@ -1952,10 +1955,27 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
                   )
                     .map((c) => c.id)
                     .filter((id): id is string => Boolean(id));
-                  if (listas.length === 0) return [];
-                  return (await queryOperationTasks(cfgEstado, { listIds: listas, limit: 500 } as never)).tasks;
+                  if (listas.length === 0) return { tasks: [], truncated: false };
+                  const r = await queryOperationTasks(cfgEstado, { listIds: listas });
+                  return { tasks: r.tasks, truncated: r.truncated };
                 }).catch(() => null);
                 if (estado) partesDeContexto.push(estado);
+
+                /**
+                 * O MAPA DE FRENTES DO CLIENTE (29/09/2026): o estado acima diz
+                 * QUANTAS tarefas existem; isto diz o que elas TÊM A VER entre
+                 * si, que era o buraco. Vem das mesmas tarefas já em cache —
+                 * nenhuma consulta a mais, nenhuma chamada de modelo.
+                 *
+                 * Sai null pra cliente sem convenção de nome, e é assim que tem
+                 * que ser: ver bento-padrao-de-task.ts.
+                 */
+                const nomeDoCliente = clienteDoTurno.clientName;
+                if (nomeDoCliente) {
+                  const doCliente = tasksDoEstadoEmCache().filter((t) => t.listName === nomeDoCliente);
+                  const frentes = blocoDeFrentes({ clientName: nomeDoCliente, tasks: doCliente });
+                  if (frentes) partesDeContexto.push(frentes);
+                }
               }
             }
           }
