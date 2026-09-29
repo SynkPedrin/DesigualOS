@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apurarMetricas, metricasEmTexto, montarPanorama, panoramaEmResposta } from './bento-panorama';
+import { apurarMetricas, metricasEmTexto, montarPanorama, numerosInventados, panoramaEmResposta } from './bento-panorama';
 
 type Escritor = (prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>;
 import type { OperationTask } from '@desigual-os/tool-gateway';
@@ -235,5 +235,73 @@ describe('ausência de dado nunca pode virar zero', () => {
     const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task()], truncated: false }), HOJE);
     expect(t).toContain('AUSÊNCIA DE DADO NÃO É ZERO');
     expect(t).toContain('R$ 0,00');
+  });
+});
+
+/**
+ * Medido no navegador com a persona de gerente de conta (29/09/2026): o gatilho
+ * conhecia "onde está o risco" e NÃO "o que está em risco", que é a forma mais
+ * natural de perguntar a mesma coisa. A pergunta caía no core, que responde
+ * listando tarefa, e a análise causal nunca era usada.
+ */
+describe('perguntar por risco, do jeito que se pergunta', () => {
+  it.each([
+    'o que está em risco na Cosentino?',
+    'o que ta em risco hoje',
+    'quais os riscos da operação',
+    'qual risco a gente tem',
+  ])('%s -> panorama', (m) => {
+    expect(pedePanorama(m)).toBe(true);
+  });
+
+  it('"risco" solto dentro de outra frase NÃO vira panorama', () => {
+    expect(pedePanorama('essa task é de risco alto, muda a prioridade')).toBe(false);
+    expect(pedePanorama('cria uma task de análise de risco')).toBe(false);
+  });
+});
+
+/**
+ * Medido no navegador em 29/09/2026, num turno que acertou todo o resto: a
+ * leitura fechou com "Redistribuir 13 das 24 peças atrasadas para Bruna
+ * Baldacini". O 24 é real, o 13 não existe em lugar nenhum dos números
+ * apurados. O prompt já proibia número novo — proibir não basta.
+ */
+describe('a leitura não pode inventar número', () => {
+  const APURADO = 'Atrasadas: 24\nSem responsável: 31\n- Bruna Baldacini: 0 / 1 / 1';
+
+  it('pega o caso real', () => {
+    expect(numerosInventados('Redistribuir 13 das 24 peças atrasadas para Bruna.', APURADO)).toEqual([13]);
+  });
+
+  it('número que está no apurado passa', () => {
+    expect(numerosInventados('São 24 atrasadas e 31 sem responsável.', APURADO)).toEqual([]);
+  });
+
+  it('data, percentual e numeração de lista não são invenção', () => {
+    expect(numerosInventados('1. Prazo 25/09, cobertura de 80%.', APURADO)).toEqual([]);
+  });
+
+  it('"apenas uma tarefa" não vira acusação de número falso', () => {
+    expect(numerosInventados('Bruna tem apenas 1 tarefa pendente.', APURADO)).toEqual([]);
+  });
+
+  it('leitura que insiste em inventar é DESCARTADA — os números bastam sozinhos', async () => {
+    const p = await montarPanorama({
+      tasks: [task({ dueDate: dia(-1) })],
+      escritor: vi.fn(async () => '## O QUE ESTÁ EM RISCO\n- redistribuir 137 peças'),
+      agora: HOJE,
+    });
+    expect(p.leitura).toBeNull();
+    expect(panoramaEmResposta(p)).toContain('Atrasadas: 1');
+  });
+
+  it('acertando na reespera, a leitura é mantida', async () => {
+    const escritor = vi
+      .fn<Escritor>()
+      .mockResolvedValueOnce('## O QUE ESTÁ EM RISCO\n- redistribuir 137 peças')
+      .mockResolvedValueOnce('## O QUE ESTÁ EM RISCO\n- a maioria das atrasadas está sem dono');
+    const p = await montarPanorama({ tasks: [task({ dueDate: dia(-1) })], escritor, agora: HOJE });
+    expect(escritor).toHaveBeenCalledTimes(2);
+    expect(p.leitura).toContain('a maioria');
   });
 });

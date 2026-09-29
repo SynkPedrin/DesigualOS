@@ -32,9 +32,16 @@ import type { OperationTask } from '@desigual-os/tool-gateway';
  * aparece em "muda o status dessa task" — se virasse gatilho, um pedido de
  * escrita responderia com relatório, que é o pior tipo de erro aqui: parece
  * que funcionou e nada foi feito.
+ *
+ * "O QUE ESTÁ EM RISCO" entrou depois (29/09/2026), e a falta dela é
+ * instrutiva: o gatilho conhecia "onde está o risco" e não a forma mais natural
+ * de perguntar a mesma coisa. Medido no navegador, com a persona de gerente de
+ * conta — a pergunta ia parar no core, que responde listando tarefa, e a
+ * análise causal (bento-arvore.ts) nunca era usada. Frase inteira, como o resto
+ * da lista: "risco" solto pegaria "essa task é de risco".
  */
 const PEDE_PANORAMA_RE =
-  /(^|\s)(me atualiz[ae]|me p[õo]e a par|panorama|status geral|vis[ãa]o geral|como (est[aá]|ta|tá|estamos|anda|t[áa]) (a )?(opera[çc][ãa]o|as coisas|tudo|o time)|o que (est[aá]|ta|tá) (pegando|travado|atrasado)|onde (est[aá]|ta|tá) o risco|resumo da opera[çc][ãa]o)/i;
+  /(^|\s)(me atualiz[ae]|me p[õo]e a par|panorama|status geral|vis[ãa]o geral|como (est[aá]|ta|tá|estamos|anda|t[áa]) (a )?(opera[çc][ãa]o|as coisas|tudo|o time)|o que (est[aá]|ta|tá) (pegando|travado|atrasado)|onde (est[aá]|ta|tá) o risco|o que (est[aá]|ta|tá) em risco|qua(l|is) (os |o )?riscos?|resumo da opera[çc][ãa]o)/i;
 
 export function pedePanorama(mensagem: string): boolean {
   return PEDE_PANORAMA_RE.test(mensagem);
@@ -244,6 +251,37 @@ export interface Panorama {
   leitura: string | null;
 }
 
+/**
+ * Números que a LEITURA inventou: aparecem no texto do modelo e não em nenhum
+ * lugar dos números apurados.
+ *
+ * Medido no navegador em 29/09/2026, num turno que acertou todo o resto: a
+ * leitura fechou com "Redistribuir 13 das 24 peças atrasadas para Bruna
+ * Baldacini". O 24 é real; o 13 não existe em lugar nenhum. O prompt já proibia
+ * número novo desde sempre — proibir não basta, porque quem escreve a leitura é
+ * um modelo e o custo de um número inventado é a confiança na resposta inteira.
+ *
+ * Fica de fora o que não é contagem de operação: ano de quatro dígitos, data
+ * (25/09), posição de lista ("1." no começo da linha) e percentual. Zero e um
+ * também passam — aparecem em "apenas uma tarefa" sem serem afirmação de
+ * volume.
+ */
+export function numerosInventados(leitura: string, numerosApurados: string): number[] {
+  const semDatas = leitura
+    .replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ')
+    .replace(/\b\d+\s*%/g, ' ')
+    .replace(/^\s*\d+[.)]\s/gm, ' ');
+  const noApurado = new Set((numerosApurados.match(/\d+/g) ?? []).map(Number));
+  const vistos = new Set<number>();
+  for (const bruto of semDatas.match(/\d+/g) ?? []) {
+    const n = Number(bruto);
+    if (n <= 1 || n >= 1900) continue;
+    if (noApurado.has(n)) continue;
+    vistos.add(n);
+  }
+  return [...vistos];
+}
+
 export async function montarPanorama(params: PanoramaParams): Promise<Panorama> {
   const metricas = apurarMetricas(params.tasks, params.agora ?? new Date());
   const numeros = metricasEmTexto(metricas);
@@ -252,7 +290,24 @@ export async function montarPanorama(params: PanoramaParams): Promise<Panorama> 
   // seria gastar pra produzir enrolação.
   if (metricas.total === 0) return { metricas, numeros, leitura: null };
 
-  const leitura = await params.escritor(`${BARRA_GERENTE}\n\nNÚMEROS:\n${numeros}`, { maxTokens: 900 }).catch(() => null);
+  const prompt = `${BARRA_GERENTE}\n\nNÚMEROS:\n${numeros}`;
+  let leitura = await params.escritor(prompt, { maxTokens: 900 }).catch(() => null);
+
+  // Uma retentativa quando a leitura inventa número, e desistir dela se a
+  // segunda também inventar: os números sozinhos já são uma resposta honesta, e
+  // leitura com número falso contamina o bloco inteiro que está certo.
+  if (leitura && numerosInventados(leitura, numeros).length > 0) {
+    const inventados = numerosInventados(leitura, numeros);
+    leitura = await params
+      .escritor(
+        `${prompt}\n\nA versão anterior citou números que NÃO estão na lista acima (${inventados.join(', ')}). ` +
+          'Reescreva usando exclusivamente os números dados. Se precisar falar de uma quantidade que não está lá, ' +
+          'descreva sem número ("parte das atrasadas", "a maioria").',
+        { maxTokens: 900 },
+      )
+      .catch(() => null);
+    if (leitura && numerosInventados(leitura, numeros).length > 0) leitura = null;
+  }
   return { metricas, numeros, leitura: leitura?.trim() || null };
 }
 
