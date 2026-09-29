@@ -336,6 +336,16 @@ export async function estadoDaOperacaoEmTexto(
     '',
     'Use estes números quando a pergunta tocar a operação. NÃO invente número que não esteja aqui,',
     'e NÃO repita a lista inteira — cite só o que a pergunta pedir.',
+    /**
+     * Medido na bateria de uso livre (29/09/2026). Perguntaram quanto a agência
+     * faturou com um cliente; ele explicou certo que o ClickUp não tem campo de
+     * receita e concluiu: "Logo, R$ 0,00 faturado registrado no sistema."
+     *
+     * Quem bate o olho lê que o cliente faturou zero. Transformar ausência de
+     * dado em número é pior que não responder, porque vira fato citável.
+     */
+    'AUSÊNCIA DE DADO NÃO É ZERO. Se o sistema não guarda aquilo (faturamento, custo, horas, receita, contrato),',
+    'diga que não é um dado que você tem — nunca escreva 0, R$ 0,00 ou "nenhum" para dizer "não sei".',
     truncado ? 'Se citar um total, diga que é do recorte consultado, não da operação inteira.' : '',
   ].join('\n');
   cache = { em: agora.getTime(), texto, tasks };

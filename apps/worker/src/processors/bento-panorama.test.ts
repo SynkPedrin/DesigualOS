@@ -20,7 +20,7 @@ function task(over: Partial<OperationTask> = {}): OperationTask {
   return {
     id: 't', name: 'Task', description: null, status: 'aberto', statusType: 'open',
     priority: null, url: null, dueDate: dia(2), startDate: null, createdAt: null,
-    updatedAt: HOJE.getTime(), assignees: ['Gui'], tags: [], listId: 'L1',
+    updatedAt: HOJE.getTime(), assignees: ['Gui'], tags: [], parentId: null, topLevelParentId: null, listId: 'L1',
     listName: 'D. Carvalho', folderName: null, spaceId: null, ...over,
   };
 }
@@ -220,5 +220,20 @@ describe('número truncado é declarado, nunca apresentado como total', () => {
     __limparCacheDoEstado();
     const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
     expect(t).not.toContain('FATIA');
+  });
+});
+
+/**
+ * Bateria de uso livre, 29/09/2026: "quanto a gente faturou com esse cliente?"
+ * voltou com a explicação certa (o ClickUp não guarda receita) e a conclusão
+ * errada — "Logo, R$ 0,00 faturado registrado no sistema". Quem lê rápido
+ * entende que o cliente faturou zero, e isso vira fato citável.
+ */
+describe('ausência de dado nunca pode virar zero', () => {
+  it('o bloco proíbe explicitamente responder "não sei" com um número', async () => {
+    __limparCacheDoEstado();
+    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task()], truncated: false }), HOJE);
+    expect(t).toContain('AUSÊNCIA DE DADO NÃO É ZERO');
+    expect(t).toContain('R$ 0,00');
   });
 });

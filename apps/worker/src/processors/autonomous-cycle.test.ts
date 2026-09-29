@@ -18,7 +18,7 @@ function task(over: Partial<OperationTask> = {}): OperationTask {
   return {
     id: 't1', name: 'Task', description: null, status: 'aberto', statusType: 'open', priority: null,
     url: null, dueDate: null, startDate: null, createdAt: null, updatedAt: null,
-    assignees: ['Ana'], tags: [], listId: QA, listName: 'QA', folderName: null, spaceId: null,
+    assignees: ['Ana'], tags: [], parentId: null, topLevelParentId: null, listId: QA, listName: 'QA', folderName: null, spaceId: null,
     ...over,
   };
 }

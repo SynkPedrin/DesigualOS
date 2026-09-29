@@ -49,6 +49,24 @@ const teamTaskSchema = z.object({
     .array(z.object({ id: z.number().nullish(), username: z.string().nullish(), email: z.string().nullish() }))
     .nullish(),
   tags: z.array(z.object({ name: z.string() })).nullish(),
+  /**
+   * A ÁRVORE. Medida no workspace real em 29/09/2026: 84% a 91% das tarefas
+   * abertas dos três maiores clientes são subtarefa, e `dependencies` e
+   * `linked_tasks` vêm ZERADOS em todos eles — a agência não usa dependência
+   * do ClickUp, usa hierarquia de subtarefa.
+   *
+   * O campo sempre veio na listagem e era descartado aqui, então o sistema era
+   * cego para a única relação entre tarefas que esta operação de fato mantém:
+   *
+   *   DC_Aprosoja
+   *   ├─ DC_Aprosoja_Captação            pronto
+   *   ├─ DC_Aprosoja_Vídeo Painel de Led pronto
+   *   │  ├─ _Bases    (Gui)
+   *   │  └─ _Edição   (Celso)
+   *   └─ DC_Aprosoja_Edições             aberto, 7 peças
+   */
+  parent: z.string().nullish(),
+  top_level_parent: z.string().nullish(),
   list: z.object({ id: z.string().nullish(), name: z.string().nullish() }).nullish(),
   folder: z.object({ id: z.string().nullish(), name: z.string().nullish() }).nullish(),
   space: z.object({ id: z.string().nullish() }).nullish(),
@@ -75,6 +93,10 @@ export interface OperationTask {
   updatedAt: number | null;
   assignees: string[];
   tags: string[];
+  /** Id da tarefa-mãe. `null` = está na raiz da lista. Ver nota no schema. */
+  parentId: string | null;
+  /** Id da raiz da árvore, quando o ClickUp a informa. */
+  topLevelParentId: string | null;
   listId: string | null;
   listName: string | null;
   folderName: string | null;
@@ -145,6 +167,8 @@ function normalizeTask(raw: z.infer<typeof teamTaskSchema>): OperationTask {
     updatedAt: toNumberOrNull(raw.date_updated),
     assignees: (raw.assignees ?? []).map((a) => a.username || a.email || '').filter(Boolean),
     tags: (raw.tags ?? []).map((t) => t.name),
+    parentId: raw.parent ?? null,
+    topLevelParentId: raw.top_level_parent ?? null,
     listId: raw.list?.id ?? null,
     listName: raw.list?.name ?? null,
     folderName: raw.folder?.name ?? null,

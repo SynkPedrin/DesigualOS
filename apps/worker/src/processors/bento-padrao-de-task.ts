@@ -188,6 +188,13 @@ export function agruparEmFrentes(
  *
  * Devolve null quando não há convenção: bloco vazio é melhor que bloco que
  * afirma um padrão que a operação não tem.
+ *
+ * ELE NÃO LISTA MAIS AS FRENTES. Listava, por prefixo de nome, até a medição de
+ * 29/09/2026 mostrar que a operação mantém uma árvore de subtarefa de verdade
+ * (84% a 91% das tarefas) — ver bento-arvore.ts. Duas definições de "frente"
+ * convivendo no mesmo prompt faziam o modelo citar agrupamento que a árvore não
+ * confirma, e frente inventada é pior que frente nenhuma. Aqui ficou só o que
+ * a árvore NÃO sabe dizer: como a equipe escreve o nome de uma task nova.
  */
 export function blocoDeFrentes(params: {
   clientName: string;
@@ -198,7 +205,6 @@ export function blocoDeFrentes(params: {
   const convencao = inferirConvencao(abertas.map((t) => t.name));
   if (!convencao) return null;
 
-  const frentes = agruparEmFrentes(abertas, convencao, params.agora ?? new Date()).slice(0, 6);
   const linhas: string[] = [
     `COMO A EQUIPE NOMEIA AS TASKS DE ${params.clientName.toUpperCase()} (padrão observado em ${convencao.seguem} de ${convencao.total} tarefas abertas):`,
     `Prefixo "${convencao.prefixo}", segmentos separados por "${convencao.separador}", do mais geral pro mais específico.`,
@@ -207,19 +213,5 @@ export function blocoDeFrentes(params: {
     'Ao CRIAR task deste cliente, use esta forma. Nada de verbo na frente ("Criar ...") e nada de repetir o nome do cliente no fim.',
   ];
 
-  if (frentes.length > 0) {
-    linhas.push(
-      '',
-      'FRENTES EM ANDAMENTO (tarefas que compartilham prefixo são a mesma entrega; o ClickUp não agrupa isso, foi apurado do nome):',
-      ...frentes.map(
-        (f) =>
-          `- ${f.nome}: ${f.quantas} tarefa(s)` +
-          (f.atrasadas > 0 ? `, ${f.atrasadas} atrasada(s)` : '') +
-          (f.semDono > 0 ? `, ${f.semDono} sem responsável` : '') +
-          (f.donos.length > 0 ? ` · ${f.donos.join(', ')}` : ''),
-      ),
-      'Quando a pergunta for sobre uma task, diga a que frente ela pertence. Não invente frente que não esteja nesta lista.',
-    );
-  }
   return linhas.join('\n');
 }

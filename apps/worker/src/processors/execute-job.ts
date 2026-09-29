@@ -66,6 +66,7 @@ import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-ex
 import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama, tasksDoEstadoEmCache } from './bento-panorama';
 import { blocoDeFrentes } from './bento-padrao-de-task';
+import { blocoRelacional } from './bento-arvore';
 import { ehPerguntaOperacional, montarAtaDeReuniao, pedeAtaDeReuniao, responderOperacional } from './bento-resposta-operacional';
 import { documentosEmTexto, lerDocumentos } from './bento-documentos';
 import { confirmacaoDeAprendizado, detectarRegraDeBriefing, registrarRegra } from './bento-aprendizado';
@@ -2060,8 +2061,18 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
                 const nomeDoCliente = clienteDoTurno.clientName;
                 if (nomeDoCliente) {
                   const doCliente = tasksDoEstadoEmCache().filter((t) => t.listName === nomeDoCliente);
-                  const frentes = blocoDeFrentes({ clientName: nomeDoCliente, tasks: doCliente });
-                  if (frentes) partesDeContexto.push(frentes);
+                  /**
+                   * A ÁRVORE PRIMEIRO, e a causa junto com ela: é o que separa
+                   * "você tem 14 atrasadas" de "9 delas não são o problema".
+                   * Sai da árvore de subtarefa do ClickUp, que a operação usa
+                   * em 84% a 91% das tarefas (ver bento-arvore.ts).
+                   */
+                  const relacional = blocoRelacional({ clientName: nomeDoCliente, tasks: doCliente });
+                  if (relacional) partesDeContexto.push(relacional);
+                  // Depois como se escreve o nome: é a única coisa que a árvore
+                  // não sabe dizer, e é o que faz a task nova nascer igual às da equipe.
+                  const nomenclatura = blocoDeFrentes({ clientName: nomeDoCliente, tasks: doCliente });
+                  if (nomenclatura) partesDeContexto.push(nomenclatura);
                 }
               }
             }

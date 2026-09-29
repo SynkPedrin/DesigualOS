@@ -27,7 +27,7 @@
  *    de "entendido", e foi exatamente isso que a operação reclamou.
  */
 
-import { and, desc, eq, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { Logger } from '@desigual-os/logging';
 import type { DeliveryType } from './briefing-schema';
@@ -58,6 +58,37 @@ const INSTRUCAO_RE =
 
 /** "para tarefas de social", "nos briefings de vídeo" — escopo por TIPO. */
 const ESCOPO_TIPO_RE = /\b(para|pra|nos?|nas?|em)\s+(tarefas?|briefings?|pe[çc]as?|demandas?)\s+d[eo]s?\s+(.{3,30}?)\b/i;
+
+/**
+ * O ASPECTO da regra: qual parte do trabalho ela governa.
+ *
+ * Existe por um pedido explícito da operação (29/09/2026): "o Bento precisa
+ * saber quando uma regra deve substituir outra, não só acumular instruções".
+ *
+ * Sem isso, corrigir duas vezes o mesmo ponto deixava as DUAS no prompt. Se a
+ * pessoa disse "sempre 5 linhas" e depois "na verdade sempre 3 linhas", o
+ * briefing seguinte recebia as duas ordens e obedecia a sorte — e o pior é que
+ * a mais nova, que é a que ela quis, podia perder pro teto de 6 regras.
+ *
+ * A política é a MESMA que o memory-engine já aplica a fato de cliente, e está
+ * escrita no CLAUDE.md: mesmo aspecto se aposenta, o último vale; aspecto
+ * desconhecido acumula em vez de apagar o anterior. Acumular é o erro barato;
+ * apagar a regra errada é o caro.
+ */
+const ASPECTOS: Array<{ aspecto: string; re: RegExp }> = [
+  { aspecto: 'estrutura', re: /\b(estrutura|se[çc][ãa]o|se[çc][õo]es|campos?|t[óo]pic|contexto.*objetivo|objetivo.*formato|conter|incluir)\b/i },
+  { aspecto: 'tamanho', re: /\b(linhas?|par[áa]grafos?|caracteres?|palavras?|curto|longo|enxut|resum)\b/i },
+  { aspecto: 'tom', re: /\b(tom|linguagem|voz|formal|informal|gíria|coloquial|s[ée]rio|descontra)\b/i },
+  { aspecto: 'referencias', re: /\b(refer[êe]ncias?|benchmark|exemplos? de|moodboard|inspira)\b/i },
+  { aspecto: 'cta', re: /\b(cta|chamada para a[çc][ãa]o|call to action)\b/i },
+  { aspecto: 'publico', re: /\b(p[úu]blico|persona|audi[êe]ncia|target)\b/i },
+  { aspecto: 'entregavel', re: /\b(entreg[áa]vel|formato de entrega|arquivo|dimens[õo]es|proporç)\b/i },
+];
+
+/** null = aspecto desconhecido, e regra sem aspecto ACUMULA (nunca aposenta ninguém). */
+export function aspectoDaRegra(texto: string): string | null {
+  return ASPECTOS.find((a) => a.re.test(texto))?.aspecto ?? null;
+}
 
 export interface RegraDetectada {
   /** O texto da regra, como a pessoa disse — nunca reescrito. */
@@ -116,7 +147,34 @@ export async function registrarRegra(params: {
 }): Promise<RegraGravada | null> {
   const global = params.deteccao.escopoDeTipoExplicito;
   const clientId = global ? null : params.clientId;
+  const aspecto = aspectoDaRegra(params.deteccao.regra);
   try {
+    /**
+     * A regra nova aposenta a anterior do MESMO aspecto, mesmo escopo e mesmo
+     * tipo de entrega. Aspecto desconhecido não aposenta ninguém: acumular é o
+     * erro barato, apagar a regra certa é o caro.
+     */
+    if (aspecto) {
+      const aposentadas = await db
+        .update(schema.memories)
+        .set({ status: 'superseded' })
+        .where(
+          and(
+            eq(schema.memories.kind, KIND_REGRA),
+            eq(schema.memories.status, 'active'),
+            clientId ? eq(schema.memories.clientId, clientId) : isNull(schema.memories.clientId),
+            sql`${schema.memories.metadata}->>'aspecto' = ${aspecto}`,
+            sql`${schema.memories.metadata}->>'deliveryType' IS NOT DISTINCT FROM ${params.deteccao.deliveryType}`,
+          ),
+        )
+        .returning({ id: schema.memories.id });
+      if (aposentadas.length > 0) {
+        params.logger.info(
+          { aspecto, aposentadas: aposentadas.length },
+          '[bento-aprendizado] regra nova aposentou a anterior do mesmo aspecto',
+        );
+      }
+    }
     const [linha] = await db
       .insert(schema.memories)
       .values({
@@ -131,6 +189,7 @@ export async function registrarRegra(params: {
         metadata: {
           deliveryType: params.deteccao.deliveryType,
           escopo: clientId ? 'cliente' : 'agencia',
+          aspecto,
         },
       })
       .returning({ id: schema.memories.id });

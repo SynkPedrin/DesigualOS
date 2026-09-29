@@ -15,7 +15,7 @@ function task(nome: string, over: Partial<OperationTask> = {}): OperationTask {
   return {
     id: nome, name: nome, description: null, status: 'aberto', statusType: 'open',
     priority: null, url: null, dueDate: null, startDate: null, createdAt: null,
-    updatedAt: HOJE.getTime(), assignees: [], tags: [], listId: 'L', listName: 'C',
+    updatedAt: HOJE.getTime(), assignees: [], tags: [], parentId: null, topLevelParentId: null, listId: 'L', listName: 'C',
     folderName: 'CLIENTES ATIVOS', spaceId: null, ...over,
   };
 }
@@ -128,17 +128,18 @@ describe('frente é o que a pasta do ClickUp deveria dar e não dá', () => {
 describe('o bloco ensina a nomear antes de listar', () => {
   const tasks = D_CARVALHO.map((n) => task(n, { listName: 'D. Carvalho' }));
 
+  /**
+   * O bloco deixou de listar frentes em 29/09/2026: a árvore de subtarefa
+   * (bento-arvore.ts) é a autoridade sobre agrupamento, e duas definições de
+   * "frente" no mesmo prompt faziam o modelo citar agrupamento que a árvore não
+   * confirma. Aqui ficou só o que a árvore não sabe: como se escreve o nome.
+   */
   it('traz a convenção e proíbe o vício das tasks que o próprio Bento criou', () => {
     const b = blocoDeFrentes({ clientName: 'D. Carvalho', tasks, agora: HOJE })!;
     expect(b).toContain('Prefixo "DC"');
     // No workspace real existem "Criar Cosentino_... — Cosentino": dá pra ver a
     // olho nu qual task é da equipe e qual é do robô.
     expect(b).toContain('Nada de verbo na frente');
-  });
-
-  it('a convenção vem ANTES das frentes: primeiro como nomear, depois o que existe', () => {
-    const b = blocoDeFrentes({ clientName: 'D. Carvalho', tasks, agora: HOJE })!;
-    expect(b.indexOf('COMO A EQUIPE NOMEIA')).toBeLessThan(b.indexOf('FRENTES EM ANDAMENTO'));
   });
 
   it('cliente sem convenção não ganha bloco — melhor nada que padrão inventado', () => {
@@ -155,8 +156,4 @@ describe('o bloco ensina a nomear antes de listar', () => {
     expect(b).toContain('em 6 de 6 tarefas abertas');
   });
 
-  it('proíbe inventar frente, do mesmo jeito que o panorama proíbe inventar número', () => {
-    const b = blocoDeFrentes({ clientName: 'D. Carvalho', tasks, agora: HOJE })!;
-    expect(b).toContain('Não invente frente');
-  });
 });

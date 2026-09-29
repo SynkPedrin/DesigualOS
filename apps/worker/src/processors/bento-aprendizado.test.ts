@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectarRegraDeBriefing, regrasEmTexto, confirmacaoDeAprendizado } from './bento-aprendizado';
+import { detectarRegraDeBriefing, regrasEmTexto, confirmacaoDeAprendizado, aspectoDaRegra } from './bento-aprendizado';
 
 /**
  * Pedido da operação (29/09/2026), o ponto que ela chamou de mais importante:
@@ -87,5 +87,44 @@ describe('a regra aplicada, e a confirmação que a pessoa lê', () => {
       'D. Carvalho',
     );
     expect(c).toContain('D. Carvalho');
+  });
+});
+
+/**
+ * Pedido da operação (29/09/2026): "o Bento precisa saber quando uma regra deve
+ * substituir outra, não só acumular instruções".
+ *
+ * O caso que dói: "sempre 5 linhas" e depois "na verdade sempre 3 linhas". Com
+ * acúmulo, o briefing recebia as duas ordens e obedecia a sorte — e a mais
+ * nova, que é a que a pessoa quis, podia até perder pro teto de 6 regras.
+ */
+describe('aspecto da regra: o que permite uma substituir a outra', () => {
+  it('reconhece o aspecto que a correção governa', () => {
+    expect(aspectoDaRegra('esse briefing ficou ruim, sempre use no máximo 3 linhas')).toBe('tamanho');
+    expect(aspectoDaRegra('ficou genérico, sempre inclua contexto, objetivo e entregável')).toBe('estrutura');
+    expect(aspectoDaRegra('o tom ficou formal demais, use linguagem mais coloquial')).toBe('tom');
+    expect(aspectoDaRegra('faltou referências, sempre traga 3 exemplos de benchmark')).toBe('referencias');
+  });
+
+  /**
+   * Aspecto desconhecido ACUMULA, nunca aposenta. Acumular é o erro barato;
+   * apagar a regra certa é o caro. É a mesma política que o CLAUDE.md já fixa
+   * para fato de cliente.
+   */
+  it('correção que não se encaixa em nenhum aspecto não aposenta ninguém', () => {
+    expect(aspectoDaRegra('ficou ruim, sempre fale com o Endrigo antes')).toBeNull();
+  });
+
+  it('duas correções do MESMO aspecto colidem — é isso que faz a segunda valer', () => {
+    const a = aspectoDaRegra('ficou ruim, sempre 5 linhas');
+    const b = aspectoDaRegra('ficou ruim, na verdade sempre 3 linhas');
+    expect(a).toBe(b);
+    expect(a).not.toBeNull();
+  });
+
+  it('aspectos diferentes convivem: corrigir o tom não apaga a regra de estrutura', () => {
+    expect(aspectoDaRegra('ficou ruim, sempre inclua o entregável')).not.toBe(
+      aspectoDaRegra('ficou ruim, sempre use um tom mais informal'),
+    );
   });
 });
