@@ -66,7 +66,7 @@ import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-ex
 import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama, tasksDoEstadoEmCache } from './bento-panorama';
 import { blocoDeFrentes } from './bento-padrao-de-task';
-import { blocoRelacional } from './bento-arvore';
+import { blocoRelacional, explicacaoParaPessoa } from './bento-arvore';
 import { ehPerguntaOperacional, montarAtaDeReuniao, pedeAtaDeReuniao, responderOperacional } from './bento-resposta-operacional';
 import { documentosEmTexto, lerDocumentos } from './bento-documentos';
 import { confirmacaoDeAprendizado, detectarRegraDeBriefing, registrarRegra } from './bento-aprendizado';
@@ -1126,6 +1126,11 @@ const INFRA_CONHECIDA: Array<{ re: RegExp; texto: string }> = [
   },
 ];
 
+/** Comparação de nome tolerante a acento e caixa: "d. carvalho" acha "D. Carvalho". */
+function stripAccentsLower(texto: string): string {
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
 export function failureAnswerFor(agent: AgentName, error: string | null | undefined): string {
   const label = agent.charAt(0).toUpperCase() + agent.slice(1);
   const detalhe = (error ?? '').trim();
@@ -1567,23 +1572,45 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
           },
         );
         if (res) {
+          /**
+           * "O QUE ESTÁ EM RISCO NA COSENTINO?" não é panorama da agência.
+           *
+           * Medido ao vivo em 29/09/2026: essa pergunta caía aqui, o panorama
+           * respondia com os números da agência inteira e uma lista de 25
+           * tarefas — exatamente o que o panorama existe pra evitar. O nome do
+           * cliente estava na frase e ninguém olhava.
+           *
+           * Com cliente citado, o recorte é dele e a resposta vira a EXPLICAÇÃO
+           * (bento-arvore.ts): o que concentra o risco, o que não é o problema,
+           * e a oferta de reorganizar. Determinística, sem chamada de modelo.
+           */
+          const nomeCliente = clienteDaExecucao?.name ?? null;
+          const citado =
+            nomeCliente && stripAccentsLower(message).includes(stripAccentsLower(nomeCliente)) ? nomeCliente : null;
+          const tasksDoRecorte = citado ? res.tasks.filter((t) => t.listName === citado) : res.tasks;
+          const explicacao = citado
+            ? explicacaoParaPessoa({ clientName: citado, tasks: tasksDoRecorte })
+            : null;
+
           const panorama = await montarPanorama({
-            tasks: res.tasks,
+            tasks: tasksDoRecorte,
             escritor: async (prompt, opts) =>
               (await completeTextSafely(prompt, logger, opts)) ??
               (await completeTextViaOpenAI(prompt, logger, opts)) ??
               (await completeTextViaOllama(prompt, logger)),
           });
           logger.info(
-            { tasks: panorama.metricas.total, atrasadas: panorama.metricas.atrasadas, leitura: panorama.leitura !== null },
+            { tasks: panorama.metricas.total, atrasadas: panorama.metricas.atrasadas, leitura: panorama.leitura !== null, cliente: citado },
             '[bento-panorama] panorama montado',
           );
           guardedResult = {
             execution_id: executionId, agent, status: 'completed',
-            answer: panoramaEmResposta(panorama),
+            // A causa vem PRIMEIRO: quem pergunta o que está em risco quer
+            // saber o porquê, e os números ficam embaixo como lastro.
+            answer: explicacao ? `${explicacao}\n\n---\n\n${panoramaEmResposta(panorama)}` : panoramaEmResposta(panorama),
             sources: ['CLICKUP_OPERATION'], tool_calls: [],
             usage: { input_tokens: 0, output_tokens: 0 },
-            metadata: { guard: 'bento-panorama', tasks: panorama.metricas.total },
+            metadata: { guard: 'bento-panorama', tasks: panorama.metricas.total, cliente: citado },
           };
         }
       }

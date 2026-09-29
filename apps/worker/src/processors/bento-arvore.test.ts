@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OperationTask } from '@desigual-os/tool-gateway';
-import { apurarFrentes, blocoRelacional, diagnosticar, frenteDaTask, montarArvore } from './bento-arvore';
+import { apurarFrentes, blocoRelacional, diagnosticar, explicacaoParaPessoa, frenteDaTask, montarArvore } from './bento-arvore';
 
 /**
  * A árvore usada aqui é a da D. Carvalho, lida do ClickUp em 29/09/2026. Se a
@@ -205,5 +205,48 @@ describe('causa que se sobrepõe não pode virar soma', () => {
       agora: HOJE,
     })!;
     expect(b).toContain('1 é avulsa');
+  });
+});
+
+/**
+ * A análise precisa sair NO CHAT, não só no prompt. A primeira versão vivia só
+ * no contexto e "o que está em risco na Cosentino?" foi capturada pelo caminho
+ * do panorama, que responde antes — o bloco nunca chegou ao modelo e a resposta
+ * voltou listando 25 tarefas.
+ */
+describe('a explicação escrita pra pessoa', () => {
+  const comRisco = [
+    t('mae'),
+    t('a', { parentId: 'mae', dueDate: dia(-1) }),
+    t('b', { parentId: 'mae', dueDate: dia(-2) }),
+    t('c', { parentId: 'mae', dueDate: dia(-3) }),
+    t('solta', { dueDate: dia(-90), assignees: ['Gui'] }),
+  ];
+
+  it('abre pelo que concentra o risco, não pela contagem', () => {
+    const r = explicacaoParaPessoa({ clientName: 'Cosentino', tasks: comRisco, agora: HOJE })!;
+    expect(r.split('\n')[0]).toContain('não pesam igual');
+    expect(r).toContain('O que concentra o risco');
+  });
+
+  it('diz o que NÃO é o problema, que é o "9 não são o problema"', () => {
+    const r = explicacaoParaPessoa({ clientName: 'Cosentino', tasks: comRisco, agora: HOJE })!;
+    expect(r).toContain('avulsa');
+  });
+
+  it('não é instrução de prompt: nada de "não invente" na cara da pessoa', () => {
+    const r = explicacaoParaPessoa({ clientName: 'Cosentino', tasks: comRisco, agora: HOJE })!;
+    expect(r).not.toContain('NÃO invente');
+    expect(r).not.toContain('ATENÇÃO:');
+  });
+
+  it('oferece a ação como pergunta — redistribuir sem pedir seria mexer na operação dos outros', () => {
+    const r = explicacaoParaPessoa({ clientName: 'Cosentino', tasks: comRisco, agora: HOJE })!;
+    expect(r).toContain('Se quiser, eu');
+    expect(r).toContain('sem mexer no que está em aprovação');
+  });
+
+  it('cliente sem risco e sem árvore não gera texto', () => {
+    expect(explicacaoParaPessoa({ clientName: 'X', tasks: [t('só')], agora: HOJE })).toBeNull();
   });
 });

@@ -327,3 +327,83 @@ export function blocoRelacional(params: {
 
   return linhas.join('\n');
 }
+
+/**
+ * A mesma análise, escrita PRA PESSOA em vez de pro modelo.
+ *
+ * `blocoRelacional` acima é instrução de prompt ("responda pela CAUSA, não
+ * invente..."). Isto é resposta: sai pronta no chat, sem passar por modelo
+ * nenhum, e por isso não tem como alucinar nem custa token.
+ *
+ * Existe porque a primeira versão falhou ao vivo de um jeito instrutivo: com a
+ * análise só no prompt, "o que está em risco na Cosentino?" foi capturada pelo
+ * caminho do panorama, que responde antes da montagem do contexto — o bloco
+ * nunca chegou ao modelo (zero ocorrências no log) e a resposta voltou listando
+ * 25 tarefas, exatamente o que o panorama existe pra evitar.
+ */
+export function explicacaoParaPessoa(params: {
+  clientName: string;
+  tasks: OperationTask[];
+  agora?: Date;
+}): string | null {
+  const agora = params.agora ?? new Date();
+  const diag = diagnosticar(params.tasks, agora);
+  const frentes = apurarFrentes(params.tasks, agora);
+  if (diag.atrasadas === 0 && frentes.length === 0) return null;
+
+  const linhas: string[] = [];
+
+  if (diag.causas.length > 0) {
+    const principal = diag.causas[0]!;
+    const resto = diag.atrasadas - principal.explica;
+    linhas.push(
+      `${params.clientName} tem ${diag.atrasadas} tarefas atrasadas, e elas não pesam igual.`,
+      '',
+      `O que concentra o risco: ${principal.texto.charAt(0).toLowerCase()}${principal.texto.slice(1)}.`,
+    );
+    if (diag.causas.length > 1) {
+      linhas.push('', 'O resto do atraso se explica assim:');
+      for (const c of diag.causas.slice(1)) linhas.push(`- ${c.texto}`);
+    }
+    if (diag.semPadrao > 0) {
+      linhas.push(
+        '',
+        diag.semPadrao === 1
+          ? 'Sobra 1 tarefa avulsa, sem relação com as outras — essa dá pra tratar por último.'
+          : `Sobram ${diag.semPadrao} tarefas avulsas, sem relação entre si — essas dão pra tratar por último.`,
+      );
+    } else if (resto > 0) {
+      linhas.push('', 'As demais estão cobertas pelas causas acima, então são menos problemas do que parece pelo número.');
+    }
+  }
+
+  const emRisco = frentes.filter((f) => f.atrasadas > 0 || f.semDono > 0).slice(0, 4);
+  if (emRisco.length > 0) {
+    linhas.push('', 'Por entrega:');
+    for (const f of emRisco) {
+      const dono = f.donos[0];
+      linhas.push(
+        `- ${f.raiz.name}: ${f.prontas} de ${f.pecas.length} peças prontas` +
+          (f.atrasadas > 0 ? `, ${f.atrasadas} atrasada(s)` : '') +
+          (f.semDono > 0 ? `, ${f.semDono} sem responsável` : '') +
+          (f.emAprovacao > 0 ? `, ${f.emAprovacao} esperando aprovação` : '') +
+          (dono ? ` · quem sustenta: ${dono.pessoa}` : ''),
+      );
+    }
+  }
+
+  // A oferta de ação, que é o que separa relatório de alguém acompanhando
+  // junto. Fica como PERGUNTA: redistribuir responsável sem pedir seria
+  // mexer na operação de outra pessoa por conta própria.
+  const semDonoTotal = frentes.reduce((s, f) => s + f.semDono, 0);
+  if (semDonoTotal > 0 || diag.causas.some((c) => c.texto.includes('dependem de'))) {
+    linhas.push(
+      '',
+      semDonoTotal > 0
+        ? `Se quiser, eu distribuo as ${semDonoTotal} sem responsável e reorganizo os prazos, sem mexer no que está em aprovação.`
+        : 'Se quiser, eu reorganizo responsáveis e prazos, sem mexer no que está em aprovação.',
+    );
+  }
+
+  return linhas.join('\n');
+}
