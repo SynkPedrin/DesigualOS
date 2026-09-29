@@ -115,19 +115,53 @@ export async function falar(page: Page, texto: string, timeout = 120_000): Promi
   await expect
     .poll(async () => ((await bolha.count()) > 0 ? 'ok' : (await falhou.count()) > 0 ? 'falhou' : 'pensando'), { timeout })
     .toBe('ok');
+  /**
+   * ESTÁVEL = o texto parou de crescer em DUAS janelas seguidas.
+   *
+   * Com uma janela só de 1,2s, uma pausa do streaming no meio da resposta era
+   * lida como fim: a persona de continuidade reprovou com "curta demais (16
+   * chars)" em 29/09/2026, e a busca no banco não achou NENHUMA resposta de 16
+   * caracteres nas 3 horas anteriores — 6 respostas curtas no período, todas
+   * longas o bastante e todas explicáveis. Ou seja, o sistema respondeu inteiro
+   * e o medidor leu pela metade.
+   *
+   * É o terceiro instrumento do dia mentindo na mesma direção (o extrator da
+   * bateria, o clique do chip, e agora este), e a direção é sempre a mesma:
+   * transformar "não consegui medir" em "medi e está ruim".
+   */
   await expect
     .poll(
       async () => {
-        const a = (await bolha.innerText()).trim().length;
+        const a = semRodape(await bolha.innerText()).length;
         await page.waitForTimeout(1200);
-        const b = (await bolha.innerText()).trim().length;
-        return a === b && a > 0 ? 'estavel' : 'crescendo';
+        const b = semRodape(await bolha.innerText()).length;
+        // b === 0 é a bolha só com rodapé: a resposta ainda não começou.
+        if (a !== b || b === 0) return 'crescendo';
+        await page.waitForTimeout(1200);
+        const c = semRodape(await bolha.innerText()).length;
+        return b === c ? 'estavel' : 'crescendo';
       },
       { timeout },
     )
     .toBe('estavel');
   const depois = await mensagens.count();
-  return { texto: (await bolha.innerText()).trim(), duplicadas: depois - antes - 1, ms: Date.now() - inicio };
+  return { texto: semRodape(await bolha.innerText()), duplicadas: depois - antes - 1, ms: Date.now() - inicio };
+}
+
+/**
+ * O `innerText` da bolha inclui o RODAPÉ: horário e o botão "Encaminhar".
+ * "12:17\nEncaminhar" tem exatamente 16 caracteres — que foi o que a persona de
+ * continuidade reprovou como "curta demais (16 chars)" em 29/09/2026. Nenhuma
+ * resposta do sistema no período tinha menos de 67 caracteres: o medidor leu o
+ * rodapé de uma bolha que ainda não tinha texto.
+ *
+ * Quarto instrumento do dia lendo errado, e todos na mesma direção: "não
+ * consegui medir" aparecendo como "medi e está ruim".
+ */
+export function semRodape(texto: string): string {
+  return texto
+    .replace(/\n?\s*\d{1,2}:\d{2}\s*\n?\s*(encaminhar|copiar)?\s*$/i, '')
+    .trim();
 }
 
 export function log(rotulo: string, r: Resposta): void {
