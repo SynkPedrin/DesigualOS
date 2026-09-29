@@ -149,3 +149,37 @@ describe('risco é pergunta de operação, não de mídia paga', () => {
     },
   );
 });
+
+/**
+ * Achado da sessão de auditoria com o harness de roteamento sem hint
+ * (scripts/intelligence-routing-check.mts), 29/09/2026. Mesma classe do
+ * "em risco": o classificador 3B lê "estado" e "aconteceu" como vocabulário de
+ * desempenho de mídia.
+ *
+ *   "Qual é o estado atual do Desigual OS?" -> jarbas, confiança 1.0
+ *   "Qual é o estado do Citável?"           -> jarbas, confiança 0.8
+ *   "O que aconteceu ontem?"                -> jarbas, confiança 0.8
+ *
+ * As duas primeiras são as perguntas sobre os projetos INTERNOS da agência.
+ */
+describe('estado e "o que aconteceu" são operação', () => {
+  it.each([
+    'Qual é o estado atual do Desigual OS?',
+    'Qual é o estado do Citável?',
+    'O que aconteceu ontem?',
+    'qual o estado da operação',
+  ])('%s -> bento', (m) => {
+    expect(matchRule(m)?.rule.primaryAgent).toBe('bento');
+  });
+
+  /**
+   * A cerca do outro lado. Consertar o roteamento empurrando tudo pro Bento
+   * seria trocar um erro por outro, e o Jarbas é quem responde mídia.
+   */
+  it.each([
+    'como está o CPA da campanha da D. Carvalho?',
+    'o ROAS caiu essa semana?',
+  ])('%s continua no Jarbas', (m) => {
+    expect(matchRule(m)?.rule.primaryAgent).toBe('jarbas');
+  });
+});

@@ -213,6 +213,29 @@ export const ROUTING_RULES: RoutingRule[] = [
       'riscos da operação',
       'algum risco',
       'que risco',
+      /**
+       * ESTADO e O QUE ACONTECEU também são operação (achado da sessão de
+       * auditoria, 29/09/2026, com o harness de roteamento sem hint):
+       *
+       *   "Qual é o estado atual do Desigual OS?" -> jarbas, confiança 1.0
+       *   "Qual é o estado do Citável?"           -> jarbas, confiança 0.8
+       *   "O que aconteceu ontem?"                -> jarbas, confiança 0.8
+       *
+       * O 3B lê "estado" e "aconteceu" como vocabulário de desempenho. As duas
+       * primeiras são justamente as perguntas sobre os projetos INTERNOS da
+       * agência (Desigual OS e Citável são linha em `clients`), e a terceira é
+       * a pergunta temporal mais básica que existe — justo agora que o event
+       * store passou a respondê-la.
+       *
+       * "qual o estado da campanha do Meta" é legitimamente ambíguo e é por
+       * isso que existe o bloco J01-J04 no
+       * scripts/intelligence-routing-check.mts: ele reprova se consertar isto
+       * aqui empurrar pergunta de mídia pro Bento.
+       */
+      'o que aconteceu',
+      'estado atual',
+      'qual é o estado',
+      'qual o estado',
     ],
     primaryAgent: 'bento',
     requiredTools: ['clickup'],
