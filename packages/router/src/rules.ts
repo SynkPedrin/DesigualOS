@@ -59,6 +59,36 @@ export const ROUTING_RULES: RoutingRule[] = [
       'melhor resultado',
       'campanha que merece escala',
       'fadiga de criativo',
+      /**
+       * VOCABULÁRIO DE MÍDIA QUE NÃO PODE DEPENDER DE MODELO (29/09/2026).
+       *
+       * "quanto gastamos em Meta Ads esse mês?" e "qual criativo está
+       * performando melhor?" iam pro Jarbas pelo classificador local, nunca por
+       * regra. E o classificador é um 3B que divide a máquina com um modelo de
+       * 24 GB: com o grande carregado, ele estoura o tempo, a decisão cai num
+       * casamento fraco de regra e a pergunta de mídia vai parar no Bento.
+       *
+       * Medido: /api/ps com qwen3.6:35b-a3b residente, classifyLocally
+       * devolvendo TimeoutError, e o harness de roteamento caindo de 32/32 pra
+       * 30/32 sem nenhuma linha de código ter mudado.
+       *
+       * Depender de modelo pra vocabulário que é determinístico foi a escolha
+       * errada. Estas frases decidem sem rede e sem GPU — e o classificador
+       * continua valendo pro que é mesmo ambíguo.
+       */
+      'meta ads',
+      'facebook ads',
+      'google ads',
+      'quanto gastamos',
+      'quanto investimos',
+      'investimento em mídia',
+      'verba de mídia',
+      'criativo está performando',
+      'performando melhor',
+      'alcance da campanha',
+      'custo por clique',
+      'custo por lead',
+      'taxa de conversão',
     ],
     primaryAgent: 'jarbas',
     requiredTools: ['meta_ads'],

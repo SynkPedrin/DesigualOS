@@ -183,3 +183,32 @@ describe('estado e "o que aconteceu" são operação', () => {
     expect(matchRule(m)?.rule.primaryAgent).toBe('jarbas');
   });
 });
+
+/**
+ * O classificador local é um 3B que divide a máquina com um modelo de 24 GB.
+ * Medido em 29/09/2026: com o grande residente (/api/ps mostrando
+ * qwen3.6:35b-a3b), classifyLocally devolve TimeoutError, a decisão cai num
+ * casamento fraco de regra e a pergunta de MÍDIA vai parar no Bento — sem
+ * nenhuma linha de código ter mudado.
+ *
+ * Vocabulário de mídia é determinístico. Depender de modelo pra ele foi a
+ * escolha errada: estas frases decidem sem rede e sem GPU.
+ */
+describe('mídia decide por regra, não por modelo que pode estar fora', () => {
+  it.each([
+    'quanto gastamos em Meta Ads esse mês?',
+    'qual criativo está performando melhor?',
+    'quanto investimos em mídia no trimestre',
+    'qual o custo por clique da campanha',
+  ])('%s -> jarbas, sem depender do classificador', (m) => {
+    expect(matchRule(m)?.rule.primaryAgent).toBe('jarbas');
+  });
+
+  /** E a cerca do outro lado continua: operação não virou mídia. */
+  it.each(['o que está em risco hoje', 'me mostra o que ta atrasado', 'o que aconteceu ontem?'])(
+    '%s continua no Bento',
+    (m) => {
+      expect(matchRule(m)?.rule.primaryAgent).toBe('bento');
+    },
+  );
+});
