@@ -18,6 +18,7 @@ import { registrarToolsDeTarefa } from './tools/tasks.js';
 import { registrarToolsDeMemoriaEEventos } from './tools/memory-events.js';
 import { registrarToolsDeOperacao } from './tools/operation.js';
 import type { ContextoDaTool } from './tools/kit.js';
+import { renderConsentPage } from './consent-page.js';
 
 /**
  * server.ts — o DESIGUAL OS MCP.
@@ -34,8 +35,15 @@ import type { ContextoDaTool } from './tools/kit.js';
 
 const logger = createLogger({ service: 'desigual-mcp' });
 const PORTA = Number(process.env.MCP_PORT ?? 3010);
-const URL_PUBLICA = process.env.MCP_PUBLIC_URL ?? `http://localhost:${PORTA}`;
-const URL_CONSENTIMENTO = process.env.MCP_CONSENT_URL ?? `${process.env.FRONTEND_URL ?? 'http://localhost:3000'}/mcp/authorize`;
+const URL_PUBLICA_BASE = process.env.MCP_PUBLIC_URL ?? `http://localhost:${PORTA}`;
+const URL_PUBLICA = URL_PUBLICA_BASE;
+/**
+ * A tela de consentimento mora NESTE servidor por padrão (ver consent-page.ts):
+ * depender do app web para conectar adiciona uma peça de deploy entre o
+ * funcionário e a conexão. `MCP_CONSENT_URL` continua existindo para o dia em
+ * que o app web quiser assumir o fluxo.
+ */
+const URL_CONSENTIMENTO = process.env.MCP_CONSENT_URL ?? `${URL_PUBLICA_BASE}/consent`;
 
 function exigirEnv(nome: string): string {
   const v = process.env[nome];
@@ -50,6 +58,7 @@ const oauth = new DesigualOAuthProvider({
   supabaseUrl: exigirEnv('SUPABASE_URL'),
   consentUrl: URL_CONSENTIMENTO,
   resourceUrl: `${URL_PUBLICA}/mcp`,
+  logger,
 });
 
 /**
@@ -128,8 +137,32 @@ async function main(): Promise<void> {
   );
 
   /**
-   * Ponte do consentimento: o app web chama isto depois que o funcionário
-   * aprovou, mandando o access token do Supabase dele.
+   * A TELA. O `/authorize` do SDK redireciona para cá com o id do pedido; aqui
+   * o funcionário entra com a conta dele do Desigual OS e autoriza.
+   */
+  app.get('/consent', (req, res) => {
+    const pedido = typeof req.query.mcp_request === 'string' ? req.query.mcp_request : '';
+    if (!pedido) {
+      res.status(400).send('Pedido de autorização ausente. Volte ao Claude e conecte de novo.');
+      return;
+    }
+    const scopes = typeof req.query.scopes === 'string' && req.query.scopes.trim()
+      ? req.query.scopes.trim().split(/\s+/)
+      : ['desigual.read'];
+    res.type('html').send(
+      renderConsentPage({
+        requestId: pedido,
+        clientName: typeof req.query.client_name === 'string' ? req.query.client_name : 'Claude',
+        scopes,
+        supabaseUrl: exigirEnv('SUPABASE_URL'),
+        supabaseAnonKey: exigirEnv('SUPABASE_PUBLISHABLE_KEY'),
+      }),
+    );
+  });
+
+  /**
+   * Ponte do consentimento: a tela acima chama isto depois que o funcionário
+   * entrou, mandando o access token do Supabase dele.
    */
   app.post('/mcp/consent', async (req, res) => {
     const { request_id: pedido, supabase_token: token } = req.body ?? {};
@@ -196,6 +229,20 @@ async function main(): Promise<void> {
       });
     },
   );
+
+  /**
+   * ÚLTIMO RECURSO, e ele existe porque a falta dele custou caro: um erro
+   * qualquer numa rota virava `{"error":"server_error"}` com HTTP 500 e NENHUMA
+   * linha de log. Meia hora de depuração num servidor que sabia exatamente o
+   * que tinha acontecido e não contava.
+   *
+   * Aqui o erro é registrado com a rota e o método; o corpo devolvido continua
+   * genérico de propósito (não vazar stack numa superfície pública).
+   */
+  app.use((erro: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    logger.error({ err: erro, metodo: req.method, rota: req.path }, '[mcp] erro não tratado');
+    if (!res.headersSent) res.status(500).json({ error: 'server_error' });
+  });
 
   app.listen(PORTA, () => {
     logger.info(

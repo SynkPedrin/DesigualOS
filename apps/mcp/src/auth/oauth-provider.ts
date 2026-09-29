@@ -8,7 +8,7 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthorizationParams, OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidGrantError, InvalidTokenError, ServerError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import {
   consumirCodigo, emitirCodigoDeAutorizacao, emitirTokens, lerCodigo,
   revogarPorValor, rotacionarRefresh, verificarAccessToken,
@@ -81,6 +81,8 @@ class ClientesRegistrados implements OAuthRegisteredClientsStore {
 }
 
 export interface DesigualOAuthDeps {
+  /** Para que falha de auth seja observável (§20) em vez de virar 500 mudo. */
+  logger?: { error: (obj: object, msg: string) => void; info: (obj: object, msg: string) => void };
   /** URL do Supabase, para validar o token que volta da tela de login. */
   supabaseUrl: string;
   /** Onde mora a tela de consentimento (o app web do Desigual OS). */
@@ -225,7 +227,23 @@ export class DesigualOAuthProvider implements OAuthServerProvider {
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const verificado = await verificarAccessToken(token);
+    let verificado: Awaited<ReturnType<typeof verificarAccessToken>>;
+    try {
+      verificado = await verificarAccessToken(token);
+    } catch (erro) {
+      /**
+       * FALHA DE INFRA NÃO É TOKEN INVÁLIDO, e confundir as duas custa caro nos
+       * dois sentidos: banco fora do ar virando "reautorize" manda o
+       * funcionário refazer um fluxo que não vai resolver; e token inválido
+       * virando 500 faz o cliente MCP tentar de novo em vez de reconectar.
+       *
+       * Aqui a distinção é explícita e a falha é LOGADA — §20 pede métrica de
+       * auth failure, e um 500 mudo foi exatamente o que me custou meia hora
+       * de depuração neste arquivo.
+       */
+      this.deps.logger?.error({ err: erro }, '[mcp-oauth] verificação de token falhou por erro de infraestrutura');
+      throw new ServerError('Não consegui verificar o token agora.');
+    }
     /**
      * `InvalidTokenError` do SDK, e não um Error qualquer: é o que o middleware
      * `requireBearerAuth` traduz em 401 com o header `WWW-Authenticate` que o
@@ -233,7 +251,10 @@ export class DesigualOAuthProvider implements OAuthServerProvider {
      * servidor devolvia 500, e 500 diz "o servidor quebrou" quando a verdade é
      * "seu token não vale" — o Claude tentaria de novo em vez de reconectar.
      */
-    if (!verificado) throw new InvalidTokenError('Token inválido, expirado ou revogado.');
+    if (!verificado) {
+      this.deps.logger?.info({ prefixo: token.slice(0, 5) }, '[mcp-oauth] token recusado');
+      throw new InvalidTokenError('Token inválido, expirado ou revogado.');
+    }
     return {
       token,
       clientId: verificado.clientId,
