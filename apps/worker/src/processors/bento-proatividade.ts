@@ -49,6 +49,14 @@ export interface ContextoProativo {
    * exceção no meio de uma criação bem-sucedida.
    */
   task: Partial<TaskDetail> | null;
+  /**
+   * true quando a resposta JÁ perguntou sobre o responsável — porque o nome que
+   * a pessoa deu não resolveu, e a pergunta de lá é melhor ("não encontrei o
+   * Guilherme, achei o Gui, é ele?"). Sem isto a resposta dizia as duas coisas
+   * seguidas, e repetir a mesma pergunta com menos informação faz o Bento
+   * parecer que não sabe o que acabou de falar.
+   */
+  jaPerguntouResponsavel?: boolean;
   /** Campos que o briefing não conseguiu preencher — já são ditos à parte. */
   lacunasJaDitas?: string[];
   agora?: Date;
@@ -78,7 +86,10 @@ export function observacoesProativas(ctx: ContextoProativo): string[] {
 
   // 2. SEM RESPONSÁVEL: a task existe e não é de ninguém. É o modo mais comum
   //    de uma demanda sumir — está no ClickUp, então "está resolvida".
-  if (responsaveis !== null && responsaveis.length === 0) {
+  //    `jaPerguntouResponsavel` existe porque a criação já faz essa pergunta,
+  //    com mais informação ("achei o Gui, é ele?"), e dizer a mesma coisa duas
+  //    vezes na mesma resposta faz o Bento parecer que não sabe o que já falou.
+  if (responsaveis !== null && responsaveis.length === 0 && !ctx.jaPerguntouResponsavel) {
     obs.push('👤 Ficou sem responsável. Me diz de quem é que eu atribuo.');
   }
 

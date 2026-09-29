@@ -717,7 +717,10 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       // A task já foi relida pela criação verificada. Dizer o que se vê nela
       // custa zero e é a diferença entre um executor e um colega — ver
       // bento-proatividade.ts. Nunca executa nada por conta própria.
-      ...observacoesProativas({ task: result.data as unknown as import('@desigual-os/tool-gateway').TaskDetail | null }),
+      ...observacoesProativas({
+        task: result.data as unknown as import('@desigual-os/tool-gateway').TaskDetail | null,
+        jaPerguntouResponsavel: Boolean(result.responsavelPendente),
+      }),
     ].filter(Boolean) as string[];
 
     /**

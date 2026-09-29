@@ -101,3 +101,24 @@ describe('próximo dia útil', () => {
     expect(proximoDiaUtil(terca)).toBe(terca);
   });
 });
+
+/**
+ * A criação já pergunta sobre o responsável quando o nome não resolveu, e com
+ * mais informação ("não encontrei o Guilherme, achei o Gui, é ele?"). Medido no
+ * teste ao vivo de 29/09/2026: a resposta saía com as duas frases seguidas, e
+ * repetir a mesma pergunta com menos informação faz o Bento parecer que não
+ * sabe o que acabou de falar.
+ */
+describe('não repetir a pergunta do responsável', () => {
+  const semDono = { id: 't', name: 'Task', assignees: [], dueDate: null } as never;
+
+  it('cala quando a criação já perguntou', () => {
+    const obs = observacoesProativas({ task: semDono, jaPerguntouResponsavel: true });
+    expect(obs.some((o) => o.includes('sem responsável'))).toBe(false);
+  });
+
+  it('continua avisando quando ninguém perguntou nada', () => {
+    const obs = observacoesProativas({ task: semDono });
+    expect(obs.some((o) => o.includes('sem responsável'))).toBe(true);
+  });
+});
