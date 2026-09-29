@@ -90,17 +90,12 @@ const fakeLogger = { warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown a
  * com a origem SEMPRE declarada na resposta: onde o arquivo nasce é o que a
  * pessoa precisa saber pra achá-lo depois.
  */
-describe('qual token usa, e por quê', () => {
-  it('sem ninguém conectado e sem token da agência, não há o que usar', async () => {
-    expect(await escolherToken('', fakeLogger, {} as NodeJS.ProcessEnv)).toBeNull();
+describe('só o token da pessoa — não existe fallback', () => {
+  it('sem conexão pessoal, não há token: a resposta é o convite, nunca o Notion de outro', async () => {
+    expect(await escolherToken('', fakeLogger)).toBeNull();
   });
 
-  it('sem conexão pessoal, cai pro token da agência — e marca a origem', async () => {
-    const r = await escolherToken('', fakeLogger, { NOTION_API_KEY: 'ntn_agencia' } as NodeJS.ProcessEnv);
-    expect(r).toEqual({ token: 'ntn_agencia', origem: 'agencia' });
-  });
-
-  it('token da agência em branco não conta como configurado', async () => {
-    expect(await escolherToken('', fakeLogger, { NOTION_API_KEY: '   ' } as NodeJS.ProcessEnv)).toBeNull();
+  it('usuário sem id também não resolve — nada de escrever "em nome de ninguém"', async () => {
+    expect(await escolherToken('', fakeLogger)).toBeNull();
   });
 });
