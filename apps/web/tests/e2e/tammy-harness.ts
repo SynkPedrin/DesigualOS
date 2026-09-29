@@ -24,8 +24,19 @@ export interface Resposta {
 export async function login(page: Page): Promise<void> {
   page.setDefaultTimeout(45_000);
   await page.goto('/login');
-  await page.getByLabel('E-mail').fill(EMAIL);
-  await page.getByLabel('Senha').fill(PASSWORD);
+  /**
+   * Espera o campo ficar EDITÁVEL antes de escrever. O `fill` direto estourou
+   * 45s em 29/09/2026 com o locator já resolvido: a página ainda estava
+   * hidratando e o input existia sem aceitar digitação. Falha de login parece
+   * falha do produto no relatório, e foi o que me fez reinvestigar um defeito
+   * que não existia.
+   */
+  const email = page.getByLabel('E-mail');
+  const senha = page.getByLabel('Senha');
+  await expect(email).toBeEditable({ timeout: 45_000 });
+  await email.fill(EMAIL);
+  await expect(senha).toBeEditable({ timeout: 45_000 });
+  await senha.fill(PASSWORD);
   await page.getByRole('button', { name: /entrar/i }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 45_000 });
 }
@@ -52,9 +63,28 @@ export async function novoChat(page: Page, agente?: 'Bento' | 'Otto' | 'Jarbas' 
      * é sorte, não método — teste que mente sobre o que fez é o mesmo erro do
      * medidor que relata falha falsa.)
      */
-    const chip = page.getByRole('button', { name: new RegExp(`^${agente}\\b`, 'i') });
+    /**
+     * `button[aria-pressed]` + texto: são os ÚNICOS botões da tela com esse
+     * atributo (os 4 agentes e o AUTO), então o seletor é preciso sem precisar
+     * de testid no componente de produção.
+     *
+     * O que não serve: `getByRole('button', {name: /^Bento/})`. A barra lateral
+     * tem conversas chamadas "Bento respondeu Oi! Tô por aqui...", e o locator
+     * casa várias — em strict mode isso lança, e o `.isVisible().catch(()=>false)`
+     * da versão original engolia o erro. Resultado medido em 29/09/2026: o chip
+     * NUNCA foi clicado em nenhuma rodada, todo turno foi pro roteador
+     * automático, e as falhas apareciam como se fossem do Bento.
+     */
+    const chip = page.locator('button[aria-pressed]').filter({ hasText: new RegExp(`^${agente}`, 'i') }).first();
     await expect(chip, `o chip do agente ${agente} não apareceu`).toBeVisible({ timeout: 20_000 });
     await chip.click();
+    // Confere que PEGOU. Clicar e seguir sem verificar foi o que deixou todos
+    // os turnos irem pro roteador automático sem ninguém perceber.
+    await expect(chip, `o chip ${agente} não ficou selecionado depois do clique`).toHaveAttribute(
+      'aria-pressed',
+      'true',
+      { timeout: 10_000 },
+    );
   }
 }
 
