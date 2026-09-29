@@ -12,6 +12,7 @@ export * from './knowledge-plane';
 export * from './integration-health';
 export * from './cognition';
 export * from './clickup';
+export * from './mcp';
 export * from './integrations';
 export * from './studio';
 export * from './workflows';

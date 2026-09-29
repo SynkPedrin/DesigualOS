@@ -167,9 +167,38 @@ export const operationalEvents = pgTable(
     processedAt: timestamp('processed_at', { withTimezone: true }),
     processingError: text('processing_error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * ── EVENTO DE NEGÓCIO (migração 0044) ─────────────────────────────────
+     *
+     * Até 29/09/2026 esta tabela tinha 633 linhas e DOIS tipos — `task.created`
+     * e `task.updated` — os dois vindos do webhook do ClickUp, com `actor` nulo
+     * em 100% delas. Nenhum evento jamais foi registrado por uma pessoa nem por
+     * um agente, porque não havia como: faltavam a organização, o funcionário e
+     * um resumo legível.
+     *
+     * Estas colunas são o que permite ao Claude de cada funcionário registrar o
+     * que aconteceu enquanto trabalha — e é isso que transforma o chat
+     * individual em memória da empresa. Todas nulas: o webhook continua
+     * gravando exatamente como antes.
+     */
+    organizationId: uuid('organization_id'),
+    /** `organization_members.id`: QUEM da equipe, não só qual login. */
+    employeeId: uuid('employee_id'),
+    userId: uuid('user_id'),
+    projectId: uuid('project_id'),
+    /** Id da task na ferramenta (texto: o ClickUp usa id alfanumérico). */
+    taskId: text('task_id'),
+    /** Uma frase legível. É o que um humano lê no resumo do dia. */
+    summary: text('summary'),
+    /** 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL' — governa o que entra num resumo curto. */
+    importance: text('importance').default('LOW'),
+    /** 'PRIVATE' | 'TEAM' | 'CLIENT_SCOPED' — quem pode ver este acontecimento. */
+    visibility: text('visibility').default('TEAM'),
   },
   (table) => ({
     dedupeIdx: uniqueIndex('operational_events_source_external_idx').on(table.source, table.externalId),
+    orgOccurredIdx: index('operational_events_org_occurred_idx').on(table.organizationId, table.occurredAt),
+    userIdx: index('operational_events_user_idx').on(table.userId),
     clientIdx: index('operational_events_client_idx').on(table.clientId),
     unprocessedIdx: index('operational_events_processed_idx').on(table.processedAt),
     typeIdx: index('operational_events_type_idx').on(table.type),

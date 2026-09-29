@@ -22,6 +22,29 @@ export const auditLogs = pgTable(
     timestamp: timestamp('timestamp', { withTimezone: true }).notNull().defaultNow(),
     result: text('result').notNull(),
     metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    /**
+     * ── DETALHE DE AUDITORIA (migração 0044) ──────────────────────────────
+     *
+     * Todas nulas, todas aditivas: a tabela tinha 2.417 linhas quando estas
+     * colunas nasceram e nenhuma delas foi reescrita. O que existia respondia
+     * "quem alterou"; o que faltava era "o que era antes", "veio de onde" e
+     * "essa sequência é toda da mesma requisição?".
+     *
+     * `source` é a coluna que responde à pergunta que a operação faz de
+     * verdade: foi o Bento, foi o Claude de alguém, ou foi um humano no app?
+     * Valores: 'mcp' | 'web' | 'worker' | 'webhook'.
+     */
+    organizationId: uuid('organization_id'),
+    /** `organization_members.id` — a identidade de TRABALHO, não a de login. */
+    employeeId: uuid('employee_id'),
+    tool: text('tool'),
+    resourceType: text('resource_type'),
+    resourceId: text('resource_id'),
+    oldValue: jsonb('old_value').$type<Record<string, unknown> | null>(),
+    newValue: jsonb('new_value').$type<Record<string, unknown> | null>(),
+    requestId: text('request_id'),
+    sessionId: uuid('session_id'),
+    source: text('source'),
   },
   (table) => ({
     userIdx: index('audit_logs_user_id_idx').on(table.userId),

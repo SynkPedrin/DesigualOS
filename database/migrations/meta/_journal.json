@@ -309,6 +309,13 @@
       "when": 1790365632822,
       "tag": "0043_motion_ad_hoc_nullable_client",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1790693205473,
+      "tag": "0044_mcp_server",
+      "breakpoints": true
     }
   ]
 }
