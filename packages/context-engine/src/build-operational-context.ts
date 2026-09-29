@@ -2,6 +2,7 @@ import type { OperationalScope } from './resolve-scope';
 import { zonedDayStart } from './resolve-temporal';
 import { textoExternoSeguro } from './texto-externo';
 import { APRESENTACAO_HUMANA } from './selection';
+import { ehInterno } from './natureza-do-cliente';
 
 /**
  * build-operational-context.ts — transforma o escopo resolvido em DADO REAL de operação,
@@ -242,8 +243,12 @@ export async function buildOperationalContext(
           ? `ESTES NÚMEROS SÃO SOMENTE DO QUE ESTÁ COM ${scope.person.name.toUpperCase()}, atravessando clientes.`
           : null;
   if (escopoDoNumero) linhas.push(escopoDoNumero);
+  const internosNoRecorte = byClient.filter((c) => ehInterno(c.clientName));
+  const carteiraNoRecorte = byClient.length - internosNoRecorte.length;
   linhas.push(
-    `${result.tasks.length} tarefa(s) aberta(s)${janela} em ${byClient.length} cliente(s), de ${listIds.length} cliente(s) consultado(s).`,
+    internosNoRecorte.length > 0
+      ? `${result.tasks.length} tarefa(s) aberta(s)${janela}: ${carteiraNoRecorte} cliente(s) da carteira mais ${internosNoRecorte.length} frente(s) internas da agência, de ${listIds.length} lista(s) consultada(s).`
+      : `${result.tasks.length} tarefa(s) aberta(s)${janela} em ${byClient.length} cliente(s), de ${listIds.length} cliente(s) consultado(s).`,
   );
   if (overdue > 0) linhas.push(`${overdue} já passou do prazo.`);
   if (unassigned > 0) linhas.push(`${unassigned} sem responsável definido.`);
@@ -306,14 +311,43 @@ export async function buildOperationalContext(
   const TETO_POR_CLIENTE = scope.kind === 'GLOBAL' || scope.kind === 'MULTI_CLIENT' ? 12 : Number.MAX_SAFE_INTEGER;
 
   const listedTasks: Array<OperationalTaskLike & { clientName: string | null }> = [];
-  for (const { clientName } of byClient) {
+  /**
+   * A CASA NÃO É CLIENTE (29/09/2026).
+   *
+   * Medido numa resposta real: "Agência Desigual: 34 atrasadas" apareceu no
+   * meio da carteira, entre Cosentino e D. Carvalho. São 170 tarefas de
+   * trabalho REAL — operação interna, site, processo — e por isso elas não
+   * saem daqui. Mas somar a casa à carteira faz o gestor ler "meus clientes
+   * estão com 34 atrasadas" sobre trabalho que é dele mesmo.
+   *
+   * Então: rotuladas e no fim, nunca escondidas. Quem pergunta "como está a
+   * carteira?" enxerga a separação; quem pergunta "o que está atrasado?"
+   * continua vendo tudo, porque continua sendo tudo que precisa ser feito.
+   */
+  const ordenadosPorNatureza = [...byClient].sort((a, b) => {
+    const ia = ehInterno(a.clientName) ? 1 : 0;
+    const ib = ehInterno(b.clientName) ? 1 : 0;
+    return ia !== ib ? ia - ib : 0;
+  });
+  const temInterno = ordenadosPorNatureza.some((c) => ehInterno(c.clientName));
+  let jaSeparou = false;
+
+  for (const { clientName } of ordenadosPorNatureza) {
     const tasks = [...porCliente.get(clientName)!].sort((a, b) => {
       const pa = PRIORITY_ORDER[a.priority ?? 'normal'] ?? 2;
       const pb = PRIORITY_ORDER[b.priority ?? 'normal'] ?? 2;
       if (pa !== pb) return pa - pb;
       return (a.dueDate ?? Number.MAX_SAFE_INTEGER) - (b.dueDate ?? Number.MAX_SAFE_INTEGER);
     });
-    linhas.push(`${textoExternoSeguro(clientName, 80) || 'cliente sem nome'} (${tasks.length}):`);
+    if (temInterno && !jaSeparou && ehInterno(clientName)) {
+      jaSeparou = true;
+      linhas.push(
+        'TRABALHO INTERNO DA AGÊNCIA (daqui pra baixo NÃO é cliente: é a própria casa, produto interno ou projeto do dono — não chame de cliente e não some na carteira):',
+      );
+      linhas.push('');
+    }
+    const rotulo = ehInterno(clientName) ? `${clientName} [INTERNO]` : clientName;
+    linhas.push(`${textoExternoSeguro(rotulo, 92) || 'cliente sem nome'} (${tasks.length}):`);
     const mostradas = tasks.slice(0, TETO_POR_CLIENTE);
     if (mostradas.length < tasks.length) {
       linhas.push(`(mostrando as ${mostradas.length} mais urgentes de ${tasks.length} — prioridade e prazo primeiro)`);

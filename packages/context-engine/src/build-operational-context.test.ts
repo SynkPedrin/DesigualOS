@@ -369,3 +369,74 @@ describe('ausência de dado financeiro não pode virar zero', () => {
     expect(ctx.block).toContain('nunca abra a resposta com um número');
   });
 });
+
+/**
+ * A CASA NÃO É CLIENTE (29/09/2026).
+ *
+ * Medido numa resposta real ao usuário: "Agência Desigual: 34 atrasadas"
+ * apareceu no meio da carteira, entre Cosentino e D. Carvalho. São 170 tarefas
+ * de trabalho real da própria agência — não podem sumir, e não podem ser
+ * somadas à carteira como se fossem de cliente.
+ */
+describe('trabalho interno separado da carteira', () => {
+  const CLIENTES_MISTOS = [
+    { id: 'c1', name: 'Cosentino', clickupListId: 'L-cos' },
+    { id: 'c2', name: 'Agência Desigual', clickupListId: 'L-casa' },
+    { id: 'c3', name: 'D. Carvalho', clickupListId: 'L-dc' },
+  ];
+  const tarefas = [
+    task({ id: 'a', name: 'Peça da Cosentino', listId: 'L-cos', listName: 'Cosentino' }),
+    task({ id: 'b', name: 'Site da própria agência', listId: 'L-casa', listName: 'Agência Desigual' }),
+    task({ id: 'c', name: 'Layout D. Carvalho', listId: 'L-dc', listName: 'D. Carvalho' }),
+  ];
+
+  async function bloco() {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      {
+        listAuthorizedClients: async () => CLIENTES_MISTOS,
+        queryTasks: async () => ({ tasks: tarefas, truncated: false }),
+      },
+      NOW,
+    );
+    return ctx;
+  }
+
+  it('a casa é ROTULADA como interna, não apagada', async () => {
+    const ctx = await bloco();
+    expect(ctx.block).toContain('Agência Desigual [INTERNO]');
+    // e a tarefa dela continua lá: é trabalho que alguém precisa fazer
+    expect(ctx.block).toContain('Site da própria agência');
+    expect(ctx.openTasks).toHaveLength(3);
+  });
+
+  it('o cabeçalho separa carteira de frente interna', async () => {
+    const ctx = await bloco();
+    expect(ctx.block).toContain('2 cliente(s) da carteira mais 1 frente(s) internas');
+  });
+
+  it('a instrução proíbe chamar a casa de cliente', async () => {
+    const ctx = await bloco();
+    expect(ctx.block).toContain('NÃO é cliente');
+  });
+
+  it('o interno vem DEPOIS de toda a carteira', async () => {
+    const ctx = await bloco();
+    const texto = ctx.block!;
+    expect(texto.indexOf('Cosentino (')).toBeLessThan(texto.indexOf('Agência Desigual [INTERNO]'));
+    expect(texto.indexOf('D. Carvalho (')).toBeLessThan(texto.indexOf('Agência Desigual [INTERNO]'));
+  });
+
+  it('carteira sem nenhum interno não ganha cabeçalho de separação', async () => {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      {
+        listAuthorizedClients: async () => [CLIENTES_MISTOS[0]!, CLIENTES_MISTOS[2]!],
+        queryTasks: async () => ({ tasks: [tarefas[0]!, tarefas[2]!], truncated: false }),
+      },
+      NOW,
+    );
+    expect(ctx.block).not.toContain('TRABALHO INTERNO');
+    expect(ctx.block).toContain('em 2 cliente(s)');
+  });
+});

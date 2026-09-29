@@ -2,6 +2,7 @@ import { isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   buildChangeContext,
+  escopoOperacional,
   buildOperationalBriefing,
   buildOperationalContext,
   pedeMudanca,
@@ -77,12 +78,28 @@ async function listAuthorizedClients(
     // cliente arquivado no meio do briefing.
     .where(isNull(schema.clients.deletedAt));
 
-  if (principal === CLICKUP_INTEGRATION) return rows;
+  /**
+   * FIXTURE DE QA FORA DA OPERAÇÃO (29/09/2026).
+   *
+   * Medido numa resposta real ao usuário: "teste" apareceu com 27 atrasadas e
+   * 27 sem responsável DENTRO do panorama da agência, ao lado de Cosentino e
+   * D. Carvalho, junto com "Cliente Teste 7" e "QA CAMPOS 1790624559995". Quem
+   * lê aquilo para decidir o dia da equipe não tem como saber que são fixture.
+   *
+   * O trabalho INTERNO da casa (a própria agência, o Citável, os projetos do
+   * dono) continua aqui de propósito: são 170 tarefas que alguém precisa
+   * fazer, e escondê-las trocaria um erro por outro pior. Quem separa carteira
+   * de casa na APRESENTAÇÃO é o build-operational-context; aqui só o dado de
+   * teste sai, porque ele não é trabalho de ninguém.
+   */
+  const semFixture = escopoOperacional(rows);
+
+  if (principal === CLICKUP_INTEGRATION) return semFixture;
 
   // Uma query, não uma por cliente: o for em série custava 22s do turno (ver
   // authorizedClientIds em access.ts, com a medição).
-  const permitidos = await authorizedClientIds(principal, rows.map((r) => r.id));
-  return rows.filter((row) => permitidos.has(row.id));
+  const permitidos = await authorizedClientIds(principal, semFixture.map((r) => r.id));
+  return semFixture.filter((row) => permitidos.has(row.id));
 }
 
 export interface OperationalTurn {
