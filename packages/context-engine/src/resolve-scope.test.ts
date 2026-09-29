@@ -111,9 +111,17 @@ describe('escopo de CLIENTE — cliente citado ganha de marcador global', () => 
 describe('ambiguidade — perguntar de volta e a atitude certa, mas nomeando os candidatos', () => {
   it('termo que bate em 2 clientes no mesmo nivel -> AMBIGUOUS com candidatos', async () => {
     const s = await resolveOperationalScope('como esta o case zero?', NOW);
-    // Sem cliente "case zero" no fixture, isso cai em NONE — o teste de ambiguidade real
-    // vive em resolve-client.test.ts, onde o fixture tem as duas linhas duplicadas.
-    expect(['NONE', 'AMBIGUOUS']).toContain(s.kind);
+    // Sem cliente "case zero" no fixture, o teste de ambiguidade real vive em
+    // resolve-client.test.ts, onde o fixture tem as duas linhas duplicadas.
+    //
+    // GLOBAL entrou na lista em 29/09/2026, com a inversão do portão de leitura
+    // (ver `pedeCompreensaoDaOperacao`): isto É uma pergunta, e pergunta agora
+    // consulta a operação por padrão em vez de cair em NONE e o agente
+    // responder "de qual cliente?" sem ter olhado para nada. O que este teste
+    // garante continua sendo o mesmo — nenhum cliente é INVENTADO a partir de
+    // um termo que não resolve.
+    expect(['NONE', 'AMBIGUOUS', 'GLOBAL']).toContain(s.kind);
+    expect(s.clients).toHaveLength(0);
   });
 });
 

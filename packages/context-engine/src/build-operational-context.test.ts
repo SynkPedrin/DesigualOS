@@ -268,3 +268,83 @@ describe('buildOperationalContext: tarefa maliciosa vinda do ClickUp', () => {
     expect((r.block ?? '').split('\n').filter((l) => l.startsWith('- '))).toHaveLength(1);
   });
 });
+
+/**
+ * O CONJUNTO QUE O BRIEFING RECEBE (29/09/2026).
+ *
+ * Bug medido ao vivo: o bloco declarava "411 tarefa(s) aberta(s) ... (811 já
+ * concluídas ficaram FORA)" e o briefing, montado no MESMO turno a partir da
+ * MESMA consulta, declarava "1222 tarefa(s)" — porque lia a lista crua do
+ * ClickUp em vez do conjunto filtrado. O briefing é quem vence no prompt, então
+ * o usuário recebeu o volume da operação 3x inflado ("sobrecarregado com 1222
+ * tarefas ativas", num briefing executivo).
+ *
+ * Estes testes travam o invariante pela ÚNICA coisa que importa: os dois
+ * consumidores da consulta têm que enxergar o mesmo conjunto.
+ */
+describe('openTasks — o conjunto que sustenta os números', () => {
+  const abertaA = task({ id: 'aberta-a', statusType: 'open', status: 'aberto' });
+  const abertaB = task({ id: 'aberta-b', statusType: 'custom', status: 'em revisão' });
+  const pronta = task({ id: 'pronta', statusType: 'done', status: 'pronto' });
+  const fechada = task({ id: 'fechada', statusType: 'closed', status: 'complete' });
+
+  function depsCom(tasks: OperationalTaskLike[]): OperationalContextDeps {
+    return {
+      listAuthorizedClients: async () => CLIENTES,
+      queryTasks: async () => ({ tasks, truncated: false }),
+    };
+  }
+
+  it('exclui as concluídas e as fechadas, e bate com o total do summary', async () => {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      depsCom([abertaA, pronta, abertaB, fechada]),
+      NOW,
+    );
+
+    expect(ctx.openTasks.map((t) => t.id)).toEqual(['aberta-a', 'aberta-b']);
+    // O invariante: quem monta o briefing a partir de openTasks chega ao MESMO
+    // número que o bloco anuncia. Sem isto os dois voltam a divergir.
+    expect(ctx.openTasks).toHaveLength(ctx.summary!.total);
+    expect(ctx.block).toContain('2 tarefa(s) aberta(s)');
+    expect(ctx.block).toContain('2 task(s) já concluídas');
+  });
+
+  it('é vazio quando a consulta só devolveu trabalho encerrado', async () => {
+    const ctx = await buildOperationalContext(scope({ temporal: null }), depsCom([pronta, fechada]), NOW);
+    expect(ctx.openTasks).toEqual([]);
+    expect(ctx.summary!.total).toBe(0);
+  });
+
+  it('é vazio, nunca ausente, quando o turno nem chega a consultar', async () => {
+    const semOperacional = await buildOperationalContext(
+      scope({ operational: false, kind: 'NONE' }),
+      depsCom([abertaA]),
+      NOW,
+    );
+    expect(semOperacional.openTasks).toEqual([]);
+
+    const semLista = await buildOperationalContext(
+      scope({ kind: 'CLIENT', clients: [{ id: 'c-semlista', name: 'Gelateria Fratelli', slug: 'gelateria-fratelli' }], temporal: null }),
+      depsCom([abertaA]),
+      NOW,
+    );
+    expect(semLista.openTasks).toEqual([]);
+    expect(semLista.failure).toContain('não tem lista do ClickUp vinculada');
+  });
+
+  it('sobrevive à falha da consulta sem virar undefined', async () => {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      {
+        listAuthorizedClients: async () => CLIENTES,
+        queryTasks: async () => {
+          throw new Error('rede caiu');
+        },
+      },
+      NOW,
+    );
+    expect(ctx.openTasks).toEqual([]);
+    expect(ctx.failure).toContain('a consulta ao ClickUp falhou');
+  });
+});

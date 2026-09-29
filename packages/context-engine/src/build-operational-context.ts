@@ -55,6 +55,20 @@ export interface OperationalContext {
    * como saber qual task era a segunda.
    */
   listedTasks: Array<OperationalTaskLike & { clientName: string | null }>;
+  /**
+   * As tarefas REALMENTE ABERTAS da consulta — o mesmo conjunto que sustenta os
+   * números do bloco, já sem as de `statusType` `done`/`closed`.
+   *
+   * Existe porque quem monta o BRIEFING (apps/api/src/lib/operational-context.ts)
+   * estava lendo a lista crua devolvida pelo ClickUp, que inclui as concluídas:
+   * o bloco dizia "411 tarefa(s) aberta(s) ... 811 já concluídas ficaram FORA" e
+   * o briefing, montado no MESMO turno, dizia "1222 tarefa(s)". Quem vence é o
+   * briefing, então o usuário recebia o volume da operação 3x inflado — medido
+   * ao vivo em 29/09/2026, com o Bento respondendo "sobrecarregado com 1222
+   * tarefas ativas". Expor o conjunto filtrado é o que impede os dois caminhos
+   * de divergirem de novo.
+   */
+  openTasks: OperationalTaskLike[];
   /** Números crus, pra quem quiser responder sem LLM (rota tool-only) ou pra log. */
   summary: {
     total: number;
@@ -93,14 +107,14 @@ export async function buildOperationalContext(
   now: Date = new Date(),
 ): Promise<OperationalContext> {
   if (!scope.operational || scope.kind === 'NONE' || scope.kind === 'AMBIGUOUS') {
-    return { block: null, listedTasks: [], summary: null, failure: null };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: null };
   }
 
   let clients: Array<{ id: string; name: string; clickupListId: string | null }>;
   try {
     clients = await deps.listAuthorizedClients();
   } catch (error) {
-    return { block: null, listedTasks: [], summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})` };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})` };
   }
 
   // Escopo de cliente(s): só as listas daqueles clientes. Escopo GLOBAL e
@@ -116,6 +130,7 @@ export async function buildOperationalContext(
     return {
       block: null,
       listedTasks: [],
+      openTasks: [],
       summary: null,
       failure:
         scope.kind === 'GLOBAL'
@@ -133,7 +148,7 @@ export async function buildOperationalContext(
       ...(scope.kind === 'PERSON' && scope.person?.memberIds?.length ? { assigneeIds: scope.person.memberIds } : {}),
     });
   } catch (error) {
-    return { block: null, listedTasks: [], summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})` };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})` };
   }
 
   /**
@@ -191,6 +206,7 @@ export async function buildOperationalContext(
         'Isto é resultado real de consulta, não ausência de acesso: pode afirmar que não há nada.',
       ].join('\n'),
       listedTasks: [],
+      openTasks: result.tasks,
       summary,
       failure: null,
     };
@@ -304,5 +320,5 @@ export async function buildOperationalContext(
     linhas.push('');
   }
 
-  return { block: linhas.join('\n').trimEnd(), listedTasks, summary, failure: null };
+  return { block: linhas.join('\n').trimEnd(), listedTasks, openTasks: result.tasks, summary, failure: null };
 }

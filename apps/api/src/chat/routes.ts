@@ -128,8 +128,9 @@ async function comPrazoDeAck(
     log.warn({ prazoMs: PRAZO_ACK_MS }, '[chat] contexto operacional não chegou no prazo do ack; seguindo sem ele');
     return {
       scope: { kind: 'NONE', clients: [], ambiguous: [], temporal: null, operational: false, comparative: false, briefing: false, person: null, signals: ['ack:prazo-estourado'], confidence: 0 },
-      context: { block: null, listedTasks: [], summary: null, failure: 'não consegui consultar o ClickUp a tempo neste turno' },
+      context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: 'não consegui consultar o ClickUp a tempo neste turno' },
       briefingBlock: null,
+      changeBlock: null,
       selection: null,
     };
   } finally {
@@ -527,8 +528,41 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           .catch(() => undefined);
       }
 
-      const operationalBlock =
-        operationalTurn.briefingBlock ?? formatOperationalContextForPrompt(operationalTurn.context);
+      /**
+       * O BRIEFING NÃO SUBSTITUI MAIS A LISTAGEM (29/09/2026).
+       *
+       * Era `briefingBlock ?? formatOperationalContextForPrompt(...)`, com a
+       * justificativa de que mandar os dois duplicaria o dado. Medido na
+       * pergunta-ouro: a consulta trouxe 1.222 tarefas, o builder montou
+       * 29.920 caracteres de listagem por cliente (nome, status, prazo,
+       * responsável, marca de atraso) e o `??` jogou TUDO fora em favor de um
+       * briefing de 7.582 — que nomeia 8 tarefas. 75% do dado consultado,
+       * pago em ~40s de ClickUp, descartado antes de chegar ao modelo.
+       *
+       * Não é duplicação: são camadas diferentes do mesmo fato. O briefing traz
+       * agregado, ranking e procedência por campo; a listagem traz o item, que é
+       * o que permite nomear tarefa e responsável em vez de falar por cima. O
+       * teto do serviço externo é de 120KB e os dois juntos cabem com folga
+       * (~37KB no pior caso medido).
+       */
+      const operationalListing = formatOperationalContextForPrompt(operationalTurn.context);
+      /**
+       * O bloco de MUDANÇA vai PRIMEIRO quando existe. Quem perguntou "o que
+       * mudou desde ontem?" quer a trajetória; o estado de agora é o pano de
+       * fundo dela, não a resposta. Na ordem inversa o modelo abria pelo
+       * inventário e a pergunta ficava sem resposta no meio do texto.
+       */
+      const estadoAtual = operationalTurn.briefingBlock
+        ? [
+            operationalTurn.briefingBlock,
+            operationalListing
+              ? `\n\nITENS QUE SUSTENTAM O BRIEFING ACIMA (mesma consulta, item a item — use para NOMEAR tarefa, responsável e prazo em vez de falar por cima):\n${operationalListing}`
+              : '',
+          ]
+            .filter(Boolean)
+            .join('')
+        : operationalListing;
+      const operationalBlock = [operationalTurn.changeBlock, estadoAtual].filter(Boolean).join('\n\n') || null;
 
       const partesDaMensagem = [body.message];
       if (contextBlock && contextoGeralVaiNaMensagem(decision.primary_agent)) {

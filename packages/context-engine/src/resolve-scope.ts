@@ -440,6 +440,64 @@ export interface EstadoDoTurnoAnterior {
   clients?: ClientMatch[];
 }
 
+
+/**
+ * ── LEITURA NÃO PRECISA DE SENHA (29/09/2026) ─────────────────────────────
+ *
+ * Até aqui, `operational` era uma ALLOWLIST: a consulta ao ClickUp só
+ * acontecia se a frase contivesse uma das palavras de OPERATIONAL_MARKERS,
+ * AGGREGATE_MARKERS, BRIEFING_MARKERS ou PANORAMA_MARKERS. Medido nas 21
+ * perguntas do benchmark de inteligência, 12 chegaram ao modelo com ZERO dado
+ * operacional — não porque o dado não existisse, mas porque a frase não tinha
+ * a palavra certa:
+ *
+ *   "Quais são os maiores riscos operacionais neste momento?"   -> NONE
+ *   "Quem trabalha aqui e qual é a função de cada pessoa?"      -> NONE
+ *   "Quais projetos internos parecem abandonados?"              -> NONE
+ *   "O que está parado há mais tempo?"                          -> NONE
+ *   "Quem está sobrecarregado?"       -> GLOBAL, e operational=FALSE
+ *
+ * A allowlist é a forma errada do problema. Ler não muda nada, não gasta
+ * permissão e não tem como estragar dado — a autorização existe para AÇÃO,
+ * não para raciocínio. Então o portão vira DENYLIST: pergunta substantiva
+ * consulta por padrão, e só não consulta o que provadamente não precisa.
+ *
+ * O que continua fora, e por quê:
+ *   - saudação e agradecimento: não há operação nenhuma na frase;
+ *   - pergunta sobre o próprio agente ("quem é você?"): é meta, não operação;
+ *   - ORDEM DE ESCRITA sem pergunta junto: já era assim antes (WRITE_ORDER_RE),
+ *     e continua — quem manda criar não está pedindo panorama.
+ *
+ * Custo: mais turnos consultam o ClickUp. É deliberado e é o lado certo do
+ * trade-off enquanto a consulta for ao vivo; quando o espelho local existir
+ * (ver a auditoria de inteligência, P0-3), o custo cai para uma query local.
+ */
+const SAUDACAO_OU_REACAO_RE =
+  /^(oi+|ola|opa|e ai|eai|bom dia|boa tarde|boa noite|tudo bem|tudo bom|blz|beleza|obrigad\w*|valeu|vlw|ok|okay|ta bom|tá bom|certo|entendi|perfeito|show|legal|top|bacana|massa|isso|isso ai|sim|nao|não)\b/;
+
+const SOBRE_O_PROPRIO_AGENTE_RE =
+  /\b(quem e voce|quem es voce|o que voce (e|faz|sabe|consegue|pode)|como voce funciona|voce e (um|uma)|qual (e )?seu nome|seu nome e)\b/;
+
+/**
+ * Pedido de ENTENDIMENTO: o verbo pede compreensão, não mudança. Vale como
+ * gatilho de leitura mesmo sem nenhuma palavra do vocabulário operacional.
+ */
+const PEDIDO_DE_ENTENDIMENTO_RE =
+  /\b(entend\w*|resum\w*|analis\w*|analit\w*|explic\w*|compar\w*|descobr\w*|audit\w*|avali\w*|revis\w*|diagnostic\w*|list\w*|mapei\w*|me (fal|diga|dig|mostr|cont|atualiz|inform|explic)\w*|quero saber|preciso saber|gostaria de saber|tudo que voce sabe|o que voce sabe|estado (atual|da|do)|situacao (da|do|atual)|o que mudou|o que aconteceu|o que ta|o que esta|risco|riscos|gargalo|inconsistenc|abandonad|parad[oa]|sobrecarregad)\b/;
+
+/**
+ * A frase pede COMPREENSÃO da operação? Denylist: começa valendo, e só cai
+ * fora do que provadamente não é operação.
+ */
+export function pedeCompreensaoDaOperacao(flat: string): boolean {
+  const t = flat.trim();
+  if (t.length === 0) return false;
+  // Saudação curta é saudação; parágrafo que começa com "ok" é assunto.
+  if (t.length <= 30 && SAUDACAO_OU_REACAO_RE.test(t)) return false;
+  if (SOBRE_O_PROPRIO_AGENTE_RE.test(t)) return false;
+  return QUESTION_RE.test(t) || PEDIDO_DE_ENTENDIMENTO_RE.test(t);
+}
+
 export async function resolveOperationalScope(
   message: string,
   now: Date = new Date(),
@@ -491,6 +549,19 @@ export async function resolveOperationalScope(
     aggregateHits.length === 0;
   if (ordemDeEscrita) signals.push('escrita:sem-consulta');
 
+  // Ver `pedeCompreensaoDaOperacao`: o portão de LEITURA é denylist, não
+  // allowlist. Sem isto, 12 das 21 perguntas do benchmark não disparavam
+  // consulta nenhuma por falta de uma palavra específica.
+  /**
+   * A frase ELÍPTICA continua sem inaugurar escopo, e isto não é exceção à
+   * regra nova: é a regra antiga preservada. "Se eu só conseguir resolver três
+   * coisas, o que eu faço?" é uma pergunta — mas numa conversa CRIATIVA ela
+   * fala do trabalho criativo, não da operação. Quem decide é o turno
+   * anterior; sem anterior operacional, ela não abre consulta sozinha.
+   */
+  const compreensao = pedeCompreensaoDaOperacao(flat) && !(ehFollowUpEliptico(message) && !anterior?.operational);
+  if (compreensao) signals.push('leitura:compreensao');
+
   const operational =
     !ordemDeEscrita &&
     (operationalHits.length > 0 ||
@@ -498,6 +569,10 @@ export async function resolveOperationalScope(
       briefingHits.length > 0 ||
       // Pedir o panorama É pedir o estado da operação, mesmo sem dizer "tarefa".
       panoramaHits.length > 0 ||
+      // Comparar entidades é operacional por definição: "quem está
+      // sobrecarregado?" resolvia GLOBAL e mesmo assim não buscava nada.
+      comparativeHits.length > 0 ||
+      compreensao ||
       herdaDoAnterior ||
       temporal !== null);
   const comparative = comparativeHits.length > 0;
@@ -669,6 +744,9 @@ export async function resolveOperationalScope(
       temporal !== null ||
       operationalHits.length > 0 ||
       panoramaHits.length > 0 ||
+      // A pergunta sobre a operação sem cliente nomeado é sobre a operação
+      // INTEIRA. Antes caía em NONE e o agente respondia sem dado nenhum.
+      compreensao ||
       (herdaDoAnterior && anterior?.kind === 'GLOBAL'))
   ) {
     return {

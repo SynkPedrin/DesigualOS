@@ -19,3 +19,10 @@ export {
   type PolicyContext,
   type PolicyDecision,
 } from './policy.js';
+
+export {
+  classificarAcesso,
+  ehPedidoDeLeitura,
+  type NivelDeAcesso,
+  type ClassificacaoDeAcesso,
+} from './access-level.js';
