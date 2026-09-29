@@ -121,7 +121,7 @@ O único caminho de leitura é `queryOperationTasks({ listIds })`, e `listIds` s
 - O cliente tem **`getSpaces` apenas dentro do fluxo de OAuth** (`clickup-oauth.ts:122`), para descobrir espaços na hora de conectar. Nenhum caminho de conhecimento lê espaço, pasta ou Doc.
 - `getTaskComments` existe, mas só é chamado com um `taskId` que já se conhece. Comentário nunca é fonte de descoberta.
 - Não existe leitura de histórico de task.
-- **CORRIGIDO NO MESMO DIA, e a correção muda a conclusão.** Esta linha dizia também "nem de subtarefa como entidade, nem de relação entre tarefas", e eu concluí daí que faltava DADO. Faltava leitura, não dado: o campo `parent` sempre veio na listagem do ClickUp e era descartado no parse. A sessão paralela mediu o que ele continha e o número é uma descoberta sobre como a agência trabalha, não sobre a ferramenta — nos três maiores clientes, `dependencies` vem 0 de 253 e `linked_tasks` 0 de 253, mas **221 de 253 são subtarefa**. A agência não usa dependência do ClickUp; usa árvore. Ver `apps/worker/src/processors/bento-arvore.ts`, que passou a montar a árvore, apurar frentes e diagnosticar causa de atraso — e que se proíbe de afirmar dependência entre tarefas, justamente porque esse dado não existe.
+- **CORRIGIDO NO MESMO DIA — ver C-15, que é o achado mais transferível desta auditoria.** Esta linha dizia também "nem de subtarefa como entidade, nem de relação entre tarefas", e eu concluí daí que faltava DADO. Faltava leitura.
 - **6 clientes ativos não têm lista vinculada e são inteiramente invisíveis:** FESTARA, Botini, Gelateria Fratelli, Home Center Tecaut, Sonhar Painéis e **John Deere** — o cliente citado no próprio briefing desta missão como exemplo de risco.
 
 Os 20 itens que o Claude enumerou sobre espaços, organização do workspace, infraestrutura e riscos técnicos não são "coisas que o Desigual OS respondeu mal". São coisas que **nenhum código deste repositório consegue enxergar**.
@@ -302,6 +302,24 @@ Q02, "Quem trabalha aqui e qual é a função de cada pessoa?", foi respondida c
 O acerto não é reproduzível, não é verificável e some no dia em que alguém editar aquele arquivo. Um sistema que conhece a agência não pode depender de o organograma estar no lugar errado.
 
 Q17, "Quais ações os agentes realizaram recentemente?", mostra o outro lado da mesma moeda: oito fontes do vault, todas de abril a julho de 2026, falando de auditoria de código e de alcance no Instagram. Nenhuma linha sobre o que Bento, Otto ou Jarbas fizeram — apesar de `executions` ter **510 execuções do Bento nos últimos 7 dias** e `tool_calls` registrar as ações reais. A pergunta sobre os agentes foi respondida por deriva semântica num vault.
+
+### C-15 — A fonte óbvia vem vazia; o sinal está em outro lugar · DATA · P1
+
+Três vezes em 29/09/2026, no mesmo dia, o mesmo erro de método: alguém (eu incluído) olhou o campo que a ferramenta oferece para aquele significado, encontrou vazio, e concluiu que a informação não existia. Ela existia, em outro campo.
+
+Medido nos três maiores clientes da carteira (253 tarefas):
+
+| O que se procurava | Campo óbvio | Preenchimento | Onde o sinal realmente está |
+|---|---|---|---|
+| relação entre tarefas | `dependencies` | **0 de 253** | `parent` — **221 de 253** (84% a 91% por cliente) |
+| relação entre tarefas | `linked_tasks` | **0 de 253** | idem |
+| agrupamento de cliente | `tags` | **32 de 411** | `folderName` — **411 de 411**, valendo "CLIENTES ATIVOS" |
+
+**A conclusão não é sobre subtarefa.** É sobre esta operação: ela codifica estrutura em NOME e em ÁRVORE DE SUBTAREFA, não nos campos relacionais que o ClickUp oferece. A convenção `Cliente_Campanha_Peça` e a hierarquia de tarefa-mãe carregam o que, num workspace de manual, estaria em dependência e etiqueta.
+
+E a conclusão de MÉTODO, que vale para qualquer camada nova: **medir o preenchimento do campo antes de escrever a primeira linha em cima dele.** Uma consulta de `count(*) filter (where campo is not null)` custa segundos e teria evitado as três. O atalho que falhou nas três — "a busca não devolve, logo a fonte não tem" — é exatamente o que esta auditoria acusa o próprio sistema de fazer em C-01 e C-07.
+
+O que saiu disso: `apps/worker/src/processors/bento-arvore.ts` monta a árvore, apura frentes e diagnostica causa de atraso a partir do `parent` que já vinha e era descartado no parse. Saída real da Cosentino: *"19 estão na mesma frente Europa V (141 de 173 já entregues); 8 não têm responsável; 7 dependem de Tammy em 4 frentes; 5 estão aguardando aprovação"*. E ele se proíbe de afirmar dependência entre tarefas — porque esse dado, esse sim, não existe.
 
 ### C-12 — O "shared brain" está morto · ARCHITECTURE · P2
 
