@@ -44,12 +44,19 @@ export interface CandidatoAEpisodio {
  * memória fica diferente a cada execução do MESMO turno.
  */
 const FORMAS: Array<{ tipo: TipoDeEpisodio; re: RegExp; peso: number }> = [
-  // Decisão: alguém fechou uma questão.
-  { tipo: 'decision', re: /\b(decidimos|decidi|ficou (definido|decidido|acertado)|vamos (seguir|com)|aprovad[oa]|fechado|optamos por|escolhemos)\b/i, peso: 0.9 },
+  // Decisão: alguém fechou uma questão. Ampliada em 26/09/2026 (F-20): o
+  // dialeto real da operação não é só "decidimos" — só 4 de 10 decisões
+  // naturais viravam episódio. As formas novas continuam exigindo conteúdo
+  // material (ver extractEpisodeCandidates), então "tá decidido." sozinho
+  // não vira memória.
+  { tipo: 'decision', re: /\b(decidimos|decidi|ficou (definido|decidido|acertado)|t[áa] decidido|vamos (seguir|com|fazer assim)|pode seguir|bora com|aprovad[oa]|fechado|optamos por|escolhemos)\b/i, peso: 0.9 },
   // Feedback: julgamento sobre entrega.
   { tipo: 'feedback', re: /\b(reprovad[oa]|refaz|refaça|não gostei|nao gostei|ficou (ruim|genérico|generico|fraco)|muito bom|gostei|ajusta|corrige|troca)\b/i, peso: 0.8 },
-  // Preferência: regra durável declarada.
-  { tipo: 'preference', re: /\b(prefir[ao]|sempre|nunca|daqui pra frente|de agora em diante|a partir de agora|padr[ãa]o|regra)\b/i, peso: 0.85 },
+  // Preferência: regra durável declarada. "prefere" entra ao lado de
+  // "prefiro/prefira"; as formas de restrição ("não usar mais", "esse cliente
+  // não usa", "quando for campanha") são as que a equipe usa pra declarar
+  // regra de cliente sem dizer "regra".
+  { tipo: 'preference', re: /\b(prefir[ao]|prefere|sempre|nunca|daqui pra frente|de agora em diante|a partir de agora|padr[ãa]o|regra|n[ãa]o (usa|usar) mais|(esse|este|o) cliente n[ãa]o usa|quando for campanha)\b/i, peso: 0.85 },
   // Mudança operacional: estado da operação mudou.
   { tipo: 'operational_change', re: /\b(mudou|alterad[oa]|adiad[oa]|antecipad[oa]|entrou|saiu|assumiu|passou a|virou)\b/i, peso: 0.7 },
 ];
@@ -83,6 +90,18 @@ export function extractEpisodeCandidates(mensagem: string): CandidatoAEpisodio[]
     const forma = FORMAS.find((f) => f.re.test(frase));
     const pediu = PEDIU_PRA_REGISTRAR.test(frase);
     if (!forma && !pediu) continue;
+
+    /**
+     * RELEVÂNCIA MÍNIMA (F-20, 26/09/2026): a forma sozinha não basta. "Tá
+     * decidido." sem mais nada não carrega fato — O QUE se decidiu é que é a
+     * memória. Regra: depois de remover o marcador que disparou (a forma ou o
+     * pedido de registro), a frase precisa restar pelo menos 2 termos de
+     * conteúdo (termosDeConsulta, que já ignora palavra de função). Um termo
+     * só aceitaria confirmação casual ("Beleza, pode seguir."); dois exigem
+     * assunto + alguma coisa sobre ele.
+     */
+    const semMarcador = frase.replace(forma?.re ?? PEDIU_PRA_REGISTRAR, ' ');
+    if (termosDeConsulta(semMarcador).length < 2) continue;
 
     const tipo: TipoDeEpisodio = forma?.tipo ?? 'decision';
     const chave = `${tipo}|${frase.toLowerCase()}`;
@@ -270,6 +289,14 @@ export function formatEpisodeBlock(episodios: EpisodioRecuperado[], rotulo: stri
 const TIPOS_DE_FATO_EXPLICITO = ['decision', 'preference', 'operational_change', 'feedback'] as const;
 
 /**
+ * Par de strings pro translate() do recall factual: cada acento PT-BR vira a
+ * letra base, preservando a caixa (o ILIKE dobra a caixa depois). Os dois
+ * lados têm o mesmo comprimento, como translate() exige.
+ */
+const DOBRA_ACENTO_DE = 'áàâãäéèêëíìîïóòôõöúùûüçñÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ';
+const DOBRA_ACENTO_PARA = 'aaaaaeeeeiiiiooooouuuucnAAAAAEEEEIIIIOOOOOUUUUCN';
+
+/**
  * Palavras que não discriminam nada. Só função gramatical e verbo de pergunta —
  * a lista é curta de propósito: uma lista longa de "palavras genéricas" já
  * matou 287 campanhas reais neste repositório quando incluiu "dia".
@@ -347,7 +374,23 @@ export async function recallFactualEpisodes(params: {
     );
   }
   const casaAlgumTermo = or(
-    ...params.termos.map((termo) => sql`${schema.agentEpisodes.summary} ilike ${'%' + termo + '%'}`),
+    ...params.termos.map((termo) => {
+      // DOBRA DE ACENTO NOS DOIS LADOS (F-13, auditoria de 26/09/2026). O termo
+      // chega sem acento (termosDeConsulta normaliza a pergunta) mas o resumo
+      // foi gravado cru ("orçamento"), e ILIKE dobra caixa, não acento — a
+      // pergunta exata não achava o fato ensinado minutos antes.
+      //
+      // Por que translate() e não unaccent/FTS: unaccent exige CREATE
+      // EXTENSION e tsvector/GIN exige migration + config de idioma — as duas
+      // saídas passam por migration, que este workstream não faz. translate()
+      // é função nativa do Postgres, cobre o alfabeto PT-BR e, com limit 6 e
+      // escopo por cliente+ambiente, o custo do scan é irrelevante. Fica como
+      // follow-up trocar por unaccent + tsvector quando houver migration.
+      const dobrado = termo
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '');
+      return sql`translate(${schema.agentEpisodes.summary}, ${DOBRA_ACENTO_DE}, ${DOBRA_ACENTO_PARA}) ilike ${'%' + dobrado + '%'}`;
+    }),
   );
   if (casaAlgumTermo) condicoes.push(casaAlgumTermo);
 
@@ -386,17 +429,35 @@ function nucleoDoResumo(resumo: string): Set<string> {
 }
 
 /**
- * Dois episódios tratam do mesmo assunto? Exige DUAS palavras de conteúdo em
- * comum, não uma: com uma só, "o decisor é X" e "a praça é Y" se tocariam por
- * acaso e um fato válido seria marcado como substituído.
+ * Dois episódios tratam do mesmo assunto? Duas regras, na ordem:
+ *
+ * 1. DUAS palavras de conteúdo em comum (por radical, não por igualdade:
+ *    "decisor" e "decisora" são a mesma coisa pra quem pergunta, e comparar
+ *    string exata fazia a correção do decisor passar como fato novo em vez de
+ *    substituir o anterior). Com uma só, "o decisor é X" e "a praça é Y" se
+ *    tocariam por acaso e um fato válido seria marcado como substituído.
+ *
+ * 2. NÚCLEO CURTO com sobreposição >= metade (F-21, 26/09/2026): reescrita
+ *    curta do MESMO fato revival o fato velho porque a redação divergente não
+ *    chegava a 2 termos comuns — "o responsável mudou" × "o responsável é a
+ *    Maria". Com núcleo de até 2 termos, UM termo em comum já é metade do
+ *    assunto. Núcleo maior continua exigindo os 2 radicais: um termo sozinho
+ *    em texto comprido não discrimina nada.
+ *
+ * O que isto NÃO resolve: reescrita total sem termo comum ("orçamento é 50
+ * mil" × "verba passa a ser 60 mil") — sinônimo exige semântica, e a saída de
+ * verdade é a supersessão PERSISTIDA (coluna superseded_by em agent_episodes,
+ * como já existe em memories), que depende de migration e ficou como
+ * follow-up. Este módulo não faz migration.
  */
 function falamDoMesmo(a: Set<string>, b: Set<string>): boolean {
   let comuns = 0;
   for (const t of a) {
-    // Por RADICAL, não por igualdade: "decisor" e "decisora" são a mesma coisa
-    // pra quem pergunta, e comparar string exata fazia a correção do decisor
-    // passar como fato novo em vez de substituir o anterior.
     for (const u of b) {
+      if (t === u) {
+        comuns += 1;
+        break;
+      }
       const menor = t.length <= u.length ? t : u;
       const maior = t.length <= u.length ? u : t;
       if (menor.length >= 5 && maior.startsWith(menor)) {
@@ -405,7 +466,9 @@ function falamDoMesmo(a: Set<string>, b: Set<string>): boolean {
       }
     }
   }
-  return comuns >= 2;
+  if (comuns >= 2) return true;
+  const menorLado = Math.min(a.size, b.size);
+  return comuns >= 1 && menorLado <= 2 && comuns / menorLado >= 0.5;
 }
 
 export function formatFactualEpisodeBlock(episodios: EpisodioRecuperado[]): string {
@@ -422,17 +485,24 @@ export function formatFactualEpisodeBlock(episodios: EpisodioRecuperado[]): stri
    * acontece quando a decisão de qual fato vale fica com quem está gerando
    * texto. Agora a decisão é tomada aqui e viaja escrita.
    */
-  const vistos: Array<{ nucleo: Set<string>; texto: string }> = [];
+  const vistos: Array<{ clientId: string | null; eventType: string; nucleo: Set<string>; texto: string }> = [];
   const linhas = [
     'REGISTRO APRENDIDO NA CONVERSA (informado por quem trabalha aqui, com data):',
   ];
   for (const e of episodios) {
     const quando = e.occurredAt.toISOString().slice(0, 16).replace('T', ' ');
     const nucleo = nucleoDoResumo(e.summary);
-    const anterior = vistos.find((v) => falamDoMesmo(v.nucleo, nucleo));
+    // SUPERSESSÃO ESCOPADA (F-21): um episódio só aposenta outro do MESMO
+    // cliente e do MESMO tipo. Sem o escopo, uma preferência geral da agência
+    // (clientId null) podia ser rotulada SUBSTITUÍDA por uma decisão de
+    // cliente que só dividia termos com ela — aposentadoria por acidente de
+    // vocabulário.
+    const anterior = vistos.find(
+      (v) => v.clientId === e.clientId && v.eventType === e.eventType && falamDoMesmo(v.nucleo, nucleo),
+    );
     const rotulo = anterior ? 'SUBSTITUÍDO' : 'ATUAL';
     linhas.push(`- ${rotulo} [${quando}] (${e.eventType}) ${e.summary}`);
-    vistos.push({ nucleo, texto: e.summary });
+    vistos.push({ clientId: e.clientId, eventType: e.eventType, nucleo, texto: e.summary });
   }
   linhas.push('');
   linhas.push(

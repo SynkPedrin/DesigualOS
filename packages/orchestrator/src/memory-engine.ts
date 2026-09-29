@@ -292,6 +292,17 @@ export interface RecallQuery {
  * pro prompt, que era o problema original de memória velha ganhando de dado novo.
  */
 export async function recallMemories(query: RecallQuery): Promise<RecalledMemory[]> {
+  if (query.environment === undefined) {
+    // O default 'production' protege o lado que mais dói (QA nunca vaza pra
+    // produção), mas esconde o erro inverso: um turno de QA lendo memória
+    // real. Tornar o parâmetro obrigatório quebraria callers fora deste
+    // workstream (agentic-dispatch.ts:325-326, execute-job.ts:1311/1331), que
+    // ainda não propagam o ambiente — fica o log até lá.
+    logger.warn(
+      { clientId: query.clientId ?? null, kinds: query.kinds ?? null },
+      'recallMemories sem environment: usando production; propague o ambiente resolvido do turno',
+    );
+  }
   // `now()` do Postgres em vez de bindar um Date: o driver (postgres.js) não aceita objeto
   // Date como parâmetro dentro de um template sql`` cru nesta posição, e isso estourava em
   // runtime (achado no teste de integração, não em typecheck).
