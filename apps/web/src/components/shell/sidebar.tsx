@@ -1,11 +1,11 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronsLeft, ChevronsRight, LogOut, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, LogOut, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui-store';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
@@ -46,6 +46,37 @@ export function Sidebar({
   const { data: me } = useMe();
   const { logoSrc } = useBrandAssets();
   const visibleNavItems = NAV_ITEMS.filter((item) => !item.masterOnly || isMaster);
+
+  /**
+   * QUAIS SEÇÕES ESTÃO ABERTAS.
+   *
+   * As técnicas nascem recolhidas (ver `recolhida` em nav-items.ts): somam
+   * vinte e três itens e servem a quem foi caçar uma coisa específica, não a
+   * quem abriu o sistema para trabalhar.
+   *
+   * A exceção que evita um beco: se a pessoa JÁ ESTÁ numa tela de uma seção
+   * recolhida, ela abre. Senão, quem chega em /audit por link vê a barra
+   * inteira sem nenhum sinal de onde está.
+   */
+  const [abertas, setAbertas] = useState<Set<string>>(
+    () =>
+      new Set(
+        NAV_SECTIONS.filter(
+          (s) =>
+            !s.recolhida ||
+            NAV_ITEMS.some((i) => i.section === s.id && i.href !== '/' && pathname.startsWith(i.href)),
+        ).map((s) => s.id),
+      ),
+  );
+
+  function alternarSecao(id: string) {
+    setAbertas((atual) => {
+      const proxima = new Set(atual);
+      if (proxima.has(id)) proxima.delete(id);
+      else proxima.add(id);
+      return proxima;
+    });
+  }
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -144,22 +175,47 @@ export function Sidebar({
         {NAV_SECTIONS.map((secao) => {
         const itensDaSecao = visibleNavItems.filter((i) => i.section === secao.id);
         if (itensDaSecao.length === 0) return null;
+        /*
+          * Com a barra COLAPSADA (só ícones) nada é recolhido: ali já não há
+          * rótulo nem espaço, e esconder metade dos ícones deixaria a pessoa
+          * sem nenhuma pista do que existe.
+          */
+        const aberta = collapsed || abertas.has(secao.id);
+        const podeRecolher = !collapsed && Boolean(secao.recolhida);
         return (
-        <div key={secao.id} className={cn(secao.id !== 'overview' && 'pt-4')}>
+        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-4')}>
           {/*
             * O rótulo da seção some quando a sidebar está colapsada — ali só
             * cabe ícone, e um texto truncado em 3 letras não agrupa nada.
             * Colapsada, a separação fica por conta do espaçamento entre grupos.
             */}
-          {!collapsed && (
-            <p className="px-3 pb-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60">
-              {secao.label}
-            </p>
-          )}
-          {collapsed && secao.id !== 'overview' && (
+          {!collapsed &&
+            (podeRecolher ? (
+              <button
+                type="button"
+                onClick={() => alternarSecao(secao.id)}
+                aria-expanded={aberta}
+                title={secao.ajuda}
+                className="flex w-full items-center gap-1.5 rounded px-3 pb-1.5 pt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60 transition-colors hover:text-branco-cru"
+              >
+                {aberta ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                <span>{secao.label}</span>
+                {/* Quantos itens tem lá dentro: sem isso, uma seção fechada
+                  * não diz se esconde dois itens ou vinte. */}
+                {!aberta && <span className="text-nevoa/40">{itensDaSecao.length}</span>}
+              </button>
+            ) : (
+              <p
+                title={secao.ajuda}
+                className="px-3 pb-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60"
+              >
+                {secao.label}
+              </p>
+            ))}
+          {collapsed && secao.id !== NAV_SECTIONS[0]!.id && (
             <div aria-hidden className="mx-3 mb-2 border-t border-grafite-elevado" />
           )}
-          <div className="space-y-1">
+          <div className={cn('space-y-1', !aberta && 'hidden')}>
         {itensDaSecao.map((item) => {
           const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
           const Icon = item.icon;

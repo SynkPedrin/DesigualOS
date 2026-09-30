@@ -30,25 +30,30 @@ import {
 } from 'lucide-react';
 
 /**
- * A navegação do CONTROL PLANE.
+ * A NAVEGAÇÃO, reorganizada para quem SUPERVISIONA a operação (30/09/2026).
  *
- * Reposicionamento do produto (29/09/2026): o Desigual OS deixa de ser "mais um
- * chat de IA" e passa a ser a camada por trás — memória, contexto, permissão,
- * auditoria e saúde da inteligência da agência. O Claude continua sendo onde a
- * equipe trabalha; aqui é onde se vê e se controla o que ele pode fazer.
+ * O que estava errado, e a culpa é de como eu vinha trabalhando: a cada
+ * necessidade eu ACRESCENTAVA uma tela. Chegou a quase trinta itens visíveis de
+ * uma vez. Trinta portas abertas não é poder de escolha — é a pessoa não saber
+ * por onde começar, e um supervisor com pressa fecha o sistema e volta pro
+ * ClickUp.
  *
- * O que isso significa pra esta lista, e é a decisão que mais pesa: NADA foi
- * deletado. Chat, agentes, Studio, automações e as telas de engenharia
- * continuam existindo, nas mesmas rotas, e mudaram de LUGAR — foram pra seção
- * INTERNO, no fim. Quebrar rota de um produto que a equipe já usa pra melhorar
- * a primeira impressão seria trocar um problema real por um estético.
+ * A correção não é apagar nada. NENHUMA rota foi removida: tudo continua
+ * existindo, no mesmo endereço, e alcançável. O que muda é o que aparece SEM
+ * pedir. As seções técnicas nascem recolhidas, e quem precisa delas abre.
  *
- * A ordem das seções é a ordem da pergunta que alguém faz ao abrir o sistema:
- * como está agora (VISÃO GERAL), o que ele sabe (INTELIGÊNCIA), o que ele pode
- * (CONTROLE), com o que ele fala (SISTEMA), e só então o motor (INTERNO).
+ * A pergunta que organiza a lista deixou de ser "que partes o sistema tem" e
+ * passou a ser "o que um supervisor faz num dia":
+ *
+ *   1. algo pegou fogo?            -> Visão geral, Sinais
+ *   2. como está a operação?       -> Clientes, Equipe
+ *   3. o que o sistema aprendeu?   -> Memória, Decisões
+ *   4. e o motor?                  -> recolhido, para quem for mexer nele
+ *
+ * Seis itens de saída, contra vinte e nove. O resto continua a um clique.
  */
 
-export type NavSection = 'overview' | 'intelligence' | 'control' | 'system' | 'internal';
+export type NavSection = 'dia' | 'conhecimento' | 'sistema' | 'interno';
 
 export interface NavItem {
   href: string;
@@ -60,65 +65,90 @@ export interface NavItem {
   masterOnly?: boolean;
 }
 
-export const NAV_SECTIONS: Array<{ id: NavSection; label: string }> = [
-  { id: 'overview', label: 'Visão geral' },
-  { id: 'intelligence', label: 'Inteligência' },
-  { id: 'control', label: 'Controle' },
-  { id: 'system', label: 'Sistema' },
-  { id: 'internal', label: 'Interno' },
+export interface NavSectionDef {
+  id: NavSection;
+  label: string;
+  /**
+   * Nasce recolhida. É o que separa "o que eu uso" de "o que existe": as duas
+   * seções de baixo somam vinte e três itens e servem a quem foi caçar uma
+   * coisa específica, não a quem abriu o sistema para trabalhar.
+   */
+  recolhida?: boolean;
+  /** Uma linha dizendo para que serve. Rótulo sozinho não ensina ninguém. */
+  ajuda?: string;
+}
+
+export const NAV_SECTIONS: NavSectionDef[] = [
+  { id: 'dia', label: 'Operação', ajuda: 'O que precisa de você hoje.' },
+  { id: 'conhecimento', label: 'Inteligência', ajuda: 'O que o sistema aprendeu e decidiu.' },
+  {
+    id: 'sistema',
+    label: 'Sistema',
+    recolhida: true,
+    ajuda: 'Saúde, permissões e integrações. Abra quando algo não estiver batendo.',
+  },
+  {
+    id: 'interno',
+    label: 'Ferramentas internas',
+    recolhida: true,
+    ajuda: 'O motor: chat, agentes, Studio e automações.',
+  },
 ];
 
 export const NAV_ITEMS: NavItem[] = [
-  // VISÃO GERAL — o estado agora.
-  { href: '/', label: 'Overview', icon: LayoutDashboard, section: 'overview' },
-  { href: '/activity', label: 'Atividade', icon: Activity, section: 'overview' },
-  { href: '/health', label: 'Saúde', icon: Heart, section: 'overview' },
-
-  // INTELIGÊNCIA — o que o sistema sabe.
   /**
-   * SINAIS vem primeiro da seção porque é a única tela que PEDE ação. Memória e
-   * decisões respondem "o que o sistema sabe"; sinal responde "o que ele quer
-   * te contar agora", e enterrar isso embaixo de acervo é como o alerta deixa
-   * de ser alerta.
+   * O DIA. Quatro itens, e cada um responde uma pergunta que alguém faz em voz
+   * alta na agência.
    */
-  { href: '/signals', label: 'Sinais', icon: Radar, section: 'intelligence' },
-  { href: '/memory', label: 'Memória', icon: Brain, section: 'intelligence' },
-  { href: '/decisions', label: 'Decisões', icon: ScrollText, section: 'intelligence' },
-  { href: '/clients', label: 'Clientes', icon: Users, section: 'intelligence' },
-  { href: '/people', label: 'Pessoas', icon: Users, section: 'intelligence' },
+  // "como estamos agora?"
+  { href: '/', label: 'Visão geral', icon: LayoutDashboard, section: 'dia' },
+  // "tem algo pegando fogo?"
+  { href: '/signals', label: 'Sinais', icon: Radar, section: 'dia' },
+  // "como está a conta do cliente X?"
+  { href: '/clients', label: 'Clientes', icon: Users, section: 'dia' },
+  // "quem está fazendo o quê?" — antes se chamava "Pessoas", que descrevia o
+  // cadastro; "Equipe" descreve o que o supervisor procura.
+  { href: '/people', label: 'Equipe', icon: Users, section: 'dia' },
 
-  // CONTROLE — o que ele pode fazer, e o que já fez.
-  { href: '/mcp', label: 'MCP', icon: Plug, section: 'control' },
-  { href: '/tools', label: 'Ferramentas', icon: Wrench, section: 'control' },
-  { href: '/permissions', label: 'Permissões', icon: KeyRound, section: 'control' },
-  { href: '/audit', label: 'Auditoria', icon: ShieldCheck, section: 'control' },
-  { href: '/errors', label: 'Incidentes', icon: TriangleAlert, section: 'control' },
-
-  // SISTEMA — com o que ele fala, e quanto custa.
-  { href: '/integrations', label: 'Integrações', icon: Boxes, section: 'system' },
-  // Só master: é manutenção do cadastro, não operação.
-  { href: '/data-quality', label: 'Qualidade do dado', icon: ShieldAlert, section: 'system', masterOnly: true },
-  { href: '/usage', label: 'Uso', icon: Gauge, section: 'system' },
-  { href: '/settings', label: 'Configurações', icon: Settings, section: 'system' },
+  // O QUE O SISTEMA SABE. Dois itens: o acervo e o que já foi fechado.
+  { href: '/memory', label: 'Memória', icon: Brain, section: 'conhecimento' },
+  { href: '/decisions', label: 'Decisões', icon: ScrollText, section: 'conhecimento' },
 
   /**
-   * INTERNO — o motor. Continua inteiro, nas mesmas rotas, só deixou de ser a
-   * primeira coisa que alguém vê. O chat do Bento em especial: ele não some, e
-   * quem usa continua chegando nele em dois cliques.
+   * SISTEMA — recolhido. Nada aqui é urgente num dia normal, e tudo aqui é
+   * essencial no dia em que algo quebra.
    */
-  { href: '/chat', label: 'Console do Bento', icon: MessageSquare, section: 'internal' },
-  { href: '/agents', label: 'Agentes', icon: Bot, section: 'internal' },
-  { href: '/workflows', label: 'Automações', icon: GitBranch, section: 'internal' },
-  { href: '/studio', label: 'Studio', icon: Sparkles, section: 'internal' },
-  { href: '/messages', label: 'Mensagens', icon: Inbox, section: 'internal' },
-  { href: '/tasks', label: 'Tasks', icon: CheckSquare, section: 'internal' },
-  { href: '/history', label: 'Histórico', icon: History, section: 'internal' },
-  { href: '/knowledge', label: 'Conhecimento', icon: BookOpen, section: 'internal' },
-  { href: '/analytics', label: 'Analytics', icon: BarChart3, section: 'internal' },
-  { href: '/costs', label: 'Tokens & Custos', icon: Coins, section: 'internal', masterOnly: true },
-  { href: '/monitoring', label: 'Monitoramento', icon: Activity, section: 'internal', masterOnly: true },
+  { href: '/health', label: 'Saúde', icon: Heart, section: 'sistema' },
+  { href: '/activity', label: 'Atividade', icon: Activity, section: 'sistema' },
+  // "MCP" é sigla de protocolo. Quem supervisiona quer saber quais Claudes
+  // estão plugados no sistema — então é esse o nome.
+  { href: '/mcp', label: 'Claudes conectados', icon: Plug, section: 'sistema' },
+  { href: '/tools', label: 'Ferramentas do Claude', icon: Wrench, section: 'sistema' },
+  { href: '/permissions', label: 'Permissões', icon: KeyRound, section: 'sistema' },
+  { href: '/audit', label: 'Auditoria', icon: ShieldCheck, section: 'sistema' },
+  { href: '/errors', label: 'Incidentes', icon: TriangleAlert, section: 'sistema' },
+  { href: '/integrations', label: 'Integrações', icon: Boxes, section: 'sistema' },
+  { href: '/data-quality', label: 'Qualidade do dado', icon: ShieldAlert, section: 'sistema', masterOnly: true },
+  { href: '/usage', label: 'Uso', icon: Gauge, section: 'sistema' },
+  { href: '/settings', label: 'Configurações', icon: Settings, section: 'sistema' },
+
+  /**
+   * INTERNO — o motor, recolhido e INTEIRO. O chat do Bento em especial: ele
+   * não sumiu, continua em /chat, e quem usa chega nele em dois cliques.
+   */
+  { href: '/chat', label: 'Console do Bento', icon: MessageSquare, section: 'interno' },
+  { href: '/agents', label: 'Agentes', icon: Bot, section: 'interno' },
+  { href: '/workflows', label: 'Automações', icon: GitBranch, section: 'interno' },
+  { href: '/studio', label: 'Studio', icon: Sparkles, section: 'interno' },
+  { href: '/messages', label: 'Mensagens', icon: Inbox, section: 'interno' },
+  { href: '/tasks', label: 'Tasks', icon: CheckSquare, section: 'interno' },
+  { href: '/history', label: 'Histórico', icon: History, section: 'interno' },
+  { href: '/knowledge', label: 'Conhecimento', icon: BookOpen, section: 'interno' },
+  { href: '/analytics', label: 'Analytics', icon: BarChart3, section: 'interno' },
+  { href: '/costs', label: 'Tokens & Custos', icon: Coins, section: 'interno', masterOnly: true },
+  { href: '/monitoring', label: 'Monitoramento', icon: Activity, section: 'interno', masterOnly: true },
   // Fila de aprovação humana do Tool Gateway (budget de Meta Ads, publicação
   // no Instagram, deletar task do ClickUp) - só master aprova (`requirePermission('tool_calls','approve')`).
-  { href: '/approvals', label: 'Aprovações', icon: ClipboardCheck, section: 'internal', masterOnly: true },
-  { href: '/admin', label: 'Admin', icon: ShieldCheck, section: 'internal', masterOnly: true },
+  { href: '/approvals', label: 'Aprovações', icon: ClipboardCheck, section: 'interno', masterOnly: true },
+  { href: '/admin', label: 'Admin', icon: ShieldCheck, section: 'interno', masterOnly: true },
 ];

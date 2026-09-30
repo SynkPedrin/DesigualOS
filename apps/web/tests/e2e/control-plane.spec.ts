@@ -36,7 +36,7 @@ const TELAS = [
   { rota: '/health', titulo: /Saúde do sistema/i },
   { rota: '/memory', titulo: /Memória/i },
   { rota: '/decisions', titulo: /Decisões e aprendizados/i },
-  { rota: '/people', titulo: /Pessoas/i },
+  { rota: '/people', titulo: /^Equipe$/i },
   { rota: '/mcp', titulo: /^MCP$/i },
   { rota: '/tools', titulo: /Ferramentas/i },
   { rota: '/permissions', titulo: /Permissões/i },
@@ -80,15 +80,41 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     });
   }
 
-  /** A sidebar agrupada é o que reposiciona o produto — se ela não agrupar, nada mais importa. */
-  test('a sidebar mostra as seções do Control Plane, com o interno por último', async ({ page }) => {
+  /**
+   * A BARRA PRECISA CABER NA CABEÇA DE QUEM SUPERVISIONA.
+   *
+   * O produto chegou a vinte e nove itens visíveis de uma vez, porque a cada
+   * necessidade eu acrescentava uma tela. Trinta portas abertas não é poder de
+   * escolha: é a pessoa não saber por onde começar.
+   *
+   * O teste trava as DUAS metades da promessa, porque uma sozinha é perigosa:
+   * poucos itens à mostra (senão volta a poluir) E nada inalcançável (senão
+   * "limpar" vira esconder, que é pior que a bagunça).
+   */
+  test('a barra mostra pouco por padrão, e nada fica inalcançável', async ({ page }) => {
     await login(page);
     await page.goto('/');
-    for (const secao of ['Visão geral', 'Inteligência', 'Controle', 'Sistema', 'Interno']) {
-      await expect(page.getByText(secao, { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+
+    const nav = page.getByRole('navigation', { name: /Navegação principal/i });
+    await expect(nav).toBeVisible({ timeout: 20_000 });
+
+    // O que um supervisor usa no dia aparece sem pedir.
+    for (const item of ['Visão geral', 'Sinais', 'Clientes', 'Equipe']) {
+      await expect(nav.getByRole('link', { name: item, exact: true })).toBeVisible({ timeout: 20_000 });
     }
-    // O console do Bento continua alcançável: mudou de lugar, não de estado.
-    await expect(page.getByRole('link', { name: /Console do Bento/i })).toBeVisible();
+
+    const visiveis = await nav.getByRole('link').count();
+    expect(visiveis, `a barra voltou a ter ${visiveis} itens à mostra`).toBeLessThanOrEqual(10);
+
+    /**
+     * E o motor continua inteiro. O Console do Bento é o caso que mais importa:
+     * a equipe usa, e "reposicionar" nunca pode virar "sumiu".
+     */
+    const interno = nav.getByRole('button', { name: /Ferramentas internas/i });
+    await expect(interno).toBeVisible();
+    await expect(interno, 'a seção técnica nasce recolhida').toHaveAttribute('aria-expanded', 'false');
+    await interno.click();
+    await expect(page.getByRole('link', { name: /Console do Bento/i })).toBeVisible({ timeout: 10_000 });
   });
 
   /** A logo do Claude é asset local — se o caminho quebrar, a imagem some em silêncio. */

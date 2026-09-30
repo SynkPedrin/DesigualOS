@@ -1477,6 +1477,7 @@ export interface CollaboratorWire {
   roles: string[];
   clickup: CollaboratorClickUpWire | null;
   last_seen_at: ISODateString | null;
+  atividade?: AtividadeNoClaude;
 }
 
 export interface CollaboratorsResponseWire {
@@ -1499,6 +1500,15 @@ export interface Collaborator {
     color: string | null;
   } | null;
   lastSeenAt: ISODateString | null;
+  /** `null` = a API não mandou (versão anterior). Diferente de "não usou". */
+  atividade: AtividadeNoClaude | null;
+}
+
+export interface AtividadeNoClaude {
+  conversas_30d: number;
+  mensagens_30d: number;
+  ultima_conversa: string | null;
+  agentes: Array<{ agent: string; total: number }>;
 }
 
 export function mapCollaborator(wire: CollaboratorWire): Collaborator {
@@ -1519,6 +1529,12 @@ export function mapCollaborator(wire: CollaboratorWire): Collaborator {
         }
       : null,
     lastSeenAt: wire.last_seen_at,
+    /**
+     * O que a pessoa anda pedindo ao Claude. O backend sempre manda; o `??`
+     * cobre uma API mais velha em deploy escalonado, e aí a tela mostra
+     * ausência em vez de zero — "não medi" e "não usou" são coisas diferentes.
+     */
+    atividade: wire.atividade ?? null,
   };
 }
 
