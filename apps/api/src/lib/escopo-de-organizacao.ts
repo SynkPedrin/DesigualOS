@@ -1,5 +1,5 @@
 import { db, schema } from '@desigual-os/database';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { AuthenticatedUser } from '../auth/middleware';
 
 /**
@@ -130,4 +130,48 @@ export async function colegasVisiveis(user: AuthenticatedUser): Promise<{ userId
   // A própria pessoa sempre entra: sem isso, alguém fora de qualquer
   // organização deixaria de se ver na própria tela de equipe.
   return { userIds: [...new Set([user.id, ...linhas.map((l) => l.userId)])], ehProvider: false };
+}
+
+/**
+ * O recorte de pessoas visíveis, como FRAGMENTO DE SQL.
+ *
+ * Existe porque a alternativa é pior das duas formas possíveis:
+ *
+ *   - resolver as organizações antes e filtrar depois custa duas idas ao banco
+ *     ANTES da consulta principal, e o pool desta API tem três conexões. Já
+ *     derrubei o /panorama assim duas vezes no mesmo dia (0,16s -> 2,9s);
+ *   - escrever o `EXISTS` à mão em cada rota é a seção 82 sendo violada pela
+ *     mesma pessoa que a citou — e treze cópias é treze chances de uma divergir.
+ *
+ * Então: uma consulta só, e uma fonte só. O fragmento vai dentro do `where` que
+ * a rota já tem.
+ *
+ * `colunaDoUsuario` é a coluna que identifica a pessoa naquela consulta —
+ * `schema.users.id` numa listagem de gente, `schema.mcpTokens.userId` numa de
+ * conexões. Passar a coluna errada não quebra: silenciosamente não recorta
+ * nada, que é o motivo de esta função existir em vez de cada rota improvisar.
+ */
+export function recorteDePessoasVisiveis(
+  user: AuthenticatedUser,
+  colunaDoUsuario: SQL | unknown,
+): SQL {
+  const papelDePlataforma = ehPapelDePlataforma(user.roles);
+  const provedora = organizacaoProvedora();
+
+  return sql`(
+    (
+      ${papelDePlataforma}
+      and ${provedora}::uuid is not null
+      and exists (
+        select 1 from organization_members om
+        where om.user_id = ${user.id}::uuid and om.organization_id = ${provedora}::uuid
+      )
+    )
+    or exists (
+      select 1 from organization_members meu
+      join organization_members dele on dele.organization_id = meu.organization_id
+      where meu.user_id = ${user.id}::uuid and dele.user_id = ${colunaDoUsuario}
+    )
+    or ${colunaDoUsuario} = ${user.id}::uuid
+  )`;
 }

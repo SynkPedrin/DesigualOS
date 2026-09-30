@@ -4,6 +4,7 @@ import { db, schema } from '@desigual-os/database';
 import { createLogger } from '@desigual-os/logging';
 import { getTeamMembers, type ClickUpMember } from '@desigual-os/tool-gateway';
 import { requireAuth } from '../auth/middleware';
+import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
 
 const logger = createLogger({ service: 'orchestrator-api' });
 
@@ -41,7 +42,12 @@ function getClickUpConfig(): { apiKey: string; teamId: string } | null {
  * de integração externa.
  */
 export async function registerCollaboratorRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/collaborators', { preHandler: requireAuth }, async () => {
+  app.get('/collaborators', { preHandler: requireAuth }, async (request, reply) => {
+    const usuario = request.authUser;
+    if (!usuario) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
     const rows = await db
       .select({
         id: schema.users.id,
@@ -55,7 +61,18 @@ export async function registerCollaboratorRoutes(app: FastifyInstance): Promise<
       .from(schema.users)
       .innerJoin(schema.userRoles, eq(schema.userRoles.userId, schema.users.id))
       .innerJoin(schema.roles, eq(schema.roles.id, schema.userRoles.roleId))
-      .where(and(isNull(schema.users.deletedAt), eq(schema.users.active, true)))
+      /**
+       * SÓ A EQUIPE DA MINHA EMPRESA. A rota devolvia todos os usuários ativos,
+       * sem recorte — nome, e-mail, papel e vínculo ClickUp de cada pessoa.
+       * Recorte dentro da consulta que já existia, não numa pergunta antes.
+       */
+      .where(
+        and(
+          isNull(schema.users.deletedAt),
+          eq(schema.users.active, true),
+          recorteDePessoasVisiveis(usuario, schema.users.id),
+        ),
+      )
       .orderBy(asc(schema.users.name));
 
     const byId = new Map<

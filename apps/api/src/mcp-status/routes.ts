@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { and, desc, eq, gte, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
+import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
 
 /**
  * O ESTADO REAL DO MCP, pro Control Plane.
@@ -69,7 +70,11 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
       })
       .from(schema.mcpTokens)
       .leftJoin(schema.users, eq(schema.users.id, schema.mcpTokens.userId))
-      .where(conexaoViva())
+      /**
+       * Só quem é da minha empresa. Esta rota mostra QUEM está conectado e com
+       * quais escopos — com dois tenants, seria a lista de acessos do outro.
+       */
+      .where(and(conexaoViva(), recorteDePessoasVisiveis(user, schema.mcpTokens.userId)))
       .orderBy(desc(schema.mcpTokens.createdAt));
 
     const porPessoa = new Map<
