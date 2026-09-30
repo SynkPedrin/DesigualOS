@@ -179,7 +179,14 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
           visibility: args.visibility ?? 'TEAM',
           payload: (args.detail ?? {}) as Record<string, unknown>,
           occurredAt: new Date(),
-          processedAt: new Date(),
+          /**
+           * SEM processedAt aqui, de propósito (30/09/2026): marcado como já
+           * processado, o evento nunca era reclamado por processPendingEvents
+           * (apps/worker) e o vocabulário de negócio do MCP — CLIENT_DECISION,
+           * STRATEGY_CHANGED... — nunca virava sinal proativo, mesmo depois de
+           * event-intelligence.ts aprender a interpretá-lo. `processedAt` fica
+           * null; o job de 5 em 5 min reclama, classifica e marca.
+           */
         })
         // A tabela já é idempotente por (source, external_id) desde sempre —
         // aproveitamos a garantia que existe em vez de inventar outra.
@@ -221,7 +228,8 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
           employeeId: ctx.principal.employeeId, clientId: args.client_id ?? null,
           taskId: args.task_id ?? null, entityType: 'work', entityId: args.task_id ?? null,
           actor: ctx.principal.name, summary: args.summary, importance: 'NORMAL', visibility: 'TEAM',
-          occurredAt: new Date(), processedAt: new Date(),
+          // Sem processedAt — mesmo motivo do log_operational_event acima.
+          occurredAt: new Date(),
         })
         .onConflictDoNothing({ target: [schema.operationalEvents.source, schema.operationalEvents.externalId] })
         .returning({ id: schema.operationalEvents.id });
@@ -281,7 +289,8 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
         entityType: 'memory', entityId: memoria!.id, actor: ctx.principal.name,
         summary: `Feedback de ${cliente.name}: ${args.feedback.slice(0, 200)}`,
         importance: args.is_restriction ? 'HIGH' : 'NORMAL', visibility: 'CLIENT_SCOPED',
-        occurredAt: new Date(), processedAt: new Date(),
+        // Sem processedAt — mesmo motivo do log_operational_event acima.
+        occurredAt: new Date(),
       }).onConflictDoNothing();
 
       await registrarAuditoria(

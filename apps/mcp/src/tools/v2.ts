@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { and, desc, eq, gte } from 'drizzle-orm';
+import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { classificarStatusFuncional } from '@desigual-os/context-engine';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
@@ -111,6 +111,70 @@ export function registrarToolsV2(deps: RegistrarToolDeps): void {
           client_id: l.clientId,
           result: l.result,
           request_id: l.requestId,
+        })),
+      };
+    },
+  });
+
+  registrarTool(deps, {
+    nome: 'get_signals',
+    descricao:
+      'Alertas proativos pendentes: o que o Bento já decidiu que merece atenção humana AGORA, com uma próxima ' +
+      'ação — decisão de cliente registrada, estratégia mudada, criativo rejeitado, erro relatado, QA reprovado, ' +
+      'tarefa atrasada. Nem todo evento vira alerta aqui: silêncio não significa "nada aconteceu", significa "nada ' +
+      'que precisasse da sua atenção agora". Consulte antes de perguntar "tem alguma pendência?" pro time.',
+    entrada: {
+      client_id: z.string().uuid().optional(),
+      min_severity: z.enum(['low', 'medium', 'high', 'critical']).optional().describe('Padrão: medium.'),
+      limit: z.number().int().min(1).max(50).optional(),
+    },
+    scope: 'desigual.read',
+    acesso: 'READ',
+    recurso: 'signal',
+    executar: async (args, ctx) => {
+      if (args.client_id) await carregarClienteDaOrganizacao(ctx.principal, args.client_id);
+
+      const ordem: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
+      const piso = ordem[args.min_severity ?? 'medium'] ?? 1;
+
+      /**
+       * proactive_signals não tem organization_id (30/09/2026: só existe UMA
+       * organização em produção, então isto não é uma fronteira testada sob
+       * multi-tenant real). Sinal com cliente segue a fronteira do cliente,
+       * IGUAL a get_recent_events; sinal SEM cliente (decisão de agência,
+       * erro sem cliente identificado) fica visível pra quem tem
+       * desigual.read — não há outro sinal no dado pra restringir por onde.
+       */
+      const condicoes = [
+        eq(schema.proactiveSignals.status, 'pending'),
+        or(
+          sql`${schema.proactiveSignals.clientId} is null`,
+          sql`${schema.proactiveSignals.clientId} in (select id from clients where organization_id = ${ctx.principal.organizationId} and deleted_at is null)`,
+        )!,
+      ];
+      if (args.client_id) condicoes.push(eq(schema.proactiveSignals.clientId, args.client_id));
+
+      const linhas = await db
+        .select({
+          id: schema.proactiveSignals.id, rule: schema.proactiveSignals.rule, agent: schema.proactiveSignals.agent,
+          clientId: schema.proactiveSignals.clientId, severity: schema.proactiveSignals.severity,
+          title: schema.proactiveSignals.title, body: schema.proactiveSignals.body,
+          recommendedAction: schema.proactiveSignals.recommendedAction, entityType: schema.proactiveSignals.entityType,
+          entityId: schema.proactiveSignals.entityId, createdAt: schema.proactiveSignals.createdAt,
+        })
+        .from(schema.proactiveSignals)
+        .where(and(...condicoes))
+        .orderBy(desc(schema.proactiveSignals.createdAt))
+        .limit((args.limit ?? 20) * 2);
+
+      const filtrados = linhas.filter((s) => (ordem[s.severity] ?? 0) >= piso).slice(0, args.limit ?? 20);
+      return {
+        count: filtrados.length,
+        signals: filtrados.map((s) => ({
+          signal_id: s.id, rule: s.rule, agent: s.agent, severity: s.severity, title: s.title, body: s.body,
+          recommended_action: s.recommendedAction, client_id: s.clientId,
+          entity: s.entityType ? `${s.entityType}${s.entityId ? `:${s.entityId}` : ''}` : null,
+          created_at: s.createdAt,
         })),
       };
     },

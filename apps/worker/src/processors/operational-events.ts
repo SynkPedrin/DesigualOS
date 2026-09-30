@@ -51,6 +51,12 @@ const KNOWN_TYPES: readonly OperationalEventType[] = [
   'creative.approved',
   'creative.rejected',
   'client.updated',
+  // Vocabulário de negócio do MCP — mesma ponte, ver event-intelligence.ts.
+  'CLIENT_DECISION',
+  'STRATEGY_CHANGED',
+  'CREATIVE_REJECTED',
+  'ERROR_FOUND',
+  'QA_FAILED',
 ];
 
 function isKnownType(type: string): type is OperationalEventType {
@@ -76,6 +82,9 @@ export function normalizePendingEvent(event: PendingEvent): NormalizedEvent | nu
     clientName: cliente,
     actor: event.actor,
     occurredAt: event.occurredAt,
+    // Só o MCP grava isto; webhook nunca. reactToEvent usa como corpo do
+    // sinal quando existe, em vez do template genérico dos tipos de cima.
+    summary: event.summary,
   };
 }
 

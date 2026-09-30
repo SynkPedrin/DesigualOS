@@ -104,6 +104,8 @@ export interface PendingEvent {
   entityType: string | null;
   entityId: string | null;
   actor: string | null;
+  /** Texto pronto do evento, quando quem gravou já escreveu um (MCP sempre escreve; webhook nunca). */
+  summary: string | null;
   payload: Record<string, unknown>;
   occurredAt: Date | null;
 }
@@ -119,6 +121,7 @@ export async function claimUnprocessedEvents(limit = 50): Promise<PendingEvent[]
       entityType: schema.operationalEvents.entityType,
       entityId: schema.operationalEvents.entityId,
       actor: schema.operationalEvents.actor,
+      summary: schema.operationalEvents.summary,
       payload: schema.operationalEvents.payload,
       occurredAt: schema.operationalEvents.occurredAt,
     })
@@ -151,6 +154,7 @@ export async function eventsSince(since: Date, clientId?: string | null): Promis
       entityType: schema.operationalEvents.entityType,
       entityId: schema.operationalEvents.entityId,
       actor: schema.operationalEvents.actor,
+      summary: schema.operationalEvents.summary,
       payload: schema.operationalEvents.payload,
       occurredAt: schema.operationalEvents.occurredAt,
     })

@@ -24,6 +24,7 @@ function evento(overrides: Partial<PendingEvent> = {}): PendingEvent {
     entityType: 'task',
     entityId: 'task-abc',
     actor: null,
+    summary: null,
     payload: {},
     occurredAt: new Date('2026-09-15T12:00:00Z'),
     ...overrides,
@@ -58,6 +59,19 @@ describe('normalizePendingEvent', () => {
 
   it('tipo que o event-intelligence não conhece vira null', () => {
     expect(normalizePendingEvent(evento({ type: 'task.time_tracked' }))).toBeNull();
+  });
+
+  it('evento de MCP (CLIENT_DECISION) é reconhecido e carrega o summary', () => {
+    const n = normalizePendingEvent(evento({
+      source: 'mcp', type: 'CLIENT_DECISION', summary: 'Cosentino exige aprovação interna antes do envio',
+    }));
+    expect(n).not.toBeNull();
+    expect(n?.summary).toBe('Cosentino exige aprovação interna antes do envio');
+  });
+
+  it('evento de MCP sem summary não quebra — normaliza com null', () => {
+    const n = normalizePendingEvent(evento({ source: 'mcp', type: 'QA_FAILED', summary: null }));
+    expect(n?.summary).toBeNull();
   });
 });
 
