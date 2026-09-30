@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   MessageSquare,
   Plug,
+  Radar,
   ScrollText,
   ShieldAlert,
   Settings,
@@ -74,6 +75,13 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/health', label: 'Saúde', icon: Heart, section: 'overview' },
 
   // INTELIGÊNCIA — o que o sistema sabe.
+  /**
+   * SINAIS vem primeiro da seção porque é a única tela que PEDE ação. Memória e
+   * decisões respondem "o que o sistema sabe"; sinal responde "o que ele quer
+   * te contar agora", e enterrar isso embaixo de acervo é como o alerta deixa
+   * de ser alerta.
+   */
+  { href: '/signals', label: 'Sinais', icon: Radar, section: 'intelligence' },
   { href: '/memory', label: 'Memória', icon: Brain, section: 'intelligence' },
   { href: '/decisions', label: 'Decisões', icon: ScrollText, section: 'intelligence' },
   { href: '/clients', label: 'Clientes', icon: Users, section: 'intelligence' },
