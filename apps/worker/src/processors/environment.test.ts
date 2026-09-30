@@ -37,4 +37,35 @@ describe('a conta de QA decide o ambiente', () => {
   it('respeita a variável configurada', () => {
     expect(ehContaDeQa('outro@x.com', { BENTO_QA_BOT_EMAIL: 'outro@x.com' } as NodeJS.ProcessEnv)).toBe(true);
   });
+
+  /**
+   * A SEGUNDA CONTA, achada ao contar masters no banco real (30/09/2026):
+   * `qa-motion@agenciadesigual.com.br`, criada pro e2e do motion, master, e
+   * classificada como produção em tudo que escrevia. Mesmo buraco da conta de
+   * aceite, aberto porque a regra só cabia UMA conta.
+   */
+  it('reconhece as duas contas de teste conhecidas, sem variável configurada', () => {
+    const vazio = {} as NodeJS.ProcessEnv;
+
+    expect(ehContaDeQa('qa-bot@institutoalmada.org', vazio)).toBe(true);
+    expect(ehContaDeQa('qa-motion@agenciadesigual.com.br', vazio)).toBe(true);
+    expect(ehContaDeQa('tammy@segundocerebro.pro', vazio)).toBe(false);
+  });
+
+  it('aceita lista na variável', () => {
+    const env2 = { BENTO_QA_BOT_EMAIL: 'a@x.com, b@x.com' } as NodeJS.ProcessEnv;
+
+    expect(ehContaDeQa('b@x.com', env2)).toBe(true);
+  });
+
+  /**
+   * Variável configurada SUBSTITUI o padrão. Se ela só somasse, um ambiente que
+   * aponta o QA pra outra organização herdaria as nossas contas de brinde — e
+   * passaria a classificar gente de verdade de lá como teste.
+   */
+  it('a variável configurada substitui o padrão, não soma a ele', () => {
+    const env2 = { BENTO_QA_BOT_EMAIL: 'outro@x.com' } as NodeJS.ProcessEnv;
+
+    expect(ehContaDeQa('qa-bot@institutoalmada.org', env2)).toBe(false);
+  });
 });

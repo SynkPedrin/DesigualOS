@@ -28,6 +28,27 @@ export interface ChamadaDeFerramenta {
   at: string | null;
 }
 
+/**
+ * Uma conexão que ACONTECEU, do evento que o servidor MCP emite.
+ *
+ * Diferente de `PessoaConectada`, que é o estado agora (token vivo): aqui é o
+ * fato datado. Os dois convivem porque respondem perguntas diferentes — "quem
+ * pode entrar" e "quem entrou, quando".
+ */
+export interface ConexaoRecente {
+  id: string;
+  session_id: string | null;
+  user_id: string | null;
+  nome: string | null;
+  summary: string | null;
+  at: string | null;
+  scopes: string[];
+  /** `null` = o evento não trouxe dono; não há a quem atribuir chamada. */
+  chamadas_24h: number | null;
+  /** A autorização daquela sessão ainda está de pé? */
+  conexao_viva: boolean;
+}
+
 export interface McpStatus {
   /** `null` = a API não sabe o endereço público. Nunca um endereço plausível. */
   endpoint: string | null;
@@ -39,6 +60,7 @@ export interface McpStatus {
   chamadas_24h: number;
   sucessos_24h: number;
   por_ferramenta: Array<{ tool: string; total: number; sucesso: number }>;
+  conexoes_recentes: ConexaoRecente[];
   ultimas: ChamadaDeFerramenta[];
 }
 

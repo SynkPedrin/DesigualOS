@@ -57,13 +57,28 @@ export async function resolveEnvironment(
 }
 
 /**
- * A conta que roda a bateria de aceite. Mesmo critério do guard de escrita
+ * As contas que rodam bateria de aceite. Mesmo critério do guard de escrita
  * (`ehQaBot`), replicado aqui só pra não criar dependência circular entre
  * environment.ts e bento-action-guard.ts — o VALOR vem da mesma variável, que
  * é o que impede as duas de divergirem.
+ *
+ * É uma LISTA desde 30/09/2026, e não por gosto de generalizar: ao contar quem
+ * é master no banco real apareceu `qa-motion@agenciadesigual.com.br`, criada
+ * pro e2e do motion, master, e classificada como produção em tudo que escreve.
+ * Exatamente o buraco que o parágrafo acima descreve — fechado pra uma conta e
+ * aberto pra outra, porque a regra só cabia uma.
+ *
+ * `BENTO_QA_BOT_EMAIL` continua valendo sozinha pra quem já a define; quando
+ * configurada, ela SUBSTITUI o padrão, senão um ambiente que aponta a conta de
+ * QA pra outra org herdaria as nossas de brinde.
  */
+const CONTAS_DE_QA_PADRAO = ['qa-bot@institutoalmada.org', 'qa-motion@agenciadesigual.com.br'];
+
 export function ehContaDeQa(email: string | null, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!email) return false;
-  const configurado = (env.BENTO_QA_BOT_EMAIL ?? 'qa-bot@institutoalmada.org').trim().toLowerCase();
-  return email.trim().toLowerCase() === configurado;
+  const configurado = env.BENTO_QA_BOT_EMAIL?.trim();
+  const contas = configurado
+    ? configurado.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean)
+    : CONTAS_DE_QA_PADRAO;
+  return contas.includes(email.trim().toLowerCase());
 }

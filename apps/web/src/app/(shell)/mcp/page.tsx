@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { ArrowRight } from 'lucide-react';
 import {
   ClaudeMark,
@@ -34,6 +35,13 @@ import { useFerramentasVivas, useSaudeDoMcp, porEscopo } from '@/hooks/use-mcp-s
  */
 export default function McpPage() {
   const { data: mcp, isPending, isError } = useMcpStatus();
+  /**
+   * `?conectou=<id>` — de onde a notificação de "fulano conectou o Claude"
+   * aterrissa. Sem isto o aviso levaria a uma tabela de dez linhas e a pessoa
+   * teria que procurar o nome que acabou de ler; um link que não mostra o que
+   * prometeu é ruído com aparência de utilidade.
+   */
+  const destacado = useSearchParams().get('conectou');
   /**
    * PING DE VERDADE, não eco de configuração.
    *
@@ -120,7 +128,10 @@ export default function McpPage() {
             </thead>
             <tbody>
               {(mcp?.pessoas ?? []).map((p) => (
-                <tr key={p.user_id}>
+                <tr
+                  key={p.user_id}
+                  className={p.user_id === destacado ? 'bg-roxo-eletrico/10' : undefined}
+                >
                   <Td className="truncate">{p.nome ?? '—'}</Td>
                   <Td>
                     <span className="flex items-center gap-1.5">
@@ -153,6 +164,76 @@ export default function McpPage() {
               ))}
             </tbody>
           </Tabela>
+        )}
+      </Secao>
+
+      <Secao titulo="Conexões recentes">
+        {isPending ? (
+          <LinhasFantasma linhas={3} />
+        ) : (mcp?.conexoes_recentes.length ?? 0) === 0 ? (
+          <SemNadaAinda
+            titulo="Nenhuma conexão registrada"
+            explicacao="O servidor grava um evento a cada sessão de MCP aberta. Sem evento aqui, ninguém abriu sessão nesta instalação — não é falha de leitura."
+          />
+        ) : (
+          <>
+            {/*
+              * POR QUE A MESMA PESSOA APARECE VÁRIAS VEZES.
+              *
+              * Medido em 30/09/2026: seis eventos da mesma conta em CINCO
+              * segundos. O cliente do Claude abre várias sessões ao conectar,
+              * e cada uma é um evento real. Esconder as repetições seria
+              * inventar um número mais bonito; deixá-las sem explicação faria
+              * qualquer leitor contar seis conexões onde houve uma. Então a
+              * tela mostra o fato e diz o que ele significa.
+              */}
+            <p className="mb-3 text-[13px] text-nevoa">
+              Cada linha é uma sessão aberta. O Claude costuma abrir várias de uma vez ao conectar, então a mesma
+              pessoa repetida em poucos segundos é uma conexão só.
+            </p>
+            <Tabela>
+              <thead>
+                <tr>
+                  <Th className="w-40">Quando</Th>
+                  <Th>Quem</Th>
+                  <Th className="w-32">Autorização</Th>
+                  <Th className="w-28">Chamadas 24h</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {(mcp?.conexoes_recentes ?? []).map((c) => (
+                  <tr key={c.id} className={c.user_id === destacado ? 'bg-roxo-eletrico/10' : undefined}>
+                    <Td className="whitespace-nowrap font-mono text-[12px] text-nevoa">
+                      {c.at ? new Date(c.at).toLocaleString('pt-BR') : '—'}
+                    </Td>
+                    <Td className="truncate">
+                      <span className="flex items-center gap-1.5">
+                        <ClaudeMark size={14} />
+                        {c.nome ?? '—'}
+                      </span>
+                    </Td>
+                    <Td>
+                      {/*
+                        * "Viva" = o token daquela pessoa ainda vale. NÃO é
+                        * "está online": o MCP fala por HTTP e não tem despedida
+                        * de protocolo, então ninguém aqui sabe se o Claude está
+                        * aberto neste instante. Dizer "offline" a partir de
+                        * silêncio seria inventar um fato.
+                        */}
+                      <StatusLabel estado={c.conexao_viva ? 'ok' : 'desconhecido'}>
+                        {c.conexao_viva ? 'vigente' : 'expirada'}
+                      </StatusLabel>
+                    </Td>
+                    {/* `null` = sem dono no evento. Um traço diz isso; um "0"
+                      * afirmaria que a pessoa não usou nada. */}
+                    <Td className="font-mono text-[13px]">
+                      {c.chamadas_24h === null ? <span className="text-nevoa">sem dono</span> : c.chamadas_24h}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Tabela>
+          </>
         )}
       </Secao>
 

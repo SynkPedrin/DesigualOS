@@ -8,6 +8,7 @@ import { runKnowledgeConsolidation } from './knowledge-consolidation.js';
 import { keepInferenceWarm } from './inference-warmth.js';
 import { expireStaleStudioJobs } from './studio-queue-timeout.js';
 import { expireStaleExecutions } from './execution-timeout.js';
+import { avisarDeConexoesMcp } from './aviso-de-conexao-mcp.js';
 
 const QUEUE_NAME = 'daily-digest';
 const logger = createLogger({ service: 'worker:scheduler' });
@@ -73,6 +74,12 @@ export function setupDailyJobs(): Worker {
     // horas, porque worker que morre no meio do job não escreve desfecho
     // nenhum. O chat mostrava "pensando" pra sempre. Ver execution-timeout.ts.
     queue.add('execution-timeout', {}, { repeat: { pattern: '*/2 * * * *' }, jobId: 'execution-timeout' }),
+    // AVISO DE CONEXÃO MCP a cada 2 min. O servidor já registrava
+    // `CONNECTION_CREATED` e ninguém era avisado — o evento morria no banco.
+    // De 2 em 2 minutos porque "alguém plugou o Claude agora" perde o sentido
+    // se chegar no dia seguinte, e o vigia olha 15 min pra trás justamente pra
+    // sobreviver a uma parada curta sem ressuscitar conexão velha.
+    queue.add('aviso-conexao-mcp', {}, { repeat: { pattern: '*/2 * * * *' }, jobId: 'aviso-conexao-mcp' }),
   ])
     .then(() => logger.info('Scheduler armado (checklist 18:00, resumo 08:00, eventos 5min, saude da integracao 15min, consolidacao 03:00)'))
     .catch((error: unknown) => logger.error({ error }, 'Failed to register daily digest repeatable jobs'));
@@ -96,6 +103,8 @@ export function setupDailyJobs(): Worker {
         await expireStaleStudioJobs(logger);
       } else if (job.name === 'execution-timeout') {
         await expireStaleExecutions(logger);
+      } else if (job.name === 'aviso-conexao-mcp') {
+        await avisarDeConexoesMcp(logger);
       }
     },
     { connection: getRedisConnection() },
