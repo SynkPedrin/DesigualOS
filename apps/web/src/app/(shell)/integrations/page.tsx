@@ -5,6 +5,8 @@ import Image from 'next/image';
 import { ClaudeMark, ControlHeader, Secao, StatusLabel, type Estado } from '@/components/control/primitives';
 import { useClickUpIntegration } from '@/hooks/use-clickup-integration';
 import { useNotionIntegration } from '@/hooks/use-notion-integration';
+import { useMcpStatus } from '@/hooks/use-mcp-status';
+import { Consentimento } from '@/components/settings/consentimento';
 
 /**
  * INTEGRAÇÕES — com o que a inteligência fala.
@@ -17,6 +19,7 @@ import { useNotionIntegration } from '@/hooks/use-notion-integration';
 export default function IntegrationsPage() {
   const { data: clickup, isPending: clickupPendente } = useClickUpIntegration();
   const { data: notion, isPending: notionPendente } = useNotionIntegration();
+  const { data: mcp, isPending: mcpPendente } = useMcpStatus();
 
   return (
     <div className="mx-auto max-w-[1200px]">
@@ -27,12 +30,34 @@ export default function IntegrationsPage() {
 
       <Secao titulo="Inteligência">
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {/*
+            * O ESTADO DO CLAUDE É LIDO, não escrito aqui.
+            *
+            * Este cartão dizia "Sem conexões — depende do MCP, que ainda não
+            * foi publicado". Era verdade quando foi escrito e falso horas
+            * depois: o servidor subiu e a equipe conectou. Exatamente o mesmo
+            * defeito que a tela de MCP já tinha cometido e que foi corrigido
+            * lá — a afirmação por constante envelhece sem avisar, e ninguém
+            * revisa um cartão que "sempre disse isso".
+            */}
           <Cartao
             nome="Claude"
             logo={<ClaudeMark size={28} />}
-            estado="desconhecido"
-            texto="Sem conexões"
-            detalhe="depende do MCP, que ainda não foi publicado"
+            estado={mcpPendente ? 'desconhecido' : (mcp?.pessoas_conectadas ?? 0) > 0 ? 'ok' : 'atencao'}
+            texto={
+              mcpPendente
+                ? 'Consultando'
+                : (mcp?.pessoas_conectadas ?? 0) > 0
+                  ? `${mcp!.pessoas_conectadas} pessoa(s) conectada(s)`
+                  : 'Ninguém conectado'
+            }
+            detalhe={
+              mcpPendente
+                ? 'lendo o estado'
+                : (mcp?.chamadas_24h ?? 0) > 0
+                  ? `${mcp!.chamadas_24h} chamada(s) em 24h`
+                  : 'memória, tarefas e contexto da empresa'
+            }
             href="/mcp"
           />
         </div>
@@ -56,6 +81,15 @@ export default function IntegrationsPage() {
             href="/settings"
           />
         </div>
+      </Secao>
+
+      {/*
+        * O CONSENTIMENTO FICA JUNTO DAS INTEGRAÇÕES, não perdido em
+        * Configurações: é aqui que alguém decide conectar, e a autorização
+        * precisa estar no mesmo lugar da decisão.
+        */}
+      <Secao titulo="Autorização da empresa">
+        <Consentimento />
       </Secao>
     </div>
   );

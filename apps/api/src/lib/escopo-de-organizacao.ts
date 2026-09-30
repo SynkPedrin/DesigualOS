@@ -1,6 +1,19 @@
 import { db, schema } from '@desigual-os/database';
 import { eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { AuthenticatedUser } from '../auth/middleware';
+/**
+ * O NÚCLEO DA REGRA mora em `@desigual-os/auth` — o MCP precisa dela e não
+ * pode importar de dentro de outro app. Aqui ficam só as partes que dependem
+ * de banco e do usuário autenticado do Fastify.
+ */
+import {
+  decidirEscopo,
+  ehPapelDePlataforma,
+  organizacaoProvedora,
+  type EscopoDeOrganizacao,
+} from '@desigual-os/auth';
+
+export { decidirEscopo, ehPapelDePlataforma, organizacaoProvedora, type EscopoDeOrganizacao };
 
 /**
  * escopo-de-organizacao.ts — a resposta canônica de "quais empresas esta pessoa
@@ -50,50 +63,6 @@ import type { AuthenticatedUser } from '../auth/middleware';
  * administrador de um cliente virar administrador da plataforma por herdar um
  * nome de papel.
  */
-
-export interface EscopoDeOrganizacao {
-  /** Empresas em que a pessoa é membro. Vazio = não vê nada além do próprio. */
-  organizationIds: string[];
-  /**
-   * Opera no nível da plataforma (Desigual), podendo alcançar outras empresas
-   * conforme a rota permitir. NUNCA verdadeiro só por causa do papel.
-   */
-  ehProvider: boolean;
-}
-
-/**
- * A organização provedora. Lida do ambiente para não ficar hardcoded num
- * `if` de rota — quando a outra sessão entregar o modelo de provider no schema,
- * esta constante é o único lugar que muda.
- *
- * Sem configuração, NINGUÉM é provider. O default seguro é o restritivo: um
- * default permissivo transformaria erro de configuração em acesso total, que é
- * a pior direção possível para um default errar.
- */
-export function organizacaoProvedora(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env.PROVIDER_ORGANIZATION_ID?.trim() || null;
-}
-
-/** Papéis que operam no nível da plataforma — só valem DENTRO da provedora. */
-const PAPEIS_DE_PLATAFORMA = ['master', 'provider_owner', 'provider_admin'];
-
-export function ehPapelDePlataforma(roles: readonly string[]): boolean {
-  return roles.some((r) => PAPEIS_DE_PLATAFORMA.includes(r.toLowerCase()));
-}
-
-/**
- * Decide o escopo a partir dos dados já carregados. Pura, para ter teste — a
- * regra que separa tenant de provider não pode depender de subir banco para ser
- * verificada.
- */
-export function decidirEscopo(
-  organizationIds: string[],
-  roles: readonly string[],
-  provedora: string | null,
-): EscopoDeOrganizacao {
-  const ehProvider = Boolean(provedora) && organizationIds.includes(provedora!) && ehPapelDePlataforma(roles);
-  return { organizationIds, ehProvider };
-}
 
 /** Em quais empresas a pessoa é membro, e se ela opera no nível da plataforma. */
 export async function escopoDeOrganizacao(user: AuthenticatedUser): Promise<EscopoDeOrganizacao> {
