@@ -51,6 +51,7 @@ const TELAS = [
    * é master, então não há motivo pra ficar de fora: uma tela que não é aberta
    * por ninguém é uma tela que pode estar quebrada há dias.
    */
+  { rota: '/signals', titulo: /^Sinais$/i },
   { rota: '/data-quality', titulo: /Qualidade do dado/i },
   { rota: '/clients', titulo: /Clientes/i },
   { rota: '/settings', titulo: /Configurações/i },
@@ -253,6 +254,68 @@ test.describe('contagem não confunde janela com total', () => {
       // Sem corte, o rótulo simples é o correto — e aí ele É o total.
       expect(texto, 'sem corte, o rótulo é "N registro(s)"').toMatch(/^\d+ registro\(s\)/);
     }
+  });
+});
+
+/**
+ * A ÚNICA TELA DO PRODUTO EM QUE VAZIO É BOA NOTÍCIA.
+ *
+ * Em todas as outras, ausência é uma pergunta ("será que quebrou?"). Aqui,
+ * nenhum sinal em aberto quer dizer que nada está pegando fogo — e apresentar
+ * isso com a mesma cara de "sem dados" desperdiça a informação.
+ *
+ * O teste trava as duas propriedades que fazem a tela valer: ela distingue
+ * "nada pedindo atenção" de "não consegui ler" (os dois nunca coexistem), e um
+ * sinal em aberto SEMPRE oferece como tratá-lo. Lista que só cresce vira ruído
+ * que se aprende a ignorar, que é como um painel de alerta morre.
+ */
+test.describe('sinais chegam em uma pessoa', () => {
+  test.setTimeout(120_000);
+
+  test('separa "nada pedindo atenção" de "não consegui ler"', async ({ page }) => {
+    await login(page);
+    await page.goto('/signals');
+    await expect(page.getByRole('heading', { name: /^Sinais$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+
+    const calmo = page.getByText(/Nada pedindo atenção agora/i);
+    const falha = page.getByText(/Não consegui ler os sinais/i);
+    const lista = page.locator('main li');
+
+    await expect(calmo.or(falha).or(lista.first()).first()).toBeVisible({ timeout: 30_000 });
+    expect(
+      (await calmo.count()) + (await falha.count()),
+      'calmaria e falha de leitura são diagnósticos opostos: não podem aparecer juntos',
+    ).toBeLessThanOrEqual(1);
+  });
+
+  test('sinal em aberto sempre oferece como tratá-lo', async ({ page }) => {
+    await login(page);
+    await page.goto('/signals');
+    await expect(page.getByRole('heading', { name: /^Sinais$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+    // Espera o estado final: ou a lista, ou a declaração de calmaria.
+    await expect(
+      page.locator('main li').first().or(page.getByText(/Nada pedindo atenção agora/i)).first(),
+    ).toBeVisible({ timeout: 30_000 });
+
+    /**
+     * O CABEÇALHO E A LISTA TÊM QUE CONCORDAR.
+     *
+     * Sem esta conferência, o teste passa tanto com um sinal na tela quanto com
+     * nenhum — e eu não saberia qual dos dois aconteceu. Foi exatamente assim
+     * que a tela de Memória anunciou "150 registro(s)" havendo 396: o número do
+     * cabeçalho e o conteúdo da lista vinham de fontes diferentes e ninguém
+     * comparou.
+     */
+    const cabecalho = await page.getByRole('heading', { name: /sinal\(is\)/i }).first().textContent();
+    const declarados = Number(/^(\d+)/.exec((cabecalho ?? '').trim())?.[1] ?? '0');
+    const abertos = await page.locator('main li').count();
+
+    expect(abertos, `o cabeçalho diz "${cabecalho?.trim()}" e a lista mostra ${abertos}`).toBe(declarados);
+
+    if (abertos === 0) return; // Sem sinal em aberto não há o que tratar.
+
+    await expect(page.getByRole('button', { name: /Resolvi/ }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /Não é problema/ }).first()).toBeVisible();
   });
 });
 
