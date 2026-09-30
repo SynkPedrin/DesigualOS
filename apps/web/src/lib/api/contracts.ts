@@ -67,6 +67,12 @@ export type Theme = (typeof THEMES)[number];
  * (2026-09-01) - inconsistent with PATCH /me's snake_case response below, a known wart on
  * their side, not a frontend mapping bug.
  */
+/** Uma empresa em que a pessoa é membro. */
+export interface OrganizacaoDoUsuario {
+  id: string;
+  name: string;
+}
+
 export interface MeResponse {
   id: string;
   email: string;
@@ -77,6 +83,18 @@ export interface MeResponse {
   language: Language;
   theme: Theme;
   clickupEmail: string | null;
+  /**
+   * DE QUAL EMPRESA A PESSOA É — o campo que a interface não tinha.
+   *
+   * Sem ele, não havia como o front saber em que empresa está, e por isso
+   * branding por tenant, troca de empresa e barra lateral por tenant não tinham
+   * de onde ler. `organizacoes` alimenta o seletor quando houver mais de uma;
+   * hoje existe uma só, então a interface não mostra escolha — porque não há.
+   */
+  organizacoes?: OrganizacaoDoUsuario[];
+  organizacao_ativa?: OrganizacaoDoUsuario | null;
+  /** Opera no nível da plataforma. Nunca derivado só do papel. */
+  eh_provider?: boolean;
 }
 
 /** PATCH /me. Snake_case request and response, confirmed by the backend (2026-09-01). */

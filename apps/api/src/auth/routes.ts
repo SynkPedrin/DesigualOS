@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import { invalidateUserAccessCache, requireAuth } from './middleware';
+import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
 import { uploadUserFile } from '../lib/storage';
 import { sendResetPasswordEmail } from '../lib/email';
 
@@ -106,8 +107,55 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/me', { preHandler: requireAuth }, async (request) => {
-    return request.authUser;
+  /**
+   * `/me` passa a dizer DE QUAL EMPRESA a pessoa é.
+   *
+   * Até 30/09/2026 devolvia id, e-mail, nome, papéis, permissões, avatar,
+   * idioma, tema e o e-mail do ClickUp — e nenhum campo de organização. O
+   * inventário forense registrou a consequência: a interface não tinha como
+   * saber em que empresa estava. Sem isso, branding por tenant, troca de
+   * empresa e barra lateral por tenant não têm de onde ler.
+   *
+   * É o campo que destrava as seções 20, 22, 59, 61 e 62 do briefing de uma
+   * vez, e por isso vem antes delas.
+   *
+   * `organizacao_ativa` é a atual; `organizacoes` são todas em que a pessoa é
+   * membro — é daqui que sai a lista do seletor de empresa, quando houver mais
+   * de uma. Hoje existe uma só, então a lista tem um item e o seletor não
+   * aparece: a interface mostra escolha quando há escolha.
+   */
+  app.get('/me', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+
+    const escopo = await escopoDeOrganizacao(user);
+    const organizacoes = escopo.organizationIds.length
+      ? await db
+          .select({ id: schema.organizations.id, name: schema.organizations.name })
+          .from(schema.organizations)
+          .where(inArray(schema.organizations.id, escopo.organizationIds))
+          .catch(() => [] as Array<{ id: string; name: string }>)
+      : [];
+
+    return {
+      ...user,
+      organizacoes,
+      /**
+       * A ativa. Com uma só, é ela; com várias, a primeira até existir troca
+       * explícita de empresa — que é feature da Fase C, não desta.
+       */
+      organizacao_ativa: organizacoes[0] ?? null,
+      /**
+       * Opera no nível da plataforma. NUNCA derivado só do papel: exige também
+       * pertencer à organização provedora. Ver lib/escopo-de-organizacao.ts —
+       * é o que impede o administrador de um cliente virar administrador da
+       * plataforma por herdar um nome de papel.
+       */
+      eh_provider: escopo.ehProvider,
+    };
   });
 
   // Perfil próprio do colaborador: hoje só nome e o e-mail do ClickUp
