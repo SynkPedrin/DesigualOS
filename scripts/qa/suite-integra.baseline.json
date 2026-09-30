@@ -3,5 +3,40 @@
     "total": 1467,
     "arquivos": 75,
     "quando": "2026-09-30"
+  },
+  "api": {
+    "total": 129,
+    "arquivos": 19,
+    "quando": "2026-09-30"
+  },
+  "web": {
+    "total": 256,
+    "arquivos": 24,
+    "quando": "2026-09-30"
+  },
+  "context-engine": {
+    "total": 315,
+    "arquivos": 15,
+    "quando": "2026-09-30"
+  },
+  "router": {
+    "total": 65,
+    "arquivos": 4,
+    "quando": "2026-09-30"
+  },
+  "orchestrator": {
+    "total": 184,
+    "arquivos": 16,
+    "quando": "2026-09-30"
+  },
+  "tool-gateway": {
+    "total": 105,
+    "arquivos": 8,
+    "quando": "2026-09-30"
+  },
+  "bento-core": {
+    "total": 102,
+    "arquivos": 3,
+    "quando": "2026-09-30"
   }
 }

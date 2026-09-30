@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
 import { tenantSharingScope } from '../lib/access';
+import { RECUSA_DE_STATUS, ehDesfechoDePessoa } from './tratamento';
 
 /**
  * OS SINAIS PROATIVOS — o que o sistema percebeu sozinho e quer contar.
@@ -130,12 +131,13 @@ export async function registerSignalsRoutes(app: FastifyInstance): Promise<void>
         return { error: 'Not authenticated' };
       }
 
+      // A regra de QUAIS valores uma pessoa pode escrever mora em
+      // ./tratamento.ts, com teste. Aqui ela só é aplicada — é a parte que
+      // alguém "amplia" sem pensar, então vale ter guarda própria.
       const novo = request.body?.status;
-      // Só os dois desfechos que uma pessoa dá. `pending` e `delivered` são do
-      // sistema, e deixar a tela escrevê-los faria o estado mentir sobre quem agiu.
-      if (novo !== 'dismissed' && novo !== 'resolved') {
+      if (!ehDesfechoDePessoa(novo)) {
         reply.code(400);
-        return { error: "status deve ser 'dismissed' ou 'resolved'" };
+        return { error: RECUSA_DE_STATUS };
       }
 
       const [atualizado] = await db
