@@ -102,6 +102,30 @@ porque fui medir antes. Fica registrado porque é o padrão que este documento
 existe para combater — **hipótese formada sem a evidência decisiva**, que aqui é
 a `failureMessages` que eu nunca capturei.
 
+### A pista mais afiada, achada ao comparar os relatórios JSON
+
+Nas execuções que falharam, **testes somem em vez de reprovar**:
+
+| execução | passou | falhou | total relatado |
+|---|---|---|---|
+| limpa | 1465 | 0 | 1465 |
+| com 4 falhas | 1461 | 4 | 1465 |
+| com 2 falhas | 1427 | 2 | **1429** |
+
+Na última, **36 testes não produziram resultado nenhum** — nem passaram, nem
+falharam, nem foram pulados. O conjunto de ARQUIVOS é idêntico ao das execuções
+limpas (conferido: zero diferença), então não é arquivo que deixou de carregar.
+
+Isso muda o alvo: uma asserção errada reprova UM teste. Trinta e seis
+resultados sumindo é a execução do arquivo sendo abortada no meio — hook que
+estoura, ou o worker do vitest daquele arquivo morrendo. Quem for consertar
+deve começar por aí, não pelas asserções.
+
+(De passagem: `numTotalTestSuites` caiu de 370 para 361 nessa execução e eu li
+isso como "9 arquivos sumiram". Não sumiram — o campo conta blocos `describe`,
+não arquivos. Conferi antes de escrever, que é o que eu devia ter feito com as
+duas hipóteses anteriores.)
+
 ### O estado honesto
 
 Não sei a causa. O que sei está na tabela de medições. O que ELIMINEI por
@@ -138,6 +162,9 @@ intermitente.
 
 1. Capturar a mensagem: rodar a suíte completa em laço até falhar, com
    `--reporter=json`, e guardar o `failureMessages`. Sem isso, o resto é chute.
+   Aviso de quem tentou: 15 execuções consecutivas limpas (6 ociosa, 3 com os
+   outros 13 pacotes, 3 com Chromium junto, 3 na varredura) não reproduziram.
+   Vai precisar de laço longo ou de uma máquina mais disputada.
 2. Se for timeout, a correção não é aumentar o timeout — é tirar a dependência
    de relógio do teste, ou marcar os quatro para rodar em série.
 3. Enquanto não for corrigido: **nenhum relatório deve citar o número do worker
