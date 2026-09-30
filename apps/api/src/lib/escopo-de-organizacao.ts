@@ -144,3 +144,58 @@ export function recorteDePessoasVisiveis(
     or ${colunaDoUsuario} = ${user.id}::uuid
   )`;
 }
+
+/**
+ * O recorte para tabelas que NÃO têm `organization_id` — só `client_id` e/ou
+ * `user_id`.
+ *
+ * É o caso de `studio_assets`, `studio_jobs`, `cost_records` e `token_usage`:
+ * ficaram de fora da migração 0045 porque não são conteúdo do Brain, e mesmo
+ * assim carregam dado sensível de empresa (peça criativa de um cliente, quanto
+ * cada conta gastou).
+ *
+ * A fronteira sai do vínculo que já existe: a empresa dona do CLIENTE, ou a
+ * empresa de quem CRIOU. Mesma precedência de `organizacaoDaEscrita` em
+ * packages/auth — cliente primeiro, pessoa depois — para as duas não
+ * divergirem.
+ *
+ * `null` nas duas pontas continua visível: são linhas antigas sem vínculo, e
+ * escondê-las faria a tela encolher hoje sem ninguém entender por quê. Quando
+ * existir uma segunda empresa, essas linhas precisam ser resolvidas antes —
+ * está anotado no inventário.
+ */
+export function recorteViaClienteOuPessoa(
+  user: AuthenticatedUser,
+  colunaDeCliente: SQL | unknown,
+  colunaDeUsuario?: SQL | unknown,
+): SQL {
+  const papelDePlataforma = ehPapelDePlataforma(user.roles);
+  const provedora = organizacaoProvedora();
+
+  const porPessoa =
+    colunaDeUsuario === undefined
+      ? sql`false`
+      : sql`exists (
+          select 1 from organization_members dono
+          join organization_members meu on meu.organization_id = dono.organization_id
+          where dono.user_id = ${colunaDeUsuario} and meu.user_id = ${user.id}::uuid
+        )`;
+
+  return sql`(
+    (
+      ${papelDePlataforma}
+      and ${provedora}::uuid is not null
+      and exists (
+        select 1 from organization_members om
+        where om.user_id = ${user.id}::uuid and om.organization_id = ${provedora}::uuid
+      )
+    )
+    or exists (
+      select 1 from clients c
+      join organization_members meu on meu.organization_id = c.organization_id
+      where c.id = ${colunaDeCliente} and meu.user_id = ${user.id}::uuid
+    )
+    or ${porPessoa}
+    or (${colunaDeCliente} is null${colunaDeUsuario === undefined ? sql`` : sql` and ${colunaDeUsuario} is null`})
+  )`;
+}

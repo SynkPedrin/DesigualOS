@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { gte, sql } from 'drizzle-orm';
+import { and, gte, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { recorteViaClienteOuPessoa } from '../lib/escopo-de-organizacao';
 
 function rangeToDate(range: string | undefined): Date {
   const days = range?.endsWith('d') ? Number(range.slice(0, -1)) : 30;
@@ -13,8 +14,27 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { range?: string } }>(
     '/costs/overview',
     { preHandler: [requireAuth, requirePermission('costs', 'read')] },
-    async (request) => {
+    async (request, reply) => {
+      const usuario = request.authUser;
+      if (!usuario) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
       const since = rangeToDate(request.query.range);
+      /**
+       * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
+       *
+       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
+       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
+       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
+       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
+       * três vezes hoje em lugares diferentes.
+       */
+      const daMinhaEmpresa = recorteViaClienteOuPessoa(
+        usuario,
+        schema.costRecords.clientId,
+        schema.costRecords.userId,
+      );
 
       const [totals] = await db
         .select({
@@ -22,7 +42,7 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
           eventCount: sql<number>`count(*)`,
         })
         .from(schema.costRecords)
-        .where(gte(schema.costRecords.createdAt, since));
+        .where(and(gte(schema.costRecords.createdAt, since), daMinhaEmpresa));
 
       const [tokenTotals] = await db
         .select({
@@ -30,7 +50,28 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
           outputTokens: sql<string>`coalesce(sum(${schema.tokenUsage.outputTokens}), 0)`,
         })
         .from(schema.tokenUsage)
-        .where(gte(schema.tokenUsage.createdAt, since));
+        /**
+         * `token_usage` não tem cliente NEM pessoa — só `execution_id`. E
+         * `executions` ganhou `organization_id` na 0045, então a ligação
+         * existe e é por ali. Execução sem dono (linha antiga) continua
+         * entrando, pelo mesmo motivo das outras: sumir com número hoje
+         * confundiria mais do que protege.
+         */
+        .where(
+          and(
+            gte(schema.tokenUsage.createdAt, since),
+            sql`(
+              ${schema.tokenUsage.executionId} is null
+              or exists (
+                select 1 from executions e
+                where e.id = ${schema.tokenUsage.executionId}
+                  and (e.organization_id is null or e.organization_id in (
+                    select organization_id from organization_members where user_id = ${usuario.id}::uuid
+                  ))
+              )
+            )`,
+          ),
+        );
 
       return {
         range_days: Math.round((Date.now() - since.getTime()) / (24 * 60 * 60 * 1000)),
@@ -49,8 +90,27 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { range?: string } }>(
     '/costs/by-agent',
     { preHandler: [requireAuth, requirePermission('costs', 'read')] },
-    async (request) => {
+    async (request, reply) => {
+      const usuario = request.authUser;
+      if (!usuario) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
       const since = rangeToDate(request.query.range);
+      /**
+       * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
+       *
+       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
+       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
+       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
+       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
+       * três vezes hoje em lugares diferentes.
+       */
+      const daMinhaEmpresa = recorteViaClienteOuPessoa(
+        usuario,
+        schema.costRecords.clientId,
+        schema.costRecords.userId,
+      );
       const rows = await db
         .select({
           agent: schema.costRecords.agent,
@@ -58,7 +118,7 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
           eventCount: sql<number>`count(*)`,
         })
         .from(schema.costRecords)
-        .where(gte(schema.costRecords.createdAt, since))
+        .where(and(gte(schema.costRecords.createdAt, since), daMinhaEmpresa))
         .groupBy(schema.costRecords.agent);
 
       return {
@@ -74,8 +134,27 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { range?: string } }>(
     '/costs/by-client',
     { preHandler: [requireAuth, requirePermission('costs', 'read')] },
-    async (request) => {
+    async (request, reply) => {
+      const usuario = request.authUser;
+      if (!usuario) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
       const since = rangeToDate(request.query.range);
+      /**
+       * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
+       *
+       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
+       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
+       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
+       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
+       * três vezes hoje em lugares diferentes.
+       */
+      const daMinhaEmpresa = recorteViaClienteOuPessoa(
+        usuario,
+        schema.costRecords.clientId,
+        schema.costRecords.userId,
+      );
       const rows = await db
         .select({
           clientId: schema.costRecords.clientId,
@@ -84,7 +163,7 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
         })
         .from(schema.costRecords)
         .leftJoin(schema.clients, sql`${schema.costRecords.clientId} = ${schema.clients.id}`)
-        .where(gte(schema.costRecords.createdAt, since))
+        .where(and(gte(schema.costRecords.createdAt, since), daMinhaEmpresa))
         .groupBy(schema.costRecords.clientId, schema.clients.name);
 
       return {
@@ -103,8 +182,27 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { range?: string } }>(
     '/costs/economy',
     { preHandler: [requireAuth, requirePermission('costs', 'read')] },
-    async (request) => {
+    async (request, reply) => {
+      const usuario = request.authUser;
+      if (!usuario) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
       const since = rangeToDate(request.query.range);
+      /**
+       * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
+       *
+       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
+       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
+       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
+       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
+       * três vezes hoje em lugares diferentes.
+       */
+      const daMinhaEmpresa = recorteViaClienteOuPessoa(
+        usuario,
+        schema.costRecords.clientId,
+        schema.costRecords.userId,
+      );
       const [totals] = await db
         .select({
           estimatedCost: sql<string>`coalesce(sum(${schema.economyRecords.estimatedCost}), 0)`,
@@ -134,8 +232,27 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { range?: string } }>(
     '/costs/by-user',
     { preHandler: [requireAuth, requirePermission('costs', 'read')] },
-    async (request) => {
+    async (request, reply) => {
+      const usuario = request.authUser;
+      if (!usuario) {
+        reply.code(401);
+        return { error: 'Not authenticated' };
+      }
       const since = rangeToDate(request.query.range);
+      /**
+       * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
+       *
+       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
+       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
+       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
+       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
+       * três vezes hoje em lugares diferentes.
+       */
+      const daMinhaEmpresa = recorteViaClienteOuPessoa(
+        usuario,
+        schema.costRecords.clientId,
+        schema.costRecords.userId,
+      );
       const rows = await db
         .select({
           userId: schema.costRecords.userId,
@@ -144,7 +261,7 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
         })
         .from(schema.costRecords)
         .leftJoin(schema.users, sql`${schema.costRecords.userId} = ${schema.users.id}`)
-        .where(gte(schema.costRecords.createdAt, since))
+        .where(and(gte(schema.costRecords.createdAt, since), daMinhaEmpresa))
         .groupBy(schema.costRecords.userId, schema.users.name);
 
       return {

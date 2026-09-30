@@ -88,14 +88,23 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
      */
     const bruto: any = await db.execute(sql`
       with
-      minhas_orgs as (
+      /*
+       * MATERIALIZED: avalia UMA vez, não a cada subconsulta que a referencia.
+       *
+       * Sem a dica, o Postgres pode reavaliar a CTE em cada um dos seis lugares
+       * que a usam. Medido: /panorama saiu de 0,35s para 1,06s quando o recorte
+       * passou a valer para todas as contagens, e voltou a estourar os 20s da
+       * suíte sob carga — a terceira vez que esta rota me ensina a mesma coisa
+       * sobre o pool de três conexões.
+       */
+      minhas_orgs as materialized (
         select organization_id from organization_members where user_id = ${user.id}
       ),
       /*
        * Provider = papel de plataforma E pertencer à provedora. As duas
        * condições juntas, sempre — ver lib/escopo-de-organizacao.ts.
        */
-      escopo as (
+      escopo as materialized (
         select (
           ${papelDePlataforma}
           and ${provedora}::uuid is not null
