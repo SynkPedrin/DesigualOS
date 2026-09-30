@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { classificarStatusFuncional, escopoOperacional } from '@desigual-os/context-engine';
+import { McpAuthorizationError } from '@desigual-os/mcp-domain';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
 import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
@@ -257,6 +258,70 @@ export function registrarToolsV2(deps: RegistrarToolDeps): void {
         nota: idsDaCarteira.length === 0 && !args.client_id
           ? 'Carteira vazia ou sem rastreio — não é ausência de dado, é o estado real agora.'
           : undefined,
+      };
+    },
+  });
+
+  registrarTool(deps, {
+    nome: 'get_organizations',
+    descricao:
+      'As empresas que o Desigual OS atende: gente, carteira de clientes, conhecimento acumulado e última ' +
+      'atividade de cada uma. É a visão do PROVEDOR — só quem opera no nível da plataforma enxerga isto. ' +
+      'Não mostra "saudável" em selo verde: saúde por empresa exige medição que ainda não existe, e selo ' +
+      'inventado é pior que selo nenhum.',
+    entrada: {},
+    scope: 'admin.read',
+    acesso: 'READ',
+    recurso: 'organization',
+    executar: async (_args, ctx) => {
+      /**
+       * A MESMA consulta que apps/api/src/organizations/routes.ts usa — não
+       * uma segunda versão da mesma pergunta. `ehProvider` já veio calculado
+       * no principal (packages/mcp-domain, decidirEscopo), mas o gate aqui é
+       * redundante de propósito: um principal cuja sessão foi montada antes
+       * de PROVIDER_ORGANIZATION_ID existir não deveria, por estar "velho",
+       * herdar acesso — a checagem explícita é o que torna isso impossível.
+       */
+      if (!ctx.principal.ehProvider) {
+        throw new McpAuthorizationError(
+          'PERMISSION_DENIED',
+          'Só quem opera no nível da plataforma enxerga a lista de empresas.',
+          { eh_provider: false },
+        );
+      }
+
+      const provedora = ctx.principal.organizationIds.find((id) => id === process.env.PROVIDER_ORGANIZATION_ID);
+      const bruto = await db.execute(sql`
+        select
+          o.id,
+          o.name,
+          (select count(*)::int from organization_members om where om.organization_id = o.id) as pessoas,
+          (select count(*)::int from clients c
+            where c.organization_id = o.id and c.deleted_at is null) as clientes,
+          (select max(m.created_at) from messages m where m.organization_id = o.id) as ultima_atividade,
+          (select count(*)::int from memories mem
+            where mem.organization_id = o.id and mem.status = 'active') as memorias,
+          (o.id = ${provedora ?? null}::uuid) as eh_provedora
+        from organizations o
+        order by (o.id = ${provedora ?? null}::uuid) desc, o.name
+      `);
+      const linhas = ((bruto as { rows?: unknown[] }).rows ?? (bruto as unknown[])) as Array<{
+        id: string; name: string; pessoas: number; clientes: number;
+        ultima_atividade: string | null; memorias: number; eh_provedora: boolean;
+      }>;
+
+      return {
+        organizations: linhas.map((o) => ({
+          id: o.id,
+          name: o.name,
+          eh_provedora: o.eh_provedora,
+          pessoas: o.pessoas,
+          clientes: o.clientes,
+          memorias: o.memorias,
+          // null = nenhuma mensagem registrada. Nunca "agora" nem data inventada.
+          ultima_atividade: o.ultima_atividade ? new Date(o.ultima_atividade).toISOString() : null,
+        })),
+        gerado_em: new Date().toISOString(),
       };
     },
   });
