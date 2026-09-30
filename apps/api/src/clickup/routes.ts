@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
@@ -26,6 +26,8 @@ import { createLogger } from '@desigual-os/logging';
 import { getRedisConnection, publishWsEvent, recordLearning, recordOperationalEvent } from '@desigual-os/orchestrator';
 import { stripBlockMarkers, stripEmDashes } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import type { AuthenticatedUser } from '../auth/middleware';
+import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
 import { resolveClickUpAccess } from '../integrations/access';
 import { hasClientAccess } from '../lib/access';
 import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
@@ -102,10 +104,42 @@ function getClickUpConfig(): { apiKey: string; teamId: string } | null {
  * clickup-operation.ts). Cliente sem `clickup_list_id` fica de fora, o que é
  * o comportamento certo (nada pra buscar por ele ainda).
  */
-async function clientsByClickUpListId(): Promise<Map<string, { id: string; name: string }>> {
+/**
+ * As listas do ClickUp que ESTA PESSOA pode ver, por empresa.
+ *
+ * Nasceu sem recorte: selecionava TODOS os clientes do banco e montava o mapa
+ * com todas as listas. Com uma organização, isso é a carteira da casa. Com
+ * duas, `/clickup/tasks/agency` devolveria as tarefas dos clientes do outro
+ * tenant — e nada no código acusaria, porque a consulta ao ClickUp funciona
+ * igual e devolve tarefas de verdade.
+ *
+ * O inventário forense de 30/09/2026 marcou este módulo como o mais grave da
+ * categoria "só papel, sem organização": nove rotas, dez checagens de papel,
+ * zero de empresa, e é a porta para a operação inteira.
+ *
+ * O recorte sai da fonte canônica (`lib/escopo-de-organizacao.ts`), não de um
+ * `where` escrito à mão aqui — é a seção 82 do briefing: enforcement central.
+ */
+async function clientsByClickUpListId(
+  user: AuthenticatedUser,
+): Promise<Map<string, { id: string; name: string }>> {
+  const escopo = await escopoDeOrganizacao(user);
+
+  /**
+   * Provider enxerga todas as empresas; qualquer outra pessoa só as suas. E
+   * quem não pertence a organização nenhuma não vê lista alguma — restritivo
+   * de propósito: sem vínculo, não há do que se derivar permissão.
+   */
+  const recorte = escopo.ehProvider
+    ? undefined
+    : escopo.organizationIds.length > 0
+      ? inArray(schema.clients.organizationId, escopo.organizationIds)
+      : sql`false`;
+
   const rows = await db
     .select({ id: schema.clients.id, name: schema.clients.name, clickupListId: schema.clients.clickupListId })
-    .from(schema.clients);
+    .from(schema.clients)
+    .where(recorte);
   const map = new Map<string, { id: string; name: string }>();
   for (const row of rows) {
     if (row.clickupListId) map.set(row.clickupListId, { id: row.id, name: row.name });
@@ -502,13 +536,18 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
    * chat dos agentes) - esta é a primeira rota que expõe isso pro navegador.
    */
   app.get('/clickup/tasks/agency', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
-    const access = await resolveClickUpAccess(request.authUser?.id ?? '');
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const access = await resolveClickUpAccess(user.id);
     if (!access) {
       reply.code(400);
       return { error: 'No ClickUp access available for this user' };
     }
 
-    const clientByListId = await clientsByClickUpListId();
+    const clientByListId = await clientsByClickUpListId(user);
     if (clientByListId.size === 0) {
       return { tasks: [], truncated: false };
     }
@@ -555,7 +594,15 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
       return { error: 'Linked ClickUp email does not match any member of the workspace' };
     }
 
-    const clientByListId = await clientsByClickUpListId();
+    // `user` aqui é a LINHA do banco (tem clickupEmail); o recorte precisa do
+    // usuário autenticado, que carrega papéis. São objetos diferentes com o
+    // mesmo nome nesta rota — vale o cuidado.
+    const autenticado = request.authUser;
+    if (!autenticado) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const clientByListId = await clientsByClickUpListId(autenticado);
     if (clientByListId.size === 0) {
       return { tasks: [], truncated: false };
     }
