@@ -199,3 +199,46 @@ export function recorteViaClienteOuPessoa(
     or (${colunaDeCliente} is null${colunaDeUsuario === undefined ? sql`` : sql` and ${colunaDeUsuario} is null`})
   )`;
 }
+
+/**
+ * Porteiro de rota: SÓ O PROVEDOR passa.
+ *
+ * Diferente de recorte por empresa. Recorte serve para dado que EXISTE por
+ * empresa (cliente, memória, tarefa). Isto serve para o que não tem dimensão de
+ * empresa nenhuma e mesmo assim não é de todo mundo: a INFRAESTRUTURA da
+ * plataforma.
+ *
+ * Conferido no banco em 30/09/2026: `nodes` (5 linhas), `health_checks`
+ * (140.932) e `node_capabilities` (6) não têm `client_id`, `user_id` nem
+ * `organization_id`. São as máquinas que rodam os agentes, compartilhadas por
+ * toda a plataforma — recortá-las por empresa seria inventar uma dimensão que
+ * o dado não tem, e sugerir que cada cliente tem servidor próprio, que é
+ * falso no modelo cloud multi-tenant (seção 7).
+ *
+ * O problema real ali é outro: `/nodes` e `/health/nodes/:id` devolvem
+ * `private_host` — o endereço interno das máquinas. Hoje isso é visível para
+ * quem tem `nodes:read`; num mundo multiempresa, isso incluiria o
+ * administrador de uma empresa cliente. A seção 22 é explícita: "cliente não
+ * pode receber o Control Plane técnico", e a 53 põe observabilidade na área
+ * administrativa.
+ */
+export function exigirProvedor(): (request: { authUser?: AuthenticatedUser }, reply: {
+  code: (n: number) => unknown;
+  send: (body: unknown) => unknown;
+}) => Promise<void> {
+  return async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      void reply.send({ error: 'Not authenticated' });
+      return;
+    }
+    const escopo = await escopoDeOrganizacao(user);
+    if (!escopo.ehProvider) {
+      reply.code(403);
+      void reply.send({
+        error: 'Infraestrutura da plataforma é visível só para quem a opera.',
+      });
+    }
+  };
+}

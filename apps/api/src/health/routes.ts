@@ -5,12 +5,13 @@ import { NODE_STATUSES } from '@desigual-os/types';
 import { syncAgents, getProbeTargets, readWorkerHealth } from '@desigual-os/orchestrator';
 import { getReleaseInfo } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { exigirProvedor } from '../lib/escopo-de-organizacao';
 import { separarRegistrosAposentados } from './retired-nodes';
 
 export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
   // Gerenciamento de agentes/infra é assunto de master (pedido do usuário:
   // colaborador só vê o dia a dia dele, não saúde de máquina).
-  app.get('/health/infrastructure', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+  app.get('/health/infrastructure', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
     const rows = await db
       .select({
         nodeId: schema.nodes.nodeId,
@@ -126,7 +127,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
 
   app.get<{ Params: { node_id: string } }>(
     '/nodes/:node_id',
-    { preHandler: [requireAuth, requirePermission('nodes', 'read')] },
+    { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] },
     async (request, reply) => {
     const [node] = await db
       .select({
@@ -192,7 +193,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
    * autossolucionado. Substitui a espera passiva por heartbeat - que nunca
    * chegava, deixando a tela em "0/2 agentes conectados".
    */
-  app.post('/health/sync', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+  app.post('/health/sync', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
     const report = await syncAgents();
     return {
       ran_at: report.ranAt,
@@ -225,7 +226,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
    * node vira um evento - offline vira erro, volta pro ar vira info, e
    * qualquer estado intermediário vira aviso.
    */
-  app.get('/health/events', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+  app.get('/health/events', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
     const rows = await db
       .select({
         nodeId: schema.nodes.nodeId,

@@ -83,3 +83,37 @@ describe('papéis de plataforma', () => {
  * condição e passou a afirmar coisas sobre um texto que não existia — teste que
  * verifica a própria ficção.
  */
+
+/**
+ * A INFRAESTRUTURA DA PLATAFORMA NÃO TEM DIMENSÃO DE EMPRESA — e nem por isso
+ * é de todo mundo.
+ *
+ * Conferido no banco em 30/09/2026: `nodes` (5 linhas), `health_checks`
+ * (140.932) e `node_capabilities` (6) não têm `client_id`, `user_id` nem
+ * `organization_id`. São as máquinas que rodam os agentes, compartilhadas.
+ *
+ * Recortá-las por empresa seria inventar uma dimensão que o dado não tem, e
+ * sugerir que cada cliente tem servidor próprio — falso no modelo cloud
+ * multi-tenant. O risco real era outro: `/nodes` devolve `private_host`, o
+ * endereço interno das máquinas, para quem tem `nodes:read`. Num mundo
+ * multiempresa isso incluiria o administrador de uma empresa cliente.
+ *
+ * Estes testes travam quem passa por esse portão. São a mesma regra de
+ * `ehProvider`, aplicada onde a resposta é sim/não em vez de um recorte.
+ */
+describe('porteiro da infraestrutura', () => {
+  it('master da provedora entra', () => {
+    expect(decidirEscopo([PROVEDORA], ['master'], PROVEDORA).ehProvider).toBe(true);
+  });
+
+  /** O caso que a regra existe para impedir. */
+  it('administrador de uma empresa CLIENTE não entra', () => {
+    expect(decidirEscopo([CLIENTE], ['master'], PROVEDORA).ehProvider).toBe(false);
+    expect(decidirEscopo([CLIENTE], ['tenant_owner'], PROVEDORA).ehProvider).toBe(false);
+  });
+
+  /** Verificado contra o banco: a Tammy é colaborador, uma organização. */
+  it('colaborador não entra nem na própria empresa', () => {
+    expect(decidirEscopo([PROVEDORA], ['colaborador'], PROVEDORA).ehProvider).toBe(false);
+  });
+});

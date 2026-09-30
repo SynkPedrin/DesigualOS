@@ -10,6 +10,7 @@ import {
 } from '@desigual-os/node-protocol';
 import { requireNodeSecret } from './auth';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { exigirProvedor } from '../lib/escopo-de-organizacao';
 import { publishWsEvent } from '@desigual-os/orchestrator';
 
 // 'drain' não existe de verdade ainda porque não há rastreio de trabalho em
@@ -130,7 +131,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/nodes', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+  app.get('/nodes', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
     const rows = await db
       .select({
         nodeId: schema.nodes.nodeId,
