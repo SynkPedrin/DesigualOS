@@ -29,7 +29,7 @@ export default function MemoryPage() {
 
   const { data: tipos } = useMemoryKinds();
   const {
-    data: memorias,
+    data: pagina,
     isPending,
     isError,
   } = useMemories({
@@ -38,6 +38,22 @@ export default function MemoryPage() {
     busca: busca.trim() || undefined,
     limite: 150,
   });
+
+  const memorias = pagina?.memories;
+  /**
+   * "150 registro(s)" era o que esta tela dizia — pedindo 150, recebendo 150 e
+   * chamando isso de total, com 396 visíveis no banco. Nenhuma linha mentia: a
+   * tela contava o que tinha na mão. Quem lesse concluiria que o sistema sabe
+   * 150 coisas.
+   *
+   * Agora ela diz a janela E o total, e só fala em janela quando ela de fato
+   * corta alguma coisa — "396 de 396" seria ruído com cara de precisão.
+   */
+  const rotulo = !pagina
+    ? 'Registros'
+    : pagina.total > pagina.mostrando
+      ? `${pagina.mostrando} de ${pagina.total} registro(s) — os mais recentes`
+      : `${pagina.total} registro(s)`;
 
   return (
     <div className="mx-auto max-w-[1400px]">
@@ -74,7 +90,7 @@ export default function MemoryPage() {
         </div>
       </Secao>
 
-      <Secao titulo={memorias ? `${memorias.length} registro(s)` : 'Registros'}>
+      <Secao titulo={rotulo}>
         {isPending ? (
           <LinhasFantasma linhas={8} />
         ) : isError ? (

@@ -44,6 +44,16 @@ const TELAS = [
   { rota: '/errors', titulo: /Incidentes/i },
   { rota: '/integrations', titulo: /Integrações/i },
   { rota: '/usage', titulo: /^Uso$/i },
+  /**
+   * As três que faltavam, achadas ao conferir a lista contra a sidebar em
+   * 30/09/2026 — e a ausência mais cara era justamente `/data-quality`, a tela
+   * cujo trabalho é apontar dado torto. Ela é `masterOnly`, e a conta da suíte
+   * é master, então não há motivo pra ficar de fora: uma tela que não é aberta
+   * por ninguém é uma tela que pode estar quebrada há dias.
+   */
+  { rota: '/data-quality', titulo: /Qualidade do dado/i },
+  { rota: '/clients', titulo: /Clientes/i },
+  { rota: '/settings', titulo: /Configurações/i },
 ];
 
 test.describe('Control Plane — cada tela abre e se comporta', () => {
@@ -143,6 +153,46 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     const semLeitura = await page.getByText(/Não consegui ler as conexões/i).count();
     expect(semNinguem + semLeitura, 'ausência e falha de leitura não podem coexistir').toBeLessThanOrEqual(1);
   });
+
+  /**
+   * O HISTÓRICO DE CONEXÃO NÃO PODE SER LIDO COMO UMA CONTAGEM DE PESSOAS.
+   *
+   * Medido no banco em 30/09/2026: seis eventos `CONNECTION_CREATED` da MESMA
+   * conta dentro de CINCO segundos — o cliente do Claude abre várias sessões ao
+   * conectar. Cada linha é um fato real, e seis linhas com o mesmo nome fazem
+   * qualquer leitor contar seis conexões onde houve uma.
+   *
+   * Esconder as repetições daria um número mais bonito e menos verdadeiro. O
+   * que a tela deve a quem lê é a explicação — e é ela que este teste trava,
+   * porque é exatamente o que some numa refatoração de layout.
+   */
+  test('conexões recentes explicam a rajada em vez de deixar contar errado', async ({ page }) => {
+    await login(page);
+    await page.goto('/mcp');
+    await expect(page.getByRole('heading', { name: /^MCP$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+
+    const secao = page.getByRole('heading', { name: /Conexões recentes/i });
+    await expect(secao).toBeVisible({ timeout: 30_000 });
+
+    const vazio = page.getByText(/Nenhuma conexão registrada/i);
+    const explicacao = page.getByText(/mesma pessoa repetida em poucos segundos é uma conexão só/i);
+
+    // Ou não há conexão nenhuma, ou há a explicação. Lista sem explicação, não.
+    await expect(vazio.or(explicacao).first()).toBeVisible({ timeout: 30_000 });
+  });
+
+  /**
+   * `?conectou=<id>` é para onde a notificação de "fulano conectou o Claude"
+   * aterrissa. Um link que não mostra o que prometeu é ruído com aparência de
+   * utilidade — e é o tipo de coisa que continua "passando" sem ninguém olhar.
+   */
+  test('o link da notificação abre a tela sem quebrar', async ({ page }) => {
+    await login(page);
+    await page.goto('/mcp?conectou=e1b865d0-646c-4f65-9ae2-b2ec2944ceec');
+
+    await expect(page.getByRole('heading', { name: /^MCP$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /Conexões recentes/i })).toBeVisible({ timeout: 30_000 });
+  });
 });
 
 /**
@@ -167,6 +217,45 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
  * sobre a fonte — registros, ausência, ou falha. Uma tela que sempre diz
  * "vazio" passa despercebida justamente por parecer um estado legítimo.
  */
+/**
+ * A TELA NÃO PODE CHAMAR DE TOTAL O QUE COUBE NA RESPOSTA.
+ *
+ * Achado ao reconciliar tela x API x banco (30/09/2026): a Memória pedia 150
+ * registros, recebia 150 e se intitulava "150 registro(s)". Havia 396 visíveis
+ * àquela conta. Nenhuma linha de código mentia — a tela contou o que tinha na
+ * mão e chamou de total, e quem lesse concluiria que o sistema sabe 150 coisas.
+ *
+ * Mesma família de 58-x-49 (fixture contada como cliente) e 812-x-146 (task
+ * fechada contada como atrasada): número certo sobre a pergunta errada. O teste
+ * trava a propriedade, não o número — quando houver corte, a tela declara os
+ * dois lados.
+ */
+test.describe('contagem não confunde janela com total', () => {
+  test.setTimeout(120_000);
+
+  test('a Memória declara a janela quando há mais do que cabe', async ({ page }) => {
+    await login(page);
+    await page.goto('/memory');
+    await expect(page.getByRole('heading', { name: /^Memória$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+
+    const cabecalho = page.getByRole('heading', { name: /registro\(s\)/i });
+    await expect(cabecalho.first()).toBeVisible({ timeout: 30_000 });
+
+    const texto = (await cabecalho.first().textContent()) ?? '';
+    const janela = /^(\d+) de (\d+) registro/.exec(texto);
+    if (janela) {
+      const [, mostrando, total] = janela;
+      expect(Number(mostrando), 'a janela não pode ser maior que o total').toBeLessThanOrEqual(Number(total));
+      // Contar as linhas da lista: a janela declarada tem que ser a real.
+      const linhas = await page.locator('main li').count();
+      expect(linhas, 'a tela mostra o que disse que está mostrando').toBe(Number(mostrando));
+    } else {
+      // Sem corte, o rótulo simples é o correto — e aí ele É o total.
+      expect(texto, 'sem corte, o rótulo é "N registro(s)"').toMatch(/^\d+ registro\(s\)/);
+    }
+  });
+});
+
 test.describe('decisões vêm da fonte certa', () => {
   test.setTimeout(120_000);
 

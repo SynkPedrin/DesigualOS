@@ -1,4 +1,41 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+
+// ESM: não há __dirname. O config é carregado como módulo pelo Playwright.
+const AQUI = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * AS CREDENCIAIS DE QA SÃO CARREGADAS AQUI, e o motivo é uma falha de
+ * instrumento, não uma conveniência.
+ *
+ * Medido em 30/09/2026: `playwright test control-plane.spec.ts` rodou e
+ * imprimiu "23 skipped", saindo com código ZERO. A suíte inteira se
+ * auto-desligou porque `QA_USER_EMAIL`/`QA_USER_PASSWORD` só existem em
+ * `.env.local` e nada aqui os lia — e um comando que valida NADA e devolve
+ * sucesso é a pior espécie de teste, porque é indistinguível de um que passou.
+ *
+ * O `test.skip` continua existindo pro CI, onde segredo não é commitado. O que
+ * muda é que na máquina de quem desenvolve as credenciais ESTÃO ali, então o
+ * skip não pode mais acontecer por descuido de ambiente.
+ */
+function carregarEnvLocal(): void {
+  for (const caminho of [resolve(AQUI, '.env.local'), resolve(AQUI, '../../.env.local')]) {
+    if (!existsSync(caminho)) continue;
+    for (const linha of readFileSync(caminho, 'utf8').split('\n')) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(linha);
+      if (!m) continue;
+      const [, chave, valorCru] = m;
+      // Variável já definida no shell VENCE o arquivo: é assim que se aponta a
+      // suíte pra outro ambiente sem editar arquivo nenhum.
+      if (process.env[chave!] !== undefined) continue;
+      process.env[chave!] = valorCru!.trim().replace(/^["']|["']$/g, '');
+    }
+  }
+}
+
+carregarEnvLocal();
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 

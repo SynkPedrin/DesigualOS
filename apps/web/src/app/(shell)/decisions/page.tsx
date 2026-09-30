@@ -25,9 +25,18 @@ import { useEpisodes, useEpisodeTypes, type Episodio } from '@/hooks/use-episode
 export default function DecisionsPage() {
   const [tipo, setTipo] = useState<string | null>(null);
   const { data: tipos } = useEpisodeTypes();
-  const { data: episodios, isPending, isError } = useEpisodes({ type: tipo, limite: 200 });
+  const { data: pagina, isPending, isError } = useEpisodes({ type: tipo, limite: 200 });
 
-  const lista = episodios ?? [];
+  const lista = pagina?.episodes ?? [];
+  /**
+   * Janela e total. Hoje não há corte (31 registros, teto de 300) e os dois
+   * números são iguais — o rótulo só fala em janela quando ela de fato corta.
+   */
+  const rotulo = !pagina
+    ? 'Registros'
+    : pagina.total > pagina.mostrando
+      ? `${pagina.mostrando} de ${pagina.total} registro(s) — os mais recentes`
+      : `${pagina.total} registro(s)`;
 
   return (
     <div className="mx-auto max-w-[1200px]">
@@ -49,7 +58,7 @@ export default function DecisionsPage() {
         </div>
       </Secao>
 
-      <Secao titulo={`${lista.length} registro(s)`}>
+      <Secao titulo={rotulo}>
         {isPending ? (
           <LinhasFantasma linhas={6} />
         ) : isError ? (

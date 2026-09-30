@@ -103,7 +103,29 @@ export async function registerMemoryRoutes(app: FastifyInstance): Promise<void> 
       .orderBy(desc(schema.memories.createdAt))
       .limit(limite);
 
+    /**
+     * QUANTOS EXISTEM, além dos que couberam.
+     *
+     * Achado ao reconciliar tela x API x banco (30/09/2026): a tela pedia 150,
+     * recebia 150 e se intitulava "150 registro(s)". Havia 396 visíveis àquela
+     * conta. Ninguém mentiu numa linha de código — a tela contou o que tinha na
+     * mão e chamou de total, e quem lesse concluiria que o sistema sabe 150
+     * coisas quando ele sabe 396.
+     *
+     * É a mesma família de 58-x-49 e 812-x-146: número certo sobre a pergunta
+     * errada. Por isso o total sai daqui, com EXATAMENTE os mesmos filtros —
+     * contar com regra diferente da listagem é como o vazamento de privacidade
+     * desta rota começou.
+     */
+    const [contagem] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(schema.memories)
+      .where(and(...filtros));
+
     return {
+      total: contagem?.total ?? 0,
+      /** Quantos couberam nesta resposta. A tela precisa dos dois pra ser honesta. */
+      mostrando: linhas.length,
       memories: linhas.map(({ memoria: m, clienteNome, autorNome, autorEmail }) => ({
         id: m.id,
         kind: m.kind,

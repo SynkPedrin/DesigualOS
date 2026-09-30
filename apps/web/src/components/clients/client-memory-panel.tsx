@@ -24,7 +24,7 @@ import { useMemories, type MemoriaWire } from '@/hooks/use-memories';
  * apps/api/src/memories/visibilidade.ts, e o vazamento que originou a regra).
  */
 export function ClientMemoryPanel({ clientId }: { clientId: string }) {
-  const { data: memorias, isPending, isError } = useMemories({ clientId, limite: 60 });
+  const { data: pagina, isPending, isError } = useMemories({ clientId, limite: 60 });
 
   if (isPending) return <LinhasFantasma linhas={5} />;
 
@@ -37,7 +37,7 @@ export function ClientMemoryPanel({ clientId }: { clientId: string }) {
     );
   }
 
-  const lista = memorias ?? [];
+  const lista = pagina?.memories ?? [];
   if (lista.length === 0) {
     return (
       <SemNadaAinda
@@ -49,8 +49,13 @@ export function ClientMemoryPanel({ clientId }: { clientId: string }) {
 
   return (
     <div className="space-y-2.5">
+      {/* Janela e total. Um cliente com 200 memórias mostraria 60 e diria
+        * "60 registros" — contando o que coube e chamando de tudo. */}
       <p className="font-mono text-[11px] text-nevoa">
-        {lista.length} registro(s). O que está aqui vale pra próxima entrega sem ninguém repetir.
+        {pagina && pagina.total > pagina.mostrando
+          ? `${pagina.mostrando} de ${pagina.total} registro(s), os mais recentes.`
+          : `${lista.length} registro(s).`}{' '}
+        O que está aqui vale pra próxima entrega sem ninguém repetir.
       </p>
       <ul className="space-y-2">
         {lista.map((m) => (

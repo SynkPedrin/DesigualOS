@@ -30,6 +30,13 @@ export interface Episodio {
   occurred_at: string | null;
 }
 
+/** Janela e total: a tela precisa dos dois pra não chamar de total o que coube. */
+export interface PaginaDeEpisodios {
+  total: number;
+  mostrando: number;
+  episodes: Episodio[];
+}
+
 export function useEpisodes(filtro: { type?: string | null | undefined; clientId?: string | null | undefined; limite?: number } = {}) {
   const params = new URLSearchParams();
   if (filtro.type) params.set('type', filtro.type);
@@ -39,7 +46,7 @@ export function useEpisodes(filtro: { type?: string | null | undefined; clientId
 
   return useQuery({
     queryKey: ['episodes', filtro],
-    queryFn: async () => (await apiFetch<{ episodes: Episodio[] }>(`/episodes${query ? `?${query}` : ''}`)).episodes,
+    queryFn: () => apiFetch<PaginaDeEpisodios>(`/episodes${query ? `?${query}` : ''}`),
     staleTime: 30_000,
   });
 }

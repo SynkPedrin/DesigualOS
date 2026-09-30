@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, inArray, isNull, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
 import { tenantSharingScope } from '../lib/access';
@@ -54,6 +54,22 @@ export async function registerEpisodeRoutes(app: FastifyInstance): Promise<void>
 
       const limite = Math.min(Math.max(Number(request.query.limit ?? 100), 1), 300);
 
+      /**
+       * Os filtros saem daqui pra poderem ser usados DUAS vezes — na listagem e
+       * na contagem. Repetir a condição à mão é como a listagem e o total
+       * passam a discordar, e um total que discorda da lista é pior que não ter
+       * total nenhum.
+       */
+      const filtros = and(
+        recorteDeTenant,
+        // Episódio de QA não vira decisão de produção, pelo mesmo motivo que
+        // vale pra memória: um "tá decidido" de teste vira regra real na
+        // semana seguinte e ninguém acha a origem.
+        eq(schema.agentEpisodes.environment, 'production'),
+        request.query.type ? eq(schema.agentEpisodes.eventType, request.query.type) : undefined,
+        request.query.client_id ? eq(schema.agentEpisodes.clientId, request.query.client_id) : undefined,
+      );
+
       const linhas = await db
         .select({
           episodio: schema.agentEpisodes,
@@ -64,21 +80,24 @@ export async function registerEpisodeRoutes(app: FastifyInstance): Promise<void>
         .from(schema.agentEpisodes)
         .leftJoin(schema.clients, eq(schema.clients.id, schema.agentEpisodes.clientId))
         .leftJoin(schema.users, eq(schema.users.id, schema.agentEpisodes.userId))
-        .where(
-          and(
-            recorteDeTenant,
-            // Episódio de QA não vira decisão de produção, pelo mesmo motivo que
-            // vale pra memória: um "tá decidido" de teste vira regra real na
-            // semana seguinte e ninguém acha a origem.
-            eq(schema.agentEpisodes.environment, 'production'),
-            request.query.type ? eq(schema.agentEpisodes.eventType, request.query.type) : undefined,
-            request.query.client_id ? eq(schema.agentEpisodes.clientId, request.query.client_id) : undefined,
-          ),
-        )
+        .where(filtros)
         .orderBy(desc(schema.agentEpisodes.occurredAt))
         .limit(limite);
 
+      /**
+       * Hoje há 31 episódios e o teto é 300, então nada é cortado e este número
+       * é igual ao da lista. É justamente por isso que vale existir agora: a
+       * tela de Memória cometeu o erro com 396 registros e ninguém notou, e a
+       * diferença entre as duas é só o tamanho da tabela.
+       */
+      const [contagem] = await db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(schema.agentEpisodes)
+        .where(filtros);
+
       return {
+        total: contagem?.total ?? 0,
+        mostrando: linhas.length,
         episodes: linhas.map(({ episodio: e, clienteNome, autorNome, autorEmail }) => ({
           id: e.id,
           event_type: e.eventType,

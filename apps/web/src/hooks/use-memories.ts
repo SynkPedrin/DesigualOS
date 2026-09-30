@@ -47,6 +47,20 @@ export interface FiltroDeMemoria {
   limite?: number | undefined;
 }
 
+/**
+ * A resposta traz a JANELA e o TOTAL, e os dois importam.
+ *
+ * A tela pedia 150, recebia 150 e se intitulava "150 registro(s)" — com 396
+ * visíveis. Devolver só o array condena qualquer tela a contar o que tem na mão
+ * e chamar de total; é preciso que o número de fora exista pra ela poder ser
+ * honesta.
+ */
+export interface PaginaDeMemoria {
+  total: number;
+  mostrando: number;
+  memories: MemoriaWire[];
+}
+
 export function useMemories(filtro: FiltroDeMemoria = {}) {
   const params = new URLSearchParams();
   if (filtro.clientId) params.set('client_id', filtro.clientId);
@@ -58,7 +72,7 @@ export function useMemories(filtro: FiltroDeMemoria = {}) {
 
   return useQuery({
     queryKey: ['memories', filtro],
-    queryFn: async () => (await apiFetch<{ memories: MemoriaWire[] }>(`/memories${query ? `?${query}` : ''}`)).memories,
+    queryFn: () => apiFetch<PaginaDeMemoria>(`/memories${query ? `?${query}` : ''}`),
     staleTime: 30_000,
   });
 }
