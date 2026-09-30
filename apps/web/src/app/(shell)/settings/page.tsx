@@ -10,9 +10,6 @@ import { useMe } from '@/hooks/use-me';
 import { useUpdateMe, useUploadAvatar } from '@/hooks/use-update-me';
 import { useTheme } from '@/hooks/use-theme';
 import { useHoverSound } from '@/hooks/use-hover-sound';
-import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';
-import { NotionIntegrationSection } from '@/components/settings/notion-integration-card';
-import { MotionProvidersSection } from '@/components/settings/motion-providers-card';
 import { ApiRequestError } from '@/lib/api/client';
 import { LANGUAGES, THEMES, type Language, type Theme } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
@@ -111,7 +108,7 @@ export default function SettingsPage() {
   if (isPending || !me) {
     return (
       <div>
-        <PageHeader eyebrow="Conta" title="Configurações" description="Idioma, tema, foto de perfil e integrações." />
+        <PageHeader eyebrow="Conta" title="Configurações" description="Sua conta: foto, nome, idioma e tema. Conectar fontes é em Integrações." />
         <Skeleton className="h-64 w-full" />
       </div>
     );
@@ -119,10 +116,23 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Conta" title="Configurações" description="Idioma, tema, foto de perfil e integrações." />
+      <PageHeader eyebrow="Conta" title="Configurações" description="Sua conta: foto, nome, idioma e tema. Conectar fontes é em Integrações." />
 
       <Surface level="grafite" className="p-0">
-        <div className="grid grid-cols-1 divide-y divide-grafite-elevado xl:grid-cols-4 xl:divide-x xl:divide-y-0">
+        {/*
+          * EMPILHADO, não em quatro colunas.
+          *
+          * A tela era uma grade de 4 colunas com perfil, integrações, motion e
+          * tema lado a lado — assuntos diferentes competindo pela mesma linha
+          * de leitura. A seção 30 do briefing pede o contrário: "evitar colocar
+          * tudo na mesma tela".
+          *
+          * E as integrações saíram daqui: elas já tinham cartão em
+          * /integrations, que LINKAVA de volta pra cá. Duas portas pro mesmo
+          * ajuste é como as duas telas divergem — agora conectar fonte acontece
+          * onde a fonte é mostrada, e aqui é só sobre a pessoa.
+          */}
+        <div className="grid grid-cols-1 divide-y divide-grafite-elevado lg:grid-cols-2 lg:divide-x lg:divide-y-0">
           <section className="p-5">
             <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Perfil</h2>
 
@@ -217,15 +227,6 @@ export default function SettingsPage() {
             {updateMe.isError && !nameDirty && !clickupDirty && (
               <p className="mt-2 text-[11px] text-erro">{errorMessage(updateMe.error, 'Não foi possível salvar.')}</p>
             )}
-          </section>
-
-          <section className="p-5">
-            <ClickUpIntegrationSection />
-            <NotionIntegrationSection />
-          </section>
-
-          <section className="p-5">
-            <MotionProvidersSection />
           </section>
 
           <section className="p-5">

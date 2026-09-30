@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   candidatasADuplicata,
@@ -10,6 +10,7 @@ import {
   type AlertaDeQualidade,
 } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
+import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
 
 /**
  * QUALIDADE DO DADO — o que está torto no acervo, medido a cada chamada.
@@ -39,10 +40,31 @@ export async function registerDataQualityRoutes(app: FastifyInstance): Promise<v
       return { error: 'Data quality é visível só para master' };
     }
 
+    /**
+     * RECORTE POR EMPRESA, inclusive numa tela de manutenção.
+     *
+     * A rota contava o acervo INTEIRO do banco: clientes, memórias, episódios.
+     * Com duas empresas, quem abrisse isto veria quantos clientes e quanto
+     * conhecimento a outra tem — vazamento por AGREGAÇÃO, o mesmo padrão que
+     * apareceu no /panorama e no get_health do MCP no mesmo dia. Número
+     * agregado não parece dado sensível até ser de outra empresa.
+     *
+     * `organization_id is null` continua entrando: são as linhas anteriores à
+     * migração 0045 sem vínculo resolvido, e justamente as que esta tela existe
+     * para apontar.
+     */
+    const escopo = await escopoDeOrganizacao(user);
+    const daMinhaEmpresa = (coluna: unknown) =>
+      escopo.ehProvider
+        ? undefined
+        : sql`(${coluna} is null or ${coluna} in (
+            select organization_id from organization_members where user_id = ${user.id}::uuid
+          ))`;
+
     const clientes = await db
       .select({ id: schema.clients.id, name: schema.clients.name, clickupListId: schema.clients.clickupListId })
       .from(schema.clients)
-      .where(isNull(schema.clients.deletedAt));
+      .where(and(isNull(schema.clients.deletedAt), daMinhaEmpresa(schema.clients.organizationId)));
 
     const memorias = await db
       .select({
@@ -52,7 +74,8 @@ export async function registerDataQualityRoutes(app: FastifyInstance): Promise<v
         environment: schema.memories.environment,
         clientId: schema.memories.clientId,
       })
-      .from(schema.memories);
+      .from(schema.memories)
+      .where(daMinhaEmpresa(schema.memories.organizationId));
 
     const episodios = await db
       .select({
@@ -60,7 +83,8 @@ export async function registerDataQualityRoutes(app: FastifyInstance): Promise<v
         summary: schema.agentEpisodes.summary,
         environment: schema.agentEpisodes.environment,
       })
-      .from(schema.agentEpisodes);
+      .from(schema.agentEpisodes)
+      .where(daMinhaEmpresa(schema.agentEpisodes.organizationId));
 
     const idsDeCliente = new Set(clientes.map((c) => c.id));
 

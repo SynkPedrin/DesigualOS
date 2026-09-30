@@ -5,6 +5,7 @@ import { db, schema } from '@desigual-os/database';
 import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { ROLE_NAMES } from '@desigual-os/types';
 import { invalidateUserAccessCache, requireAuth, requirePermission } from '../auth/middleware';
+import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
 import { sendInviteEmail } from '../lib/email';
 
 const inviteSchema = z.object({
@@ -110,8 +111,29 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   // quais workspaces de cliente cada um tem acesso concedido (POST
   // /clients/:id/access), pra não precisar cruzar isso manualmente cliente
   // por cliente.
-  app.get('/admin/users', { preHandler: [requireAuth, requirePermission('users', 'read')] }, async () => {
-    const rows = await db.select().from(schema.users).orderBy(desc(schema.users.createdAt));
+  app.get('/admin/users', { preHandler: [requireAuth, requirePermission('users', 'read')] }, async (request, reply) => {
+    const usuario = request.authUser;
+    if (!usuario) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+
+    /**
+     * ADMINISTRAR A MINHA EMPRESA, não todas.
+     *
+     * A rota devolvia TODOS os usuários do banco para quem tem permissão
+     * `users:read`. A permissão responde "esta pessoa pode administrar gente?"
+     * — não responde "gente de qual empresa?". Com dois tenants, o
+     * administrador de um veria e poderia alterar papéis do outro.
+     *
+     * É a distinção que este trabalho inteiro persegue: papel forte DENTRO de
+     * uma empresa não é poder SOBRE todas as empresas.
+     */
+    const rows = await db
+      .select()
+      .from(schema.users)
+      .where(recorteDePessoasVisiveis(usuario, schema.users.id))
+      .orderBy(desc(schema.users.createdAt));
     const userIds = rows.map((user) => user.id);
 
     // As 3 consultas de contexto (papéis, acessos a cliente, integrações)

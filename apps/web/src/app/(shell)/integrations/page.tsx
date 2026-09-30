@@ -7,6 +7,9 @@ import { useClickUpIntegration } from '@/hooks/use-clickup-integration';
 import { useNotionIntegration } from '@/hooks/use-notion-integration';
 import { useMcpStatus } from '@/hooks/use-mcp-status';
 import { Consentimento } from '@/components/settings/consentimento';
+import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';
+import { NotionIntegrationSection } from '@/components/settings/notion-integration-card';
+import { MotionProvidersSection } from '@/components/settings/motion-providers-card';
 
 /**
  * INTEGRAÇÕES — com o que a inteligência fala.
@@ -70,7 +73,7 @@ export default function IntegrationsPage() {
             estado={clickupPendente ? 'desconhecido' : clickup?.connected ? 'ok' : 'atencao'}
             texto={clickupPendente ? 'Consultando' : clickup?.connected ? 'Conectado' : 'Desconectado'}
             detalhe="tarefas, prazos, responsáveis"
-            href="/settings"
+            href="#conectar"
           />
           <Cartao
             nome="Notion"
@@ -78,7 +81,7 @@ export default function IntegrationsPage() {
             estado={notionPendente ? 'desconhecido' : notion?.connected ? 'ok' : 'atencao'}
             texto={notionPendente ? 'Consultando' : notion?.connected ? 'Conectado' : 'Desconectado'}
             detalhe="documentos e bases"
-            href="/settings"
+            href="#conectar"
           />
         </div>
       </Secao>
@@ -88,6 +91,23 @@ export default function IntegrationsPage() {
         * Configurações: é aqui que alguém decide conectar, e a autorização
         * precisa estar no mesmo lugar da decisão.
         */}
+      {/*
+        * CONECTAR ACONTECE ONDE A FONTE É MOSTRADA. Estes três blocos viviam em
+        * Configurações, e os cartões acima linkavam PARA LÁ — duas portas pro
+        * mesmo ajuste, que é como duas telas divergem.
+        */}
+      <Secao titulo="Conectar e ajustar">
+        <div className="grid gap-5 lg:grid-cols-2">
+          <div className="rounded-lg border border-grafite-elevado bg-grafite px-5 py-4">
+            <ClickUpIntegrationSection />
+            <NotionIntegrationSection />
+          </div>
+          <div className="rounded-lg border border-grafite-elevado bg-grafite px-5 py-4">
+            <MotionProvidersSection />
+          </div>
+        </div>
+      </Secao>
+
       <Secao titulo="Autorização da empresa">
         <Consentimento />
       </Secao>
