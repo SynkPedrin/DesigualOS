@@ -11,6 +11,7 @@ import {
   type EstadoDoTurnoAnterior,
   type SelectionSnapshot,
 } from '@desigual-os/context-engine';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { route, type RouterDecision } from '@desigual-os/router';
 import { dispatchChatMessage, touchConversation } from '@desigual-os/orchestrator';
 import {
@@ -328,6 +329,23 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           effectiveProjectId = await resolveDefaultProjectForClient(effectiveClientId);
         }
 
+        /**
+         * DE QUAL EMPRESA É ESTA CONVERSA.
+         *
+         * A migração 0045 pôs `organization_id` nas tabelas de conteúdo e fez
+         * o backfill do passado. O presente depende disto: medido poucas horas
+         * depois do backfill, `messages` já tinha ido de 2 para 22 linhas sem
+         * organização, porque as escritas novas não preenchiam o campo. Sem
+         * esta linha, cada dia de uso recria o problema que a migração
+         * acabou de arrumar.
+         *
+         * A regra mora em `@desigual-os/auth` e não aqui — são treze pontos de
+         * escrita nessas tabelas entre api, worker e mcp, e treze cópias da
+         * mesma dedução é treze chances de uma divergir. Divergir aqui não
+         * quebra nada: só grava na empresa errada, em silêncio.
+         */
+        const organizationId = await organizacaoDaEscrita({ userId: user.id, clientId: effectiveClientId });
+
         const [conversation] = await db
           .insert(schema.conversations)
           .values({
@@ -335,6 +353,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
             clientId: effectiveClientId,
             projectId: effectiveProjectId,
             title: body.message.slice(0, 80),
+            organizationId,
           })
           .returning();
         conversationId = conversation?.id ?? null;
@@ -396,10 +415,30 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      /**
+       * A MENSAGEM HERDA A EMPRESA DA CONVERSA.
+       *
+       * Não deduz de novo: a conversa já foi resolvida (na criação, ou numa
+       * requisição anterior), e refazer a dedução aqui abriria a chance de a
+       * mensagem cair numa empresa diferente da conversa que a contém — o tipo
+       * de divergência que não quebra nada e corrompe tudo.
+       *
+       * Quando a conversa não tem dono (linha legada de antes da 0045), a
+       * mensagem também fica sem. Melhor herdar um vazio honesto que inventar
+       * um dono que a conversa não tem.
+       */
+      const [conversaAtual] = await db
+        .select({ organizationId: schema.conversations.organizationId })
+        .from(schema.conversations)
+        .where(eq(schema.conversations.id, conversationId))
+        .catch(() => []);
+      const organizacaoDaConversa = conversaAtual?.organizationId ?? null;
+
       const [userMessage] = await db
         .insert(schema.messages)
         .values({
           conversationId,
+          organizationId: organizacaoDaConversa,
           role: 'user',
           content: body.message,
           // Colunas legadas seguem guardando só o primeiro anexo (schema não
@@ -452,6 +491,9 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           'Me diz qual dos três e eu sigo daqui.';
         await db.insert(schema.messages).values({
           conversationId,
+          // Mesma herança da mensagem do usuário: a resposta pertence à empresa
+          // da conversa, não a uma dedução nova.
+          organizationId: organizacaoDaConversa,
           role: 'assistant',
           agent: null,
           content: pergunta,
