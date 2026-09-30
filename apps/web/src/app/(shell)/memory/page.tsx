@@ -124,6 +124,39 @@ function Pilula({
   );
 }
 
+/**
+ * O alcance de uma memória, em uma palavra.
+ *
+ * `USER_PRIVATE` aparece destacado de propósito: quando alguém vê uma anotação
+ * privada nesta lista, é porque é DELA — o backend não devolve a de mais
+ * ninguém (ver apps/api/src/memories/visibilidade.ts, e o vazamento que a
+ * originou). O selo é o que torna isso óbvio em vez de depender de quem lê
+ * lembrar da regra.
+ */
+function SeloDeAlcance({ escopo }: { escopo: string }) {
+  const privado = escopo === 'USER_PRIVATE';
+  const rotulos: Record<string, string> = {
+    AGENCY: 'toda a agência',
+    CLIENT: 'este cliente',
+    EMPLOYEE: 'uma pessoa',
+    DELIVERY_TYPE: 'um tipo de entrega',
+    CAMPAIGN: 'uma campanha',
+    PROCESS: 'um processo',
+    USER_PRIVATE: 'só você',
+  };
+  return (
+    <span
+      className={[
+        'rounded-full px-2 py-0.5 font-mono text-[10px]',
+        privado ? 'bg-roxo-eletrico/15 text-violeta-sutil' : 'bg-grafite-elevado text-nevoa',
+      ].join(' ')}
+      title={`Alcance: ${escopo}`}
+    >
+      {rotulos[escopo] ?? escopo}
+    </span>
+  );
+}
+
 function CartaoDeMemoria({ memoria: m }: { memoria: MemoriaWire }) {
   const aposentada = m.status !== 'active';
   const estado: Estado = aposentada ? 'desconhecido' : 'ok';
@@ -141,11 +174,17 @@ function CartaoDeMemoria({ memoria: m }: { memoria: MemoriaWire }) {
           <StatusDot estado={estado} />
           <span className="truncate font-mono text-[11px] uppercase tracking-wider text-nevoa">{m.kind}</span>
         </span>
-        {m.client_name && (
-          <span className="shrink-0 rounded-full bg-grafite-elevado px-2 py-0.5 font-mono text-[10px] text-nevoa">
-            {m.client_name}
-          </span>
-        )}
+        <span className="flex shrink-0 items-center gap-1.5">
+          {/* O ALCANCE vem antes do cliente: é o que diz o tamanho do estrago
+           * se esta memória estiver errada. Uma regra "AGENCY" errada contamina
+           * toda a operação; uma anotação privada errada incomoda uma pessoa. */}
+          {m.mcp_scope && <SeloDeAlcance escopo={m.mcp_scope} />}
+          {m.client_name && (
+            <span className="rounded-full bg-grafite-elevado px-2 py-0.5 font-mono text-[10px] text-nevoa">
+              {m.client_name}
+            </span>
+          )}
+        </span>
       </div>
 
       <p className="mt-2 line-clamp-4 text-sm text-branco-cru">{m.content}</p>

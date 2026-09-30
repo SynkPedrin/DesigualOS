@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, inArray, isNull, like, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
 import { tenantSharingScope } from '../lib/access';
+import { somenteMemoriaVisivel } from './visibilidade';
 
 /**
  * A MEMÓRIA INSTITUCIONAL, exposta pra ser vista.
@@ -18,13 +19,25 @@ import { tenantSharingScope } from '../lib/access';
  * ninguém descobre pela memória, descobre pelo briefing errado três dias
  * depois.
  *
- * DUAS COISAS QUE ESTA ROTA NÃO FAZ, de propósito:
+ * TRÊS COISAS QUE ESTA ROTA NÃO FAZ, e a primeira é uma correção de vazamento
+ * que a própria rota causou:
  *
- * 1. Não devolve memória de QA. O campo `environment` existe justamente porque
+ * 0. NÃO devolve memória privada de outra pessoa. O MCP tem um escopo
+ *    `USER_PRIVATE` cuja regra é absoluta — "nem SUPER_ADMIN atravessa, porque
+ *    um administrador que lê tudo transforma o escopo privado em teatro"
+ *    (packages/mcp-domain/src/memory-scope.ts). A primeira versão desta rota
+ *    não sabia que esse escopo existia, e a conta de QA lia anotações da conta
+ *    de atendimento cujo próprio texto dizia "que ninguém mais pode ver".
+ *
+ *    O filtro é SQL, não pós-consulta: filtrar depois de buscar ainda vaza pelo
+ *    total, e um contador que conta o que a lista esconde é uma forma mais
+ *    silenciosa do mesmo defeito.
+ *
+ * 2. Não devolve memória de QA. O campo `environment` existe justamente porque
  *    uma preferência inventada num teste vira regra de marca real na semana
  *    seguinte e ninguém acha a origem. Produção lê produção.
  *
- * 2. Não devolve o que foi aposentado por padrão. Fato superseded continua na
+ * 3. Não devolve o que foi aposentado por padrão. Fato superseded continua na
  *    tabela (o histórico importa), mas mostrar tudo junto faria a tela
  *    apresentar como verdade o que o sistema já corrigiu. Quem quiser o
  *    histórico pede com `?status=all`.
@@ -60,8 +73,13 @@ export async function registerMemoryRoutes(app: FastifyInstance): Promise<void> 
     const status = request.query.status ?? 'active';
     const limite = Math.min(Math.max(Number(request.query.limit ?? 100), 1), 300);
 
+    // PRIVADO É PRIVADO. Ver a nota 0 no topo e ./visibilidade.ts, onde a
+    // condição vive sozinha justamente pra ter teste.
+    const naoEhPrivadoDeOutro = somenteMemoriaVisivel(user.id);
+
     const filtros: Array<SQL | undefined> = [
       recorteDeTenant,
+      naoEhPrivadoDeOutro,
       eq(schema.memories.environment, 'production'),
       status === 'all' ? undefined : eq(schema.memories.status, status),
       request.query.client_id ? eq(schema.memories.clientId, request.query.client_id) : undefined,
@@ -101,6 +119,13 @@ export async function registerMemoryRoutes(app: FastifyInstance): Promise<void> 
         confidence: m.confidence,
         importance: m.importance,
         metadata: m.metadata,
+        /**
+         * O escopo do MCP, quando a memória veio por lá. A tela mostra isso
+         * porque "quem mais vê isto" é a primeira pergunta de quem lê memória
+         * institucional — e sem o rótulo, uma anotação de cliente e uma regra
+         * da agência inteira parecem a mesma coisa.
+         */
+        mcp_scope: (m.metadata as { mcp_scope?: unknown } | null)?.mcp_scope ?? null,
         created_at: m.createdAt?.toISOString() ?? null,
       })),
     };
@@ -119,10 +144,19 @@ export async function registerMemoryRoutes(app: FastifyInstance): Promise<void> 
       reply.code(401);
       return { error: 'Not authenticated' };
     }
+    // A contagem por tipo segue a MESMA regra de privacidade da listagem:
+    // um número que inclui o que a lista esconde denuncia a existência do que
+    // deveria estar escondido.
     const linhas = await db
       .select({ kind: schema.memories.kind, id: schema.memories.id })
       .from(schema.memories)
-      .where(and(eq(schema.memories.environment, 'production'), eq(schema.memories.status, 'active')));
+      .where(
+        and(
+          eq(schema.memories.environment, 'production'),
+          eq(schema.memories.status, 'active'),
+          somenteMemoriaVisivel(user.id),
+        ),
+      );
 
     const contagem = new Map<string, number>();
     for (const l of linhas) contagem.set(l.kind, (contagem.get(l.kind) ?? 0) + 1);

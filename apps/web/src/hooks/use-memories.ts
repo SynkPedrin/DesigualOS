@@ -25,6 +25,16 @@ export interface MemoriaWire {
   confidence: string | null;
   importance: string | null;
   metadata: Record<string, unknown>;
+  /**
+   * O escopo do MCP, quando a memória veio por lá: AGENCY, CLIENT, EMPLOYEE,
+   * DELIVERY_TYPE, CAMPAIGN, PROCESS, USER_PRIVATE. `null` = não veio pelo MCP.
+   *
+   * A tela mostra isso porque "quem mais vê isto?" é a primeira pergunta de
+   * quem lê memória institucional. Sem o rótulo, uma anotação sobre um cliente
+   * e uma regra que vale pra agência inteira parecem a mesma coisa — e o
+   * tamanho do estrago de uma memória errada depende exatamente disso.
+   */
+  mcp_scope: string | null;
   created_at: string | null;
 }
 
