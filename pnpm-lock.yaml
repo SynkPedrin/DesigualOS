@@ -729,6 +729,9 @@ importers:
 
   packages/orchestrator:
     dependencies:
+      '@desigual-os/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@desigual-os/database':
         specifier: workspace:*
         version: link:../database
