@@ -14,6 +14,26 @@ const QUEUE_NAME = 'daily-digest';
 const logger = createLogger({ service: 'worker:scheduler' });
 
 /**
+ * Os nomes dos jobs repetíveis, na ordem em que são registrados abaixo.
+ *
+ * Existe pro log poder dizer a verdade: a mensagem "Scheduler armado" trazia
+ * uma lista escrita à mão que anunciava CINCO jobs enquanto NOVE estavam
+ * armados. Log que enumera precisa enumerar de verdade — é a mesma coisa que
+ * uma tela contar o que coube e chamar de total, só que ninguém olha.
+ */
+const JOBS_REPETIVEIS = [
+  'end-of-day-checklist',
+  'morning-briefing',
+  'operational-events',
+  'integration-health',
+  'knowledge-consolidation',
+  'inference-warmth',
+  'studio-queue-timeout',
+  'execution-timeout',
+  'aviso-conexao-mcp',
+] as const;
+
+/**
  * Checklist de fim de dia (18h) e resumo de pendências de manhã (8h),
  * pedidos pelo usuário pra manter a visão do colaborador simples: métricas
  * ficam só pro master, o colaborador recebe isso pronto todo dia.
@@ -81,7 +101,18 @@ export function setupDailyJobs(): Worker {
     // sobreviver a uma parada curta sem ressuscitar conexão velha.
     queue.add('aviso-conexao-mcp', {}, { repeat: { pattern: '*/2 * * * *' }, jobId: 'aviso-conexao-mcp' }),
   ])
-    .then(() => logger.info('Scheduler armado (checklist 18:00, resumo 08:00, eventos 5min, saude da integracao 15min, consolidacao 03:00)'))
+    /**
+     * A lista é escrita à mão e já ficou para trás: ela anunciava cinco jobs
+     * enquanto nove estavam armados. Log que ENUMERA precisa enumerar de
+     * verdade, senão vira a mesma coisa que uma tela contando o que coube —
+     * então agora ela sai da fila registrada, não da memória de quem editou.
+     */
+    .then(() =>
+      logger.info(
+        { jobs: JOBS_REPETIVEIS },
+        `Scheduler armado (${JOBS_REPETIVEIS.length} jobs repetiveis)`,
+      ),
+    )
     .catch((error: unknown) => logger.error({ error }, 'Failed to register daily digest repeatable jobs'));
 
   const worker = new Worker(
