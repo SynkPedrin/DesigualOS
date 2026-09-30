@@ -149,6 +149,7 @@ export const handlers = [
       clickupListId: null,
       clickupUrl: null,
       projectId: null,
+      natureza: 'CLIENTE' as const,
     };
     mockClients.push(created);
     return HttpResponse.json(created, { status: 201 });

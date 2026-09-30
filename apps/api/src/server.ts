@@ -17,6 +17,8 @@ import { startWorkerWatchdog } from './health/worker-watchdog';
 import { registerAuthRoutes } from './auth/routes';
 import { registerChatRoutes } from './chat/routes';
 import { registerExecutionRoutes } from './executions/routes';
+import { registerMemoryRoutes } from './memories/routes';
+import { registerMcpStatusRoutes } from './mcp-status/routes';
 import { registerStudioRoutes } from './studio/routes';
 import { registerMotionRoutes } from './motion/routes';
 import { registerCanvasDocumentRoutes } from './studio/canvas-routes';
@@ -209,6 +211,8 @@ async function start(): Promise<void> {
   await app.register(registerAuthRoutes);
   await app.register(registerChatRoutes);
   await app.register(registerExecutionRoutes);
+  await app.register(registerMemoryRoutes);
+  await app.register(registerMcpStatusRoutes);
   await app.register(registerStudioRoutes);
   await app.register(registerMotionRoutes);
   await app.register(registerCanvasDocumentRoutes);

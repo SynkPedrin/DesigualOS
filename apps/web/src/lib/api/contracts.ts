@@ -433,6 +433,14 @@ export interface ExecutionListItemWire {
   completed_at: ISODateString | null;
   tokens_input: number;
   tokens_output: number;
+  /**
+   * Quem pediu. Passou a vir na listagem em 29/09/2026 — sem autor, atividade
+   * é log e não auditoria. Opcionais no tipo porque o front precisa continuar
+   * funcionando contra uma API que ainda não subiu com o campo.
+   */
+  user_id?: string | null;
+  user_name?: string | null;
+  created_at?: ISODateString | null;
 }
 
 export interface ExecutionDetailWire extends ExecutionListItemWire {
@@ -452,6 +460,10 @@ export interface ExecutionListItem {
   completedAt: ISODateString | null;
   tokensInput: number;
   tokensOutput: number;
+  /** Quem pediu. `null` = usuário apagado, e a tela mostra "—", nunca outro nome. */
+  userId: string | null;
+  userName: string | null;
+  createdAt: ISODateString | null;
 }
 
 export interface ExecutionStep {
@@ -480,6 +492,12 @@ function mapExecutionListItem(wire: ExecutionListItemWire): ExecutionListItem {
     completedAt: wire.completed_at,
     tokensInput: wire.tokens_input,
     tokensOutput: wire.tokens_output,
+    // `?? null` e não `?? ''`: API antiga sem o campo vira "não sei quem foi",
+    // que a tela mostra como "—". String vazia viraria um autor em branco, que
+    // parece dado e não é.
+    userId: wire.user_id ?? null,
+    userName: wire.user_name ?? null,
+    createdAt: wire.created_at ?? null,
   };
 }
 
@@ -492,6 +510,7 @@ export function mapExecutionList(wire: { executions: ExecutionListItemWire[] }):
  * Confirmed real by the backend (2026-09-01), replacing the earlier frontend placeholder.
  */
 export interface ClientSummaryWire {
+  natureza?: NaturezaDeCliente;
   id: string;
   name: string;
   slug: string;
@@ -503,6 +522,16 @@ export interface ClientSummaryWire {
   project_id?: string | null;
 }
 
+/**
+ * CLIENTE, TRABALHO INTERNO OU FIXTURE DE TESTE.
+ *
+ * Vem do classificador do backend (`naturezaDoCliente`), não de uma regra
+ * repetida aqui. Opcional no tipo porque o front precisa continuar funcionando
+ * contra uma API que ainda não subiu com o campo — e nesse caso a tela trata
+ * como CLIENTE, que é o comportamento de antes.
+ */
+export type NaturezaDeCliente = 'CLIENTE' | 'INTERNO' | 'FIXTURE';
+
 export interface ClientSummary {
   id: string;
   name: string;
@@ -511,6 +540,7 @@ export interface ClientSummary {
   clickupListId: string | null;
   clickupUrl: string | null;
   projectId: string | null;
+  natureza: NaturezaDeCliente;
 }
 
 export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
@@ -522,6 +552,9 @@ export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
     clickupListId: wire.clickup_list_id ?? null,
     clickupUrl: wire.clickup_url ?? null,
     projectId: wire.project_id ?? null,
+    // API antiga sem o campo trata tudo como cliente — o comportamento de
+    // antes, não um default que esconde fixture sem avisar.
+    natureza: wire.natureza ?? 'CLIENTE',
   };
 }
 

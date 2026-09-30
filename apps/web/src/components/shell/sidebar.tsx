@@ -13,7 +13,7 @@ import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { supabase } from '@/lib/supabase/client';
-import { NAV_ITEMS } from './nav-items';
+import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
 import { SidebarChatSections } from './sidebar-chat-sections';
 
 function formatBackupTime(iso: string | null) {
@@ -141,7 +141,26 @@ export function Sidebar({
       </div>
 
       <nav aria-label="Navegação principal" className="flex-1 space-y-1 overflow-y-auto px-3">
-        {visibleNavItems.map((item) => {
+        {NAV_SECTIONS.map((secao) => {
+        const itensDaSecao = visibleNavItems.filter((i) => i.section === secao.id);
+        if (itensDaSecao.length === 0) return null;
+        return (
+        <div key={secao.id} className={cn(secao.id !== 'overview' && 'pt-4')}>
+          {/*
+            * O rótulo da seção some quando a sidebar está colapsada — ali só
+            * cabe ícone, e um texto truncado em 3 letras não agrupa nada.
+            * Colapsada, a separação fica por conta do espaçamento entre grupos.
+            */}
+          {!collapsed && (
+            <p className="px-3 pb-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60">
+              {secao.label}
+            </p>
+          )}
+          {collapsed && secao.id !== 'overview' && (
+            <div aria-hidden className="mx-3 mb-2 border-t border-grafite-elevado" />
+          )}
+          <div className="space-y-1">
+        {itensDaSecao.map((item) => {
           const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
           const Icon = item.icon;
           const itemClassName = cn(
@@ -184,6 +203,10 @@ export function Sidebar({
               {itemContent}
             </Link>
           );
+        })}
+          </div>
+        </div>
+        );
         })}
 
         {/* Colapsada, a sidebar esconde tudo que não é ícone - as seções somem

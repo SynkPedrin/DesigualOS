@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { and, count, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
+import { naturezaDoCliente } from '@desigual-os/context-engine';
 import { getTaskComments, getTasksInList, getTasksInListPaged } from '@desigual-os/tool-gateway';
 import type { ClickUpTaskSummary } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
@@ -115,6 +116,20 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         status: row.status,
         clickup_list_id: row.clickupListId,
         clickup_url: row.clickupListId && teamId ? `https://app.clickup.com/${teamId}/v/li/${row.clickupListId}` : null,
+        /**
+         * CLIENTE, TRABALHO INTERNO OU FIXTURE DE TESTE.
+         *
+         * Vem do MESMO classificador que o backend usa pra decidir o que entra
+         * numa consulta de operação (`naturezaDoCliente`, context-engine). Sai
+         * daqui como campo em vez de a tela reimplementar a regra, porque duas
+         * definições da mesma coisa em lugares diferentes foi exatamente como o
+         * sistema passou a dizer "58 clientes" numa tela e "49" na outra.
+         *
+         * A listagem continua devolvendo TUDO: quem esconde é quem apresenta.
+         * Filtrar aqui quebraria a tela de Clientes, que precisa mostrar a
+         * fixture pra alguém poder apagá-la.
+         */
+        natureza: naturezaDoCliente(row.name),
       })),
     };
   });
