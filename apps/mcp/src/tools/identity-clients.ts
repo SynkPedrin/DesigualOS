@@ -1,6 +1,7 @@
 import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
+import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
 import { ehCitavel, scopesDoPapel, type McpPrincipal } from '@desigual-os/mcp-domain';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 
@@ -142,7 +143,17 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
             sourceType: schema.memories.sourceType, updatedAt: schema.memories.updatedAt,
           })
           .from(schema.memories)
-          .where(and(eq(schema.memories.clientId, cliente.id), eq(schema.memories.status, 'active')))
+          .where(
+            and(
+              eq(schema.memories.clientId, cliente.id),
+              eq(schema.memories.status, 'active'),
+              // Hoje nenhuma memória privada tem cliente, então esta linha não
+              // muda nenhum resultado. Ela existe para o dia em que alguém
+              // registrar uma nota privada SOBRE um cliente — que o produto
+              // permite — e que sem ela vazaria sem ninguém perceber.
+              somenteMemoriaVisivelNoMcp(ctx.principal.userId),
+            ),
+          )
           .orderBy(desc(schema.memories.updatedAt))
           .limit(8);
         contexto.memory = memorias.map((m) => ({
@@ -252,6 +263,7 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
           and(
             eq(schema.memories.clientId, cliente.id),
             eq(schema.memories.status, 'active'),
+            somenteMemoriaVisivelNoMcp(ctx.principal.userId),
             or(
               ilike(schema.memories.kind, '%preference%'),
               ilike(schema.memories.kind, '%feedback%'),

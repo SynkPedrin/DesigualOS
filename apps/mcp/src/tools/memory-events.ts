@@ -8,6 +8,7 @@ import {
 import { registrarAuditoria } from '../audit.js';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
+import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
 
 /**
  * memory-events.ts — o que transforma o chat individual em memória da empresa.
@@ -41,6 +42,10 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
       const condicoes = [
         eq(schema.memories.status, 'active'),
         ilike(schema.memories.content, `%${args.query}%`),
+        // ANOTAÇÃO PRIVADA DE OUTRA PESSOA NÃO SAI DAQUI. Ver
+        // ./visibilidade-de-memoria.ts: sem esta linha, buscar "privada"
+        // devolvia as notas da Tammy para qualquer um da organização.
+        somenteMemoriaVisivelNoMcp(ctx.principal.userId),
       ];
       if (args.client_id) condicoes.push(eq(schema.memories.clientId, args.client_id));
       const linhas = await db
