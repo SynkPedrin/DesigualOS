@@ -102,18 +102,47 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
           and exists (select 1 from minhas_orgs where organization_id = ${provedora}::uuid)
         ) as eh_provider
       ),
-      cli as (select name from clients where deleted_at is null),
+      /*
+       * TODA CONTAGEM RECORTADA, não só a de pessoas.
+       *
+       * A primeira versão recortou gente e deixou clientes, execuções,
+       * memórias e sinais contando o banco inteiro. Invisível com uma
+       * organização; com duas, seria vazamento por AGREGAÇÃO — a pessoa não vê
+       * o dado do outro tenant, vê o TAMANHO dele, que já entrega carteira,
+       * volume de operação e quanto a concorrência usa a plataforma.
+       *
+       * (Achado depois que a outra sessão encontrou o mesmo padrão no
+       * get_health do MCP: três contagens sem filtro, invisíveis pelo mesmo
+       * motivo. Número agregado não parece dado sensível até ser de outra
+       * empresa.)
+       *
+       * organization_id is null continua entrando: são as linhas anteriores
+       * à migração 0045 que não resolveram vínculo. Excluí-las faria os
+       * números encolherem hoje sem ninguém entender por quê.
+       */
+      cli as (
+        select c.name from clients c
+        where c.deleted_at is null
+          and ((select eh_provider from escopo) or c.organization_id is null
+               or c.organization_id in (select organization_id from minhas_orgs))
+      ),
       exec_dia as (
         select created_at::date as dia,
                count(*)::int as total,
                count(*) filter (where status = 'completed')::int as ok,
                count(*) filter (where status = 'failed')::int as falhou
-        from executions where created_at > now() - interval '14 days'
+        from executions
+        where created_at > now() - interval '14 days'
+          and ((select eh_provider from escopo) or organization_id is null
+               or organization_id in (select organization_id from minhas_orgs))
         group by 1 order by 1
       ),
       exec_agente as (
         select agent, count(*)::int as total
-        from executions where created_at > now() - interval '30 days' and agent is not null
+        from executions
+        where created_at > now() - interval '30 days' and agent is not null
+          and ((select eh_provider from escopo) or organization_id is null
+               or organization_id in (select organization_id from minhas_orgs))
         group by 1 order by 2 desc
       ),
       gente as (
@@ -141,8 +170,14 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
         (select count(*)::int from gente) as pessoas,
         (select count(*)::int from gente where clickup_email is null) as sem_clickup,
         (select count(*)::int from gente g where exists (select 1 from ativos a where a.user_id = g.id)) as usando,
-        (select count(*)::int from memories where status = 'active' and environment = 'production') as memorias,
-        (select count(*)::int from proactive_signals where status = 'pending') as sinais
+        (select count(*)::int from memories
+          where status = 'active' and environment = 'production'
+            and ((select eh_provider from escopo) or organization_id is null
+                 or organization_id in (select organization_id from minhas_orgs))) as memorias,
+        (select count(*)::int from proactive_signals
+          where status = 'pending'
+            and ((select eh_provider from escopo) or organization_id is null
+                 or organization_id in (select organization_id from minhas_orgs))) as sinais
     `);
 
     const linha = (bruto.rows ?? bruto)[0] as {

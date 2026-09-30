@@ -23,6 +23,7 @@ import { registerEpisodeRoutes } from './episodes/routes';
 import { registerDataQualityRoutes } from './data-quality/routes';
 import { registerSignalsRoutes } from './signals/routes';
 import { registerPanoramaRoutes } from './panorama/routes';
+import { registerOrganizationRoutes } from './organizations/routes';
 import { registerStudioRoutes } from './studio/routes';
 import { registerMotionRoutes } from './motion/routes';
 import { registerCanvasDocumentRoutes } from './studio/canvas-routes';
@@ -221,6 +222,7 @@ async function start(): Promise<void> {
   await app.register(registerDataQualityRoutes);
   await app.register(registerSignalsRoutes);
   await app.register(registerPanoramaRoutes);
+  await app.register(registerOrganizationRoutes);
   await app.register(registerStudioRoutes);
   await app.register(registerMotionRoutes);
   await app.register(registerCanvasDocumentRoutes);

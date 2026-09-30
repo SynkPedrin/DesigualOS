@@ -5,6 +5,7 @@ import {
   BookOpen,
   Boxes,
   Brain,
+  Building2,
   CheckSquare,
   ClipboardCheck,
   Coins,
@@ -62,6 +63,13 @@ export interface NavItem {
   /** Some backend permissions (costs:read, nodes:read) are master-only, colaborador gets 403.
    * Hide the nav item rather than let a colaborador hit an error. */
   masterOnly?: boolean;
+  /**
+   * Só para quem opera no nível da PLATAFORMA (o provedor). Diferente de
+   * `masterOnly`: master é papel forte dentro de uma empresa; provider é quem
+   * atende várias. O administrador de um cliente é master da empresa dele e
+   * NÃO deve ver a lista de empresas do provedor — que é a carteira comercial.
+   */
+  providerOnly?: boolean;
 }
 
 export interface NavSectionDef {
@@ -103,6 +111,8 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/', label: 'Visão geral', icon: LayoutDashboard, section: 'dia' },
   // "tem algo pegando fogo?"
   { href: '/signals', label: 'Sinais', icon: Radar, section: 'dia' },
+  // Só o provedor: some da barra para quem é de uma empresa cliente.
+  { href: '/organizations', label: 'Empresas', icon: Building2, section: 'dia', providerOnly: true },
   // "como está a conta do cliente X?"
   { href: '/clients', label: 'Clientes', icon: Users, section: 'dia' },
   // "quem está fazendo o quê?" — antes se chamava "Pessoas", que descrevia o

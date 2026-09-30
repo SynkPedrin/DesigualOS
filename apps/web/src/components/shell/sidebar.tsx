@@ -45,7 +45,16 @@ export function Sidebar({
   const { data: health, isPending, isError } = useInfrastructureHealth(isMaster);
   const { data: me } = useMe();
   const { logoSrc } = useBrandAssets();
-  const visibleNavItems = NAV_ITEMS.filter((item) => !item.masterOnly || isMaster);
+  /**
+   * `eh_provider` vem do /me e NUNCA é derivado só do papel: exige também
+   * pertencer à organização provedora. Ver lib/escopo-de-organizacao.ts na API.
+   * Enquanto o /me não responde, trata como não-provider — esconder um item a
+   * mais por um instante é melhor que piscar uma tela que a pessoa não pode ver.
+   */
+  const ehProvider = me?.eh_provider === true;
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => (!item.masterOnly || isMaster) && (!item.providerOnly || ehProvider),
+  );
 
   /**
    * QUAIS SEÇÕES ESTÃO ABERTAS.

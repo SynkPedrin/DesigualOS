@@ -52,6 +52,7 @@ const TELAS = [
    * por ninguém é uma tela que pode estar quebrada há dias.
    */
   { rota: '/signals', titulo: /^Sinais$/i },
+  { rota: '/organizations', titulo: /^Empresas$/i },
   { rota: '/data-quality', titulo: /Qualidade do dado/i },
   { rota: '/clients', titulo: /Clientes/i },
   { rota: '/settings', titulo: /Configurações/i },

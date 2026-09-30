@@ -5,13 +5,13 @@
     "quando": "2026-09-30"
   },
   "api": {
-    "total": 137,
+    "total": 140,
     "arquivos": 20,
     "quando": "2026-09-30"
   },
   "web": {
-    "total": 256,
-    "arquivos": 24,
+    "total": 261,
+    "arquivos": 25,
     "quando": "2026-09-30"
   },
   "context-engine": {
