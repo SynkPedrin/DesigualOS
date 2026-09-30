@@ -19,6 +19,7 @@ import { registerChatRoutes } from './chat/routes';
 import { registerExecutionRoutes } from './executions/routes';
 import { registerMemoryRoutes } from './memories/routes';
 import { registerMcpStatusRoutes } from './mcp-status/routes';
+import { registerEpisodeRoutes } from './episodes/routes';
 import { registerStudioRoutes } from './studio/routes';
 import { registerMotionRoutes } from './motion/routes';
 import { registerCanvasDocumentRoutes } from './studio/canvas-routes';
@@ -213,6 +214,7 @@ async function start(): Promise<void> {
   await app.register(registerExecutionRoutes);
   await app.register(registerMemoryRoutes);
   await app.register(registerMcpStatusRoutes);
+  await app.register(registerEpisodeRoutes);
   await app.register(registerStudioRoutes);
   await app.register(registerMotionRoutes);
   await app.register(registerCanvasDocumentRoutes);

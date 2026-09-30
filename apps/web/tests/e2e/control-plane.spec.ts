@@ -35,7 +35,7 @@ const TELAS = [
   { rota: '/activity', titulo: /Atividade/i },
   { rota: '/health', titulo: /Saúde do sistema/i },
   { rota: '/memory', titulo: /Memória/i },
-  { rota: '/decisions', titulo: /Decisões/i },
+  { rota: '/decisions', titulo: /Decisões e aprendizados/i },
   { rota: '/people', titulo: /Pessoas/i },
   { rota: '/mcp', titulo: /^MCP$/i },
   { rota: '/tools', titulo: /Ferramentas/i },
@@ -157,6 +157,46 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
  *   2. A ficha do cliente mostra o que o sistema APRENDEU, não só o que está
  *      aberto no ClickUp.
  */
+/**
+ * A tela de Decisões leu a TABELA ERRADA na primeira versão: `memories` com
+ * `kind = 'decision'`, um kind que não existe. Voltava vazia sempre e anunciava
+ * "nenhuma decisão registrada" sobre um banco com 9 decisões em
+ * `agent_episodes`.
+ *
+ * O teste trava a propriedade que pega isso: a tela precisa DIZER alguma coisa
+ * sobre a fonte — registros, ausência, ou falha. Uma tela que sempre diz
+ * "vazio" passa despercebida justamente por parecer um estado legítimo.
+ */
+test.describe('decisões vêm da fonte certa', () => {
+  test.setTimeout(120_000);
+
+  test('mostra os tipos que existem, com contagem', async ({ page }) => {
+    await login(page);
+    await page.goto('/decisions');
+    // Os filtros saem do banco: se nenhum aparecer, ou a fonte está vazia de
+    // verdade, ou a consulta está no lugar errado de novo.
+    await expect(page.getByRole('button', { name: /decisão|preferência|retorno|mudança/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+  });
+
+  test('artefato de teste aparece rotulado, não como decisão da agência', async ({ page }) => {
+    await login(page);
+    await page.goto('/decisions');
+    await expect(page.getByText(/registro\(s\)/)).toBeVisible({ timeout: 60_000 });
+    /**
+     * O aceite do MCP gravou frases como "guarda esta referência: marco-029857"
+     * como decisão de PRODUÇÃO. Se elas estiverem na tela, precisam estar
+     * marcadas — apresentar artefato de teste como decisão da agência é pior
+     * que não mostrar.
+     */
+    const marcos = await page.getByText(/marco-\d{4,}/).count();
+    if (marcos > 0) {
+      await expect(page.getByText('artefato de teste').first()).toBeVisible();
+    }
+  });
+});
+
 test.describe('inteligência por cliente', () => {
   test.setTimeout(180_000);
 

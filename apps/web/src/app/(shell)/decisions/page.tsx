@@ -1,80 +1,153 @@
 'use client';
 
-import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusDot, Tabela, Td, Th, type Estado } from '@/components/control/primitives';
-import { useMemories } from '@/hooks/use-memories';
+import { useState } from 'react';
+import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusDot } from '@/components/control/primitives';
+import { useEpisodes, useEpisodeTypes, type Episodio } from '@/hooks/use-episodes';
 
 /**
- * DECISÕES — o que foi decidido, por quem, e se ainda vale.
+ * O QUE A OPERAÇÃO FECHOU — decisão, preferência, retorno e mudança.
  *
- * Não é uma tabela nova: decisão É memória, gravada com um `kind` próprio pelo
- * extrator de episódios quando alguém fecha uma questão no chat ("tá decidido",
- * "pode seguir", "vamos com"). Criar um repositório paralelo só pra esta tela
- * faria duas fontes de verdade sobre a mesma coisa — que é exatamente como o
- * sistema já errou com "frente", tendo duas definições que discordavam.
+ * ERRO QUE ESTA TELA COMETEU, e que fica escrito porque é o mesmo do dia
+ * inteiro em outra roupa: a primeira versão lia `memories` com
+ * `kind = 'decision'`. Esse kind não existe. A consulta voltava vazia sempre, e
+ * a tela anunciava "nenhuma decisão registrada ainda" com toda a confiança —
+ * sobre um banco que tinha 9 decisões, 2 preferências, 2 feedbacks e 1 mudança
+ * operacional, guardados em `agent_episodes`.
  *
- * A supersessão é o que torna esta tela útil: quando alguém corrige uma
- * decisão, a anterior se aposenta e aponta pra que a substituiu. Por isso a
- * coluna "substituída" existe, e por isso o padrão é mostrar só o que vale.
+ * "Não achei" e "não procurei no lugar certo" parecem iguais pra quem lê, e
+ * pedem reações opostas. Um faz a pessoa registrar de novo; o outro faz alguém
+ * consertar a consulta.
+ *
+ * OS QUATRO TIPOS APARECEM JUNTOS de propósito. Decisão sem a preferência que a
+ * motivou, e sem o feedback que a corrigiu, é metade da história — e é
+ * justamente a metade que faz alguém repetir um erro já resolvido.
  */
 export default function DecisionsPage() {
-  const { data: decisoes, isPending, isError } = useMemories({ kind: 'decision', status: 'all', limite: 200 });
+  const [tipo, setTipo] = useState<string | null>(null);
+  const { data: tipos } = useEpisodeTypes();
+  const { data: episodios, isPending, isError } = useEpisodes({ type: tipo, limite: 200 });
 
-  const lista = decisoes ?? [];
-  const ativas = lista.filter((d) => d.status === 'active');
+  const lista = episodios ?? [];
 
   return (
     <div className="mx-auto max-w-[1200px]">
       <ControlHeader
-        title="Decisões"
-        description="O que a operação decidiu, quem decidiu, e o que já foi substituído."
+        title="Decisões e aprendizados"
+        description="O que a operação fechou numa conversa e passou a valer sem ninguém repetir."
       />
 
-      <Secao titulo={`${ativas.length} em vigor · ${lista.length - ativas.length} substituída(s)`}>
+      <Secao titulo="Tipo">
+        <div className="flex flex-wrap items-center gap-2">
+          <Pilula ativa={tipo === null} onClick={() => setTipo(null)}>
+            Tudo
+          </Pilula>
+          {(tipos ?? []).map((t) => (
+            <Pilula key={t.type} ativa={tipo === t.type} onClick={() => setTipo(t.type)}>
+              {ROTULO[t.type] ?? t.type} <span className="text-nevoa/70">{t.total}</span>
+            </Pilula>
+          ))}
+        </div>
+      </Secao>
+
+      <Secao titulo={`${lista.length} registro(s)`}>
         {isPending ? (
           <LinhasFantasma linhas={6} />
         ) : isError ? (
-          <SemNadaAinda titulo="Não consegui ler as decisões" explicacao="A consulta à memória falhou." />
+          <SemNadaAinda
+            titulo="Não consegui ler os registros"
+            explicacao="A consulta falhou. É a API, não o conteúdo — se continuar, vale avisar quem cuida do sistema."
+          />
         ) : lista.length === 0 ? (
           <SemNadaAinda
-            titulo="Nenhuma decisão registrada ainda"
-            explicacao="Decisão vira registro quando alguém fecha uma questão no chat — 'tá decidido', 'pode seguir', 'vamos com'. Até lá, não há o que mostrar, e inventar exemplo aqui seria pior que a tela vazia."
+            titulo="Nada fechado ainda neste recorte"
+            explicacao="Decisão vira registro quando alguém fecha uma questão no chat — 'tá decidido', 'pode seguir', 'vamos com'. Preferência e correção entram do mesmo jeito."
           />
         ) : (
-          <Tabela>
-            <thead>
-              <tr>
-                <Th>Decisão</Th>
-                <Th className="w-36">Cliente</Th>
-                <Th className="w-32">Quem</Th>
-                <Th className="w-28">Quando</Th>
-                <Th className="w-32">Estado</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {lista.map((d) => {
-                const ativa = d.status === 'active';
-                const estado: Estado = ativa ? 'ok' : 'desconhecido';
-                return (
-                  <tr key={d.id} className={ativa ? undefined : 'opacity-70'}>
-                    <Td className="max-w-xl">{d.content}</Td>
-                    <Td className="truncate text-nevoa">{d.client_name ?? '—'}</Td>
-                    <Td className="truncate text-nevoa">{d.author_name ?? '—'}</Td>
-                    <Td className="font-mono text-[12px] text-nevoa">
-                      {d.created_at ? new Date(d.created_at).toLocaleDateString('pt-BR') : '—'}
-                    </Td>
-                    <Td>
-                      <span className="flex items-center gap-1.5 font-mono text-[11px]">
-                        <StatusDot estado={estado} />
-                        {ativa ? 'em vigor' : 'substituída'}
-                      </span>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Tabela>
+          <ul className="space-y-2.5">
+            {lista.map((e) => (
+              <Registro key={e.id} episodio={e} />
+            ))}
+          </ul>
         )}
       </Secao>
     </div>
+  );
+}
+
+const ROTULO: Record<string, string> = {
+  decision: 'decisão',
+  preference: 'preferência',
+  feedback: 'retorno',
+  operational_change: 'mudança',
+};
+
+/** Frases que o aceite deixou gravadas como se fossem decisão de operação. */
+const MARCA_DE_TESTE = /\b(marco-\d{4,}|ACEITE-\d{6,}|QA[ -]\w+ \d{6,})\b/;
+
+function Pilula({ ativa, onClick, children }: { ativa: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors',
+        ativa
+          ? 'border-roxo-eletrico/60 bg-roxo-eletrico/15 text-branco-cru'
+          : 'border-grafite-elevado text-nevoa hover:text-branco-cru',
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Registro({ episodio: e }: { episodio: Episodio }) {
+  const deTeste = MARCA_DE_TESTE.test(e.summary);
+
+  return (
+    <li className="rounded-lg border border-grafite-elevado bg-grafite px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusDot estado={deTeste ? 'desconhecido' : 'ok'} />
+        <span className="font-mono text-[10px] uppercase tracking-wider text-nevoa">
+          {ROTULO[e.event_type] ?? e.event_type}
+        </span>
+        {e.client_name && (
+          <span className="rounded-full bg-grafite-elevado px-2 py-0.5 font-mono text-[10px] text-nevoa">
+            {e.client_name}
+          </span>
+        )}
+        {/*
+          * MARCA DE TESTE À VISTA.
+          *
+          * O aceite do MCP gravou frases como "guarda esta referência:
+          * marco-029857" como decisão de PRODUÇÃO. Elas são reais no banco e
+          * não são decisões da agência. Apagar não é decisão desta tela;
+          * apresentar como decisão de verdade, tampouco.
+          */}
+        {deTeste && (
+          <span className="rounded-full border border-aviso/40 bg-aviso/10 px-2 py-0.5 font-mono text-[10px] text-aviso">
+            artefato de teste
+          </span>
+        )}
+      </div>
+
+      <p className="mt-2 text-sm text-branco-cru">{e.summary}</p>
+
+      {e.decisions.length > 0 && e.decisions[0] !== e.summary && (
+        <ul className="mt-2 space-y-1">
+          {e.decisions.map((d, i) => (
+            <li key={i} className="text-sm text-nevoa">
+              · {d}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-2 font-mono text-[10px] text-nevoa">
+        {e.occurred_at ? new Date(e.occurred_at).toLocaleString('pt-BR') : '—'}
+        {e.author_name && ` · por ${e.author_name}`}
+        {e.agent && ` · via ${e.agent}`}
+      </p>
+    </li>
   );
 }
