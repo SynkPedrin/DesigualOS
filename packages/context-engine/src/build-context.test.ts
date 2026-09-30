@@ -279,9 +279,20 @@ describe('buildContext - isolamento entre clientes', () => {
 
     expect(context.clientName).toBe('Cliente A');
     expect(context.clientToneOfVoice).toBe('Tom de A');
-    expect(context.clientProfile).toBe('Dossiê do Cliente A');
+    /**
+     * `toContain` e não `toBe`: desde 30/09/2026 o perfil chega ROTULADO com a
+     * procedência (brain / dossiê / aprendido), porque as duas fontes passaram
+     * a chegar juntas e o modelo precisa saber qual está lendo.
+     *
+     * A propriedade que este teste protege continua sendo a mesma, e é a que
+     * importa: nada do Cliente B atravessa. Afrouxar para `toContain` no
+     * primeiro `expect` sem manter o `not.toContain` abaixo é que seria perder
+     * a guarda.
+     */
+    expect(context.clientProfile).toContain('Dossiê do Cliente A');
     expect(context.clientName).not.toBe('Cliente B');
     expect(context.clientProfile).not.toContain('Cliente B');
+    expect(context.clientProfile).not.toContain('Dossiê do Cliente B');
     expect(context.clientToneOfVoice).not.toBe('Tom de B');
   });
 

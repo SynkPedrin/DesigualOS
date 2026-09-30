@@ -37,10 +37,44 @@ export interface ExecutionContext {
 }
 
 const RECENT_MESSAGES_LIMIT = 5;
-const CLIENT_PROFILE_MAX_CHARS = 3000;
+/**
+ * Quantos registros de perfil entram por cliente. Três cobre o caso real
+ * medido (brain + dossiê + importação antiga) com folga de um.
+ */
+const PERFIS_POR_CLIENTE_LIMIT = 3;
+
+/**
+ * O TETO DO PERFIL, agora somado entre as fontes e não por fonte.
+ *
+ * Era 3000 por registro, com um registro só chegando. Medido: 23 dos 101
+ * perfis passam de 3000 chars, e o do Cosentino tem 6692 — 55% ia fora antes
+ * de qualquer corte de fonte.
+ *
+ * 7000 foi escolhido contra o dado, não por gosto: cobre inteiro o brain
+ * mediano somado ao dossiê, que é o par que o produto promete entregar junto.
+ * Custa cerca de 1.750 tokens por turno com cliente selecionado, contra ~750
+ * antes. Perfil gigante (11k+) continua sendo cortado — e agora o corte é
+ * ANUNCIADO no texto, para o modelo saber que existe mais e não afirmar
+ * completude sobre o que leu.
+ */
+const CLIENT_PROFILE_MAX_CHARS = 7000;
 const PROJECT_FILES_LIMIT = 5;
 const PROJECT_FILE_MAX_CHARS = 2000;
-const RECENT_LEARNINGS_LIMIT = 3;
+/**
+ * APRENDIZADOS POR TURNO: 3 -> 8.
+ *
+ * O 3 vinha de quando o filtro era só por AGENTE: sem recorte de cliente, os
+ * "3 mais importantes do Otto" entravam em todo turno, de qualquer conta, e
+ * três era o teto seguro para uma lista que podia estar falando de outro
+ * cliente. Esse recorte foi corrigido em 16/09 — hoje só entra aprendizado do
+ * cliente da conversa ou da agência.
+ *
+ * Com o escopo certo, 3 virou um teto herdado de um problema que não existe
+ * mais. Medido: o Cosentino tem 35 aprendizados elegíveis, e 32 nunca
+ * chegavam. Oito cobre o volume típico sem transformar o prompt num despejo —
+ * e a ordenação por importância continua decidindo QUEM entra.
+ */
+const RECENT_LEARNINGS_LIMIT = 8;
 const LEARNING_MAX_CHARS = 300;
 /** kind reservado ao dossiê do cliente (já tratado à parte acima); nunca deve duplicar aqui. */
 const CLIENT_PROFILE_KIND = 'client.profile';
@@ -49,6 +83,58 @@ const CLIENT_PROFILE_KIND = 'client.profile';
  * Corte limpo: se houver um espaço razoavelmente perto do limite, corta nele
  * pra não quebrar uma palavra no meio; senão corta seco mesmo.
  */
+/**
+ * O rótulo de cada fonte, tirado do `subject` que o importador grava.
+ *
+ * Existe porque as duas fontes dizem coisas de natureza diferente e o modelo
+ * precisa saber qual está lendo: o brain é o registro CRIATIVO (tom, público,
+ * o que a marca não faz) e o dossiê é o OPERACIONAL (pendência, conta de
+ * mídia, quem decide). Colar os dois num bloco sem nome faria uma restrição
+ * criativa parecer regra operacional, e vice-versa.
+ */
+function rotuloDaFonte(metadata: unknown): string {
+  const subject = (metadata as { subject?: unknown } | null)?.subject;
+  const texto = typeof subject === 'string' ? subject : '';
+  if (texto.endsWith(':brain')) return 'Perfil criativo (brain)';
+  if (texto.endsWith(':dossie')) return 'Ficha operacional (dossiê)';
+  if (texto.includes(':aprendizado:')) return 'Aprendido com a equipe';
+  return 'Registro do cliente';
+}
+
+/**
+ * Junta os registros do cliente num bloco só, com procedência e sem mentir
+ * sobre o que coube.
+ *
+ * O orçamento é COMPARTILHADO e gasto na ordem em que os registros vêm (mais
+ * recente primeiro). Quando um registro não cabe inteiro, ele é cortado e o
+ * corte é ANUNCIADO — um modelo que lê um dossiê truncado sem aviso responde
+ * com a confiança de quem leu tudo, que é o defeito mais caro que este produto
+ * já teve.
+ */
+export function juntarPerfis(registros: ReadonlyArray<{ content: string; metadata: unknown }>): string | null {
+  if (registros.length === 0) return null;
+
+  const partes: string[] = [];
+  let restante = CLIENT_PROFILE_MAX_CHARS;
+
+  for (const r of registros) {
+    if (restante <= 200) {
+      // Menos de 200 chars não cabe nem um parágrafo útil: em vez de um toco
+      // sem sentido, diz que existe mais e para por aqui.
+      partes.push(`[${rotuloDaFonte(r.metadata)}: existe, mas não coube neste turno.]`);
+      break;
+    }
+    const cabe = r.content.length <= restante;
+    const texto = cabe ? r.content : truncateClean(r.content, restante);
+    partes.push(
+      `--- ${rotuloDaFonte(r.metadata)}${cabe ? '' : ' (cortado por tamanho — há mais registrado)'} ---\n${texto}`,
+    );
+    restante -= texto.length;
+  }
+
+  return partes.join('\n\n');
+}
+
 function truncateClean(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   const cut = text.slice(0, maxChars);
@@ -145,7 +231,7 @@ export async function buildContext(params: {
       ? (async () => {
           const ambiente = await ambientePromise;
           return db
-            .select({ content: schema.memories.content })
+            .select({ content: schema.memories.content, metadata: schema.memories.metadata })
             .from(schema.memories)
             .where(
               and(
@@ -163,8 +249,27 @@ export async function buildContext(params: {
               ),
             )
             .orderBy(desc(schema.memories.updatedAt))
-            .limit(1)
-            .catch(() => [] as { content: string }[]);
+            /**
+             * TODOS OS REGISTROS, não só o mais recente.
+             *
+             * Era `.limit(1)`, e isso contradizia uma regra escrita do projeto.
+             * O CLAUDE.md diz, sobre o registro criativo (brain) e o
+             * operacional (dossiê): "Cada cliente tem até dois registros, que
+             * NÃO SE SUBSTITUEM". No código, o mais recente substituía o outro
+             * em silêncio.
+             *
+             * Medido no Cosentino em 30/09/2026: três perfis ativos — brain
+             * (6692 chars, 17/09), dossiê (2766, 16/09) e um terceiro de
+             * importação (11983, 08/09). Só o brain chegava. O dossiê, que é
+             * onde mora pendência, conta de mídia e dado comercial, nunca
+             * entrou num turno.
+             *
+             * O teto continua existindo, agora em `PERFIL_TETO_TOTAL` — o que
+             * não pode existir é uma FONTE inteira sumir por ser um dia mais
+             * velha que a outra.
+             */
+            .limit(PERFIS_POR_CLIENTE_LIMIT)
+            .catch(() => [] as Array<{ content: string; metadata: unknown }>);
         })()
       : Promise.resolve([]),
     params.projectId
@@ -228,9 +333,7 @@ export async function buildContext(params: {
     userName: user?.name ?? null,
     clientName: clientRow[0]?.name ?? null,
     clientToneOfVoice: brandKitRow[0]?.toneOfVoice ?? null,
-    clientProfile: profileRows[0]
-      ? truncateClean(profileRows[0].content, CLIENT_PROFILE_MAX_CHARS)
-      : null,
+    clientProfile: juntarPerfis(profileRows),
     projectFiles: fileRows.map((file) => ({
       filename: file.filename,
       kind: file.kind,
@@ -264,7 +367,7 @@ export function formatContextForPrompt(context: ExecutionContext): string {
   if (context.clientName) lines.push(`Cliente: ${context.clientName}`);
   if (context.clientToneOfVoice) lines.push(`Tom de voz do cliente: ${context.clientToneOfVoice}`);
   if (context.clientProfile) {
-    lines.push('Dossiê do cliente (memória):');
+    lines.push('O que sabemos deste cliente:');
     lines.push(context.clientProfile);
   }
   if (context.projectFiles.length > 0) {
