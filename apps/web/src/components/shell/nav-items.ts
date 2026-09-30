@@ -12,7 +12,6 @@ import {
   GitBranch,
   Heart,
   History,
-  Inbox,
   KeyRound,
   LayoutDashboard,
   MessageSquare,
@@ -140,9 +139,17 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/agents', label: 'Agentes', icon: Bot, section: 'interno' },
   { href: '/workflows', label: 'Automações', icon: GitBranch, section: 'interno' },
   { href: '/studio', label: 'Studio', icon: Sparkles, section: 'interno' },
-  { href: '/messages', label: 'Mensagens', icon: Inbox, section: 'interno' },
-  { href: '/tasks', label: 'Tasks', icon: CheckSquare, section: 'interno' },
-  { href: '/history', label: 'Histórico', icon: History, section: 'interno' },
+  { href: '/tasks', label: 'Tarefas', icon: CheckSquare, section: 'interno' },
+  /**
+   * "Histórico do Bento", e não "Histórico": esta tela mostra as EXECUÇÕES dos
+   * agentes — o que o Bento e os outros fizeram, por quem foi pedido e como
+   * terminou. "Histórico" sozinho não dizia de quê.
+   *
+   * `/messages` (conversa entre pessoas do time) saiu da barra: não é
+   * supervisão de operação e disputava espaço com o que é. A rota continua
+   * existindo e funcionando — quem tiver o link chega nela.
+   */
+  { href: '/history', label: 'Histórico do Bento', icon: History, section: 'interno' },
   { href: '/knowledge', label: 'Conhecimento', icon: BookOpen, section: 'interno' },
   { href: '/analytics', label: 'Analytics', icon: BarChart3, section: 'interno' },
   { href: '/costs', label: 'Tokens & Custos', icon: Coins, section: 'interno', masterOnly: true },

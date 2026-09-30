@@ -77,7 +77,7 @@ export function StatusDot({ estado, className }: { estado: Estado; className?: s
 
 export function StatusLabel({ estado, children }: { estado: Estado; children: React.ReactNode }) {
   return (
-    <span className={cn('inline-flex items-center gap-1.5 font-mono text-xs', CORES[estado].texto)}>
+    <span className={cn('inline-flex items-center gap-1.5 text-[13px]', CORES[estado].texto)}>
       <StatusDot estado={estado} />
       {children}
     </span>
@@ -122,7 +122,7 @@ export function Secao({
   return (
     <section className={cn('mb-8', className)}>
       <div className="mb-3 flex items-center justify-between gap-4">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-nevoa">{titulo}</h2>
+        <h2 className="text-[15px] font-medium text-branco-cru">{titulo}</h2>
         {acao}
       </div>
       {children}
@@ -148,7 +148,7 @@ export function Th({ children, className }: { children?: React.ReactNode; classN
   return (
     <th
       className={cn(
-        'border-b border-grafite-elevado px-3 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-nevoa',
+        'border-b border-grafite-elevado px-3 py-2.5 text-left text-[13px] font-medium text-nevoa',
         className,
       )}
     >
@@ -178,12 +178,12 @@ export function CartaoDeEstado({
 }) {
   return (
     <div className="rounded-lg border border-grafite-elevado bg-grafite px-3.5 py-3">
-      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-nevoa">{rotulo}</p>
+      <p className="text-[13px] text-nevoa">{rotulo}</p>
       <p className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-branco-cru">
         <StatusDot estado={estado} />
         {valor}
       </p>
-      {detalhe && <p className="mt-0.5 truncate font-mono text-[11px] text-nevoa">{detalhe}</p>}
+      {detalhe && <p className="mt-0.5 truncate text-[13px] text-nevoa">{detalhe}</p>}
     </div>
   );
 }

@@ -55,6 +55,13 @@ const TELAS = [
   { rota: '/data-quality', titulo: /Qualidade do dado/i },
   { rota: '/clients', titulo: /Clientes/i },
   { rota: '/settings', titulo: /Configurações/i },
+  /**
+   * As duas telas do motor que a supervisão de fato usa. Entraram na varredura
+   * quando passaram a carregar informação de supervisão: quem é o responsável
+   * de cada tarefa, e o que os agentes fizeram.
+   */
+  { rota: '/tasks', titulo: /^Tarefas$/i },
+  { rota: '/history', titulo: /Histórico do Bento/i },
 ];
 
 test.describe('Control Plane — cada tela abre e se comporta', () => {

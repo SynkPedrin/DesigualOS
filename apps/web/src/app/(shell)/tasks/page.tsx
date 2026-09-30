@@ -113,7 +113,7 @@ export default function TasksPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="ClickUp"
-        title="Central de Tasks"
+        title="Tarefas"
         description="Todas as tarefas da agência, ou só as suas, direto do ClickUp."
       />
 

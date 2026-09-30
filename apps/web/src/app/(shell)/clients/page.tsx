@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence } from 'framer-motion';
-import { Plus, Users } from 'lucide-react';
+import { Plus, Search, Users } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,6 +20,15 @@ function ClientsPageContent() {
   const { data: clients, isPending, isError, refetch } = useClients();
   const [openClient, setOpenClient] = useState<ClientSummary | null>(null);
   const [creating, setCreating] = useState(false);
+  /**
+   * BUSCA E RECORTE — a tela tinha 55 cartões e nenhum dos dois.
+   *
+   * Cinquenta e cinco cartões sem busca não é uma lista: é uma pilha. Quem
+   * procura "Colormaq" rolava a página inteira lendo nome por nome, e quem
+   * queria só a carteira via junto as frentes internas da própria agência.
+   */
+  const [busca, setBusca] = useState('');
+  const [recorte, setRecorte] = useState<'carteira' | 'internos' | 'tudo'>('carteira');
 
   // Deep link ?id=<cliente> continua abrindo direto a ficha (o link antigo
   // não pode quebrar só porque a tela virou roleta). É também o caminho da
@@ -87,6 +96,52 @@ function ClientsPageContent() {
         }
       />
 
+      {/*
+        * O recorte PADRÃO é a carteira, não "tudo". Quem abre Clientes quer ver
+        * clientes; frente interna da agência é outra pergunta, e misturar as
+        * duas foi o que já fez a tela dizer 58 onde o Overview dizia 49.
+        */}
+      {!isPending && !isError && clients && clients.length > 0 && (
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <div className="relative min-w-0 flex-1 sm:max-w-xs">
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-nevoa" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar cliente"
+              aria-label="Buscar cliente"
+              className="w-full rounded-md border border-grafite-elevado bg-grafite py-2 pl-9 pr-3 text-[14px] text-branco-cru placeholder:text-nevoa/60 focus:border-roxo-eletrico/60 focus:outline-none"
+            />
+          </div>
+          {([
+            ['carteira', 'Carteira'],
+            ['internos', 'Internos'],
+            ['tudo', 'Tudo'],
+          ] as const).map(([id, rotulo]) => {
+            const quantos =
+              id === 'tudo'
+                ? clients.length
+                : clients.filter((c) => (id === 'carteira' ? c.natureza === 'CLIENTE' : c.natureza !== 'CLIENTE')).length;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setRecorte(id)}
+                aria-pressed={recorte === id}
+                className={[
+                  'rounded-full border px-3 py-1.5 text-[13px] transition-colors',
+                  recorte === id
+                    ? 'border-roxo-eletrico/60 bg-roxo-eletrico/15 text-branco-cru'
+                    : 'border-grafite-elevado text-nevoa hover:text-branco-cru',
+                ].join(' ')}
+              >
+                {rotulo} <span className="text-nevoa/60">{quantos}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {isPending ? (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, index) => (
@@ -117,10 +172,37 @@ function ClientsPageContent() {
           description="Importe os clientes do ClickUp em Configurações → Integrações, ou clique em Novo projeto."
         />
       ) : (
-        <>
-          <p className="mb-2 font-mono text-[11px] text-nevoa">{clients.length} clientes</p>
-          <ClientGrid clients={clients} onOpen={setOpenClient} />
-        </>
+        (() => {
+          const termo = busca.trim().toLowerCase();
+          const filtrados = clients.filter((c) => {
+            if (recorte === 'carteira' && c.natureza !== 'CLIENTE') return false;
+            if (recorte === 'internos' && c.natureza === 'CLIENTE') return false;
+            return !termo || c.name.toLowerCase().includes(termo);
+          });
+          if (filtrados.length === 0) {
+            return (
+              <EmptyState
+                icon={Search}
+                title={termo ? `Nada com "${busca.trim()}"` : 'Nada neste recorte'}
+                description={
+                  termo
+                    ? 'Confira a grafia, ou troque o recorte — o cliente pode estar em Internos.'
+                    : 'Troque o recorte acima para ver os outros.'
+                }
+              />
+            );
+          }
+          return (
+            <>
+              <p className="mb-3 text-[13px] text-nevoa">
+                {filtrados.length === clients.length
+                  ? `${filtrados.length} clientes`
+                  : `${filtrados.length} de ${clients.length}`}
+              </p>
+              <ClientGrid clients={filtrados} onOpen={setOpenClient} />
+            </>
+          );
+        })()
       )}
 
       <AnimatePresence>
