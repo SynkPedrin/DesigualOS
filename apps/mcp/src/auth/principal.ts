@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { montarPrincipal, type McpPrincipal } from '@desigual-os/mcp-domain';
 
@@ -102,29 +102,59 @@ export async function abrirSessao(input: {
   /**
    * CONNECTION_CREATED é do CICLO DE VIDA, não do trabalho — por isso é
    * emitido aqui, no ato de abrir sessão, e não por uma tool que o Claude
-   * decide chamar. Sem `onConflictDoNothing`: `nova.id` acabou de ser gerado,
-   * a chave é única por construção.
+   * decide chamar.
+   *
+   * DEBOUNCE DE 1H, e não é cosmético — é correção de um bug real (30/09/2026).
+   * `sessionIdGenerator: undefined` (a correção da race condition do SDK, ver
+   * server.ts) põe o transporte em modo SEM ESTADO: ele nunca devolve
+   * `Mcp-Session-Id` na resposta, então o cliente nunca tem um id para mandar
+   * de volta, e o `if (input.transportSessionId)` acima quase nunca encontra
+   * sessão para reaproveitar. Resultado medido em produção: 6 linhas de
+   * `mcp_sessions` — e 6 `CONNECTION_CREATED` — na MESMA conta em 5 segundos,
+   * uma por chamada de tool, não uma por conexão.
+   *
+   * A linha em `mcp_sessions` continua sendo criada a cada chamada sem
+   * transportSessionId — isso é auditoria, granularidade fina não faz mal.
+   * O EVENTO é o que precisa refletir "conexão nova", não "chamada sem id
+   * para reaproveitar", e por isso é aqui, não em quem consome o evento
+   * depois, que a garantia mora.
    */
-  const [pessoa] = await db.select({ name: schema.users.name }).from(schema.users).where(eq(schema.users.id, input.userId));
-  await db.insert(schema.operationalEvents).values({
-    source: 'mcp',
-    type: 'CONNECTION_CREATED',
-    externalId: `mcp:connection:${nova!.id}`,
-    organizationId: input.organizationId,
-    userId: input.userId,
-    clientId: null,
-    entityType: 'mcp_session',
-    entityId: nova!.id,
-    actor: pessoa?.name ?? null,
-    summary: `${pessoa?.name ?? 'Alguém'} conectou o Claude ao Desigual OS`,
-    importance: 'LOW',
-    visibility: 'TEAM',
-    occurredAt: new Date(),
-    processedAt: new Date(),
-  }).catch(() => {
-    // Falha ao registrar o evento de conexão não pode derrubar a conexão em
-    // si — a sessão já foi criada e a chamada MCP precisa seguir.
-  });
+  const umaHoraAtras = new Date(Date.now() - 3_600_000);
+  const [conexaoRecente] = await db
+    .select({ id: schema.operationalEvents.id })
+    .from(schema.operationalEvents)
+    .where(
+      and(
+        eq(schema.operationalEvents.type, 'CONNECTION_CREATED'),
+        eq(schema.operationalEvents.userId, input.userId),
+        gte(schema.operationalEvents.occurredAt, umaHoraAtras),
+      ),
+    )
+    .orderBy(desc(schema.operationalEvents.occurredAt))
+    .limit(1);
+
+  if (!conexaoRecente) {
+    const [pessoa] = await db.select({ name: schema.users.name }).from(schema.users).where(eq(schema.users.id, input.userId));
+    await db.insert(schema.operationalEvents).values({
+      source: 'mcp',
+      type: 'CONNECTION_CREATED',
+      externalId: `mcp:connection:${nova!.id}`,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      clientId: null,
+      entityType: 'mcp_session',
+      entityId: nova!.id,
+      actor: pessoa?.name ?? null,
+      summary: `${pessoa?.name ?? 'Alguém'} conectou o Claude ao Desigual OS`,
+      importance: 'LOW',
+      visibility: 'TEAM',
+      occurredAt: new Date(),
+      processedAt: new Date(),
+    }).catch(() => {
+      // Falha ao registrar o evento de conexão não pode derrubar a conexão em
+      // si — a sessão já foi criada e a chamada MCP precisa seguir.
+    });
+  }
 
   return nova!.id;
 }
