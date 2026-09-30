@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '@desigual-os/database';
 import { naturezaDoCliente } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
-import { colegasVisiveis } from '../lib/escopo-de-organizacao';
+import { ehPapelDePlataforma, organizacaoProvedora } from '../lib/escopo-de-organizacao';
 
 /**
  * O PANORAMA DA AGÊNCIA — a resposta de "como estamos?" numa chamada só.
@@ -49,31 +49,25 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
      * fonte canônica (`lib/escopo-de-organizacao.ts`), para a próxima rota
      * herdar a regra em vez de precisar lembrar dela.
      */
-    const escopo = await colegasVisiveis(user);
     /**
-     * `= any($1)` com o array passado como PARÂMETRO.
+     * O RECORTE DE EMPRESA VAI DENTRO DA CONSULTA, não antes dela.
      *
-     * A primeira versão desta linha montava `in ('id','id')` concatenando
-     * string. Os ids são UUID vindos do banco, então o risco prático era
-     * baixo — mas construir SQL por concatenação dentro do módulo que existe
-     * para proteger fronteira é o tipo de coisa que envelhece mal: basta a
-     * próxima pessoa reaproveitar o padrão com um valor que veio de fora.
+     * A primeira versão do recorte chamava `colegasVisiveis()`, que faz duas
+     * idas ao banco, e só então montava a consulta principal. Três viagens onde
+     * havia uma — e o efeito foi medido: /panorama voltou de 0,16s para 2,9s, e
+     * o painel parou de aparecer em 20 segundos sob carga da suíte.
+     *
+     * É a MESMA contenção que eu já tinha corrigido nesta rota horas antes
+     * (sete consultas em Promise.all contra um pool de três). Recriei ao
+     * acrescentar segurança — e é por isso que fica escrito: a lição não é
+     * "cuidado com consulta lenta", é que somar uma pergunta ANTES da consulta
+     * principal custa uma conexão do pool, e o pool aqui tem três.
+     *
+     * O papel de plataforma sai do token, em memória; o que exige banco —
+     * pertencer à organização provedora — entra como CTE.
      */
-    const recorteDeGente = escopo.ehProvider
-      ? sql`true`
-      /**
-       * Lista PARAMETRIZADA, uma marca por id.
-       *
-       * Duas tentativas anteriores falharam e vale registrar para ninguém
-       * repetir: concatenar `in ('a','b')` funciona e é injeção esperando
-       * acontecer; `= any($1)` falha com 22P02 porque este driver serializa o
-       * array JS como uma string só, não como array do Postgres.
-       *
-       * `sql.join` gera `in ($1, $2, ...)` de verdade. Conferido contra o banco,
-       * inclusive com um id contendo `'); drop table users; --`, que volta zero
-       * linha em vez de executar coisa alguma.
-       */
-      : sql`u.id::text in (${sql.join(escopo.userIds.map((id) => sql`${id}`), sql`, `)})`;
+    const papelDePlataforma = ehPapelDePlataforma(user.roles);
+    const provedora = organizacaoProvedora();
 
     /**
      * UMA VIAGEM SÓ AO BANCO, e o motivo é medido.
@@ -94,6 +88,20 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
      */
     const bruto: any = await db.execute(sql`
       with
+      minhas_orgs as (
+        select organization_id from organization_members where user_id = ${user.id}
+      ),
+      /*
+       * Provider = papel de plataforma E pertencer à provedora. As duas
+       * condições juntas, sempre — ver lib/escopo-de-organizacao.ts.
+       */
+      escopo as (
+        select (
+          ${papelDePlataforma}
+          and ${provedora}::uuid is not null
+          and exists (select 1 from minhas_orgs where organization_id = ${provedora}::uuid)
+        ) as eh_provider
+      ),
       cli as (select name from clients where deleted_at is null),
       exec_dia as (
         select created_at::date as dia,
@@ -110,7 +118,17 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
       ),
       gente as (
         select u.id, u.clickup_email from users u
-        where u.active = true and u.deleted_at is null and ${recorteDeGente}
+        where u.active = true and u.deleted_at is null
+          and (
+            (select eh_provider from escopo)
+            or exists (
+              select 1 from organization_members om
+              where om.user_id = u.id
+                and om.organization_id in (select organization_id from minhas_orgs)
+            )
+            -- A própria pessoa sempre se vê, mesmo sem organização nenhuma.
+            or u.id = ${user.id}
+          )
       ),
       ativos as (
         select distinct user_id from conversations
