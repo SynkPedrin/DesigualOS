@@ -9,6 +9,7 @@ import { registrarAuditoria } from '../audit.js';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
 import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
+import { fronteiraDeOrganizacao } from './fronteira-de-organizacao.js';
 
 /**
  * memory-events.ts — o que transforma o chat individual em memória da empresa.
@@ -46,6 +47,8 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
         // ./visibilidade-de-memoria.ts: sem esta linha, buscar "privada"
         // devolvia as notas da Tammy para qualquer um da organização.
         somenteMemoriaVisivelNoMcp(ctx.principal.userId),
+        // Fronteira de tenant (migração 0045) — ver ./fronteira-de-organizacao.ts.
+        fronteiraDeOrganizacao(schema.memories.organizationId, ctx.principal.organizationId),
       ];
       if (args.client_id) condicoes.push(eq(schema.memories.clientId, args.client_id));
       const linhas = await db

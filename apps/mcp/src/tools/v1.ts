@@ -11,6 +11,7 @@ import {
 import { registrarAuditoria } from '../audit.js';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
+import { fronteiraDeOrganizacao } from './fronteira-de-organizacao.js';
 
 /**
  * v1.ts — as ferramentas do contrato V1 do control plane.
@@ -307,7 +308,11 @@ export function registrarToolsV1(deps: RegistrarToolDeps): void {
       const clientes = await carteiraVisivel(ctx.principal.organizationId);
       const permitidos = new Set(clientes.map((c) => c.id));
 
-      const condicoes = [ilike(schema.memories.content, `%${args.query}%`)];
+      const condicoes = [
+        ilike(schema.memories.content, `%${args.query}%`),
+        // Fronteira de tenant (migração 0045) — ver ./fronteira-de-organizacao.ts.
+        fronteiraDeOrganizacao(schema.memories.organizationId, ctx.principal.organizationId),
+      ];
       if (!args.include_superseded) condicoes.push(eq(schema.memories.status, 'active'));
       if (args.client_id) condicoes.push(eq(schema.memories.clientId, args.client_id));
 

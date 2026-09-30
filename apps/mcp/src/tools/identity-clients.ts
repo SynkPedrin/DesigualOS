@@ -2,6 +2,7 @@ import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
+import { fronteiraDeOrganizacao } from './fronteira-de-organizacao.js';
 import { ehCitavel, scopesDoPapel, type McpPrincipal } from '@desigual-os/mcp-domain';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 
@@ -169,6 +170,7 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
               eq(schema.memories.kind, 'client.profile'),
               eq(schema.memories.status, 'active'),
               sql`${schema.memories.metadata}->>'subject' is not null`,
+              fronteiraDeOrganizacao(schema.memories.organizationId, ctx.principal.organizationId),
             ),
           )
           .orderBy(desc(schema.memories.updatedAt));
@@ -320,6 +322,7 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
             eq(schema.memories.clientId, cliente.id),
             eq(schema.memories.status, 'active'),
             somenteMemoriaVisivelNoMcp(ctx.principal.userId),
+            fronteiraDeOrganizacao(schema.memories.organizationId, ctx.principal.organizationId),
             or(
               ilike(schema.memories.kind, '%preference%'),
               ilike(schema.memories.kind, '%feedback%'),

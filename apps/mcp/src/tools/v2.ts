@@ -5,6 +5,7 @@ import { classificarStatusFuncional, escopoOperacional } from '@desigual-os/cont
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
 import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
+import { fronteiraDeOrganizacao } from './fronteira-de-organizacao.js';
 
 /**
  * v2.ts — a segunda leva do contrato original: aprovação e atividade dos
@@ -139,19 +140,17 @@ export function registrarToolsV2(deps: RegistrarToolDeps): void {
       const piso = ordem[args.min_severity ?? 'medium'] ?? 1;
 
       /**
-       * proactive_signals não tem organization_id (30/09/2026: só existe UMA
-       * organização em produção, então isto não é uma fronteira testada sob
-       * multi-tenant real). Sinal com cliente segue a fronteira do cliente,
-       * IGUAL a get_recent_events; sinal SEM cliente (decisão de agência,
-       * erro sem cliente identificado) fica visível pra quem tem
-       * desigual.read — não há outro sinal no dado pra restringir por onde.
+       * proactive_signals GANHOU organization_id na migração 0045
+       * (30/09/2026) — antes desta tool depender de um subquery via
+       * clientId (e sinal sem cliente ficar visível pra qualquer um, sem
+       * fronteira nenhuma). fronteiraDeOrganizacao substitui os dois casos
+       * de uma vez, e cobre o que o subquery antigo não cobria: sinal com
+       * organizationId preenchido mas de OUTRA organização agora é excluído
+       * de verdade, não só "sem cliente = visível pra todo mundo".
        */
       const condicoes = [
         eq(schema.proactiveSignals.status, 'pending'),
-        or(
-          sql`${schema.proactiveSignals.clientId} is null`,
-          sql`${schema.proactiveSignals.clientId} in (select id from clients where organization_id = ${ctx.principal.organizationId} and deleted_at is null)`,
-        )!,
+        fronteiraDeOrganizacao(schema.proactiveSignals.organizationId, ctx.principal.organizationId),
       ];
       if (args.client_id) condicoes.push(eq(schema.proactiveSignals.clientId, args.client_id));
 
@@ -214,7 +213,12 @@ export function registrarToolsV2(deps: RegistrarToolDeps): void {
       const carteira = args.client_id ? clientesBrutos : escopoOperacional(clientesBrutos);
       const idsDaCarteira = carteira.map((c) => c.id);
 
-      const condicoesMemoria = [eq(schema.memories.status, 'active'), somenteMemoriaVisivelNoMcp(ctx.principal.userId)];
+      const condicoesMemoria = [
+        eq(schema.memories.status, 'active'),
+        somenteMemoriaVisivelNoMcp(ctx.principal.userId),
+        // Fronteira de tenant (migração 0045) — ver ./fronteira-de-organizacao.ts.
+        fronteiraDeOrganizacao(schema.memories.organizationId, ctx.principal.organizationId),
+      ];
       if (args.client_id) condicoesMemoria.push(eq(schema.memories.clientId, args.client_id));
       const [memorias] = await db
         .select({ n: sql<number>`count(*)::int` })
