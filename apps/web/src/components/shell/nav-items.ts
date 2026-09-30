@@ -57,12 +57,6 @@ export interface NavItem {
   /** Some backend permissions (costs:read, nodes:read) are master-only, colaborador gets 403.
    * Hide the nav item rather than let a colaborador hit an error. */
   masterOnly?: boolean;
-  /**
-   * A página existe e a fonte de dado dela ainda não. Marcada aqui pra que a
-   * sidebar possa dizer isso ANTES do clique — descobrir que uma tela está
-   * vazia depois de entrar nela é a forma mais cara de descobrir.
-   */
-  semDadoAinda?: boolean;
 }
 
 export const NAV_SECTIONS: Array<{ id: NavSection; label: string }> = [

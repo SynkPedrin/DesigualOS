@@ -35,6 +35,8 @@ processors/tammy-regression-20260928-escopo-de-escrita.test.ts
 | Suíte completa, quarta vez (máquina ociosa) | 2 falhas, ambas do mesmo conjunto |
 | Só os 4 arquivos juntos, 5 execuções seguidas | 0 falhas (47/47 em todas) |
 | Cada arquivo isolado | 0 falhas |
+| Suíte completa, 6 execuções seguidas, máquina ociosa | 0 falhas nas 6 |
+| Suíte completa, 3 execuções com os outros 13 pacotes em paralelo | 0 falhas nas 3 |
 
 Duração dos quatro dentro da suíte: 3s, 3s, 5s e 7s — estão entre os mais
 lentos do pacote.
@@ -68,7 +70,46 @@ O segundo é uma cerca de segurança real: ele impede que o nome de um CLIENTE
 seja gravado como RESPONSÁVEL de uma task. Um teste assim falhando de forma
 intermitente é pior que um teste quebrado — ensina a ignorá-lo.
 
-## A hipótese que sobra
+## DUAS CORREÇÕES (30/09, mais tarde). As duas hipóteses estavam erradas.
+
+### Correção 1 — não é estado de módulo compartilhado
+
+Escrevi isso sem ter lido o `apps/worker/vitest.config.ts`. Ele documenta um
+fenômeno igual, de 18/09/2026, com outra causa: `integration-health.test.ts`,
+teste de puro mock, falhou com "Test timed out in 5000ms" dentro do `pnpm test`
+do repositório e passou três vezes seguidas rodando só o pacote. A explicação
+registrada lá é `await import()` puxando um grafo grande (database,
+orchestrator, tool-gateway, context-engine) e disputando CPU. A mitigação foi
+subir `testTimeout` de 5s para 30s.
+
+O vitest isola por arquivo por padrão. Eu devia ter checado antes de escrever.
+
+### Correção 2 — e a explicação do config TAMBÉM não serve aqui
+
+Ao aplicar a causa de 18/09 aos meus quatro, fui conferir. **Três dos quatro não
+têm `await import()` nenhum**, e três dos quatro não têm `setTimeout`, `retry`,
+`Date.now` nem timer falso — nada de tempo no arquivo de teste:
+
+| arquivo | `await import()` | construtos de tempo |
+|---|---|---|
+| bento-fault-injection | 1 | 27 (retry) |
+| bento-openai-core | 0 | 0 |
+| tammy-regression-…-escopo-de-escrita | 0 | 0 |
+| tammy-regression-…-vault-anexo | 0 | 0 |
+
+Ou seja: eu ia publicar a segunda hipótese errada seguida, e só não publiquei
+porque fui medir antes. Fica registrado porque é o padrão que este documento
+existe para combater — **hipótese formada sem a evidência decisiva**, que aqui é
+a `failureMessages` que eu nunca capturei.
+
+### O estado honesto
+
+Não sei a causa. O que sei está na tabela de medições. O que ELIMINEI por
+verificação: serviço externo, pool de banco, lógica dos quatro, regressão desta
+sessão, estado compartilhado entre arquivos, e a causa de 18/09. O que falta é
+uma única coisa, e nenhuma teoria substitui ela: a mensagem da falha.
+
+## O que segue valendo da análise original
 
 **Não é contenção de banco.** Verifiquei: os dois arquivos não importam
 `@desigual-os/database`; usam stores FALSOS em memória, com semântica

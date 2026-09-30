@@ -192,35 +192,6 @@ export function CartaoDeEstado({
 // Ausência honesta
 // ---------------------------------------------------------------------------
 
-/**
- * A tela existe, a fonte de dado ainda não.
- *
- * É diferente de "não há nada" (nenhuma conexão ainda) e de "deu erro" (não
- * consegui buscar), e as três pedem reações opostas de quem lê: esperar,
- * conectar, ou chamar alguém. Misturar as três num "sem dados" genérico é o
- * mesmo defeito que o sistema já cometeu com "não sei" virando zero.
- */
-export function AindaNaoExiste({
-  titulo,
-  explicacao,
-  oQueFalta,
-}: {
-  titulo: string;
-  explicacao: string;
-  oQueFalta?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-dashed border-grafite-elevado bg-grafite/40 px-5 py-8 text-center">
-      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-aviso">Ainda não disponível</p>
-      <p className="mt-2 font-heading text-base font-semibold text-branco-cru">{titulo}</p>
-      <p className="mx-auto mt-1.5 max-w-md text-sm text-nevoa">{explicacao}</p>
-      {oQueFalta && (
-        <p className="mx-auto mt-3 max-w-md font-mono text-[11px] text-nevoa/70">Falta: {oQueFalta}</p>
-      )}
-    </div>
-  );
-}
-
 export function SemNadaAinda({
   titulo,
   explicacao,
