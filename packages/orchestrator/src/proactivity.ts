@@ -1,5 +1,6 @@
 import { and, eq, gt, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 
 const logger = createLogger({ service: 'proactivity' });
@@ -41,6 +42,8 @@ export interface SignalCandidate {
   body: string;
   recommendedAction?: string | null;
   clientId?: string | null;
+  /** Fronteira de tenant (migração 0045). proactive_signals não tem user_id pra deduzir — sem isto, sinal sem cliente fica sem dono nenhum. */
+  organizationId?: string | null;
   entityType?: string | null;
   entityId?: string | null;
   /** Identidade do PROBLEMA. Mesmo problema = mesma chave, mesmo em varreduras diferentes. */
@@ -107,9 +110,21 @@ export async function emitSignal(candidate: SignalCandidate, now: Date = new Dat
     }
 
     const cooldown = new Date(now.getTime() + COOLDOWN_HOURS[candidate.severity] * 3_600_000);
+    /**
+     * `candidate.organizationId` primeiro: quando o sinal nasce de um evento
+     * de operational_events (reactToEvent), a organização já é conhecida na
+     * origem — não precisa ser re-derivada. Isso é o que resolve o sinal SEM
+     * cliente (erro geral, decisão de agência): `organizacaoDaEscrita` só
+     * teria `clientId` pra tentar, e sem cliente ela não tem segundo caminho
+     * pra `proactive_signals` (a tabela não tem `user_id`). Sinal que não vem
+     * de um evento (produtor futuro, direto) cai no fallback por cliente.
+     */
+    const organizationId = candidate.organizationId ?? await organizacaoDaEscrita({ clientId: candidate.clientId ?? null });
+
     const [created] = await db
       .insert(schema.proactiveSignals)
       .values({
+        organizationId,
         rule: candidate.rule,
         agent: candidate.agent,
         clientId: candidate.clientId ?? null,

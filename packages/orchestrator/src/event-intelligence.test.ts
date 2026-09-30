@@ -67,6 +67,21 @@ describe('reactToEvent (§37-39) — nem todo evento vira mensagem', () => {
     expect(r.signal).not.toBeNull();
   });
 
+  /**
+   * proactive_signals não tem user_id pra deduzir dono quando o sinal não tem
+   * cliente (ver proactivity.ts). O evento de origem já sabe a organização —
+   * repassar aqui é o que resolve o sinal SEM cliente, não só o com cliente.
+   */
+  it('repassa organizationId do evento pro sinal (migração 0045)', () => {
+    const r = reactToEvent(ev({ type: 'CLIENT_DECISION', summary: 'Decisão sem cliente', organizationId: 'org-123' }));
+    expect(r.signal!.organizationId).toBe('org-123');
+  });
+
+  it('organizationId ausente no evento vira null no sinal, nunca undefined silencioso', () => {
+    const r = reactToEvent(ev({ type: 'task.overdue', entityId: 't1' }));
+    expect(r.signal!.organizationId).toBeNull();
+  });
+
   it('sem summary, cai no template com label/clientSuffix — nunca fica vazio', () => {
     const r = reactToEvent(ev({ type: 'CLIENT_DECISION', entityName: 'Aprovação de briefing' }));
     expect(r.signal!.body).toContain('Aprovação de briefing');

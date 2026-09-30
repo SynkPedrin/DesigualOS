@@ -25,6 +25,7 @@ function evento(overrides: Partial<PendingEvent> = {}): PendingEvent {
     entityId: 'task-abc',
     actor: null,
     summary: null,
+    organizationId: null,
     payload: {},
     occurredAt: new Date('2026-09-15T12:00:00Z'),
     ...overrides,

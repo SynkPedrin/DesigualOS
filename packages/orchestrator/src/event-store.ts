@@ -101,6 +101,8 @@ export interface PendingEvent {
   source: string;
   type: string;
   clientId: string | null;
+  /** Fronteira de tenant (migração 0045 puxa daqui pra proactive_signals, que não tem coluna própria de dono). */
+  organizationId: string | null;
   entityType: string | null;
   entityId: string | null;
   actor: string | null;
@@ -118,6 +120,7 @@ export async function claimUnprocessedEvents(limit = 50): Promise<PendingEvent[]
       source: schema.operationalEvents.source,
       type: schema.operationalEvents.type,
       clientId: schema.operationalEvents.clientId,
+      organizationId: schema.operationalEvents.organizationId,
       entityType: schema.operationalEvents.entityType,
       entityId: schema.operationalEvents.entityId,
       actor: schema.operationalEvents.actor,
@@ -151,6 +154,7 @@ export async function eventsSince(since: Date, clientId?: string | null): Promis
       source: schema.operationalEvents.source,
       type: schema.operationalEvents.type,
       clientId: schema.operationalEvents.clientId,
+      organizationId: schema.operationalEvents.organizationId,
       entityType: schema.operationalEvents.entityType,
       entityId: schema.operationalEvents.entityId,
       actor: schema.operationalEvents.actor,

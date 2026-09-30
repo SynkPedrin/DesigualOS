@@ -79,6 +79,7 @@ export function normalizePendingEvent(event: PendingEvent): NormalizedEvent | nu
     entityId: event.entityId,
     entityName: nome,
     clientId: event.clientId,
+    organizationId: event.organizationId,
     clientName: cliente,
     actor: event.actor,
     occurredAt: event.occurredAt,

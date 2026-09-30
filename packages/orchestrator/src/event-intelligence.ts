@@ -43,6 +43,8 @@ export interface NormalizedEvent {
   occurredAt?: Date | null;
   /** Texto já pronto (evento de MCP sempre traz; webhook nunca). Vira o corpo do sinal quando existe. */
   summary?: string | null;
+  /** Fronteira de tenant (migração 0045) — repassada ao sinal, ver proactivity.ts. */
+  organizationId?: string | null;
 }
 
 export interface EventReaction {
@@ -85,6 +87,7 @@ export function reactToEvent(event: NormalizedEvent): EventReaction {
           body: `A tarefa "${label(event)}" passou do prazo e continua aberta.`,
           recommendedAction: 'Repactuar o prazo ou concluir hoje; checar se ela bloqueia outras',
           clientId: event.clientId ?? null,
+          organizationId: event.organizationId ?? null,
           entityType: 'task',
           entityId: event.entityId ?? null,
           dedupeKey: `event.task_overdue:${event.entityId ?? label(event)}:${dayKey(event)}`,
@@ -103,6 +106,7 @@ export function reactToEvent(event: NormalizedEvent): EventReaction {
           body: `O criativo "${label(event)}" foi rejeitado.`,
           recommendedAction: 'Revisar com base no motivo da rejeição e reenviar; registrar o aprendizado por cliente',
           clientId: event.clientId ?? null,
+          organizationId: event.organizationId ?? null,
           entityType: 'creative',
           entityId: event.entityId ?? null,
           dedupeKey: `event.creative_rejected:${event.entityId ?? label(event)}`,
@@ -128,6 +132,7 @@ export function reactToEvent(event: NormalizedEvent): EventReaction {
           body: event.summary ?? `Decisão registrada sobre ${label(event)}.`,
           recommendedAction: 'Conferir se afeta entrega em andamento',
           clientId: event.clientId ?? null,
+          organizationId: event.organizationId ?? null,
           entityType: 'decision',
           entityId: event.entityId ?? null,
           dedupeKey: `mcp.client_decision:${event.entityId ?? event.summary ?? label(event)}`,
@@ -146,6 +151,7 @@ export function reactToEvent(event: NormalizedEvent): EventReaction {
           body: event.summary ?? `A estratégia mudou para ${label(event)}.`,
           recommendedAction: 'Checar peças em produção antes de entregar',
           clientId: event.clientId ?? null,
+          organizationId: event.organizationId ?? null,
           entityType: 'strategy',
           entityId: event.entityId ?? null,
           dedupeKey: `mcp.strategy_changed:${event.entityId ?? event.summary ?? label(event)}`,
@@ -164,6 +170,7 @@ export function reactToEvent(event: NormalizedEvent): EventReaction {
           body: event.summary ?? `O criativo "${label(event)}" foi rejeitado.`,
           recommendedAction: 'Revisar com base no motivo da rejeição e reenviar',
           clientId: event.clientId ?? null,
+          organizationId: event.organizationId ?? null,
           entityType: 'creative',
           entityId: event.entityId ?? null,
           dedupeKey: `mcp.creative_rejected:${event.entityId ?? event.summary ?? label(event)}`,
@@ -182,6 +189,7 @@ export function reactToEvent(event: NormalizedEvent): EventReaction {
           body: event.summary ?? `Um erro foi relatado em ${label(event)}.`,
           recommendedAction: 'Investigar e confirmar se já afetou o cliente',
           clientId: event.clientId ?? null,
+          organizationId: event.organizationId ?? null,
           entityType: 'error',
           entityId: event.entityId ?? null,
           dedupeKey: `mcp.error_found:${event.entityId ?? event.summary ?? label(event)}`,
@@ -200,6 +208,7 @@ export function reactToEvent(event: NormalizedEvent): EventReaction {
           body: event.summary ?? `QA reprovou ${label(event)}.`,
           recommendedAction: 'Corrigir antes de reenviar ao cliente',
           clientId: event.clientId ?? null,
+          organizationId: event.organizationId ?? null,
           entityType: 'qa',
           entityId: event.entityId ?? null,
           dedupeKey: `mcp.qa_failed:${event.entityId ?? event.summary ?? label(event)}`,
