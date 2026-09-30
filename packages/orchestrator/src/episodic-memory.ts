@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, isNull, lte, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createHash } from 'node:crypto';
 
 /**
@@ -140,9 +141,15 @@ export async function recordEpisodes(
     const dedupeKey = createHash('sha256')
       .update([escopo.clientId ?? '', escopo.userId ?? '', c.eventType, c.summary.toLowerCase().trim()].join('|'))
       .digest('hex');
+    const organizationId = await organizacaoDaEscrita({
+      userId: escopo.userId ?? null,
+      clientId: escopo.clientId ?? null,
+    });
+
     const r = await db
       .insert(schema.agentEpisodes)
       .values({
+        organizationId,
         occurredAt: new Date(),
         clientId: escopo.clientId ?? null,
         campaignId: escopo.campaignId ?? null,

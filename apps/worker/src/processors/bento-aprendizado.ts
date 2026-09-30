@@ -29,6 +29,7 @@
 
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import type { Logger } from '@desigual-os/logging';
 import type { DeliveryType } from './briefing-schema';
 
@@ -175,9 +176,12 @@ export async function registrarRegra(params: {
         );
       }
     }
+    const organizationId = await organizacaoDaEscrita({ userId: params.userId, clientId });
+
     const [linha] = await db
       .insert(schema.memories)
       .values({
+        organizationId,
         kind: KIND_REGRA,
         content: params.deteccao.regra,
         clientId,

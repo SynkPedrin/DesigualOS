@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import type { RouterDecision } from '@desigual-os/router';
 import type { AgentName, QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
@@ -56,9 +57,12 @@ export async function startWorkflow(params: WorkflowDispatchParams): Promise<Cha
   // usada no chat de agente único (ver chat-service.ts).
   const { amountUsd: estimatedCost } = estimateCost('unknown', message);
 
+  const organizationId = await organizacaoDaEscrita({ userId, clientId });
+
   const [execution] = await db
     .insert(schema.executions)
     .values({
+      organizationId,
       executionId,
       userId,
       clientId,

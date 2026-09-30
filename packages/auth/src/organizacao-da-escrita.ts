@@ -83,3 +83,26 @@ export async function organizacaoDaEscrita(origem: OrigemDaEscrita): Promise<str
 
   return decidirOrganizacao(orgDoCliente, orgDaPessoa);
 }
+
+/**
+ * A empresa de uma CONVERSA, para as linhas que pendem dela (mensagens).
+ *
+ * Existe separado de `organizacaoDaEscrita` de propósito: mensagem não deduz
+ * dono, ela HERDA o da conversa que a contém. Deduzir de novo abriria a chance
+ * de a mensagem cair numa empresa diferente da conversa — divergência que não
+ * quebra nada e corrompe tudo, porque as duas leituras parecem corretas
+ * isoladamente.
+ *
+ * `null` quando a conversa não tem dono (linha anterior à migração 0045). A
+ * mensagem herda o vazio, que é honesto: inventar um dono que a conversa não
+ * tem seria pior que não ter.
+ */
+export async function organizacaoDaConversa(conversationId: string | null | undefined): Promise<string | null> {
+  if (!conversationId) return null;
+  return db
+    .select({ organizationId: schema.conversations.organizationId })
+    .from(schema.conversations)
+    .where(eq(schema.conversations.id, conversationId))
+    .then((linhas) => linhas[0]?.organizationId ?? null)
+    .catch(() => null);
+}

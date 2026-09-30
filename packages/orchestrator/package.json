@@ -14,6 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@desigual-os/auth": "workspace:*",
     "@desigual-os/database": "workspace:*",
     "@desigual-os/logging": "workspace:*",
     "@desigual-os/node-protocol": "workspace:*",

@@ -11,7 +11,7 @@ import {
   type EstadoDoTurnoAnterior,
   type SelectionSnapshot,
 } from '@desigual-os/context-engine';
-import { organizacaoDaEscrita } from '@desigual-os/auth';
+import { organizacaoDaConversa, organizacaoDaEscrita } from '@desigual-os/auth';
 import { route, type RouterDecision } from '@desigual-os/router';
 import { dispatchChatMessage, touchConversation } from '@desigual-os/orchestrator';
 import {
@@ -427,18 +427,13 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
        * mensagem também fica sem. Melhor herdar um vazio honesto que inventar
        * um dono que a conversa não tem.
        */
-      const [conversaAtual] = await db
-        .select({ organizationId: schema.conversations.organizationId })
-        .from(schema.conversations)
-        .where(eq(schema.conversations.id, conversationId))
-        .catch(() => []);
-      const organizacaoDaConversa = conversaAtual?.organizationId ?? null;
+      const organizacaoDestaConversa = await organizacaoDaConversa(conversationId);
 
       const [userMessage] = await db
         .insert(schema.messages)
         .values({
           conversationId,
-          organizationId: organizacaoDaConversa,
+          organizationId: organizacaoDestaConversa,
           role: 'user',
           content: body.message,
           // Colunas legadas seguem guardando só o primeiro anexo (schema não
@@ -493,7 +488,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           conversationId,
           // Mesma herança da mensagem do usuário: a resposta pertence à empresa
           // da conversa, não a uma dedução nova.
-          organizationId: organizacaoDaConversa,
+          organizationId: organizacaoDestaConversa,
           role: 'assistant',
           agent: null,
           content: pergunta,

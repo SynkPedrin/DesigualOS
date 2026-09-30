@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 
 const logger = createLogger({ service: 'memory-engine' });
@@ -214,9 +215,15 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
       if (anteriores.length > 0) supersededId = anteriores[0]!.id;
     }
 
+    const organizationId = await organizacaoDaEscrita({
+      userId: input.userId ?? null,
+      clientId: input.clientId ?? null,
+    });
+
     const [written] = await db
       .insert(schema.memories)
       .values({
+        organizationId,
         kind: input.kind,
         content,
         environment: input.environment ?? 'production',

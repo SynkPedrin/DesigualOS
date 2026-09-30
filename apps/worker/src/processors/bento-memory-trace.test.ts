@@ -76,6 +76,13 @@ const fake = vi.hoisted(() => {
     agents: [] as R[],
     messages: [] as R[],
     projectFiles: [] as R[],
+    /**
+     * Acrescentado em 30/09/2026, quando `organizacaoDaEscrita` passou a
+     * resolver a empresa de toda linha nova (migração 0045). O banco falso
+     * precisa ter as mesmas tabelas que o código consulta — senão o teste
+     * reprova por ausência de mock, não por defeito de produto.
+     */
+    organizationMembers: [] as R[],
   };
   const rowsOf = (key: string): R[] => (store as Record<string, R[]>)[key]!;
   let seq = 0;
@@ -92,6 +99,13 @@ const fake = vi.hoisted(() => {
     const text = (cond.strings ?? []).join('');
     const vals = cond.values ?? [];
     const last = vals[vals.length - 1];
+    // build-context (30/09/2026) — metadata->>'subject' is not null.
+    // Precisa vir ANTES da comparação por igualdade: esta forma não tem
+    // parâmetro, e o ramo de baixo compararia com `undefined`, reprovando
+    // justamente as linhas que TÊM procedência.
+    if (text.includes("->>'subject'") && text.includes('is not null')) {
+      return row.metadata?.subject !== undefined && row.metadata?.subject !== null;
+    }
     // memory-engine:207 — metadata->>'subject' = ${subject}
     if (text.includes("->>'subject'")) return row.metadata?.subject === last;
     // recall factual: translate(summary, ...) ilike '%termo%'. FIEL AO
@@ -226,14 +240,16 @@ vi.mock('@desigual-os/database', () => {
     memories: table('memories', [
       'id', 'kind', 'content', 'environment', 'clientId', 'agentId', 'userId', 'sourceType', 'sourceId',
       'confidence', 'importance', 'status', 'lastVerifiedAt', 'expiresAt', 'dedupeKey', 'metadata',
-      'supersededBy', 'supersededAt', 'createdAt', 'updatedAt',
+      'supersededBy', 'supersededAt', 'createdAt', 'updatedAt', 'organizationId',
     ]),
     agentEpisodes: table('agentEpisodes', [
       'id', 'occurredAt', 'clientId', 'campaignId', 'userId', 'agent', 'conversationId', 'executionId',
       'eventType', 'summary', 'facts', 'decisions', 'feedback', 'sourceRefs', 'importance', 'environment', 'dedupeKey',
+      'organizationId',
     ]),
     users: table('users', ['id', 'name']),
-    clients: table('clients', ['id', 'name', 'environment', 'slug']),
+    clients: table('clients', ['id', 'name', 'environment', 'slug', 'organizationId']),
+    organizationMembers: table('organizationMembers', ['userId', 'organizationId']),
     clientBrandKits: table('clientBrandKits', ['clientId', 'toneOfVoice']),
     agents: table('agents', ['id', 'name']),
     messages: table('messages', ['conversationId', 'role', 'agent', 'content', 'attachmentUrl', 'attachmentFilename', 'attachmentType', 'createdAt']),
@@ -459,6 +475,9 @@ describe('2. regressão F-12: build-context isola environment', () => {
     fake.store.memories.push(
       {
         id: 'm-qa-profile',
+        // Procedência obrigatória desde 30/09/2026 — ver o filtro em
+        // build-context.ts e o importador antigo que ele exclui.
+        metadata: { subject: 'cliente:client-x:dossie' },
         kind: 'client.profile',
         status: 'active',
         environment: 'qa', // memória de homologação
@@ -471,6 +490,9 @@ describe('2. regressão F-12: build-context isola environment', () => {
       },
       {
         id: 'm-prod-profile',
+        // Procedência obrigatória desde 30/09/2026 — ver o filtro em
+        // build-context.ts e o importador antigo que ele exclui.
+        metadata: { subject: 'cliente:client-x:brain' },
         kind: 'client.profile',
         status: 'active',
         environment: 'production',
@@ -499,11 +521,18 @@ describe('2. regressão F-12: build-context isola environment', () => {
       {
         id: 'm-qa1', kind: 'client.profile', status: 'active', environment: 'qa', clientId: 'client-qa',
         agentId: null, content: 'Dossiê de homologação do cliente de teste.', expiresAt: null,
+        // `subject` acrescentado em 30/09/2026: o construtor de contexto passou
+        // a exigir procedência no perfil, para excluir a linha órfã de um
+        // importador antigo que podia CONTRADIZER o brain atual. Os
+        // importadores de hoje sempre gravam este campo — a fixture sem ele
+        // representava uma linha que a produção não produz mais.
+        metadata: { subject: 'cliente:client-qa:dossie' },
         importance: '0.900', updatedAt: new Date(T0),
       },
       {
         id: 'm-prod1', kind: 'client.profile', status: 'active', environment: 'production', clientId: 'client-qa',
         agentId: null, content: 'Dossiê de produção que não deve vazar pra QA.', expiresAt: null,
+        metadata: { subject: 'cliente:client-qa:dossie' },
         importance: '0.950', updatedAt: new Date(T0 + 1000),
       },
     );

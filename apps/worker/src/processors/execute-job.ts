@@ -1,6 +1,7 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaConversa } from '@desigual-os/auth';
 import {
   executeResponseSchema,
   type ClientBrandKit,
@@ -785,7 +786,15 @@ async function recordAssistantMessage(
    */
   await db
     .insert(schema.messages)
-    .values({ conversationId, role: 'assistant', agent, content, ...(metadata ? { metadata } : {}) });
+    // Herda da conversa, não deduz de novo. Ver organizacaoDaConversa.
+    .values({
+      conversationId,
+      organizationId: await organizacaoDaConversa(conversationId),
+      role: 'assistant',
+      agent,
+      content,
+      ...(metadata ? { metadata } : {}),
+    });
 }
 
 /**

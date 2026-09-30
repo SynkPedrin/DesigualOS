@@ -1,5 +1,6 @@
 import { and, eq, gte, inArray, lt, ne } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import type { Logger } from '@desigual-os/logging';
 
 function startOfDay(date: Date): Date {
@@ -39,6 +40,8 @@ export async function runEndOfDayChecklist(logger: Logger): Promise<void> {
 
     if (bento) {
       await db.insert(schema.memories).values({
+        // Checklist diário não tem cliente: a empresa vem de quem recebe.
+        organizationId: await organizacaoDaEscrita({ userId }),
         agentId: bento.id,
         userId,
         kind: 'daily_checklist',

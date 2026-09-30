@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { hasPermission, loadUserAccess } from '@desigual-os/auth';
+import { hasPermission, loadUserAccess, organizacaoDaConversa, organizacaoDaEscrita } from '@desigual-os/auth';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import { buildContext, formatContextForPrompt } from '@desigual-os/context-engine';
@@ -86,6 +86,10 @@ export async function processAutomationJob(
     const [conversation] = await db
       .insert(schema.conversations)
       .values({
+        organizationId: await organizacaoDaEscrita({
+          userId: automation.createdBy,
+          clientId: automation.clientId,
+        }),
         userId: automation.createdBy,
         clientId: automation.clientId,
         title: `Automação: ${automation.name}`,
@@ -103,7 +107,13 @@ export async function processAutomationJob(
   if (conversationId) {
     await db
       .insert(schema.messages)
-      .values({ conversationId, role: 'user', content: automation.prompt });
+      // Herda da conversa, não deduz de novo. Ver organizacaoDaConversa.
+      .values({
+        conversationId,
+        organizationId: await organizacaoDaConversa(conversationId),
+        role: 'user',
+        content: automation.prompt,
+      });
     await touchConversation(conversationId);
   }
 
