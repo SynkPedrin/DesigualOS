@@ -7,6 +7,7 @@ import { StatusDoSistema } from '@/components/control/status-do-sistema';
 import { InteligenciaConectada } from '@/components/control/inteligencia-conectada';
 import { FeedDeAtividade } from '@/components/control/feed-de-atividade';
 import { ResumoDaOperacao } from '@/components/control/resumo-da-operacao';
+import { SinaisEmAberto } from '@/components/control/sinais-em-aberto';
 
 /**
  * A home do CONTROL PLANE.
@@ -30,6 +31,13 @@ export default function ControlPlanePage() {
         title="Desigual OS · Control Plane"
         description="Inteligência, memória e governança da operação."
       />
+
+      {/*
+        * ANTES DO ESTADO DO SISTEMA, de propósito. O que o sistema percebeu que
+        * precisa de alguém vem antes de como o sistema está — e some sozinho
+        * quando não há nada, pra não virar enfeite que se aprende a ignorar.
+        */}
+      <SinaisEmAberto />
 
       <Secao titulo="Estado do sistema">
         <StatusDoSistema />
