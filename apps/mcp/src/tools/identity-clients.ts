@@ -210,6 +210,7 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
               // registrar uma nota privada SOBRE um cliente — que o produto
               // permite — e que sem ela vazaria sem ninguém perceber.
               somenteMemoriaVisivelNoMcp(ctx.principal.userId),
+              fronteiraDeOrganizacao(schema.memories.organizationId, ctx.principal.organizationId),
             ),
           )
           .orderBy(desc(schema.memories.updatedAt))

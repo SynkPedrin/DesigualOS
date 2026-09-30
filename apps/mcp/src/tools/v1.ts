@@ -444,19 +444,47 @@ export function registrarToolsV1(deps: RegistrarToolDeps): void {
       const chamadas = await db
         .select({ result: schema.auditLogs.result, tool: schema.auditLogs.tool })
         .from(schema.auditLogs)
-        .where(and(eq(schema.auditLogs.source, 'mcp'), gte(schema.auditLogs.timestamp, desde)))
+        .where(
+          and(
+            eq(schema.auditLogs.source, 'mcp'),
+            gte(schema.auditLogs.timestamp, desde),
+            // audit_logs sempre populou organization_id (registrarAuditoria,
+            // desde a migração 0044) — sem isto, "escritas_24h" era contagem
+            // global, não da organização de quem perguntou.
+            eq(schema.auditLogs.organizationId, ctx.principal.organizationId),
+          ),
+        )
         .catch(() => []);
 
       const eventos = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(schema.operationalEvents)
-        .where(gte(schema.operationalEvents.createdAt, desde))
+        .where(
+          and(
+            gte(schema.operationalEvents.createdAt, desde),
+            // Mesmo motivo da correção de `memorias` acima: sem isto era
+            // contagem global, não da organização de quem perguntou.
+            // Transicional (não eq puro): evento do webhook nem sempre
+            // populou organization_id, mesmo a coluna existindo desde antes
+            // da 0045 — ver get_recent_events, que já tratava essa mesma
+            // dualidade.
+            fronteiraDeOrganizacao(schema.operationalEvents.organizationId, ctx.principal.organizationId),
+          ),
+        )
         .catch(() => [{ n: 0 }]);
 
       const memorias = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(schema.memories)
-        .where(eq(schema.memories.status, 'active'))
+        .where(
+          and(
+            eq(schema.memories.status, 'active'),
+            // Sem isto, get_health contava memória de TODAS as organizações —
+            // "registros_ativos" era um número global, não da organização de
+            // quem perguntou (migração 0045, fronteira-de-organizacao.ts).
+            fronteiraDeOrganizacao(schema.memories.organizationId, ctx.principal.organizationId),
+          ),
+        )
         .catch(() => [{ n: 0 }]);
 
       /**
