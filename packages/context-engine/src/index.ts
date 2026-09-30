@@ -12,3 +12,5 @@ export * from './campaign-sync';
 export * from './texto-externo';
 export * from './selection';
 export * from './parse-due-date';
+export * from './leitura';
+export * from './qualidade-de-dado';

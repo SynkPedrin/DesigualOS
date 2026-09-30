@@ -319,7 +319,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // cognição. Sem isto o default 'production' vencia em silêncio e turno de
   // cliente de teste gravava episódio e memória recuperáveis na operação real:
   // 41 registros estavam assim em 16/09/2026.
-  const ambiente = await resolveEnvironment(clientId).catch(() => 'production' as const);
+  // O userId entra desde 30/09/2026: conta de QA sem cliente selecionado caía
+  // em 'production' e gravava episódio de aceite como conhecimento real.
+  const ambiente = await resolveEnvironment(clientId, userId).catch(() => 'production' as const);
   void checkpoint(false);
   const [episodes, preferences] = await Promise.all([
     recallMemories({ clientId, agentId: agentUuid, kinds: ['agent.episode'], limit: 3 }).catch(() => []),

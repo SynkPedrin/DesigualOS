@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Plug,
   ScrollText,
+  ShieldAlert,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -93,6 +94,8 @@ export const NAV_ITEMS: NavItem[] = [
 
   // SISTEMA — com o que ele fala, e quanto custa.
   { href: '/integrations', label: 'Integrações', icon: Boxes, section: 'system' },
+  // Só master: é manutenção do cadastro, não operação.
+  { href: '/data-quality', label: 'Qualidade do dado', icon: ShieldAlert, section: 'system', masterOnly: true },
   { href: '/usage', label: 'Uso', icon: Gauge, section: 'system' },
   { href: '/settings', label: 'Configurações', icon: Settings, section: 'system' },
 
