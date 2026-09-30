@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '@desigual-os/database';
 import { naturezaDoCliente } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
+import { colegasVisiveis } from '../lib/escopo-de-organizacao';
 
 /**
  * O PANORAMA DA AGÊNCIA — a resposta de "como estamos?" numa chamada só.
@@ -34,6 +35,45 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
       reply.code(401);
       return { error: 'Not authenticated' };
     }
+
+    /**
+     * O RECORTE DE EMPRESA, que esta rota nasceu SEM — e o registro fica.
+     *
+     * Escrevi `/panorama` em 30/09/2026 e ela foi para o inventário forense na
+     * lista de "nem papel nem organização", seis horas depois de eu corrigir
+     * exatamente esse defeito em `/memories`. Não é desatenção pontual: é a
+     * demonstração de que fronteira por convenção não se sustenta, feita por
+     * quem estava escrevendo o documento que diz isso.
+     *
+     * Por isso a correção não é um `where` a mais aqui — é passar a usar a
+     * fonte canônica (`lib/escopo-de-organizacao.ts`), para a próxima rota
+     * herdar a regra em vez de precisar lembrar dela.
+     */
+    const escopo = await colegasVisiveis(user);
+    /**
+     * `= any($1)` com o array passado como PARÂMETRO.
+     *
+     * A primeira versão desta linha montava `in ('id','id')` concatenando
+     * string. Os ids são UUID vindos do banco, então o risco prático era
+     * baixo — mas construir SQL por concatenação dentro do módulo que existe
+     * para proteger fronteira é o tipo de coisa que envelhece mal: basta a
+     * próxima pessoa reaproveitar o padrão com um valor que veio de fora.
+     */
+    const recorteDeGente = escopo.ehProvider
+      ? sql`true`
+      /**
+       * Lista PARAMETRIZADA, uma marca por id.
+       *
+       * Duas tentativas anteriores falharam e vale registrar para ninguém
+       * repetir: concatenar `in ('a','b')` funciona e é injeção esperando
+       * acontecer; `= any($1)` falha com 22P02 porque este driver serializa o
+       * array JS como uma string só, não como array do Postgres.
+       *
+       * `sql.join` gera `in ($1, $2, ...)` de verdade. Conferido contra o banco,
+       * inclusive com um id contendo `'); drop table users; --`, que volta zero
+       * linha em vez de executar coisa alguma.
+       */
+      : sql`u.id::text in (${sql.join(escopo.userIds.map((id) => sql`${id}`), sql`, `)})`;
 
     /**
      * UMA VIAGEM SÓ AO BANCO, e o motivo é medido.
@@ -68,7 +108,10 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
         from executions where created_at > now() - interval '30 days' and agent is not null
         group by 1 order by 2 desc
       ),
-      gente as (select id, clickup_email from users where active = true and deleted_at is null),
+      gente as (
+        select u.id, u.clickup_email from users u
+        where u.active = true and u.deleted_at is null and ${recorteDeGente}
+      ),
       ativos as (
         select distinct user_id from conversations
         where created_at > now() - interval '30 days' and user_id is not null
