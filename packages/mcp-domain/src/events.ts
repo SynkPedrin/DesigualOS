@@ -23,6 +23,19 @@ export const MCP_EVENT_TYPES = [
   'PREFERENCE_LEARNED',
   'ASSET_CREATED', 'ASSET_UPDATED',
   'WORK_LOGGED',
+  /**
+   * Ciclo de vida da CONEXÃO, não do trabalho — emitido pelo server, nunca
+   * pelo Claude do funcionário (por isso não passa por `log_operational_event`,
+   * que é a porta de entrada só para o que o agente decide registrar).
+   *
+   * Só CREATED existe: o transporte HTTP do MCP não tem um "adeus" de
+   * protocolo — o cliente para de chamar, e ponto. Um "DISCONNECTED"
+   * fabricado exigiria inferir a partir de silêncio, o que é exatamente o
+   * tipo de invenção que o §10 proíbe. Quem precisar de "offline" deriva de
+   * `mcp_sessions.last_seen_at` estar velho, não de um evento que nunca
+   * chega.
+   */
+  'CONNECTION_CREATED',
 ] as const;
 
 export type McpEventType = (typeof MCP_EVENT_TYPES)[number];

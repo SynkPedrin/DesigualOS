@@ -98,6 +98,34 @@ export async function abrirSessao(input: {
       transportSessionId: input.transportSessionId,
     })
     .returning({ id: schema.mcpSessions.id });
+
+  /**
+   * CONNECTION_CREATED é do CICLO DE VIDA, não do trabalho — por isso é
+   * emitido aqui, no ato de abrir sessão, e não por uma tool que o Claude
+   * decide chamar. Sem `onConflictDoNothing`: `nova.id` acabou de ser gerado,
+   * a chave é única por construção.
+   */
+  const [pessoa] = await db.select({ name: schema.users.name }).from(schema.users).where(eq(schema.users.id, input.userId));
+  await db.insert(schema.operationalEvents).values({
+    source: 'mcp',
+    type: 'CONNECTION_CREATED',
+    externalId: `mcp:connection:${nova!.id}`,
+    organizationId: input.organizationId,
+    userId: input.userId,
+    clientId: null,
+    entityType: 'mcp_session',
+    entityId: nova!.id,
+    actor: pessoa?.name ?? null,
+    summary: `${pessoa?.name ?? 'Alguém'} conectou o Claude ao Desigual OS`,
+    importance: 'LOW',
+    visibility: 'TEAM',
+    occurredAt: new Date(),
+    processedAt: new Date(),
+  }).catch(() => {
+    // Falha ao registrar o evento de conexão não pode derrubar a conexão em
+    // si — a sessão já foi criada e a chamada MCP precisa seguir.
+  });
+
   return nova!.id;
 }
 
