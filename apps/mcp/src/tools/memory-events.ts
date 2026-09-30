@@ -267,6 +267,7 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
         .values({
           kind: args.is_restriction ? 'client.restriction' : 'client.feedback',
           content: args.feedback,
+          organizationId: ctx.principal.organizationId,
           clientId: cliente.id,
           userId: ctx.principal.userId,
           sourceType: 'claude',
@@ -333,6 +334,7 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
         .insert(schema.memories)
         .values({
           kind: 'process.learning', content: args.learning,
+          organizationId: ctx.principal.organizationId,
           clientId: args.client_id ?? null, userId: ctx.principal.userId,
           sourceType: 'claude', confidence: String(confiancaInicial('claude')), status: 'active',
           metadata: { mcp_status: statusInicial('claude'), recorded_by: ctx.principal.name, session_id: ctx.principal.sessionId },

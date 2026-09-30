@@ -237,6 +237,7 @@ export function registrarToolsV1(deps: RegistrarToolDeps): void {
         .values({
           kind: `mcp.${escopo.toLowerCase()}`,
           content: args.content,
+          organizationId: ctx.principal.organizationId,
           clientId: args.client_id ?? null,
           userId: ctx.principal.userId,
           sourceType: 'claude',

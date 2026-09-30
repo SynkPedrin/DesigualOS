@@ -3,6 +3,7 @@ import { idColumn, timestampColumns } from './_shared';
 import { agents } from './agents-infra';
 import { clients } from './clients';
 import { users } from './identity';
+import { organizations } from './organizations';
 
 /**
  * Uma fonte de conhecimento de um agente (ex: o Obsidian vault local dele,
@@ -79,6 +80,16 @@ export const memories = pgTable(
   'memories',
   {
     ...idColumn,
+    /**
+     * FRONTEIRA DE TENANT DIRETA (30/09/2026). Antes desta coluna, isolar
+     * memória de uma organização dependia de lembrar de seguir client_id ->
+     * clients.organization_id (ou não seguir nada, quando client_id é nulo).
+     * Convenção que depende de quem escreve a consulta lembrar já vazou
+     * duas vezes no mesmo dia (USER_PRIVATE em /memories e em search_memory).
+     * Nullable de propósito: linha que não resolve por client_id nem por
+     * user_id fica nula e visível, nunca carimbada por dedução.
+     */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
     clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -128,6 +139,7 @@ export const memories = pgTable(
     statusIdx: index('memories_status_idx').on(table.status),
     dedupeIdx: uniqueIndex('memories_dedupe_key_idx').on(table.dedupeKey),
     sourceIdx: index('memories_source_idx').on(table.sourceType, table.sourceId),
+    organizationIdx: index('memories_organization_id_idx').on(table.organizationId),
   }),
 );
 
@@ -215,6 +227,8 @@ export const proactiveSignals = pgTable(
   'proactive_signals',
   {
     ...idColumn,
+    /** Fronteira de tenant direta — mesmo motivo de memories.organizationId acima. */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     /** Regra que gerou (ex: 'task.due_tomorrow_not_started'). */
     rule: text('rule').notNull(),
     /** Agente dono do sinal (quem fala com o humano sobre isso). */
@@ -243,5 +257,6 @@ export const proactiveSignals = pgTable(
     dedupeIdx: uniqueIndex('proactive_signals_dedupe_idx').on(table.dedupeKey),
     statusIdx: index('proactive_signals_status_idx').on(table.status),
     clientIdx: index('proactive_signals_client_idx').on(table.clientId),
+    organizationIdx: index('proactive_signals_organization_id_idx').on(table.organizationId),
   }),
 );

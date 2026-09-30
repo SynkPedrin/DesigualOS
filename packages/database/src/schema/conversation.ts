@@ -3,6 +3,7 @@ import { idColumn, softDeleteColumn, timestampColumns } from './_shared';
 import { agentNameEnum, messageRoleEnum } from './enums';
 import { clients } from './clients';
 import { users } from './identity';
+import { organizations } from './organizations';
 
 /**
  * Projetos do Chat (organização da sidebar, estilo Claude): agrupam conversas
@@ -44,6 +45,8 @@ export const conversations = pgTable(
   'conversations',
   {
     ...idColumn,
+    /** Fronteira de tenant direta — ver o comentário em memories.organizationId (knowledge.ts). */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
     userId: uuid('user_id')
@@ -63,6 +66,7 @@ export const conversations = pgTable(
     userIdx: index('conversations_user_id_idx').on(table.userId),
     clientIdx: index('conversations_client_id_idx').on(table.clientId),
     projectIdx: index('conversations_project_id_idx').on(table.projectId),
+    organizationIdx: index('conversations_organization_id_idx').on(table.organizationId),
   }),
 );
 
@@ -73,6 +77,13 @@ export const messages = pgTable(
     conversationId: uuid('conversation_id')
       .notNull()
       .references(() => conversations.id, { onDelete: 'cascade' }),
+    /**
+     * Fronteira de tenant direta, DENORMALIZADA da conversa dona
+     * (conversations.organizationId) — sem isso, toda consulta de mensagem
+     * precisaria de join pra saber de quem é. Preenchida no INSERT junto com
+     * conversationId, não derivada em leitura.
+     */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     role: messageRoleEnum('role').notNull(),
     agent: agentNameEnum('agent'),
     content: text('content').notNull(),
@@ -88,6 +99,7 @@ export const messages = pgTable(
   },
   (table) => ({
     conversationIdx: index('messages_conversation_id_idx').on(table.conversationId),
+    organizationIdx: index('messages_organization_id_idx').on(table.organizationId),
   }),
 );
 

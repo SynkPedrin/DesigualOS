@@ -316,6 +316,13 @@
       "when": 1790693205473,
       "tag": "0044_mcp_server",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1790776000000,
+      "tag": "0045_organization_id_tenant_boundary",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,7 @@ import { idColumn, timestampColumns } from './_shared';
 import { clients } from './clients';
 import { users } from './identity';
 import { campaigns } from './knowledge-plane';
+import { organizations } from './organizations';
 
 /**
  * cognition.ts — o que o sistema LEMBRA (L1) e o que os agentes COMPARTILHAM.
@@ -26,6 +27,8 @@ export const agentEpisodes = pgTable(
   'agent_episodes',
   {
     ...idColumn,
+    /** Fronteira de tenant direta — ver o comentário em memories.organizationId (knowledge.ts). */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     /** QUANDO aconteceu. É a coluna que sustenta "ontem", "esta semana". */
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
     clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
@@ -59,6 +62,7 @@ export const agentEpisodes = pgTable(
     clienteIdx: index('agent_episodes_client_id_idx').on(table.clientId),
     usuarioIdx: index('agent_episodes_user_id_idx').on(table.userId),
     ambienteIdx: index('agent_episodes_environment_idx').on(table.environment),
+    organizationIdx: index('agent_episodes_organization_id_idx').on(table.organizationId),
     dedupe: unique('agent_episodes_dedupe_key_unique').on(table.dedupeKey),
   }),
 );
