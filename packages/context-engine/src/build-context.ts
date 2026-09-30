@@ -237,6 +237,25 @@ export async function buildContext(params: {
               and(
                 eq(schema.memories.clientId, params.clientId!),
                 eq(schema.memories.kind, CLIENT_PROFILE_KIND),
+                /**
+                 * SÓ REGISTRO COM PROCEDÊNCIA.
+                 *
+                 * Os importadores de hoje (sync-brains.mts, sync-dossies.mts)
+                 * sempre marcam `metadata.subject` — `cliente:<id>:brain` ou
+                 * `:dossie`. Existe no banco uma terceira linha por cliente, sem
+                 * subject, de 12 mil caracteres: resíduo de um importador
+                 * ANTERIOR (`import-client-memories.ts`) que fazia upsert por
+                 * clientId+kind e nunca foi limpo quando o sistema novo entrou.
+                 *
+                 * Não é duplicata do mesmo processo — é uma versão velha do
+                 * mesmo cliente, que pode CONTRADIZER o brain atual. Deixá-la
+                 * disputar orçamento é pagar tokens para o modelo ler duas
+                 * verdades diferentes sobre a mesma conta e escolher uma.
+                 *
+                 * (Achado pela outra sessão ao corrigir o mesmo defeito no
+                 * `get_client_context` do MCP; filtro igual dos dois lados.)
+                 */
+                sql`${schema.memories.metadata}->>'subject' is not null`,
                 // Só fato ATIVO. Sem isto, memória aposentada (status 'superseded') e fato
                 // vencido (expires_at no passado) continuavam entrando no prompt — o que
                 // anularia toda a supersessão do memory-engine, porque quem monta o contexto

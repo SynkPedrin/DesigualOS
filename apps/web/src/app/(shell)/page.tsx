@@ -8,6 +8,7 @@ import { InteligenciaConectada } from '@/components/control/inteligencia-conecta
 import { FeedDeAtividade } from '@/components/control/feed-de-atividade';
 import { ResumoDaOperacao } from '@/components/control/resumo-da-operacao';
 import { SinaisEmAberto } from '@/components/control/sinais-em-aberto';
+import { PainelDoDono } from '@/components/control/painel-do-dono';
 
 /**
  * A home do CONTROL PLANE.
@@ -38,6 +39,16 @@ export default function ControlPlanePage() {
         * quando não há nada, pra não virar enfeite que se aprende a ignorar.
         */}
       <SinaisEmAberto />
+
+      {/*
+        * O PANORAMA VEM PRIMEIRO. A pergunta de quem abre esta tela é "como
+        * está a agência", não "como está o servidor" — e por muito tempo esta
+        * home respondia a segunda. O estado técnico continua logo abaixo, para
+        * o dia em que a pergunta for essa.
+        */}
+      <Secao titulo="A agência agora">
+        <PainelDoDono />
+      </Secao>
 
       <Secao titulo="Estado do sistema">
         <StatusDoSistema />

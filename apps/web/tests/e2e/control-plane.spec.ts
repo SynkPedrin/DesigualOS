@@ -124,6 +124,40 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     await expect(page.getByRole('link', { name: /Console do Bento/i })).toBeVisible({ timeout: 10_000 });
   });
 
+  /**
+   * O PAINEL DO DONO mostra a AGÊNCIA, não o servidor.
+   *
+   * A home respondia "como está o sistema" quando a pergunta de quem abre é
+   * "como está a agência". O teste trava o que não pode regredir: os números
+   * aparecem, vêm da API (não são placeholder), e o gráfico desenha de verdade
+   * — um gráfico que renderiza vazio passa despercebido em revisão visual,
+   * porque o espaço continua ocupado.
+   */
+  test('o painel do dono mostra números reais e desenha o gráfico', async ({ page }) => {
+    await login(page);
+    await page.goto('/');
+
+    await expect(page.getByRole('heading', { name: /A agência agora/i })).toBeVisible({ timeout: 20_000 });
+
+    // Os quatro números de cabeceira.
+    for (const rotulo of [/Clientes na carteira/i, /Equipe usando a IA/i, /Pedidos à IA/i, /Falhas/i]) {
+      await expect(page.getByText(rotulo).first()).toBeVisible({ timeout: 20_000 });
+    }
+
+    /**
+     * A carteira precisa ser um número de verdade. Zero aqui significa ou
+     * banco vazio ou consulta quebrada — e nos dois casos o painel estaria
+     * mentindo para quem confia nele de manhã.
+     */
+    const carteira = page.getByText(/Clientes na carteira/i).locator('..');
+    await expect(carteira).toContainText(/[1-9]\d*/, { timeout: 20_000 });
+
+    // O gráfico desenha: recharts vira <svg> com caminhos.
+    const grafico = page.locator('.recharts-wrapper svg').first();
+    await expect(grafico).toBeVisible({ timeout: 20_000 });
+    expect(await page.locator('.recharts-wrapper').count(), 'os dois gráficos precisam existir').toBeGreaterThanOrEqual(2);
+  });
+
   /** A logo do Claude é asset local — se o caminho quebrar, a imagem some em silêncio. */
   test('a logo do Claude carrega do arquivo do projeto', async ({ page }) => {
     await login(page);
