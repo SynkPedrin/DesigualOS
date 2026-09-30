@@ -1,6 +1,21 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { and, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { decidirOrganizacaoDeTrabalho } from '@desigual-os/auth';
+import { organizacaoAtivaDe } from '../organizations/contexto';
+import { escopoDeOrganizacao, organizacaoProvedora } from './escopo-de-organizacao';
+
+/**
+ * tenant-context.ts — decide em qual empresa a requisição está trabalhando e
+ * deixa isso em `request.tenantContext`.
+ *
+ * A REGRA em si não mora aqui: mora em `decidirOrganizacaoDeTrabalho`, pura, em
+ * `@desigual-os/auth`, junto das outras duas regras de fronteira. Este arquivo
+ * faz só a parte que precisa de banco — reunir os fatos e traduzir a recusa em
+ * HTTP. Foi ter a regra escondida dentro de um middleware, resolvendo por
+ * contagem de linhas, que derrubou a tela de Clientes de quem criou a segunda
+ * empresa; o histórico está no cabeçalho daquele arquivo.
+ */
 
 export interface TenantContext {
   userId: string;
@@ -14,26 +29,78 @@ declare module 'fastify' {
   interface FastifyRequest { tenantContext?: TenantContext }
 }
 
-/** An organization selector is accepted only after checking its membership.
- * A single membership preserves the existing agency experience. Multiple
- * memberships require explicit selection; database row order is not authority. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Vínculos ATIVOS. Conta desativada ou apagada não tem vínculo nenhum. */
+async function vinculosDe(userId: string) {
+  return db
+    .select({
+      id: schema.organizationMembers.id,
+      organizationId: schema.organizationMembers.organizationId,
+      role: schema.organizationMembers.role,
+    })
+    .from(schema.organizationMembers)
+    .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
+    .where(
+      and(
+        eq(schema.organizationMembers.userId, userId),
+        eq(schema.users.active, true),
+        isNull(schema.users.deletedAt),
+      ),
+    )
+    .catch(() => []);
+}
+
 export async function requireTenant(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const user = request.authUser;
   if (!user) { reply.code(401).send({ error: 'Not authenticated' }); return; }
-  const selected = request.headers['x-organization-id'];
-  if (selected !== undefined && (typeof selected !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selected))) {
+
+  const pedida = request.headers['x-organization-id'];
+  if (pedida !== undefined && (typeof pedida !== 'string' || !UUID.test(pedida))) {
     reply.code(400).send({ error: 'Invalid organization selector' }); return;
   }
-  const rows = await db.select({ id: schema.organizationMembers.id, organizationId: schema.organizationMembers.organizationId, role: schema.organizationMembers.role })
-    .from(schema.organizationMembers)
-    .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
-    .where(and(eq(schema.organizationMembers.userId, user.id), eq(schema.users.active, true), isNull(schema.users.deletedAt),
-      selected ? eq(schema.organizationMembers.organizationId, selected) : undefined)).limit(2);
-  if (rows.length !== 1) {
-    reply.code(403).send({ error: rows.length ? 'Select an organization' : 'Organization membership required' }); return;
+
+  const [vinculos, escopo, ativa] = await Promise.all([
+    vinculosDe(user.id),
+    escopoDeOrganizacao(user),
+    organizacaoAtivaDe(user),
+  ]);
+
+  const escolha = decidirOrganizacaoDeTrabalho({
+    pedida: typeof pedida === 'string' ? pedida : null,
+    ativa: ativa?.id ?? null,
+    vinculos: vinculos.map((v) => v.organizationId),
+    provedora: organizacaoProvedora(),
+    ehProvider: escopo.ehProvider,
+  });
+
+  if (!escolha.ok) {
+    if (escolha.motivo === 'precisa-escolher') {
+      /**
+       * A mensagem diz ONDE se resolve. A versão anterior devolvia
+       * "Select an organization" e parava aí — pedindo uma escolha que não
+       * tinha tela, o que fez o 403 parecer defeito em vez de pergunta.
+       */
+      reply.code(403).send({
+        error: 'Select an organization',
+        detalhe: 'Você pertence a mais de uma empresa. Abra uma delas na tela de Empresas.',
+      });
+      return;
+    }
+    reply.code(403).send({ error: 'Organization membership required' });
+    return;
   }
-  const member = rows[0]!;
-  request.tenantContext = { userId: user.id, organizationId: member.organizationId, membershipId: member.id, role: member.role, permissions: user.permissions };
+
+  const vinculo = vinculos.find((v) => v.organizationId === escolha.organizationId);
+  request.tenantContext = {
+    userId: user.id,
+    organizationId: escolha.organizationId,
+    // Provedor dentro de uma empresa em que não é membro não tem vínculo para
+    // mostrar. O papel fica explícito em vez de herdar o de outra empresa.
+    membershipId: vinculo?.id ?? '',
+    role: vinculo?.role ?? 'provedor',
+    permissions: user.permissions,
+  };
 }
 
 export async function clientBelongsToTenant(clientId: string, organizationId: string): Promise<boolean> {
