@@ -32,6 +32,10 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
       email: ctx.principal.email,
       role: ctx.principal.role,
       organization_id: ctx.principal.organizationId,
+      // Mesmos nomes que /me devolve em apps/api — mesma fonte (decidirEscopo,
+      // @desigual-os/auth), mesmo vocabulário nos dois lados.
+      organization_ids: ctx.principal.organizationIds,
+      eh_provider: ctx.principal.ehProvider,
     }),
   });
 

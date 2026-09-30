@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { montarPrincipal, type McpPrincipal } from '@desigual-os/mcp-domain';
+import { decidirEscopo, loadUserAccess, organizacaoProvedora } from '@desigual-os/auth';
 
 /**
  * principal.ts — do token para a PESSOA, com papel e organização.
@@ -45,6 +46,30 @@ export async function resolverPrincipal(input: ResolverPrincipalInput): Promise<
       ),
     );
   if (!row) return null;
+
+  /**
+   * MESMA REGRA QUE `apps/api` (`decidirEscopo`, `@desigual-os/auth`) —
+   * reaproveitada, não recalculada com outra lógica. `ehProvider` continua
+   * exigindo as duas condições (papel de plataforma E pertencer à
+   * organização provedora); sem `PROVIDER_ORGANIZATION_ID` configurado,
+   * ninguém é provider aqui também — mesmo default restritivo.
+   *
+   * `roles` vem do RBAC legado (`user_roles`/`roles`, "master"/"colaborador"),
+   * não do papel por função do MCP (`organization_members.role`) — são dois
+   * eixos diferentes, e `decidirEscopo` foi desenhado pro primeiro.
+   */
+  const [todasAsOrganizacoes, acesso] = await Promise.all([
+    db.select({ organizationId: schema.organizationMembers.organizationId })
+      .from(schema.organizationMembers)
+      .where(eq(schema.organizationMembers.userId, row.userId)),
+    loadUserAccess(row.userId),
+  ]);
+  const escopo = decidirEscopo(
+    [...new Set(todasAsOrganizacoes.map((o) => o.organizationId))],
+    acesso.roles,
+    organizacaoProvedora(),
+  );
+
   return montarPrincipal(
     {
       userId: row.userId,
@@ -56,6 +81,7 @@ export async function resolverPrincipal(input: ResolverPrincipalInput): Promise<
     },
     input.scopesDoToken,
     input.sessionId,
+    escopo,
   );
 }
 

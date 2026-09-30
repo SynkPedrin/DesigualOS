@@ -9,6 +9,9 @@ const membership = (role: string | null) => ({
   email: 'a@b.com', name: 'Alguém', role,
 });
 
+/** Escopo de plataforma neutro — estes testes são sobre papel/scope, não sobre provider. */
+const escopoNeutro = { organizationIds: ['org1'], ehProvider: false };
+
 describe('scopes e papéis — o teto é o papel, nunca o token', () => {
   it('SUPER_ADMIN alcança todos os scopes', () => {
     expect(scopesDoPapel('SUPER_ADMIN')).toHaveLength(MCP_SCOPES.length);
@@ -84,7 +87,7 @@ describe('papelDaMembership — o default não pode trancar nem escancarar', () 
 
 describe('portas de autorização', () => {
   it('exigirScope lança com código legível em vez de devolver booleano ignorável', () => {
-    const p = montarPrincipal(membership('CREATIVE'), ['desigual.read'], 's1');
+    const p = montarPrincipal(membership('CREATIVE'), ['desigual.read'], 's1', escopoNeutro);
     expect(() => exigirScope(p, 'traffic.read')).toThrow(McpAuthorizationError);
     try {
       exigirScope(p, 'traffic.read');
@@ -96,7 +99,7 @@ describe('portas de autorização', () => {
 
   it('recurso de outra organização responde "não encontrei", nunca "sem permissão"', () => {
     // Confirmar a EXISTÊNCIA de um recurso de outro tenant já é vazamento.
-    const p = montarPrincipal(membership('SUPER_ADMIN'), ['desigual.read'], 's1');
+    const p = montarPrincipal(membership('SUPER_ADMIN'), ['desigual.read'], 's1', escopoNeutro);
     try {
       exigirMesmaOrganizacao(p, 'org-de-outra-empresa');
       throw new Error('deveria ter lançado');
@@ -108,15 +111,15 @@ describe('portas de autorização', () => {
   });
 
   it('nem SUPER_ADMIN atravessa a fronteira de organização', () => {
-    const p = montarPrincipal(membership('SUPER_ADMIN'), [...MCP_SCOPES], 's1');
+    const p = montarPrincipal(membership('SUPER_ADMIN'), [...MCP_SCOPES], 's1', escopoNeutro);
     expect(() => exigirMesmaOrganizacao(p, 'outra')).toThrow(McpAuthorizationError);
     expect(() => exigirMesmaOrganizacao(p, 'org1')).not.toThrow();
   });
 
   it('o papel vem do BANCO, não do token — é o que faz revogação valer na hora', () => {
     // Mesmo token, papel rebaixado no banco: o acesso encolhe no próximo turno.
-    const antes = montarPrincipal(membership('MANAGER'), ['clients.write'], 's1');
-    const depois = montarPrincipal(membership('VIEWER'), ['clients.write'], 's1');
+    const antes = montarPrincipal(membership('MANAGER'), ['clients.write'], 's1', escopoNeutro);
+    const depois = montarPrincipal(membership('VIEWER'), ['clients.write'], 's1', escopoNeutro);
     expect(temScope(antes.scopes, 'clients.write')).toBe(true);
     expect(temScope(depois.scopes, 'clients.write')).toBe(false);
   });
@@ -158,5 +161,32 @@ describe('INVARIANTE: nenhum token alcança fora do teto do papel', () => {
     const a = scopesEfetivos('MANAGER', ['tasks.read', 'desigual.read', 'memory.read']);
     const b = scopesEfetivos('MANAGER', ['memory.read', 'desigual.read', 'tasks.read']);
     expect(a).toEqual(b);
+  });
+});
+
+/**
+ * organizationIds/ehProvider chegam PRONTOS de quem chama (decidirEscopo, em
+ * @desigual-os/auth) — mcp-domain só precisa repassar sem alterar. O teste
+ * aqui é o contrato: o principal carrega exatamente o que foi calculado,
+ * `organizationId` (ativa) continua existindo do jeito que sempre existiu.
+ */
+describe('escopo de plataforma no principal', () => {
+  it('organizationIds e ehProvider são repassados sem alteração', () => {
+    const p = montarPrincipal(membership('MANAGER'), ['desigual.read'], 's1', {
+      organizationIds: ['org1', 'org2'],
+      ehProvider: true,
+    });
+    expect(p.organizationIds).toEqual(['org1', 'org2']);
+    expect(p.ehProvider).toBe(true);
+  });
+
+  it('padrão restritivo: sem escopo de plataforma, ehProvider é false', () => {
+    const p = montarPrincipal(membership('SUPER_ADMIN'), [...MCP_SCOPES], 's1', escopoNeutro);
+    expect(p.ehProvider).toBe(false);
+  });
+
+  it('organizationId (ativa) continua existindo, independente de organizationIds', () => {
+    const p = montarPrincipal(membership('VIEWER'), [], 's1', { organizationIds: ['org1', 'org2', 'org3'], ehProvider: false });
+    expect(p.organizationId).toBe('org1');
   });
 });

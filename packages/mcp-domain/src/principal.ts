@@ -15,8 +15,28 @@ import { papelDaMembership, scopesEfetivos, temScope, type McpRole, type McpScop
 export interface McpPrincipal {
   /** `users.id` — quem é a pessoa no Desigual OS. */
   userId: string;
-  /** `organizations.id` — a fronteira de tenant. Toda query é recortada por ela. */
+  /**
+   * `organizations.id` — a organização ATIVA desta sessão. Continua sendo a
+   * fronteira de toda query (`exigirMesmaOrganizacao`): nada aqui muda esse
+   * comportamento, nenhuma tool passa a atravessar organização sozinha.
+   */
   organizationId: string;
+  /**
+   * TODAS as organizações de que esta pessoa é membro — não só a ativa.
+   * Mesmo campo que `apps/api` expõe em `/me` (`organizacoes`), calculado
+   * pela mesma regra (`decidirEscopo`, `@desigual-os/auth`). Existe pra dar
+   * base a uma tool de nível de plataforma decidir atravessar organização —
+   * de propósito, NENHUMA tool hoje lê este campo pra isso. Adicionar o
+   * dado não é autorizar o atravessamento; é o primeiro passo dos dois.
+   */
+  organizationIds: string[];
+  /**
+   * Opera no nível da plataforma (Desigual). NUNCA true só por papel forte —
+   * exige também pertencer à organização provedora
+   * (`PROVIDER_ORGANIZATION_ID`). Mesma regra de `apps/api`, mesma fonte
+   * (`decidirEscopo`), pra não duplicar a decisão mais cara do produto.
+   */
+  ehProvider: boolean;
   /**
    * `organization_members.id`. A missão chama de `employee_id`: é a IDENTIDADE
    * DE TRABALHO, distinta da identidade de login. A mesma pessoa em duas
@@ -46,16 +66,26 @@ export interface MembershipRow {
  *
  * O papel vem SEMPRE do banco, nunca do token: é isso que faz a revogação de
  * privilégio valer no próximo turno, sem esperar o token expirar.
+ *
+ * `escopoDePlataforma` chega PRONTO de quem chama (apps/mcp), calculado por
+ * `decidirEscopo` (`@desigual-os/auth`) — este pacote fica sem depender de
+ * banco nem de `@desigual-os/auth` de propósito (mcp-domain é lógica pura).
+ * Duas opções aqui seriam errado: recalcular a regra (duplicaria a fonte
+ * canônica) ou importar o pacote inteiro só pelo tipo (acoplaria um domínio
+ * puro a infraestrutura). Receber o resultado já pronto evita as duas.
  */
 export function montarPrincipal(
   membership: MembershipRow,
   scopesDoToken: readonly string[],
   sessionId: string,
+  escopoDePlataforma: { organizationIds: string[]; ehProvider: boolean },
 ): McpPrincipal {
   const role = papelDaMembership(membership.role);
   return {
     userId: membership.userId,
     organizationId: membership.organizationId,
+    organizationIds: escopoDePlataforma.organizationIds,
+    ehProvider: escopoDePlataforma.ehProvider,
     employeeId: membership.employeeId,
     email: membership.email,
     name: membership.name,

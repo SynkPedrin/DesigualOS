@@ -27,6 +27,7 @@ function contexto(role: string, scopes: string[]): ContextoDaTool {
       { userId: 'u1', organizationId: 'org1', employeeId: 'e1', email: 'a@b.com', name: 'Alguém', role },
       scopes,
       's1',
+      { organizationIds: ['org1'], ehProvider: false },
     ),
     providers: {} as never,
     logger,
