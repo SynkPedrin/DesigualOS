@@ -42,6 +42,26 @@ const LINHA_DE_BASE = resolve(RAIZ, 'scripts/qa/suite-integra.baseline.json');
 const pacote = process.argv[2] ?? 'worker';
 const soConferir = process.argv.includes('--so-conferir');
 
+/**
+ * QUEDA INTENCIONAL, com motivo obrigatório.
+ *
+ * Existe porque a alternativa real é pior: sem uma saída explícita, a primeira
+ * vez que alguém MOVE testes entre pacotes (legítimo) a guarda reprova, e o
+ * caminho mais curto vira editar o JSON na mão — que esvazia a guarda de vez e
+ * ninguém percebe.
+ *
+ * O motivo fica gravado na linha de base. "Aceitei porque estava vermelho" não
+ * é motivo, e ter que escrever um obriga a pensar se a queda é mesmo esperada.
+ *
+ *   node scripts/qa/suite-integra.mjs api --aceitar-queda "8 testes movidos para packages/auth"
+ */
+const idxQueda = process.argv.indexOf('--aceitar-queda');
+const motivoDaQueda = idxQueda > -1 ? (process.argv[idxQueda + 1] ?? '').trim() : '';
+if (idxQueda > -1 && motivoDaQueda.length < 10) {
+  console.error('[suite-integra] --aceitar-queda exige um motivo escrito (mín. 10 caracteres).');
+  process.exit(1);
+}
+
 const saida = resolve(RAIZ, `.tmp-suite-integra-${pacote}.json`);
 
 console.log(`[suite-integra] rodando @desigual-os/${pacote}...`);
@@ -89,8 +109,23 @@ if (anterior) {
   }
 }
 
-if (problema) {
-  console.error(`\n[suite-integra] REPROVADO\n\n      ${problema}\n`);
+if (problema && motivoDaQueda) {
+  console.log(`[suite-integra] queda ACEITA: ${motivoDaQueda}`);
+  base[pacote] = {
+    total,
+    arquivos,
+    quando: new Date().toISOString().slice(0, 10),
+    quedaAceita: { motivo: motivoDaQueda, de: anterior?.total ?? null, para: total },
+  };
+  mkdirSync(dirname(LINHA_DE_BASE), { recursive: true });
+  writeFileSync(LINHA_DE_BASE, `${JSON.stringify(base, null, 2)}\n`);
+  problema = null;
+} else if (problema) {
+  console.error(
+    `\n[suite-integra] REPROVADO\n\n      ${problema}\n\n` +
+      `      Se a queda for esperada (teste movido de pacote, por exemplo):\n` +
+      `      node scripts/qa/suite-integra.mjs ${pacote} --aceitar-queda "o motivo"\n`,
+  );
   process.exit(1);
 }
 
