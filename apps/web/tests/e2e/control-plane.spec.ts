@@ -97,22 +97,24 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     await expect(endpoint).toBeVisible({ timeout: 20_000 });
 
     /**
-     * ESPERA A CONSULTA ASSENTAR antes de contar.
+     * ESPERA O ESTADO FINAL APARECER, em vez de contar o tempo até o
+     * "Consultando" sumir.
      *
-     * A primeira versão contava na hora e reprovava com "0 estados" — porque a
-     * tela ainda dizia "Consultando", que é um estado legítimo e o único que o
-     * regex não cobre. Teste que lê antes do dado chegar acusa o produto de um
-     * defeito que é do teste; já aconteceu quatro vezes neste projeto em um dia.
+     * A diferença não é estilo: a cadeia é login -> /mcp/status (nossa API) ->
+     * /health (o servidor MCP, que é outro serviço, em outro provedor). Com
+     * dois workers competindo pelo login, isso passou de 30s e o teste reprovou
+     * uma tela que estava certa — conferido com sonda: as duas chamadas
+     * voltaram 200 e a tela dizia "No ar".
+     *
+     * Esperar pelo que se quer ver, e não pelo que se quer que suma, também diz
+     * melhor o que o teste protege.
      */
-    await expect(page.getByText('Consultando', { exact: true })).toHaveCount(0, { timeout: 30_000 });
+    const estadoFinal = page.getByText(/^(No ar|No ar · banco em \d+ms|Não respondeu|Sem endereço configurado|Não consegui ler o estado)/);
+    await expect(estadoFinal.first()).toBeVisible({ timeout: 60_000 });
+    expect(await estadoFinal.count(), 'a tela precisa declarar exatamente um estado do servidor').toBe(1);
 
-    // Um dos três, nunca dois: publicado, sem endereço, ou não consegui ler.
-    const estados = await page.getByText(/^(Publicado|Sem endereço configurado|Não consegui ler o estado)$/).count();
-    expect(estados, 'a tela precisa declarar exatamente um estado do servidor').toBe(1);
-
-    // Se diz publicado, tem que mostrar um endereço de verdade — não "—".
-    const publicado = await page.getByText('Publicado', { exact: true }).count();
-    if (publicado > 0) {
+    // Se diz que está no ar, tem que mostrar um endereço de verdade — não "—".
+    if ((await page.getByText(/^No ar/).count()) > 0) {
       await expect(endpoint).toContainText(/https?:\/\//);
     }
   });

@@ -13,8 +13,8 @@ import {
   Td,
   Th,
 } from '@/components/control/primitives';
-import { FERRAMENTAS_MCP, porEscopo } from '@/lib/mcp-tools';
 import { useMcpStatus } from '@/hooks/use-mcp-status';
+import { useFerramentasVivas, useSaudeDoMcp, porEscopo } from '@/hooks/use-mcp-servidor';
 
 /**
  * A PÁGINA DO MCP.
@@ -34,6 +34,20 @@ import { useMcpStatus } from '@/hooks/use-mcp-status';
  */
 export default function McpPage() {
   const { data: mcp, isPending, isError } = useMcpStatus();
+  /**
+   * PING DE VERDADE, não eco de configuração.
+   *
+   * A versão anterior dizia "Publicado" porque `MCP_PUBLIC_URL` estava setada —
+   * o que prova que alguém escreveu um endereço, não que existe servidor do
+   * outro lado. É a mesma classe do "não publicado" escrito em constante que
+   * esta tela já cometeu: as duas afirmam sem ler.
+   *
+   * Agora o navegador pergunta ao próprio servidor (`/health` é público e tem
+   * CORS pro nosso domínio), e o que aparece é o que ele respondeu, com a
+   * latência do banco dele junto.
+   */
+  const { data: saude, isPending: saudePendente, isError: saudeErro } = useSaudeDoMcp(mcp?.base);
+  const { data: ferramentas } = useFerramentasVivas(mcp?.base);
 
   const taxa = mcp && mcp.chamadas_24h > 0 ? Math.round((mcp.sucessos_24h / mcp.chamadas_24h) * 100) : null;
 
@@ -49,14 +63,23 @@ export default function McpPage() {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="font-heading text-base font-semibold text-branco-cru">Desigual MCP</p>
-              {isPending ? (
+              {isPending || (mcp?.base && saudePendente) ? (
                 <StatusLabel estado="desconhecido">Consultando</StatusLabel>
               ) : isError ? (
                 <StatusLabel estado="erro">Não consegui ler o estado</StatusLabel>
-              ) : mcp?.endpoint ? (
-                <StatusLabel estado="ok">Publicado</StatusLabel>
-              ) : (
+              ) : !mcp?.endpoint ? (
                 <StatusLabel estado="atencao">Sem endereço configurado</StatusLabel>
+              ) : saudeErro ? (
+                // Endereço existe e o servidor não respondeu. É o caso que a
+                // versão anterior mostrava como "Publicado", verde.
+                <StatusLabel estado="erro">Não respondeu</StatusLabel>
+              ) : saude?.status === 'ok' ? (
+                <StatusLabel estado="ok">
+                  No ar
+                  {saude.banco?.ok && ` · banco em ${saude.banco.latencia_ms}ms`}
+                </StatusLabel>
+              ) : (
+                <StatusLabel estado="atencao">{saude?.status ?? 'estado desconhecido'}</StatusLabel>
               )}
             </div>
             <div className="min-w-0 text-right">
@@ -147,7 +170,7 @@ export default function McpPage() {
               <Numero rotulo="Chamadas" valor={String(mcp?.chamadas_24h ?? 0)} />
               <Numero rotulo="Sucesso" valor={taxa === null ? '—' : `${taxa}%`} />
               <Numero rotulo="Ferramentas usadas" valor={String(mcp?.por_ferramenta.length ?? 0)} />
-              <Numero rotulo="Escritas no servidor" valor={String(FERRAMENTAS_MCP.length)} />
+              <Numero rotulo="Servidas pelo MCP" valor={ferramentas ? String(ferramentas.length) : '—'} />
             </div>
             <Tabela>
               <thead>
@@ -180,7 +203,7 @@ export default function McpPage() {
       </Secao>
 
       <Secao
-        titulo={`Ferramentas escritas no servidor (${FERRAMENTAS_MCP.length})`}
+        titulo={ferramentas ? `Ferramentas servidas (${ferramentas.length})` : 'Ferramentas servidas'}
         acao={
           <Link
             href="/tools"
@@ -191,34 +214,41 @@ export default function McpPage() {
           </Link>
         }
       >
-        <Tabela>
-          <thead>
-            <tr>
-              <Th className="w-36">Escopo</Th>
-              <Th>Ferramentas</Th>
-              <Th className="w-24">Acesso</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...porEscopo().entries()].map(([escopo, ferramentas]) => (
-              <tr key={escopo}>
-                <Td className="whitespace-nowrap font-mono text-[13px]">{escopo}</Td>
-                <Td className="text-nevoa">{ferramentas.map((f) => f.nome).join(', ')}</Td>
-                <Td>
-                  <span
-                    className={
-                      ferramentas[0]?.acesso === 'WRITE'
-                        ? 'font-mono text-[11px] text-aviso'
-                        : 'font-mono text-[11px] text-nevoa'
-                    }
-                  >
-                    {ferramentas[0]?.acesso === 'WRITE' ? 'ESCRITA' : 'LEITURA'}
-                  </span>
-                </Td>
+        {!ferramentas ? (
+          <SemNadaAinda
+            titulo="Não consegui ler as ferramentas"
+            explicacao="O inventário vem do próprio servidor. Prefiro dizer que não li a mostrar uma lista guardada — a última que ficou salva já estava com duas ferramentas a menos que a realidade."
+          />
+        ) : (
+          <Tabela>
+            <thead>
+              <tr>
+                <Th className="w-36">Escopo</Th>
+                <Th>Ferramentas</Th>
+                <Th className="w-24">Acesso</Th>
               </tr>
-            ))}
-          </tbody>
-        </Tabela>
+            </thead>
+            <tbody>
+              {[...porEscopo(ferramentas).entries()].map(([escopo, doEscopo]) => (
+                <tr key={escopo}>
+                  <Td className="whitespace-nowrap font-mono text-[13px]">{escopo}</Td>
+                  <Td className="text-nevoa">{doEscopo.map((f) => f.name).join(', ')}</Td>
+                  <Td>
+                    <span
+                      className={
+                        doEscopo[0]?.access === 'WRITE'
+                          ? 'font-mono text-[11px] text-aviso'
+                          : 'font-mono text-[11px] text-nevoa'
+                      }
+                    >
+                      {doEscopo[0]?.access === 'WRITE' ? 'ESCRITA' : 'LEITURA'}
+                    </span>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Tabela>
+        )}
       </Secao>
     </div>
   );

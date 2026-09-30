@@ -31,6 +31,8 @@ export interface ChamadaDeFerramenta {
 export interface McpStatus {
   /** `null` = a API não sabe o endereço público. Nunca um endereço plausível. */
   endpoint: string | null;
+  /** A base do servidor, pro navegador falar com ele direto (/health, /tools). */
+  base: string | null;
   conexoes_vivas: number;
   pessoas_conectadas: number;
   pessoas: PessoaConectada[];

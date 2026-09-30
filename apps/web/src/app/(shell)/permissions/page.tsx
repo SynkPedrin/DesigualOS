@@ -3,7 +3,7 @@
 import { ClaudeMark, ControlHeader, LinhasFantasma, Secao, SemNadaAinda, Tabela, Td, Th } from '@/components/control/primitives';
 import { useCollaborators } from '@/hooks/use-collaborators';
 import { useMcpStatus } from '@/hooks/use-mcp-status';
-import { FERRAMENTAS_MCP } from '@/lib/mcp-tools';
+import { useFerramentasVivas } from '@/hooks/use-mcp-servidor';
 
 /**
  * PERMISSÕES — o que cada pessoa pode fazer pela inteligência.
@@ -26,8 +26,11 @@ import { FERRAMENTAS_MCP } from '@/lib/mcp-tools';
 export default function PermissionsPage() {
   const { data: pessoas, isPending, isError } = useCollaborators();
   const { data: mcp, isPending: mcpPendente } = useMcpStatus();
+  const { data: ferramentas } = useFerramentasVivas(mcp?.base);
 
-  const escopos = [...new Set(FERRAMENTAS_MCP.map((f) => f.escopo))].sort();
+  // Os escopos que EXISTEM no servidor, lidos dele. Uma lista fixa aqui
+  // envelheceria igual à de ferramentas, que já nasceu com duas a menos.
+  const escopos = [...new Set((ferramentas ?? []).map((f) => f.scope))].sort();
 
   return (
     <div className="mx-auto max-w-[1200px]">
@@ -80,7 +83,11 @@ export default function PermissionsPage() {
         ) : (mcp?.pessoas.length ?? 0) === 0 ? (
           <SemNadaAinda
             titulo="Ninguém autorizou o Claude ainda"
-            explicacao={`Os escopos existem no servidor (${escopos.join(', ')}) e são concedidos por pessoa no momento da conexão. Nenhuma concessão foi feita até agora.`}
+            explicacao={
+              escopos.length > 0
+                ? `Os escopos existem no servidor (${escopos.join(', ')}) e são concedidos por pessoa no momento da conexão. Nenhuma concessão foi feita até agora.`
+                : 'Os escopos são concedidos por pessoa no momento em que ela autoriza o Claude. Nenhuma concessão foi feita até agora.'
+            }
           />
         ) : (
           <>

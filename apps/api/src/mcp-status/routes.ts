@@ -35,6 +35,20 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
     }
 
     const endpoint = process.env.MCP_PUBLIC_URL ?? null;
+    /**
+     * A BASE do servidor, pro navegador poder falar direto com ele.
+     *
+     * O MCP expõe `/health` e `/tools` públicos e com CORS aberto pra origem do
+     * front (verificado ao vivo: o header volta com o domínio da Vercel). Então
+     * o painel chama aquilo direto, sem proxy, e o estado que ele mostra é um
+     * PING de verdade — não o eco da variável de ambiente daqui.
+     *
+     * A diferença importa: `MCP_PUBLIC_URL` configurada diz que alguém escreveu
+     * um endereço, não que existe servidor no outro lado. Dizer "Publicado" com
+     * base nisso é a mesma classe de erro que dizer "não publicado" com base em
+     * constante — as duas afirmam sem ler.
+     */
+    const base = endpoint ? endpoint.replace(/\/mcp\/?$/, '') : null;
 
     /**
      * CONEXÕES, por pessoa.
@@ -124,6 +138,7 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
       // `null` quando a variável não está configurada. A tela decide o que
       // dizer — nunca um endereço plausível inventado aqui.
       endpoint,
+      base,
       // "Conectado" é sobre haver conexão viva, não sobre o servidor responder:
       // quem sabe se o servidor responde é o próprio servidor, e ele não é este.
       conexoes_vivas: tokens.length,

@@ -48,6 +48,24 @@ export function NotificationInboxPopup() {
     return () => clearTimeout(timeout);
   }, [batch]);
 
+  /**
+   * A PRIMEIRA LEVA NÃO ABRE O POPUP.
+   *
+   * Popup é pra avisar do que CHEGA enquanto a pessoa está trabalhando. O que
+   * já estava lá quando ela entrou é acervo, e acervo é trabalho do sino, não
+   * de um painel que cobre a tela.
+   *
+   * Medido em 29/09/2026, com o Control Plane novo: 30 não lidas acumuladas
+   * viravam uma parede sobre metade do dashboard, exatamente na tela cujo
+   * objetivo é ser entendida em dez segundos. O badge do sino continua
+   * contando as 30 — ninguém perde nada, só para de ser empurrado.
+   *
+   * O mesmo raciocínio que já tinha movido este popup do canto superior
+   * esquerdo (onde cobria a sidebar) em 05/09: o problema nunca foi a
+   * notificação, foi ela ocupar espaço que é de outra coisa.
+   */
+  const primeiraLevaIgnorada = useRef(false);
+
   useEffect(() => {
     if (!notifications) return;
 
@@ -57,8 +75,20 @@ export function NotificationInboxPopup() {
     if (unseenUnread.length === 0) return;
     for (const notification of unseenUnread) shownIds.current.add(notification.id);
 
+    // A primeira resposta da query é o acervo: marca como visto e não abre.
+    if (!primeiraLevaIgnorada.current) {
+      primeiraLevaIgnorada.current = true;
+      return;
+    }
+
     if (insideStudio) return;
-    setBatch((current) => [...current, ...unseenUnread]);
+    /**
+     * TETO DE TRÊS. Mesmo depois da primeira leva, uma rajada (o worker
+     * terminando cinco execuções juntas) empilharia cinco cartões. Três é o
+     * que cabe sem virar parede; o resto chega pelo sino, que é onde o acervo
+     * mora.
+     */
+    setBatch((current) => [...current, ...unseenUnread].slice(-3));
   }, [notifications, insideStudio]);
 
   function dismissAll() {
