@@ -4,6 +4,7 @@ import { Building2 } from 'lucide-react';
 import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusLabel } from '@/components/control/primitives';
 import { useOrganizations, type EmpresaResumo } from '@/hooks/use-organizations';
 import { useMe } from '@/hooks/use-me';
+import { NovaEmpresa } from '@/components/control/nova-empresa';
 
 /**
  * EMPRESAS — a tela do provedor (seção 60 do briefing).
@@ -47,6 +48,12 @@ export default function EmpresasPage() {
         title="Empresas"
         description="Cada empresa atendida, com o que dá para medir hoje: gente, carteira, conhecimento e última atividade."
       />
+
+      {/* O botão vem ANTES da lista: criar empresa é a ação principal desta
+        * tela, não um detalhe no rodapé. */}
+      <Secao titulo="Criar">
+        <NovaEmpresa />
+      </Secao>
 
       <Secao titulo={empresas.length === 1 ? '1 empresa' : `${empresas.length} empresas`}>
         {isPending ? (

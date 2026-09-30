@@ -5,14 +5,9 @@
     "quando": "2026-09-30"
   },
   "api": {
-    "total": 132,
-    "arquivos": 20,
-    "quando": "2026-09-30",
-    "quedaAceita": {
-      "motivo": "8 testes da regra pura movidos para packages/auth, que foi de 25 para 33",
-      "de": 140,
-      "para": 132
-    }
+    "total": 140,
+    "arquivos": 21,
+    "quando": "2026-09-30"
   },
   "web": {
     "total": 261,
