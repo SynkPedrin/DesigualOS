@@ -176,6 +176,24 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         body.conversation_id ?? 'new',
         body.project_id ?? '',
         body.message,
+        /**
+         * O AGENTE ENTRA NA CHAVE, pelo mesmo motivo do brief de motion logo
+         * abaixo: a mesma frase dita a DUAS pessoas diferentes são dois
+         * pedidos, não um repetido.
+         *
+         * Sem isto, perguntar "e aí, tudo certo?" ao Bento e, em seguida,
+         * escolher o Otto e perguntar a mesma coisa devolvia HTTP 409 —
+         * "Esta mensagem já está sendo processada" — e o segundo agente
+         * simplesmente não respondia. A tela continuava mostrando a resposta
+         * do primeiro, então parecia que o agente escolhido tinha sido
+         * ignorado pelo roteamento.
+         *
+         * Achado em 30/09/2026 interceptando o POST: era este 409, não
+         * roteamento. A janela de 15s é curta, mas trocar de agente e repetir
+         * a pergunta é justamente o que alguém faz para comparar respostas —
+         * e é o caso que mais cai dentro dela.
+         */
+        body.agent_hint,
         ...attachments.map((a) => a.url),
         // O brief entra na chave: dois "Gerar Motion" com cards diferentes
         // não são o mesmo pedido, mesmo com a mesma mensagem texto.
