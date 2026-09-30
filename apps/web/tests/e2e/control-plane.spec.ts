@@ -16,6 +16,20 @@ import { EMAIL, PASSWORD, login } from './tammy-harness';
 
 test.skip(!EMAIL || !PASSWORD, 'QA_USER_EMAIL/QA_USER_PASSWORD ausentes');
 
+/**
+ * UM WORKER SÓ, e o motivo é medido.
+ *
+ * Estas telas batem em serviços REAIS: a nossa API, o Supabase no login, e —
+ * na tela de MCP — um servidor em outro provedor. Com dois workers, a cadeia
+ * login -> API -> Railway passou de 60s e o teste reprovou uma tela que estava
+ * certa (sonda confirmou: as duas chamadas voltaram 200 e a tela dizia "No
+ * ar"). Em série, a mesma suíte passa inteira.
+ *
+ * Paralelizar aqui não economiza tempo de verdade: troca minutos de relógio por
+ * falha intermitente, e falha intermitente é como se aprende a ignorar suíte.
+ */
+test.describe.configure({ mode: 'default', retries: 0 });
+
 const TELAS = [
   { rota: '/', titulo: /Control Plane/i },
   { rota: '/activity', titulo: /Atividade/i },
@@ -128,5 +142,63 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     const semNinguem = await page.getByText(/Ninguém conectou ainda/i).count();
     const semLeitura = await page.getByText(/Não consegui ler as conexões/i).count();
     expect(semNinguem + semLeitura, 'ausência e falha de leitura não podem coexistir').toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * A CAMADA DE INTELIGÊNCIA APLICADA A UMA CONTA.
+ *
+ * Duas propriedades que separam "painel de tarefas" de "camada de
+ * inteligência", e que já divergiram entre telas neste produto:
+ *
+ *   1. Clientes e Overview contam a MESMA carteira. Enquanto a grade tratava
+ *      fixture de teste como cliente, o Overview dizia 49 e a grade mostrava 58
+ *      — a família de defeito mais cara deste projeto (1222 x 411, 33 x 35).
+ *   2. A ficha do cliente mostra o que o sistema APRENDEU, não só o que está
+ *      aberto no ClickUp.
+ */
+test.describe('inteligência por cliente', () => {
+  test.setTimeout(180_000);
+
+  test('a tela de Clientes conta a carteira, não a tabela inteira', async ({ page }) => {
+    await login(page);
+    await page.goto('/clients');
+    /**
+     * Espera OS CARDS, que são a precondição real — e não o chip de
+     * "Carregando..." sumir.
+     *
+     * Duas tentativas anteriores erraram por esperar a coisa errada: primeiro
+     * eu não esperei nada, depois esperei o chip do usuário, que com dois
+     * workers competindo pelo login demora mais de 30s e não tem relação
+     * nenhuma com a lista de clientes ter chegado.
+     *
+     * A regra que sai disso, e que já valeu pra tela de MCP hoje: espere o que
+     * você quer VER, e que o próprio teste depende — não um sintoma vizinho.
+     */
+    await expect(page.locator('[data-client-id]').first()).toBeVisible({ timeout: 60_000 });
+    // A descrição do cabeçalho separa carteira de interno e de teste.
+    await expect(page.getByText(/\d+ na carteira/)).toBeVisible({ timeout: 30_000 });
+  });
+
+  test('a ficha do cliente tem aba de Memória', async ({ page }) => {
+    await login(page);
+    await page.goto('/clients');
+    // Abre a primeira conta da grade. O card É a precondição — esperar por ele
+    // dispensa esperar qualquer outro sinal de carregamento.
+    const primeiro = page.locator('[data-client-id]').first();
+    await expect(primeiro).toBeVisible({ timeout: 60_000 });
+    await primeiro.click();
+    const aba = page.getByRole('button', { name: 'Memória', exact: true });
+    await expect(aba).toBeVisible({ timeout: 20_000 });
+    await aba.click();
+    /**
+     * A prova é NEGATIVA e é a que importa: a aba precisa dizer alguma coisa —
+     * registros, "nada aprendido ainda", ou falha de leitura. O que ela não
+     * pode é ficar em branco, que é o estado em que ninguém sabe se o sistema
+     * não sabe nada ou se não conseguiu ler.
+     */
+    await expect(
+      page.getByText(/registro\(s\)|Nada aprendido sobre este cliente|Não consegui ler a memória/),
+    ).toBeVisible({ timeout: 30_000 });
   });
 });

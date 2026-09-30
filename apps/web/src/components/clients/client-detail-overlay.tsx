@@ -10,13 +10,21 @@ import { GrantAccessForm } from './grant-access-form';
 import { ClickUpTaskRow } from './clickup-task-row';
 import { ClickUpTaskCommentsPanel } from './clickup-task-comments';
 import { ClientOverviewPanel } from './client-overview-panel';
+import { ClientMemoryPanel } from './client-memory-panel';
 import { ClientStudioGallery } from './client-studio-gallery';
 import { useClientClickUpTasks } from '@/hooks/use-client-clickup-tasks';
 import { ApiRequestError } from '@/lib/api/client';
 import type { ClientSummary } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
-const BASE_TABS = ['ClickUp', 'Visão Geral', 'Conversas', 'Studio'] as const;
+/**
+ * "Memória" entra ao lado de "Visão Geral" (29/09/2026): a ficha passou a
+ * mostrar o que o sistema APRENDEU sobre a conta, não só o que está aberto
+ * nela. É a promessa de camada de inteligência aplicada a um cliente — e o
+ * lugar onde quem vai produzir descobre a regra ANTES do retrabalho, em vez de
+ * depois.
+ */
+const BASE_TABS = ['ClickUp', 'Visão Geral', 'Memória', 'Conversas', 'Studio'] as const;
 /** "Acesso" só pra master - mesma regra da tela antiga, não afrouxa nada. */
 const MASTER_TABS = [...BASE_TABS, 'Acesso'] as const;
 type Tab = (typeof MASTER_TABS)[number];
@@ -150,6 +158,8 @@ export function ClientDetailOverlay({ client, onClose }: { client: ClientSummary
           {tab === 'ClickUp' && <TasksPanel clientId={client.id} clickupUrl={clickupUrl} />}
 
           {tab === 'Visão Geral' && <ClientOverviewPanel clientId={client.id} />}
+
+          {tab === 'Memória' && <ClientMemoryPanel clientId={client.id} />}
 
           {tab === 'Conversas' && <ClickUpTaskCommentsPanel clientId={client.id} />}
 

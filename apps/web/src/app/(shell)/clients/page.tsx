@@ -49,7 +49,32 @@ function ClientsPageContent() {
       <PageHeader
         eyebrow="Contas"
         title="Clientes"
-        description="Clientes vindos do ClickUp e projetos criados por aqui. Clique num card para abrir a ficha completa."
+        /**
+         * A CONTAGEM DIZ O MESMO QUE O CONTROL PLANE.
+         *
+         * O Overview separa carteira de trabalho interno e de fixture de teste,
+         * usando o classificador do backend. Esta tela mostrava os 58 como
+         * iguais e o Overview dizia 49 — duas telas do MESMO produto
+         * discordando do que é cliente, que é a família de defeito mais cara
+         * deste projeto (1222 x 411, 58 x 49, 33 x 35 ferramentas).
+         *
+         * Nada some: fixture continua listada, porque apagar do cadastro é
+         * decisão de quem cuida do cadastro. Só deixa de ser contada como
+         * cliente.
+         */
+        description={
+          clients
+            ? [
+                `${clients.filter((c) => c.natureza === 'CLIENTE').length} na carteira`,
+                clients.filter((c) => c.natureza === 'INTERNO').length > 0 &&
+                  `${clients.filter((c) => c.natureza === 'INTERNO').length} frente(s) interna(s)`,
+                clients.filter((c) => c.natureza === 'FIXTURE').length > 0 &&
+                  `${clients.filter((c) => c.natureza === 'FIXTURE').length} de teste`,
+              ]
+                .filter(Boolean)
+                .join(' · ') + '. Clique num card para abrir a ficha completa.'
+            : 'Clientes vindos do ClickUp e projetos criados por aqui. Clique num card para abrir a ficha completa.'
+        }
         actions={
           <button
             type="button"
