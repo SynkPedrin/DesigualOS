@@ -65,6 +65,32 @@ export interface RegistrarToolDeps {
   contextoDaChamada: () => ContextoDaTool | null;
 }
 
+export interface MetadadosDeTool {
+  name: string;
+  description: string;
+  scope: McpScope;
+  access: TipoDeAcesso;
+  resource: string;
+}
+
+/**
+ * Metadados públicos de tool, para o `GET /tools` do server — nome, descrição,
+ * scope, tipo de acesso. NUNCA dado de negócio, e por isso é seguro deixar sem
+ * autenticação: é a mesma informação que `tools/list` do protocolo MCP já
+ * devolve para qualquer cliente autenticado, só que sem exigir o handshake
+ * OAuth inteiro para um painel apenas LISTAR o que existe.
+ *
+ * `Map` em vez de array: `montarServidor()` roda de novo a cada requisição (a
+ * correção da race condition do SDK — ver server.ts), então cada tool é
+ * "registrada" muitas vezes ao longo da vida do processo. Upsert por nome
+ * evita que o registro cresça sem limite.
+ */
+const REGISTRO_DE_METADADOS = new Map<string, MetadadosDeTool>();
+
+export function listarMetadadosDeTools(): MetadadosDeTool[] {
+  return [...REGISTRO_DE_METADADOS.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /**
  * Registra uma tool no servidor MCP com todas as portas no lugar.
  *
@@ -75,6 +101,9 @@ export function registrarTool<TInput extends z.ZodRawShape>(
   deps: RegistrarToolDeps,
   def: DefinicaoDeTool<TInput>,
 ): void {
+  REGISTRO_DE_METADADOS.set(def.nome, {
+    name: def.nome, description: def.descricao, scope: def.scope, access: def.acesso, resource: def.recurso,
+  });
   /**
    * O `as never` na assinatura do callback é a ÚNICA concessão de tipagem deste
    * arquivo, e ela mora aqui de propósito: o SDK infere os argumentos com

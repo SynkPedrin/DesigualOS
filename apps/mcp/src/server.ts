@@ -19,7 +19,10 @@ import { registrarToolsDeMemoriaEEventos } from './tools/memory-events.js';
 import { registrarToolsDeOperacao } from './tools/operation.js';
 import { registrarToolsV1 } from './tools/v1.js';
 import { registrarToolsV2 } from './tools/v2.js';
+import { db } from '@desigual-os/database';
+import { sql } from 'drizzle-orm';
 import type { ContextoDaTool } from './tools/kit.js';
+import { listarMetadadosDeTools } from './tools/kit.js';
 import { renderConsentPage } from './consent-page.js';
 
 /**
@@ -161,9 +164,43 @@ async function main(): Promise<void> {
   app.use(cors({ origin: true, exposedHeaders: ['Mcp-Session-Id', 'WWW-Authenticate'] }));
   app.use(express.json({ limit: '2mb' }));
 
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', service: 'desigual-os-mcp', version: '0.1.0', timestamp: new Date().toISOString() });
+  /**
+   * PÚBLICO, sem autenticação — de propósito. Um painel de status (interno
+   * ou de terceiro) precisa distinguir "está no ar" de "está configurado":
+   * `MCP_PUBLIC_URL` setada não prova que o processo responde, só que alguém
+   * pretende que ele responda. Por isso o ping ao banco é real, não decorativo
+   * — mesma checagem que `get_health` (tool autenticada) faz, sem exigir o
+   * handshake OAuth só para saber se o serviço está de pé.
+   */
+  app.get('/health', async (_req, res) => {
+    const inicio = Date.now();
+    const bancoOk = await db.execute(sql`select 1 as ok`).then(() => true).catch(() => false);
+    res.json({
+      status: bancoOk ? 'ok' : 'degraded',
+      service: 'desigual-os-mcp',
+      version: '0.1.0',
+      banco: { ok: bancoOk, latencia_ms: Date.now() - inicio },
+      timestamp: new Date().toISOString(),
+    });
   });
+
+  /**
+   * PÚBLICO, sem autenticação — a mesma informação que `tools/list` do
+   * protocolo MCP devolve para qualquer cliente autenticado, só que sem exigir
+   * o handshake OAuth inteiro para um painel apenas LISTAR o que existe. Nunca
+   * dado de negócio: nome, descrição, scope, tipo de acesso.
+   */
+  app.get('/tools', (_req, res) => {
+    res.json({ tools: listarMetadadosDeTools(), count: listarMetadadosDeTools().length });
+  });
+
+  /**
+   * Sem isto, `/tools` devolveria lista vazia até o primeiro `/mcp` real —
+   * o registro só se popula quando `montarServidor()` roda. Zero I/O, então
+   * pagar o custo aqui no boot (em vez de esperar o primeiro Claude conectar)
+   * não atrasa nada que importe.
+   */
+  montarServidor();
 
   /**
    * Endpoints OAuth do SDK: discovery, /authorize, /token, /register, /revoke.
