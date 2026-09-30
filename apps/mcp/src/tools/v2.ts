@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
-import { classificarStatusFuncional } from '@desigual-os/context-engine';
+import { classificarStatusFuncional, escopoOperacional } from '@desigual-os/context-engine';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
+import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
 
 /**
  * v2.ts — a segunda leva do contrato original: aprovação e atividade dos
@@ -176,6 +177,82 @@ export function registrarToolsV2(deps: RegistrarToolDeps): void {
           entity: s.entityType ? `${s.entityType}${s.entityId ? `:${s.entityId}` : ''}` : null,
           created_at: s.createdAt,
         })),
+      };
+    },
+  });
+
+  registrarTool(deps, {
+    nome: 'get_brain_overview',
+    descricao:
+      'O retrato de quanto a memória institucional já sabe: quantos clientes na carteira, quanta memória ativa ' +
+      '(decisão, preferência, aprendizado) e quantas decisões recentes. É a resposta pronta pra "o que o Bento já ' +
+      'aprendeu?" — use ao conectar um Claude novo ou quando alguém perguntar o tamanho do que já foi registrado. ' +
+      'Cada número é contado agora, direto do banco — nunca estimado.',
+    entrada: {
+      client_id: z.string().uuid().optional().describe('Restringe o retrato a um cliente específico.'),
+      decisions_days: z.number().int().min(1).max(180).optional().describe('Janela para "decisões recentes". Padrão 30.'),
+    },
+    scope: 'desigual.read',
+    acesso: 'READ',
+    recurso: 'brain_overview',
+    executar: async (args, ctx) => {
+      if (args.client_id) await carregarClienteDaOrganizacao(ctx.principal, args.client_id);
+      const janelaDias = args.decisions_days ?? 30;
+      const desde = new Date(Date.now() - janelaDias * 86_400_000);
+
+      /**
+       * Carteira: mesma exclusão de fixture/interno que o resto do produto usa
+       * (escopoOperacional) — sem isso, conta de QA e linha interna inflariam
+       * "clientes na carteira" pra quem só quer saber o tamanho real.
+       */
+      const clientesBrutos = args.client_id
+        ? [{ id: args.client_id, name: '' }]
+        : await db
+            .select({ id: schema.clients.id, name: schema.clients.name })
+            .from(schema.clients)
+            .where(and(eq(schema.clients.organizationId, ctx.principal.organizationId), sql`deleted_at is null`));
+      const carteira = args.client_id ? clientesBrutos : escopoOperacional(clientesBrutos);
+      const idsDaCarteira = carteira.map((c) => c.id);
+
+      const condicoesMemoria = [eq(schema.memories.status, 'active'), somenteMemoriaVisivelNoMcp(ctx.principal.userId)];
+      if (args.client_id) condicoesMemoria.push(eq(schema.memories.clientId, args.client_id));
+      const [memorias] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.memories)
+        .where(and(...condicoesMemoria));
+
+      const condicoesDecisao = [
+        eq(schema.operationalEvents.organizationId, ctx.principal.organizationId),
+        or(
+          eq(schema.operationalEvents.type, 'CLIENT_DECISION'),
+          eq(schema.operationalEvents.type, 'STRATEGY_CHANGED'),
+          eq(schema.operationalEvents.type, 'CREATIVE_APPROVED'),
+          eq(schema.operationalEvents.type, 'CREATIVE_REJECTED'),
+        )!,
+        sql`coalesce(${schema.operationalEvents.occurredAt}, ${schema.operationalEvents.createdAt}) >= ${desde.toISOString()}`,
+      ];
+      if (args.client_id) condicoesDecisao.push(eq(schema.operationalEvents.clientId, args.client_id));
+      const [decisoes] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.operationalEvents)
+        .where(and(...condicoesDecisao));
+
+      const [ultimaMemoria] = await db
+        .select({ at: schema.memories.updatedAt })
+        .from(schema.memories)
+        .where(and(...condicoesMemoria))
+        .orderBy(desc(schema.memories.updatedAt))
+        .limit(1);
+
+      return {
+        clients_in_portfolio: args.client_id ? null : idsDaCarteira.length,
+        memories_count: memorias?.n ?? 0,
+        decisions_count: decisoes?.n ?? 0,
+        decisions_window_days: janelaDias,
+        last_memory_update: ultimaMemoria?.at ?? null,
+        nota: idsDaCarteira.length === 0 && !args.client_id
+          ? 'Carteira vazia ou sem rastreio — não é ausência de dado, é o estado real agora.'
+          : undefined,
       };
     },
   });
