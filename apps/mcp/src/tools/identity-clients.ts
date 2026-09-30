@@ -119,7 +119,9 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
     nome: 'get_client_context',
     descricao:
       'O RESUMO OPERACIONAL de um cliente, pronto para trabalhar: quem é, o que está aberto, o que está atrasado, ' +
-      'e o que a agência já aprendeu sobre ele. É a primeira chamada antes de criar qualquer peça para esse cliente.',
+      'o perfil completo (brain e dossiê, quando existem) e as memórias recentes registradas sobre ele. É a ' +
+      'primeira chamada antes de criar qualquer peça para esse cliente — leia client_profile antes de escrever ' +
+      'qualquer coisa, é onde mora tom de voz, restrição e histórico que ninguém deveria adivinhar.',
     entrada: {
       client_id: z.string().uuid().describe('Id do cliente. Use search_clients se só tiver o nome.'),
       include_memory: z.boolean().optional().describe('Trazer decisões e preferências registradas. Padrão true.'),
@@ -136,6 +138,57 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
       };
 
       if (args.include_memory !== false && ctx.principal.scopes.includes('memory.read')) {
+        /**
+         * PERFIL DO CLIENTE (brain + dossiê), MEDIDO SEPARADO DO RESTO (30/09/2026).
+         *
+         * Antes, o perfil competia pelas mesmas 8 vagas que episódio de
+         * agente (curto, frequente, sempre mais recente). Medido no Cosentino:
+         * 3 registros de client.profile na base (brain 6692 chars, dossiê 2766,
+         * mais um terceiro órfão de 11983) e NENHUM entrava no top-8 — todas as
+         * 8 vagas eram tomadas por `agent.episode`. Toda vez que o Claude de
+         * alguém chamava esta tool pra "conhecer" um cliente, recebia zero
+         * conteúdo de brain e zero de dossiê.
+         *
+         * `metadata->>'subject' is not null` exclui o registro órfão: ele vem
+         * de um importador anterior (import-client-memories.ts) que nunca
+         * marcou subject, e sync-brains.mts/sync-dossies.mts (os que rodam
+         * hoje) sempre marcam `cliente:<id>:brain` / `cliente:<id>:dossie`.
+         * Sem o filtro, o órfão (o maior dos três, 11983 chars) venceria por
+         * tamanho e desperdiçaria o orçamento com conteúdo desatualizado e sem
+         * proveniência.
+         */
+        const perfis = await db
+          .select({
+            id: schema.memories.id, content: schema.memories.content,
+            metadata: schema.memories.metadata, updatedAt: schema.memories.updatedAt,
+          })
+          .from(schema.memories)
+          .where(
+            and(
+              eq(schema.memories.clientId, cliente.id),
+              eq(schema.memories.kind, 'client.profile'),
+              eq(schema.memories.status, 'active'),
+              sql`${schema.memories.metadata}->>'subject' is not null`,
+            ),
+          )
+          .orderBy(desc(schema.memories.updatedAt));
+        /** Mesmo rótulo que build-context.ts usa (rotuloDaFonte) — consistência entre Bento e o Claude do funcionário. */
+        const ROTULO_DA_FONTE: Record<string, string> = { brain: 'Perfil criativo (brain)', dossie: 'Ficha operacional (dossiê)' };
+        contexto.client_profile = perfis.map((p) => {
+          const subject = String((p.metadata as Record<string, unknown>).subject ?? '');
+          const chave = subject.split(':').pop() ?? '';
+          return {
+            fonte: ROTULO_DA_FONTE[chave] ?? chave ?? 'Perfil',
+            // 4000 chars cobre o brain inteiro do Cosentino (6692 -> ~60%) e o
+            // dossiê inteiro (2766 -> 100%). Custo: até dois perfis por
+            // chamada, ~1000 tokens cada no pior caso — pago só quando o
+            // Claude decide chamar esta tool, não em todo turno.
+            content: p.content.slice(0, 4000),
+            truncated: p.content.length > 4000,
+            updated_at: p.updatedAt,
+          };
+        });
+
         const memorias = await db
           .select({
             id: schema.memories.id, kind: schema.memories.kind, content: schema.memories.content,
@@ -147,6 +200,9 @@ export function registrarToolsDeIdentidadeEClientes(deps: RegistrarToolDeps): vo
             and(
               eq(schema.memories.clientId, cliente.id),
               eq(schema.memories.status, 'active'),
+              // client.profile já foi buscado acima, garantido — não compete
+              // mais pelas vagas de atividade recente.
+              sql`${schema.memories.kind} <> 'client.profile'`,
               // Hoje nenhuma memória privada tem cliente, então esta linha não
               // muda nenhum resultado. Ela existe para o dia em que alguém
               // registrar uma nota privada SOBRE um cliente — que o produto
