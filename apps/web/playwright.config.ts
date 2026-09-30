@@ -21,7 +21,20 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
  * skip não pode mais acontecer por descuido de ambiente.
  */
 function carregarEnvLocal(): void {
-  for (const caminho of [resolve(AQUI, '.env.local'), resolve(AQUI, '../../.env.local')]) {
+  /**
+   * A ORDEM É A PRECEDÊNCIA: shell vence `.env.local`, que vence `.env`.
+   *
+   * `.env` entrou na lista porque a conferência de 30/09/2026 mostrou que
+   * `CLICKUP_API_KEY` mora só lá — e sem ela, os specs que provam escrita real
+   * no ClickUp desligavam sozinhos exatamente como os outros faziam por falta
+   * de QA_USER_*. Consertar uma fonte e deixar a outra fora seria fechar metade
+   * da porta.
+   */
+  for (const caminho of [
+    resolve(AQUI, '.env.local'),
+    resolve(AQUI, '../../.env.local'),
+    resolve(AQUI, '../../.env'),
+  ]) {
     if (!existsSync(caminho)) continue;
     for (const linha of readFileSync(caminho, 'utf8').split('\n')) {
       const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(linha);
