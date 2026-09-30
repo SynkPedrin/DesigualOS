@@ -7,6 +7,15 @@ RBAC de função, fronteira de tenant no backend. Complementa
 
 Tudo aqui foi medido em produção — banco real, deploy real — não estimado.
 
+> **Atualização (mesmo dia, depois da primeira versão deste documento):** a seção
+> 3.1 registrava um bloqueio — "Bento Master" precisa que o principal suporte mais
+> de uma organização, e eu não ia decidir isso sozinho. **A decisão já foi tomada**,
+> pela outra sessão com autorização direta do Pedro: `/me` agora devolve
+> `organizacoes` (todas as empresas da pessoa) e `eh_provider` (papel de
+> plataforma E pertencer à organização provedora, nunca só o papel — ver
+> `apps/api/src/lib/escopo-de-organizacao.ts`). A seção 3.1 abaixo fica como
+> registro do raciocínio; o estado real está na seção 5, no final.
+
 ---
 
 ## 1. O que já existe, funcionando, medido hoje
@@ -183,3 +192,28 @@ Fase A.
 
 Não implementei 2-4 porque cada um depende de uma decisão que não é só minha —
 exatamente a régua que a sessão paralela também está seguindo hoje.
+
+---
+
+## 5. Atualização — o bloqueio da seção 3.1 já foi decidido, não por mim
+
+A outra sessão implementou `apps/api/src/lib/escopo-de-organizacao.ts`, com aval
+direto do Pedro. Resumo da decisão, pra este documento não ficar desatualizado:
+
+- `organizationIds`: todas as organizações em que a pessoa é membro (o schema já
+  suportava isso — `organization_members` sempre permitiu várias linhas por
+  usuário, só ninguém pertencia a duas até agora).
+- `ehProvider`: **nunca** derivado só do papel. Exige papel de plataforma
+  (`master`/`provider_owner`/`provider_admin`) **E** pertencer à organização
+  provedora (`PROVIDER_ORGANIZATION_ID`, variável de ambiente — sem ela, ninguém
+  é provider; default restritivo de propósito).
+- As duas funções que carregam essa regra (`decidirEscopo`, `ehPapelDePlataforma`)
+  são puras — testáveis sem banco.
+
+**O que isso muda no meu lado:** o núcleo puro dessa decisão precisa morar em
+`packages/auth` (não em `apps/api`, que `apps/mcp` não importa) pra eu reaproveitar
+em vez de duplicar a mesma regra — exatamente o erro que a seção 83 do prompt
+master pede pra evitar, e que este projeto já cometeu duas vezes no mesmo dia com
+a visibilidade de memória. Propus a extração à outra sessão; a Fase A do meu lado
+(principal com múltiplas organizações) começa assim que isso se resolver, não
+antes — reaproveitar a fonte única continua sendo a regra, mesmo sob pressa.
