@@ -34,6 +34,11 @@ export interface FichaDaEmpresa {
   };
   pessoas: PessoaDaEmpresa[];
   numeros: { clientes: number; pessoas: number; memorias: number; conversas: number };
+  /** Um ponto por dia, incluindo os dias de silêncio — o silêncio é o que o
+   *  dono precisa ver. A janela pode ser menor que 30 dias numa empresa nova. */
+  atividade: { dia: string; mensagens: number; execucoes: number }[];
+  atividade_desde: string | null;
+  ultima_atividade: string | null;
   criada_em: string | null;
 }
 

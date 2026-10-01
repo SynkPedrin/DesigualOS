@@ -205,6 +205,22 @@ async function start(): Promise<void> {
     global: true,
     max: 300,
     timeWindow: '1 minute',
+    /**
+     * FORA DE PRODUÇÃO, a máquina local não conta.
+     *
+     * Medido em 01/10/2026: uma rodada da suíte de ponta a ponta produziu 140
+     * respostas 429, e o efeito foi um teste acusando a tela de não mostrar os
+     * números do painel. A tela estava certa — a API é que tinha parado de
+     * responder para aquele IP. Um instrumento que falha por esgotar o próprio
+     * limite acusa o produto por um defeito do ambiente, e é exatamente o tipo
+     * de falso vermelho que ensina a ignorar vermelho.
+     *
+     * EM PRODUÇÃO A LISTA É VAZIA, e isso não é detalhe: lá a API fica atrás de
+     * proxy, e o endereço de origem de TODA requisição é o do proxy. Liberar
+     * loopback em produção desligaria o limite inteiro, para todo mundo, em vez
+     * de liberar uma máquina — o contrário do que o limite existe para fazer.
+     */
+    allowList: isProd ? [] : ['127.0.0.1', '::1'],
   });
   await app.register(websocketPlugin);
   // 25 MB cobre foto de perfil, print de tela, áudio curto e PDF/doc/pptx

@@ -60,11 +60,14 @@ export async function requireTenant(request: FastifyRequest, reply: FastifyReply
     reply.code(400).send({ error: 'Invalid organization selector' }); return;
   }
 
-  const [vinculos, escopo, ativa] = await Promise.all([
-    vinculosDe(user.id),
-    escopoDeOrganizacao(user),
-    organizacaoAtivaDe(user),
-  ]);
+  /**
+   * Escopo e vínculos em paralelo (não dependem um do outro); a empresa ativa
+   * depois, RECEBENDO o escopo. Pedi-la junto no mesmo `Promise.all` parecia
+   * mais rápido e era mais lento: ela relia o escopo por dentro, e com
+   * `DATABASE_POOL_MAX=3` a consulta repetida vira fila, não desperdício.
+   */
+  const [vinculos, escopo] = await Promise.all([vinculosDe(user.id), escopoDeOrganizacao(user)]);
+  const ativa = await organizacaoAtivaDe(user, escopo);
 
   const escolha = decidirOrganizacaoDeTrabalho({
     pedida: typeof pedida === 'string' ? pedida : null,

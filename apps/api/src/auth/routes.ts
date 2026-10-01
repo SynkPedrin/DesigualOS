@@ -6,7 +6,7 @@ import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import { invalidateUserAccessCache, requireAuth } from './middleware';
 import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
-import { organizacaoDeTrabalhoDe } from '../organizations/contexto';
+import { contextoCompletoDe } from '../organizations/contexto';
 import { uploadUserFile } from '../lib/storage';
 import { sendResetPasswordEmail } from '../lib/email';
 
@@ -132,18 +132,19 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       return { error: 'Not authenticated' };
     }
 
-    const escopo = await escopoDeOrganizacao(user);
-    const organizacoes = escopo.organizationIds.length
-      ? await db
-          .select({ id: schema.organizations.id, name: schema.organizations.name })
-          .from(schema.organizations)
-          .where(inArray(schema.organizations.id, escopo.organizationIds))
-          .catch(() => [] as Array<{ id: string; name: string }>)
-      : [];
+    /**
+     * UMA ida ao banco para tudo que é de empresa, e não quatro.
+     *
+     * Medido: cada consulta contra este banco custa ~300ms de rede, qualquer
+     * que seja o tamanho dela. As quatro sequenciais que havia aqui faziam
+     * `/me` levar 1,3s — numa rota que toda navegação chama.
+     */
+    const contexto = await contextoCompletoDe(user);
+    const escopo = contexto.escopo;
 
     return {
       ...user,
-      organizacoes,
+      organizacoes: contexto.organizacoes,
       /**
        * A EMPRESA EM QUE A PESSOA ESTÁ AGORA.
        *
@@ -161,7 +162,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
        * e a gravação cair em outra — ordem de linha do banco decidindo o que a
        * regra já sabia responder.
        */
-      organizacao_ativa: await organizacaoDeTrabalhoDe(user),
+      organizacao_ativa: contexto.deTrabalho,
       /**
        * Opera no nível da plataforma. NUNCA derivado só do papel: exige também
        * pertencer à organização provedora. Ver lib/escopo-de-organizacao.ts —

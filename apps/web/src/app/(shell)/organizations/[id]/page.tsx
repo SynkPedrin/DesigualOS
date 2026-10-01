@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ArrowLeft, Check, LogIn } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
 import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, Tabela, Td, Th } from '@/components/control/primitives';
@@ -82,6 +83,7 @@ function Ficha({ ficha }: { ficha: FichaDaEmpresa }) {
       />
 
       <Numeros ficha={ficha} />
+      <Atividade ficha={ficha} />
       <Identidade ficha={ficha} />
       <Pessoas ficha={ficha} />
       <Estado ficha={ficha} />
@@ -113,6 +115,107 @@ function Numeros({ ficha }: { ficha: FichaDaEmpresa }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * COMO A EMPRESA SE MEXEU, dia a dia.
+ *
+ * É o que separa a ficha de um cadastro: quatro contagens dizem o tamanho da
+ * conta, a curva diz se ela está viva. Numa operação de agência, uma conta que
+ * para de se mexer é a primeira evidência de um cliente indo embora — e ela
+ * aparece semanas antes do aviso.
+ *
+ * DIA SEM MOVIMENTO É DESENHADO, não pulado. Um gráfico que só liga os dias com
+ * dado transforma uma semana parada numa linha contínua, que é precisamente o
+ * sinal que ele deveria dar.
+ *
+ * E a janela é DECLARADA. Numa empresa criada ontem ela tem dois dias, e dizer
+ * "últimos 30 dias" ali seria afirmar 28 dias de silêncio que nunca existiram.
+ */
+function Atividade({ ficha }: { ficha: FichaDaEmpresa }) {
+  const serie = ficha.atividade.map((d) => ({
+    ...d,
+    rotulo: new Date(`${d.dia}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+  }));
+
+  const total = serie.reduce((s, d) => s + d.mensagens, 0);
+  const dias = serie.length;
+
+  const legenda =
+    dias === 0
+      ? 'Sem janela para medir ainda.'
+      : dias < 30
+        ? `Desde que a empresa existe — ${dias} dia(s).`
+        : 'Últimos 30 dias.';
+
+  return (
+    <Secao titulo="Movimento">
+      <div className="rounded-lg border border-grafite-elevado bg-grafite px-5 py-4">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-[13px] text-nevoa">{legenda}</p>
+          <p className="text-[13px] text-nevoa">
+            {ficha.ultima_atividade
+              ? `última atividade ${new Date(ficha.ultima_atividade).toLocaleDateString('pt-BR')}`
+              : 'nenhuma atividade registrada'}
+          </p>
+        </div>
+
+        {total === 0 ? (
+          /**
+           * NÃO DESENHA UMA LINHA RETA NO ZERO. Um gráfico achatado parece uma
+           * medição que deu zero; a frase diz que não houve movimento, que é
+           * outra coisa — e numa empresa criada hoje é o estado correto, não
+           * um alerta.
+           */
+          <div className="rounded-md border border-grafite-elevado bg-carbono px-4 py-8 text-center">
+            <p className="text-[14px] text-branco-cru">Nenhum movimento neste período.</p>
+            <p className="mt-1 text-[13px] text-nevoa">
+              {ficha.numeros.pessoas === 0
+                ? 'Ninguém foi adicionado a esta empresa ainda.'
+                : 'A empresa existe e tem gente, mas ninguém conversou com o assistente dela.'}
+            </p>
+          </div>
+        ) : (
+          <div className="h-[200px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={serie} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="grad-movimento" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.45} />
+                    <stop offset="100%" stopColor="#a78bfa" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2a2a32" vertical={false} />
+                <XAxis dataKey="rotulo" tick={{ fill: '#8b8b96', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={24} />
+                <YAxis tick={{ fill: '#8b8b96', fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ background: '#15151a', border: '1px solid #2a2a32', borderRadius: 8, fontSize: 13 }}
+                  labelStyle={{ color: '#e8e6e3' }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="mensagens"
+                  name="mensagens"
+                  stroke="#a78bfa"
+                  fill="url(#grad-movimento)"
+                  strokeWidth={2}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="execucoes"
+                  name="execuções"
+                  stroke="#38bdf8"
+                  fill="#38bdf8"
+                  fillOpacity={0.12}
+                  strokeWidth={1.5}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+    </Secao>
   );
 }
 

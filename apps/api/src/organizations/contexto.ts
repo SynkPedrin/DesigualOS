@@ -1,8 +1,12 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
-import { decidirOrganizacaoDeTrabalho } from '@desigual-os/auth';
+import { decidirEscopo, decidirOrganizacaoDeTrabalho } from '@desigual-os/auth';
 import type { AuthenticatedUser } from '../auth/middleware';
-import { escopoDeOrganizacao, organizacaoProvedora } from '../lib/escopo-de-organizacao';
+import {
+  escopoDeOrganizacao,
+  organizacaoProvedora,
+  type EscopoDeOrganizacao,
+} from '../lib/escopo-de-organizacao';
 
 /**
  * contexto.ts — entrar numa empresa e sair dela.
@@ -118,6 +122,7 @@ export async function trocarOrganizacaoAtiva(
  */
 export async function organizacaoAtivaDe(
   user: AuthenticatedUser,
+  escopoJaLido?: EscopoDeOrganizacao,
 ): Promise<{ id: string; name: string; slug: string } | null> {
   const [linha] = await db
     .select({ ativa: schema.users.organizacaoAtivaId })
@@ -127,7 +132,15 @@ export async function organizacaoAtivaDe(
 
   if (!linha?.ativa) return null;
 
-  const escopo = await escopoDeOrganizacao(user);
+  /**
+   * `escopoJaLido` não é micro-otimização: foi uma regressão medida. Quando
+   * `/me` passou a resolver a empresa de trabalho, `escopoDeOrganizacao` caiu
+   * três vezes na MESMA requisição — e `/me` é chamado em toda navegação. Com
+   * `DATABASE_POOL_MAX=3`, a rota foi de instantânea para 2,2s e a home passou
+   * a estourar o tempo do painel. Com o pool desse tamanho, ida ao banco
+   * repetida não é desperdício: é fila.
+   */
+  const escopo = escopoJaLido ?? (await escopoDeOrganizacao(user));
   if (!escopo.ehProvider && !escopo.organizationIds.includes(linha.ativa)) {
     // Vínculo perdido desde a entrada: limpa e volta ao provedor, em silêncio
     // para a pessoa mas sem manter o acesso.
@@ -142,6 +155,122 @@ export async function organizacaoAtivaDe(
     .catch(() => []);
 
   return org ?? null;
+}
+
+export interface ContextoCompleto {
+  escopo: EscopoDeOrganizacao;
+  /** Todas as empresas em que a pessoa é membro, já com nome. */
+  organizacoes: { id: string; name: string }[];
+  /** A que ela abriu de propósito, validada. `null` = contexto do provedor. */
+  ativa: { id: string; name: string; slug: string } | null;
+  /** Onde ela está trabalhando agora. Nunca nula quando há vínculo. */
+  deTrabalho: { id: string; name: string; slug: string } | null;
+}
+
+/**
+ * TUDO O QUE `/me` PRECISA SABER SOBRE EMPRESA, EM UMA IDA AO BANCO.
+ *
+ * MEDIDO EM 01/10/2026, e é o número que explica a função: cada consulta
+ * trivial contra este banco custa ~300ms. Não é custo de consulta — `select
+ * organization_id from organization_members where user_id = $1` devolve duas
+ * linhas de uma tabela de onze. São 300ms de ida e volta de REDE, porque o
+ * banco é remoto.
+ *
+ * Com isso, "quantas consultas" deixa de ser questão de elegância e vira a
+ * latência inteira da rota. O `/me` fazia quatro em sequência — vínculos,
+ * nomes das empresas, empresa ativa, dados da empresa ativa — e levava 1,3s.
+ * Numa rota que TODA navegação chama, isso é um terço de segundo colado em
+ * cada clique, e foi o que fez o painel da home estourar os 20 segundos do
+ * teste debaixo de carga.
+ *
+ * A consulta abaixo traz tudo junto: as empresas de que a pessoa é membro, e
+ * a empresa ativa MESMO QUANDO ela não é membro dela — que é o caso do
+ * provedor visitando um cliente, e a razão de o `left join` não bastar
+ * sozinho.
+ *
+ * A REGRA NÃO MUDOU, só o número de viagens: quem decide continua sendo
+ * `decidirEscopo` e `decidirOrganizacaoDeTrabalho`, as mesmas funções puras
+ * que o middleware usa. Juntar consultas não pode virar a desculpa para a
+ * fronteira entre empresas ser decidida em SQL ad hoc.
+ */
+export async function contextoCompletoDe(user: AuthenticatedUser): Promise<ContextoCompleto> {
+  const bruto: unknown = await db
+    .execute(
+      sql`with eu as (select id, organizacao_ativa_id from users where id = ${user.id}::uuid)
+          select o.id,
+                 o.name,
+                 o.slug,
+                 o.status,
+                 (om.user_id is not null) as sou_membro,
+                 (o.id = (select organizacao_ativa_id from eu)) as eh_ativa
+          from organizations o
+          left join organization_members om
+            on om.organization_id = o.id and om.user_id = (select id from eu)
+          where om.user_id is not null
+             or o.id = (select organizacao_ativa_id from eu)`,
+    )
+    .catch(() => null);
+
+  const linhas = (((bruto as { rows?: unknown[] } | null)?.rows ?? (bruto as unknown[] | null) ?? []) as Array<{
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    sou_membro: boolean;
+    eh_ativa: boolean;
+  }>);
+
+  const membros = linhas.filter((l) => l.sou_membro);
+  const escopo = decidirEscopo(
+    membros.map((l) => l.id),
+    user.roles,
+    organizacaoProvedora(),
+  );
+
+  const linhaAtiva = linhas.find((l) => l.eh_ativa) ?? null;
+
+  /**
+   * As MESMAS duas condições de `organizacaoAtivaDe`, aplicadas em memória:
+   * a empresa precisa estar ativa, e o vínculo precisa continuar valendo. A
+   * segunda é a que importa — alguém pode ter sido removido da empresa DEPOIS
+   * de entrar nela, e aí o contexto salvo é permissão vencida guardada no
+   * banco.
+   */
+  const ativaVale =
+    linhaAtiva !== null &&
+    linhaAtiva.status === 'ativa' &&
+    (escopo.ehProvider || escopo.organizationIds.includes(linhaAtiva.id));
+
+  if (linhaAtiva && !ativaVale && !escopo.ehProvider && !escopo.organizationIds.includes(linhaAtiva.id)) {
+    // Limpa o contexto vencido. Em silêncio para a pessoa, mas sem manter o
+    // acesso. Não bloqueia a resposta: se falhar, a validação acima já barrou.
+    void db
+      .update(schema.users)
+      .set({ organizacaoAtivaId: null })
+      .where(eq(schema.users.id, user.id))
+      .catch(() => undefined);
+  }
+
+  const ativa = ativaVale && linhaAtiva ? { id: linhaAtiva.id, name: linhaAtiva.name, slug: linhaAtiva.slug } : null;
+
+  const escolha = decidirOrganizacaoDeTrabalho({
+    pedida: null,
+    ativa: ativa?.id ?? null,
+    vinculos: escopo.organizationIds,
+    provedora: organizacaoProvedora(),
+    ehProvider: escopo.ehProvider,
+  });
+
+  const linhaTrabalho = escolha.ok ? (linhas.find((l) => l.id === escolha.organizationId) ?? null) : null;
+
+  return {
+    escopo,
+    organizacoes: membros.map((l) => ({ id: l.id, name: l.name })),
+    ativa,
+    deTrabalho: linhaTrabalho
+      ? { id: linhaTrabalho.id, name: linhaTrabalho.name, slug: linhaTrabalho.slug }
+      : null,
+  };
 }
 
 /**
@@ -160,31 +289,34 @@ export async function organizacaoAtivaDe(
  * porta a menos. Ordem de linha do banco não é autoridade sobre nada.
  *
  * `opcoes.pedida` cobre o cabeçalho `x-organization-id` do middleware; `/me`
- * chama sem ele.
+ * chama sem ele. `opcoes.escopo` evita reler o que quem chama já leu — ver a
+ * nota sobre o pool em `organizacaoAtivaDe`.
  */
 export async function organizacaoDeTrabalhoDe(
   user: AuthenticatedUser,
-  opcoes: { pedida?: string | null } = {},
+  opcoes: { pedida?: string | null; escopo?: EscopoDeOrganizacao } = {},
 ): Promise<{ id: string; name: string; slug: string } | null> {
-  const vinculos = await db
-    .select({ organizationId: schema.organizationMembers.organizationId })
-    .from(schema.organizationMembers)
-    .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
-    .where(
-      and(
-        eq(schema.organizationMembers.userId, user.id),
-        eq(schema.users.active, true),
-        isNull(schema.users.deletedAt),
-      ),
-    )
-    .catch(() => [] as Array<{ organizationId: string }>);
+  const escopo = opcoes.escopo ?? (await escopoDeOrganizacao(user));
 
-  const [ativa, escopo] = await Promise.all([organizacaoAtivaDe(user), escopoDeOrganizacao(user)]);
+  /**
+   * Os vínculos saem do escopo que já foi lido — é a MESMA consulta
+   * (`organization_members` por usuário) que `escopoDeOrganizacao` acabou de
+   * fazer. Repeti-la aqui era uma ida ao banco para reconfirmar o que já
+   * estava em memória.
+   *
+   * A diferença que resta: `escopoDeOrganizacao` não filtra conta desativada.
+   * Quem está desativado não autentica, então não chega aqui — e quem desativa
+   * alguém no meio da sessão precisa que a autenticação a derrube, não que uma
+   * resolução de contexto a contorne.
+   */
+  const vinculos = escopo.organizationIds;
+
+  const ativa = await organizacaoAtivaDe(user, escopo);
 
   const escolha = decidirOrganizacaoDeTrabalho({
     pedida: opcoes.pedida ?? null,
     ativa: ativa?.id ?? null,
-    vinculos: [...new Set(vinculos.map((v) => v.organizationId))],
+    vinculos,
     provedora: organizacaoProvedora(),
     ehProvider: escopo.ehProvider,
   });

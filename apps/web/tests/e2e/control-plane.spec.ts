@@ -244,6 +244,40 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     await expect(page.getByLabel(/Nome do assistente/i)).toHaveValue(novo, { timeout: 20_000 });
   });
 
+  /**
+   * A FICHA DA EMPRESA SEPARA "não se mexeu" DE "não consegui medir".
+   *
+   * É a regra mais cara de um painel, e a mais fácil de quebrar ao adicionar
+   * gráfico: desenhar uma linha reta no zero para uma empresa recém-criada faz
+   * uma medição que nunca aconteceu parecer um resultado. Aqui a empresa sem
+   * movimento mostra a frase, e a empresa com movimento mostra a curva.
+   */
+  test('o movimento da empresa é desenhado quando existe, e dito quando não existe', async ({ page }) => {
+    await login(page);
+    await page.goto('/organizations');
+
+    const configurar = page.getByRole('link', { name: /^Configurar$/ });
+    if ((await configurar.count()) === 0) return;
+
+    // A PRIMEIRA é a provedora, que é a única com meses de histórico real.
+    await configurar.first().click();
+    await expect(page.getByRole('heading', { name: /^Movimento$/ })).toBeVisible({ timeout: 20_000 });
+
+    const grafico = page.locator('.recharts-responsive-container');
+    const semMovimento = page.getByText(/Nenhum movimento neste período/i);
+
+    // Exatamente UM dos dois estados, nunca os dois nem nenhum.
+    await expect(grafico.or(semMovimento).first()).toBeVisible({ timeout: 20_000 });
+    const temGrafico = (await grafico.count()) > 0;
+    expect(temGrafico ? await semMovimento.count() : 1).toBe(temGrafico ? 0 : 1);
+
+    /**
+     * A JANELA É DECLARADA. "Últimos 30 dias" numa empresa criada ontem
+     * afirmaria 29 dias de silêncio que nunca existiram.
+     */
+    await expect(page.getByText(/Últimos 30 dias|Desde que a empresa existe|Sem janela para medir/i)).toBeVisible();
+  });
+
   /** A logo do Claude é asset local — se o caminho quebrar, a imagem some em silêncio. */
   test('a logo do Claude carrega do arquivo do projeto', async ({ page }) => {
     await login(page);

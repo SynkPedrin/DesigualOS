@@ -101,6 +101,20 @@ export interface FichaDaEmpresa {
    * confunda com "não consegui contar".
    */
   numeros: { clientes: number; pessoas: number; memorias: number; conversas: number };
+  /**
+   * COMO ESTA EMPRESA SE MEXEU, dia a dia. É o que transforma a ficha de um
+   * cadastro num painel: quatro números parados dizem o tamanho da conta, a
+   * curva diz se ela está viva.
+   *
+   * `desde` existe porque a janela nem sempre é de 30 dias: numa empresa criada
+   * há três dias, os 27 anteriores não são dias de silêncio — são dias em que
+   * ela não existia, e desenhá-los no zero inventaria uma queda que nunca
+   * aconteceu. A tela diz qual janela está vendo.
+   */
+  atividade: { dia: string; mensagens: number; execucoes: number }[];
+  atividade_desde: string | null;
+  /** `null` = nenhuma mensagem registrada. Nunca uma data inventada. */
+  ultima_atividade: string | null;
   criada_em: string | null;
 }
 
@@ -156,6 +170,66 @@ export async function fichaDaEmpresa(
     conversas: 0,
   }) as { clientes: number; pessoas: number; memorias: number; conversas: number };
 
+  /**
+   * A SÉRIE SAI DE `generate_series`, não das linhas existentes.
+   *
+   * Agrupar só o que existe produziria uma curva sem os dias de silêncio — e o
+   * silêncio é justamente o que o dono precisa ver. Um gráfico que pula o
+   * sábado faz a semana parecer contínua.
+   *
+   * E a janela começa no NASCIMENTO da empresa quando ele é recente: dia em que
+   * a conta não existia não é dia de zero movimento.
+   *
+   * MAS "nascimento" NÃO É a data da linha em `organizations`, e essa distinção
+   * custou uma medição: a provedora tem a linha criada em 21/09 e mensagens de
+   * 04/09, trazidas pelo backfill da 0045. Clipar na linha escondia duas
+   * semanas de história real. Então o início é o MENOR entre a data da linha e
+   * a primeira atividade registrada — se há movimento anterior, a empresa já
+   * existia, qualquer que seja o carimbo da linha.
+   */
+  const serieBruta: unknown = await db
+    .execute(
+      sql`with janela as (
+            select greatest(
+              date_trunc('day', now() - interval '29 days'),
+              date_trunc('day', least(
+                coalesce((select created_at from organizations where id = ${organizationId}::uuid), now()),
+                coalesce((select min(created_at) from messages where organization_id = ${organizationId}::uuid), now())
+              ))
+            ) as inicio
+          ),
+          dias as (
+            select generate_series((select inicio from janela), date_trunc('day', now()), interval '1 day') as dia
+          )
+          select to_char(d.dia, 'YYYY-MM-DD') as dia,
+                 (select count(*)::int from messages m
+                   where m.organization_id = ${organizationId}::uuid
+                     and m.created_at >= d.dia and m.created_at < d.dia + interval '1 day') as mensagens,
+                 (select count(*)::int from executions e
+                   where e.organization_id = ${organizationId}::uuid
+                     and e.created_at >= d.dia and e.created_at < d.dia + interval '1 day') as execucoes
+          from dias d
+          order by d.dia`,
+    )
+    .catch(() => null);
+
+  const atividade = (((serieBruta as { rows?: unknown[] } | null)?.rows ??
+    (serieBruta as unknown[] | null) ??
+    []) as Array<{ dia: string; mensagens: number; execucoes: number }>).map((l) => ({
+    dia: l.dia,
+    mensagens: Number(l.mensagens),
+    execucoes: Number(l.execucoes),
+  }));
+
+  const ultimaBruta: unknown = await db
+    .execute(
+      sql`select max(created_at) as quando from messages where organization_id = ${organizationId}::uuid`,
+    )
+    .catch(() => null);
+  const ultima = (((ultimaBruta as { rows?: unknown[] } | null)?.rows ??
+    (ultimaBruta as unknown[] | null) ??
+    [])[0] ?? { quando: null }) as { quando: string | Date | null };
+
   return {
     id: org.id,
     nome: org.name,
@@ -174,6 +248,9 @@ export async function fichaDaEmpresa(
       responde_pela_empresa: PAPEIS_QUE_RESPONDEM.has(p.papel.toLowerCase()),
     })),
     numeros: n,
+    atividade,
+    atividade_desde: atividade[0]?.dia ?? null,
+    ultima_atividade: ultima.quando ? new Date(ultima.quando).toISOString() : null,
     criada_em: org.createdAt ? new Date(org.createdAt).toISOString() : null,
   };
 }
