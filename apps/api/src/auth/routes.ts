@@ -6,6 +6,7 @@ import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import { invalidateUserAccessCache, requireAuth } from './middleware';
 import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
+import { organizacaoDeTrabalhoDe } from '../organizations/contexto';
 import { uploadUserFile } from '../lib/storage';
 import { sendResetPasswordEmail } from '../lib/email';
 
@@ -144,10 +145,23 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       ...user,
       organizacoes,
       /**
-       * A ativa. Com uma só, é ela; com várias, a primeira até existir troca
-       * explícita de empresa — que é feature da Fase C, não desta.
+       * A EMPRESA EM QUE A PESSOA ESTÁ AGORA.
+       *
+       * Vem de `users.organizacao_ativa_id`, revalidada a cada chamada — não da
+       * URL, e não de um estado de front. Quem é de uma organização só nunca
+       * "entra" em lugar nenhum, e a escada de `organizacaoDeTrabalhoDe`
+       * resolve por ela.
+       *
+       * A revalidação importa: alguém pode ter sido removido da empresa DEPOIS
+       * de entrar nela, e nesse caso o contexto salvo seria uma permissão
+       * vencida guardada no banco.
+       *
+       * É DE PROPÓSITO a MESMA função que o middleware de tenant usa. Enquanto
+       * este campo respondia `organizacoes[0]`, a tela podia dizer uma empresa
+       * e a gravação cair em outra — ordem de linha do banco decidindo o que a
+       * regra já sabia responder.
        */
-      organizacao_ativa: organizacoes[0] ?? null,
+      organizacao_ativa: await organizacaoDeTrabalhoDe(user),
       /**
        * Opera no nível da plataforma. NUNCA derivado só do papel: exige também
        * pertencer à organização provedora. Ver lib/escopo-de-organizacao.ts —

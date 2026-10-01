@@ -4,6 +4,8 @@ import { db } from '@desigual-os/database';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware';
 import { criarEmpresa } from './criar';
+import { trocarOrganizacaoAtiva } from './contexto';
+import { configurarEmpresa, fichaDaEmpresa, podeConfigurar } from './ficha';
 import { ehPapelDePlataforma, escopoDeOrganizacao, organizacaoProvedora } from '../lib/escopo-de-organizacao';
 
 /**
@@ -92,6 +94,32 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     }
   });
 
+  /**
+   * ENTRAR NUMA EMPRESA, ou sair dela.
+   *
+   * `organization_id: null` volta ao contexto do provedor.
+   *
+   * É POST e não um parâmetro de leitura porque MUDA ESTADO — e estado de
+   * autorização, ainda por cima. Um GET que troca o contexto seria disparável
+   * por um link, uma imagem ou um preview de mensageiro.
+   */
+  app.post('/organizations/ativa', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+
+    const body = z.object({ organization_id: z.string().uuid().nullable() }).parse(request.body);
+    const r = await trocarOrganizacaoAtiva(user, body.organization_id);
+
+    if (!r.ok) {
+      reply.code(403);
+      return { error: r.motivo };
+    }
+    return { organizacao_ativa: r.organizacao };
+  });
+
   app.get('/organizations', { preHandler: requireAuth }, async (request, reply) => {
     const user = request.authUser;
     if (!user) {
@@ -158,5 +186,99 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
       })),
       gerado_em: new Date().toISOString(),
     };
+  });
+
+  /**
+   * A FICHA DE UMA EMPRESA — o que havia entre "a empresa existe" e "a empresa
+   * é utilizável", e que não existia até aqui.
+   *
+   * Até 30/09/2026 a API tinha criar, listar e entrar. Entrar numa empresa
+   * levava a um lugar onde nada podia ser ajustado: nem o nome, nem o
+   * identificador, nem quem trabalha lá. Uma conta imutável é um cadastro, não
+   * uma conta de cliente.
+   *
+   * É `/:id` e não "a empresa ativa" de propósito: configurar não é a mesma
+   * ação que estar dentro. O provedor precisa poder ajustar a conta de um
+   * cliente sem antes virar aquele cliente — e, ao contrário, estar dentro de
+   * uma empresa não deveria dar poder de reescrever a identidade dela a quem
+   * só trabalha lá.
+   */
+  app.get('/organizations/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const permissao = await podeConfigurar(user, id);
+    if (!permissao.pode) {
+      reply.code(permissao.motivo === 'Empresa não encontrada.' ? 404 : 403);
+      return { error: permissao.motivo };
+    }
+
+    const ficha = await fichaDaEmpresa(id, organizacaoProvedora());
+    if (!ficha) {
+      reply.code(404);
+      return { error: 'Empresa não encontrada.' };
+    }
+
+    return { ...ficha, como_provedor: permissao.comoProvedor };
+  });
+
+  app.patch('/organizations/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const permissao = await podeConfigurar(user, id);
+    if (!permissao.pode) {
+      reply.code(permissao.motivo === 'Empresa não encontrada.' ? 404 : 403);
+      return { error: permissao.motivo };
+    }
+
+    /**
+     * `.optional()` e NÃO `.nullish()` no nome, no slug e no status: esses três
+     * não têm "vazio" como estado válido. Os de identidade aceitam `null`
+     * porque apagar a cor ou a mensagem de boas-vindas é uma escolha legítima
+     * — volta ao padrão do produto.
+     */
+    const corpo = z
+      .object({
+        nome: z.string().optional(),
+        slug: z.string().optional(),
+        nome_assistente: z.string().nullish(),
+        mensagem_boas_vindas: z.string().max(400).nullish(),
+        cor_primaria: z.string().nullish(),
+        cor_secundaria: z.string().nullish(),
+        logo_url: z.string().nullish(),
+        status: z.enum(['ativa', 'suspensa']).optional(),
+      })
+      .parse(request.body);
+
+    const r = await configurarEmpresa(id, corpo, organizacaoProvedora());
+    if (!r.ok) {
+      reply.code(400);
+      return { error: r.motivo };
+    }
+
+    // Devolve a ficha inteira, não um `{ok:true}`: a tela precisa do estado
+    // REAL depois da gravação (o slug normalizado, por exemplo, raramente é o
+    // que foi digitado) em vez de supor que o que ela mandou foi o que ficou.
+    const ficha = await fichaDaEmpresa(id, organizacaoProvedora());
+    await db
+      .execute(
+        sql`insert into audit_logs (user_id, organization_id, action, result, source, metadata)
+            values (${user.id}::uuid, ${id}::uuid, 'organization.configure', 'success', 'app',
+                    ${JSON.stringify({ campos: Object.keys(corpo), como_provedor: permissao.comoProvedor })}::jsonb)`,
+      )
+      .catch(() => undefined);
+
+    return ficha;
   });
 }

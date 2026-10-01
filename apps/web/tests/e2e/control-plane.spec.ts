@@ -159,12 +159,98 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     expect(await page.locator('.recharts-wrapper').count(), 'os dois gráficos precisam existir').toBeGreaterThanOrEqual(2);
   });
 
+  /**
+   * ENTRAR NUMA EMPRESA E SAIR — o fluxo que transforma "existem empresas no
+   * banco" em produto.
+   *
+   * O teste trava a parte que mais custa quando falha: saber ONDE se está. O
+   * provedor entra na conta de um cliente para dar suporte, se distrai, e edita
+   * a empresa errada — e nesse momento a permissão estava certa, a pessoa tinha
+   * acesso mesmo. O que faltou foi ela saber onde estava.
+   */
+  test('dá para entrar numa empresa, e fica visível que você está dentro dela', async ({ page }) => {
+    await login(page);
+    await page.goto('/organizations');
+    await expect(page.getByRole('heading', { name: /^Empresas$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+
+    const abrir = page.getByRole('button', { name: /^Entrar$/ }).first();
+    const jaDentro = page.getByRole('button', { name: /Você está aqui/ }).first();
+
+    // Sem empresa cliente cadastrada não há o que abrir — e isso é um estado
+    // legítimo, não uma falha do teste.
+    if ((await abrir.count()) === 0 && (await jaDentro.count()) === 0) return;
+
+    if (await abrir.count()) {
+      await abrir.click();
+      await page.waitForTimeout(1500);
+    }
+
+    /**
+     * A FAIXA DE CONTEXTO. É proposital que ela seja uma interrupção visual, do
+     * mesmo jeito que ambiente de homologação se pinta de outra cor.
+     */
+    const faixa = page.getByText(/Você está dentro de/i);
+    await expect(faixa).toBeVisible({ timeout: 20_000 });
+
+    // E dá para voltar. Entrar sem saída é um beco.
+    const voltar = page.getByRole('button', { name: /Voltar para a Desigual/i });
+    await expect(voltar).toBeVisible();
+    await voltar.click();
+    await expect(faixa).toBeHidden({ timeout: 20_000 });
+  });
+
+  /**
+   * A EMPRESA CRIADA PRECISA SER CONFIGURÁVEL, que é o degrau entre "a conta
+   * existe" e "a conta é utilizável".
+   *
+   * O teste grava o relato exato de quem usou: dava para criar a empresa e não
+   * dava para acessar e configurar as contas individualmente. Então ele não
+   * verifica só que a tela abre — verifica que um campo gravado VOLTA gravado,
+   * porque uma tela de configuração que aceita e não persiste é pior que
+   * nenhuma: ela mente dizendo "salvo".
+   */
+  test('dá para configurar uma empresa, e o que foi salvo volta salvo', async ({ page }) => {
+    await login(page);
+    await page.goto('/organizations');
+    await expect(page.getByRole('heading', { name: /^Empresas$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+
+    const configurar = page.getByRole('link', { name: /^Configurar$/ });
+    if ((await configurar.count()) === 0) return; // sem empresa, nada a configurar
+
+    // A ÚLTIMA, não a primeira: a primeira é sempre a provedora, e a provedora
+    // é o caso especial (não pode ser suspensa). Configurar um tenant de
+    // verdade é o que o teste precisa cobrir.
+    await configurar.last().click();
+
+    const campoAssistente = page.getByLabel(/Nome do assistente/i);
+    await expect(campoAssistente).toBeVisible({ timeout: 20_000 });
+
+    const novo = `Teste ${Date.now().toString().slice(-6)}`;
+    await campoAssistente.fill(novo);
+
+    /**
+     * A PRÉVIA REAGE AO QUE ESTÁ SENDO DIGITADO, não ao que está salvo.
+     * Escolher o nome e a cor do assistente sem ver o resultado é escolher no
+     * escuro — e foi por isso que a prévia entrou na tela.
+     */
+    await expect(page.getByText(/Como vai aparecer/i)).toBeVisible();
+
+    await page.getByRole('button', { name: /Salvar identidade/i }).click();
+    await expect(page.getByText(/^Salvo$/)).toBeVisible({ timeout: 20_000 });
+
+    // RECARREGA. Sem isto o teste só prova que o React guardou na memória dele,
+    // que é exatamente a forma de "salvo" que não salva nada.
+    await page.reload();
+    await expect(page.getByLabel(/Nome do assistente/i)).toHaveValue(novo, { timeout: 20_000 });
+  });
+
   /** A logo do Claude é asset local — se o caminho quebrar, a imagem some em silêncio. */
   test('a logo do Claude carrega do arquivo do projeto', async ({ page }) => {
     await login(page);
-    // A home sempre tem a marca no bloco "Inteligência conectada", com ou sem
+    // O bloco "Inteligência conectada" SAIU da home e passou para Integrações,
+    // quando a home foi enxugada. A marca continua aparecendo com ou sem
     // conexão — diferente da tabela do MCP, que só existe quando há alguém.
-    await page.goto('/');
+    await page.goto('/integrations');
     const logo = page.locator('img[alt="Claude"]').first();
     await expect(logo).toBeVisible({ timeout: 20_000 });
     await expect(logo).toHaveJSProperty('naturalWidth', 320);

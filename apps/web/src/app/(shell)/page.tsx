@@ -3,8 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { ControlHeader, Secao } from '@/components/control/primitives';
-import { StatusDoSistema } from '@/components/control/status-do-sistema';
-import { InteligenciaConectada } from '@/components/control/inteligencia-conectada';
+import { LinhaDoSistema } from '@/components/control/linha-do-sistema';
 import { FeedDeAtividade } from '@/components/control/feed-de-atividade';
 import { ResumoDaOperacao } from '@/components/control/resumo-da-operacao';
 import { SinaisEmAberto } from '@/components/control/sinais-em-aberto';
@@ -50,24 +49,17 @@ export default function ControlPlanePage() {
         <PainelDoDono />
       </Secao>
 
-      <Secao titulo="Estado do sistema">
-        <StatusDoSistema />
-      </Secao>
-
-      <Secao
-        titulo="Inteligência conectada"
-        acao={
-          <Link
-            href="/integrations"
-            className="inline-flex items-center gap-1 font-mono text-[11px] text-nevoa transition-colors hover:text-branco-cru"
-          >
-            Integrações
-            <ArrowRight size={12} />
-          </Link>
-        }
-      >
-        <InteligenciaConectada />
-      </Secao>
+      {/*
+        * O ESTADO TÉCNICO EM UMA LINHA, e não mais numa faixa de seis cartões.
+        *
+        * Os seis continuam inteiros em /health, e "Inteligência conectada"
+        * passou para /integrations, que é onde se vai quando a pergunta é essa.
+        * O motivo é o relato de quem usa: a tela estava poluída de informação,
+        * e a maior parte dela era infraestrutura respondendo "tudo bem" todo
+        * dia — seis cartões que não mudam são seis cartões que se aprende a
+        * pular, inclusive no dia em que um deles muda.
+        */}
+      <LinhaDoSistema />
 
       <div className="grid gap-8 lg:grid-cols-[1.15fr_1fr]">
         <Secao

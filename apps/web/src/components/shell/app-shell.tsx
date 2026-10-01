@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
+import { ContextoDaEmpresa } from './contexto-da-empresa';
 import { CommandPalette } from './command-palette';
 import { NoiseOverlay } from './noise-overlay';
 import { NotificationInboxPopup } from './notification-inbox-popup';
@@ -28,6 +29,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex h-full w-full max-w-[2400px]">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* ACIMA DE TUDO, inclusive da barra superior: saber em qual empresa
+            * se está não pode competir por atenção com busca e notificação. */}
+          <ContextoDaEmpresa />
           <Topbar />
           <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             <AnimatePresence mode="wait">

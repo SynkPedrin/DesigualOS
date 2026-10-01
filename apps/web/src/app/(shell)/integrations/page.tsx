@@ -10,6 +10,7 @@ import { Consentimento } from '@/components/settings/consentimento';
 import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';
 import { NotionIntegrationSection } from '@/components/settings/notion-integration-card';
 import { MotionProvidersSection } from '@/components/settings/motion-providers-card';
+import { InteligenciaConectada } from '@/components/control/inteligencia-conectada';
 
 /**
  * INTEGRAÇÕES — com o que a inteligência fala.
@@ -30,6 +31,16 @@ export default function IntegrationsPage() {
         title="Integrações"
         description="Os sistemas que a inteligência alcança, e o estado de cada ligação."
       />
+
+      {/*
+        * VEIO DA HOME. Lá ocupava uma seção inteira para responder uma pergunta
+        * que quase ninguém faz ao abrir o sistema de manhã — "quantas pessoas
+        * estão conectadas pelo MCP". Aqui ela é a primeira pergunta da tela,
+        * porque quem abre Integrações veio justamente perguntar isso.
+        */}
+      <Secao titulo="Inteligência conectada">
+        <InteligenciaConectada />
+      </Secao>
 
       <Secao titulo="Inteligência">
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">

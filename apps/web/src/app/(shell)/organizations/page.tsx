@@ -1,6 +1,10 @@
 'use client';
 
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Building2 } from 'lucide-react';
+import { apiFetch } from '@/lib/api/client';
 import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusLabel } from '@/components/control/primitives';
 import { useOrganizations, type EmpresaResumo } from '@/hooks/use-organizations';
 import { useMe } from '@/hooks/use-me';
@@ -71,7 +75,7 @@ export default function EmpresasPage() {
         ) : (
           <div className="space-y-2.5">
             {empresas.map((e) => (
-              <Cartao key={e.id} empresa={e} />
+              <Cartao key={e.id} empresa={e} ativa={me?.organizacao_ativa?.id === e.id} />
             ))}
           </div>
         )}
@@ -91,7 +95,27 @@ function quandoFoi(iso: string | null): string {
   return dias === 1 ? 'ontem' : `há ${dias} dias`;
 }
 
-function Cartao({ empresa: e }: { empresa: EmpresaResumo }) {
+function Cartao({ empresa: e, ativa }: { empresa: EmpresaResumo; ativa: boolean }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  const abrir = useMutation({
+    mutationFn: () =>
+      apiFetch<{ organizacao_ativa: { id: string } | null }>('/organizations/ativa', {
+        method: 'POST',
+        body: JSON.stringify({ organization_id: e.id }),
+      }),
+    onSuccess: () => {
+      /**
+       * Invalida TUDO ao entrar. Cada tela lê o que a empresa ativa permite —
+       * manter cache da empresa anterior mostraria dado de uma enquanto a
+       * interface diz estar noutra, que é pior que uma tela vazia.
+       */
+      void queryClient.invalidateQueries();
+      router.push('/');
+    },
+  });
+
   return (
     <div className="rounded-lg border border-grafite-elevado bg-grafite px-4 py-3.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -109,7 +133,35 @@ function Cartao({ empresa: e }: { empresa: EmpresaResumo }) {
           * recém-criada ainda não tem movimento, e pintar isso de vermelho
           * ensinaria a ignorar o vermelho.
           */}
-        <StatusLabel estado={e.ultima_atividade ? 'ok' : 'desconhecido'}>{quandoFoi(e.ultima_atividade)}</StatusLabel>
+        <div className="flex items-center gap-3">
+          <StatusLabel estado={e.ultima_atividade ? 'ok' : 'desconhecido'}>{quandoFoi(e.ultima_atividade)}</StatusLabel>
+          {/*
+            * DUAS AÇÕES DIFERENTES, e confundi-las foi o que deixou a empresa
+            * criada mas inutilizável: "Entrar" muda o contexto de trabalho
+            * (passo a operar como essa empresa); "Configurar" abre a ficha dela
+            * sem virar aquela empresa — é o que o provedor faz ao ajustar a
+            * conta de um cliente.
+            *
+            * A provedora não tem "Entrar": ela é o contexto padrão, e oferecer
+            * um botão para entrar onde já se está é convidar ao clique inútil.
+            */}
+          <Link
+            href={`/organizations/${e.id}`}
+            className="rounded-md border border-grafite-elevado bg-carbono px-3 py-1.5 text-[13px] text-branco-cru transition-colors hover:border-roxo-eletrico/60"
+          >
+            Configurar
+          </Link>
+          {!e.eh_provedora && (
+            <button
+              type="button"
+              onClick={() => abrir.mutate()}
+              disabled={abrir.isPending || ativa}
+              className="rounded-md border border-grafite-elevado bg-carbono px-3 py-1.5 text-[13px] text-branco-cru transition-colors hover:border-roxo-eletrico/60 disabled:opacity-50"
+            >
+              {ativa ? 'Você está aqui' : abrir.isPending ? 'Entrando...' : 'Entrar'}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mt-2.5 flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-nevoa">

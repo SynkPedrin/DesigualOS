@@ -34,6 +34,19 @@ export const users = pgTable('users', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   ...timestampColumns,
   ...softDeleteColumn,
+
+  /**
+   * EM QUAL EMPRESA A PESSOA ESTÁ TRABALHANDO AGORA (migração 0047).
+   *
+   * `null` = contexto do provedor, que é o estado de quem pertence a uma
+   * organização só.
+   *
+   * Está no banco e não na URL de propósito: trocar de empresa por query string
+   * faria da barra de endereço uma superfície de autorização, e o servidor
+   * teria que confiar no que o navegador mandou. Aqui quem escreve é o
+   * servidor, depois de validar o vínculo.
+   */
+  organizacaoAtivaId: uuid('organizacao_ativa_id'),
 });
 
 export const roles = pgTable('roles', {
