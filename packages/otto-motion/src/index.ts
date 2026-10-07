@@ -68,11 +68,22 @@ export { summarizeClientContext, type ClientContextSummary } from './client-cont
 export { campaignBriefSchema, briefHasDirection, type CampaignBrief } from './brief/schema.js';
 export { extractCampaignBriefFromMessage } from './brief/extract.js';
 /**
- * Superfície para scripts de prova e para quem precisa rodar o pipeline fora
- * da fila (ver apps/worker/scripts/motion-e2e.mts). O caminho normal continua
- * sendo createMotion/updateMotion, que enfileiram.
+ * `runMotionPipeline` NÃO sai por aqui — sai por `@desigual-os/otto-motion/pipeline`
+ * (ver "exports" no package.json), e isso é deliberado (07/10/2026, cutover).
+ *
+ * O pipeline puxa @remotion/renderer, @remotion/bundler e sharp: três addons
+ * NATIVOS (.node). Enquanto ele era reexportado daqui, QUALQUER import deste
+ * barril arrastava o renderizador junto — inclusive a API, que só precisa
+ * enfileirar. Resultado: o esbuild de apps/api quebrava em "No loader is
+ * configured for .node files" e a API simplesmente não tinha build de
+ * produção (passava despercebido porque dev roda em `tsx`, sem bundle).
+ *
+ * Esta fronteira continua explícita, só deixou de ser única: o que é leve sai
+ * no barril, o que carrega binário nativo sai numa entrada própria, de modo
+ * que o custo é de quem realmente renderiza (o worker, e o script de prova em
+ * apps/worker/scripts/motion-e2e.mts). O caminho normal segue sendo
+ * createMotion/updateMotion, que enfileiram.
  */
-export { runMotionPipeline } from './pipeline.js';
 export { workspaceFor, type MotionWorkspace } from './workspace/workspace.js';
 export { requireSession as getMotionSession, getMetadata as getMotionMetadata } from './store/sessions.js';
 export type { BrandIdentity, ClientMotionContext, MotionAsset } from './client-context/types.js';

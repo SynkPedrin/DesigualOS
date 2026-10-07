@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createLogger } from '@desigual-os/logging';
 import type { AgentName } from '@desigual-os/types';
 import { requireEnv } from './env';
+import { sslDoDestino } from './ssl';
 import * as schema from './schema/index';
 
 const logger = createLogger({ service: 'database:seed' });
@@ -94,11 +95,29 @@ const PERMISSIONS: Array<{ role: 'master' | 'colaborador'; resource: string; act
   { role: 'colaborador', resource: 'studio', action: 'write' },
   { role: 'colaborador', resource: 'knowledge', action: 'read' },
   { role: 'colaborador', resource: 'clickup', action: 'write' },
+  // Inbox (P1-A, 06/10/2026): ler e responder conversa é trabalho de
+  // atendimento/CS do dia a dia, mesmo padrão de `clients`/`clickup` acima.
+  { role: 'colaborador', resource: 'communications', action: 'read' },
+  { role: 'colaborador', resource: 'communications', action: 'write' },
+  // Demand/Brief/Approval (P1-D/E/I, 06/10/2026): o core workflow é
+  // trabalho de equipe, não só de master.
+  { role: 'colaborador', resource: 'demands', action: 'read' },
+  { role: 'colaborador', resource: 'demands', action: 'write' },
+  { role: 'colaborador', resource: 'briefs', action: 'read' },
+  { role: 'colaborador', resource: 'briefs', action: 'write' },
+  { role: 'colaborador', resource: 'approvals', action: 'read' },
+  { role: 'colaborador', resource: 'approvals', action: 'write' },
+  // Calendar (06/10/2026): ver/criar evento é trabalho de qualquer colaborador
+  // (agenda própria, de cliente, de equipe) — a fronteira fina de "só a minha
+  // agenda vs a de outros" é decidida em apps/api/src/calendar/access.ts, não
+  // aqui (RBAC só responde "este papel mexe com calendário", não "com qual").
+  { role: 'colaborador', resource: 'calendar', action: 'read' },
+  { role: 'colaborador', resource: 'calendar', action: 'write' },
 ];
 
 async function main(): Promise<void> {
   const connectionString = requireEnv('DATABASE_URL');
-  const client = postgres(connectionString, { ssl: 'require', prepare: false, max: 1 });
+  const client = postgres(connectionString, { ssl: sslDoDestino(connectionString), prepare: false, max: 1 });
   const db = drizzle(client, { schema });
 
   // onConflictDoNothing().returning() só devolve as linhas que ELE inseriu

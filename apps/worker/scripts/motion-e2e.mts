@@ -32,9 +32,11 @@ import {
   getMotionSession,
   getMotionStatus,
   resolveClientContext,
-  runMotionPipeline,
   workspaceFor,
 } from '@desigual-os/otto-motion';
+// Entrada separada de propósito: o pipeline carrega addon nativo (remotion,
+// sharp) e por isso não sai no barril. Ver o comentário em otto-motion/index.ts.
+import { runMotionPipeline } from '@desigual-os/otto-motion/pipeline';
 import { tryMotionGuard } from '../src/processors/motion-guard.js';
 
 const logger = createLogger({ service: 'motion-e2e', pretty: true });

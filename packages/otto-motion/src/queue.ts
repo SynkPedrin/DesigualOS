@@ -1,7 +1,6 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import { getRedisConnection } from '@desigual-os/orchestrator';
 import type { Logger } from '@desigual-os/logging';
-import { runMotionPipeline } from './pipeline.js';
 import { withMotionLock } from './workspace/lock.js';
 import { isMotionError } from './errors.js';
 
@@ -67,6 +66,19 @@ export function startMotionWorker(logger: Logger): Worker<MotionJobData> {
     async (job: Job<MotionJobData>) => {
       const { motionId, mode, instruction } = job.data;
       logger.info({ motionId, mode, jobId: job.id }, 'Motion: job iniciado');
+      // Import TARDIO do pipeline (07/10/2026, cutover): `./pipeline.js` puxa
+      // @remotion/renderer, @remotion/bundler e sharp — três addons NATIVOS.
+      // Importado no topo, quem só precisa ENFILEIRAR (a API, via
+      // `getMotionQueue`) arrastava o renderizador inteiro junto, e o esbuild
+      // de apps/api quebrava em "No loader is configured for .node files" —
+      // ou seja, a API não tinha build de produção nenhum, só `tsx` em dev.
+      // Quem renderiza é o worker, e só aqui dentro: o custo nativo agora
+      // pertence a quem de fato roda o render.
+      // Caminho de PACOTE (não './pipeline.js'): import relativo o esbuild
+      // resolve e embute no mesmo bundle, o que anularia a laziness. Pela
+      // entrada pública, apps/api consegue marcá-la como `external` e nunca
+      // carregá-la; o worker, que renderiza de verdade, a embute.
+      const { runMotionPipeline } = await import('@desigual-os/otto-motion/pipeline');
       await withMotionLock(motionId, async () =>
         runMotionPipeline({ motionId, mode, instruction, deps: { logger } }),
       );

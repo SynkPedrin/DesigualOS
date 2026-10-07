@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { requireEnv } from './env';
+import { sslDoDestino } from './ssl';
 import * as schema from './schema/index';
 
 const connectionString = requireEnv('DATABASE_URL');
@@ -44,7 +45,7 @@ const poolMax = Number(process.env.DATABASE_POOL_MAX) || 3;
 const CONNECT_TIMEOUT_S = Number(process.env.DATABASE_CONNECT_TIMEOUT_S) || 15;
 
 const client = postgres(connectionString, {
-  ssl: 'require',
+  ssl: sslDoDestino(connectionString),
   prepare: false,
   max: poolMax,
   connect_timeout: CONNECT_TIMEOUT_S,
