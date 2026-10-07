@@ -74,10 +74,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # OTTO_MOTION_ENABLED=true, não é um caminho opcional.
 # Versões fixas, iguais às que o pnpm-lock.yaml resolveu no workspace: é o
 # que impede a imagem de produção divergir do que foi testado aqui.
+#
+# @napi-rs/canvas entra pelo MESMO motivo, por um caminho diferente: o worker
+# lê PDF em processors/bento-documentos.ts (pdf-parse -> pdfjs-dist), e o
+# pdfjs precisa dele pra ter DOMMatrix/ImageData/Path2D fora do browser. Sem
+# ele o worker nem inicia — morre em "ReferenceError: DOMMatrix is not
+# defined" assim que o módulo é avaliado, num crash loop (07/10/2026).
+# Escolhido em vez do `canvas` clássico de propósito: canvas@2 compila do
+# fonte com node-gyp (precisa de Python e toolchain, e já falhava no build);
+# @napi-rs/canvas é binário pré-compilado, resolvido por plataforma.
 RUN npm install --omit=dev --no-package-lock --no-audit --no-fund \
       @remotion/renderer@4.0.528 \
       @remotion/bundler@4.0.528 \
-      sharp@0.33.5
+      sharp@0.33.5 \
+      @napi-rs/canvas@0.1.80
 
 COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
