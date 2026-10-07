@@ -23,6 +23,15 @@ services:
     # .env). Sem isso, qualquer processo que alcance a porta do Redis dentro
     # da VPS conseguiria ler/escrever a fila de jobs e o pub/sub do WebSocket.
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD precisa estar definida no .env de produção}"]
+    # A senha também precisa existir DENTRO do container, não só na linha de
+    # comando: o healthcheck abaixo roda `redis-cli -a "$$REDIS_PASSWORD"`, e
+    # `$$` é escape do compose justamente pra variável ser lida em runtime, lá
+    # dentro. Sem este bloco ela chegava vazia, o AUTH falhava com WRONGPASS e
+    # o Redis ficava eternamente `unhealthy` — o que derrubava api e worker
+    # junto, via `depends_on: condition: service_healthy`, com o Redis na
+    # verdade funcionando perfeitamente (07/10/2026, primeiro deploy na VPS).
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD precisa estar definida no .env de produção}
     volumes:
       - redis_data:/data
     # Sem "ports:" de propósito: o Redis não precisa ser alcançável de fora
