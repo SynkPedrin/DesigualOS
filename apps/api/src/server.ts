@@ -21,6 +21,7 @@ import { registerMemoryRoutes } from './memories/routes';
 import { registerMcpStatusRoutes } from './mcp-status/routes';
 import { registerEpisodeRoutes } from './episodes/routes';
 import { registerDataQualityRoutes } from './data-quality/routes';
+import { registerPipelineRoutes } from './pipeline/routes';
 import { registerSignalsRoutes } from './signals/routes';
 import { registerActivityRoutes } from './activity/routes';
 import { registerPanoramaRoutes } from './panorama/routes';
@@ -249,6 +250,7 @@ async function start(): Promise<void> {
   await app.register(registerMcpStatusRoutes);
   await app.register(registerEpisodeRoutes);
   await app.register(registerDataQualityRoutes);
+  await app.register(registerPipelineRoutes);
   await app.register(registerSignalsRoutes);
   await app.register(registerPanoramaRoutes);
   await app.register(registerActivityRoutes);

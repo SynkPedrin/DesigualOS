@@ -33,5 +33,6 @@ export * from './entity-links';
 export * from './operational-identities';
 export * from './communications';
 export * from './demands';
+export * from './pipeline';
 export * from './briefs';
 export * from './approvals';

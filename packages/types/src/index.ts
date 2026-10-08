@@ -3,6 +3,7 @@ export * from './canva';
 export * from './client-assignment';
 export * from './communication';
 export * from './demand';
+export * from './pipeline';
 export * from './brief';
 export * from './approval';
 export * from './conversation';

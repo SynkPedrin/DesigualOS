@@ -2782,3 +2782,46 @@ export interface WhatsappHealthWire {
   configured: boolean;
   detail?: string | null;
 }
+
+/**
+ * PIPELINES — quadros de trabalho persistidos (GET /pipelines).
+ *
+ * `escopo` é a regra de propriedade na forma que a tela precisa: 'agencia' é
+ * o quadro da casa, que todo mundo da empresa vê; 'pessoal' é de quem criou e
+ * de mais ninguém. No banco isso é `owner_id IS NULL` contra `owner_id = eu`,
+ * mas a tela não deve precisar saber disso pra desenhar um selo.
+ */
+export interface PipelineStageWire {
+  id: string;
+  label: string;
+  color: string;
+  clickupStatus?: string | undefined;
+}
+
+export interface PipelineCardWire {
+  id: string;
+  board_id: string;
+  stage_id: string;
+  name: string;
+  client_id: string | null;
+  clickup_task_id: string | null;
+  responsavel: string | null;
+  valor: string | null;
+  nota: string;
+  posicao: number;
+  atualizado_em: string;
+}
+
+export interface PipelineBoardWire {
+  id: string;
+  nome: string;
+  tipo: 'cliente' | 'tarefas' | 'colaborador';
+  escopo: 'agencia' | 'pessoal';
+  stages: PipelineStageWire[];
+  posicao: number;
+  cards: PipelineCardWire[];
+}
+
+export interface PipelinesResponseWire {
+  boards: PipelineBoardWire[];
+}
