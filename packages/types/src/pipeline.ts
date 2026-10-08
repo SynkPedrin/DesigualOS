@@ -45,3 +45,16 @@ export type PipelineEscopo = 'agencia' | 'pessoal';
 export function escopoDoQuadro(ownerId: string | null): PipelineEscopo {
   return ownerId === null ? 'agencia' : 'pessoal';
 }
+
+/**
+ * Anexo de cartão. `url` aponta pro arquivo já enviado (POST /uploads), nunca
+ * pra um `blob:` local — a versão anterior guardava `URL.createObjectURL`, que
+ * é um endereço válido só dentro da aba que o criou: o arquivo sumia no
+ * recarregamento e nunca existiu pra mais ninguém.
+ */
+export interface PipelineAnexo {
+  id: string;
+  nome: string;
+  url: string;
+  tipo: string;
+}

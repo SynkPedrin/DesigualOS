@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, API_FETCH_UPLOAD_TIMEOUT_MS } from '@/lib/api/client';
 import type {
+  UploadFileResponseWire,
   PipelineBoardWire,
   PipelineCardWire,
   PipelineStageWire,
@@ -106,6 +107,40 @@ export function useMoverCartao() {
     },
     onSettled: () => qc.invalidateQueries({ queryKey: CHAVE }),
   });
+}
+
+/** Editar o cartão: nome, responsável, valor, nota e anexos. */
+export function useAtualizarCartao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, cardId, ...corpo }: {
+      boardId: string;
+      cardId: string;
+      name?: string;
+      responsavel?: string | null;
+      valor?: string | null;
+      nota?: string;
+      anexos?: { id: string; nome: string; url: string; tipo: string }[];
+    }) => apiFetch<PipelineCardWire>(`/pipelines/${boardId}/cards/${cardId}`, { method: 'PATCH', body: JSON.stringify(corpo) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+/**
+ * Envia o arquivo e devolve o endereço dele. O anexo só entra no cartão
+ * DEPOIS disto — guardar um `blob:` local, como a versão anterior fazia, dava
+ * um endereço válido só dentro da aba que o criou: o arquivo sumia no
+ * recarregamento e nunca existiu pra mais ninguém.
+ */
+export async function enviarAnexo(arquivo: File): Promise<{ id: string; nome: string; url: string; tipo: string }> {
+  const form = new FormData();
+  form.append('file', arquivo);
+  const enviado = await apiFetch<UploadFileResponseWire>(
+    '/uploads',
+    { method: 'POST', body: form },
+    { timeoutMs: API_FETCH_UPLOAD_TIMEOUT_MS },
+  );
+  return { id: crypto.randomUUID(), nome: enviado.filename, url: enviado.url, tipo: enviado.contentType };
 }
 
 export function useApagarCartao() {

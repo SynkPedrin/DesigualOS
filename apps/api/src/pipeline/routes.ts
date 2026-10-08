@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { PIPELINE_STAGE_COLORS, PIPELINE_TIPOS } from '@desigual-os/types';
+import { resolveClickUpCredentialsForOrganizations, updateTask } from '@desigual-os/tool-gateway';
 import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
@@ -92,7 +93,15 @@ const criarCartaoSchema = z.object({
   nota: z.string().optional(),
 });
 
+const anexoSchema = z.object({
+  id: z.string().min(1),
+  nome: z.string().min(1),
+  url: z.string().url(),
+  tipo: z.string(),
+});
+
 const atualizarCartaoSchema = z.object({
+  anexos: z.array(anexoSchema).optional(),
   stage_id: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
   client_id: z.string().uuid().nullable().optional(),
@@ -125,6 +134,7 @@ function wireQuadro(
         responsavel: c.responsavel,
         valor: c.valor,
         nota: c.nota,
+        anexos: c.anexos,
         posicao: c.posicao,
         atualizado_em: c.updatedAt.toISOString(),
       })),
@@ -352,6 +362,51 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
         return { error: `A coluna "${body.stage_id}" não existe neste quadro.` };
       }
 
+      /**
+       * QUADRO DE TAREFAS: O CLICKUP VEM PRIMEIRO.
+       *
+       * Num quadro `tipo='tarefas'` a coluna NÃO é um rótulo nosso — ela é o
+       * status real da tarefa no ClickUp (`stage.clickupStatus`). Arrastar o
+       * cartão é, literalmente, mudar o status lá.
+       *
+       * Até 08/10/2026 isso era mentira declarada: a tela mostrava "status
+       * atualizado no ClickUp" num toast verde e nada era escrito. A pessoa
+       * fechava o quadro achando que tinha movido a tarefa do time.
+       *
+       * O ClickUp é escrito ANTES do nosso banco, e a ordem é a decisão: se a
+       * escrita lá falhar, o cartão NÃO se move aqui. Um quadro que mostra a
+       * tarefa em "Concluído" enquanto o ClickUp a tem em "Revisão" é pior que
+       * um cartão que não se mexeu — porque o segundo a pessoa percebe.
+       */
+      const estagioNovo = body.stage_id !== undefined ? quadro.stages.find((s) => s.id === body.stage_id) : undefined;
+      if (quadro.tipo === 'tarefas' && estagioNovo?.clickupStatus) {
+        const [cartaoAtual] = await db
+          .select({ clickupTaskId: schema.pipelineCards.clickupTaskId })
+          .from(schema.pipelineCards)
+          .where(and(eq(schema.pipelineCards.id, request.params.cardId), eq(schema.pipelineCards.boardId, quadro.id)));
+
+        if (cartaoAtual?.clickupTaskId) {
+          const credenciais = await resolveClickUpCredentialsForOrganizations([quadro.organizationId]);
+          const resolucao = credenciais.get(quadro.organizationId);
+          if (!resolucao?.credentials) {
+            reply.code(502);
+            return {
+              error: 'Não consegui falar com o ClickUp para mudar o status desta tarefa.',
+              detalhe: resolucao?.error ?? 'A empresa não tem ClickUp conectado. O cartão não foi movido.',
+            };
+          }
+          try {
+            await updateTask(resolucao.credentials, cartaoAtual.clickupTaskId, { status: estagioNovo.clickupStatus });
+          } catch (erro) {
+            reply.code(502);
+            return {
+              error: `O ClickUp recusou mudar o status para "${estagioNovo.clickupStatus}".`,
+              detalhe: `${erro instanceof Error ? erro.message : String(erro)} O cartão continua onde estava.`,
+            };
+          }
+        }
+      }
+
       const [atualizado] = await db
         .update(schema.pipelineCards)
         .set({
@@ -362,6 +417,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
           ...(body.valor !== undefined ? { valor: body.valor } : {}),
           ...(body.nota !== undefined ? { nota: body.nota } : {}),
           ...(body.posicao !== undefined ? { posicao: body.posicao } : {}),
+          ...(body.anexos !== undefined ? { anexos: body.anexos } : {}),
         })
         .where(
           and(

@@ -10,8 +10,12 @@ import {
   usePipelines,
   useCriarPipeline,
   useAtualizarPipeline,
+  useApagarPipeline,
   useCriarCartao,
+  useAtualizarCartao,
+  useApagarCartao,
   useMoverCartao,
+  enviarAnexo,
 } from '@/hooks/use-pipelines';
 import type { PipelineBoardWire } from '@/lib/api/contracts';
 import { useIsMaster } from '@/hooks/use-is-master';
@@ -384,17 +388,28 @@ function NovoCartaoModal({ board, onCreate, onClose }: { board: PipelineBoard; o
 function CartaoDetalheModal({
   card,
   anexos,
+  enviando,
   onAnexar,
   onRemoverAnexo,
+  onSalvar,
+  onApagar,
   onClose,
 }: {
   card: PipelineCard;
   anexos: AnexoLocal[];
+  enviando: boolean;
   onAnexar: (files: FileList) => void;
   onRemoverAnexo: (id: string) => void;
+  onSalvar: (campos: { name: string; responsavel: string | null; valor: string | null; nota: string }) => void;
+  onApagar: () => void;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<'Visão geral' | 'Demandas' | 'Tarefas' | 'Arquivos' | 'Anexos'>('Visão geral');
+  const [editando, setEditando] = useState(false);
+  const [nome, setNome] = useState(card.name);
+  const [responsavel, setResponsavel] = useState(card.responsavel ?? '');
+  const [valor, setValor] = useState(card.valor ?? '');
+  const [nota, setNota] = useState(card.nota);
   const tabs = card.clientId ? (['Visão geral', 'Demandas', 'Tarefas', 'Arquivos', 'Anexos'] as const) : (['Visão geral', 'Anexos'] as const);
 
   return (
@@ -420,15 +435,69 @@ function CartaoDetalheModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {tab === 'Visão geral' && (
+          {tab === 'Visão geral' && !editando && (
             <div className="space-y-3 text-sm">
               {card.valor && <p className="text-sinal">{card.valor}</p>}
-              <p className="text-branco-cru">{card.nota}</p>
+              <p className="whitespace-pre-wrap text-branco-cru">{card.nota || <span className="text-nevoa">Sem nota.</span>}</p>
               {card.clientId && (
                 <Link href={`/clients?id=${card.clientId}`} className="inline-block text-sm text-roxo-eletrico hover:underline">
                   Abrir ficha completa do cliente →
                 </Link>
               )}
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditando(true)}
+                  className="rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru transition-colors hover:border-nevoa/50"
+                >
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={onApagar}
+                  className="rounded-md border border-erro/40 px-3 py-1.5 text-xs text-erro transition-colors hover:bg-erro/10"
+                >
+                  Apagar cartão
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === 'Visão geral' && editando && (
+            <div className="space-y-3 text-sm">
+              <div>
+                <label className="mb-1 block text-xs text-nevoa">Nome</label>
+                <input value={nome} onChange={(e) => setNome(e.target.value)} className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-nevoa">Responsável</label>
+                  <input value={responsavel} onChange={(e) => setResponsavel(e.target.value)} className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-nevoa">Valor</label>
+                  <input value={valor} onChange={(e) => setValor(e.target.value)} placeholder="Ex.: R$ 4.500/mês" className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-nevoa">Nota</label>
+                <textarea value={nota} onChange={(e) => setNota(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico" />
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSalvar({ name: nome.trim() || card.name, responsavel: responsavel.trim() || null, valor: valor.trim() || null, nota });
+                    setEditando(false);
+                  }}
+                  className="rounded-md bg-roxo-eletrico px-3 py-1.5 text-xs font-medium text-branco-cru"
+                >
+                  Salvar
+                </button>
+                <button type="button" onClick={() => setEditando(false)} className="rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-nevoa">
+                  Cancelar
+                </button>
+              </div>
             </div>
           )}
           {tab === 'Demandas' && card.clientId && <ClientDemandsPanel clientId={card.clientId} />}
@@ -436,13 +505,22 @@ function CartaoDetalheModal({
           {tab === 'Arquivos' && card.clientId && <ClientStudioGallery clientId={card.clientId} />}
           {tab === 'Anexos' && (
             <div className="space-y-3">
-              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-grafite-elevado py-6 text-sm text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru">
+              <label
+                className={cn(
+                  'flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-grafite-elevado py-6 text-sm text-nevoa transition-colors',
+                  enviando ? 'cursor-wait opacity-60' : 'cursor-pointer hover:border-roxo-eletrico/50 hover:text-branco-cru',
+                )}
+              >
                 <Upload size={16} />
-                Anexar imagem, PDF, Word, PowerPoint...
+                {enviando ? 'Enviando...' : 'Anexar imagem, PDF, .docx ou .pptx'}
                 <input
                   type="file"
                   multiple
-                  accept="image/*,.pdf,.doc,.docx,.ppt,.pptx"
+                  /* `.doc` e `.ppt` (formatos binários antigos) ficam de fora
+                     porque o servidor os recusa — oferecer um upload que falha
+                     sempre é pior que não oferecer. */
+                  accept="image/*,.pdf,.docx,.pptx,.md,.txt,.csv"
+                  disabled={enviando}
                   className="hidden"
                   onChange={(e) => e.target.files && onAnexar(e.target.files)}
                 />
@@ -517,6 +595,7 @@ function daApi(boards: PipelineBoardWire[]): { boards: PipelineBoard[]; cards: P
         responsavel: c.responsavel ?? 'Sem responsável',
         valor: c.valor,
         nota: c.nota,
+        anexos: c.anexos,
         atualizadoEm: c.atualizado_em,
       })),
     ),
@@ -528,7 +607,11 @@ function PipelineBoardUI() {
   const criarPipeline = useCriarPipeline();
   const atualizarPipeline = useAtualizarPipeline();
   const criarCartao = useCriarCartao();
+  const atualizarCartao = useAtualizarCartao();
+  const apagarCartao = useApagarCartao();
+  const apagarPipeline = useApagarPipeline();
   const moverCartaoMut = useMoverCartao();
+  const [enviandoAnexo, setEnviandoAnexo] = useState(false);
 
   const { boards, cards } = useMemo(() => daApi(data?.boards ?? []), [data]);
   /** Selo de "da agência" / "meu", direto do servidor. */
@@ -538,7 +621,6 @@ function PipelineBoardUI() {
   );
 
   const [boardIdEscolhido, setBoardId] = useState<string | null>(null);
-  const [anexosPorCartao, setAnexosPorCartao] = useState<Record<string, AnexoLocal[]>>({});
   const [arrastando, setArrastando] = useState<string | null>(null);
   const [colunaSobre, setColunaSobre] = useState<string | null>(null);
   const [criandoCartao, setCriandoCartao] = useState(false);
@@ -560,17 +642,25 @@ function PipelineBoardUI() {
   function moverCartao(cardId: string, novoEstagio: string) {
     const card = cards.find((c) => c.id === cardId);
     if (!card || !board) return;
+    const stage = board.stages.find((s) => s.id === novoEstagio);
     moverCartaoMut.mutate(
       { boardId: board.id, cardId, stage_id: novoEstagio },
       {
+        /**
+         * O aviso de "atualizado no ClickUp" só sai DEPOIS que o servidor
+         * confirmou. Antes ele era disparado junto com a chamada, sempre, e
+         * dizia que a tarefa tinha mudado de status lá quando nada tinha sido
+         * escrito — toast verde é afirmação, e afirmação precisa de resposta.
+         */
+        onSuccess: () => {
+          if (board.tipo === 'tarefas' && stage?.clickupStatus) {
+            toast(`"${card.name}" → ${stage.label} — status atualizado no ClickUp.`, 'success');
+          }
+        },
         onError: (erro) =>
           toast(`Não consegui mover "${card.name}": ${erro instanceof Error ? erro.message : 'erro desconhecido'}`, 'error'),
       },
     );
-    if (board.tipo === 'tarefas') {
-      const stage = board.stages.find((s) => s.id === novoEstagio);
-      toast(`"${card.name}" → ${stage?.label ?? novoEstagio} — status atualizado no ClickUp.`, 'success');
-    }
   }
 
   if (isPending) {
@@ -629,13 +719,30 @@ function PipelineBoardUI() {
     );
   }
 
-  function anexarArquivos(cardId: string, files: FileList) {
-    const novos: AnexoLocal[] = Array.from(files).map((f) => ({ id: `anexo-${Date.now()}-${f.name}`, nome: f.name, url: URL.createObjectURL(f), tipo: f.type }));
-    setAnexosPorCartao((atual) => ({ ...atual, [cardId]: [...(atual[cardId] ?? []), ...novos] }));
+  /**
+   * O arquivo SOBE antes de virar anexo. A versão anterior guardava
+   * `URL.createObjectURL(f)`: um endereço válido só dentro da aba que o criou,
+   * então o anexo sumia no recarregamento e nunca existiu pra mais ninguém —
+   * inclusive pra quem compartilha o quadro da agência.
+   */
+  async function anexarArquivos(cardId: string, files: FileList) {
+    if (!board) return;
+    const atuais = cards.find((c) => c.id === cardId)?.anexos ?? [];
+    setEnviandoAnexo(true);
+    try {
+      const novos = await Promise.all(Array.from(files).map((f) => enviarAnexo(f)));
+      atualizarCartao.mutate({ boardId: board.id, cardId, anexos: [...atuais, ...novos] });
+    } catch (erro) {
+      toast(`Não consegui enviar o arquivo: ${erro instanceof Error ? erro.message : 'erro desconhecido'}`, 'error');
+    } finally {
+      setEnviandoAnexo(false);
+    }
   }
 
   function removerAnexo(cardId: string, anexoId: string) {
-    setAnexosPorCartao((atual) => ({ ...atual, [cardId]: (atual[cardId] ?? []).filter((a) => a.id !== anexoId) }));
+    if (!board) return;
+    const atuais = cards.find((c) => c.id === cardId)?.anexos ?? [];
+    atualizarCartao.mutate({ boardId: board.id, cardId, anexos: atuais.filter((a) => a.id !== anexoId) });
   }
 
   return (
@@ -647,6 +754,29 @@ function PipelineBoardUI() {
           description="Cliente, tarefas do ClickUp ou carga da equipe — cada quadro do seu jeito."
           actions={
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  /**
+                   * Confirmação nativa, e de propósito: apagar um quadro é a
+                   * única ação aqui que some com o trabalho de organização
+                   * de alguém — e, num quadro da agência, com o de todo
+                   * mundo. O cartão vai pro soft delete e dá pra restaurar
+                   * no banco, mas quem clicou não sabe disso.
+                   */
+                  if (!window.confirm(`Apagar o quadro "${board.nome}"? Os cartões vão junto.`)) return;
+                  apagarPipeline.mutate(board.id, {
+                    onSuccess: () => {
+                      setBoardId(null);
+                      toast(`Quadro "${board.nome}" apagado.`, 'success');
+                    },
+                    onError: (erro) => toast(erro instanceof Error ? erro.message : 'Não consegui apagar o quadro.', 'error'),
+                  });
+                }}
+                className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-nevoa transition-colors hover:border-erro/50 hover:text-erro"
+              >
+                Apagar quadro
+              </button>
               {board.tipo !== 'tarefas' && (
                 <button type="button" onClick={() => setConfigurando(true)} className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50">
                   <Settings2 size={15} /> Configurar
@@ -725,7 +855,7 @@ function PipelineBoardUI() {
                   <p className="py-6 text-center text-sm text-nevoa">Nenhum cartão aqui.</p>
                 ) : (
                   cartoesDoEstagio.map((card) => {
-                    const anexos = anexosPorCartao[card.id]?.length ?? 0;
+                    const anexos = card.anexos.length;
                     return (
                       <div
                         key={card.id}
@@ -783,9 +913,15 @@ function PipelineBoardUI() {
       {cartaoSelecionado && (
         <CartaoDetalheModal
           card={cartaoSelecionado}
-          anexos={anexosPorCartao[cartaoSelecionado.id] ?? []}
-          onAnexar={(files) => anexarArquivos(cartaoSelecionado.id, files)}
+          anexos={cartaoSelecionado.anexos}
+          enviando={enviandoAnexo}
+          onAnexar={(files) => void anexarArquivos(cartaoSelecionado.id, files)}
           onRemoverAnexo={(anexoId) => removerAnexo(cartaoSelecionado.id, anexoId)}
+          onSalvar={(campos) => atualizarCartao.mutate({ boardId: board.id, cardId: cartaoSelecionado.id, ...campos })}
+          onApagar={() => {
+            apagarCartao.mutate({ boardId: board.id, cardId: cartaoSelecionado.id });
+            setCartaoAberto(null);
+          }}
           onClose={() => setCartaoAberto(null)}
         />
       )}

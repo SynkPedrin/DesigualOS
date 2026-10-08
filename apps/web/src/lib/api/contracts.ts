@@ -2808,6 +2808,7 @@ export interface PipelineCardWire {
   responsavel: string | null;
   valor: string | null;
   nota: string;
+  anexos: { id: string; nome: string; url: string; tipo: string }[];
   posicao: number;
   atualizado_em: string;
 }

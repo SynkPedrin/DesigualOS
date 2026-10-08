@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import type { PipelineStage, PipelineTipo } from '@desigual-os/types';
+import type { PipelineAnexo, PipelineStage, PipelineTipo } from '@desigual-os/types';
 import { idColumn, softDeleteColumn, timestampColumns } from './_shared';
 import { organizations } from './organizations';
 import { clients } from './clients';
@@ -80,6 +80,13 @@ export const pipelineCards = pgTable(
     responsavel: text('responsavel'),
     valor: text('valor'),
     nota: text('nota').notNull().default(''),
+    /**
+     * Anexos do cartão. jsonb pelo mesmo motivo de `stages`: são sempre lidos
+     * com o cartão, nunca referenciados de fora, e poucos por cartão. O
+     * ARQUIVO em si vive no storage (POST /uploads); aqui fica só o endereço
+     * dele, o nome e o tipo.
+     */
+    anexos: jsonb('anexos').$type<PipelineAnexo[]>().notNull().default([]),
     /** Ordem dentro da coluna. Menor primeiro. */
     posicao: integer('posicao').notNull().default(0),
     ...timestampColumns,

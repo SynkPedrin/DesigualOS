@@ -1,0 +1,1 @@
+ALTER TABLE "calendar_event_participants" ADD CONSTRAINT "calendar_event_participants_event_id_member_id_unique" UNIQUE("event_id","member_id");
