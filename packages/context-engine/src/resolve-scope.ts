@@ -263,6 +263,51 @@ const WRITE_ORDER_RE =
   /(^|[\s,;:.!])(cria|crie|criar|cadastra|cadastre|lanca|lance|lancar|abre|abra|abrir|adiciona|adicione|atribui|atribua|atribuir|delega|delegue|separa|separe|poe|poem|coloca|coloque|move|mova|mover|muda|mude|mudar|altera|altere|alterar|atualiza|atualize|renomeia|renomeie|edita|edite|marca|marque|fecha|feche|fechar|conclui|conclua|concluir|finaliza|finalize|apaga|apague|apagar|deleta|delete|deletar|exclui|exclua|excluir|remove|remova|remover)\b/;
 
 /**
+ * ESCRITA SOBRE O QUE JÁ EXISTE, com alvo AMPLO — e por que ela precisa da
+ * consulta que a ordem de escrita normalmente dispensa.
+ *
+ * `WRITE_ORDER_RE` mistura dois pedidos muito diferentes sob o mesmo nome:
+ *
+ *   criar    "cria uma tarefa de revisão"   não precisa de lista nenhuma: o
+ *                                           alvo ainda não existe.
+ *   agir     "finaliza todas as tarefas     precisa da lista: é impossível
+ *            atribuídas a Pedro Gabriel"    concluir o que não se enxerga.
+ *
+ * Suprimir a consulta nos dois casos deixou o Bento cego exatamente quando ele
+ * mais precisava ver. Relato de 08/10/2026: "BENTO FINALIZE TODAS AS TASKS
+ * ATRIBUIDAS A PEDRO GABRIEL", com nove tarefas atrasadas na tela de
+ * Prioridades, e o agente sem nenhum dado do ClickUp no turno.
+ *
+ * A supressão continua valendo quando o alvo é PRECISO — "conclui a tarefa
+ * 86abc123", "fecha essa daí" — porque aí a lista inteira não acrescenta nada
+ * e a consulta é desperdício. O que quebra a supressão é o alvo amplo: "todas",
+ * "minhas", "as tarefas de fulano", "o que está atrasado".
+ */
+const ESCRITA_SOBRE_EXISTENTE_RE =
+  /(^|[\s,;:.!])(atribui|atribua|atribuir|delega|delegue|move|mova|mover|muda|mude|mudar|altera|altere|alterar|atualiza|atualize|renomeia|renomeie|edita|edite|marca|marque|fecha|feche|fechar|conclui|conclua|concluir|finaliza|finalize|finalizar|reagenda|reagende|prioriza|priorize|arquiva|arquive|apaga|apague|apagar|deleta|delete|deletar|exclui|exclua|excluir|remove|remova|remover)\b/;
+
+/** Alvo amplo: o pedido não aponta UMA coisa, aponta um conjunto a descobrir. */
+const ALVO_AMPLO_RE =
+  /(^|[\s,;:.!])(tod[oa]s?|cada|minhas?|meus?|as tarefas|os cards|as demandas|atribuid[oa]s?|designad[oa]s?|atrasad[oa]s?|pendentes?|aberta?s?|em aberto|do dia|de hoje|da semana)\b/;
+
+/**
+ * Referência PRECISA a um item: id do ClickUp, link, ou dêitico que só faz
+ * sentido contra a seleção do turno anterior. Com qualquer um deles, a lista
+ * ampla não acrescenta — e a supressão da consulta continua certa.
+ */
+const ALVO_PRECISO_RE =
+  /(app\.clickup\.com\/t\/|\b(?=[0-9a-z]{7,12}\b)(?=[a-z]*[0-9])[0-9a-z]{7,12}\b|(^|[\s,;:.!])(essa|esse|esta|este|aquela|aquele|a segunda|a primeira|a terceira|a ultima|o item|item \d+)\b)/;
+
+/*
+ * O id do ClickUp exige DÍGITO, e a primeira versão deste padrão não exigia:
+ * `[0-9a-z]{7,12}` no fim da frase casava com "gabriel", "atrasadas" e
+ * "revisao" — ou seja, "finalize todas as tasks atribuidas a Pedro Gabriel"
+ * era lido como alvo preciso e voltava a suprimir a consulta, que é
+ * exatamente o defeito que este bloco existe pra corrigir. Pego pelos
+ * próprios testes, na primeira execução.
+ */
+
+/**
  * Interrogação explícita: "?" ou pronome/advérbio de pergunta abrindo trecho.
  *
  * "como" fica de fora de propósito: em ordem de escrita ele é comparativo, não
@@ -574,9 +619,19 @@ export async function resolveOperationalScope(
   // Ver WRITE_ORDER_RE: ordem de escrita sem pergunta junto não gasta consulta
   // ao vivo no ClickUp. O panorama/global/agregado ganha da supressão — quem
   // pede as duas coisas na mesma frase quer as duas.
+  /**
+   * Ver ESCRITA_SOBRE_EXISTENTE_RE: mandar AGIR sobre um conjunto a descobrir
+   * ("finaliza todas as minhas tarefas") não é ordem de criação — é leitura
+   * seguida de escrita, e sem a leitura a escrita não tem alvo.
+   */
+  const agirSobreConjunto =
+    ESCRITA_SOBRE_EXISTENTE_RE.test(flat) && ALVO_AMPLO_RE.test(flat) && !ALVO_PRECISO_RE.test(flat);
+  if (agirSobreConjunto) signals.push('escrita:precisa-da-lista');
+
   const ordemDeEscrita =
     WRITE_ORDER_RE.test(flat) &&
     !QUESTION_RE.test(flat) &&
+    !agirSobreConjunto &&
     panoramaHits.length === 0 &&
     globalHits.length === 0 &&
     aggregateHits.length === 0;
@@ -606,6 +661,9 @@ export async function resolveOperationalScope(
       // sobrecarregado?" resolvia GLOBAL e mesmo assim não buscava nada.
       comparativeHits.length > 0 ||
       compreensao ||
+      // Mandar agir sobre um conjunto a descobrir É turno operacional: a
+      // escrita depende de uma leitura que ainda não aconteceu.
+      agirSobreConjunto ||
       herdaDoAnterior ||
       temporal !== null);
   const comparative = comparativeHits.length > 0;
