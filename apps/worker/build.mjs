@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { shaDeRelease, versaoDoSchema } from '../../scripts/identidade-de-release.mjs';
 
 /**
  * Mesmo problema e mesma solução do apps/api/build.mjs: `tsc` puro emite
@@ -34,6 +35,13 @@ await build({
   external: NATIVOS_DO_MOTION,
   sourcemap: true,
   logLevel: 'info',
+  // O SHA vira literal no bundle. Ver scripts/sha-de-release.mjs: o
+  // container de produção não tem .git, então resolver isso em runtime
+  // devolvia 'unknown' e o /health não provava qual commit estava no ar.
+  define: {
+    __RELEASE_SHA__: JSON.stringify(shaDeRelease()),
+    __SCHEMA_VERSION__: JSON.stringify(versaoDoSchema()),
+  },
   banner: {
     js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
   },
