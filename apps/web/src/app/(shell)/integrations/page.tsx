@@ -13,6 +13,8 @@ import { useMe } from '@/hooks/use-me';
 import { useWhatsappHealth } from '@/hooks/use-organization-connectors';
 import { useMetaIntegration } from '@/hooks/use-meta-integration';
 import { useGoogleAdsIntegration } from '@/hooks/use-google-ads-integration';
+import { useMicrosoftCalendarIntegration } from '@/hooks/use-microsoft-calendar';
+import { MidiaConnectSection, CalendarioConnectSection } from '@/components/settings/conexao-oauth-card';
 import { Consentimento } from '@/components/settings/consentimento';
 import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';
 import { NotionIntegrationSection } from '@/components/settings/notion-integration-card';
@@ -36,6 +38,7 @@ export default function IntegrationsPage() {
   const { data: whatsapp, isPending: whatsappPendente } = useWhatsappHealth(me?.organizacao_ativa?.id ?? null);
   const { data: meta, isPending: metaPendente } = useMetaIntegration();
   const { data: googleAds, isPending: googleAdsPendente } = useGoogleAdsIntegration();
+  const { data: microsoftCal, isPending: microsoftCalPendente } = useMicrosoftCalendarIntegration();
   const [busca, setBusca] = useState('');
 
   // Cada seção é uma lista de dados, não JSX solta: é o que permite a busca
@@ -103,7 +106,7 @@ export default function IntegrationsPage() {
         {
           nome: 'Meta Ads',
           categoria: 'Mídia paga',
-          bannerClassName: 'bg-[#0866FF]',
+          bannerClassName: 'bg-branco-cru',
           logo: <Image src="/logos/meta.png" alt="" width={40} height={40} unoptimized className="rounded-[6px]" />,
           estado: metaPendente ? 'desconhecido' : meta?.connected ? 'ok' : 'atencao',
           texto: metaPendente ? 'Consultando' : meta?.connected ? 'Conectado' : 'Desconectado',
@@ -116,6 +119,36 @@ export default function IntegrationsPage() {
           logo: <Image src="/logos/google-ads.webp" alt="" width={40} height={40} unoptimized className="rounded-[6px]" />,
           estado: googleAdsPendente ? 'desconhecido' : googleAds?.connected ? 'ok' : 'atencao',
           texto: googleAdsPendente ? 'Consultando' : googleAds?.connected ? 'Conectado' : 'Desconectado',
+          href: '#conectar',
+        },
+      ],
+    },
+    {
+      // A AGENDA FALTAVA NA VITRINE. Tinha rota de authorize na API, hook no
+      // front e tela de Calendário consumindo — e nenhum cartão aqui, então não
+      // havia por onde conectar (relato do Pedro, 08/10/2026).
+      //
+      // Só Microsoft: o Google Calendar foi retirado a pedido da operação, que
+      // usa Outlook. A rota e o hook continuam existindo, então voltar é
+      // adicionar o cartão de novo, não reimplementar.
+      titulo: 'Calendário',
+      itens: [
+        {
+          nome: 'Microsoft Calendar',
+          categoria: 'Agenda',
+          bannerClassName: 'bg-branco-cru',
+          logo: (
+            <Image
+              src="/logos/microsoft-calendar.png"
+              alt=""
+              width={40}
+              height={40}
+              unoptimized
+              className="rounded-[6px]"
+            />
+          ),
+          estado: microsoftCalPendente ? 'desconhecido' : microsoftCal?.connected ? 'ok' : 'atencao',
+          texto: microsoftCalPendente ? 'Consultando' : microsoftCal?.connected ? 'Conectado' : 'Desconectado',
           href: '#conectar',
         },
       ],
@@ -166,7 +199,7 @@ export default function IntegrationsPage() {
       ) : (
         secoesFiltradas.map((s) => (
           <Secao key={s.titulo} titulo={s.titulo}>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {s.itens.map((item) => (
                 <Cartao key={item.nome} {...item} />
               ))}
@@ -199,6 +232,20 @@ export default function IntegrationsPage() {
           </div>
           <div className="rounded-lg border border-grafite-elevado bg-grafite px-5 py-4">
             <MotionProvidersSection />
+          </div>
+          {/*
+            * OS CARTÕES DE MÍDIA E CALENDÁRIO APONTAVAM PRA CÁ E NÃO HAVIA NADA
+            * PRA ELES. Clicar em "Meta Ads" rolava a tela até esta seção, que só
+            * tinha ClickUp, Notion, Motion e WhatsApp — a pessoa clicava e,
+            * literalmente, não acontecia nada. Os hooks de conexão já existiam
+            * (useConnectMeta, useConnectGoogleAds e os dois de calendário);
+            * faltava o lugar de clicar.
+            */}
+          <div className="rounded-lg border border-grafite-elevado bg-grafite px-5 py-4">
+            <MidiaConnectSection />
+          </div>
+          <div className="rounded-lg border border-grafite-elevado bg-grafite px-5 py-4">
+            <CalendarioConnectSection />
           </div>
           <WhatsAppConnectCard />
         </div>
