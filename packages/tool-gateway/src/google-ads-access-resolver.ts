@@ -18,13 +18,26 @@ export const GOOGLE_ADS_PROVIDER = 'google_ads';
  * confirmação, então toda leitura troca o refresh_token por um access_token
  * novo, nunca reaproveita um token em cache entre requisições.
  */
+/**
+ * O DEVELOPER TOKEN NÃO ENTRA MAIS AQUI. Ele foi descontinuado em 09/09/2026
+ * (developers.google.com/google-ads/api/docs/api-policy/developer-token): o
+ * header virou opcional e ignorado, e o nível de acesso passou a ser decidido
+ * pelo projeto do Google Cloud que gerou as credenciais de OAuth.
+ *
+ * Enquanto ele era exigido aqui, um `.env` sem GOOGLE_ADS_DEVELOPER_TOKEN
+ * fazia esta função devolver null, o status responder `configured: false` e o
+ * botão Conectar nascer desabilitado — ou seja, a integração ficava impossível
+ * de concluir por falta de uma credencial que a Google já tinha aposentado.
+ *
+ * A variável continua podendo existir no .env sem efeito nenhum: configuração
+ * velha não quebra, só não é mais lida.
+ */
 export function getGoogleAdsEnvConfig(): Omit<GoogleAdsOAuthConfig, 'loginCustomerId'> | null {
   const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
   const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI;
-  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
-  if (!clientId || !clientSecret || !redirectUri || !developerToken) return null;
-  return { clientId, clientSecret, redirectUri, developerToken };
+  if (!clientId || !clientSecret || !redirectUri) return null;
+  return { clientId, clientSecret, redirectUri };
 }
 
 export async function getGoogleAdsConnection(userId: string) {

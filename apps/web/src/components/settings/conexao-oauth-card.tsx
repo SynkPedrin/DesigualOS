@@ -191,6 +191,12 @@ export function MetaConnect() {
   );
 }
 
+/*
+ * Sem GOOGLE_ADS_DEVELOPER_TOKEN na lista: descontinuado em 09/09/2026
+ * (developers.google.com/google-ads/api/docs/api-policy/developer-token).
+ * Pedir uma credencial que a Google aposentou mandaria a pessoa atrás de algo
+ * que não existe mais pra conseguir.
+ */
 export function GoogleAdsConnect() {
   const ads = useGoogleAdsIntegration();
   const conectarAds = useConnectGoogleAds();
@@ -201,12 +207,7 @@ export function GoogleAdsConnect() {
       nome="Google Ads"
         descricao="Conecte sua conta pra que os agentes leiam campanhas e desempenho do Google Ads."
         descricaoConectado="Conectado. Os agentes já leem suas campanhas do Google Ads."
-        variaveis={[
-          'GOOGLE_ADS_CLIENT_ID',
-          'GOOGLE_ADS_CLIENT_SECRET',
-          'GOOGLE_ADS_REDIRECT_URI',
-          'GOOGLE_ADS_DEVELOPER_TOKEN',
-        ]}
+        variaveis={['GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_REDIRECT_URI']}
         status={ads.data}
         carregando={ads.isPending}
         conectar={() => conectarAds.mutate()}

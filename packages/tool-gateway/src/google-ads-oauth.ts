@@ -6,13 +6,25 @@ import { z } from 'zod';
  * (meta-oauth.ts): isto só autentica "quem fala com o Google Ads"; qual
  * Customer ID pertence a qual cliente é decidido em clients/routes.ts.
  *
- * DIFERENÇA ESTRUTURAL IMPORTANTE em relação ao Meta: o Google Ads exige um
- * `developer-token` aprovado pela Google (Google Ads API Center) em TODA
- * chamada, além do OAuth — sem ele, nenhuma leitura funciona, mesmo com OAuth
- * concluído com sucesso. Acesso "Test" (o nível que qualquer developer token
- * novo ganha automaticamente) só enxerga contas de TESTE, não contas reais de
- * cliente; acesso "Basic"/"Standard" exige aprovação manual da Google. Isso é
- * configuração externa (Google Ads API Center), não limitação deste código.
+ * DEVELOPER TOKEN: ACABOU (sunset em 09/09/2026, confirmado na documentação
+ * oficial em developers.google.com/google-ads/api/docs/api-policy/developer-token).
+ *
+ * Este arquivo dizia o contrário — que o Google Ads "exige um developer-token
+ * aprovado em TODA chamada" e que sem ele "nenhuma leitura funciona". Era
+ * verdade quando foi escrito e deixou de ser. A documentação atual diz, em
+ * resumo: o header continua aceito mas é IGNORADO pelos servidores, o nível de
+ * acesso passou a ser determinado pelo PROJETO DO GOOGLE CLOUD que gerou as
+ * credenciais de OAuth, e o Google vai começar a REJEITAR o token numa versão
+ * maior futura da API.
+ *
+ * Por isso aqui ele não é mais enviado. Mandar um header que hoje é ignorado e
+ * amanhã é rejeitado só adianta uma quebra: o custo de parar de enviar é zero
+ * agora, e o de continuar é uma falha numa data que ninguém escolhe.
+ *
+ * Consequência prática pra quem opera: o nível de acesso (contas de teste vs.
+ * contas reais) deixou de se resolver no Google Ads API Center e passou a se
+ * resolver no projeto do Google Cloud. Continua sendo configuração externa,
+ * só mudou de lugar.
  *
  * Outra diferença: o access_token do Google expira em ~1h e não tem "sonda
  * barata" equivalente ao GET /me do Meta sem gastar uma chamada de verdade -
@@ -47,8 +59,12 @@ export interface GoogleAdsOAuthConfig {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
-  /** Developer token do Google Ads API Center — não é segredo de OAuth, mas também nunca vai pro browser. */
-  developerToken: string;
+  /**
+   * OBSOLETO desde o sunset de 09/09/2026. Continua aceito no tipo pra que um
+   * `.env` antigo com GOOGLE_ADS_DEVELOPER_TOKEN preenchido não quebre nada,
+   * mas o valor não é lido nem enviado em lugar nenhum.
+   */
+  developerToken?: string | undefined;
   /** MCC da agência, quando as contas de cliente vivem sob um manager account. Opcional. */
   loginCustomerId?: string;
 }
@@ -121,10 +137,11 @@ export async function refreshGoogleAdsAccessToken(config: Pick<GoogleAdsOAuthCon
   return tokenResponseSchema.parse(await response.json()).access_token;
 }
 
-function authHeaders(config: Pick<GoogleAdsOAuthConfig, 'developerToken' | 'loginCustomerId'>, accessToken: string): Record<string, string> {
+function authHeaders(config: Pick<GoogleAdsOAuthConfig, 'loginCustomerId'>, accessToken: string): Record<string, string> {
+  // Sem `developer-token`: ignorado pelos servidores desde 09/09/2026 e
+  // marcado pra ser rejeitado numa versão maior futura. Ver o cabeçalho.
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
-    'developer-token': config.developerToken,
     'Content-Type': 'application/json',
   };
   if (config.loginCustomerId) headers['login-customer-id'] = config.loginCustomerId.replace(/-/g, '');
