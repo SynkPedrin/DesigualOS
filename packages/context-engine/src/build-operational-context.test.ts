@@ -440,3 +440,46 @@ describe('trabalho interno separado da carteira', () => {
     expect(ctx.block).toContain('em 2 cliente(s)');
   });
 });
+
+/**
+ * QUEM ESTÁ FALANDO.
+ *
+ * Medido no chat de produção em 08/10/2026: "me lista as minhas tarefas
+ * abertas" devolveu as 414 tarefas da agência inteira. A resposta estava
+ * certa para a pergunta que o agente conseguia enxergar — o bloco trazia as
+ * tarefas e não dizia de quem era a voz do outro lado, então "minhas" não
+ * tinha a quem se referir.
+ */
+describe('identidade de quem pergunta', () => {
+  it('o bloco diz quem está falando e qual é o e-mail dele no ClickUp', async () => {
+    const r = await buildOperationalContext(
+      scope({ kind: 'GLOBAL' }),
+      deps({ quemPergunta: { nome: 'Pedro Gabriel', emailClickUp: 'pedro@exemplo.com' } }),
+      NOW,
+    );
+    expect(r.block).toContain('Pedro Gabriel');
+    expect(r.block).toContain('pedro@exemplo.com');
+    expect(r.block).toMatch(/minhas/i);
+  });
+
+  /**
+   * Sem e-mail do ClickUp não dá pra cruzar a pessoa daqui com a de lá. O
+   * bloco diz isso em vez de deixar o agente adivinhar por nome de exibição,
+   * que é apelido e muda.
+   */
+  it('sem e-mail do ClickUp, avisa que "minhas tarefas" não se resolve sozinho', async () => {
+    const r = await buildOperationalContext(
+      scope({ kind: 'GLOBAL' }),
+      deps({ quemPergunta: { nome: 'Alguém', emailClickUp: null } }),
+      NOW,
+    );
+    expect(r.block).toContain('Alguém');
+    expect(r.block).toMatch(/sem e-mail do ClickUp/i);
+  });
+
+  /** A integração do ClickUp não é pessoa: não há "minhas", e a linha não sai. */
+  it('sem quemPergunta, o bloco não inventa identidade', async () => {
+    const r = await buildOperationalContext(scope({ kind: 'GLOBAL' }), deps(), NOW);
+    expect(r.block).not.toMatch(/QUEM ESTÁ FALANDO/);
+  });
+});

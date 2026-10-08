@@ -44,6 +44,22 @@ export interface OperationalContextDeps {
      * resolvidos pelo chamador, que é quem tem acesso à API. */
     assigneeIds?: number[];
   }) => Promise<{ tasks: OperationalTaskLike[]; truncated: boolean }>;
+  /**
+   * QUEM ESTÁ PERGUNTANDO — e por que isso precisava entrar no bloco.
+   *
+   * O `principal` já chegava até aqui, mas só como AUTORIZAÇÃO: ele decidia
+   * quais clientes podiam ser lidos e nada mais. O agente recebia a lista de
+   * tarefas sem saber de quem era a voz do outro lado.
+   *
+   * Consequência medida no chat de produção em 08/10/2026: "me lista as
+   * minhas tarefas abertas" devolveu as 414 tarefas da agência inteira. A
+   * resposta estava correta para a pergunta que o agente conseguia enxergar —
+   * ele não tinha como saber o que "minhas" queria dizer.
+   *
+   * O e-mail do ClickUp é o que amarra a pessoa daqui à pessoa de lá: nome de
+   * exibição é apelido e muda, e-mail é identidade.
+   */
+  quemPergunta?: { nome: string | null; emailClickUp: string | null } | undefined;
 }
 
 export interface OperationalContext {
@@ -243,6 +259,21 @@ export async function buildOperationalContext(
   }
 
   const linhas: string[] = [];
+  /**
+   * A identidade vem ANTES dos dados: "minhas tarefas" e "o que eu tenho pra
+   * hoje" só têm resposta se o agente souber quem é "eu". Sem esta linha, a
+   * pergunta pessoal era respondida com a operação inteira.
+   */
+  if (deps.quemPergunta?.nome || deps.quemPergunta?.emailClickUp) {
+    const quem = deps.quemPergunta;
+    linhas.push(
+      `QUEM ESTÁ FALANDO COM VOCÊ: ${quem.nome ?? 'pessoa sem nome cadastrado'}` +
+        (quem.emailClickUp ? ` (no ClickUp: ${quem.emailClickUp})` : ' — sem e-mail do ClickUp vinculado, então "minhas tarefas" você não tem como resolver sozinho: peça o nome.'),
+    );
+    linhas.push('Quando a pessoa disser "minhas", "eu" ou "pra mim", é desta pessoa que ela fala.');
+    linhas.push('');
+  }
+
   linhas.push('DADOS AO VIVO DO CLICKUP (consultados agora, valem mais que qualquer memória sua):');
   // Âncora temporal explícita: sem a data de hoje no bloco, o agente estimava
   // "próximas semanas" sobre prazos de meses atrás (medido em 24/09/2026).

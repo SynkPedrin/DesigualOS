@@ -358,6 +358,20 @@ export async function resolveOperationalTurn(
         truncado = result.truncated;
         return { tasks: result.tasks, truncated: result.truncated };
       },
+      /**
+       * O principal já estava aqui, mas só como autorização. Passá-lo também
+       * como IDENTIDADE é o que torna "minhas tarefas" respondível — antes a
+       * pergunta pessoal devolvia a operação inteira, porque o agente não
+       * tinha como saber quem era "eu".
+       *
+       * A integração (CLICKUP_INTEGRATION) não tem nome nem e-mail: quando é
+       * ela que pergunta, não há "minhas", e o bloco simplesmente não ganha a
+       * linha.
+       */
+      quemPergunta:
+        typeof principal === 'object' && 'name' in principal
+          ? { nome: principal.name ?? null, emailClickUp: principal.clickupEmail ?? null }
+          : undefined,
     },
     now,
   );
