@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { useClients } from '@/hooks/use-clients';
+import { logoDoCliente } from '@/lib/client-logos';
 import { useClientWorkspace } from '@/hooks/use-client-workspace';
 import { useDemands } from '@/hooks/use-demands';
 import { useInboxThreads } from '@/hooks/use-inbox';
@@ -83,10 +84,25 @@ function ClientsPageContent() {
       if (statusChip !== 'todos' && c.status !== statusChip) return false;
       return !termo || c.name.toLowerCase().includes(termo);
     });
-    if (ordem !== 'parados') return resultado;
-    // Parados primeiro: quem nunca se mexeu no topo, quem não pôde ser medido
-    // no fim — ver pesoDeParado em client-grid.tsx pro porquê da ordem.
-    return [...resultado].sort((a, b) => pesoDeParado(b) - pesoDeParado(a));
+    if (ordem === 'parados') {
+      // Parados primeiro: quem nunca se mexeu no topo, quem não pôde ser medido
+      // no fim — ver pesoDeParado em client-grid.tsx pro porquê da ordem.
+      return [...resultado].sort((a, b) => pesoDeParado(b) - pesoDeParado(a));
+    }
+    // COM LOGO PRIMEIRO, EM ORDEM ALFABÉTICA (08/10/2026). Quem opera varre a
+    // lista pela MARCA, não pelo nome escrito: reconhecer a logo é mais rápido
+    // que ler. Misturar cliente com e sem logo quebrava essa varredura, porque
+    // o olho perdia o ritmo a cada bloco de iniciais.
+    //
+    // Não é juízo de valor sobre o cliente: é pôr junto o que se reconhece de
+    // relance. Quem ainda não tem logo fica logo abaixo, também em ordem, e
+    // aparece igual na busca.
+    return [...resultado].sort((a, b) => {
+      const comLogoA = logoDoCliente(a.name) ? 0 : 1;
+      const comLogoB = logoDoCliente(b.name) ? 0 : 1;
+      if (comLogoA !== comLogoB) return comLogoA - comLogoB;
+      return a.name.localeCompare(b.name, 'pt-BR');
+    });
   }, [clients, busca, statusChip, ordem]);
 
   /**

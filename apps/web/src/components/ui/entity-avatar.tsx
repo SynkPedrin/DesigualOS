@@ -1,10 +1,20 @@
 'use client';
 
 import Image from 'next/image';
+import { logoDoCliente } from '@/lib/client-logos';
 import { cn } from '@/lib/utils';
 
 const SIZE_CLASSES = { sm: 'size-6 text-[10px]', md: 'size-9 text-xs', lg: 'size-11 text-sm', xl: 'size-14 text-base' } as const;
-const SIZE_PX = { sm: 24, md: 36, lg: 44, xl: 56 } as const;
+
+/**
+ * Logo é maior que a inicial no MESMO tamanho nominal.
+ *
+ * Sem moldura nem padding, a marca pode ocupar o espaço inteiro — e ela precisa
+ * disso: uma logo encolhida a 24px dentro de um quadrado com borda não é
+ * reconhecível, e aí ela não serve pra nada que as iniciais já não fizessem.
+ */
+const LOGO_SIZE_CLASSES = { sm: 'size-8', md: 'size-12', lg: 'size-14', xl: 'size-20' } as const;
+const SIZE_PX = { sm: 32, md: 48, lg: 56, xl: 80 } as const;
 
 /** Paleta de fundo+texto com contraste bom, pra quando não há foto/logo real —
  *  nunca cor aleatória a cada render, sempre a MESMA cor pro mesmo nome. */
@@ -47,13 +57,17 @@ function iniciaisDePessoa(name: string): string {
 }
 
 /**
- * Avatar de CLIENTE (quadrado, cor determinística pelo nome — nunca foto: um
- * cliente real não ganha foto inventada) ou de PESSOA (círculo, foto quando
- * `photoUrl` existe, iniciais quando não). Mesmo princípio do
- * `CollaboratorAvatar` (fallback nunca inventa dado, só preenche com o que dá
- * pra derivar do nome), generalizado pra cobrir cliente também — a diferença
- * de forma (quadrado x círculo) é o que distingue "marca" de "gente" no
- * mockup, e mantemos isso aqui em vez de usar o mesmo círculo pros dois.
+ * Avatar de CLIENTE (quadrado) ou de PESSOA (círculo). A diferença de forma é
+ * o que distingue "marca" de "gente" no mockup, e mantemos isso aqui em vez
+ * de usar o mesmo círculo pros dois.
+ *
+ * Logo real de cliente (08/10/2026): cliente nunca ganhava foto, porque não
+ * havia fonte confiável de logo — o fallback de iniciais era o único estado
+ * honesto. Agora que o Pedro entregou os logos reais (`client-logos.ts`), o
+ * mesmo princípio do `CollaboratorAvatar` passa a valer pros dois: foto
+ * quando existe uma de verdade, iniciais quando não — nunca um logo genérico
+ * ou um palpite de qual marca é. `photoUrl` continua aceito pra cliente
+ * também, caso algum dia venha uma foto por fonte diferente do nome.
  */
 export function EntityAvatar({
   name,
@@ -63,7 +77,6 @@ export function EntityAvatar({
   className,
 }: {
   name: string;
-  /** Só faz sentido pra kind='person' — cliente nunca ganha foto fake. */
   photoUrl?: string | null;
   kind: 'client' | 'person';
   size?: keyof typeof SIZE_CLASSES;
@@ -71,20 +84,36 @@ export function EntityAvatar({
 }) {
   const cor = PALETTE[hashParaIndice(name, PALETTE.length)]!;
   const iniciais = kind === 'client' ? iniciaisDeCliente(name) : iniciaisDePessoa(name);
-  const temFoto = kind === 'person' && Boolean(photoUrl);
+  const fotoResolvida = kind === 'client' ? (photoUrl ?? logoDoCliente(name)) : photoUrl;
+  const temFoto = Boolean(fotoResolvida);
 
   return (
     <span
       className={cn(
-        'flex shrink-0 items-center justify-center overflow-hidden font-mono font-semibold',
-        kind === 'client' ? 'rounded-lg' : 'rounded-full',
-        SIZE_CLASSES[size],
-        !temFoto && cor,
+        'flex shrink-0 items-center justify-center font-mono font-semibold',
+        // SEM MOLDURA QUANDO HÁ LOGO (08/10/2026). A logo vinha dentro de um
+        // quadrado branco com padding: o recorte comia a marca e o fundo claro
+        // brigava com a tela escura, então o colaborador precisava LER o nome
+        // pra saber de quem era o cliente. Logo existe justamente pra ser
+        // reconhecida antes da leitura — a moldura anulava a única função dela.
+        //
+        // O fallback de iniciais MANTÉM a forma e a cor: ali o quadrado não é
+        // enfeite, é o que torna a inicial legível e distinguível.
+        temFoto ? 'overflow-visible' : cn('overflow-hidden rounded-lg', cor),
+        kind === 'person' && 'overflow-hidden rounded-full',
+        temFoto && kind === 'client' ? LOGO_SIZE_CLASSES[size] : SIZE_CLASSES[size],
         className,
       )}
     >
       {temFoto ? (
-        <Image src={photoUrl!} alt={name} width={SIZE_PX[size]} height={SIZE_PX[size]} unoptimized className="size-full object-cover" />
+        <Image
+          src={fotoResolvida!}
+          alt={name}
+          width={SIZE_PX[size]}
+          height={SIZE_PX[size]}
+          unoptimized
+          className={cn('size-full', kind === 'client' ? 'object-contain' : 'object-cover')}
+        />
       ) : (
         iniciais
       )}
