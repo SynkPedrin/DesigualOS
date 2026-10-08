@@ -76,7 +76,8 @@ import { queryOperationTasks } from '@desigual-os/tool-gateway';
 import { resolveWriteTarget } from './write-target';
 import { clearResourceFocusIfDeleted } from './bento-resource-state';
 import { tryMotionGuard } from './motion-guard';
-import { loadSeniorRuntimeContext } from './senior-runtime-context';
+import { loadSeniorRuntimeContext, resolverAutoridadeDoSenior, explicarFaltaDeAutoridade } from './senior-runtime-context';
+import type { SeniorToolContext } from '@desigual-os/tool-gateway';
 import { detectSmallTalk } from './small-talk';
 import { registrarConhecimentoDoTurno } from './knowledge-statement';
 import {
@@ -86,6 +87,26 @@ import {
 } from './execution-record';
 import { responderBriefingDoItemEmFoco } from './selection-read';
 import { looksLikeCreativeFeedback } from './conversation-artifact';
+
+/**
+ * Resolve a autoridade UMA vez e devolve os dois campos que o core precisa: o
+ * contexto quando deu certo, e a explicação do que houve quando não deu.
+ *
+ * Existe porque a explicação só pode ser montada aqui, onde o `executionDbId`
+ * é conhecido. Antes o core recebia só `null` e respondia sempre "não consegui
+ * confirmar sua permissão" — frase que, no caso mais comum (pessoa com duas
+ * empresas e nenhuma aberta), manda procurar um administrador para um problema
+ * que se resolve abrindo a empresa.
+ */
+async function autoridadeParaOCore(
+  executionDbId: string,
+): Promise<{ seniorToolContext: SeniorToolContext | null; explicacaoSemAutoridade?: string }> {
+  const r = await resolverAutoridadeDoSenior(executionDbId);
+  return r.ok
+    ? { seniorToolContext: r.contexto }
+    : { seniorToolContext: null, explicacaoSemAutoridade: explicarFaltaDeAutoridade(r.motivo) };
+}
+
 import {
   checkDateRangeMatch,
   clienteDoBloco,
@@ -1739,7 +1760,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         conversationId,
         organizationId: null,
         clientId: runningExecution?.clientId ?? null,
-        seniorToolContext: await loadSeniorRuntimeContext(executionDbId),
+        ...(await autoridadeParaOCore(executionDbId)),
         // Contexto operacional que o core não recebia (28/09/2026): sem o nome
         // do cliente o planner planejava no escuro e o briefing não tinha como
         // puxar o dossiê; sem os anexos o print do pedido nunca chegava na
@@ -1777,7 +1798,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       userName: jobUser?.name ?? jobUser?.email ?? 'usuário',
       userClickUpEmail: jobUser?.clickupEmail ?? null,
       userEmail: jobUser?.email ?? null,
-      seniorToolContext: await loadSeniorRuntimeContext(executionDbId),
+      ...(await autoridadeParaOCore(executionDbId)),
       agencyListId: agencyClient[0]?.clickupListId ?? null,
       clientId: runningExecution?.clientId ?? null,
       clientName: clienteDaExecucao?.name ?? null,

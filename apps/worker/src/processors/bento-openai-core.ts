@@ -219,6 +219,13 @@ export interface BentoOpenAiCoreParams {
   organizationId: string | null;
   clientId: string | null;
   seniorToolContext: SeniorToolContext | null;
+  /**
+   * Por que a autoridade não foi resolvida, quando não foi. Sem isto, toda
+   * falha virava "não consegui confirmar sua permissão" — inclusive a mais
+   * comum delas, que é não saber em qual das empresas da pessoa agir, e que
+   * se resolve em dois cliques se alguém disser isso.
+   */
+  explicacaoSemAutoridade?: string | undefined;
   logger: Logger;
   /**
    * Nome do cliente ativo da conversa. Era `null` hardcoded na chamada do
@@ -402,7 +409,7 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
     return envelopeToExecuteResponse(
       'bento',
       { success: false, verified: false, provider: null, resourceIds: [], operation: action.intent, changes: {}, error: 'sem contexto de autoridade resolvido (executor/organização/permissão)', retryable: false, sources: [] },
-      'Não consegui confirmar sua permissão pra essa ação agora.',
+      params.explicacaoSemAutoridade ?? 'Não consegui confirmar sua permissão pra essa ação agora.',
     );
   }
 
