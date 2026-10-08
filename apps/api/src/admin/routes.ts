@@ -123,6 +123,12 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     // Sem Resend, cai pro e-mail padrão do Supabase (funcional, sem marca).
     const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
     let authUserId: string;
+    /**
+     * A conta já existia antes deste convite? Decide a resposta no fim e o que
+     * a tela diz. Vive aqui, não dentro do ramo do Resend, porque os dois
+     * caminhos de convite precisam poder respondê-la.
+     */
+    let jaTinhaConta = false;
 
     if (hasResend) {
       /**
@@ -141,11 +147,51 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           email: body.email,
           options: { data: { invited_role: body.role, invited_name: body.name ?? null }, redirectTo },
         });
-        if (resposta.error || !resposta.data.user) {
+
+        /**
+         * RECONVIDAR ALGUÉM QUE JÁ TEM CONTA É O CASO NORMAL, NÃO O ERRO.
+         *
+         * O Supabase recusa `type: 'invite'` para e-mail já registrado:
+         * "A user with this email address has already been registered". O
+         * código antigo não tratava isso de forma nenhuma e devolvia 500
+         * "Internal Server Error" — a mensagem que o Pedro viu na tela ao
+         * tentar convidar uma pessoa que já estava no sistema (08/10/2026).
+         *
+         * Recusar é a resposta errada, e por um motivo que o próprio bloco
+         * mais abaixo já reconhece: "Reconvidar alguém que ficou sem papel (ou
+         * sem empresa) é exatamente o caso em que se reconvida". Há gente no
+         * banco nesse estado AGORA — conta ativa, zero papéis, nenhum vínculo
+         * — que entra no sistema e toma 403 em toda tela. Um 400 dizendo
+         * "já registrado" tranca a única porta que consertaria isso.
+         *
+         * Então, quando a conta existe, o convite vira RECUPERAÇÃO: um link
+         * para a pessoa definir a senha, e o resto do fluxo (papel + vínculo
+         * com a empresa) segue igual. O efeito é o que o administrador quis
+         * dizer ao clicar em "Enviar convite": essa pessoa deve ter acesso.
+         */
+        const jaRegistrado = /already been registered|already exists/i.test(resposta.error?.message ?? '');
+        if (jaRegistrado) {
+          jaTinhaConta = true;
+          const recuperacao = await admin.auth.admin.generateLink({
+            type: 'recovery',
+            email: body.email,
+            options: { redirectTo },
+          });
+          if (recuperacao.error || !recuperacao.data.user) {
+            reply.code(400);
+            return {
+              error:
+                `${body.email} já tem conta, mas não consegui gerar o link para ela definir a senha` +
+                `${recuperacao.error?.message ? `: ${recuperacao.error.message}` : '.'}`,
+            };
+          }
+          data = recuperacao.data;
+        } else if (resposta.error || !resposta.data.user) {
           reply.code(400);
           return { error: resposta.error?.message ?? 'Failed to generate invite link' };
+        } else {
+          data = resposta.data;
         }
-        data = resposta.data;
       } catch (erro) {
         request.log.error({ erro, email: body.email }, 'generateLink do Supabase falhou');
         reply.code(502);
@@ -281,7 +327,15 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     }
 
     reply.code(201);
-    return { email: body.email, role: body.role, status: 'invited', organization_id: organizationId };
+    return {
+      email: body.email,
+      role: body.role,
+      // `reconvidado` em vez de `invited` quando a conta já existia: a tela
+      // precisa poder dizer "essa pessoa já tinha conta; atualizei o papel e o
+      // vínculo e mandei o link da senha" em vez de fingir um convite novo.
+      status: jaTinhaConta ? 'reinvited' : 'invited',
+      organization_id: organizationId,
+    };
     },
   );
 

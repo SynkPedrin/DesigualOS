@@ -82,6 +82,58 @@ async function convidar(email: string) {
   return app.inject({ method: 'POST', url: '/admin/invite', payload: { email, role: 'colaborador' } });
 }
 
+/**
+ * RECONVIDAR QUEM JÁ TEM CONTA.
+ *
+ * O Supabase recusa `type: 'invite'` para e-mail já registrado. Sem
+ * tratamento, isso virava 500 "Internal Server Error" na tela — relatado em
+ * 08/10/2026 ao tentar convidar alguém que já estava no sistema.
+ *
+ * Recusar é a resposta errada: há conta no banco com ZERO papéis e nenhum
+ * vínculo, que entra e toma 403 em toda tela, e reconvidar é a única porta que
+ * conserta isso. Medido no banco real depois do fix: papeis={} -> ["colaborador"].
+ */
+describe('POST /admin/invite — quem já tem conta é reconvidado, não recusado', () => {
+  beforeEach(() => {
+    process.env.SUPABASE_URL = 'https://projeto.supabase.co';
+    process.env.SUPABASE_SECRET_KEY = 'sb_secret_fake';
+    process.env.RESEND_API_KEY = 're_fake';
+    process.env.RESEND_FROM_EMAIL = 'Desigual OS <noreply@agenciadesigual.com.br>';
+    sendInviteEmail.mockReset().mockResolvedValue('envio-1');
+    conferirEntrega.mockReset().mockResolvedValue('delivered');
+    generateLink.mockReset().mockImplementation((args: { type: string }) =>
+      args.type === 'invite'
+        ? Promise.resolve({ data: { user: null }, error: { message: 'A user with this email address has already been registered' } })
+        : Promise.resolve({ data: { user: { id: 'auth-1' }, properties: { action_link: 'https://app/senha#token' } }, error: null }),
+    );
+  });
+
+  it('e-mail já registrado vira link de recuperação, não erro', async () => {
+    const res = await convidar('ja.existe@institutoalmada.org');
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().status).toBe('reinvited');
+    expect(generateLink).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'recovery', email: 'ja.existe@institutoalmada.org' }),
+    );
+  });
+
+  it('o e-mail sai mesmo assim — é por ele que a pessoa define a senha', async () => {
+    await convidar('ja.existe@institutoalmada.org');
+    expect(sendInviteEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'ja.existe@institutoalmada.org' }));
+  });
+
+  it('erro que NÃO é "já registrado" continua sendo recusa, não vira recuperação', async () => {
+    generateLink.mockReset().mockResolvedValue({ data: { user: null }, error: { message: 'Invalid email address' } });
+
+    const res = await convidar('torto@exemplo.com');
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('Invalid email');
+    expect(generateLink).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('POST /admin/invite — 200 do provedor não é entrega', () => {
   beforeEach(() => {
     process.env.SUPABASE_URL = 'https://projeto.supabase.co';
