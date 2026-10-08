@@ -157,14 +157,29 @@ export async function organizacaoAtivaDe(
   return org ?? null;
 }
 
+export interface MarcaDaOrganizacao {
+  /** Nomes em inglês de propósito: é o shape que o brand-provider do web lê
+   *  (`--color-brand-primary` etc.). Traduzir aqui quebraria a tela em
+   *  silêncio — o front nunca acharia `corPrimaria`. */
+  primary: string | null;
+  secondary: string | null;
+  /** Reservado para o sistema de tokens; não há coluna para ele ainda. */
+  accent: string | null;
+  logo_url: string | null;
+  nome_assistente: string | null;
+}
+
 export interface ContextoCompleto {
   escopo: EscopoDeOrganizacao;
   /** Todas as empresas em que a pessoa é membro, já com nome. */
   organizacoes: { id: string; name: string }[];
   /** A que ela abriu de propósito, validada. `null` = contexto do provedor. */
-  ativa: { id: string; name: string; slug: string } | null;
-  /** Onde ela está trabalhando agora. Nunca nula quando há vínculo. */
-  deTrabalho: { id: string; name: string; slug: string } | null;
+  ativa: { id: string; name: string; slug: string; marca: MarcaDaOrganizacao } | null;
+  /** Onde ela está trabalhando agora. Nunca nula quando há vínculo.
+   *  `eh_provedora` é a identidade ESTÁVEL da provedora (id comparado ao
+   *  PROVIDER_ORGANIZATION_ID do ambiente) — substitui o regex no nome que o
+   *  front usava para saber se está "dentro de um tenant". */
+  deTrabalho: { id: string; name: string; slug: string; marca: MarcaDaOrganizacao; eh_provedora: boolean } | null;
 }
 
 /**
@@ -201,6 +216,10 @@ export async function contextoCompletoDe(user: AuthenticatedUser): Promise<Conte
                  o.name,
                  o.slug,
                  o.status,
+                 o.cor_primaria,
+                 o.cor_secundaria,
+                 o.logo_url,
+                 o.nome_assistente,
                  (om.user_id is not null) as sou_membro,
                  (o.id = (select organizacao_ativa_id from eu)) as eh_ativa
           from organizations o
@@ -216,9 +235,29 @@ export async function contextoCompletoDe(user: AuthenticatedUser): Promise<Conte
     name: string;
     slug: string;
     status: string;
+    cor_primaria: string | null;
+    cor_secundaria: string | null;
+    logo_url: string | null;
+    nome_assistente: string | null;
     sou_membro: boolean;
     eh_ativa: boolean;
   }>);
+
+  /**
+   * A marca vem na MESMA consulta — quatro colunas a mais numa query que já
+   * existia, não uma ida nova ao banco (a nota de latência acima vale para
+   * ela também). É o que faz o brand-provider do web deixar de ser no-op:
+   * `/me` passa a devolver `organizacao_ativa.marca` no shape exato que ele
+   * lê (primary/secondary/accent), e a tela re-tematiza sem nenhuma tela
+   * precisar mudar.
+   */
+  const marcaDe = (l: (typeof linhas)[number]): MarcaDaOrganizacao => ({
+    primary: l.cor_primaria,
+    secondary: l.cor_secundaria,
+    accent: null,
+    logo_url: l.logo_url,
+    nome_assistente: l.nome_assistente,
+  });
 
   const membros = linhas.filter((l) => l.sou_membro);
   const escopo = decidirEscopo(
@@ -251,7 +290,7 @@ export async function contextoCompletoDe(user: AuthenticatedUser): Promise<Conte
       .catch(() => undefined);
   }
 
-  const ativa = ativaVale && linhaAtiva ? { id: linhaAtiva.id, name: linhaAtiva.name, slug: linhaAtiva.slug } : null;
+  const ativa = ativaVale && linhaAtiva ? { id: linhaAtiva.id, name: linhaAtiva.name, slug: linhaAtiva.slug, marca: marcaDe(linhaAtiva) } : null;
 
   const escolha = decidirOrganizacaoDeTrabalho({
     pedida: null,
@@ -268,7 +307,13 @@ export async function contextoCompletoDe(user: AuthenticatedUser): Promise<Conte
     organizacoes: membros.map((l) => ({ id: l.id, name: l.name })),
     ativa,
     deTrabalho: linhaTrabalho
-      ? { id: linhaTrabalho.id, name: linhaTrabalho.name, slug: linhaTrabalho.slug }
+      ? {
+          id: linhaTrabalho.id,
+          name: linhaTrabalho.name,
+          slug: linhaTrabalho.slug,
+          marca: marcaDe(linhaTrabalho),
+          eh_provedora: linhaTrabalho.id === organizacaoProvedora(),
+        }
       : null,
   };
 }
