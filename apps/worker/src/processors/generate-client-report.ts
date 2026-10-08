@@ -5,6 +5,7 @@ import { renderToBuffer } from '@react-pdf/renderer';
 import {
   getMetaAccountInsights,
   getMetaCampaigns,
+  getMetaAds,
   resolveMetaAccessByConnectionId,
   getGoogleAdsAccountInsights,
   getGoogleAdsCampaigns,
@@ -12,7 +13,7 @@ import {
   getGoogleAdsEnvConfig,
 } from '@desigual-os/tool-gateway';
 import type { Logger } from '@desigual-os/logging';
-import { ClientReportDocument, type ChannelReportData, type ClientReportData } from '../reports/client-report-document.js';
+import { ClientReportDocument, type ChannelReportData, type ClientReportData, type ReportCreative } from '../reports/client-report-document.js';
 
 const BUCKET = 'user-uploads';
 
@@ -95,6 +96,39 @@ export async function generateClientReport(reportId: string, logger: Logger): Pr
   }
 }
 
+/**
+ * BAIXA A IMAGEM DO CRIATIVO E EMBUTE NO PDF, em vez de referenciar a URL.
+ *
+ * As `thumbnail_url` do Meta são assinadas e expiram em horas. Um PDF que
+ * aponta para elas nasce certo e apodrece: o cliente abre o relatório na
+ * semana seguinte e encontra retângulos quebrados onde estavam as peças. Como
+ * o arquivo é gerado uma vez e guardado para sempre, a imagem tem que virar
+ * bytes agora.
+ *
+ * Falha de uma imagem não derruba as outras nem o relatório — o criativo
+ * entra sem arte, com o nome e os números, que continuam valendo.
+ */
+async function baixarCriativos(
+  anuncios: Array<{ id: string; name: string; thumbnailUrl: string | null; imageUrl: string | null; spend: number | null; ctr: number | null }>,
+  logger: Logger,
+): Promise<ReportCreative[]> {
+  const comArte = anuncios.filter((a) => a.thumbnailUrl ?? a.imageUrl);
+  return Promise.all(
+    comArte.map(async (anuncio) => {
+      const url = (anuncio.imageUrl ?? anuncio.thumbnailUrl)!;
+      try {
+        const resposta = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`);
+        const bytes = Buffer.from(await resposta.arrayBuffer());
+        return { id: anuncio.id, name: anuncio.name, spend: anuncio.spend, ctr: anuncio.ctr, imagem: bytes };
+      } catch (error) {
+        logger.warn({ anuncio: anuncio.id, error }, 'Criativo sem imagem no relatório — o download falhou');
+        return { id: anuncio.id, name: anuncio.name, spend: anuncio.spend, ctr: anuncio.ctr, imagem: null };
+      }
+    }),
+  );
+}
+
 async function buscarCanalMeta(
   clientId: string,
   periodoAtual: { since: string; until: string },
@@ -119,16 +153,25 @@ async function buscarCanalMeta(
   }
 
   try {
-    const [insightsAtual, insightsAnterior, campanhas] = await Promise.all([
+    const [insightsAtual, insightsAnterior, campanhas, anuncios] = await Promise.all([
       getMetaAccountInsights(access.token, mapping.accountId, periodoAtual),
       getMetaAccountInsights(access.token, mapping.accountId, periodoAnterior),
       getMetaCampaigns(access.token, mapping.accountId, periodoAtual),
+      // Criativos entram no MESMO Promise.all: é uma quarta ida à Graph API,
+      // e enfileirá-la depois somaria a latência inteira ao relatório.
+      getMetaAds(access.token, mapping.accountId, periodoAtual, 8).catch((error: unknown) => {
+        // Falhar aqui não pode custar o relatório: sem criativo o PDF sai com
+        // os números, que é o que ele sempre teve.
+        logger.warn({ clientId, error }, 'Não consegui ler os criativos do Meta; o relatório sai sem a galeria');
+        return [];
+      }),
     ]);
     return {
       conectado: true,
       atual: insightsAtual && { spend: insightsAtual.spend, resultados: insightsAtual.results, ctr: insightsAtual.ctr, custoMedio: insightsAtual.cpc },
       anterior: insightsAnterior && { spend: insightsAnterior.spend, resultados: insightsAnterior.results, ctr: insightsAnterior.ctr, custoMedio: insightsAnterior.cpc },
       campanhas: campanhas.map((c) => ({ id: c.id, name: c.name, status: c.status, spend: c.spend, clicks: c.clicks, ctr: c.ctr })),
+      criativos: await baixarCriativos(anuncios, logger),
     };
   } catch (error) {
     logger.error({ clientId, error }, 'Falha ao buscar dados do Meta Ads para o relatório');
