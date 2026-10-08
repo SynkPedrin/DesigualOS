@@ -146,6 +146,17 @@ export interface AgentJobData {
    * hoje?" respondendo pela agência mesmo com um cliente selecionado na tela.
    */
   clienteDoEscopo?: string;
+  /**
+   * O intent que o Router decidiu para ESTA mensagem (campaign_creation,
+   * knowledge_query, ...). Até 01/10/2026 ele morria na API: ia pra
+   * `executions.intent` e `router_decisions.intent`, mas não entrava no job,
+   * então o worker não tinha como usá-lo pra decidir o que recuperar (o
+   * retrieval planner do Bento lê daqui). Opcional: jobs enfileirados antes
+   * desta data não têm o campo e o worker trata ausência como "sem sinal".
+   */
+  intent?: string;
+  /** Confiança do Router na decisão (0..1), quando veio junto com o intent. */
+  routingConfidence?: number;
   // Presentes só quando este job é uma etapa de workflow (Fase 10).
   workflowId?: string;
   stepIndex?: number;

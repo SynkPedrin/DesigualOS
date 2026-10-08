@@ -82,6 +82,31 @@ export interface OperationalContext {
   /** Erro honesto de ferramenta: quando isso vem preenchido, o agente TEM que dizer que
    * não conseguiu consultar, e nunca responder com número inventado. */
   failure: string | null;
+  /**
+   * POR QUE NÃO VEIO DADO — e as duas razões não podem ser a mesma coisa.
+   *
+   * 'falha'     a ferramenta quebrou: ClickUp fora, credencial inválida, timeout.
+   *             É anormal, é temporário, e o agente TEM que reconhecer em voz alta,
+   *             senão volta a inventar número quando a integração cai.
+   *
+   * 'sem_fonte' não há o que consultar: o cliente não acompanha tarefa no ClickUp.
+   *             É normal, é permanente, e NÃO é um problema de ninguém.
+   *
+   * MEDIDO EM 01/10/2026, e é a razão desta separação existir: perguntei "Quem é o
+   * decisor do Cliente Teste 7?" — um fato institucional que ACABARA de ser gravado
+   * na memória, com embedding. O Bento respondeu "Não foi possível consultar o
+   * ClickUp agora: o cliente citado não tem lista do ClickUp vinculada". A memória
+   * tinha a resposta e nunca foi usada.
+   *
+   * A causa não foi o retrieval: foi esta classificação. "Sem lista" entrava como
+   * `failure`, o formatador transformava qualquer `failure` num bloco "FALHA DE
+   * FERRAMENTA (obrigatório reconhecer)" com a ordem "diga isso de forma curta e
+   * direta", e o modelo obedeceu. A ausência numa fonte virou a resposta da
+   * pergunta — que é a mesma família de defeito que este repositório já cataloga
+   * como "ausência virando valor", agora no sentido inverso: o vazio gritando mais
+   * alto que o fato.
+   */
+  failureKind: 'falha' | 'sem_fonte' | null;
 }
 
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
@@ -108,14 +133,14 @@ export async function buildOperationalContext(
   now: Date = new Date(),
 ): Promise<OperationalContext> {
   if (!scope.operational || scope.kind === 'NONE' || scope.kind === 'AMBIGUOUS') {
-    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: null };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: null, failureKind: null };
   }
 
   let clients: Array<{ id: string; name: string; clickupListId: string | null }>;
   try {
     clients = await deps.listAuthorizedClients();
   } catch (error) {
-    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})` };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})`, failureKind: 'falha' };
   }
 
   // Escopo de cliente(s): só as listas daqueles clientes. Escopo GLOBAL e
@@ -137,6 +162,9 @@ export async function buildOperationalContext(
         scope.kind === 'GLOBAL'
           ? 'nenhum cliente com lista do ClickUp vinculada'
           : `o cliente citado não tem lista do ClickUp vinculada (${alvo.map((c) => c.name).join(', ') || 'desconhecido'})`,
+      // Não é falha: é a resposta correta para um cliente que não acompanha
+      // tarefa no ClickUp. Ver a nota em `failureKind`.
+      failureKind: 'sem_fonte',
     };
   }
 
@@ -149,7 +177,7 @@ export async function buildOperationalContext(
       ...(scope.kind === 'PERSON' && scope.person?.memberIds?.length ? { assigneeIds: scope.person.memberIds } : {}),
     });
   } catch (error) {
-    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})` };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})`, failureKind: 'falha' };
   }
 
   /**
@@ -210,6 +238,7 @@ export async function buildOperationalContext(
       openTasks: result.tasks,
       summary,
       failure: null,
+      failureKind: null,
     };
   }
 
@@ -375,5 +404,5 @@ export async function buildOperationalContext(
     linhas.push('');
   }
 
-  return { block: linhas.join('\n').trimEnd(), listedTasks, openTasks: result.tasks, summary, failure: null };
+  return { block: linhas.join('\n').trimEnd(), listedTasks, openTasks: result.tasks, summary, failure: null, failureKind: null };
 }

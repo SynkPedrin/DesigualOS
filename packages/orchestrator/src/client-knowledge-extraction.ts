@@ -20,6 +20,15 @@
 export interface ExtractedClientFact {
   /** Nome do cliente como foi falado; o caller resolve pro id real. */
   clientName: string | null;
+  /**
+   * Todas as leituras possíveis do nome na frase, da mais específica para a
+   * menos. `clientName` é a primeira delas, mantida para quem só quer uma.
+   *
+   * Existe porque regex nenhuma decide entre "Cliente Teste 7" e "Teste 7" sem
+   * saber quem existe na carteira — e quem sabe isso é o resolvedor, não o
+   * extrator. Ele tenta uma por uma e fica com a que for empresa de verdade.
+   */
+  clientNameCandidates: string[];
   /** Aspecto que o fato governa. Aspecto nomeado supersede o anterior. */
   aspect: string;
   /** O fato, já limpo do enunciado de registro. */
@@ -67,15 +76,66 @@ const CLIENTE_PADROES: RegExp[] = [
   /\bd[oa]\s+([A-ZÀ-Ý][\wÀ-ÿ.'-]*(?:\s+[A-ZÀ-Ý0-9][\wÀ-ÿ.'-]*){0,4})/,
 ];
 
-function acharClienteCitado(texto: string): string | null {
+/**
+ * ONDE O NOME ACABA E A FRASE COMEÇA.
+ *
+ * MEDIDO EM 01/10/2026, contra o sistema rodando: "Anota que o decisor do
+ * Cliente Teste 7 é a Marina." não gravou nada. O turno completou em 10
+ * segundos, o extrator rodou, e o nome que ele devolveu foi
+ * `"Teste 7 é a Marina"` — a frase inteira até o ponto final.
+ *
+ * A causa: os padrões de "cliente X" capturam preguiçosamente até pontuação,
+ * e numa frase de uma oração só a primeira pontuação é o ponto do fim. Com
+ * nome de UMA palavra ("da Colormaq é a Marina") o padrão de palavras
+ * capitalizadas salvava o caso; com nome de duas ou mais, não.
+ *
+ * E O MODO DE FALHAR É O PIOR POSSÍVEL: nome que não resolve na carteira é
+ * descartado de propósito (gravar por aproximação envenenaria o dossiê), então
+ * o fato sumia CALADO. Quem ensinou não recebe erro, e descobre semanas depois
+ * que o agente nunca soube. Vinte e nove dos quarenta e nove clientes da
+ * carteira têm nome de duas palavras ou mais.
+ *
+ * O corte abaixo é por VERBO e por ADVÉRBIO, nunca por palavra minúscula
+ * qualquer: "Casa de Carnes" e "D. Carvalho" têm minúscula no meio e são nomes
+ * legítimos. O que nenhum nome de empresa tem é um verbo de ligação.
+ *
+ * O limite usa `(?![\wÀ-ÿ])` e NÃO `\b`, e isso não é preciosismo: em
+ * JavaScript `\b` é fronteira ASCII, então `é\b` nunca casa — `é` não conta
+ * como caractere de palavra, e entre ele e o espaço seguinte não há transição
+ * nenhuma. A primeira versão desta correção falhou exatamente por isso, e
+ * falhou em silêncio: a regex simplesmente não encontrava nada.
+ */
+const CONECTOR_QUE_ENCERRA_NOME =
+  /\s+(?:é|eh|são|sao|está|esta|estão|estao|fica|ficou|ficam|passa|passou|virou|vira|tem|têm|teve|deve|usa|usam|prefere|preferem|atende|atendem|mudou|muda|agora|não|nao|pode|podem|precisa|quer)(?![\wÀ-ÿ])/i;
+
+function cortarNoConector(nome: string): string {
+  const corte = CONECTOR_QUE_ENCERRA_NOME.exec(nome);
+  return corte ? nome.slice(0, corte.index).trim() : nome;
+}
+
+/**
+ * TODOS OS CANDIDATOS, não o primeiro que casar — e quem decide é a carteira.
+ *
+ * O primeiro padrão a casar nem sempre é o certo. "Anota que o decisor do
+ * Cliente Teste 7 é a Marina": o padrão de `cliente X` devolve "Teste 7",
+ * porque trata "cliente" como substantivo comum; o de palavras capitalizadas
+ * devolve "Cliente Teste 7", que é o nome real. Os dois são leituras honestas
+ * da frase, e nenhuma regex decide entre elas sem saber quem existe.
+ *
+ * Quem sabe é a carteira. Então aqui saem os candidatos, do mais específico
+ * (mais longo) ao menos, e o resolvedor fica com o primeiro que for uma empresa
+ * de verdade. A regra que não muda: nenhum resolveu, nada é gravado — jamais
+ * por aproximação.
+ */
+function acharClientesCitados(texto: string): string[] {
+  const vistos = new Set<string>();
   for (const re of CLIENTE_PADROES) {
     const m = re.exec(texto);
-    if (m?.[1]) {
-      const nome = m[1].trim().replace(/\s+/g, ' ');
-      if (nome.length >= 2) return nome;
-    }
+    if (!m?.[1]) continue;
+    const nome = cortarNoConector(m[1].trim().replace(/\s+/g, ' '));
+    if (nome.length >= 2) vistos.add(nome);
   }
-  return null;
+  return [...vistos].sort((a, b) => b.length - a.length);
 }
 
 function aspectoDe(texto: string): string {
@@ -132,7 +192,8 @@ export function extractClientFacts(message: string): ExtractedClientFact[] {
     // Curto demais depois de limpar = só o enunciado, sem fato dentro.
     if (value.length < 12) continue;
 
-    const clientName = acharClienteCitado(frase);
+    const candidatos = acharClientesCitados(frase);
+    const clientName = candidatos[0] ?? null;
     const aspect = aspectoDe(frase);
     const chave = `${clientName ?? ''}|${aspect}|${value.toLowerCase()}`;
     if (vistos.has(chave)) continue;
@@ -146,7 +207,7 @@ export function extractClientFacts(message: string): ExtractedClientFact[] {
     if (porAspecto.has(chaveAspecto)) continue;
     porAspecto.add(chaveAspecto);
 
-    fatos.push({ clientName, aspect, value, source: frase.slice(0, 400) });
+    fatos.push({ clientName, clientNameCandidates: candidatos, aspect, value, source: frase.slice(0, 400) });
   }
 
   return fatos;

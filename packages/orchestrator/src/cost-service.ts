@@ -18,6 +18,11 @@ export async function recordCostEvent(params: {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Empresa dona do custo (recorte por tenant, migração 0049). Quem chama
+   *  costuma já ter a execution carregada — passe o valor e nenhuma query
+   *  extra acontece. `undefined` = resolver aqui (execution → cliente, mesma
+   *  precedência de `organizacaoDaEscrita`); `null` explícito = sem dono. */
+  organizationId?: string | null;
   /** Bento/Jarbas/Suzy não reportam usage de verdade (ver estimateTokenUsage
    * em apps/worker/src/processors/execute-job.ts) - marca a linha como tal
    * pra quem for ler `cost_records` depois saber que é aproximado, não medido. */
@@ -43,11 +48,49 @@ export async function recordCostEvent(params: {
     executionId: executionDbId,
     clientId,
     userId,
+    organizationId: await resolverOrganizacaoDoCusto(params),
     agent,
     kind: estimated ? 'model_estimated' : 'model',
     amount: amountUsd.toString(),
     currency: 'USD',
   });
+}
+
+/**
+ * De qual empresa é este custo. Execution primeiro, cliente como fallback —
+ * a mesma escada de `organizacaoDaEscrita` (packages/auth), para a leitura e
+ * a escrita não divergirem sobre quem é o dono da linha.
+ *
+ * NUNCA lança: custo é telemetria, e uma linha sem empresa vale infinitamente
+ * mais que um turno derrubado por causa dela. Falha na resolução = `null`,
+ * que as rotas de custo já tratam (linha antiga/sem vínculo continua visível
+ * pelo recorte por cliente/pessoa).
+ */
+async function resolverOrganizacaoDoCusto(params: {
+  executionDbId: string;
+  clientId: string | null;
+  organizationId?: string | null;
+}): Promise<string | null> {
+  if (params.organizationId !== undefined) return params.organizationId;
+
+  try {
+    const [daExecution] = await db
+      .select({ organizationId: schema.executions.organizationId })
+      .from(schema.executions)
+      .where(eq(schema.executions.id, params.executionDbId));
+    if (daExecution?.organizationId) return daExecution.organizationId;
+
+    if (params.clientId) {
+      const [doCliente] = await db
+        .select({ organizationId: schema.clients.organizationId })
+        .from(schema.clients)
+        .where(eq(schema.clients.id, params.clientId));
+      if (doCliente?.organizationId) return doCliente.organizationId;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 /** Soma todas as linhas de custo já gravadas pra essa execution e atualiza o total. */
