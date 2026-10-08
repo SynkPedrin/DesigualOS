@@ -1,6 +1,7 @@
 import { extractEpisodeCandidates, recordEpisodes, type CandidatoAEpisodio } from '@desigual-os/orchestrator';
 import type { Logger } from '@desigual-os/logging';
 import { resolveEnvironment } from './environment.js';
+import { captureClientFacts } from './client-fact.js';
 
 /**
  * knowledge-statement.ts — quando o turno ENSINA em vez de perguntar.
@@ -26,6 +27,8 @@ export interface RegistroDeConhecimento {
   tipos: string[];
   /** Quantos episódios FORAM DE FATO gravados. Zero aqui é bug, não caso feliz. */
   gravados: number;
+  /** Quantos fatos de cliente chegaram em `memories` neste mesmo turno. */
+  fatosCliente: number;
 }
 
 /** Marca de pergunta: quem pergunta não está ensinando. */
@@ -38,7 +41,7 @@ const PERGUNTA = /\?\s*$|^\s*(o que|qual|quais|quem|quando|onde|como|por que|por
 export function detectKnowledgeStatement(
   message: string,
   clientName: string | null,
-): Omit<RegistroDeConhecimento, 'gravados'> | null {
+): Omit<RegistroDeConhecimento, 'gravados' | 'fatosCliente'> | null {
   const texto = message.trim();
   if (texto.length === 0) return null;
 
@@ -92,6 +95,17 @@ export function detectKnowledgeStatement(
  * Medido: zero episódios com o marcador do teste. Confirmar o que não foi
  * gravado é pior que o erro original, porque o usuário para de repetir a
  * informação achando que o sistema já sabe.
+ *
+ * E grava nas DUAS camadas que o turno toca. O episódio (`agent_episodes`) é a
+ * auditoria datada do ensino; o FATO DE CLIENTE (`memories`, kind
+ * `client.profile`) é o que uma conversa NOVA lê ao montar o dossiê
+ * (client-context.ts). Até 01/10/2026 este caminho gravava só o episódio —
+ * medido ao vivo: "Anota que o decisor do Cliente Teste 7 é a Marina." foi
+ * confirmada com "Registrado, fica valendo..." e na conversa seguinte o agente
+ * não sabia quem era a Marina, porque quem monta contexto não lê episódio. A
+ * captura é a mesma do dispatch agêntico (`captureClientFacts`), sobre a mesma
+ * mensagem e no mesmo ambiente resolvido aqui — episódio e fato nunca divergem
+ * de ambiente.
  */
 export async function registrarConhecimentoDoTurno(params: {
   message: string;
@@ -106,7 +120,9 @@ export async function registrarConhecimentoDoTurno(params: {
   const detectado = detectKnowledgeStatement(params.message, params.clientName);
   if (!detectado) return null;
 
-  const environment = await resolveEnvironment(params.clientId).catch(() => 'production' as const);
+  // O userId entra na resolução pelo mesmo motivo do dispatch (30/09/2026):
+  // conta de QA sem cliente selecionado cai em 'production' sem ele.
+  const environment = await resolveEnvironment(params.clientId, params.userId).catch(() => 'production' as const);
   const candidatos = extractEpisodeCandidates(params.message);
   const gravados = await recordEpisodes(candidatos, {
     clientId: params.clientId,
@@ -128,5 +144,17 @@ export async function registrarConhecimentoDoTurno(params: {
     return null;
   }
 
-  return { ...detectado, gravados };
+  // O episódio já garante a auditoria; daqui pra baixo é a memória que a
+  // PRÓXIMA conversa lê. Falha aqui NUNCA derruba o turno nem muda a resposta:
+  // loga e segue — o episódio continua gravado e o "Registrado" já vale.
+  const fatos = await captureClientFacts(
+    params.message,
+    { clientId: params.clientId, userId: params.userId, executionId: params.executionId, environment },
+    params.logger,
+  ).catch((erro: unknown) => {
+    params.logger.warn({ erro, executionId: params.executionId }, '[registro] falha ao capturar fato de cliente; episódio gravado, turno segue');
+    return [];
+  });
+
+  return { ...detectado, gravados, fatosCliente: fatos.length };
 }

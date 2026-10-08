@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anexarFontes, formatProvenanceBlock, pedeProveniencia } from './provenance-block';
+import { anexarFontes, autoriaDeMetadata, descreverAutoria, formatProvenanceBlock, pedeProveniencia } from './provenance-block';
 
 /**
  * Regressão medida no navegador (16/09/2026): perguntado "quem trabalha na
@@ -85,5 +85,97 @@ describe('anexarFontes', () => {
   it('não duplica quando o modelo já citou', () => {
     const jaCitou = 'Tammy é a gestora.\n\nFontes utilizadas:\n- ClickUp';
     expect(anexarFontes(jaCitou, 'qual a fonte?', ['cliente'])).toBe(jaCitou);
+  });
+});
+
+/**
+ * AUTORIA na proveniência — o que permite ao Bento responder "foi a Tammy?"
+ * com a verdade. A regra vem da escrita (apps/mcp/tools/autoria.ts): memória
+ * gravada por credencial de conexão carrega metadata.recorded_by +
+ * metadata.actor_type. Conta compartilhada NUNCA vira nome de pessoa.
+ */
+describe('autoriaDeMetadata', () => {
+  it('lê recorded_by + actor_type de uma memória gravada por identidade operacional', () => {
+    expect(autoriaDeMetadata({ recorded_by: 'Equipe Atendimento', actor_type: 'shared_account' })).toEqual({
+      recordedBy: 'Equipe Atendimento',
+      actorType: 'shared_account',
+    });
+  });
+
+  it('recorded_by sozinho (legado) NÃO vira autoria — sem actor_type não há o que afirmar', () => {
+    expect(autoriaDeMetadata({ recorded_by: 'Pedro Gabriel' })).toBeNull();
+  });
+
+  it('memória sem metadata renderiza como antes: null', () => {
+    expect(autoriaDeMetadata(null)).toBeNull();
+    expect(autoriaDeMetadata(undefined)).toBeNull();
+    expect(autoriaDeMetadata({ mcp_status: 'OBSERVED' })).toBeNull();
+  });
+
+  it('actor_type fora do vocabulário não é autoria', () => {
+    expect(autoriaDeMetadata({ recorded_by: 'X', actor_type: 'robo' })).toBeNull();
+  });
+});
+
+describe('descreverAutoria', () => {
+  it('person renderiza o nome', () => {
+    expect(descreverAutoria({ recordedBy: 'Pedro Claude', actorType: 'person' })).toBe('registrado por Pedro Claude');
+  });
+
+  it('shared_account carrega o aviso no próprio texto', () => {
+    expect(descreverAutoria({ recordedBy: 'Equipe Atendimento', actorType: 'shared_account' }))
+      .toBe('registrado por Equipe Atendimento (conta compartilhada)');
+  });
+
+  it('service é automação, não gente', () => {
+    expect(descreverAutoria({ recordedBy: 'Jev', actorType: 'service' })).toBe('registrado por Jev (automação)');
+  });
+});
+
+describe('proveniência com autoria', () => {
+  it('conta compartilhada: o bloco diz quem registrou E proíbe atribuir a uma pessoa', () => {
+    const b = formatProvenanceBlock('de onde você tirou isso?', ['memoria_semantica'], [
+      { recordedBy: 'Equipe Atendimento', actorType: 'shared_account' },
+    ]);
+    expect(b).toContain('registrado por Equipe Atendimento (conta compartilhada)');
+    expect(b).toMatch(/não é possível atribuir/i);
+    expect(b).toMatch(/foi a Tammy\?/);
+  });
+
+  it('person: o bloco nomeia a identidade, sem o aviso de conta compartilhada', () => {
+    const b = formatProvenanceBlock('qual a fonte?', ['memoria_semantica'], [
+      { recordedBy: 'Pedro Claude', actorType: 'person' },
+    ]);
+    expect(b).toContain('registrado por Pedro Claude');
+    expect(b).not.toMatch(/conta compartilhada/i);
+  });
+
+  it('sem autoria, o bloco é EXATAMENTE o de antes — memória sem metadata não muda o formato', () => {
+    expect(formatProvenanceBlock('qual a fonte?', ['campanha'])).toBe(
+      formatProvenanceBlock('qual a fonte?', ['campanha'], []),
+    );
+  });
+
+  it('autorias repetidas (a mesma identidade em várias memórias) aparecem uma vez só', () => {
+    const b = formatProvenanceBlock('de onde veio?', ['memoria_semantica'], [
+      { recordedBy: 'Equipe Atendimento', actorType: 'shared_account' },
+      { recordedBy: 'Equipe Atendimento', actorType: 'shared_account' },
+      { recordedBy: 'Pedro Claude', actorType: 'person' },
+    ]);
+    expect(b.match(/Equipe Atendimento/g)).toHaveLength(1);
+    expect(b).toContain('registrado por Pedro Claude');
+  });
+
+  it('o rodapé determinístico também expõe a autoria', () => {
+    const r = anexarFontes('Essa preferência está registrada.', 'como você sabe?', ['memoria_semantica'], [
+      { recordedBy: 'Equipe Atendimento', actorType: 'shared_account' },
+    ]);
+    expect(r).toContain('Autoria dos registros da equipe:');
+    expect(r).toContain('registrado por Equipe Atendimento (conta compartilhada)');
+  });
+
+  it('rodapé sem autoria: formato atual preservado', () => {
+    const r = anexarFontes('resposta', 'qual a fonte?', ['campanha']);
+    expect(r).not.toContain('Autoria');
   });
 });

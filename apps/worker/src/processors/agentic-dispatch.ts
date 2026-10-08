@@ -17,11 +17,15 @@ import { db, schema } from '@desigual-os/database';
 import { desc, eq, sql } from 'drizzle-orm';
 import type { AgentJobData } from '@desigual-os/orchestrator';
 import {
+  excludeMemoryIds,
   extractEpisodeCandidates,
   formatEpisodeBlock,
   formatFactualEpisodeBlock,
+  formatSemanticMemoryBlock,
   janelaDoTexto,
+  mergeSemanticResults,
   recallFactualEpisodes,
+  recallMemoriesSemantic,
   termosDeConsulta,
   publishWsEvent,
   recallEpisodes,
@@ -29,6 +33,7 @@ import {
   recordEpisodes,
   rememberFact,
 } from '@desigual-os/orchestrator';
+import { embedText } from '@desigual-os/openai-provider';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
 import type { ClientBrandKit, ClientFeedbackEntry } from '@desigual-os/node-protocol';
 import type { AgentName } from '@desigual-os/types';
@@ -41,9 +46,10 @@ import { capturePreferences, formatPreferenceBlock, recallPreferences } from './
 import { captureClientFacts } from './client-fact';
 import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaignTurnContext } from './campaign-context';
 import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
-import { assembleContext, type BlocoDeContexto } from './context-assembler';
+import { assembleContext, type BlocoDeContexto, type RegistroDeEvidencia } from './context-assembler';
 import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
 import { montarProveniencia } from './response-provenance.js';
+import { avaliarAusencia, respostaDeUltimoRecurso } from './guarda-de-ausencia';
 import {
   blocoDeContinuacaoCriativa,
   contratoDeSaida,
@@ -56,7 +62,9 @@ import {
   relatarProjecao,
   semEncanamentoOperacional,
 } from './otto-context-projection.js';
-import { anexarFontes, formatProvenanceBlock } from './provenance-block';
+import { anexarFontes, autoriaDeMetadata, formatProvenanceBlock, type AutoriaDeRegistro } from './provenance-block';
+import { PLANO_NULO, SEMANTIC_TOP_K_REFORCADO, planejarRecuperacao, type PlanoDeRecuperacao } from './retrieval-planner';
+import { FONTES_VAZIAS, coletarFontesDoPlano, listIdDoCliente, type FontesDoPlano } from './planner-sources';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { resolveCrossAgentContext } from './cross-agent-context';
 import { resolveEnvironment } from './environment';
@@ -70,6 +78,13 @@ interface DispatchParams {
   data: AgentJobData;
   userId: string | null;
   clientId: string | null;
+  /**
+   * A empresa do turno (executions.organization_id). É ela que decide a
+   * credencial do conector de tarefas na autocura de campanha — white label:
+   * subconta lê a plataforma DELA, não a da agência. `null` = execução da
+   * própria Desigual, que cai no fallback de env como sempre.
+   */
+  organizationId?: string | null;
   clientBrandKit: ClientBrandKit | undefined;
   clientFeedbackHistory: ClientFeedbackEntry[];
   logger: Logger;
@@ -243,6 +258,7 @@ export function comContextoOperacionalDoTurno(data: AgentJobData): AgentJobData 
 
 export async function dispatchWithAgentLoop(params: DispatchParams): Promise<ExecuteResponse> {
   const { userId, clientId, logger, callAgent } = params;
+  const organizationId = params.organizationId ?? null;
   const data = comContextoOperacionalDoTurno(params.data);
   const taskClass: TaskClass = classifyTask(data.message, data.agent);
 
@@ -323,9 +339,13 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // em 'production' e gravava episódio de aceite como conhecimento real.
   const ambiente = await resolveEnvironment(clientId, userId).catch(() => 'production' as const);
   void checkpoint(false);
-  const [episodes, preferences] = await Promise.all([
+  const [episodes, preferences, vetorConsulta] = await Promise.all([
     recallMemories({ clientId, agentId: agentUuid, kinds: ['agent.episode'], limit: 3 }).catch(() => []),
     userId ? recallMemories({ userId, kinds: ['user.preference'], limit: 5 }).catch(() => []) : Promise.resolve([]),
+    // VETOR DA CONSULTA SEMÂNTICA, disparado junto dos gathers pra não somar
+    // latência ao turno. Falha = null e o recall semântico lá na frente vira
+    // no-op silencioso (embedText nunca lança).
+    embedText(data.message).catch(() => null),
   ]);
   // MEMÓRIA SEMÂNTICA (§19, §48): o turno pode ENSINAR uma preferência
   // durável ("para o Cliente X, prefira headlines curtas"). A captura é
@@ -383,8 +403,10 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     message: data.message,
     clientId: clienteDoTurno?.clientId ?? clientId,
     // Fonte de verdade para a autocura: se a campanha citada não estiver no
-    // registro, o turno relê o ClickUp e tenta de novo antes de desistir.
-    buscarTasks: buscarTasksDaLista,
+    // registro, o turno relê a plataforma e tenta de novo antes de desistir.
+    // A leitura sai com a credencial DA EMPRESA do turno quando ela tem
+    // conector próprio (white label); sem, o fallback de env de sempre.
+    buscarTasks: (listId: string) => buscarTasksDaLista(listId, organizationId),
   }).catch(() => null);
   // A campanha CARREGA o cliente. Quando o texto nomeia a campanha e não o
   // cliente ("campanha de aniversário do Jardim Europa 5"), é a campanha que
@@ -397,6 +419,42 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       executionClientId: campanhaDoTurno.campanha.clientId,
     }).catch(() => clienteDoTurno);
   }
+
+  /**
+   * RETRIEVAL PLANNER (01/10/2026). Até aqui a recuperação era fixa e
+   * estrutural: os mesmos gathers para "bom dia" e para "o que mudou na
+   * Cosentino essa semana?" — e o event store (operational_events), lido pelo
+   * MCP, nunca entrava no turno. O planner decide POR PERGUNTA o que adicionar:
+   * eventos recentes, consulta ao vivo à lista, reforço do top-k semântico.
+   *
+   * Determinístico (regex + intent do Router, que agora viaja no job), sem
+   * chamada de modelo no caminho crítico. Só ADICIONA fontes: plano nulo =
+   * o turno de sempre. Vale só pro Bento — o Otto tem projeção própria de
+   * contexto e bloco operacional condicionado, e fonte nova fora dessa régua
+   * reabriria o enquadramento operacional que ela tirou.
+   *
+   * Disparado aqui (sem await) pra rodar EM PARALELO com diálogo, pessoas,
+   * frescor, A2A e episódios abaixo; o await acontece antes do recall
+   * semântico, que é o primeiro consumidor (top-k reforçado).
+   */
+  const planoDoTurnoP: Promise<{ plano: PlanoDeRecuperacao; fontes: FontesDoPlano }> = (async () => {
+    if (data.agent !== 'bento') return { plano: PLANO_NULO, fontes: FONTES_VAZIAS };
+    const clienteDoPlano = clienteDoTurnoFinal?.clientId ?? clientId;
+    const listId = clienteDoPlano ? await listIdDoCliente(clienteDoPlano).catch(() => null) : null;
+    const plano = planejarRecuperacao({
+      intent: data.intent,
+      mensagem: data.message,
+      citouCliente: Boolean(clienteDoTurnoFinal?.clientId),
+      clienteTemListaClickup: Boolean(listId),
+    });
+    const fontes = await coletarFontesDoPlano(plano, {
+      clientId: clienteDoPlano,
+      listId,
+      organizationId,
+      userId,
+    });
+    return { plano, fontes };
+  })();
   const blocoClienteBruto = clienteDoTurnoFinal ? formatClientBlock(clienteDoTurnoFinal, totalClientes) : blocoCliente;
   /**
    * PROJEÇÃO SÓ PRO OTTO. Medido: num "me dá 3 títulos" o dossiê chegava com
@@ -590,6 +648,85 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   );
   const blocoAprendizado = formatFactualEpisodeBlock(factuaisNovos);
 
+  // MEMÓRIA SEMÂNTICA (recall por similaridade de embedding). Complementa o
+  // recall por escopo/kind: acha o fato cujo kind o turno não pediu ("tom de
+  // voz" achando "não usar linguagem técnica"). Escopo de cliente e de usuário
+  // são consultas SEPARADAS — a convenção do repo (ver recallPreferences) é
+  // nunca dar AND entre os dois: fato de cliente tem userId nulo e sumiria.
+  // O vetor da consulta já veio pronto do gather paralelo, então isto custa
+  // duas queries e zero chamadas extras à OpenAI.
+  //
+  // O planner é resolvido aqui: disparado lá em cima, em paralelo com tudo
+  // que aconteceu entre lá e cá. O top-k reforçado é o primeiro consumidor.
+  const { plano: planoDoTurno, fontes: fontesDoPlano } = await planoDoTurnoP;
+  const reforcoSemantico = planoDoTurno.reforcarMemoriaSemantica ? { limit: SEMANTIC_TOP_K_REFORCADO } : {};
+  const KINDS_COM_BLOCO_PROPRIO = new Set(['client.profile', 'client.preference', 'user.preference', 'org.manual']);
+  const clienteParaSemantica = clienteDoTurnoFinal?.clientId ?? clientId;
+  const [semanticasDoCliente, semanticasDoUsuario, semanticasDoManual] = await Promise.all([
+    clienteParaSemantica
+      ? recallMemoriesSemantic({
+          text: data.message,
+          environment: ambiente,
+          // Fronteira de tenant, não filtro de relevância: ver a nota em
+          // SemanticRecallQuery.organizationId.
+          organizationId,
+          clientId: clienteParaSemantica,
+          queryVector: vetorConsulta,
+          ...reforcoSemantico,
+        }).catch(() => [])
+      : Promise.resolve([]),
+    userId
+      ? recallMemoriesSemantic({ text: data.message, environment: ambiente, organizationId, userId, queryVector: vetorConsulta, ...reforcoSemantico }).catch(
+          () => [],
+        )
+      : Promise.resolve([]),
+    // MANUAL DO PRODUTO: "onde fica X" / "como eu faço Y" sobre o próprio
+    // DesigualOS — não é fato de cliente nem de pessoa, é da EMPRESA (ver
+    // sync-product-docs.mts e a nota de organizationId em RememberInput).
+    // Sem clientId/userId de propósito: o mesmo manual vale pra qualquer
+    // colaborador daquela empresa, não só pra quem perguntou antes.
+    organizationId
+      ? recallMemoriesSemantic({
+          text: data.message,
+          environment: ambiente,
+          organizationId,
+          kinds: ['org.manual'],
+          queryVector: vetorConsulta,
+        }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+  // Dedup por memory.id contra o que os blocos dedicados já entregaram
+  // (episódios e preferências do gather) — mesmo motivo do corte de episódios
+  // repetidos logo acima. Os kinds que já têm bloco próprio (dossiê,
+  // preferências de cliente) saem por KIND, porque o dossiê não expõe os ids
+  // das memórias que compôs pra dedupar.
+  const jaNoContexto = new Set([...episodes, ...preferences].map((m) => m.id));
+  // O merge dos DOIS escopos re-corta no top-k: sem repassar o reforço aqui,
+  // o limite maior dos recalls individuais morreria na junção.
+  const memsSemanticas = excludeMemoryIds(
+    mergeSemanticResults([semanticasDoCliente, semanticasDoUsuario], planoDoTurno.reforcarMemoriaSemantica ? SEMANTIC_TOP_K_REFORCADO : undefined),
+    jaNoContexto,
+  ).filter((m) => !KINDS_COM_BLOCO_PROPRIO.has(m.kind));
+  const blocoSemantico = formatSemanticMemoryBlock(memsSemanticas);
+  // Bloco PRÓPRIO do manual: ao contrário do semântico genérico acima, isto é
+  // fato estável sobre o PRODUTO (não precisa de "confirme antes de tratar
+  // como vigente" — a tela existe ou não existe, não muda por turno).
+  const blocoManual = formatSemanticMemoryBlock(
+    semanticasDoManual,
+    'MANUAL DO SISTEMA (como usar o próprio DesigualOS — autoritativo, não é achado por semelhança a confirmar):',
+  );
+  /**
+   * AUTORIA do conhecimento que entrou neste turno. Quando a memória foi
+   * gravada por uma identidade operacional (credencial de conexão do MCP), o
+   * metadata carrega recorded_by + actor_type, e a proveniência passa a dizer
+   * QUEM registrou — e, em conta compartilhada, a dizer que NÃO se escolhe uma
+   * pessoa. Sem metadata de autoria (memória antiga, pipeline) a lista fica
+   * vazia e o bloco de fontes renderiza exatamente como antes.
+   */
+  const autoriasDoContexto = memsSemanticas
+    .map((m) => autoriaDeMetadata(m.metadata))
+    .filter((a): a is AutoriaDeRegistro => a !== null);
+
   // BLACKBOARD: NÃO é escrito aqui, de propósito.
   //
   // Medido em 16/09/2026: 27 blackboards gravados, ZERO com fatos e ZERO com
@@ -698,6 +835,39 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       summary: `Informado na conversa em ${e.occurredAt.toISOString().slice(0, 10)} (${e.eventType}): ${e.summary}`,
     });
   }
+  /**
+   * As fontes do PLANNER também viram evidência — mesma regra de sempre: o que
+   * entra no prompt precisa de lastro no grounding, senão o agente é reprovado
+   * por usar o contexto que o próprio sistema entregou. Evento do store vale
+   * como documento datado; o estado ao vivo da lista vale como dado ao vivo
+   * (confidence 1, validade = o instante do turno).
+   */
+  for (const ev of fontesDoPlano.eventos) {
+    evidence.push({
+      type: 'document',
+      source: 'operational_events',
+      sourceId: ev.id,
+      ...(ev.clientId ? { clientId: ev.clientId } : {}),
+      confidence: 0.95,
+      retrievedAt: nowIso,
+      summary: `[${(ev.occurredAt ?? ev.createdAt)?.toISOString().slice(0, 10) ?? 's/d'}] ${ev.type}: ${(ev.summary ?? '').slice(0, 240)}`,
+    });
+  }
+  if (fontesDoPlano.tarefasLive && fontesDoPlano.tarefasLive.length > 0) {
+    const abertas = fontesDoPlano.tarefasLive.filter((t) => !t.closed).length;
+    evidence.push({
+      type: 'clickup_task',
+      source: 'clickup_live_tasks',
+      ...(clienteDoTurnoFinal?.clientId ? { clientId: clienteDoTurnoFinal.clientId } : {}),
+      confidence: 1,
+      retrievedAt: nowIso,
+      validAt: nowIso,
+      summary: `Estado ao vivo da lista: ${fontesDoPlano.tarefasLive.length} tarefa(s), ${abertas} em aberto. ${fontesDoPlano.tarefasLive
+        .slice(0, 6)
+        .map((t) => t.name)
+        .join(' | ')}`,
+    });
+  }
   if (cruzado.bloco.length > 0) {
     evidence.push({
       type: 'document',
@@ -795,6 +965,8 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // Observabilidade do pacote de contexto: sem isto não dá pra auditar quem
   // ocupou o prompt nem por que uma fonte não chegou ao modelo.
   let contextPackFontes: string[] = [];
+  /** As evidências COMO FORAM ENTREGUES ao modelo — insumo do guarda de ausência. */
+  let contextPackEvidencias: RegistroDeEvidencia[] = [];
   let contextPackChars = 0;
   let useReduced = false;
 
@@ -818,29 +990,84 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         // NÃO evidenciável — é o que já foi dito, não uma fonte de fato; o
         // agente citando a si mesmo seria pior que não citar nada.
         { fonte: 'dialogo', texto: blocoDialogo, evidenciavel: false },
-        { fonte: 'cliente', texto: blocoClienteFinal },
+        /**
+         * O DOSSIÊ CARREGA PROCEDÊNCIA, e sem isso ele não existia como
+         * evidência. Descoberto em 01/10/2026 por um teste de runtime do
+         * guarda de ausência que falhou: `assembleContext` só registra em
+         * `pack.evidencias` o bloco que tem `evidenciavel && proveniencia`, e
+         * NENHUM bloco deste arquivo tinha os dois. O registro de evidência
+         * existia desde que foi construído e nunca recebeu uma linha.
+         *
+         * Consequência: o guarda recebia lista vazia, concluía que nada estava
+         * coberto e aprovava qualquer afirmação de ausência — inclusive sobre
+         * o dossiê que ele próprio tinha acabado de mandar ao modelo.
+         */
+        {
+          fonte: 'cliente',
+          texto: blocoClienteFinal,
+          evidenciavel: true,
+          proveniencia: {
+            sourceType: 'memory',
+            sourceId: clienteDoTurnoFinal?.clientId ?? clientId ?? null,
+            clientId: clienteDoTurnoFinal?.clientId ?? clientId ?? null,
+            confidence: 0.9,
+          },
+        },
         // O estado ao vivo da conta, quando o turno pede: fato consultado, na
         // mesma faixa de autoridade do registro de campanha.
         { fonte: 'campanha', texto: blocoOperacionalDoTurno },
         { fonte: 'campanha', texto: blocoCampanha },
+        // O estado AO VIVO da lista, quando o planner pediu e o guard de
+        // frescor deixou: mesma faixa de autoridade do registro de campanha,
+        // que ele desempata (o bloco diz isso no próprio texto).
+        { fonte: 'campanha', texto: fontesDoPlano.blocoTarefasLive },
         { fonte: 'pessoas', texto: blocoPessoas },
         // O bloco do outro domínio entra junto da campanha: é fato de fonte,
         // não preferência nem histórico.
         { fonte: 'campanha', texto: cruzado.bloco },
         { fonte: 'episodios', texto: blocoEpisodios },
+        // O event store, quando a pergunta é de mudança/recência: fato datado
+        // como o episódio, mas do que ACONTECEU na operação — ver ORDEM.
+        { fonte: 'eventos_recentes', texto: fontesDoPlano.blocoEventos },
+        // Por similaridade, não por escopo: entra depois dos episódios (fato
+        // datado) e antes das preferências — ver ORDEM no assembler. Não é
+        // evidenciável: é candidata por afinidade de texto, o próprio bloco
+        // pede confirmação antes de tratar como vigente.
+        { fonte: 'memoria_semantica', texto: blocoSemantico, evidenciavel: false },
+        // Manual do produto: evidenciável de verdade (não "por afinidade,
+        // confirme antes") — é documentação da própria tela, não um achado.
+        {
+          fonte: 'memoria_semantica',
+          texto: blocoManual,
+          evidenciavel: true,
+          proveniencia: { sourceType: 'memory', sourceId: organizationId ?? null, clientId: null, confidence: 0.9 },
+        },
         { fonte: 'preferencias', texto: formatPreferenceBlock(preferencias) },
         // Por último de propósito: o que a equipe ensinou é mais novo que a
         // ficha curada e corrige o que vier antes. Ver ORDEM no assembler.
-        { fonte: 'aprendizado', texto: blocoAprendizado },
+        // O que a equipe ENSINOU também é evidência, e pelo mesmo motivo:
+        // sem procedência ele não entra no registro e o guarda não o enxerga.
+        {
+          fonte: 'aprendizado',
+          texto: blocoAprendizado,
+          evidenciavel: true,
+          proveniencia: {
+            sourceType: 'memory',
+            sourceId: clienteDoTurnoFinal?.clientId ?? clientId ?? null,
+            clientId: clienteDoTurnoFinal?.clientId ?? clientId ?? null,
+            confidence: 0.85,
+          },
+        },
       ];
       let pack = assembleContext(blocos);
       // PROVENIÊNCIA: só quando perguntam. O bloco lista as fontes que de fato
       // entraram no pacote — citar vira leitura, não memória.
-      const blocoProveniencia = formatProvenanceBlock(data.message, pack.fontes);
+      const blocoProveniencia = formatProvenanceBlock(data.message, pack.fontes, autoriasDoContexto);
       if (blocoProveniencia.length > 0) {
         pack = assembleContext([...blocos, { fonte: 'frescor', texto: blocoProveniencia }]);
       }
       contextPackFontes = pack.fontes;
+      contextPackEvidencias = pack.evidencias;
       contextPackChars = pack.totalChars;
       // MARCADOR DO PROTOCOLO: é o que o node reconhece como contexto do
       // orquestrador (CONTEXT_BLOCK_MARKER, packages/otto/src/brain/depth.ts).
@@ -1186,7 +1413,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // partir do que entrou no pacote — não pelo modelo. Medido: o Bento recebeu
   // as fontes e mesmo assim respondeu sem citá-las.
   if (loop.answer && contextPackFontes.length >= 0) {
-    loop.answer = anexarFontes(loop.answer, data.message, contextPackFontes as never);
+    loop.answer = anexarFontes(loop.answer, data.message, contextPackFontes as never, autoriasDoContexto);
   }
 
   const completed = (loop.completed && Boolean(loop.answer?.trim())) || entregaComRessalva;
@@ -1261,15 +1488,52 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     });
   }
 
+  /**
+   * GUARDA DE AUSÊNCIA — a última conferência antes de a resposta sair.
+   *
+   * Medido em 01/10/2026, nove execuções da mesma pergunta com o dossiê da
+   * Cosentino no prompt: em cinco delas o modelo afirmou que não havia a
+   * informação que estava ali. Quatro tentativas de resolver isso reescrevendo
+   * o prompt falharam, e a quarta piorou.
+   *
+   * Então a garantia deixa de depender de o modelo obedecer: aqui o sistema
+   * CONFERE a resposta contra o que entregou. Se ela nega um tópico que a
+   * evidência entregue cobre, a negativa não vai ao usuário — vai o registro.
+   *
+   * LIMITE CONHECIDO: não há regeração ainda. A resposta reprovada cai direto
+   * no fallback determinístico, que é literal e sem elegância. É pior de ler e
+   * melhor de confiar, e é a ordem de prioridade que este produto escolheu.
+   */
+  let respostaFinal = completed ? loop.answer : null;
+  let guardaAcionada = false;
+  if (respostaFinal && !entregaComRessalva) {
+    const veredicto = avaliarAusencia({
+      pergunta: data.message,
+      resposta: respostaFinal,
+      evidencias: contextPackEvidencias,
+    });
+    if (!veredicto.aprovada) {
+      guardaAcionada = true;
+      logger.warn(
+        {
+          executionId: data.executionId,
+          metric: 'guarda_ausencia_acionada_total',
+          afirmacoes: veredicto.afirmacoesDeAusencia,
+          topicosCobertos: veredicto.cobertos.map((c) => c.topico),
+        },
+        '[guarda] a resposta negou um tópico que a evidência entregue cobre; usando o registro',
+      );
+      respostaFinal = respostaDeUltimoRecurso(veredicto.cobertos);
+    }
+  }
+
   const response: ExecuteResponse = {
     execution_id: data.executionId,
     agent: data.agent as AgentName,
     status: completed ? 'completed' : 'failed',
     answer: entregaComRessalva
       ? `${textoDisponivel}\n\n---\nObs.: não aprovei isso na minha própria régua de qualidade (ficou genérico demais pra marca). Estou entregando pra você não ficar travado, mas vale pedir outro ângulo.`
-      : completed
-        ? loop.answer
-        : null,
+      : respostaFinal,
     sources: [],
     tool_calls: [],
     usage: { input_tokens: 0, output_tokens: 0 },
@@ -1340,6 +1604,10 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         // Plano original + plano final: juntos mostram replan sem perder o trace.
         plan_initial: planoInicial,
         autonomous: sinais.autonomous,
+        // O que o retrieval planner decidiu para ESTE turno (só o Bento planeja;
+        // os demais ficam no plano nulo). Sem isto a auditoria não saberia por
+        // que o event store ou a lista ao vivo entraram — ou não entraram.
+        retrieval_plan: planoDoTurno,
       },
     },
   };

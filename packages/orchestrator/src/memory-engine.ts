@@ -3,6 +3,7 @@ import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
+import { generateAndStoreMemoryEmbedding } from './memory-embeddings';
 
 const logger = createLogger({ service: 'memory-engine' });
 
@@ -25,9 +26,11 @@ const logger = createLogger({ service: 'memory-engine' });
  *    é DETERMINÍSTICA: quem escreve declara o `subject` (ex: `cliente:3net:responsavel`), e
  *    fato novo no mesmo subject aposenta o anterior. É menos esperto e muito mais
  *    previsível — e não inventa conflito onde não há.
- *  - não gera embedding. Não existe pgvector nem geração de embedding neste repo (a busca
- *    vetorial de verdade vive fora, no bento-qa). A recuperação aqui é por escopo + kind +
- *    subject + ordenação por importância, não por similaridade.
+ *  - não RANKEIA por embedding. A geração do vetor mora aqui (hook fire-and-forget
+ *    abaixo, depois de insert/update — memória grava mesmo se a API falhar), mas a
+ *    recuperação deste módulo continua por escopo + kind + subject + importância.
+ *    A busca por similaridade é outra função, em memory-embeddings.ts
+ *    (`recallMemoriesSemantic`), com o mesmo isolamento de ambiente.
  */
 
 export type MemorySourceType =
@@ -58,6 +61,16 @@ export interface RememberInput {
   clientId?: string | null;
   agentId?: string | null;
   userId?: string | null;
+  /**
+   * Só pra fato que não nasce de cliente nem de pessoa (ex: manual do próprio
+   * produto — mesmo conteúdo pra qualquer tenant que o tiver sincronizado).
+   * `organizacaoDaEscrita` só sabe deduzir empresa a partir de `clientId` ou
+   * `userId`; sem nenhum dos dois ela devolve null, e memória sem empresa é
+   * INVISÍVEL pro recall semântico de propósito (ver nota em
+   * SemanticRecallQuery.organizationId) — então quem grava fato org-wide
+   * precisa dizer explicitamente de qual empresa ele é.
+   */
+  organizationId?: string | null;
   sourceType: MemorySourceType;
   sourceId?: string | null;
   /** 0..1. Default por origem (ver DEFAULT_CONFIDENCE). */
@@ -192,6 +205,12 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
           updatedAt: now,
         })
         .where(eq(schema.memories.id, existing.id));
+      // Reconfirmação SOBRESCREVE o content (acima): o vetor precisa ser
+      // regerado, senão a busca semântica casa o texto velho. Fire-and-forget
+      // — falha da API deixa a memória sem vetor novo e o backfill cobre.
+      void generateAndStoreMemoryEmbedding(existing.id, content).catch((error: unknown) => {
+        logger.warn({ error, memoryId: existing.id }, 'Falha ao regerar embedding de memória reconfirmada');
+      });
       return { status: 'reconfirmed', memoryId: existing.id };
     }
 
@@ -215,10 +234,13 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
       if (anteriores.length > 0) supersededId = anteriores[0]!.id;
     }
 
-    const organizationId = await organizacaoDaEscrita({
-      userId: input.userId ?? null,
-      clientId: input.clientId ?? null,
-    });
+    const organizationId =
+      input.organizationId !== undefined
+        ? input.organizationId
+        : await organizacaoDaEscrita({
+            userId: input.userId ?? null,
+            clientId: input.clientId ?? null,
+          });
 
     const [written] = await db
       .insert(schema.memories)
@@ -243,6 +265,13 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
       .returning({ id: schema.memories.id });
 
     if (!written) return { status: 'skipped', reason: 'insert nao retornou linha' };
+
+    // Vetor DEPOIS do insert, fire-and-forget: memória é efeito colateral e o
+    // embedding é efeito colateral da memória — nem a falha da OpenAI nem a
+    // latência dela podem encostar no turno. Ausência da linha = pendente.
+    void generateAndStoreMemoryEmbedding(written.id, content).catch((error: unknown) => {
+      logger.warn({ error, memoryId: written.id }, 'Falha ao gerar embedding de memória nova');
+    });
 
     if (supersededId) {
       await db

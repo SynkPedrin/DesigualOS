@@ -5,20 +5,100 @@ import type { Logger } from '@desigual-os/logging';
  * execute-job.ts é o pipeline inteiro de execução (800+ linhas), acoplado a
  * banco, filas BullMQ e rede real pros agentes. Este arquivo NÃO tenta
  * testar processAgentJob/processSingleAgentJob/processWorkflowStep fim a
- * fim (isso exigiria recriar o banco inteiro) - foca nas três funções que
- * são lógica isolável e de maior risco: buildNodeUrl (monta a URL de
- * dispatch), callBento e callAgentesDesigual (Jarbas/Suzy - inclui a
- * barreira de aprovação humana adicionada em 08/09/2026).
+ * fim (isso exigiria recriar o banco inteiro) - foca nas funções que são
+ * lógica isolável e de maior risco: buildNodeUrl (monta a URL de dispatch),
+ * callBento e callAgentesDesigual (Jarbas/Suzy - inclui a barreira de
+ * aprovação humana adicionada em 08/09/2026), e
+ * listasDeClickUpDaOrganizacao (P0.1 slice 2, 05/10/2026 - fecha o
+ * vazamento cross-tenant das quatro chamadas que montam "estado da
+ * operação" pro Bento: ata de reunião, pergunta operacional, estado por
+ * turno e panorama liam `clickupListId` de clientes de QUALQUER empresa,
+ * filtrando só `deletedAt is null`).
  *
- * buildNodeUrl/callBento/callAgentesDesigual não eram exportadas; ganharam
- * `export` (só a palavra-chave, nenhuma mudança de lógica) especificamente
- * pra viabilizar este teste.
+ * buildNodeUrl/callBento/callAgentesDesigual/listasDeClickUpDaOrganizacao
+ * não eram exportadas; ganharam `export` (só a palavra-chave, nenhuma
+ * mudança de lógica) especificamente pra viabilizar este teste.
  */
 
-// db/schema não são tocados por nenhuma das 3 funções testadas aqui, mas
-// precisam existir pra o módulo importar sem estourar (o client real de
+// db/schema: recordTokenUsage (testada abaixo) grava via insert e às vezes
+// lê a execution; as demais funções testadas aqui não tocam o banco, mas o
+// mock precisa existir pra o módulo importar sem estourar (o client real de
 // @desigual-os/database exige DATABASE_URL, que não está setada em teste).
-vi.mock('@desigual-os/database', () => ({ db: {}, schema: {} }));
+const mockInsertValues = vi.fn();
+let mockSelectRows: unknown[] = [];
+let mockSelectRejects: Error | null = null;
+
+/** Clientes em memória, só pro isolamento cross-tenant de
+ *  listasDeClickUpDaOrganizacao (ver describe abaixo) - as demais funções
+ *  testadas aqui nunca tocam `clients`, então começa vazio sem afetá-las. */
+interface MockClientRow {
+  clickupListId: string | null;
+  name: string;
+  organizationId: string | null;
+  deletedAt: Date | null;
+}
+let mockClients: MockClientRow[] = [];
+
+/** Mesmo extrator de valores embutidos numa condição drizzle mockada usado
+ *  em apps/api (organizations/membros.test.ts, admin/routes.test.ts). */
+function coletarParams(no: unknown, achados: string[] = []): string[] {
+  if (typeof no === 'string') {
+    achados.push(no);
+    return achados;
+  }
+  if (Array.isArray(no)) {
+    for (const item of no) coletarParams(item, achados);
+    return achados;
+  }
+  if (no === null || typeof no !== 'object') return achados;
+  if ('value' in no && !Array.isArray((no as { value: unknown }).value)) {
+    coletarParams((no as { value: unknown }).value, achados);
+  }
+  const chunks = (no as { queryChunks?: unknown[] }).queryChunks;
+  if (Array.isArray(chunks)) for (const c of chunks) coletarParams(c, achados);
+  return achados;
+}
+
+vi.mock('@desigual-os/database', () => {
+  const clients = {
+    clickupListId: 'clients.clickup_list_id',
+    name: 'clients.name',
+    organizationId: 'clients.organization_id',
+    deletedAt: 'clients.deleted_at',
+  };
+
+  return {
+    db: {
+      insert: () => ({
+        values: (v: unknown) => {
+          mockInsertValues(v);
+          return Promise.resolve();
+        },
+      }),
+      select: () => ({
+        from: (table: unknown) => ({
+          where: (cond: unknown) => {
+            if (table === clients) {
+              const params = coletarParams(cond);
+              const orgIds = params.filter((p) => mockClients.some((c) => c.organizationId === p));
+              return Promise.resolve(
+                mockClients
+                  .filter((c) => c.deletedAt === null && (orgIds.length === 0 || (c.organizationId !== null && orgIds.includes(c.organizationId))))
+                  .map((c) => ({ id: c.clickupListId, name: c.name })),
+              );
+            }
+            return mockSelectRejects ? Promise.reject(mockSelectRejects) : Promise.resolve(mockSelectRows);
+          },
+        }),
+      }),
+    },
+    schema: {
+      tokenUsage: { executionId: 'token_usage.execution_id' },
+      executions: { id: 'executions.id', organizationId: 'executions.organization_id' },
+      clients,
+    },
+  };
+});
 
 // Mock leve do orchestrator: só os valores que callAgentesDesigual/callBento
 // realmente leem (AGENT_TIMEOUT_MS). O resto vira vi.fn() só pra satisfazer
@@ -573,4 +653,117 @@ describe('callBento reespera a falha passageira', () => {
     expect(result.status).toBe('failed');
     expect(mockAskBentoQA).toHaveBeenCalledTimes(1);
   }, IMPORT_A_FRIO_MS);
+});
+
+describe('recordTokenUsage — empresa dona do custo (migração 0049)', () => {
+  const usage = { input_tokens: 120, output_tokens: 45 };
+  const resultado = { status: 'completed', answer: 'ok', usage } as never;
+
+  beforeEach(() => {
+    mockInsertValues.mockReset();
+    mockSelectRows = [];
+    mockSelectRejects = null;
+  });
+
+  it('grava a organização que o chamador JÁ tinha, sem consulta extra', async () => {
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    await recordTokenUsage('exec-1', resultado, 'org-agencia');
+
+    expect(mockInsertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ executionId: 'exec-1', organizationId: 'org-agencia' }),
+    );
+  });
+
+  it('resolve pela execution quando o chamador não tem o valor', async () => {
+    mockSelectRows = [{ organizationId: 'org-resolvida' }];
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    await recordTokenUsage('exec-1', resultado);
+
+    expect(mockInsertValues).toHaveBeenCalledWith(expect.objectContaining({ organizationId: 'org-resolvida' }));
+  });
+
+  /**
+   * O caso que NÃO PODE derrubar o turno: execution órfã, linha apagada,
+   * banco falhando. Custo é telemetria — a linha nasce sem dono e o turno
+   * segue, nunca o contrário.
+   */
+  it('execution órfã ou banco falhando: grava sem dono e NÃO lança', async () => {
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    mockSelectRows = [];
+    await expect(recordTokenUsage('exec-orfa', resultado)).resolves.toBeUndefined();
+    expect(mockInsertValues).toHaveBeenCalledWith(expect.objectContaining({ organizationId: null }));
+
+    mockInsertValues.mockReset();
+    mockSelectRejects = new Error('connection reset');
+    await expect(recordTokenUsage('exec-orfa', resultado)).resolves.toBeUndefined();
+    expect(mockInsertValues).toHaveBeenCalledWith(expect.objectContaining({ organizationId: null }));
+  });
+
+  it('turno sem tokens não grava nada (como sempre foi)', async () => {
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    await recordTokenUsage('exec-1', { status: 'completed', answer: null, usage: { input_tokens: 0, output_tokens: 0 } } as never);
+
+    expect(mockInsertValues).not.toHaveBeenCalled();
+  });
+});
+
+describe('listasDeClickUpDaOrganizacao — P0.1 slice 2: isolamento cross-tenant das listas de ClickUp que o Bento usa pra "estado da operação"', () => {
+  const ORG_A = 'org-a-11111111';
+  const ORG_B = 'org-b-22222222';
+
+  beforeEach(() => {
+    mockClients = [
+      { clickupListId: 'LIST_A', name: 'Cliente A', organizationId: ORG_A, deletedAt: null },
+      { clickupListId: 'LIST_B', name: 'Cliente B', organizationId: ORG_B, deletedAt: null },
+    ];
+  });
+
+  it('execução da organização A só recebe a lista do cliente A — nunca a de B', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    const linhas = await listasDeClickUpDaOrganizacao(ORG_A);
+
+    expect(linhas.map((l) => l.id)).toEqual(['LIST_A']);
+    expect(linhas.map((l) => l.id)).not.toContain('LIST_B');
+  });
+
+  it('execução da organização B só recebe a lista do cliente B — nunca a de A', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    const linhas = await listasDeClickUpDaOrganizacao(ORG_B);
+
+    expect(linhas.map((l) => l.id)).toEqual(['LIST_B']);
+    expect(linhas.map((l) => l.id)).not.toContain('LIST_A');
+  });
+
+  it('cliente apagado (soft delete) não entra, mesmo pertencendo à organização certa', async () => {
+    mockClients.push({ clickupListId: 'LIST_A_APAGADO', name: 'Cliente A (apagado)', organizationId: ORG_A, deletedAt: new Date() });
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    const linhas = await listasDeClickUpDaOrganizacao(ORG_A);
+
+    expect(linhas.map((l) => l.id)).not.toContain('LIST_A_APAGADO');
+  });
+
+  /**
+   * FAIL CLOSED: `executions.organization_id` é nullable (migração 0045 -
+   * linha legada sem resolução vira NULL de propósito). Sem organização,
+   * NUNCA pode cair para "todos os clientes" - a única resposta segura é
+   * lista vazia, mesmo com `mockClients` populado com A e B.
+   */
+  it('FAIL CLOSED: organizationId null nunca consulta todos os clientes', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    expect(await listasDeClickUpDaOrganizacao(null)).toEqual([]);
+  });
+
+  it('FAIL CLOSED: organizationId undefined (execution não encontrada no UPDATE...RETURNING) nunca consulta todos os clientes', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    expect(await listasDeClickUpDaOrganizacao(undefined)).toEqual([]);
+  });
 });

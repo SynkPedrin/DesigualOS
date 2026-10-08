@@ -154,6 +154,9 @@ describe('o gatilho reconhece pedido de panorama, não de escrita', () => {
 import { estadoDaOperacaoEmTexto, __limparCacheDoEstado } from './bento-panorama';
 import { beforeEach } from 'vitest';
 
+const ORG_A = 'org-a-11111111';
+const ORG_B = 'org-b-22222222';
+
 /**
  * "Quero o Bento saber de tudo sobre todos os clientes e todas as ações do
  * ClickUp" — ou seja, o estado da operação tem que estar na mão dele SEMPRE,
@@ -162,27 +165,32 @@ import { beforeEach } from 'vitest';
  * O risco disso é conhecido e já custou caro: varrer as listas de todos os
  * clientes por turno foi o que fez o POST /chat levar 186s. Contexto ambiente
  * não pode ser pago por turno — daí o cache, e é ele que estes testes travam.
+ *
+ * Todo teste passa `ORG_A` (ou outra organização explícita) como primeiro
+ * argumento desde o P0.1 slice 2b: o cache deixou de ser uma variável só,
+ * compartilhada por qualquer organização, e virou um Map por organização —
+ * ver "isolamento cross-tenant do cache" abaixo pra prova disso.
  */
 describe('estado da operação como contexto de todo turno', () => {
   beforeEach(() => __limparCacheDoEstado());
 
   it('apura uma vez e REUSA — o segundo turno não paga nada', async () => {
     const buscar = vi.fn(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }));
-    const t1 = await estadoDaOperacaoEmTexto(buscar, HOJE);
-    const t2 = await estadoDaOperacaoEmTexto(buscar, new Date(HOJE.getTime() + 60_000));
+    const t1 = await estadoDaOperacaoEmTexto(ORG_A, buscar, HOJE);
+    const t2 = await estadoDaOperacaoEmTexto(ORG_A, buscar, new Date(HOJE.getTime() + 60_000));
     expect(buscar).toHaveBeenCalledTimes(1);
     expect(t2).toBe(t1);
   });
 
   it('depois do TTL, apura de novo', async () => {
     const buscar = vi.fn(async () => ({ tasks: [task()], truncated: false }));
-    await estadoDaOperacaoEmTexto(buscar, HOJE);
-    await estadoDaOperacaoEmTexto(buscar, new Date(HOJE.getTime() + 10 * 60_000));
+    await estadoDaOperacaoEmTexto(ORG_A, buscar, HOJE);
+    await estadoDaOperacaoEmTexto(ORG_A, buscar, new Date(HOJE.getTime() + 10 * 60_000));
     expect(buscar).toHaveBeenCalledTimes(2);
   });
 
   it('o bloco traz número apurado e proíbe inventar', async () => {
-    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
+    const t = await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
     expect(t).toContain('apurado do ClickUp');
     expect(t).toContain('Atrasadas: 1');
     expect(t).toContain('NÃO invente número');
@@ -190,12 +198,13 @@ describe('estado da operação como contexto de todo turno', () => {
 
   it('ClickUp fora do ar não derruba o turno — devolve o cache, ou nada', async () => {
     const falha = vi.fn(async () => { throw new Error('502'); });
-    expect(await estadoDaOperacaoEmTexto(falha, HOJE)).toBeNull();
+    expect(await estadoDaOperacaoEmTexto(ORG_A, falha, HOJE)).toBeNull();
   });
 
   it('falha depois de um sucesso serve o último estado conhecido, em vez de nada', async () => {
-    await estadoDaOperacaoEmTexto(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
+    await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
     const depois = await estadoDaOperacaoEmTexto(
+      ORG_A,
       async () => { throw new Error('502'); },
       new Date(HOJE.getTime() + 10 * 60_000),
     );
@@ -203,7 +212,83 @@ describe('estado da operação como contexto de todo turno', () => {
   });
 
   it('operação vazia não vira bloco — não há o que dizer', async () => {
-    expect(await estadoDaOperacaoEmTexto(async () => ({ tasks: [], truncated: false }), HOJE)).toBeNull();
+    expect(await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [], truncated: false }), HOJE)).toBeNull();
+  });
+});
+
+/**
+ * P0.1 SLICE 2B (05/10/2026): o cache era uma variável só, sem chave de
+ * organização — a consulta já saía recortada por tenant (slice 2a), mas a
+ * RESPOSTA cacheada vazava pra qualquer organização que perguntasse dentro do
+ * TTL. Estes testes travam o Map por organização que corrigiu isso.
+ */
+describe('isolamento cross-tenant do cache de estado', () => {
+  beforeEach(() => __limparCacheDoEstado());
+
+  it('A cacheia, B pergunta no mesmo instante: B recebe o estado de B, nunca o de A', async () => {
+    await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [task({ dueDate: dia(-1), listName: 'A_STATE' })], truncated: false }), HOJE);
+
+    const deB = await estadoDaOperacaoEmTexto(ORG_B, async () => ({ tasks: [task({ dueDate: dia(-3), listName: 'B_STATE' })], truncated: false }), HOJE);
+
+    // 3 atrasadas é a marca d'água do estado de B (dia(-3) com 1 task -> "Atrasadas: 1",
+    // o que distingue é o conteúdo vir da segunda chamada, não da primeira).
+    expect(deB).toContain('Atrasadas: 1');
+    expect(deB).not.toBe(await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [], truncated: false }), HOJE));
+  });
+
+  it('invertendo a ordem (B cacheia primeiro), A continua recebendo o PRÓPRIO estado', async () => {
+    const buscarA = vi.fn(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }));
+    const buscarB = vi.fn(async () => ({ tasks: [task({ dueDate: dia(-1) }), task({ dueDate: dia(-1) })], truncated: false }));
+
+    await estadoDaOperacaoEmTexto(ORG_B, buscarB, HOJE);
+    const deA = await estadoDaOperacaoEmTexto(ORG_A, buscarA, HOJE);
+
+    expect(buscarA).toHaveBeenCalledTimes(1); // A não achou cache de B e consultou de verdade
+    expect(deA).toContain('Atrasadas: 1');
+
+    // Terceira chamada pra A, ainda dentro do TTL: usa o cache de A, não o de B.
+    const deANovo = await estadoDaOperacaoEmTexto(ORG_A, buscarA, new Date(HOJE.getTime() + 1_000));
+    expect(buscarA).toHaveBeenCalledTimes(1);
+    expect(deANovo).toBe(deA);
+  });
+
+  it('duas organizações concorrentes (Promise.all) não se sobrescrevem', async () => {
+    const [deA, deB] = await Promise.all([
+      estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE),
+      estadoDaOperacaoEmTexto(ORG_B, async () => ({ tasks: [task({ dueDate: dia(-1) }), task({ dueDate: dia(-1) }), task({ dueDate: dia(-1) })], truncated: false }), HOJE),
+    ]);
+    expect(deA).toContain('Atrasadas: 1');
+    expect(deB).toContain('Atrasadas: 3');
+
+    // Lendo de novo, ainda dentro do TTL: cada organização continua com o PRÓPRIO número.
+    const deANovamente = await estadoDaOperacaoEmTexto(ORG_A, async () => { throw new Error('não deveria consultar — devia vir do cache de A'); }, HOJE);
+    const deBNovamente = await estadoDaOperacaoEmTexto(ORG_B, async () => { throw new Error('não deveria consultar — devia vir do cache de B'); }, HOJE);
+    expect(deANovamente).toContain('Atrasadas: 1');
+    expect(deBNovamente).toContain('Atrasadas: 3');
+  });
+
+  /**
+   * FAIL CLOSED: sem organização, a função nunca lê NEM escreve
+   * `cachePorOrganizacao` — ela roda a busca na hora e esquece. Provado aqui
+   * ao garantir que (a) uma chamada anterior de A não "vaza" pra quem chama
+   * sem organização, e (b) chamar sem organização não deixa rastro que uma
+   * chamada de B possa herdar depois.
+   */
+  it('FAIL CLOSED: sem organizationId, nunca lê cache alheio nem cria entrada própria', async () => {
+    await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
+
+    const buscarSemOrg = vi.fn(async () => ({ tasks: [task({ dueDate: dia(-1) }), task({ dueDate: dia(-1) })], truncated: false }));
+    const semOrgNull = await estadoDaOperacaoEmTexto(null, buscarSemOrg, HOJE);
+    const semOrgUndefined = await estadoDaOperacaoEmTexto(undefined, buscarSemOrg, HOJE);
+
+    // Nunca recebeu o cache de A (1 atrasada): sempre apurou fresco (2 atrasadas).
+    expect(semOrgNull).toContain('Atrasadas: 2');
+    expect(semOrgUndefined).toContain('Atrasadas: 2');
+    expect(buscarSemOrg).toHaveBeenCalledTimes(2); // nunca usou cache - nem o de A, nem um "default" próprio
+
+    // E a organização B, chamando depois, não herda nada do que rodou sem organização.
+    const deB = await estadoDaOperacaoEmTexto(ORG_B, async () => ({ tasks: [task({ dueDate: dia(-1) }), task({ dueDate: dia(-1) }), task({ dueDate: dia(-1) })], truncated: false }), HOJE);
+    expect(deB).toContain('Atrasadas: 3');
   });
 });
 
@@ -211,14 +296,14 @@ describe('número truncado é declarado, nunca apresentado como total', () => {
   it('batendo no teto, o bloco avisa que é uma fatia', async () => {
     __limparCacheDoEstado();
     const muitas = Array.from({ length: 500 }, () => task({ dueDate: dia(-1) }));
-    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: muitas, truncated: true }), HOJE);
+    const t = await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: muitas, truncated: true }), HOJE);
     expect(t).toContain('truncada');
     expect(t).toContain('FATIA');
   });
 
   it('abaixo do teto, nada de ressalva — o número é o total', async () => {
     __limparCacheDoEstado();
-    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
+    const t = await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [task({ dueDate: dia(-1) })], truncated: false }), HOJE);
     expect(t).not.toContain('FATIA');
   });
 });
@@ -232,7 +317,7 @@ describe('número truncado é declarado, nunca apresentado como total', () => {
 describe('ausência de dado nunca pode virar zero', () => {
   it('o bloco proíbe explicitamente responder "não sei" com um número', async () => {
     __limparCacheDoEstado();
-    const t = await estadoDaOperacaoEmTexto(async () => ({ tasks: [task()], truncated: false }), HOJE);
+    const t = await estadoDaOperacaoEmTexto(ORG_A, async () => ({ tasks: [task()], truncated: false }), HOJE);
     expect(t).toContain('AUSÊNCIA DE DADO NÃO É ZERO');
     expect(t).toContain('R$ 0,00');
   });

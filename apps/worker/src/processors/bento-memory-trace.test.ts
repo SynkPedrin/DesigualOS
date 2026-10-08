@@ -58,7 +58,14 @@ vi.mock('@desigual-os/logging', () => ({
   createLogger: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
 }));
 
-type Row = Record<string, any>;
+/** Linha do bancinho fake: colunas dinâmicas por fora, e tipados os campos
+ *  que o avaliador de condições e os testes leem de verdade. */
+type Row = {
+  [key: string]: unknown;
+  id?: string;
+  metadata?: { subject?: unknown } | null;
+  updatedAt?: Date;
+};
 
 /**
  * Bancinho fake + avaliador de condições, içados porque vi.mock é hoisted.
@@ -66,7 +73,35 @@ type Row = Record<string, any>;
  * módulos sob teste (memory-engine, episodic-memory, build-context).
  */
 const fake = vi.hoisted(() => {
-  type R = Record<string, any>;
+  type R = Row;
+  /** Tabela do schema mockado: { __table: nome, coluna: 'tabela.coluna' }. */
+  type FakeTable = Record<string, string>;
+  type IdRows = Array<{ id: unknown }>;
+  /** O código real awaita os estágios da query: then com a assinatura do
+   *  Promise sobre o payload T. catch só onde o bancinho implementa (os
+   *  estágios de select; o update do fake não o tem). */
+  interface ThenableQuery<T> {
+    then: <TResult1 = T, TResult2 = never>(
+      res?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
+      rej?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ) => Promise<TResult1 | TResult2>;
+    catch?: <TResult = never>(
+      rej?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null,
+    ) => Promise<T | TResult>;
+  }
+  interface Chainable extends ThenableQuery<R[]> {
+    orderBy: (...descs: Cond[]) => Chainable;
+    limit: (n: number) => Promise<R[]>;
+  }
+  interface InsertChain {
+    returning: (cols?: unknown) => Promise<IdRows>;
+    onConflictDoNothing: () => {
+      returning: (cols?: unknown) => Promise<IdRows>;
+    };
+  }
+  interface UpdateChain extends ThenableQuery<IdRows> {
+    returning: (cols?: unknown) => Promise<IdRows>;
+  }
   const store = {
     memories: [] as R[],
     agentEpisodes: [] as R[],
@@ -168,29 +203,29 @@ const fake = vi.hoisted(() => {
     return out;
   }
 
-  function chainable(compute: () => R[]) {
+  function chainable(compute: () => R[]): Chainable {
     let cached: R[] | null = null;
     const get = () => (cached ??= compute());
     return {
-      then: (res?: any, rej?: any) => Promise.resolve().then(get).then(res, rej),
+      then: (res, rej) => Promise.resolve().then(get).then(res, rej),
       // client-context.ts chama .catch direto no resultado do .where() (sem
       // .limit no meio) — sem isto o fake quebrava com "catch is not a function".
-      catch: (rej?: any) => Promise.resolve().then(get).catch(rej),
+      catch: (rej) => Promise.resolve().then(get).catch(rej),
       orderBy: (...descs: Cond[]) => chainable(() => applyOrder(get(), descs)),
       limit: (n: number) => Promise.resolve().then(() => get().slice(0, n)),
     };
   }
 
-  const tableKey = (table: any): string => table.__table;
+  const tableKey = (table: FakeTable): string => table.__table!;
 
   const db = {
     select: (_cols?: unknown) => ({
-      from: (table: any) => ({
+      from: (table: FakeTable) => ({
         where: (cond: Cond) => chainable(() => rowsOf(tableKey(table)).filter((r) => evalCond(r, cond))),
       }),
     }),
-    insert: (table: any) => ({
-      values: (v: R) => {
+    insert: (table: FakeTable) => ({
+      values: (v: R): InsertChain => {
         const key = tableKey(table);
         const doInsert = () => {
           const row = { ...v, id: v.id ?? `${key}-${++seq}` };
@@ -208,16 +243,16 @@ const fake = vi.hoisted(() => {
         };
       },
     }),
-    update: (table: any) => ({
+    update: (table: FakeTable) => ({
       set: (patch: R) => ({
-        where: (cond: Cond) => {
-          const apply = () => {
+        where: (cond: Cond): UpdateChain => {
+          const apply = (): IdRows => {
             const matched = rowsOf(tableKey(table)).filter((r) => evalCond(r, cond));
             for (const r of matched) Object.assign(r, patch);
             return matched.map((r) => ({ id: r.id }));
           };
           return {
-            then: (res?: any, rej?: any) => Promise.resolve().then(apply).then(res, rej),
+            then: (res, rej) => Promise.resolve().then(apply).then(res, rej),
             returning: (_cols?: unknown) => Promise.resolve().then(apply),
           };
         },
@@ -270,6 +305,8 @@ import {
 } from '@desigual-os/orchestrator';
 import { buildContext } from '@desigual-os/context-engine';
 import { resolveClientTurnContext } from './client-context';
+import { registrarConhecimentoDoTurno } from './knowledge-statement';
+import type { Logger } from '@desigual-os/logging';
 
 const DIA = 86_400_000;
 const T0 = new Date('2026-09-21T10:00:00Z').getTime();
@@ -770,5 +807,111 @@ describe('4b. formas novas (F-20) e o que NÃO pode virar memória', () => {
     const row = fake.store.agentEpisodes[0]!;
     expect(row.importance).toBe('0.900');
     expect(row.sourceRefs).toEqual(['execution:exec-1']);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 5. F-21 — fast path knowledge-statement grava o FATO, não só o      */
+/*    episódio (regressão do caso Marina, 01/10/2026)                  */
+/* ------------------------------------------------------------------ */
+describe('5. regressão F-21: ensino confirmado no fast path volta na conversa nova', () => {
+  beforeEach(resetAll);
+
+  const logger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as Logger;
+  const MARINA = 'Anota que o decisor do Cliente Teste 7 é a Marina.';
+
+  function turnoDeEnsino(message: string, clientId: string | null, executionId: string) {
+    return registrarConhecimentoDoTurno({
+      message,
+      clientId,
+      clientName: null,
+      userId: 'tammy',
+      agent: 'bento',
+      conversationId: 'conv-origem',
+      executionId,
+      logger,
+    });
+  }
+
+  it('caso Marina: episódio (auditoria) E memória (client.profile) gravados, e a leitura da conversa nova devolve o fato', async () => {
+    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production' });
+
+    // O turno do ensino: o fast path detecta, grava e confirma.
+    const registro = await turnoDeEnsino(MARINA, null, 'exec-marina-1');
+    expect(registro).not.toBeNull();
+    expect(registro!.gravados).toBe(1);
+    expect(registro!.fatosCliente).toBe(1);
+    expect(registro!.answer).toContain('Registrado');
+
+    // Auditoria: o episódio continua gravado como antes.
+    expect(fake.store.agentEpisodes).toHaveLength(1);
+    expect(fake.store.agentEpisodes[0]!.summary).toContain('Marina');
+
+    // O que faltava: o fato em `memories`, com o subject do aspecto decidido.
+    const perfis = fake.store.memories.filter((m) => m.kind === 'client.profile');
+    expect(perfis).toHaveLength(1);
+    expect(perfis[0]!.clientId).toBe('cliente-teste-7');
+    expect(perfis[0]!.metadata?.subject).toBe('cliente:cliente-teste-7:aprendizado:decisor');
+    expect(perfis[0]!.content).toContain('Marina');
+    expect(perfis[0]!.environment).toBe('production');
+
+    // A conversa NOVA lê por duas portas, e as duas devolvem a Marina:
+    // (a) recallMemories com os mesmos filtros do montador de contexto;
+    const recall = await recallMemories({ clientId: 'cliente-teste-7', kinds: ['client.profile'], environment: 'production' });
+    expect(recall.some((m) => m.subject === 'cliente:cliente-teste-7:aprendizado:decisor' && m.content.includes('Marina'))).toBe(true);
+    // (b) o caminho real de client-context.ts: resolveClientTurnContext + comporPerfil.
+    const ctx = await resolveClientTurnContext({ message: 'prepara o post de sexta', executionClientId: 'cliente-teste-7' });
+    expect(ctx.clientId).toBe('cliente-teste-7');
+    expect(ctx.profile).toContain('Marina');
+    expect(ctx.profile).toContain('REGISTRO APRENDIDO');
+  });
+
+  it('ensinamento SEM cliente citado não quebra nada: episódio gravado, memória só se houver cliente da execução', async () => {
+    // Sem cliente citado e sem cliente na execução: não há dono pro fato —
+    // descartado de propósito, e o turno confirma o episódio normalmente.
+    const semDono = await turnoDeEnsino('Anota que a agência não trabalha aos domingos.', null, 'exec-geral-1');
+    expect(semDono).not.toBeNull();
+    expect(semDono!.gravados).toBe(1);
+    expect(semDono!.fatosCliente).toBe(0);
+    expect(fake.store.agentEpisodes).toHaveLength(1);
+    expect(fake.store.memories).toHaveLength(0);
+
+    // Com cliente na execução, o fato sem nome citado vai pro cliente do turno.
+    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production' });
+    // Frase com corpo: abaixo de 25 chars de fato o rememberFact descarta por
+    // relevância (piso do pipeline, memory-engine.ts), independente deste fix.
+    const comDono = await turnoDeEnsino('Anota que quem aprova as peças é a Marina.', 'cliente-teste-7', 'exec-geral-2');
+    expect(comDono).not.toBeNull();
+    expect(comDono!.fatosCliente).toBe(1);
+    const perfil = fake.store.memories.find((m) => m.kind === 'client.profile');
+    expect(perfil?.clientId).toBe('cliente-teste-7');
+    expect(perfil?.content).toContain('Marina');
+    expect(perfil?.metadata?.subject).toBe('cliente:cliente-teste-7:aprendizado:decisor');
+  });
+
+  it('cliente citado que NÃO existe na carteira continua descartado de propósito (resolverDono)', async () => {
+    // Carteira vazia: "Padaria do Zé" não resolve, e gravar por aproximação
+    // envenenaria o dossiê — o fato é descartado, o episódio não.
+    const registro = await turnoDeEnsino('Anota que o decisor do Padaria do Zé é o Zé.', null, 'exec-inexistente-1');
+    expect(registro).not.toBeNull();
+    expect(registro!.gravados).toBe(1);
+    expect(registro!.fatosCliente).toBe(0);
+    expect(fake.store.agentEpisodes).toHaveLength(1);
+    expect(fake.store.memories).toHaveLength(0);
+  });
+
+  it('nem episódio nem memória em duplicata: repetir o MESMO ensino não grava de novo', async () => {
+    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production' });
+
+    const primeiro = await turnoDeEnsino(MARINA, null, 'exec-marina-1');
+    expect(primeiro).not.toBeNull();
+
+    // Mesma frase, mesma conversa: o dedupe de recordEpisodes (dedupe_key)
+    // devolve 0 gravados, o fast path NÃO confirma de novo e a captura de
+    // fatos nem roda — o store fica exatamente como estava.
+    const repetido = await turnoDeEnsino(MARINA, null, 'exec-marina-1-retry');
+    expect(repetido).toBeNull();
+    expect(fake.store.agentEpisodes).toHaveLength(1);
+    expect(fake.store.memories).toHaveLength(1);
   });
 });

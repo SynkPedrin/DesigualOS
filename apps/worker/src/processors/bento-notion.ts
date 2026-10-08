@@ -36,6 +36,32 @@ export function pedeNotion(mensagem: string): boolean {
   return MENCAO_RE.test(mensagem) || PEDIDO_ESCRITO_RE.test(mensagem);
 }
 
+/**
+ * ESTE TURNO DEVE EXPORTAR?
+ *
+ * A condição morava solta em execute-job.ts e começava com `agent === 'bento'`.
+ * O efeito, medido ao ler o código em 07/10/2026: pedir `@notion` num turno do
+ * Otto — o agente que escreve briefing, que é exatamente o material que alguém
+ * quer guardar — não fazia nada. E não fazia nada EM SILÊNCIO: nenhum aviso,
+ * nenhuma linha na resposta. A pessoa concluía que a integração não funciona,
+ * e estava certa pela metade.
+ *
+ * O export não depende de quem respondeu: ele pega o documento do turno (ou a
+ * resposta, quando não há documento) e cria uma página. Amarrar isso a um
+ * agente era detalhe de implementação da primeira versão virando regra de
+ * produto.
+ *
+ * As condições que SOBRAM são as que importam: o turno terminou bem, tem texto
+ * para levar, e a pessoa pediu.
+ */
+export function deveExportarParaNotion(params: {
+  status: string;
+  answer: string | null | undefined;
+  mensagem: string;
+}): boolean {
+  return params.status === 'completed' && Boolean(params.answer) && pedeNotion(params.mensagem);
+}
+
 /** Tira o `@notion` do texto: ele endereça, não faz parte do pedido. */
 export function semMencaoNotion(mensagem: string): string {
   return mensagem.replace(MENCAO_RE, '$1').replace(/\s{2,}/g, ' ').trim();

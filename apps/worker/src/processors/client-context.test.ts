@@ -14,6 +14,7 @@ describe('formatClientBlock', () => {
         clientId: 'c1',
         clientName: 'D. Carvalho',
         profile: 'Concessionária John Deere que atende Araçatuba, Andradina e Presidente Prudente.',
+        brandKit: null,
         unresolvedMentions: [],
         ambiguous: [],
       },
@@ -26,7 +27,7 @@ describe('formatClientBlock', () => {
 
   it('cliente existe mas sem dossiê: proíbe inventar ramo/produto', () => {
     const b = formatClientBlock(
-      { clientId: 'c1', clientName: 'Fulano', profile: null, unresolvedMentions: [], ambiguous: [] },
+      { clientId: 'c1', clientName: 'Fulano', profile: null, brandKit: null, unresolvedMentions: [], ambiguous: [] },
       57,
     );
     expect(b).toContain('EXISTE na carteira');
@@ -35,7 +36,7 @@ describe('formatClientBlock', () => {
 
   it('sem cliente resolvido: proíbe afirmar que cliente não existe', () => {
     const b = formatClientBlock(
-      { clientId: null, clientName: null, profile: null, unresolvedMentions: [], ambiguous: [] },
+      { clientId: null, clientName: null, profile: null, brandKit: null, unresolvedMentions: [], ambiguous: [] },
       57,
     );
     // O erro exato do bug: afirmar que o cliente não existe e descrever o ramo.
@@ -46,11 +47,38 @@ describe('formatClientBlock', () => {
 
   it('ambiguidade manda perguntar, não escolher', () => {
     const b = formatClientBlock(
-      { clientId: null, clientName: null, profile: null, unresolvedMentions: [], ambiguous: ['Colpar', 'Colpar QA'] },
+      { clientId: null, clientName: null, profile: null, brandKit: null, unresolvedMentions: [], ambiguous: ['Colpar', 'Colpar QA'] },
       57,
     );
     expect(b).toContain('AMBÍGUO');
     expect(b).toMatch(/NÃO escolha por conta própria/i);
+  });
+
+  it('kit de marca cadastrado (client_brand_kits) entra como bloco estruturado, separado do brain', () => {
+    const b = formatClientBlock(
+      {
+        clientId: 'c1',
+        clientName: 'Clinica Teste Fase 7',
+        profile: null,
+        brandKit: { logoUrl: 'https://example.com/logo.png', colors: ['#7b2eff', '#00d6a4'], fonts: ['Georgia', 'Helvetica'], toneOfVoice: 'Descontraído e acolhedor' },
+        unresolvedMentions: [],
+        ambiguous: [],
+      },
+      57,
+    );
+    expect(b).toContain('KIT DE MARCA');
+    expect(b).toContain('#7b2eff');
+    expect(b).toContain('Georgia');
+    expect(b).toContain('Descontraído e acolhedor');
+    expect(b).toContain('https://example.com/logo.png');
+  });
+
+  it('sem kit de marca cadastrado, não aparece a seção (nunca bloco vazio)', () => {
+    const b = formatClientBlock(
+      { clientId: 'c1', clientName: '3net', profile: 'Provedor de internet.', brandKit: null, unresolvedMentions: [], ambiguous: [] },
+      57,
+    );
+    expect(b).not.toContain('KIT DE MARCA');
   });
 });
 
@@ -165,7 +193,7 @@ describe('comporPerfil com registro aprendido', () => {
 describe('formatClientBlock mantém o registro vivo', () => {
   it('manda pedir o que falta e explica como o dado vira permanente', () => {
     const b = formatClientBlock(
-      { clientId: 'c1', clientName: 'Yak Sushibar', profile: 'Restaurante japonês. Público: [FALTA]', unresolvedMentions: [], ambiguous: [] },
+      { clientId: 'c1', clientName: 'Yak Sushibar', profile: 'Restaurante japonês. Público: [FALTA]', brandKit: null, unresolvedMentions: [], ambiguous: [] },
       57,
     );
     expect(b).toContain('REGISTRO É VIVO');

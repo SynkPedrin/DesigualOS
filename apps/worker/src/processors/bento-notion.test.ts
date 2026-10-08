@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pedeNotion, semMencaoNotion, tituloParaNotion } from './bento-notion';
+import { deveExportarParaNotion, pedeNotion, semMencaoNotion, tituloParaNotion } from './bento-notion';
 import { markdownParaBlocosNotion } from '@desigual-os/tool-gateway';
 
 /**
@@ -97,5 +97,40 @@ describe('só o token da pessoa — não existe fallback', () => {
 
   it('usuário sem id também não resolve — nada de escrever "em nome de ninguém"', async () => {
     expect(await escolherToken('', fakeLogger)).toBeNull();
+  });
+});
+
+/**
+ * `@notion` NÃO É UMA FEATURE DO BENTO — é da integração.
+ *
+ * A condição em execute-job.ts começava com `agent === 'bento'`. Pedir
+ * `@notion` num turno do Otto, que é o agente que escreve briefing — o
+ * material que mais se quer guardar —, não fazia nada, e não fazia nada em
+ * silêncio. Nenhum aviso, nenhuma linha na resposta.
+ */
+describe('deveExportarParaNotion — a regra que decide o export do turno', () => {
+  const pedido = 'manda esse briefing pro notion';
+
+  it('turno completo, com texto e com pedido: exporta', () => {
+    expect(deveExportarParaNotion({ status: 'completed', answer: 'o briefing', mensagem: pedido })).toBe(true);
+  });
+
+  it('vale para qualquer agente — a regra não olha quem respondeu', () => {
+    // O predicado nem recebe o agente: é essa ausência que conserta o defeito.
+    expect(deveExportarParaNotion({ status: 'completed', answer: 'copy do Otto', mensagem: '@notion' })).toBe(true);
+  });
+
+  it('turno que falhou não exporta — não se guarda o que deu errado', () => {
+    expect(deveExportarParaNotion({ status: 'failed', answer: 'o briefing', mensagem: pedido })).toBe(false);
+  });
+
+  it('turno sem texto não exporta — não há o que virar página', () => {
+    expect(deveExportarParaNotion({ status: 'completed', answer: '', mensagem: pedido })).toBe(false);
+    expect(deveExportarParaNotion({ status: 'completed', answer: null, mensagem: pedido })).toBe(false);
+  });
+
+  /** Nada vai pro Notion sozinho: sem pedido, o turno segue como sempre. */
+  it('sem pedido não exporta, por mais completo que o turno esteja', () => {
+    expect(deveExportarParaNotion({ status: 'completed', answer: 'o briefing', mensagem: 'faz um post' })).toBe(false);
   });
 });

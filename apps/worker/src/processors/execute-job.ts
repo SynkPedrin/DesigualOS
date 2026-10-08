@@ -64,7 +64,7 @@ import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './
 import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation, getClickUpConfigOrNull, ehQaBot } from './bento-action-guard';
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
 import { executarCampanha, pedeSegmentacaoDeCampanha } from './bento-campanha-executor';
-import { exportarParaNotion, pedeNotion, tituloParaNotion } from './bento-notion';
+import { deveExportarParaNotion, exportarParaNotion, tituloParaNotion } from './bento-notion';
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama, tasksDoEstadoEmCache } from './bento-panorama';
 import { blocoDeFrentes } from './bento-padrao-de-task';
 import { blocoRelacional, explicacaoParaPessoa } from './bento-arvore';
@@ -1178,6 +1178,32 @@ async function notifyChatCompletion(
   });
 }
 
+/**
+ * As listas de ClickUp dos clientes ATIVOS da EMPRESA DA EXECUÇÃO — nunca de
+ * todas as empresas.
+ *
+ * Antes desta função, os quatro lugares que montam "estado da operação" pro
+ * Bento dentro de um turno (ata de reunião, pergunta operacional, estado
+ * injetado a cada turno, panorama) filtravam só `deletedAt is null` — uma
+ * execução da Organização A enxergava clickupListId de clientes de QUALQUER
+ * organização. Vazamento cross-tenant ativo, medido, não hipotético.
+ *
+ * FAIL CLOSED: `executions.organization_id` é nullable (migração 0045 — linha
+ * legada que não resolveu fica `NULL`, de propósito, em vez de carimbada por
+ * dedução). Sem organização resolvida, devolve lista VAZIA — nunca cai para
+ * "todos os clientes". O turno perde a apuração operacional daquela vez; não
+ * vaza dado de outro tenant.
+ */
+export async function listasDeClickUpDaOrganizacao(
+  organizationId: string | null | undefined,
+): Promise<Array<{ id: string | null; name: string }>> {
+  if (!organizationId) return [];
+  return db
+    .select({ id: schema.clients.clickupListId, name: schema.clients.name })
+    .from(schema.clients)
+    .where(and(isNull(schema.clients.deletedAt), eq(schema.clients.organizationId, organizationId)));
+}
+
 export async function processAgentJob(job: Job<AgentJobData>, logger: Logger): Promise<void> {
   if (job.data.workflowId !== undefined && job.data.stepIndex !== undefined) {
     await processWorkflowStep(job.data, logger);
@@ -1203,7 +1229,13 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     .update(schema.executions)
     .set({ status: 'running', startedAt: new Date() })
     .where(eq(schema.executions.id, executionDbId))
-    .returning({ userId: schema.executions.userId, clientId: schema.executions.clientId });
+    .returning({
+      userId: schema.executions.userId,
+      clientId: schema.executions.clientId,
+      // A empresa do turno sai de graça no RETURNING: é o que decide a
+      // credencial do conector de tarefas (white label) sem query extra.
+      organizationId: schema.executions.organizationId,
+    });
   await publishWsEvent({
     type: 'execution.progress',
     payload: { execution_id: executionId, agent, status: 'running' },
@@ -1274,7 +1306,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       sources: [],
       tool_calls: [],
       usage: { input_tokens: 0, output_tokens: 0 },
-      metadata: { fast_path: 'knowledge_statement', kinds: registro.tipos, episodios_gravados: registro.gravados },
+      metadata: { fast_path: 'knowledge_statement', kinds: registro.tipos, episodios_gravados: registro.gravados, fatos_cliente: registro.fatosCliente },
     };
   }
 
@@ -1478,10 +1510,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     if (!guardedResult && agent === 'bento' && blocoDeDocumentos && pedeAtaDeReuniao(message, true)) {
       const cfgAta = getClickUpConfigOrNull();
       const estadoAta = cfgAta
-        ? await estadoDaOperacaoEmTexto(async () => {
-            const listas = (
-              await db.select({ id: schema.clients.clickupListId }).from(schema.clients).where(isNull(schema.clients.deletedAt))
-            )
+        ? await estadoDaOperacaoEmTexto(runningExecution?.organizationId, async () => {
+            const listas = (await listasDeClickUpDaOrganizacao(runningExecution?.organizationId))
               .map((c) => c.id)
               .filter((id): id is string => Boolean(id));
             if (listas.length === 0) return { tasks: [], truncated: false };
@@ -1522,10 +1552,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     if (!guardedResult && agent === 'bento' && ehPerguntaOperacional(message) && !pedePanorama(message)) {
       const cfgResposta = getClickUpConfigOrNull();
       const estado = cfgResposta
-        ? await estadoDaOperacaoEmTexto(async () => {
-            const listas = (
-              await db.select({ id: schema.clients.clickupListId }).from(schema.clients).where(isNull(schema.clients.deletedAt))
-            )
+        ? await estadoDaOperacaoEmTexto(runningExecution?.organizationId, async () => {
+            const listas = (await listasDeClickUpDaOrganizacao(runningExecution?.organizationId))
               .map((c) => c.id)
               .filter((id): id is string => Boolean(id));
             if (listas.length === 0) return { tasks: [], truncated: false };
@@ -1581,11 +1609,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
        * são de alguém, e escondê-las trocaria um erro por outro pior.
        */
       const linhasDeCliente = cfgPanorama
-        ? await db
-            .select({ id: schema.clients.clickupListId, name: schema.clients.name })
-            .from(schema.clients)
-            .where(isNull(schema.clients.deletedAt))
-            .catch(() => [])
+        ? await listasDeClickUpDaOrganizacao(runningExecution?.organizationId).catch(() => [])
         : [];
       const listas = escopoOperacional(linhasDeCliente)
         .map((c) => c.id)
@@ -1919,6 +1943,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         data,
         userId: runningExecution?.userId ?? null,
         clientId: runningExecution?.clientId ?? null,
+        organizationId: runningExecution?.organizationId ?? null,
         clientBrandKit,
         clientFeedbackHistory,
         logger,
@@ -2110,13 +2135,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             if (agent === 'bento') {
               const cfgEstado = getClickUpConfigOrNull();
               if (cfgEstado) {
-                const estado = await estadoDaOperacaoEmTexto(async () => {
-                  const listas = (
-                    await db
-                      .select({ id: schema.clients.clickupListId })
-                      .from(schema.clients)
-                      .where(isNull(schema.clients.deletedAt))
-                  )
+                const estado = await estadoDaOperacaoEmTexto(runningExecution?.organizationId, async () => {
+                  const listas = (await listasDeClickUpDaOrganizacao(runningExecution?.organizationId))
                     .map((c) => c.id)
                     .filter((id): id is string => Boolean(id));
                   if (listas.length === 0) return { tasks: [], truncated: false };
@@ -2136,7 +2156,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
                  */
                 const nomeDoCliente = clienteDoTurno.clientName;
                 if (nomeDoCliente) {
-                  const doCliente = tasksDoEstadoEmCache().filter((t) => t.listName === nomeDoCliente);
+                  const doCliente = tasksDoEstadoEmCache(runningExecution?.organizationId).filter((t) => t.listName === nomeDoCliente);
                   /**
                    * A ÁRVORE PRIMEIRO, e a causa junto com ela: é o que separa
                    * "você tem 14 atrasadas" de "9 delas não são o problema".
@@ -2371,7 +2391,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
    * isso é a última coisa do turno, e falhar aqui acrescenta uma linha de
    * explicação em vez de derrubar o que o Bento fez.
    */
-  if (agent === 'bento' && result.status === 'completed' && result.answer && pedeNotion(message)) {
+  // A resposta sai do `result` antes do `if` só para o TypeScript estreitar o
+  // `string | null` uma vez — o predicado é quem carrega a regra.
+  const respostaDoTurno = result.answer;
+  if (respostaDoTurno && deveExportarParaNotion({ status: result.status, answer: respostaDoTurno, mensagem: message })) {
     // Prefere o DOCUMENTO do turno (o briefing) ao recibo do chat: ver o
     // comentário em bento-openai-core.ts. Sem documento, exporta a resposta
     // mesmo — uma análise no chat também é conteúdo que alguém quer guardar.
@@ -2379,7 +2402,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     const exportado = await exportarParaNotion({
       userId: runningExecution?.userId ?? '',
       titulo: doc?.titulo?.trim() || tituloParaNotion(message, null),
-      markdown: doc?.markdown?.trim() || result.answer,
+      markdown: doc?.markdown?.trim() || respostaDoTurno,
       logger,
     }).catch((error: unknown) => {
       logger.warn({ error, executionId }, '[bento-notion] export falhou; a resposta do turno continua valendo');
@@ -2426,7 +2449,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
   // rechamar o agente de verdade uma 2ª vez, duplicando mensagem/custo. O
   // pior caso aceitável aqui é um registro incompleto, nunca uma ação
   // externa repetida.
-  let execution: { id: string; userId: string; clientId: string | null } | undefined;
+  let execution: { id: string; userId: string; clientId: string | null; organizationId: string | null } | undefined;
   try {
     [execution] = await db
       .update(schema.executions)
@@ -2441,9 +2464,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         id: schema.executions.id,
         userId: schema.executions.userId,
         clientId: schema.executions.clientId,
+        // Já vem de graça no RETURNING: poupa a query extra que o recorte por
+        // tenant de custo exigiria por turno (~300ms de RTT neste banco).
+        organizationId: schema.executions.organizationId,
       });
 
-    await recordTokenUsage(executionDbId, result);
+    await recordTokenUsage(executionDbId, result, execution?.organizationId);
     await recordAuditLog(agent, executionId, result);
     // Ver `vaiReprocessar`: enquanto ainda há retry pela frente, a resposta
     // NÃO é gravada — senão a pessoa lê a mesma coisa uma vez por tentativa.
@@ -2499,6 +2525,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         agent,
         result.usage,
         usageEstimated,
+        execution.organizationId,
       );
       await finalizeExecutionCost(executionDbId);
     }
@@ -2562,6 +2589,7 @@ async function recordCostForStep(
   agent: AgentName,
   usage: { input_tokens: number; output_tokens: number },
   estimated: boolean,
+  organizationId: string | null,
 ): Promise<void> {
   await recordCostEvent({
     executionDbId,
@@ -2572,6 +2600,7 @@ async function recordCostForStep(
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
     estimated,
+    organizationId,
   });
 }
 
@@ -2680,13 +2709,17 @@ async function processWorkflowStep(data: AgentJobData, logger: Logger): Promise<
       ),
     );
 
-  await recordTokenUsage(executionDbId, result);
-  await recordAuditLog(agent, executionId, result);
-
+  // A execution é lida ANTES de gravar telemetria: o organizationId já
+  // carregado aqui poupa a query extra por turno que o recorte de custo por
+  // tenant exigiria (ver recordTokenUsage).
   const [execution] = await db
     .select()
     .from(schema.executions)
     .where(eq(schema.executions.id, executionDbId));
+
+  await recordTokenUsage(executionDbId, result, execution?.organizationId ?? null);
+  await recordAuditLog(agent, executionId, result);
+
   if (execution) {
     await recordCostForStep(
       execution.clientId,
@@ -2695,6 +2728,7 @@ async function processWorkflowStep(data: AgentJobData, logger: Logger): Promise<
       agent,
       result.usage,
       usageEstimated,
+      execution.organizationId,
     );
   }
 
@@ -2969,15 +3003,45 @@ export async function consolidateWorkflowAnswer(
   return partes.join('\n\n');
 }
 
-async function recordTokenUsage(executionDbId: string, result: ExecuteResponse): Promise<void> {
-  if (result.usage.input_tokens > 0 || result.usage.output_tokens > 0) {
-    await db.insert(schema.tokenUsage).values({
-      executionId: executionDbId,
-      model: 'unknown', // Node ainda não devolve qual modelo o OpenClaw usou; ver Fase 04.
-      inputTokens: result.usage.input_tokens,
-      outputTokens: result.usage.output_tokens,
-    });
+/**
+ * Grava o uso de tokens do turno, já com a empresa dona (recorte de custo por
+ * tenant, migração 0049).
+ *
+ * `organizationIdConhecido` é o valor que o chamador JÁ tem em memória (a
+ * execution está carregada nos dois caminhos que chegam aqui): cada consulta
+ * contra este banco custa ~300ms de rede, e um turno não pode pagar uma ida
+ * extra por telemetria. Quem não tem o valor passa `undefined` e a função o
+ * resolve com uma consulta — ou sem ela, se a consulta falhar: custo é
+ * TELEMETRIA, e telemetria nunca derruba um turno. Por isso o try/catch aqui
+ * é deliberado e não disfarce.
+ *
+ * Exportada (só a palavra-chave) para o teste travar a regra de tenant — mesmo
+ * precedente de buildNodeUrl/callBento neste arquivo.
+ */
+export async function recordTokenUsage(
+  executionDbId: string,
+  result: ExecuteResponse,
+  organizationIdConhecido?: string | null,
+): Promise<void> {
+  if (result.usage.input_tokens <= 0 && result.usage.output_tokens <= 0) return;
+
+  let organizationId = organizationIdConhecido;
+  if (organizationId === undefined) {
+    organizationId = await db
+      .select({ organizationId: schema.executions.organizationId })
+      .from(schema.executions)
+      .where(eq(schema.executions.id, executionDbId))
+      .then((linhas) => linhas[0]?.organizationId ?? null)
+      .catch(() => null);
   }
+
+  await db.insert(schema.tokenUsage).values({
+    executionId: executionDbId,
+    model: 'unknown', // Node ainda não devolve qual modelo o OpenClaw usou; ver Fase 04.
+    inputTokens: result.usage.input_tokens,
+    outputTokens: result.usage.output_tokens,
+    organizationId: organizationId ?? null,
+  });
 }
 
 async function failExecution(executionDbId: string, reason: string): Promise<void> {

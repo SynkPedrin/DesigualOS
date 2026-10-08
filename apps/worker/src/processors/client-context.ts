@@ -24,11 +24,27 @@ import { resolveClientsFromText } from '@desigual-os/context-engine';
  * perguntar em vez de inventar.
  */
 
+export interface ClientBrandKit {
+  logoUrl: string | null;
+  colors: string[];
+  fonts: string[];
+  toneOfVoice: string | null;
+}
+
 export interface ClientTurnContext {
   clientId: string | null;
   clientName: string | null;
   /** Dossiê consolidado (kind client.profile), cortado pro orçamento de prompt. */
   profile: string | null;
+  /**
+   * `client_brand_kits` — a MESMA tabela que o Studio já usa pra aplicar
+   * paleta/logo real num job de imagem (ver execute-job.ts). Até 07/10/2026
+   * só o Studio lia isto; o Bento respondia "identidade visual" só com o que
+   * estava em prosa livre no brain (quase sempre `[FALTA]`, porque nenhum
+   * Briefing Dourado trouxe hex de cor). Dado estruturado aqui nunca disputa
+   * com o brain: quando existe, é mais confiável que prosa livre.
+   */
+  brandKit: ClientBrandKit | null;
   /** Nomes citados na mensagem que NÃO existem na carteira. */
   unresolvedMentions: string[];
   /** Mais de um cliente casou: o agente precisa perguntar qual. */
@@ -139,6 +155,7 @@ export async function resolveClientTurnContext(params: {
     clientId: null,
     clientName: null,
     profile: null,
+    brandKit: null,
     unresolvedMentions: [],
     ambiguous: [],
   };
@@ -199,11 +216,29 @@ export async function resolveClientTurnContext(params: {
     );
   }
 
+  let brandKit: ClientBrandKit | null = null;
+  if (clientId) {
+    const [kit] = await db
+      .select({ logoUrl: schema.clientBrandKits.logoUrl, colors: schema.clientBrandKits.colors, fonts: schema.clientBrandKits.fonts, toneOfVoice: schema.clientBrandKits.toneOfVoice })
+      .from(schema.clientBrandKits)
+      .where(eq(schema.clientBrandKits.clientId, clientId))
+      .catch(() => []);
+    if (kit) {
+      brandKit = {
+        logoUrl: kit.logoUrl ?? null,
+        colors: Array.isArray(kit.colors) ? (kit.colors as string[]) : [],
+        fonts: Array.isArray(kit.fonts) ? (kit.fonts as string[]) : [],
+        toneOfVoice: kit.toneOfVoice ?? null,
+      };
+    }
+  }
+
   return {
     ...vazio,
     clientId,
     clientName,
     profile,
+    brandKit,
     ambiguous,
     unresolvedMentions: [],
   };
@@ -243,6 +278,18 @@ export function formatClientBlock(ctx: ClientTurnContext, totalClientes: number)
       'Este cliente EXISTE na carteira, mas não há dossiê consolidado dele no sistema.',
       'Trabalhe com o que o pedido trouxer e declare o que falta. NÃO invente ramo, produto ou público.',
     );
+  }
+
+  // KIT DE MARCA é dado ESTRUTURADO (client_brand_kits), separado do texto
+  // livre do brain — quando existe, é mais confiável que prosa, porque não
+  // depende de alguém ter escrito "cor principal: #..." dentro do dossiê.
+  if (ctx.brandKit && (ctx.brandKit.logoUrl || ctx.brandKit.colors.length > 0 || ctx.brandKit.fonts.length > 0 || ctx.brandKit.toneOfVoice)) {
+    const kit = ctx.brandKit;
+    linhas.push('', 'KIT DE MARCA (dado estruturado, cadastrado no sistema — não é texto do brain):');
+    if (kit.colors.length > 0) linhas.push(`- Cores: ${kit.colors.join(', ')}`);
+    if (kit.fonts.length > 0) linhas.push(`- Tipografia: ${kit.fonts.join(', ')}`);
+    if (kit.toneOfVoice) linhas.push(`- Tom de voz cadastrado: ${kit.toneOfVoice}`);
+    if (kit.logoUrl) linhas.push(`- Logo: ${kit.logoUrl}`);
   }
   /**
    * LACUNA NÃO É PAREDE — e a versão anterior desta instrução virou uma.

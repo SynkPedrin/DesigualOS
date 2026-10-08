@@ -365,21 +365,70 @@ export function panoramaEmResposta(p: Panorama): string {
  */
 const TTL_ESTADO_MS = Number(process.env.BENTO_ESTADO_TTL_MS ?? 180_000);
 
-let cache: { em: number; texto: string; tasks: OperationTask[] } | null = null;
-
-/** Só pra teste: zera o cache entre casos. */
-export function __limparCacheDoEstado(): void {
-  cache = null;
+interface EstadoEmCache {
+  em: number;
+  texto: string;
+  tasks: OperationTask[];
 }
 
 /**
- * As tarefas que sustentam o estado em cache. Existe pra que quem precisar
- * olhar as tarefas de novo no mesmo turno — o mapa de frentes do cliente, por
- * exemplo — não pague uma segunda varredura do ClickUp. Vazio quando o estado
- * ainda não foi apurado neste TTL: quem chama decide se vale buscar.
+ * UM CACHE POR EMPRESA, NUNCA UM CACHE SÓ (P0.1 slice 2b, 05/10/2026).
+ *
+ * Até aqui era `let cache: EstadoEmCache | null` — uma variável, compartilhada
+ * por TODAS as execuções do processo, de QUALQUER organização. O slice
+ * anterior (2a) corrigiu a CONSULTA pra recortar por `organizationId`; isso
+ * sozinho não bastava, porque a resposta da consulta certa ainda era guardada
+ * numa caixa só. Organização A apura o estado dela, cacheia; Organização B
+ * pergunta 10 segundos depois (dentro do TTL de 180s) e recebia o texto DA
+ * A — vazamento sobrevivendo um nível acima da query, no cache.
+ *
+ * A cardinalidade real da função é só `organizationId`: os três chamadores
+ * (ata de reunião, pergunta operacional, estado-por-turno, em execute-job.ts)
+ * já resolvem a lista de clientes via `listasDeClickUpDaOrganizacao(organizationId)`
+ * sem nenhum outro recorte (nem client, nem usuário) — então o mesmo tenant
+ * sempre produz o mesmo estado nesta função, e a chave não precisa de mais
+ * componente que isso.
  */
-export function tasksDoEstadoEmCache(): OperationTask[] {
-  return cache?.tasks ?? [];
+const cachePorOrganizacao = new Map<string, EstadoEmCache>();
+
+/**
+ * Remove entradas vencidas de OUTRAS organizações antes de ler/escrever. Sem
+ * isto, o Map cresceria um pouco a cada organização nova que já apurou
+ * estado uma vez e nunca mais voltou — pequeno (bound é o número de
+ * empresas, não de chamadas), mas "lazy evict no acesso" é simples e não
+ * deixa lixo se acumular à toa.
+ *
+ * NUNCA evict a própria organização que está sendo processada (`exceto`):
+ * o comportamento pré-existente de `estadoDaOperacaoEmTexto` serve o ÚLTIMO
+ * estado conhecido quando a consulta fresca falha, mesmo que esse estado já
+ * tenha passado do TTL — apagar a entrada aqui, antes de ela servir de
+ * fallback, trocaria "serve o último estado conhecido" por "null", que é
+ * exatamente o regresso que o teste "falha depois de um sucesso..." existe
+ * pra pegar (e pegou, na primeira versão deste arquivo).
+ */
+function evictarExpiradas(agora: number, exceto: string): void {
+  for (const [orgId, entrada] of cachePorOrganizacao) {
+    if (orgId === exceto) continue;
+    if (agora - entrada.em >= TTL_ESTADO_MS) cachePorOrganizacao.delete(orgId);
+  }
+}
+
+/** Só pra teste: zera o cache entre casos. */
+export function __limparCacheDoEstado(): void {
+  cachePorOrganizacao.clear();
+}
+
+/**
+ * As tarefas que sustentam o estado em cache — da MESMA organização, nunca de
+ * outra. Existe pra que quem precisar olhar as tarefas de novo no mesmo turno
+ * — o mapa de frentes do cliente, por exemplo — não pague uma segunda
+ * varredura do ClickUp. Vazio quando o estado ainda não foi apurado neste TTL
+ * (quem chama decide se vale buscar) OU quando `organizationId` não existe —
+ * nunca cai pro cache de outra empresa nem junta tudo numa lista só.
+ */
+export function tasksDoEstadoEmCache(organizationId: string | null | undefined): OperationTask[] {
+  if (!organizationId) return [];
+  return cachePorOrganizacao.get(organizationId)?.tasks ?? [];
 }
 
 /**
@@ -393,19 +442,48 @@ export interface ConsultaDeTasks {
   truncated: boolean;
 }
 
+/**
+ * FAIL CLOSED: sem `organizationId`, a função NUNCA toca
+ * `cachePorOrganizacao` — nem lê (não existe "cache default" pra devolver
+ * estado de outra empresa por engano) nem escreve (não cria uma entrada
+ * órfã que nenhuma organização real reivindica). Ela ainda roda `buscar()` e
+ * devolve o texto fresco — perder o cache não pode significar perder a
+ * apuração pro turno, só perder o REUSO entre turnos.
+ */
 export async function estadoDaOperacaoEmTexto(
+  organizationId: string | null | undefined,
   buscar: () => Promise<ConsultaDeTasks>,
   agora: Date = new Date(),
 ): Promise<string | null> {
-  if (cache && agora.getTime() - cache.em < TTL_ESTADO_MS) return cache.texto;
-  const consulta = await buscar().catch(() => null);
-  if (!consulta) return cache?.texto ?? null;
-  const tasks = consulta.tasks;
-  if (tasks.length === 0) return null;
+  const agoraMs = agora.getTime();
 
-  const m = apurarMetricas(tasks, agora);
+  if (!organizationId) {
+    const consultaSemCache = await buscar().catch(() => null);
+    if (!consultaSemCache || consultaSemCache.tasks.length === 0) return null;
+    return textoDoEstado(consultaSemCache, agora);
+  }
+
+  evictarExpiradas(agoraMs, organizationId);
+
+  const emCache = cachePorOrganizacao.get(organizationId);
+  if (emCache && agoraMs - emCache.em < TTL_ESTADO_MS) return emCache.texto;
+
+  const consulta = await buscar().catch(() => null);
+  if (!consulta) return emCache?.texto ?? null;
+  if (consulta.tasks.length === 0) return null;
+
+  const texto = textoDoEstado(consulta, agora);
+  cachePorOrganizacao.set(organizationId, { em: agoraMs, texto, tasks: consulta.tasks });
+  return texto;
+}
+
+/** Construção pura do texto a partir de uma consulta — sem cache, sem
+ *  organização, reaproveitada tanto pelo caminho cacheado quanto pelo
+ *  caminho fail-closed (sem `organizationId`). */
+function textoDoEstado(consulta: ConsultaDeTasks, agora: Date): string {
+  const m = apurarMetricas(consulta.tasks, agora);
   const truncado = consulta.truncated;
-  const texto = [
+  return [
     truncado
       ? 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp — ATENÇÃO: a consulta foi truncada, então estes números descrevem uma FATIA da operação, não o total):'
       : 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp, só tarefas EM ABERTO; entregues não contam como atrasadas):',
@@ -425,6 +503,4 @@ export async function estadoDaOperacaoEmTexto(
     'diga que não é um dado que você tem — nunca escreva 0, R$ 0,00 ou "nenhum" para dizer "não sei".',
     truncado ? 'Se citar um total, diga que é do recorte consultado, não da operação inteira.' : '',
   ].join('\n');
-  cache = { em: agora.getTime(), texto, tasks };
-  return texto;
 }
