@@ -1,5 +1,10 @@
 export * from './agent';
 export * from './canva';
+export * from './client-assignment';
+export * from './communication';
+export * from './demand';
+export * from './brief';
+export * from './approval';
 export * from './conversation';
 export * from './execution';
 export * from './jarbas-analysis';
@@ -7,3 +12,4 @@ export * from './personalities';
 export * from './role';
 export * from './studio';
 export * from './text';
+export * from './workspace';

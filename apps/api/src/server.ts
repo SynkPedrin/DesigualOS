@@ -22,8 +22,11 @@ import { registerMcpStatusRoutes } from './mcp-status/routes';
 import { registerEpisodeRoutes } from './episodes/routes';
 import { registerDataQualityRoutes } from './data-quality/routes';
 import { registerSignalsRoutes } from './signals/routes';
+import { registerActivityRoutes } from './activity/routes';
 import { registerPanoramaRoutes } from './panorama/routes';
 import { registerOrganizationRoutes } from './organizations/routes';
+import { registerOrganizationMemberRoutes } from './organizations/membros';
+import { registerConnectorRoutes } from './connectors/routes';
 import { registerConsentRoutes } from './consent/routes';
 import { registerStudioRoutes } from './studio/routes';
 import { registerMotionRoutes } from './motion/routes';
@@ -33,6 +36,10 @@ import { registerFontRoutes } from './studio/font-routes';
 import { registerWsRoutes } from './ws/routes';
 import { registerCostRoutes } from './costs/routes';
 import { registerClientRoutes } from './clients/routes';
+import { registerCommunicationRoutes } from './communications/routes';
+import { registerDemandRoutes } from './demands/routes';
+import { registerBriefRoutes } from './briefs/routes';
+import { registerApprovalRequestRoutes } from './approvals/routes';
 import { registerConversationRoutes } from './conversations/routes';
 import { registerProjectRoutes } from './projects/routes';
 import { registerAdminRoutes } from './admin/routes';
@@ -40,6 +47,13 @@ import { registerClickUpRoutes } from './clickup/routes';
 import { registerIntegrationRoutes } from './integrations/routes';
 import { registerClickUpMcpOAuthRoutes } from './integrations/clickup-mcp-routes';
 import { registerNotionRoutes } from './integrations/notion-routes';
+import { registerMetaIntegrationRoutes } from './integrations/meta-routes';
+import { registerGoogleAdsIntegrationRoutes } from './integrations/google-ads-routes';
+import { registerAgencyControlCenterRoutes } from './agency-control-center/routes';
+import { registerWorkspaceRoutes } from './workspace/routes';
+import { registerCalendarRoutes } from './calendar/routes';
+import { registerGoogleCalendarIntegrationRoutes } from './integrations/google-calendar-routes';
+import { registerMicrosoftCalendarIntegrationRoutes } from './integrations/microsoft-calendar-routes';
 import { registerNotificationRoutes } from './notifications/routes';
 import { registerMessageRoutes } from './messages/routes';
 import { registerTeamRoutes } from './team/routes';
@@ -49,6 +63,7 @@ import { registerToolCallRoutes } from './tool-calls/routes';
 import { registerAutomationRoutes } from './automations/routes';
 import { registerUploadRoutes } from './uploads/routes';
 import { registerAgentRoutes } from './agents/routes';
+import { origensDoFront } from './lib/url-do-app';
 
 const logger = createLogger({ service: 'orchestrator-api' });
 const isProd = process.env.NODE_ENV === 'production';
@@ -168,10 +183,7 @@ async function start(): Promise<void> {
     // (24/09/2026: uma edição do .env trocou FRONTEND_URL pra localhost e o
     // front publicado inteiro ficou preso em "Carregando..." — o preflight
     // passou a devolver a origem errada e o Chrome bloqueou TUDO.)
-    origin: (process.env.FRONTEND_URL ?? 'http://localhost:3000')
-      .split(',')
-      .map((o) => o.trim())
-      .filter(Boolean),
+    origin: origensDoFront(),
     allowedHeaders: ['Authorization', 'Content-Type'],
   });
   // Private Network Access (14/09/2026, medido no smoke de produção): quando a
@@ -239,7 +251,10 @@ async function start(): Promise<void> {
   await app.register(registerDataQualityRoutes);
   await app.register(registerSignalsRoutes);
   await app.register(registerPanoramaRoutes);
+  await app.register(registerActivityRoutes);
   await app.register(registerOrganizationRoutes);
+  await app.register(registerOrganizationMemberRoutes);
+  await app.register(registerConnectorRoutes);
   await app.register(registerConsentRoutes);
   await app.register(registerStudioRoutes);
   await app.register(registerMotionRoutes);
@@ -249,6 +264,10 @@ async function start(): Promise<void> {
   await app.register(registerWsRoutes);
   await app.register(registerCostRoutes);
   await app.register(registerClientRoutes);
+  await app.register(registerCommunicationRoutes);
+  await app.register(registerDemandRoutes);
+  await app.register(registerBriefRoutes);
+  await app.register(registerApprovalRequestRoutes);
   await app.register(registerConversationRoutes);
   await app.register(registerProjectRoutes);
   await app.register(registerAdminRoutes);
@@ -256,6 +275,13 @@ async function start(): Promise<void> {
   await app.register(registerIntegrationRoutes);
   await app.register(registerNotionRoutes);
   await app.register(registerClickUpMcpOAuthRoutes);
+  await app.register(registerMetaIntegrationRoutes);
+  await app.register(registerGoogleAdsIntegrationRoutes);
+  await app.register(registerAgencyControlCenterRoutes);
+  await app.register(registerWorkspaceRoutes);
+  await app.register(registerCalendarRoutes);
+  await app.register(registerGoogleCalendarIntegrationRoutes);
+  await app.register(registerMicrosoftCalendarIntegrationRoutes);
   await app.register(registerNotificationRoutes);
   await app.register(registerMessageRoutes);
   await app.register(registerTeamRoutes);

@@ -1,6 +1,7 @@
 import { index, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, timestampColumns } from './_shared';
 import { organizations } from './organizations';
+import { operationalIdentities } from './operational-identities';
 import { users } from './identity';
 
 /**
@@ -47,9 +48,13 @@ export const mcpTokens = pgTable(
   'mcp_tokens',
   {
     ...idColumn,
-    /** 'authorization_code' | 'access' | 'refresh' */
+    /** 'authorization_code' | 'access' | 'refresh' | 'connection' */
     kind: text('kind').notNull(),
-    tokenHash: text('token_hash').notNull().unique(),
+    // O unique NÃO vai inline aqui: `.unique()` gera o nome automático
+    // `mcp_tokens_token_hash_unique`, que colide com o `unique()` explícito e
+    // nomeado abaixo e derruba o `db:generate` inteiro ("duplicated unique
+    // constraint names"). O banco real tem uma constraint só (migração 0044).
+    tokenHash: text('token_hash').notNull(),
     clientId: text('client_id').notNull(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
@@ -67,6 +72,35 @@ export const mcpTokens = pgTable(
     resource: text('resource'),
     /** Encadeia o access ao refresh que o emitiu — revoga a família inteira. */
     parentTokenId: uuid('parent_token_id'),
+    /**
+     * QUEM AGE, quando não é quem autorizou.
+     *
+     * `userId` acima responde "quem AUTORIZOU esta credencial" — no fluxo
+     * OAuth é a própria pessoa, que fez login; numa conexão gerada pelo master
+     * é o master. Esta coluna responde a outra pergunta: "qual identidade
+     * operacional está AGINDO agora".
+     *
+     * Medido em 01/10/2026: a identidade NÃO vem do Claude. Ele manda
+     * `client_id` e um `client_name` que é a string "Claude", igual para todo
+     * mundo. Sem esta coluna, toda ação de `atendimento@` nasceria com o nome
+     * do master — e "o que a Jamile fez hoje" seria respondido com dado
+     * inventado.
+     *
+     * NULA nos 246 tokens existentes e em todo token OAuth: ali quem autoriza
+     * é quem age, e o comportamento não muda. A coluna é aditiva de propósito.
+     *
+     * POR QUE AQUI E NÃO NUMA TABELA NOVA: uma credencial a mais é um caminho
+     * de validação e revogação a mais, e revogação errada não avisa. Jev
+     * sugeriu tabela dedicada (0,69, confiança 0,57); segui o caminho de um
+     * sistema de auth só, que é o que o produto pediu e o que mantém revogar
+     * sendo uma coisa só.
+     */
+    actorIdentityId: uuid('actor_identity_id').references(() => operationalIdentities.id, { onDelete: 'cascade' }),
+    /**
+     * Último uso, para a tela do master responder "esta conexão está viva?".
+     * Nulo = nunca usada desde que foi criada.
+     */
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     /** Código de autorização é de uso único: consumido não troca de novo. */
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
@@ -75,6 +109,7 @@ export const mcpTokens = pgTable(
   },
   (table) => ({
     userIdx: index('mcp_tokens_user_id_idx').on(table.userId),
+    atorIdx: index('mcp_tokens_actor_identity_id_idx').on(table.actorIdentityId),
     kindExpiresIdx: index('mcp_tokens_kind_expires_idx').on(table.kind, table.expiresAt),
     hashUnico: unique('mcp_tokens_token_hash_unique').on(table.tokenHash),
   }),

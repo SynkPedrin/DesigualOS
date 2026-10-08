@@ -144,6 +144,38 @@ export const memories = pgTable(
 );
 
 /**
+ * Vetor semântico de UMA memória operacional (1:1 com `memories`). Tabela
+ * separada da `embeddings` de propósito: aquela tem FK obrigatória para
+ * `knowledge_chunks` (pipeline de documentos), esta é do pipeline de memória.
+ *
+ * jsonb + cosseno em JS no recall (packages/orchestrator/src/memory-embeddings.ts),
+ * não pgvector: o recall sempre filtra por environment + escopo + status antes
+ * de rankear, então o universo de candidatos é de dezenas, não de milhares.
+ * O critério para migrar a pgvector está documentado no header daquele módulo.
+ *
+ * A AUSÊNCIA da linha é o estado "pendente de embedding" (falha da API na
+ * escrita, ou memória anterior à feature) — o backfill cobre.
+ */
+export const memoryEmbeddings = pgTable(
+  'memory_embeddings',
+  {
+    ...idColumn,
+    memoryId: uuid('memory_id')
+      .notNull()
+      .references(() => memories.id, { onDelete: 'cascade' }),
+    /** Modelo que gerou o vetor (ex: 'text-embedding-3-small'). Vetores de modelos diferentes não são comparáveis. */
+    model: text('model').notNull(),
+    vector: jsonb('vector').$type<number[]>().notNull(),
+    /** sha256 do content no momento da geração: content mudou => vetor velho detectável. */
+    contentHash: text('content_hash'),
+    ...timestampColumns,
+  },
+  (table) => ({
+    memoryIdx: uniqueIndex('memory_embeddings_memory_id_idx').on(table.memoryId),
+  }),
+);
+
+/**
  * Event store operacional: TUDO que acontece na operação e pode virar contexto futuro
  * (task criada/movida, comentário, aprovação, briefing, mensagem de chat, snapshot de
  * métrica). Antes disto o webhook do ClickUp era processado e descartado — nada ficava,

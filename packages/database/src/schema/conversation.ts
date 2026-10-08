@@ -10,15 +10,30 @@ import { organizations } from './organizations';
  * soltas por frente de trabalho. NÃO confundir com studio_projects (schema
  * studio.ts), que é do domínio do Studio/ComfyUI.
  */
-export const projects = pgTable('projects', {
-  ...idColumn,
-  name: text('name').notNull(),
-  clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
-  createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  ...timestampColumns,
-});
+export const projects = pgTable(
+  'projects',
+  {
+    ...idColumn,
+    name: text('name').notNull(),
+    clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+    /**
+     * FRONTEIRA DE TENANT DIRETA (05/10/2026). Antes desta coluna o escopo era
+     * `tenantSharingScope` — a união de TODAS as empresas da pessoa, com bypass
+     * de master — e um provedor dentro da conta de um cliente via os projetos
+     * da Desigual. Nullable: projeto sem cliente resolvível fica NULL = legado
+     * da provedora (mesma regra de memories.organizationId, knowledge.ts).
+     * Backfill das linhas antigas em apps/worker/scripts/backfill-projects-org.mts.
+     */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    ...timestampColumns,
+  },
+  (table) => ({
+    organizationIdx: index('projects_organization_id_idx').on(table.organizationId),
+  }),
+);
 
 /**
  * Arquivos de referência anexados a um projeto do Chat (identidade visual,

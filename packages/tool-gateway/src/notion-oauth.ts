@@ -36,6 +36,20 @@ export function getNotionOAuthConfig(env: NodeJS.ProcessEnv = process.env): Noti
   return { clientId, clientSecret, redirectUri };
 }
 
+/**
+ * QUAIS variáveis faltam — não só "falta alguma".
+ *
+ * "Não configurado" é a resposta mais inútil que uma integração pode dar a
+ * quem tem permissão de configurá-la. Na agência, quem vê esse aviso é o
+ * próprio administrador: mandar ele "falar com o Admin" é mandar ele falar
+ * sozinho. Dizendo o NOME do que falta, o conserto é copiar três linhas.
+ */
+export function variaveisFaltantesDoNotion(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (['NOTION_CLIENT_ID', 'NOTION_CLIENT_SECRET', 'NOTION_REDIRECT_URI'] as const).filter(
+    (nome) => !env[nome]?.trim(),
+  );
+}
+
 export function buildNotionAuthorizeUrl(config: NotionOAuthConfig, state: string): string {
   const url = new URL(`${API}/oauth/authorize`);
   url.searchParams.set('client_id', config.clientId);

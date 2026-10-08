@@ -46,10 +46,33 @@ export const clientUsers = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    /** NÍVEL DE ACESSO (viewer/editor) — não confundir com `responsibility`
+     *  abaixo. "Quem pode ver/editar o workspace do cliente" é uma pergunta;
+     *  "o que esta pessoa FAZ nesse cliente" é outra, e as duas podem
+     *  divergir (um editor pode não ser o designer responsável). */
     role: text('role').notNull().default('viewer'),
+    /**
+     * RESPONSABILIDADE OPERACIONAL (P0-C, 06/10/2026): account, traffic,
+     * design, copy, social, video, manager, sales, other — texto livre
+     * validado na camada de aplicação (`packages/types`), não enum de banco,
+     * pra não exigir migration toda vez que um tipo novo surgir.
+     *
+     * `null` = não definida. Linhas existentes NÃO são migradas por dedução
+     * a partir de `role` — dado que não existe vira `null`, nunca um palpite
+     * (mesmo critério do `[FALTA]` do brain de cliente).
+     *
+     * A unique constraint inclui esta coluna (não só client+user): permite
+     * a MESMA pessoa ter várias responsabilidades no MESMO cliente (Tammy é
+     * manager E account da Cosentino, por exemplo), uma linha por par
+     * (cliente, pessoa, responsabilidade). Postgres trata `NULL` como
+     * distinto em `UNIQUE` — múltiplas linhas com `responsibility IS NULL`
+     * para o mesmo par coexistem, o que preserva linhas antigas sem quebrar
+     * nada enquanto ninguém define a responsabilidade delas.
+     */
+    responsibility: text('responsibility'),
     ...timestampColumns,
   },
-  (table) => ({ clientUserUnique: unique().on(table.clientId, table.userId) }),
+  (table) => ({ clientUserUnique: unique().on(table.clientId, table.userId, table.responsibility) }),
 );
 
 /**

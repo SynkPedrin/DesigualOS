@@ -18,6 +18,7 @@
     "@desigual-os/database": "workspace:*",
     "@desigual-os/logging": "workspace:*",
     "@desigual-os/node-protocol": "workspace:*",
+    "@desigual-os/openai-provider": "workspace:*",
     "@desigual-os/router": "workspace:*",
     "@desigual-os/token-engine": "workspace:*",
     "@desigual-os/types": "workspace:*",

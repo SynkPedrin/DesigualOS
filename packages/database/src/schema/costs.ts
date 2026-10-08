@@ -17,10 +17,19 @@ export const tokenUsage = pgTable(
     model: text('model').notNull(),
     inputTokens: integer('input_tokens').notNull().default(0),
     outputTokens: integer('output_tokens').notNull().default(0),
+    /**
+     * Fronteira de tenant direta (migração 0049). Antes o recorte saía só por
+     * join com `executions` — custava um EXISTS por consulta de custo. Copiado
+     * da execution no momento da gravação; backfill das linhas antigas em
+     * apps/worker/scripts/backfill-cost-org.mts. `set null`: telemetria não
+     * pode impedir a remoção de uma empresa.
+     */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     executionIdx: index('token_usage_execution_id_idx').on(table.executionId),
+    organizationIdx: index('token_usage_organization_id_idx').on(table.organizationId),
   }),
 );
 
@@ -47,6 +56,15 @@ export const costRecords = pgTable(
     executionId: uuid('execution_id').references(() => executions.id, { onDelete: 'set null' }),
     clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    /**
+     * Fronteira de tenant direta (migração 0049): derivada da execution, com
+     * fallback para a empresa do cliente — mesma precedência de
+     * `organizacaoDaEscrita` em packages/auth. Backfill das linhas antigas em
+     * apps/worker/scripts/backfill-cost-org.mts. `set null` como os demais
+     * vínculos desta tabela: custo gravado não pode impedir remoção de
+     * empresa, cliente ou pessoa.
+     */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'set null' }),
     agent: agentNameEnum('agent'),
     kind: text('kind').notNull(),
     amount: numeric('amount', { precision: 12, scale: 6 }).notNull(),
@@ -61,6 +79,7 @@ export const costRecords = pgTable(
     clientIdx: index('cost_records_client_id_idx').on(table.clientId),
     userIdx: index('cost_records_user_id_idx').on(table.userId),
     executionIdx: index('cost_records_execution_id_idx').on(table.executionId),
+    organizationIdx: index('cost_records_organization_id_idx').on(table.organizationId),
   }),
 );
 
@@ -89,6 +108,13 @@ export const economyRecords = pgTable('economy_records', {
  * chamada nasce dentro de uma conversa (ex: automação) ou tem organização
  * resolvida no momento da gravação; perder a linha de custo por causa disso
  * seria pior que gravar com FK parcial.
+ *
+ * ESTADO REAL, conferido em 01/10/2026: NADA escreve nesta tabela. O writer
+ * (`recordOpenAIUsage` em packages/openai-provider/src/ledger.ts) existe e não é
+ * chamado por nenhum caminho de execução — o gasto por tenant hoje sai de
+ * `cost_records`/`token_usage` (organization_id desde a migração 0049). Fica
+ * como está de propósito: reviver o ledger é uma decisão de produto (uso real
+ * medido vs. estimado), não um detalhe desta fundação.
  */
 export const aiUsageLedger = pgTable(
   'ai_usage_ledger',
