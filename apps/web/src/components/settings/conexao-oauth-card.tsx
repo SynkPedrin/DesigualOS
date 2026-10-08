@@ -11,6 +11,7 @@ import {
   useGoogleAdsIntegration,
 } from '@/hooks/use-google-ads-integration';
 import { useConnectMicrosoftCalendar, useMicrosoftCalendarIntegration } from '@/hooks/use-microsoft-calendar';
+import { useGoogleCalendarIntegration, useConnectGoogleCalendar } from '@/hooks/use-google-calendar';
 
 /**
  * CONEXÃO OAUTH — o botão que faltava.
@@ -231,6 +232,36 @@ export function GoogleAdsConnect() {
  * conta de calendário, em outra tela). Oferecer um botão que não tem rota
  * atrás seria pior que não oferecer.
  */
+/**
+ * GOOGLE CALENDAR — a integração que existia inteira e não tinha porta.
+ *
+ * Achado em 08/10/2026 clicando a tela de Integrações no navegador: a API
+ * tinha as cinco rotas (`authorize`, `callback`, `status`, `calendars` e o
+ * vínculo por membro), as três variáveis de ambiente estavam preenchidas e
+ * `/integrations/google-calendar/status` respondia `configured: true` — mas a
+ * tela nunca desenhou um cartão pra ela. Backend pronto que ninguém alcança é
+ * indistinguível, pra quem usa, de backend que não existe.
+ */
+export function GoogleCalendarConnect() {
+  const google = useGoogleCalendarIntegration();
+  const conectarGoogle = useConnectGoogleCalendar();
+
+  return (
+    <ConexaoOAuth
+      nome="Google Calendar"
+      descricao="Conecte sua agenda do Google pra que as reuniões apareçam no Calendário."
+      descricaoConectado="Conectado. Sua agenda do Google aparece no Calendário."
+      variaveis={['GOOGLE_CALENDAR_CLIENT_ID', 'GOOGLE_CALENDAR_CLIENT_SECRET', 'GOOGLE_CALENDAR_REDIRECT_URI']}
+      status={google.data}
+      carregando={google.isPending}
+      conectar={() => conectarGoogle.mutate()}
+      conectando={conectarGoogle.isPending}
+      erroConectar={conectarGoogle.error}
+      paramCallback="google_calendar"
+    />
+  );
+}
+
 export function MicrosoftCalendarConnect() {
   const microsoft = useMicrosoftCalendarIntegration();
   const conectarMicrosoft = useConnectMicrosoftCalendar();

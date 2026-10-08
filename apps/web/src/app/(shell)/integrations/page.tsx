@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { Search } from 'lucide-react';
+import { CalendarDays, Search } from 'lucide-react';
 import { ClaudeMark, ControlHeader, Secao, StatusLabel, type Estado } from '@/components/control/primitives';
 import { cn } from '@/lib/utils';
 import { useClickUpIntegration } from '@/hooks/use-clickup-integration';
@@ -13,7 +13,8 @@ import { useWhatsappHealth } from '@/hooks/use-organization-connectors';
 import { useMetaIntegration } from '@/hooks/use-meta-integration';
 import { useGoogleAdsIntegration } from '@/hooks/use-google-ads-integration';
 import { useMicrosoftCalendarIntegration } from '@/hooks/use-microsoft-calendar';
-import { MetaConnect, GoogleAdsConnect, MicrosoftCalendarConnect } from '@/components/settings/conexao-oauth-card';
+import { useGoogleCalendarIntegration } from '@/hooks/use-google-calendar';
+import { MetaConnect, GoogleAdsConnect, MicrosoftCalendarConnect, GoogleCalendarConnect } from '@/components/settings/conexao-oauth-card';
 import { IntegracaoDialog } from '@/components/settings/integracao-dialog';
 import { Consentimento } from '@/components/settings/consentimento';
 import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';
@@ -39,6 +40,7 @@ export default function IntegrationsPage() {
   const { data: meta, isPending: metaPendente } = useMetaIntegration();
   const { data: googleAds, isPending: googleAdsPendente } = useGoogleAdsIntegration();
   const { data: microsoftCal, isPending: microsoftCalPendente } = useMicrosoftCalendarIntegration();
+  const { data: googleCal, isPending: googleCalPendente } = useGoogleCalendarIntegration();
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState<CartaoProps | null>(null);
 
@@ -142,6 +144,26 @@ export default function IntegrationsPage() {
           estado: microsoftCalPendente ? 'desconhecido' : microsoftCal?.connected ? 'ok' : 'atencao',
           texto: microsoftCalPendente ? 'Consultando' : microsoftCal?.connected ? 'Conectado' : 'Desconectado',
           painel: <MicrosoftCalendarConnect />,
+        },
+        {
+          /**
+           * Google Calendar estava FALTANDO aqui (achado em 08/10/2026,
+           * clicando a tela no navegador): a API tem as cinco rotas, as três
+           * variáveis estão preenchidas e o status responde `configured: true`
+           * — e não havia cartão. Quem usa Google em vez de Outlook não tinha
+           * como conectar a agenda, sem nenhum sinal de que faltava algo.
+           *
+           * Ícone em vez de PNG de propósito: não há logo do Google Calendar em
+           * public/logos, e reaproveitar o do Google Ads seria mostrar a marca
+           * errada. Ícone neutro diz a verdade.
+           */
+          nome: 'Google Calendar',
+          categoria: 'Agenda',
+          bannerClassName: 'bg-branco-cru',
+          logo: <CalendarDays size={28} className="text-carbono" />,
+          estado: googleCalPendente ? 'desconhecido' : googleCal?.connected ? 'ok' : 'atencao',
+          texto: googleCalPendente ? 'Consultando' : googleCal?.connected ? 'Conectado' : 'Desconectado',
+          painel: <GoogleCalendarConnect />,
         },
       ],
     },
