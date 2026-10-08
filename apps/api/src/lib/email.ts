@@ -195,8 +195,13 @@ function montarTexto(conteudo: ConteudoDoEmail): string {
   ].join('\n');
 }
 
-/** Um único lugar que fala com o Resend: assunto, HTML e texto sempre juntos. */
-async function enviar(params: { to: string; subject: string; conteudo: ConteudoDoEmail }): Promise<void> {
+/**
+ * Um único lugar que fala com o Resend: assunto, HTML e texto sempre juntos.
+ *
+ * Devolve o id do envio porque HTTP 200 aqui NÃO significa entrega — ver
+ * `conferirEntrega` logo abaixo.
+ */
+async function enviar(params: { to: string; subject: string; conteudo: ConteudoDoEmail }): Promise<string | null> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
   if (!apiKey || !from) {
@@ -218,6 +223,63 @@ async function enviar(params: { to: string; subject: string; conteudo: ConteudoD
   if (!response.ok) {
     throw new Error(`Resend email send failed (${response.status}): ${await response.text()}`);
   }
+
+  /**
+   * `try` em vez de `.catch()`: se `json` não for função — resposta sem corpo,
+   * proxy no caminho, mock de teste — a CHAMADA lança de forma síncrona e
+   * nenhum `.catch()` encadeado chega a existir. Sem o id a conferência de
+   * entrega é pulada, e isso é aceitável: o e-mail já foi aceito, e não saber
+   * o estado dele nunca pode derrubar um convite.
+   */
+  try {
+    const corpo = (await response.json()) as { id?: string } | null;
+    return corpo?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * O 200 do Resend é "aceitei a requisição", não "a pessoa recebeu".
+ *
+ * O caso que motivou isto, medido no log da conta em 08/10/2026: um convite
+ * para um endereço que não existe VOLTOU (`bounced` às 13:01). O Resend então
+ * colocou o endereço na lista de supressão dele e, no envio seguinte às 13:02,
+ * respondeu 200 com um id normal e **descartou a mensagem** (`suppressed`).
+ * Para a API os dois envios foram idênticos e bem-sucedidos. A tela disse
+ * "convite enviado" nas duas vezes. Nada chegou nas duas vezes.
+ *
+ * O efeito colateral disso é pior que o silêncio: como o único convite que de
+ * fato caiu numa caixa de entrada naquele dia foi um endereçado ao próprio
+ * administrador, a leitura natural virou "o sistema está mandando tudo pro meu
+ * e-mail" — um diagnóstico errado que custa caro, porque manda procurar o
+ * defeito num lugar onde ele não está (o `to` sempre foi respeitado).
+ *
+ * `suppressed` é detectável NA HORA: o Resend já sabe que o endereço está na
+ * lista antes de tentar entregar. `bounced` é assíncrono (segundos a minutos)
+ * e esta checagem não promete pegá-lo — por isso ela responde o que viu, e
+ * quem chama decide. Falha de rede aqui devolve `null`: não saber o estado da
+ * entrega nunca pode derrubar um convite que já foi criado.
+ */
+export async function conferirEntrega(id: string): Promise<string | null> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch(`${RESEND_API_URL}/${id}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const corpo = (await res.json()) as { last_event?: string } | null;
+    return corpo?.last_event ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Estados em que o provedor aceitou a chamada mas a mensagem não vai chegar. */
+export function entregaFalhou(evento: string | null): boolean {
+  return evento === 'suppressed' || evento === 'bounced' || evento === 'failed';
 }
 
 export async function sendInviteEmail(params: {
@@ -226,14 +288,14 @@ export async function sendInviteEmail(params: {
   role: string;
   inviteLink: string;
   organizationName?: string | null;
-}): Promise<void> {
+}): Promise<string | null> {
   const saudacao = params.name ? `Olá, ${escapeHtml(params.name)}.` : 'Olá.';
   const papel = ROLE_LABEL[params.role] ?? params.role;
   const destino = params.organizationName
     ? `a <strong style="color:${BRANCO_CRU};">${escapeHtml(params.organizationName)}</strong> no Desigual OS`
     : 'o <strong style="color:' + BRANCO_CRU + ';">Desigual OS</strong>';
 
-  await enviar({
+  return await enviar({
     to: params.to,
     subject: params.organizationName
       ? `Seu convite para a ${params.organizationName} no Desigual OS`
