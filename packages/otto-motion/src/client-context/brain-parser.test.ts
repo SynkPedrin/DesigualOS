@@ -29,8 +29,19 @@ describe('placeholders do brain nunca viram dado', () => {
 describe('BRAIN.md real da D. Carvalho (John Deere)', () => {
   const parsed = parseBrain(brain('d-carvalho'));
 
-  it('lê as cores confirmadas da marca', () => {
-    expect(parsed.colors).toEqual(expect.arrayContaining(['#367C2B', '#FFDE00']));
+  /**
+   * Este teste já afirmou o contrário — que as cores eram extraídas — e estava
+   * codificando um defeito (08/10/2026).
+   *
+   * O brain da D. Carvalho hoje registra TRÊS pares de verde/amarelo vindos de
+   * fontes diferentes, declara "nenhum escolhido" e instrui: "usar 'verde e
+   * amarelo D. Carvalho' em texto sem fixar o hex em peça que dependa da cor
+   * exata". O parser devolvia os cinco hex como se fossem cor da marca — três
+   * errados por construção, qualquer um deles pronto pra pintar uma peça
+   * publicitária. Enquanto o cliente não escolher, o certo é não ter cor.
+   */
+  it('não fixa hex quando o brain registra três pares e não escolhe nenhum', () => {
+    expect(parsed.colors).toEqual([]);
   });
 
   it('lê as tipografias, separando a prosa "X (display) e Y (texto)"', () => {
@@ -59,6 +70,37 @@ describe('BRAIN.md real da Envu — o caso das lacunas', () => {
 
   it('repassa as lacunas declaradas em vez de escondê-las', () => {
     expect(parsed.gaps.length).toBeGreaterThan(0);
+  });
+});
+
+describe('BRAIN.md real da Ibiza II — prosa com "ou"', () => {
+  const parsed = parseBrain(brain('ibiza-ii'));
+
+  it('separa "Alta Regular ou Georgia." em duas fontes, sem o ponto final', () => {
+    expect(parsed.fonts).toEqual(['Alta Regular', 'Georgia']);
+  });
+});
+
+describe('anotação editorial nunca vira dado', () => {
+  const comPerguntaAberta = `- **Cores:** verde \`#367C2B\`\n  \`[CONFIRMAR: é #367C2B ou #367e33?]\``;
+
+  it('bloco de cor com [CONFIRMAR] não entrega hex nenhum', () => {
+    expect(extractColors(comPerguntaAberta)).toEqual([]);
+  });
+
+  it('hex citado DENTRO da anotação não vaza como cor', () => {
+    expect(extractColors('- **Cores:** verde `#1B383E`\n- nota `[FALTA: e o #ABCDEF?]`')).toEqual(['#1B383E']);
+  });
+
+  it('prefixo em prosa antes do valor não vira nome de fonte', () => {
+    expect(extractFonts('- **Tipografia:** já registrado neste brain: Inter (texto)')).toEqual(['Inter']);
+  });
+
+  it('comentário depois do ponto não vira fonte', () => {
+    expect(extractFonts('- **Tipografia:** Inter e Georgia. Dossiê cita Trade Gothic como alternativa.')).toEqual([
+      'Inter',
+      'Georgia',
+    ]);
   });
 });
 
