@@ -265,7 +265,11 @@ export const NAV_ITEMS: NavItem[] = [
    * INTERNO — o motor, recolhido e INTEIRO. O chat do Bento em especial: ele
    * não sumiu, continua em /chat, e quem usa chega nele em dois cliques.
    */
-  { href: '/chat', label: 'Bento', icon: MessageSquare, section: 'dia', modulo: 'bento' },
+  // "Chat", não "Bento" (pedido do Pedro, 08/10/2026): o item leva a um lugar
+  // onde se conversa com QUALQUER agente — o roteador escolhe entre Bento,
+  // Jarbas, Suzy, Studio e Otto. Nomear o destino pelo nome de um deles
+  // descrevia errado o que há do outro lado.
+  { href: '/chat', label: 'Chat', icon: MessageSquare, section: 'dia', modulo: 'bento' },
   { href: '/agents', label: 'Agentes', icon: Bot, section: 'interno', administracao: true },
   { href: '/studio', label: 'Studio', icon: Sparkles, section: 'interno', administracao: true },
   /**

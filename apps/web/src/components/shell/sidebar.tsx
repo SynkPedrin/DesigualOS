@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -11,10 +11,11 @@ import { useUiStore } from '@/stores/ui-store';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
+import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { supabase } from '@/lib/supabase/client';
 import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
-import { SidebarChatSections } from './sidebar-chat-sections';
+import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
 
 function formatBackupTime(iso: string | null) {
   if (!iso) return 'Sem registro';
@@ -44,6 +45,7 @@ export function Sidebar({
   const { isMaster } = useIsMaster();
   const { data: health, isPending, isError } = useInfrastructureHealth(isMaster);
   const { data: me } = useMe();
+  const { data: workspace } = useMyWorkspace();
   const { logoSrc } = useBrandAssets();
   /**
    * `eh_provider` vem do /me e NUNCA é derivado só do papel: exige também
@@ -52,9 +54,42 @@ export function Sidebar({
    * mais por um instante é melhor que piscar uma tela que a pessoa não pode ver.
    */
   const ehProvider = me?.eh_provider === true;
-  const visibleNavItems = NAV_ITEMS.filter(
-    (item) => (!item.masterOnly || isMaster) && (!item.providerOnly || ehProvider),
-  );
+
+  /**
+   * DENTRO DE UMA EMPRESA OU NA CASA?
+   *
+   * Pedro continua sendo Pedro — entrar numa subconta NÃO troca identidade,
+   * troca `organizacao_ativa`. O que muda aqui é só o que faz sentido ver: um
+   * tenant não vende tenants, então "Empresas" some lá dentro.
+   *
+   * A decisão é por IDENTIDADE ESTÁVEL (`organizacao_ativa.eh_provedora`, o id
+   * comparado ao PROVIDER_ORGANIZATION_ID no servidor) — não mais regex no
+   * nome, que quebrava com um tenant chamado "Desigual Advocacia" ou uma
+   * provedora renomeada. Ver nav-visibility.ts.
+   */
+  const dentroDeTenant = estaDentroDeTenant(me);
+
+  /**
+   * A NAVEGAÇÃO COMERCIAL ESCONDE A INFRAESTRUTURA — e não apaga nada.
+   *
+   * Medido em 02/10/2026: eram 30 itens visíveis, entre eles Sinais, Decisões,
+   * Memória, Agentes, Monitoramento e Qualidade do dado. Trinta portas abertas
+   * não é poder de escolha: é alguém sem saber por onde começar.
+   *
+   * `administracao: true` tira o item daqui e mantém a ROTA intacta, no mesmo
+   * endereço, para quem dá suporte. A régua é a do briefing: se entender o item
+   * exige saber o que é MCP, embedding, fila ou episódio de agente, ele não
+   * pertence à navegação de quem usa o produto para trabalhar.
+   *
+   * O filtro mora em nav-visibility.ts desde 05/10/2026 — o ⌘K aplica OS
+   * MESMOS gates, e duas cópias eram duas chances de uma divergir.
+   */
+  const visibleNavItems = itensVisiveisNaNavegacao(NAV_ITEMS, {
+    isMaster,
+    ehProvider,
+    dentroDeTenant,
+    modulosHabilitados: workspace ? new Set(workspace.modules) : null,
+  });
 
   /**
    * QUAIS SEÇÕES ESTÃO ABERTAS.
@@ -138,6 +173,23 @@ export function Sidebar({
         )}
       </div>
 
+      {/* SELETOR DA AGÊNCIA (mockup, 07/10/2026) — clicar sai da visão do
+       * colaborador (Hoje) e vai pra /agencia, a visão de gestão da agência
+       * inteira (bom dia + calendário + visão geral + demandas + pipeline,
+       * tudo agregado — nunca o Control Plane, que é sobre uso de IA/infra,
+       * pergunta diferente). Troca de EMPRESA de verdade ainda não existe
+       * (Pedro só tem uma); quando existir, é aqui que o dropdown abre a lista. */}
+      {!collapsed && (
+        <Link href="/agencia" className="mx-4 mb-3 flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-grafite">
+          <Image src="/brand/os-mark-icon.png" alt="" width={56} height={56} unoptimized className="size-7 shrink-0 rounded-md" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-branco-cru">Desigual</p>
+            <p className="truncate font-mono text-[10px] uppercase tracking-wider text-nevoa">Agência</p>
+          </div>
+          <ChevronDown size={14} className="shrink-0 text-nevoa" />
+        </Link>
+      )}
+
       <div className={cn('mx-4 mb-4 rounded-lg bg-grafite px-3 py-3', collapsed && 'mx-2 px-2')}>
         <div className="flex items-center gap-3">
           <div className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru">
@@ -151,7 +203,7 @@ export function Sidebar({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-branco-cru">{me?.name ?? 'Carregando...'}</p>
               <p className="truncate font-mono text-xs text-nevoa">
-                {isMaster ? 'Administrador Master' : 'Colaborador'}
+                {isMaster ? 'Administrador Master' : 'Atendimento'}
               </p>
             </div>
           )}
@@ -226,7 +278,10 @@ export function Sidebar({
           )}
           <div className={cn('space-y-1', !aberta && 'hidden')}>
         {itensDaSecao.map((item) => {
-          const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+          // item.href pode carregar querystring (ex.: "/inbox?view=contatos") — pathname
+          // nunca inclui `?`, então o match precisa ignorar essa parte, ou nunca acende.
+          const caminhoDoItem = item.href.split('?')[0]!;
+          const isActive = caminhoDoItem === '/' ? pathname === '/' : pathname.startsWith(caminhoDoItem);
           const Icon = item.icon;
           const itemClassName = cn(
             'relative flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-colors',
@@ -274,14 +329,15 @@ export function Sidebar({
         );
         })}
 
-        {/* Colapsada, a sidebar esconde tudo que não é ícone - as seções somem
-         * junto (mesmo destino do widget de saúde). Suspense: a seção usa
-         * useSearchParams pro destaque do item ativo. */}
-        {!collapsed && (
-          <Suspense fallback={null}>
-            <SidebarChatSections />
-          </Suspense>
-        )}
+        {/* PROJETOS E CONVERSAS RECENTES SAÍRAM DAQUI (pedido do Pedro,
+         * 08/10/2026). Não foram removidos do produto: o `/chat` já tem o rail
+         * próprio dele (ConversationSidebar, dentro do ChatThread), que lista
+         * as mesmas conversas E os mesmos projetos, com arquivar, renomear e
+         * filtro por agente e por cliente — coisas que a versão da barra
+         * lateral não tinha.
+         *
+         * Eram duas listas da mesma coisa, e a de fora era a mais pobre. Uma
+         * lista de conversas pertence ao lugar onde se conversa. */}
       </nav>
 
       {isMaster && (
