@@ -12,7 +12,7 @@ import {
   type SelectionSnapshot,
 } from '@desigual-os/context-engine';
 import { organizacaoDaConversa, organizacaoDaEscrita } from '@desigual-os/auth';
-import { route, type RouterDecision } from '@desigual-os/router';
+import { route, type RouterDecision , ehPerguntaFactualSobreEntidade } from '@desigual-os/router';
 import { dispatchChatMessage, touchConversation } from '@desigual-os/orchestrator';
 import {
   AGENT_NAMES,
@@ -23,7 +23,7 @@ import {
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
-import { formatOperationalContextForPrompt, resolveOperationalTurn, type OperationalTurn } from '../lib/operational-context';
+import { formatOperationalContextForPrompt, perguntaSobreTarefas, resolveOperationalTurn, type OperationalTurn } from '../lib/operational-context';
 import {
   agenteAceitaBlocoNaMensagem,
   contextoGeralVaiNaMensagem,
@@ -129,7 +129,7 @@ async function comPrazoDeAck(
     log.warn({ prazoMs: PRAZO_ACK_MS }, '[chat] contexto operacional não chegou no prazo do ack; seguindo sem ele');
     return {
       scope: { kind: 'NONE', clients: [], ambiguous: [], temporal: null, operational: false, comparative: false, briefing: false, person: null, signals: ['ack:prazo-estourado'], confidence: 0 },
-      context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: 'não consegui consultar o ClickUp a tempo neste turno' },
+      context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: 'não consegui consultar o ClickUp a tempo neste turno', failureKind: 'falha' },
       briefingBlock: null,
       changeBlock: null,
       selection: null,
@@ -139,9 +139,16 @@ async function comPrazoDeAck(
   }
 }
 
-function manualDecision(agent: AgentName): RouterDecision {
+/**
+ * `intent` é parametrizável porque o atalho factual precisa dizer
+ * `knowledge_query` e não `manual_override`: o intent viaja até o worker e é
+ * o que o retrieval-planner lê para reforçar o recall semântico. Rotular uma
+ * consulta ao Brain como override manual esconderia a natureza dela do resto
+ * do caminho.
+ */
+function manualDecision(agent: AgentName, intent: RouterDecision['intent'] = 'manual_override'): RouterDecision {
   return {
-    intent: 'manual_override',
+    intent,
     primary_agent: agent,
     required_tools: [],
     context: [],
@@ -465,12 +472,37 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         .catch(() => [] as unknown[])) as unknown as Array<{ agent: AgentName | null }>;
       const agenteAnterior = ultimas[0]?.agent ?? null;
 
+      /**
+       * ENTIDADE RESOLVIDA + PERGUNTA FACTUAL = CONHECIMENTO, sem classificador.
+       *
+       * Medido em 01/10/2026: numa bateria de 25 execuções sobre a Cosentino,
+       * 2 devolveram "não consegui identificar sozinho se isso é operação,
+       * mídia paga ou criação" — para perguntas como "Qual é o posicionamento
+       * da Cosentino?", com o `client_id` vindo na própria requisição. As
+       * outras 23 rotearam certo. Mesma pergunta, mesmo código: a decisão
+       * dependia de classificador probabilístico.
+       *
+       * Numa pergunta sem ambiguidade, essa variação não se justifica. A regra
+       * é de FORMA (ver pergunta-factual.ts), não lista de palavras, e só vale
+       * com entidade resolvida — sem cliente, clarification continua sendo a
+       * resposta certa, que é a metade do requisito fácil de esquecer.
+       */
+      const factual = ehPerguntaFactualSobreEntidade(body.message, Boolean(body.client_id));
+
       const decision = comContinuidadeDeAgente(
-        body.agent_hint === 'AUTO'
-          ? await route(body.message, request.log)
-          : manualDecision(body.agent_hint.toLowerCase() as AgentName),
+        body.agent_hint !== 'AUTO'
+          ? manualDecision(body.agent_hint.toLowerCase() as AgentName)
+          : factual.ehFactual
+            ? manualDecision('bento', 'knowledge_query')
+            : await route(body.message, request.log),
         agenteAnterior,
       );
+      if (factual.ehFactual && body.agent_hint === 'AUTO') {
+        request.log.info(
+          { metric: 'router_atalho_factual_total', clientId: body.client_id },
+          '[router] entidade resolvida + pergunta factual: conhecimento, sem classificador',
+        );
+      }
 
       /**
        * Nenhuma camada de roteamento decidiu (regra, classifier local e a paga
@@ -600,7 +632,10 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
        * teto do serviço externo é de 120KB e os dois juntos cabem com folga
        * (~37KB no pior caso medido).
        */
-      const operationalListing = formatOperationalContextForPrompt(operationalTurn.context);
+      const operationalListing = formatOperationalContextForPrompt(
+        operationalTurn.context,
+        perguntaSobreTarefas(body.message),
+      );
       /**
        * O bloco de MUDANÇA vai PRIMEIRO quando existe. Quem perguntou "o que
        * mudou desde ontem?" quer a trajetória; o estado de agora é o pano de

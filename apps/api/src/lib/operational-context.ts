@@ -1,4 +1,4 @@
-import { isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   buildChangeContext,
@@ -205,7 +205,7 @@ async function resolveSelectionTurn(params: {
     return {
       // `openTasks` vazio de propósito: este caminho responde pela SELEÇÃO da
       // conversa, e nenhum briefing nasce dele — ver `briefingBlock: null` abaixo.
-      context: { block, listedTasks: [], openTasks: [], summary: null, failure: null },
+      context: { block, listedTasks: [], openTasks: [], summary: null, failure: null, failureKind: null },
       selection: atualizada,
     };
   }
@@ -222,6 +222,7 @@ async function resolveSelectionTurn(params: {
       openTasks: [],
       summary: null,
       failure: null,
+      failureKind: null,
     },
     selection,
   };
@@ -287,14 +288,14 @@ export async function resolveOperationalTurn(
   }
 
   if (!scope.operational || scope.kind === 'NONE' || scope.kind === 'AMBIGUOUS') {
-    return { scope, context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: null }, briefingBlock: null, changeBlock: null, selection: null };
+    return { scope, context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: null, failureKind: null }, briefingBlock: null, changeBlock: null, selection: null };
   }
 
   const config = getClickUpConfig();
   if (!config) {
     return {
       scope,
-      context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: 'ClickUp não está configurado neste ambiente' },
+      context: { block: null, listedTasks: [], openTasks: [], summary: null, failure: 'ClickUp não está configurado neste ambiente', failureKind: 'falha' },
       briefingBlock: null,
       changeBlock: null,
       selection: null,
@@ -337,6 +338,7 @@ export async function resolveOperationalTurn(
           openTasks: [],
           summary: null,
           failure: `não encontrei ninguém chamado "${scope.person.name}" entre os membros do ClickUp`,
+          failureKind: 'falha',
         },
         briefingBlock: null,
         changeBlock: null,
@@ -365,6 +367,33 @@ export async function resolveOperationalTurn(
   // lacuna, pra não preencher campo vazio com invenção.
   let briefingBlock: string | null = null;
   if (scope.briefing && !context.failure) {
+    /**
+     * O dossiê do cliente do escopo, lido aqui para alimentar o briefing. Uma
+     * consulta, só quando o turno é de briefing e só quando há UM cliente —
+     * briefing global não tem dossiê único para citar.
+     *
+     * `null` quando não há cliente ou não há dossiê, e aí o campo volta a ser
+     * um campo vazio de formulário (que agora diz exatamente isso, e não mais
+     * "não há fonte para isto").
+     */
+    const clienteDoEscopo = scope.kind === 'CLIENT' ? (scope.clients[0]?.id ?? null) : null;
+    const dossieDoCliente = clienteDoEscopo
+      ? await db
+          .select({ content: schema.memories.content })
+          .from(schema.memories)
+          .where(
+            and(
+              eq(schema.memories.clientId, clienteDoEscopo),
+              eq(schema.memories.kind, 'client.profile'),
+              eq(schema.memories.status, 'active'),
+            ),
+          )
+          .orderBy(desc(schema.memories.updatedAt))
+          .limit(2)
+          .then((linhas) => linhas.map((l) => l.content ?? '').filter(Boolean).join('\n\n') || null)
+          .catch(() => null)
+      : null;
+
     const nomePorLista = new Map(
       clientesAutorizados.filter((c) => c.clickupListId).map((c) => [c.clickupListId!, c.name]),
     );
@@ -389,6 +418,15 @@ export async function resolveOperationalTurn(
      */
     const briefing = buildOperationalBriefing({
       clientName: scope.kind === 'CLIENT' ? (scope.clients[0]?.name ?? null) : null,
+      /**
+       * O DOSSIÊ ENTRA NO BRIEFING. Medido em 01/10/2026: o motor de briefing
+       * aceita `clientProfile` desde sempre e este — o ÚNICO chamador — nunca
+       * passava. Resultado: todo briefing de todo cliente declarava "Dossiê do
+       * cliente: não há fonte para isto", enquanto o dossiê real viajava no
+       * mesmo prompt por outro bloco. O formulário negava o que o contexto
+       * afirmava, e o modelo acreditou no formulário.
+       */
+      clientProfile: dossieDoCliente,
       tasks: context.openTasks,
       clientNameByListId: nomePorLista,
       temporalLabel: scope.temporal?.label ?? null,
@@ -490,7 +528,69 @@ export async function resolveOperationalTurn(
  * comportamento observado era o agente responder com número plausível quando a integração
  * caía (ver relato de "recebi seu briefing da CA1" respondendo sobre outro cliente).
  */
-export function formatOperationalContextForPrompt(context: OperationalContext): string | null {
+/**
+ * A pergunta é sobre TAREFA (estado operacional corrente)? Mesmo vocabulário do
+ * `PEDE_ESTADO_OPERACIONAL` do retrieval-planner, de propósito: duas definições
+ * do que é "pergunta operacional" em arquivos diferentes é como as duas telas
+ * de cliente passaram a discordar sobre o que é cliente.
+ */
+const PERGUNTA_SOBRE_TAREFAS =
+  /\b(status|andamento|tarefas?|tasks?|entregas?|prazos?|vence|vencimento|atrasad[ao]s?|em aberto|pend[êe]ncias?|backlog|sprint)\b/i;
+
+export function perguntaSobreTarefas(mensagem: string | null | undefined): boolean {
+  return Boolean(mensagem && PERGUNTA_SOBRE_TAREFAS.test(mensagem));
+}
+
+export function formatOperationalContextForPrompt(
+  context: OperationalContext,
+  perguntaSobreTarefas = true,
+): string | null {
+  /**
+   * NÃO HÁ O QUE CONSULTAR ≠ A CONSULTA FALHOU.
+   *
+   * Cliente que não acompanha tarefa no ClickUp é um estado normal e
+   * permanente. Tratá-lo como falha produziu, medido em 01/10/2026, a resposta
+   * errada mais cara deste sistema: perguntado "Quem é o decisor do Cliente
+   * Teste 7?" — fato que acabara de ser gravado na memória, com embedding — o
+   * Bento respondeu "Não foi possível consultar o ClickUp agora: o cliente
+   * citado não tem lista vinculada". A memória tinha a resposta e nunca foi
+   * usada, porque este bloco mandava reconhecer uma falha que não existia, com
+   * a ordem "diga isso de forma curta e direta".
+   *
+   * Aqui a ausência volta a ser o que é: uma nota lateral que delimita UMA
+   * fonte, e que diz explicitamente para não virar a resposta.
+   */
+  if (context.failureKind === 'sem_fonte') {
+    /**
+     * SEM PERGUNTA SOBRE TAREFA, A NOTA NEM ENTRA.
+     *
+     * A primeira versão desta correção só SUAVIZOU o texto — tirou o "FALHA DE
+     * FERRAMENTA (obrigatório reconhecer)" e pôs uma nota de escopo. Medido em
+     * 01/10/2026, não bastou: perguntado "Quem é o decisor do Cliente Teste 7?",
+     * com o fato na memória e com o dossiê no prompt, o Bento respondeu
+     * "Impossível responder. O dado confirma que o Cliente Teste 7 não tem lista
+     * vinculada no ClickUp". A proveniência do turno registrou `claims: []` e
+     * uma única fonte: "o ClickUp, consultado ao vivo".
+     *
+     * Ou seja: o modelo não sustentou afirmação nenhuma e ainda assim liderou
+     * com a ausência. Um bloco sobre a fonte vazia, em qualquer tom, compete
+     * com o fato — e ganha, porque é a última coisa afirmada com segurança.
+     *
+     * Então a regra passa a ser de PRESENÇA, não de tom: a nota só existe
+     * quando a pergunta é sobre tarefa, prazo ou andamento, que é o único caso
+     * em que "não acompanho tarefa por aqui" responde alguma coisa. Para
+     * qualquer outra pergunta ela não é contexto: é ruído com autoridade.
+     */
+    if (!perguntaSobreTarefas) return null;
+
+    return [
+      'SOBRE TAREFAS (nota de escopo, não é problema nem falha):',
+      `${context.failure}. Esse cliente simplesmente não acompanha tarefa por ali.`,
+      'Ausência de tarefa aqui NÃO significa ausência de trabalho.',
+      'Diga isso em uma linha e siga respondendo com o que mais souber do contexto.',
+    ].join('\n');
+  }
+
   if (context.failure) {
     return [
       'FALHA DE FERRAMENTA (obrigatório reconhecer):',
