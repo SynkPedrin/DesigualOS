@@ -930,6 +930,67 @@ export function mapClientMemory(wire: ClientMemoryWire): ClientMemory {
  * o erro silencioso mais provável aqui, e a tela precisa dizer isso antes do
  * primeiro `@notion` falhar.
  */
+/**
+ * GET /media/overview — a carteira de mídia. Cada cliente aparece SEMPRE,
+ * inclusive sem vínculo: a lista do que falta conectar é metade do valor da
+ * tela. Os estados são excludentes e honestos — "conectado" não implica "tem
+ * número", porque conexão revogada e API fora são coisas diferentes de zero.
+ */
+export type MediaOverviewClientWire =
+  | { client_id: string; client_name: string; status: string; connected: false }
+  | {
+      client_id: string;
+      client_name: string;
+      status: string;
+      connected: true;
+      account_id: string;
+      account_label: string | null;
+      data_available: false;
+      reason: string;
+    }
+  | {
+      client_id: string;
+      client_name: string;
+      status: string;
+      connected: true;
+      account_id: string;
+      account_label: string | null;
+      data_available: true;
+      insights: {
+        spend: number | null;
+        impressions: number | null;
+        clicks: number | null;
+        ctr: number | null;
+        results: number | null;
+      } | null;
+    };
+
+/**
+ * GET /clients/:id/media/meta/creatives — os anúncios com a imagem da peça.
+ * Mesmo union honesto das rotas irmãs de mídia: conectado não implica ter
+ * dado, e imagem ausente é `null`, nunca uma caixa fingindo criativo.
+ */
+export interface MetaCreativeWire {
+  id: string;
+  name: string;
+  status: string;
+  thumbnail_url: string | null;
+  image_url: string | null;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+export type ClientMetaCreativesWire =
+  | { connected: false }
+  | { connected: true; account_id: string; data_available: false; reason: string }
+  | { connected: true; account_id: string; data_available: true; creatives: MetaCreativeWire[] };
+
+export interface MediaOverviewWire {
+  clients: MediaOverviewClientWire[];
+}
+
 export interface NotionIntegrationStatusWire {
   connected: boolean;
   /** false = o Orchestrator não tem NOTION_CLIENT_ID/SECRET/REDIRECT_URI. */

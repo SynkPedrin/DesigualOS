@@ -1,15 +1,32 @@
 import type { FastifyInstance } from 'fastify';
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { naturezaDoCliente } from '@desigual-os/context-engine';
-import { getTaskComments, getTasksInList, getTasksInListPaged } from '@desigual-os/tool-gateway';
+import {
+  getGoogleAdsAccountInsights,
+  getGoogleAdsAccounts,
+  getGoogleAdsCampaigns,
+  getMetaAccountInsights,
+  getMetaAds,
+  getMetaAdAccounts,
+  getMetaCampaigns,
+  getTaskComments,
+  getTasksInList,
+  getTasksInListPaged,
+} from '@desigual-os/tool-gateway';
 import type { ClickUpTaskSummary } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
+import { recordOperationalEvent, enqueueClientReport } from '@desigual-os/orchestrator';
+import { CLIENT_RESPONSIBILITIES } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { requireModule } from '../auth/require-module';
 import { hasClientAccess } from '../lib/access';
+import { auditarAcao } from '../lib/auditoria';
 import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 import { resolveClickUpAccess } from '../integrations/access';
+import { resolveMetaAccess, resolveMetaAccessByConnectionId } from '../integrations/meta-access';
+import { getGoogleAdsEnvConfig, resolveGoogleAdsAccess, resolveGoogleAdsAccessByConnectionId } from '../integrations/google-ads-access';
 
 const logger = createLogger({ service: 'clients' });
 
@@ -80,6 +97,45 @@ const grantAccessSchema = z.object({
   role: z.enum(['viewer', 'editor']).default('viewer'),
 });
 
+const assignmentSchema = z.object({
+  userId: z.string().uuid(),
+  responsibility: z.enum(CLIENT_RESPONSIBILITIES),
+});
+
+/** `account_id` vem no formato "act_123..." que a própria Graph API devolve e exige de volta. */
+const linkMetaAccountSchema = z.object({
+  account_id: z.string().trim().min(1),
+  business_id: z.string().trim().min(1).optional(),
+  label: z.string().trim().min(1).max(80).optional(),
+  is_primary: z.boolean().optional(),
+});
+
+const reportRequestSchema = z.object({
+  channels: z.array(z.enum(['meta', 'google_ads'])).min(1, 'Selecione ao menos um canal.'),
+  period_days: z.number().int().min(1).max(365).default(30),
+});
+
+function apresentacaoDoRelatorio(row: typeof schema.clientReports.$inferSelect) {
+  return {
+    id: row.id,
+    status: row.status,
+    channels: row.channels,
+    period_days: row.periodDays,
+    period_start: row.periodStart.toISOString(),
+    period_end: row.periodEnd.toISOString(),
+    storage_url: row.storageUrl,
+    error_message: row.errorMessage,
+    created_at: row.createdAt.toISOString(),
+  };
+}
+
+const linkGoogleAdsAccountSchema = z.object({
+  customer_id: z.string().trim().regex(/^\d+$/, 'customer_id deve ser só os dígitos, sem hífen.'),
+  login_customer_id: z.string().trim().regex(/^\d+$/, 'login_customer_id deve ser só os dígitos, sem hífen.').optional(),
+  label: z.string().trim().min(1).max(80).optional(),
+  is_primary: z.boolean().optional(),
+});
+
 export async function registerClientRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', async (request, reply) => {
     await requireAuth(request, reply);
@@ -92,6 +148,41 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
     }
   });
   app.get('/clients', { preHandler: [requireAuth, requirePermission('clients', 'read')] }, async (request) => {
+    /**
+     * QUANDO CADA CLIENTE SE MEXEU PELA ÚLTIMA VEZ.
+     *
+     * Até aqui esta rota devolvia nome, slug, status e vínculo do ClickUp — o
+     * cadastro. Com isso a tela de Clientes não tinha como responder a pergunta
+     * que de fato importa para quem gere uma agência: qual cliente parou. Conta
+     * que esfria é a primeira evidência de cliente indo embora, e ela aparece
+     * semanas antes do aviso.
+     *
+     * TRÊS FONTES, e nenhuma sozinha serve. `messages` não tem `client_id` (liga
+     * por conversa); `memories` e `executions` têm. Usar só uma faria um cliente
+     * que só conversa parecer parado, ou um que só gera peça parecer sumido.
+     *
+     * EM PARALELO com a listagem, de propósito: medido, a consulta custa 60-200ms
+     * acima da ida de rede (141ms). Em sequência ela somaria uma viagem inteira
+     * a uma tela que a equipe abre o dia todo.
+     */
+    const atividadePorCliente = db
+      .execute(
+        sql`select c.id,
+              greatest(
+                (select max(m.created_at) from messages m
+                   join conversations cv on cv.id = m.conversation_id
+                  where cv.client_id = c.id),
+                (select max(mem.created_at) from memories mem where mem.client_id = c.id),
+                (select max(e.created_at) from executions e where e.client_id = c.id)
+              ) as ultima,
+              (select count(*)::int from executions e
+                where e.client_id = c.id and e.created_at > now() - interval '30 days') as pedidos_30d
+            from clients c
+            where c.organization_id = ${request.tenantContext!.organizationId}::uuid
+              and c.deleted_at is null`,
+      )
+      .catch(() => null);
+
     const rows = await db
       .select({
         id: schema.clients.id,
@@ -108,6 +199,18 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
     // Clientes dizia "sem vínculo no ClickUp" pra TODO mundo, mesmo com o
     // cliente importado de lá (só o workspace devolvia esse campo).
     const teamId = process.env.CLICKUP_TEAM_ID;
+
+    const bruto = await atividadePorCliente;
+    const linhas = ((bruto as { rows?: unknown[] } | null)?.rows ??
+      (bruto as unknown[] | null) ??
+      []) as Array<{ id: string; ultima: string | Date | null; pedidos_30d: number }>;
+    const atividade = new Map(linhas.map((l) => [l.id, l]));
+    /**
+     * A CONSULTA FALHOU É DIFERENTE DE NINGUÉM SE MEXEU. Se ela não voltou, o
+     * campo vai `undefined` e a tela diz "não consegui ler" — nunca "parado há
+     * muito tempo", que seria inventar um alarme a partir de um erro de leitura.
+     */
+    const atividadeLida = bruto !== null;
     return {
       clients: rows.map((row) => ({
         id: row.id,
@@ -130,7 +233,19 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
          * fixture pra alguém poder apagá-la.
          */
         natureza: naturezaDoCliente(row.name),
+        /**
+         * `null` = nunca se mexeu, que é um estado legítimo (cliente recém
+         * cadastrado). `undefined` = não deu para ler. A tela trata os dois de
+         * um jeito diferente, e precisa poder.
+         */
+        ultima_atividade: !atividadeLida
+          ? undefined
+          : atividade.get(row.id)?.ultima
+            ? new Date(atividade.get(row.id)!.ultima!).toISOString()
+            : null,
+        pedidos_30d: atividadeLida ? (atividade.get(row.id)?.pedidos_30d ?? 0) : undefined,
       })),
+      atividade_lida: atividadeLida,
     };
   });
 
@@ -147,11 +262,9 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         return { error: `Client with slug '${body.slug}' already exists` };
       }
 
-      await db.insert(schema.auditLogs).values({
-        userId: request.authUser?.id ?? null,
+      await auditarAcao(request, {
         action: 'client.created',
         clientId: client.id,
-        result: 'completed',
         metadata: { name: client.name, slug: client.slug },
       });
 
@@ -265,10 +378,17 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         return { error: `No Desigual OS account found for '${body.email}'. Use POST /admin/invite first to create one.` };
       }
 
+      // Alvo do conflito inclui `responsibility` (migração 0056, P0-C): esta
+      // rota nunca define responsabilidade, então sempre mexe na linha de
+      // ACESSO (responsibility IS NULL) — nunca numa linha de
+      // responsabilidade operacional que já exista para esta pessoa.
       await db
         .insert(schema.clientUsers)
         .values({ clientId, userId: targetUser.id, role: body.role })
-        .onConflictDoUpdate({ target: [schema.clientUsers.clientId, schema.clientUsers.userId], set: { role: body.role } });
+        .onConflictDoUpdate({
+          target: [schema.clientUsers.clientId, schema.clientUsers.userId, schema.clientUsers.responsibility],
+          set: { role: body.role },
+        });
 
       // E-mail transacional dedicado (ex: Resend/Postmark) não está
       // configurado ainda; a notificação real que existe hoje é in-app.
@@ -283,6 +403,139 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
       return { client_id: clientId, user_id: targetUser.id, role: body.role };
     },
   );
+
+  /**
+   * CLIENT ASSIGNMENT (P0-C, 06/10/2026): responsabilidade OPERACIONAL de um
+   * membro sobre o cliente (account/traffic/design/...) — distinta do
+   * `role` de acesso ao workspace acima (viewer/editor). A mesma pessoa pode
+   * ter várias responsabilidades no mesmo cliente (Tammy é manager E account
+   * da Cosentino); o mesmo cliente pode ter várias pessoas na mesma
+   * responsabilidade. `responsibility IS NULL` é a linha de ACESSO (gravada
+   * pela rota acima), nunca aparece aqui.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/assignments',
+    { preHandler: [requireAuth, requirePermission('clients', 'read')] },
+    async (request) => {
+      const rows = await db
+        .select({
+          userId: schema.clientUsers.userId,
+          userName: schema.users.name,
+          userEmail: schema.users.email,
+          responsibility: schema.clientUsers.responsibility,
+        })
+        .from(schema.clientUsers)
+        .innerJoin(schema.users, eq(schema.users.id, schema.clientUsers.userId))
+        .where(and(eq(schema.clientUsers.clientId, request.params.id), isNotNull(schema.clientUsers.responsibility)))
+        .orderBy(asc(schema.clientUsers.responsibility));
+
+      return {
+        assignments: rows.map((r) => ({
+          user_id: r.userId,
+          user_name: r.userName,
+          user_email: r.userEmail,
+          responsibility: r.responsibility,
+        })),
+      };
+    },
+  );
+
+  app.put<{ Params: { id: string } }>(
+    '/clients/:id/assignments',
+    { preHandler: [requireAuth, requirePermission('clients', 'write')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const body = assignmentSchema.parse(request.body);
+
+      // Mesma checagem de `/clients/:id/access`: o alvo precisa ser membro
+      // da MESMA empresa — nunca atribuir responsabilidade a alguém de fora.
+      const [targetUser] = await db
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .innerJoin(schema.organizationMembers, eq(schema.organizationMembers.userId, schema.users.id))
+        .where(and(eq(schema.users.id, body.userId), eq(schema.organizationMembers.organizationId, request.tenantContext!.organizationId)));
+      if (!targetUser) {
+        reply.code(404);
+        return { error: `User '${body.userId}' is not a member of this organization` };
+      }
+
+      // Idempotente: chamar de novo com o MESMO par (usuário, responsabilidade)
+      // não duplica linha — a unique constraint (migração 0056) já garante isso.
+      await db
+        .insert(schema.clientUsers)
+        .values({ clientId, userId: body.userId, responsibility: body.responsibility })
+        .onConflictDoNothing({
+          target: [schema.clientUsers.clientId, schema.clientUsers.userId, schema.clientUsers.responsibility],
+        });
+
+      await auditarAcao(request, {
+        action: 'client.assignment_set',
+        resourceType: 'client',
+        resourceId: clientId,
+        newValue: { userId: body.userId, responsibility: body.responsibility },
+      });
+      await recordOperationalEvent({
+        source: 'system',
+        type: 'client.assignment_set',
+        organizationId: request.tenantContext!.organizationId,
+        userId: request.authUser?.id ?? null,
+        clientId,
+        entityType: 'client_assignment',
+        entityId: `${clientId}:${body.userId}:${body.responsibility}`,
+        summary: `Atribuiu responsabilidade de ${body.responsibility} a um membro.`,
+        payload: { target_user_id: body.userId, responsibility: body.responsibility },
+      });
+
+      reply.code(201);
+      return { client_id: clientId, user_id: body.userId, responsibility: body.responsibility };
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/clients/:id/assignments',
+    { preHandler: [requireAuth, requirePermission('clients', 'write')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      const body = assignmentSchema.parse(request.body);
+
+      const deleted = await db
+        .delete(schema.clientUsers)
+        .where(
+          and(
+            eq(schema.clientUsers.clientId, clientId),
+            eq(schema.clientUsers.userId, body.userId),
+            eq(schema.clientUsers.responsibility, body.responsibility),
+          ),
+        )
+        .returning({ id: schema.clientUsers.id });
+
+      if (deleted.length === 0) {
+        reply.code(404);
+        return { error: 'Assignment not found' };
+      }
+
+      await auditarAcao(request, {
+        action: 'client.assignment_removed',
+        resourceType: 'client',
+        resourceId: clientId,
+        oldValue: { userId: body.userId, responsibility: body.responsibility },
+      });
+      await recordOperationalEvent({
+        source: 'system',
+        type: 'client.assignment_removed',
+        organizationId: request.tenantContext!.organizationId,
+        userId: request.authUser?.id ?? null,
+        clientId,
+        entityType: 'client_assignment',
+        entityId: `${clientId}:${body.userId}:${body.responsibility}`,
+        summary: `Removeu responsabilidade de ${body.responsibility} de um membro.`,
+        payload: { target_user_id: body.userId, responsibility: body.responsibility },
+      });
+
+      return { client_id: clientId, user_id: body.userId, responsibility: body.responsibility, removed: true };
+    },
+  );
+
   /**
    * Brand kit consolidado pro Studio: junta o branding geral
    * (client_brand_kits) com as referências visuais específicas de geração
@@ -385,11 +638,9 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
           set: { referenceImages: mergedReferenceImages, updatedAt: new Date() },
         });
 
-      await db.insert(schema.auditLogs).values({
-        userId: request.authUser.id,
+      await auditarAcao(request, {
         action: 'client.brand_kit_saved',
         clientId,
-        result: 'completed',
         metadata: {
           colors: merged.colors.length,
           fonts: merged.fonts.length,
@@ -647,4 +898,674 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
     },
   );
 
+  /**
+   * Meta Ads POR CLIENTE (§34-38 do prompt de refinamento "FINAL PRODUCT
+   * REFINEMENT", 06/10/2026). REGRA FUNDAMENTAL: mídia é sempre vinculada a
+   * UM cliente — toda query aqui embaixo filtra por `clientId`, nunca lista
+   * contas de um cliente ao consultar outro, mesmo que o mesmo login Meta
+   * enxergue os dois (isso é o que a auditoria de isolamento em
+   * meta-accounts.test.ts prova).
+   */
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/meta-accounts',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('meta_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const rows = await db.select().from(schema.clientMetaAccounts).where(eq(schema.clientMetaAccounts.clientId, clientId));
+      return {
+        accounts: rows.map((row) => ({
+          account_id: row.accountId,
+          business_id: row.businessId,
+          is_primary: row.isPrimary,
+          label: row.label,
+          connected: row.connectionId !== null,
+          created_at: row.createdAt.toISOString(),
+        })),
+      };
+    },
+  );
+
+  /**
+   * Vincula uma Ad Account (já visível pela conexão Meta de QUEM está
+   * chamando) a este cliente. Valida contra a Graph API antes de gravar —
+   * nunca aceita um `account_id` que a conexão da pessoa não enxerga de
+   * verdade, pra não criar um vínculo que a tela promete e a API nunca
+   * confirma (regra geral do prompt: "não inventar dado").
+   */
+  app.post<{ Params: { id: string } }>(
+    '/clients/:id/meta-accounts',
+    { preHandler: [requireAuth, requirePermission('clients', 'write'), requireModule('meta_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const body = linkMetaAccountSchema.safeParse(request.body);
+      if (!body.success) {
+        reply.code(400);
+        return { error: body.error.issues.map((i) => i.message).join(' ') };
+      }
+
+      const access = await resolveMetaAccess(request.authUser.id);
+      if (!access) {
+        reply.code(409);
+        return { error: 'Conecte o Meta em Integrações antes de vincular uma conta a este cliente.' };
+      }
+
+      let accessible: Awaited<ReturnType<typeof getMetaAdAccounts>>;
+      try {
+        accessible = await getMetaAdAccounts(access.token, body.data.business_id);
+      } catch (error) {
+        logger.error({ error, clientId }, 'Falha ao confirmar Ad Account no Meta antes de vincular');
+        reply.code(502);
+        return { error: error instanceof Error ? error.message : 'Meta ad accounts lookup failed' };
+      }
+
+      const match = accessible.find((account) => account.id === body.data.account_id);
+      if (!match) {
+        reply.code(400);
+        return { error: `A conta "${body.data.account_id}" não está entre as contas acessíveis pela sua conexão Meta.` };
+      }
+
+      // Primary é exclusivo por cliente: marcar uma nova como primária
+      // aposenta a anterior, em vez de deixar duas (o schema documenta esse
+      // estado como ambíguo e resolvido só na aplicação).
+      if (body.data.is_primary) {
+        await db
+          .update(schema.clientMetaAccounts)
+          .set({ isPrimary: false, updatedAt: new Date() })
+          .where(eq(schema.clientMetaAccounts.clientId, clientId));
+      }
+
+      await db
+        .insert(schema.clientMetaAccounts)
+        .values({
+          clientId,
+          accountId: match.id,
+          businessId: match.businessId,
+          connectionId: access.connectionId,
+          isPrimary: body.data.is_primary ?? false,
+          label: body.data.label ?? match.name ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [schema.clientMetaAccounts.clientId, schema.clientMetaAccounts.accountId],
+          set: {
+            businessId: match.businessId,
+            connectionId: access.connectionId,
+            isPrimary: body.data.is_primary ?? false,
+            label: body.data.label ?? match.name ?? null,
+            updatedAt: new Date(),
+          },
+        });
+
+      await auditarAcao(request, { action: 'client.meta_account_linked', clientId, metadata: { account_id: match.id } });
+
+      return reply.code(201).send({
+        account_id: match.id,
+        business_id: match.businessId,
+        is_primary: body.data.is_primary ?? false,
+        label: body.data.label ?? match.name ?? null,
+        connected: true,
+      });
+    },
+  );
+
+  app.delete<{ Params: { id: string; accountId: string } }>(
+    '/clients/:id/meta-accounts/:accountId',
+    { preHandler: [requireAuth, requirePermission('clients', 'write'), requireModule('meta_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const removed = await db
+        .delete(schema.clientMetaAccounts)
+        .where(and(eq(schema.clientMetaAccounts.clientId, clientId), eq(schema.clientMetaAccounts.accountId, request.params.accountId)))
+        .returning({ id: schema.clientMetaAccounts.id });
+
+      if (removed.length === 0) {
+        reply.code(404);
+        return { error: 'Meta account mapping not found for this client' };
+      }
+
+      await auditarAcao(request, { action: 'client.meta_account_unlinked', clientId, metadata: { account_id: request.params.accountId } });
+      return { ok: true };
+    },
+  );
+
+  /**
+   * Resumo de mídia (§39): usa a conexão GRAVADA no vínculo
+   * (`resolveMetaAccessByConnectionId`), não a de quem está olhando agora —
+   * ver comentário na função. Sem vínculo nenhum, devolve `connected: false`
+   * em vez de 404: é um estado normal e esperado de cliente sem mídia
+   * conectada ainda (regra "sem fake UI": a tela mostra "Meta Ads não
+   * conectado" a partir deste campo, nunca número inventado).
+   */
+  /**
+   * ─── A CARTEIRA INTEIRA DE MÍDIA, numa resposta ───────────────────────
+   *
+   * A tela de Mídias pergunta algo que nenhuma rota respondia: "como está a
+   * mídia de TODOS os meus clientes agora?". O que existia era `summary` por
+   * cliente — bom para a ficha, inútil para quem cuida de tráfego e precisa
+   * varrer a carteira de manhã sem abrir vinte abas.
+   *
+   * O RECORTE É O MESMO da listagem de clientes: `requireTenant` decide a
+   * empresa de trabalho e só os clientes DELA entram. Não se agrega por "todos
+   * os clientes que eu enxergo" — provedor enxerga a carteira de vários
+   * tenants, e misturar isso num total seria somar dinheiro de empresas
+   * diferentes na mesma linha.
+   *
+   * CLIENTE SEM VÍNCULO APARECE. Ele é metade do valor da tela: é a lista do
+   * que falta conectar. Vem com `connected: false`, nunca omitido.
+   *
+   * Uma credencial por CONEXÃO, resolvida uma vez e reaproveitada entre os
+   * clientes que a compartilham — senão uma carteira de 50 clientes faria 50
+   * resoluções idênticas antes da primeira chamada ao Meta.
+   */
+  app.get(
+    '/media/overview',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('meta_ads')] },
+    async (request, reply) => {
+      await requireTenant(request, reply);
+      if (reply.sent) return;
+
+      const clientes = await db
+        .select({ id: schema.clients.id, name: schema.clients.name, status: schema.clients.status })
+        .from(schema.clients)
+        .where(eq(schema.clients.organizationId, request.tenantContext!.organizationId))
+        .orderBy(asc(schema.clients.name));
+
+      if (clientes.length === 0) return { clients: [] };
+
+      const vinculos = await db
+        .select({
+          clientId: schema.clientMetaAccounts.clientId,
+          accountId: schema.clientMetaAccounts.accountId,
+          connectionId: schema.clientMetaAccounts.connectionId,
+          label: schema.clientMetaAccounts.label,
+          isPrimary: schema.clientMetaAccounts.isPrimary,
+        })
+        .from(schema.clientMetaAccounts)
+        .orderBy(desc(schema.clientMetaAccounts.isPrimary), asc(schema.clientMetaAccounts.createdAt));
+
+      const vinculoPorCliente = new Map<string, (typeof vinculos)[number]>();
+      for (const v of vinculos) if (!vinculoPorCliente.has(v.clientId)) vinculoPorCliente.set(v.clientId, v);
+
+      // Uma resolução por conexão, não por cliente.
+      const acessoPorConexao = new Map<string, Awaited<ReturnType<typeof resolveMetaAccessByConnectionId>>>();
+      for (const v of vinculoPorCliente.values()) {
+        if (v.connectionId && !acessoPorConexao.has(v.connectionId)) {
+          acessoPorConexao.set(v.connectionId, await resolveMetaAccessByConnectionId(v.connectionId));
+        }
+      }
+
+      const linhas = await Promise.all(
+        clientes.map(async (cliente) => {
+          const base = { client_id: cliente.id, client_name: cliente.name, status: cliente.status };
+          const vinculo = vinculoPorCliente.get(cliente.id);
+          if (!vinculo) return { ...base, connected: false as const };
+
+          const acesso = vinculo.connectionId ? acessoPorConexao.get(vinculo.connectionId) : null;
+          if (!acesso) {
+            return {
+              ...base,
+              connected: true as const,
+              account_id: vinculo.accountId,
+              account_label: vinculo.label,
+              data_available: false as const,
+              reason: 'Vínculo sem conexão OAuth válida — reconecte o Meta em Integrações.',
+            };
+          }
+
+          try {
+            const insights = await getMetaAccountInsights(acesso.token, vinculo.accountId, 'last_30d');
+            return {
+              ...base,
+              connected: true as const,
+              account_id: vinculo.accountId,
+              account_label: vinculo.label,
+              data_available: true as const,
+              insights,
+            };
+          } catch (erro) {
+            // Um cliente com a API fora não pode apagar a carteira inteira.
+            logger.warn({ erro, clientId: cliente.id }, 'Falha ao ler insights do Meta para a visão de mídia');
+            return {
+              ...base,
+              connected: true as const,
+              account_id: vinculo.accountId,
+              account_label: vinculo.label,
+              data_available: false as const,
+              reason: 'O Meta não respondeu agora. O número existe, só não deu para ler.',
+            };
+          }
+        }),
+      );
+
+      return { clients: linhas };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { date_preset?: string } }>(
+    '/clients/:id/media/meta/summary',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('meta_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const [mapping] = await db
+        .select()
+        .from(schema.clientMetaAccounts)
+        .where(eq(schema.clientMetaAccounts.clientId, clientId))
+        .orderBy(desc(schema.clientMetaAccounts.isPrimary), asc(schema.clientMetaAccounts.createdAt))
+        .limit(1);
+
+      if (!mapping) return { connected: false };
+
+      if (!mapping.connectionId) {
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'Vínculo sem conexão OAuth associada — reconecte o Meta.' };
+      }
+
+      const access = await resolveMetaAccessByConnectionId(mapping.connectionId);
+      if (!access) {
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'A conexão Meta usada neste vínculo foi desconectada ou expirou.' };
+      }
+
+      const datePreset = request.query.date_preset ?? 'last_30d';
+      try {
+        const [insights, campaigns] = await Promise.all([
+          getMetaAccountInsights(access.token, mapping.accountId, datePreset),
+          getMetaCampaigns(access.token, mapping.accountId, datePreset),
+        ]);
+        return {
+          connected: true,
+          account_id: mapping.accountId,
+          data_available: true,
+          // snake_case no wire (convenção do resto da API) — o retorno de
+          // getMetaAccountInsights é camelCase porque é TS interno do tool-gateway.
+          insights: insights && {
+            spend: insights.spend,
+            impressions: insights.impressions,
+            clicks: insights.clicks,
+            ctr: insights.ctr,
+            cpc: insights.cpc,
+            cpm: insights.cpm,
+            frequency: insights.frequency,
+            results: insights.results,
+            period_start: insights.periodStart,
+            period_end: insights.periodEnd,
+          },
+          campaigns,
+        };
+      } catch (error) {
+        logger.error({ error, clientId }, 'Falha ao buscar dados de mídia Meta do cliente');
+        reply.code(502);
+        return { error: error instanceof Error ? error.message : 'Meta data lookup failed' };
+      }
+    },
+  );
+
+  /**
+   * Google Ads POR CLIENTE (§43-45 do prompt de refinamento). MESMA regra
+   * fundamental do Meta: "3Net usa somente o Customer ID da 3Net" — todo
+   * acesso aqui embaixo é filtrado por clientId primeiro, nunca por login.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/google-ads-accounts',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('google_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const rows = await db.select().from(schema.clientGoogleAdsAccounts).where(eq(schema.clientGoogleAdsAccounts.clientId, clientId));
+      return {
+        accounts: rows.map((row) => ({
+          customer_id: row.customerId,
+          login_customer_id: row.loginCustomerId,
+          is_primary: row.isPrimary,
+          label: row.label,
+          connected: row.connectionId !== null,
+          created_at: row.createdAt.toISOString(),
+        })),
+      };
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/clients/:id/google-ads-accounts',
+    { preHandler: [requireAuth, requirePermission('clients', 'write'), requireModule('google_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const body = linkGoogleAdsAccountSchema.safeParse(request.body);
+      if (!body.success) {
+        reply.code(400);
+        return { error: body.error.issues.map((i) => i.message).join(' ') };
+      }
+
+      const access = await resolveGoogleAdsAccess(request.authUser.id);
+      if (!access) {
+        reply.code(409);
+        return { error: 'Conecte o Google Ads em Integrações antes de vincular uma conta a este cliente.' };
+      }
+
+      let accessible: Awaited<ReturnType<typeof getGoogleAdsAccounts>>;
+      try {
+        const config = body.data.login_customer_id ? { ...access.config, loginCustomerId: body.data.login_customer_id } : access.config;
+        accessible = await getGoogleAdsAccounts(config, access.accessToken, body.data.login_customer_id);
+      } catch (error) {
+        logger.error({ error, clientId }, 'Falha ao confirmar Customer ID no Google Ads antes de vincular');
+        reply.code(502);
+        return { error: error instanceof Error ? error.message : 'Google Ads accounts lookup failed' };
+      }
+
+      const match = accessible.find((account) => account.customerId === body.data.customer_id);
+      if (!match) {
+        reply.code(400);
+        return { error: `A conta "${body.data.customer_id}" não está entre as contas acessíveis pela sua conexão Google Ads.` };
+      }
+
+      if (body.data.is_primary) {
+        await db
+          .update(schema.clientGoogleAdsAccounts)
+          .set({ isPrimary: false, updatedAt: new Date() })
+          .where(eq(schema.clientGoogleAdsAccounts.clientId, clientId));
+      }
+
+      await db
+        .insert(schema.clientGoogleAdsAccounts)
+        .values({
+          clientId,
+          customerId: match.customerId,
+          loginCustomerId: match.managerCustomerId ?? body.data.login_customer_id ?? null,
+          connectionId: access.connectionId,
+          isPrimary: body.data.is_primary ?? false,
+          label: body.data.label ?? match.descriptiveName ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [schema.clientGoogleAdsAccounts.clientId, schema.clientGoogleAdsAccounts.customerId],
+          set: {
+            loginCustomerId: match.managerCustomerId ?? body.data.login_customer_id ?? null,
+            connectionId: access.connectionId,
+            isPrimary: body.data.is_primary ?? false,
+            label: body.data.label ?? match.descriptiveName ?? null,
+            updatedAt: new Date(),
+          },
+        });
+
+      await auditarAcao(request, { action: 'client.google_ads_account_linked', clientId, metadata: { customer_id: match.customerId } });
+
+      return reply.code(201).send({
+        customer_id: match.customerId,
+        login_customer_id: match.managerCustomerId ?? body.data.login_customer_id ?? null,
+        is_primary: body.data.is_primary ?? false,
+        label: body.data.label ?? match.descriptiveName ?? null,
+        connected: true,
+      });
+    },
+  );
+
+  app.delete<{ Params: { id: string; customerId: string } }>(
+    '/clients/:id/google-ads-accounts/:customerId',
+    { preHandler: [requireAuth, requirePermission('clients', 'write'), requireModule('google_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const removed = await db
+        .delete(schema.clientGoogleAdsAccounts)
+        .where(and(eq(schema.clientGoogleAdsAccounts.clientId, clientId), eq(schema.clientGoogleAdsAccounts.customerId, request.params.customerId)))
+        .returning({ id: schema.clientGoogleAdsAccounts.id });
+
+      if (removed.length === 0) {
+        reply.code(404);
+        return { error: 'Google Ads account mapping not found for this client' };
+      }
+
+      await auditarAcao(request, { action: 'client.google_ads_account_unlinked', clientId, metadata: { customer_id: request.params.customerId } });
+      return { ok: true };
+    },
+  );
+
+  /**
+   * OS CRIATIVOS DO CLIENTE — o que a peça É, não só quanto ela gastou.
+   *
+   * Até aqui mídia parava em campanha. Quem cuida de tráfego decide pelo
+   * criativo: qual arte rodou, qual parou de performar, qual repetir. E o
+   * cartão de conexão do produto já prometia "campanhas, criativos e
+   * resultados" antes de existir qualquer leitura de criativo — esta rota é o
+   * que torna aquela frase verdadeira.
+   *
+   * Mesmos três gates das rotas irmãs e o MESMO union honesto de estados:
+   * sem vínculo, vínculo sem conexão, conexão morta, e dado de verdade. Imagem
+   * de criativo que não veio é `null`, nunca uma caixa cinza fingindo peça.
+   */
+  app.get<{ Params: { id: string }; Querystring: { date_preset?: string } }>(
+    '/clients/:id/media/meta/creatives',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('meta_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const [mapping] = await db
+        .select()
+        .from(schema.clientMetaAccounts)
+        .where(eq(schema.clientMetaAccounts.clientId, clientId))
+        .orderBy(desc(schema.clientMetaAccounts.isPrimary), asc(schema.clientMetaAccounts.createdAt))
+        .limit(1);
+
+      if (!mapping) return { connected: false };
+      if (!mapping.connectionId) {
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'Vínculo sem conexão OAuth associada — reconecte o Meta.' };
+      }
+
+      const access = await resolveMetaAccessByConnectionId(mapping.connectionId);
+      if (!access) {
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'A conexão Meta usada neste vínculo foi desconectada ou expirou.' };
+      }
+
+      try {
+        const ads = await getMetaAds(access.token, mapping.accountId, request.query.date_preset ?? 'last_30d');
+        return {
+          connected: true,
+          account_id: mapping.accountId,
+          data_available: true,
+          creatives: ads.map((ad) => ({
+            id: ad.id,
+            name: ad.name,
+            status: ad.status,
+            thumbnail_url: ad.thumbnailUrl,
+            image_url: ad.imageUrl,
+            spend: ad.spend,
+            impressions: ad.impressions,
+            clicks: ad.clicks,
+            ctr: ad.ctr,
+          })),
+        };
+      } catch (error) {
+        logger.error({ error, clientId }, 'Falha ao buscar criativos do Meta');
+        reply.code(502);
+        return { error: error instanceof Error ? error.message : 'Meta creatives lookup failed' };
+      }
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { date_range?: string } }>(
+    '/clients/:id/media/google-ads/summary',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('google_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const [mapping] = await db
+        .select()
+        .from(schema.clientGoogleAdsAccounts)
+        .where(eq(schema.clientGoogleAdsAccounts.clientId, clientId))
+        .orderBy(desc(schema.clientGoogleAdsAccounts.isPrimary), asc(schema.clientGoogleAdsAccounts.createdAt))
+        .limit(1);
+
+      if (!mapping) return { connected: false };
+
+      if (!mapping.connectionId) {
+        return { connected: true, customer_id: mapping.customerId, data_available: false, reason: 'Vínculo sem conexão OAuth associada — reconecte o Google Ads.' };
+      }
+
+      const access = await resolveGoogleAdsAccessByConnectionId(mapping.connectionId);
+      if (!access) {
+        return { connected: true, customer_id: mapping.customerId, data_available: false, reason: 'A conexão Google Ads usada neste vínculo foi desconectada ou expirou.' };
+      }
+
+      const envConfig = getGoogleAdsEnvConfig();
+      if (!envConfig) {
+        return { connected: true, customer_id: mapping.customerId, data_available: false, reason: 'Google Ads não está configurado no Orchestrator.' };
+      }
+      const config = mapping.loginCustomerId ? { ...envConfig, loginCustomerId: mapping.loginCustomerId } : envConfig;
+
+      const dateRange = request.query.date_range ?? 'LAST_30_DAYS';
+      try {
+        const [insights, campaigns] = await Promise.all([
+          getGoogleAdsAccountInsights(config, access.accessToken, mapping.customerId, dateRange),
+          getGoogleAdsCampaigns(config, access.accessToken, mapping.customerId, dateRange),
+        ]);
+        return {
+          connected: true,
+          customer_id: mapping.customerId,
+          data_available: true,
+          insights: insights && {
+            spend: insights.spend,
+            impressions: insights.impressions,
+            clicks: insights.clicks,
+            ctr: insights.ctr,
+            average_cpc: insights.averageCpc,
+            conversions: insights.conversions,
+            conversions_value: insights.conversionsValue,
+          },
+          campaigns,
+        };
+      } catch (error) {
+        logger.error({ error, clientId }, 'Falha ao buscar dados de mídia Google Ads do cliente');
+        reply.code(502);
+        return { error: error instanceof Error ? error.message : 'Google Ads data lookup failed' };
+      }
+    },
+  );
+
+  /**
+   * Relatórios PDF (§46-51 do prompt de refinamento). ASSÍNCRONO: a rota só
+   * cria a linha e enfileira — o worker busca os dados, renderiza o PDF e
+   * sobe pro Storage (ver apps/worker/src/processors/generate-client-report.ts).
+   * Front-end faz polling de GET /clients/:id/reports/:reportId até
+   * status='ready' (ou 'failed'), mesmo padrão de motion_sessions.
+   */
+  app.post<{ Params: { id: string } }>(
+    '/clients/:id/reports',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('relatorios')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const body = reportRequestSchema.safeParse(request.body ?? {});
+      if (!body.success) {
+        reply.code(400);
+        return { error: body.error.issues.map((i) => i.message).join(' ') };
+      }
+
+      const periodEnd = new Date();
+      const periodStart = new Date(periodEnd.getTime() - body.data.period_days * 24 * 60 * 60 * 1000);
+
+      const [created] = await db
+        .insert(schema.clientReports)
+        .values({
+          organizationId: request.tenantContext!.organizationId,
+          clientId,
+          requestedBy: request.authUser.id,
+          channels: body.data.channels,
+          periodDays: body.data.period_days,
+          periodStart,
+          periodEnd,
+        })
+        .returning();
+
+      await enqueueClientReport(created!.id);
+      await auditarAcao(request, { action: 'client.report_requested', clientId, metadata: { channels: body.data.channels, period_days: body.data.period_days } });
+
+      reply.code(202);
+      return apresentacaoDoRelatorio(created!);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/clients/:id/reports',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('relatorios')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const rows = await db
+        .select()
+        .from(schema.clientReports)
+        .where(eq(schema.clientReports.clientId, clientId))
+        .orderBy(desc(schema.clientReports.createdAt))
+        .limit(20);
+
+      return { reports: rows.map(apresentacaoDoRelatorio) };
+    },
+  );
+
+  app.get<{ Params: { id: string; reportId: string } }>(
+    '/clients/:id/reports/:reportId',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('relatorios')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const [row] = await db
+        .select()
+        .from(schema.clientReports)
+        .where(and(eq(schema.clientReports.id, request.params.reportId), eq(schema.clientReports.clientId, clientId)));
+
+      if (!row) {
+        reply.code(404);
+        return { error: 'Report not found for this client' };
+      }
+      return apresentacaoDoRelatorio(row);
+    },
+  );
 }

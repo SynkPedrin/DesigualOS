@@ -315,3 +315,106 @@ export async function getMetaCampaigns(token: string, adAccountId: string, dateP
     };
   });
 }
+
+const adsSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      status: z.string(),
+      creative: z
+        .object({
+          id: z.string().nullish(),
+          thumbnail_url: z.string().nullish(),
+          image_url: z.string().nullish(),
+        })
+        .nullish(),
+      insights: z
+        .object({
+          data: z.array(
+            z.object({
+              spend: z.string().nullish(),
+              impressions: z.string().nullish(),
+              clicks: z.string().nullish(),
+              ctr: z.string().nullish(),
+            }),
+          ),
+        })
+        .optional(),
+    }),
+  ),
+});
+
+export interface MetaAdCreative {
+  id: string;
+  name: string;
+  status: string;
+  /** URL da miniatura do criativo. TEMPORÁRIA — ver nota em `getMetaAds`. */
+  thumbnailUrl: string | null;
+  /** Versão grande, quando o criativo é imagem única. Nem todo anúncio tem. */
+  imageUrl: string | null;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+/**
+ * OS ANÚNCIOS DA CONTA, com a imagem do criativo e o número de cada um.
+ *
+ * Até 08/10/2026 o gateway parava no nível de CAMPANHA: dava para dizer quanto
+ * uma campanha gastou, nunca o que a peça era. Quem olha mídia na agência
+ * pergunta as duas coisas, e a segunda é a que o time de criação usa para
+ * decidir o que repetir. O cartão de conexão do produto, aliás, já prometia
+ * "campanhas, criativos e resultados" desde antes de existir qualquer leitura
+ * de criativo — esta função é o que torna aquela frase verdadeira.
+ *
+ * UMA CHAMADA, não N+1: `insights` e `creative` viajam como subcampos do mesmo
+ * pedido, igual `getMetaCampaigns` já fazia com as campanhas.
+ *
+ * ESCOPO: `ads_read`, que já é concedido no authorize — ler anúncio e criativo
+ * não exige `ads_management` (que é escrita, e de propósito não pedimos).
+ *
+ * ⚠️ `thumbnail_url` É EFÊMERA. O Meta assina essas URLs e elas expiram em
+ * horas. Servem para a tela, que carrega ao vivo; para qualquer coisa que
+ * PERSISTA — o PDF do relatório, por exemplo — a imagem tem que ser baixada e
+ * embutida no momento da geração, nunca referenciada por link.
+ */
+export async function getMetaAds(
+  token: string,
+  adAccountId: string,
+  datePreset: MetaDateWindow = 'last_30d',
+  limite = 24,
+): Promise<MetaAdCreative[]> {
+  const url = new URL(`${GRAPH_BASE}/${adAccountId}/ads`);
+  const modificadorDeData =
+    typeof datePreset === 'string' ? `date_preset(${datePreset})` : `time_range(${JSON.stringify(datePreset)})`;
+  url.searchParams.set(
+    'fields',
+    `id,name,status,creative{id,thumbnail_url,image_url},insights.${modificadorDeData}{spend,impressions,clicks,ctr}`,
+  );
+  // Teto explícito: uma conta grande tem centenas de anúncios, e nem a galeria
+  // nem o PDF têm o que fazer com isso. O default do Graph (25) é parecido,
+  // mas depender de default alheio é deixar o tamanho da resposta nas mãos
+  // deles.
+  url.searchParams.set('limit', String(limite));
+  url.searchParams.set('access_token', token);
+
+  const response = await fetchMeta(url);
+  await assertOk(response, 'Meta ads lookup failed');
+
+  return adsSchema.parse(await response.json()).data.map((ad) => {
+    const insight = ad.insights?.data[0];
+    return {
+      id: ad.id,
+      name: ad.name,
+      status: ad.status,
+      thumbnailUrl: ad.creative?.thumbnail_url ?? null,
+      imageUrl: ad.creative?.image_url ?? null,
+      spend: toNumber(insight?.spend),
+      impressions: toNumber(insight?.impressions),
+      clicks: toNumber(insight?.clicks),
+      ctr: toNumber(insight?.ctr),
+    };
+  });
+}
