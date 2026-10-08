@@ -597,8 +597,26 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       ]);
 
       if (hasExecutions.length > 0 || hasAuditLogs.length > 0 || hasConversations.length > 0 || hasDirectMessages.length > 0) {
+        // A RECUSA ESTÁ CERTA; A MENSAGEM NÃO ESTAVA. Este texto chega inteiro
+        // na tela de Equipe, e mandava "usar PATCH /admin/users/:id/status" —
+        // instrução de API pra quem está olhando uma interface, em inglês. O
+        // efeito prático era "a exclusão está bloqueada" sem ninguém entender
+        // por quê nem o que fazer (relato do Pedro, 08/10/2026).
+        //
+        // Apagar quem já trabalhou deixaria execuções, auditoria e conversas
+        // apontando pra um usuário inexistente. Desativar não é consolo: corta
+        // o acesso na hora e preserva o rastro, que é o que a lei de quem opera
+        // uma agência exige.
+        const motivos = [
+          hasExecutions.length > 0 ? 'execuções' : null,
+          hasAuditLogs.length > 0 ? 'registros de auditoria' : null,
+          hasConversations.length > 0 ? 'conversas' : null,
+          hasDirectMessages.length > 0 ? 'mensagens' : null,
+        ].filter(Boolean);
         reply.code(409);
-        return { error: 'User has real activity (executions, audit trail, conversations or messages) and cannot be deleted. Use PATCH /admin/users/:id/status to deactivate instead.' };
+        return {
+          error: `Esta pessoa já tem histórico no sistema (${motivos.join(', ')}) e por isso não pode ser apagada — o rastro ficaria órfão. Use "Desativar" no lugar: corta o acesso na hora e preserva o histórico.`,
+        };
       }
 
       const supabaseUrl = process.env.SUPABASE_URL;
