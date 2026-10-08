@@ -154,20 +154,29 @@ export function ConexaoOAuth({
   );
 }
 
-/** Mídia paga: as duas contas de anúncio que o sistema lê. */
-export function MidiaConnectSection() {
+/**
+ * Um componente POR PLATAFORMA, não um bloco com várias.
+ *
+ * Cada integração agora abre no seu próprio modal, a partir do cartão dela —
+ * agrupar duas num componente só obrigaria o modal do Meta a renderizar
+ * também o do Google Ads.
+ */
+/*
+ * "criativos" não aparece na descrição porque o produto não lê criativo
+ * nenhum: o tool-gateway tem getMetaBusinesses, getMetaAdAccounts,
+ * getMetaCampaigns e getMetaAccountInsights — o nível mais granular é
+ * CAMPANHA, não anúncio. Era o único lugar do produto prometendo o que não
+ * existe (apontado pela desigualos-4a, 08/10/2026).
+ */
+export function MetaConnect() {
   const meta = useMetaIntegration();
   const conectarMeta = useConnectMeta();
   const desconectarMeta = useDisconnectMeta();
-  const ads = useGoogleAdsIntegration();
-  const conectarAds = useConnectGoogleAds();
-  const desconectarAds = useDisconnectGoogleAds();
 
   return (
-    <>
-      <ConexaoOAuth
+    <ConexaoOAuth
         nome="Meta Ads"
-        descricao="Conecte sua conta pra que os agentes leiam campanhas, criativos e resultados do Meta."
+        descricao="Conecte sua conta pra que os agentes leiam campanhas e resultados do Meta."
         descricaoConectado="Conectado. Os agentes já leem suas campanhas do Meta."
         variaveis={['META_APP_ID', 'META_APP_SECRET', 'META_REDIRECT_URI']}
         status={meta.data}
@@ -175,12 +184,21 @@ export function MidiaConnectSection() {
         conectar={() => conectarMeta.mutate()}
         conectando={conectarMeta.isPending}
         erroConectar={conectarMeta.error}
-        desconectar={() => desconectarMeta.mutate()}
-        desconectando={desconectarMeta.isPending}
-        paramCallback="meta"
-      />
-      <ConexaoOAuth
-        nome="Google Ads"
+      desconectar={() => desconectarMeta.mutate()}
+      desconectando={desconectarMeta.isPending}
+      paramCallback="meta"
+    />
+  );
+}
+
+export function GoogleAdsConnect() {
+  const ads = useGoogleAdsIntegration();
+  const conectarAds = useConnectGoogleAds();
+  const desconectarAds = useDisconnectGoogleAds();
+
+  return (
+    <ConexaoOAuth
+      nome="Google Ads"
         descricao="Conecte sua conta pra que os agentes leiam campanhas e desempenho do Google Ads."
         descricaoConectado="Conectado. Os agentes já leem suas campanhas do Google Ads."
         variaveis={[
@@ -194,11 +212,10 @@ export function MidiaConnectSection() {
         conectar={() => conectarAds.mutate()}
         conectando={conectarAds.isPending}
         erroConectar={conectarAds.error}
-        desconectar={() => desconectarAds.mutate()}
-        desconectando={desconectarAds.isPending}
-        paramCallback="google_ads"
-      />
-    </>
+      desconectar={() => desconectarAds.mutate()}
+      desconectando={desconectarAds.isPending}
+      paramCallback="google_ads"
+    />
   );
 }
 
@@ -213,14 +230,13 @@ export function MidiaConnectSection() {
  * conta de calendário, em outra tela). Oferecer um botão que não tem rota
  * atrás seria pior que não oferecer.
  */
-export function CalendarioConnectSection() {
+export function MicrosoftCalendarConnect() {
   const microsoft = useMicrosoftCalendarIntegration();
   const conectarMicrosoft = useConnectMicrosoftCalendar();
 
   return (
-    <>
-      <ConexaoOAuth
-        nome="Microsoft Calendar"
+    <ConexaoOAuth
+      nome="Microsoft Calendar"
         descricao="Conecte sua agenda do Outlook/Microsoft 365 pra que as reuniões apareçam no Calendário."
         descricaoConectado="Conectado. Sua agenda da Microsoft aparece no Calendário."
         variaveis={[
@@ -232,9 +248,8 @@ export function CalendarioConnectSection() {
         carregando={microsoft.isPending}
         conectar={() => conectarMicrosoft.mutate()}
         conectando={conectarMicrosoft.isPending}
-        erroConectar={conectarMicrosoft.error}
-        paramCallback="microsoft_calendar"
-      />
-    </>
+      erroConectar={conectarMicrosoft.error}
+      paramCallback="microsoft_calendar"
+    />
   );
 }
