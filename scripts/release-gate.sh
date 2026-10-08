@@ -31,7 +31,24 @@ $PNPM lint
 step "3. Testes"
 $PNPM test
 
-step "4. Migration (schema -> banco)"
+step "4. O código COMMITADO compila sozinho?"
+# A etapa 1 compila a ÁRVORE DE TRABALHO, e é por isso que ela não bastava:
+# arquivo novo ainda não commitado está lá, o import resolve, e o typecheck
+# passa enquanto o repositório não constrói. Em 08/10/2026 o HEAD tinha 48
+# erros de compilação que as etapas 1 a 3 aprovaram — incluindo nove módulos
+# que nunca entraram em commit nenhum.
+#
+# SEM_CHECKOUT_LIMPO=1 pula (útil em máquina sem espaço pra uma segunda
+# árvore); INSTALAR=1 faz install de verdade lá dentro em vez de ligar o
+# node_modules daqui, que é o único jeito de pegar dependência declarada a
+# menos no package.json.
+if [ "${SEM_CHECKOUT_LIMPO:-0}" = "1" ]; then
+  echo "PULADO por SEM_CHECKOUT_LIMPO=1."
+else
+  bash scripts/conferir-checkout-limpo.sh
+fi
+
+step "5. Migration (schema -> banco)"
 if [ "${MIGRATE:-0}" = "1" ]; then
   echo "Gerando migration a partir do schema..."
   $PNPM --filter @desigual-os/database db:generate
@@ -49,14 +66,14 @@ else
   echo "Só GERAR sem aplicar: pnpm --filter @desigual-os/database db:generate"
 fi
 
-step "5. Build de produção"
+step "6. Build de produção"
 if [ "${RUN_BUILD:-0}" = "1" ]; then
   $PNPM build
 else
   echo "PULADO. Rode com RUN_BUILD=1 para o build de produção (web/api/worker)."
 fi
 
-step "6. Smoke tests ao vivo"
+step "7. Smoke tests ao vivo"
 echo "NÃO automatizados aqui (precisam de ClickUp/LLM/Supabase reais e ações que"
 echo "podem escrever em produção). Siga docs/agentic-architecture/release-smoke-tests.md"
 echo "num workspace de TESTE, com AGENT_LOOP_V2=bento (e otto)."
