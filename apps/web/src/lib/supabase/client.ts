@@ -29,9 +29,20 @@ export function wireSupabaseAccessToken() {
   setAccessTokenProvider(() => currentToken);
 
   // O getSession inicial é a fonte da verdade do boot; quem chegar antes
-  // dele espera essa promise (com teto de 2s pra nunca pendurar a UI se a
-  // auth travar) em vez de disparar sem token. Depois do boot, o provider
+  // dele espera essa promise (com teto pra nunca pendurar a UI se a auth
+  // travar) em vez de disparar sem token. Depois do boot, o provider
   // síncrono acima já tem o token e este caminho nem é consultado.
+  //
+  // O teto era 2s até 08/10/2026. Medido nesse dia (getSession real,
+  // máquina sob carga): resolveu em ~10s. Um teto de 2s não "nunca pendura a
+  // UI" — ele GARANTE um /me sem token (401) toda vez que o round-trip passa
+  // de 2s, e cada 401 custa um retry com backoff (1s/2s/4s/8s) antes de
+  // currentToken ficar populado pela própria promise que já estava a
+  // caminho. Resultado visível: toda tela que decide o que mostrar a partir
+  // de `useMe()` (Administração, painel do dono, Clientes, Conhecimento,
+  // Atividade) renderiza como se a pessoa não tivesse permissão nenhuma por
+  // vários segundos após o login. 15s cobre a pior medição com folga sem
+  // aproximar o teto de hang real (getSession nunca responder).
   const initialSession = supabase.auth.getSession().then(({ data }) => {
     currentToken = data.session?.access_token ?? null;
     return currentToken;
@@ -39,7 +50,7 @@ export function wireSupabaseAccessToken() {
   setAccessTokenAsyncProvider(() =>
     Promise.race([
       initialSession,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
     ]).catch(() => null),
   );
 

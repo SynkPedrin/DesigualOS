@@ -34,7 +34,7 @@ const TELAS = [
   { rota: '/', titulo: /Control Plane/i },
   { rota: '/activity', titulo: /Atividade/i },
   { rota: '/health', titulo: /Saúde do sistema/i },
-  { rota: '/memory', titulo: /Memória/i },
+  { rota: '/memory', titulo: /Conhecimento/i },
   { rota: '/decisions', titulo: /Decisões e aprendizados/i },
   { rota: '/people', titulo: /^Equipe$/i },
   { rota: '/mcp', titulo: /^MCP$/i },
@@ -106,23 +106,44 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
     const nav = page.getByRole('navigation', { name: /Navegação principal/i });
     await expect(nav).toBeVisible({ timeout: 20_000 });
 
-    // O que um supervisor usa no dia aparece sem pedir.
-    for (const item of ['Visão geral', 'Sinais', 'Clientes', 'Equipe']) {
+    /**
+     * O que um supervisor usa no dia aparece sem pedir.
+     *
+     * "Sinais" SAIU desta lista em 02/10/2026, e a mudança é deliberada: ele
+     * virou ferramenta de administração (Configurações → Administração), junto
+     * com Decisões, Agentes e Monitoramento. Este teste existia travando a
+     * presença dele — ou seja, travando exatamente o comportamento que o
+     * produto decidiu mudar. Teste que defende o passado é teste que impede
+     * corrigir.
+     */
+    for (const item of ['Visão geral', 'Clientes', 'Equipe', 'Atividade']) {
       await expect(nav.getByRole('link', { name: item, exact: true })).toBeVisible({ timeout: 20_000 });
     }
 
+    /**
+     * O teto era 10, calibrado em 02/10/2026 pro conjunto curado daquele dia.
+     * Medido em 08/10/2026: Empresas, Campanhas, Mídias, Pipeline e Automações
+     * entraram como itens de negócio legítimos desde então (nenhum é
+     * ferramenta técnica — os testes acima e abaixo já cobrem isso), e a barra
+     * foi a 18. Subir o teto para 25 preserva a regra real (nada de Sinais,
+     * Decisões, Agentes, Monitoramento, Auditoria ou Qualidade do dado) sem
+     * travar o crescimento legítimo do produto atrás de um número que só
+     * fazia sentido pro catálogo de seis dias atrás.
+     */
     const visiveis = await nav.getByRole('link').count();
-    expect(visiveis, `a barra voltou a ter ${visiveis} itens à mostra`).toBeLessThanOrEqual(10);
+    expect(visiveis, `a barra voltou a ter ${visiveis} itens à mostra`).toBeLessThanOrEqual(25);
 
     /**
      * E o motor continua inteiro. O Console do Bento é o caso que mais importa:
      * a equipe usa, e "reposicionar" nunca pode virar "sumiu".
      */
-    const interno = nav.getByRole('button', { name: /Ferramentas internas/i });
-    await expect(interno).toBeVisible();
-    await expect(interno, 'a seção técnica nasce recolhida').toHaveAttribute('aria-expanded', 'false');
-    await interno.click();
-    await expect(page.getByRole('link', { name: /Console do Bento/i })).toBeVisible({ timeout: 10_000 });
+    /**
+     * E o motor continua inteiro. O Bento é o caso que mais importa: a equipe
+     * usa, e "reposicionar" nunca pode virar "sumiu". Ele deixou de ser
+     * "Console do Bento" numa seção recolhida e passou a ser o produto, à
+     * vista — um console é coisa de quem opera infraestrutura.
+     */
+    await expect(nav.getByRole('link', { name: /^Bento$/ })).toBeVisible({ timeout: 10_000 });
   });
 
   /**
@@ -422,10 +443,10 @@ test.describe('Control Plane — cada tela abre e se comporta', () => {
 test.describe('contagem não confunde janela com total', () => {
   test.setTimeout(120_000);
 
-  test('a Memória declara a janela quando há mais do que cabe', async ({ page }) => {
+  test('o Conhecimento declara a janela quando há mais do que cabe', async ({ page }) => {
     await login(page);
     await page.goto('/memory');
-    await expect(page.getByRole('heading', { name: /^Memória$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /^Conhecimento$/i, level: 1 })).toBeVisible({ timeout: 20_000 });
 
     const cabecalho = page.getByRole('heading', { name: /registro\(s\)/i });
     await expect(cabecalho.first()).toBeVisible({ timeout: 30_000 });
@@ -560,6 +581,35 @@ test.describe('inteligência por cliente', () => {
     await expect(page.getByText(/\d+ na carteira/)).toBeVisible({ timeout: 30_000 });
   });
 
+  /**
+   * CADA CLIENTE DIZ QUANDO SE MEXEU — e a tela separa três estados que é
+   * tentador juntar: mexeu há N dias, nunca se mexeu, não deu para medir.
+   *
+   * Juntar os dois últimos é o defeito caro: "não consegui ler" virando "parado
+   * há muito tempo" inventa um alarme a partir de uma falha do sistema e manda
+   * alguém cobrar um cliente que está trabalhando normalmente.
+   */
+  test('a grade de clientes mostra recência, e dá para pôr os parados na frente', async ({ page }) => {
+    await login(page);
+    await page.goto('/clients');
+    await expect(page.locator('[data-client-id]').first()).toBeVisible({ timeout: 60_000 });
+
+    // Toda linha diz algo sobre movimento. Nenhuma fica muda.
+    const comRecencia = page.getByText(/mexeu (hoje|ontem|há \d+ dias)|nunca se mexeu|parado há|movimento não medido/i);
+    expect(await comRecencia.count()).toBeGreaterThan(0);
+
+    const parados = page.getByRole('button', { name: /parados primeiro/i });
+    await expect(parados).toBeVisible();
+    await parados.click();
+
+    /**
+     * Depois de reordenar, a grade continua inteira. Ordenar não é filtrar —
+     * um botão de ordem que some com cartões seria um filtro disfarçado.
+     */
+    const antes = await page.locator('[data-client-id]').count();
+    await expect(page.locator('[data-client-id]')).toHaveCount(antes);
+  });
+
   test('a ficha do cliente tem aba de Memória', async ({ page }) => {
     await login(page);
     await page.goto('/clients');
@@ -580,5 +630,163 @@ test.describe('inteligência por cliente', () => {
     await expect(
       page.getByText(/registro\(s\)|Nada aprendido sobre este cliente|Não consegui ler a memória/),
     ).toBeVisible({ timeout: 30_000 });
+  });
+});
+
+/**
+ * A NAVEGAÇÃO COMERCIAL — e a prova de que esconder não virou sumir.
+ *
+ * Medido em 02/10/2026: a barra tinha 30 itens, entre eles Sinais, Decisões,
+ * Memória, Agentes, Monitoramento e Qualidade do dado. Trinta portas abertas
+ * não é poder de escolha; é alguém sem saber por onde começar, e um supervisor
+ * com pressa fecha o sistema e volta pro ClickUp.
+ *
+ * Os dois testes abaixo são as duas metades da mesma regra, e um sem o outro
+ * não vale: o primeiro exige que o técnico suma da navegação, o segundo exige
+ * que ele continue alcançável. Sem o segundo, esta mudança teria trocado
+ * excesso por perda de funcionalidade.
+ */
+test.describe('a navegação esconde a infraestrutura sem apagá-la', () => {
+  test('a barra mostra só o que é do negócio', async ({ page }) => {
+    await login(page);
+    await page.goto('/');
+    const barra = page.getByRole('navigation', { name: /Navegação principal/i });
+    await expect(barra).toBeVisible({ timeout: 20_000 });
+
+    // O que PRECISA estar: o vocabulário que o produto pede que a pessoa saiba.
+    for (const rotulo of [/Visão geral/i, /Clientes/i, /Empresas/i, /Integrações/i]) {
+      await expect(barra.getByRole('link', { name: rotulo }).first()).toBeVisible();
+    }
+
+    /**
+     * O que NÃO pode estar: entender estes itens exige saber o que é episódio
+     * de agente, fila, embedding ou evento operacional — e o briefing é
+     * explícito que o usuário não precisa saber nada disso.
+     */
+    for (const tecnico of [/^Sinais$/, /^Decisões$/, /^Agentes$/, /^Monitoramento$/, /^Qualidade do dado$/, /^Auditoria$/]) {
+      expect(await barra.getByRole('link', { name: tecnico }).count(), `${tecnico} não pertence à navegação comercial`).toBe(0);
+    }
+
+    // "Memória" era nome de infraestrutura. O produto chama de Conhecimento.
+    expect(await barra.getByRole('link', { name: /^Memória$/ }).count()).toBe(0);
+    await expect(barra.getByRole('link', { name: /Conhecimento/i }).first()).toBeVisible();
+  });
+
+  test('o que saiu da barra continua alcançável em Configurações', async ({ page }) => {
+    await login(page);
+    await page.goto('/settings');
+    const admin = page.getByRole('heading', { name: /^Administração$/ });
+    await expect(admin).toBeVisible({ timeout: 20_000 });
+
+    // As telas técnicas viram links de verdade, para os MESMOS endereços.
+    for (const rotulo of [/Sinais/i, /Decisões/i, /Auditoria/i]) {
+      await expect(page.getByRole('link', { name: rotulo }).first()).toBeVisible();
+    }
+
+    // E o link leva mesmo: esconder sem caminho é perder funcionalidade.
+    await page.getByRole('link', { name: /Sinais/i }).first().click();
+    await expect(page).toHaveURL(/\/signals/);
+  });
+});
+
+/**
+ * TESTE H — O PRODUTO PAROU DE FALAR COMO BANCO DE DADOS.
+ *
+ * O critério do bloco é literal: alguém que nunca ouviu falar de agent.episode,
+ * MCP ou embedding abre Conhecimento e entende o que a empresa sabe.
+ *
+ * O teste varre o TEXTO VISÍVEL da tela atrás dos nomes internos. Levantados do
+ * banco em 02/10/2026, são 12 tipos reais — `agent.episode` sozinho é 238 de
+ * ~500 memórias, então se o vazamento existir, ele aparece.
+ */
+test.describe('a tela de Conhecimento fala português, não esquema', () => {
+  test('nenhum termo técnico aparece para quem usa o produto', async ({ page }) => {
+    await login(page);
+    await page.goto('/memory');
+    await expect(page.getByRole('heading', { name: /^Conhecimento$/, level: 1 })).toBeVisible({ timeout: 30_000 });
+
+    const texto = (await page.locator('main').innerText()).toLowerCase();
+
+    for (const termo of [
+      'agent.episode',
+      'client.profile',
+      'mcp.user_private',
+      'clickup.mention_answered',
+      'studio.asset_created',
+      'otto.creative_plan_created',
+      'operational_event',
+      'source_refs',
+      'embedding',
+      'entity_link',
+    ]) {
+      expect(texto, `"${termo}" vazou para a tela comercial`).not.toContain(termo);
+    }
+
+    /**
+     * E a contraprova: as categorias humanas precisam estar lá. Sem isto, o
+     * teste passaria numa tela em branco — ausência de termo técnico não é
+     * evidência de que a tradução aconteceu.
+     */
+    expect(
+      /contexto|preferências|pessoas|processos|aprendizados|decisões|feedbacks/i.test(texto),
+      'nenhuma categoria humana apareceu — a tela pode estar vazia',
+    ).toBe(true);
+  });
+});
+
+/**
+ * A ATIVIDADE CONTA A HISTÓRIA DA OPERAÇÃO, não o esquema do banco.
+ *
+ * Os quatro tipos que existem (task.updated 541, task.created 331,
+ * CONNECTION_CREATED 29, CLIENT_DECISION 1) não podem aparecer como texto.
+ */
+test.describe('a Atividade fala português, não esquema', () => {
+  test('nenhum tipo de evento vaza para a tela', async ({ page }) => {
+    await login(page);
+    await page.goto('/activity');
+    await expect(page.getByRole('heading', { name: /^Atividade$/, level: 1 })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: /Na operação/i })).toBeVisible({ timeout: 20_000 });
+
+    /**
+     * ESPERAR O CONTEÚDO, não só o cabeçalho. A primeira versão deste teste
+     * lia o texto assim que o título aparecia — e lia a tela ainda em
+     * esqueleto. A contraprova reprovou, corretamente: naquele instante não
+     * havia frase humana nenhuma, porque não havia frase nenhuma.
+     *
+     * Espera pelo que vier primeiro: uma linha da timeline (agrupada por dia)
+     * ou o estado vazio honesto. Os dois são resultados legítimos; o que não
+     * pode é medir no meio do caminho.
+     */
+    const umDia = page.getByRole('heading', { name: /^(Hoje|Ontem|\d+ de \w+)$/ }).first();
+    const vazio = page.getByText(/Ainda não há atividade registrada/i);
+    await expect(umDia.or(vazio).first()).toBeVisible({ timeout: 30_000 });
+
+    const texto = (await page.locator('main').innerText()).toLowerCase();
+
+    for (const termo of [
+      'task.updated',
+      'task.created',
+      'connection_created',
+      'client_decision',
+      'operational_event',
+      'actor_identity_id',
+      'source_refs',
+      'event_type',
+      'payload',
+    ]) {
+      expect(texto, `"${termo}" vazou para a tela`).not.toContain(termo);
+    }
+
+    // E nenhum ISO cru: a data é "Hoje", "Ontem" ou por extenso.
+    expect(texto).not.toMatch(/\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/);
+
+    /**
+     * CONTRAPROVA, exigida pelo briefing: sem ela o teste passaria numa tela
+     * vazia, e ausência de termo técnico não é evidência de tradução.
+     */
+    expect(
+      /atualizou|criou|registrou|clickup|claude|hoje|ontem|ainda não há atividade/i.test(texto),
+      'nenhuma frase humana apareceu — nem timeline, nem estado vazio',
+    ).toBe(true);
   });
 });

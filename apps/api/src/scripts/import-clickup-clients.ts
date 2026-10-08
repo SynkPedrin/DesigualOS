@@ -1,4 +1,5 @@
 import '../env.js';
+import { organizacaoProvedora } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import { resolveSharedClickUpAccess } from '../integrations/access';
 import { syncClickUpClients } from '../integrations/clickup-sync';
@@ -20,8 +21,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const organizationId = organizacaoProvedora();
+  if (!organizationId) {
+    logger.error('PROVIDER_ORGANIZATION_ID não configurado no .env — sem ele não há empresa pra gravar nos clientes importados');
+    process.exit(1);
+  }
+
   logger.info({ teamId: access.teamId }, 'Importando clientes do ClickUp');
-  const result = await syncClickUpClients(access);
+  const result = await syncClickUpClients(access, organizationId);
   logger.info(result, 'Importação concluída');
   process.exit(0);
 }

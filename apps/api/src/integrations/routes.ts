@@ -15,6 +15,7 @@ import { CLICKUP_PROVIDER, getClickUpConnection, resolveClickUpAccess } from './
 import { syncClickUpClients } from './clickup-sync';
 import { urlDoAppCom } from '../lib/url-do-app';
 import { conferirEnderecoDeRetorno } from '../lib/endereco-de-retorno';
+import { requireTenant } from '../lib/tenant-context';
 
 const logger = createLogger({ service: 'integrations' });
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -206,6 +207,8 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
    */
   app.post('/integrations/clickup/sync', { preHandler: [requireAuth, requirePermission('clients', 'write')] }, async (request, reply) => {
     const userId = request.authUser!.id;
+    await requireTenant(request, reply);
+    if (reply.sent) return;
     const source = await resolveClickUpAccess(userId);
     if (!source) {
       reply.code(400);
@@ -213,7 +216,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     }
 
     try {
-      const result = await syncClickUpClients(source);
+      const result = await syncClickUpClients(source, request.tenantContext!.organizationId);
 
       if (source.connectionId) {
         await db

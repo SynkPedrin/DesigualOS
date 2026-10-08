@@ -55,8 +55,16 @@ export interface MetaOAuthConfig {
  * Um app de Business normalmente precisa de App Review pra `ads_read` em
  * contas fora das do próprio desenvolvedor; isso é responsabilidade de quem
  * administra o App no developers.facebook.com, não deste código.
+ *
+ * `read_insights` SAIU em 08/10/2026: medido direto no dialog OAuth —
+ * "Invalid Scopes: read_insights" derrubava a tela inteira de login ("Este
+ * conteúdo não está disponível no momento"), porque o Facebook recusa o
+ * authorize INTEIRO quando qualquer escopo pedido é inválido pro app, não só
+ * aquele escopo. `read_insights` é permissão de Insights de PÁGINA — este
+ * gateway só lê conta de anúncio/campanha/anúncio via Marketing API, e isso
+ * já é coberto por `ads_read` (ver comentário de `getMetaAds` abaixo).
  */
-const SCOPES = ['ads_read', 'business_management', 'read_insights'] as const;
+const SCOPES = ['ads_read', 'business_management'] as const;
 
 export function buildMetaAuthorizeUrl(config: MetaOAuthConfig, state: string): string {
   const url = new URL(FACEBOOK_DIALOG_BASE);
