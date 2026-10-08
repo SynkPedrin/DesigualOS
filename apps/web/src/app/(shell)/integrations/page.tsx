@@ -102,7 +102,10 @@ export default function IntegrationsPage() {
       ],
     },
     {
-      titulo: 'Mídia',
+      // Microsoft Calendar vive AQUI, e não numa seção própria: três cartões
+      // fecham exatamente uma fileira, e uma seção só pra ele deixava um cartão
+      // órfão numa linha vazia abaixo (pedido da operação, 08/10/2026).
+      titulo: 'Mídia e Agenda',
       itens: [
         {
           nome: 'Meta Ads',
@@ -122,18 +125,6 @@ export default function IntegrationsPage() {
           texto: googleAdsPendente ? 'Consultando' : googleAds?.connected ? 'Conectado' : 'Desconectado',
           painel: <GoogleAdsConnect />,
         },
-      ],
-    },
-    {
-      // A AGENDA FALTAVA NA VITRINE. Tinha rota de authorize na API, hook no
-      // front e tela de Calendário consumindo — e nenhum cartão aqui, então não
-      // havia por onde conectar (relato do Pedro, 08/10/2026).
-      //
-      // Só Microsoft: o Google Calendar foi retirado a pedido da operação, que
-      // usa Outlook. A rota e o hook continuam existindo, então voltar é
-      // adicionar o cartão de novo, não reimplementar.
-      titulo: 'Calendário',
-      itens: [
         {
           nome: 'Microsoft Calendar',
           categoria: 'Agenda',
