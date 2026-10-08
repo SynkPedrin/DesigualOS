@@ -286,12 +286,56 @@ export async function queryOperationTasks(
   const tasks: OperationTask[] = [];
   let page = 0;
 
-  for (; page < MAX_PAGES; page += 1) {
-    const result = await fetchPage(config, query, page);
-    tasks.push(...result.tasks);
-    if (result.lastPage) {
-      return { tasks, truncated: false, pagesFetched: page + 1 };
+  /**
+   * PÁGINAS EM PARALELO quando não há filtro de lista — e só nesse caso.
+   *
+   * Medido em 07/10/2026, contra o ClickUp real da agência: a consulta do
+   * workspace inteiro (13 páginas) levava 11,6s sequencial, contra 6,4s do
+   * caminho por listas, que já paralelizava em lotes. Doze segundos é a tela
+   * de Tarefas parecendo travada no primeiro acesso.
+   *
+   * A janela vale 1 quando há `listIds` de propósito: esse caminho já roda
+   * dentro de lotes simultâneos lá em cima, e multiplicar as duas
+   * concorrências (3 lotes × 3 páginas) levaria a 9 requisições ao mesmo
+   * tempo — perto demais do rate limit para um ganho que aquele caminho já
+   * não precisa.
+   *
+   * O custo de errar para mais é barato: pedir uma página além do fim devolve
+   * vazio, e o laço descarta tudo depois da página que se declarou última.
+   */
+  const paginasSimultaneas = listIds.length === 0 ? 3 : 1;
+
+  /**
+   * A PRIMEIRA PÁGINA VAI SOZINHA, e isso não é detalhe: a maioria das
+   * consultas cabe nela. Disparar a janela inteira de cara gastaria três
+   * requisições para devolver um resultado de uma página — desperdício puro
+   * contra um rate limit real (100 req/min), e sem nenhum ganho de tempo,
+   * porque não havia o que buscar em paralelo. A paralelização só começa
+   * quando já se sabe que existe uma segunda página.
+   */
+  const primeira = await fetchPage(config, query, 0);
+  tasks.push(...primeira.tasks);
+  if (primeira.lastPage) {
+    return { tasks, truncated: false, pagesFetched: 1 };
+  }
+  page = 1;
+
+  while (page < MAX_PAGES) {
+    const janela = Math.min(paginasSimultaneas, MAX_PAGES - page);
+    const resultados = await Promise.all(
+      Array.from({ length: janela }, (_, i) => fetchPage(config, query, page + i)),
+    );
+
+    for (const [i, resultado] of resultados.entries()) {
+      tasks.push(...resultado.tasks);
+      if (resultado.lastPage) {
+        // As páginas seguintes da janela já foram buscadas e são descartadas:
+        // elas estão além do fim, e contá-las mentiria no `pagesFetched`.
+        return { tasks, truncated: false, pagesFetched: page + i + 1 };
+      }
     }
+
+    page += janela;
   }
 
   return { tasks, truncated: true, pagesFetched: page };
