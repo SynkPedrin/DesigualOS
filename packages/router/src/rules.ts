@@ -266,6 +266,52 @@ export const ROUTING_RULES: RoutingRule[] = [
       'estado atual',
       'qual é o estado',
       'qual o estado',
+      /**
+       * FATO SOBRE CLIENTE NOMEADO é pergunta de conhecimento, nunca de
+       * esclarecimento (bug reportado em produção, 01/10/2026):
+       *
+       *   "Quem é o decisor do Cliente Teste 7?" -> needs_routing_clarification
+       *
+       * Nenhuma regra cobria "decisor"/"orçamento", o classifier local 3B estava
+       * indisponível (mesmo cenário do bloco de mídia acima) e a paga sem chave
+       * — a decisão caía no fallback e o usuário recebia um pedido de
+       * esclarecimento numa pergunta cuja resposta está na memória do cliente.
+       * "quando é a entrega de X" já era coberta por 'entrega'; aqui entram o
+       * decisor, o orçamento e quem decide. Verba/investimento de MÍDIA seguem
+       * com o Jarbas ("quanto investimos", "verba de mídia") — vocabulário
+       * separado de propósito.
+       */
+      'decisor',
+      'decisores',
+      'quem decide',
+      'orçamento',
+      'orcamento',
+      /**
+       * A CARTEIRA é operação, e a pergunta mais básica sobre ela não era
+       * coberta por nenhuma regra.
+       *
+       * Medido no chat de produção em 08/10/2026, pelo navegador, sem hint de
+       * agente:
+       *
+       *   "operação: me lista as minhas tarefas abertas"        -> Bento, 414
+       *      tarefas reais, 30 clientes, 129 atrasadas (120s)
+       *   "quantos clientes ativos existem na carteira hoje?"   ->
+       *      needs_routing_clarification (13s)
+       *
+       * Mesmo domínio, mesma pessoa, mesma sessão: a primeira só funciona
+       * porque alguém escreveu a palavra "operação" na frente. Quem vai usar
+       * isto no dia a dia não escreve — e recebe um menu de três opções no
+       * lugar de um número que o sistema tem.
+       *
+       * Sem risco de roubar pergunta de mídia: carteira e contagem de clientes
+       * são vocabulário da agência inteira, não de campanha. O que é de mídia
+       * continua dito em CPA, ROAS, investimento e Meta, e o bloco J01-J04 de
+       * apps/worker/scripts/intelligence-routing-check.mts reprova se isto
+       * empurrar pergunta de mídia pro Bento.
+       */
+      'carteira',
+      'clientes ativos',
+      'quantos clientes',
     ],
     primaryAgent: 'bento',
     requiredTools: ['clickup'],

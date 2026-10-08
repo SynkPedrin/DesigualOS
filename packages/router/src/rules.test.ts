@@ -212,3 +212,71 @@ describe('mídia decide por regra, não por modelo que pode estar fora', () => {
     },
   );
 });
+
+/**
+ * Bug reportado em produção (01/10/2026): "Quem é o decisor do Cliente Teste 7?"
+ * recebeu PEDIDO DE ESCLARECIMENTO. Nenhuma regra cobria fato de cliente
+ * (decisor, orçamento), o classifier local estava indisponível e a paga sem
+ * chave — a decisão caía no fallback. A resposta é recuperável pela memória do
+ * cliente (Bento); esclarecimento aqui é sempre errado.
+ */
+describe('fato sobre cliente nomeado é pergunta de conhecimento, nunca esclarecimento', () => {
+  const LIMIAR = 0.7;
+
+  it.each([
+    'Quem é o decisor do Cliente Teste 7?',
+    'quem é o decisor da Cosentino?',
+    'quem decide o orçamento na 3Net?',
+    'qual o orçamento do Cliente Teste 7?',
+    'qual é o orcamento mensal da Elite?',
+    'quando é a entrega do Cliente Teste 7?',
+    'quem é o responsável pelo Cliente Teste 7?',
+  ])('"%s" -> bento acima do limiar, sem depender de classifier', (m) => {
+    const r = matchRule(m);
+    expect(r?.rule.primaryAgent).toBe('bento');
+    expect(r?.rule.intent).toBe('knowledge_query');
+    expect(r!.confidence).toBeGreaterThanOrEqual(LIMIAR);
+  });
+
+  /** A cerca do outro lado: verba de MÍDIA continua com o Jarbas. */
+  it.each(['quanto investimos em Meta Ads esse mês?', 'qual a verba de mídia do trimestre?'])(
+    '%s continua no Jarbas',
+    (m) => {
+      expect(matchRule(m)?.rule.primaryAgent).toBe('jarbas');
+    },
+  );
+
+  /**
+   * A CARTEIRA, medida no chat de produção em 08/10/2026.
+   *
+   * "operação: me lista as minhas tarefas abertas" devolveu 414 tarefas reais;
+   * "quantos clientes ativos existem na carteira hoje?", na mesma sessão,
+   * devolveu pedido de esclarecimento. A diferença era a palavra "operação"
+   * escrita na frente — que ninguém escreve no uso de verdade.
+   */
+  it.each([
+    'quantos clientes ativos existem na carteira hoje?',
+    'como está a carteira esse mês?',
+    'quantos clientes a gente atende?',
+  ])('"%s" -> bento acima do limiar (a carteira é operação)', (m) => {
+    const r = matchRule(m);
+    expect(r?.rule.primaryAgent).toBe('bento');
+    expect(r!.confidence).toBeGreaterThanOrEqual(LIMIAR);
+  });
+
+  /**
+   * A cerca do outro lado da carteira: pergunta de MÍDIA que cita cliente não
+   * pode ser capturada por este vocabulário novo.
+   */
+  it.each([
+    'qual o CPA das campanhas da Elite esse mês?',
+    'como está o ROAS do Meta Ads da 3Net?',
+  ])('%s continua no Jarbas depois da regra de carteira', (m) => {
+    expect(matchRule(m)?.rule.primaryAgent).toBe('jarbas');
+  });
+
+  /** E o genuinamente ambíguo continua sem regra (vai pro esclarecimento legítimo). */
+  it.each(['oi, tudo bem?', 'me ajuda com isso'])('%s não casa regra', (m) => {
+    expect(matchRule(m)).toBeNull();
+  });
+});
