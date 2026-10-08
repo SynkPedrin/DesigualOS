@@ -9,7 +9,13 @@
 #   cada um em nodes/*/README.md.
 #
 # Uso:
-#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#   RELEASE_SHA=$(git rev-parse HEAD) \
+#     docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# O RELEASE_SHA na frente não é enfeite: .git está no .dockerignore, então
+# dentro da imagem não há repositório pra consultar e /health responderia
+# "unknown" em release_sha — ou seja, ninguém conseguiria dizer QUAL commit
+# está no ar. Esquecer o prefixo não quebra o build, só volta ao "unknown".
 #
 # Pré-requisito: um .env de produção na raiz do repo, preenchido a partir de
 # .env.example (ver docs/runbook.md para a sequência completa de deploy).
@@ -51,6 +57,8 @@ services:
       context: .
       dockerfile: Dockerfile.prod
       target: api
+      args:
+        RELEASE_SHA: "${RELEASE_SHA:-}"
     container_name: desigual-os-api
     restart: unless-stopped
     # Todo o resto das variáveis (SUPABASE_*, ANTHROPIC_API_KEY, NODE_SECRET,
@@ -82,6 +90,8 @@ services:
       context: .
       dockerfile: Dockerfile.prod
       target: worker
+      args:
+        RELEASE_SHA: "${RELEASE_SHA:-}"
     container_name: desigual-os-worker
     restart: unless-stopped
     env_file:

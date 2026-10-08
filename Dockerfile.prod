@@ -20,6 +20,13 @@ WORKDIR /app
 
 # --- Build: instala o workspace inteiro e empacota os dois apps ---
 FROM base AS build
+# O SHA do commit entra por build arg porque .git está no .dockerignore: dentro
+# da imagem não há repositório pra consultar. scripts/identidade-de-release.mjs
+# lê RELEASE_SHA do ambiente e o assa no bundle via esbuild define — é o que
+# faz /health provar QUAL commit está no ar em vez de responder "unknown".
+# Sem o arg, degrada pro comportamento antigo ("unknown"), nunca quebra o build.
+ARG RELEASE_SHA
+ENV RELEASE_SHA=${RELEASE_SHA}
 # Contexto de build já filtrado pelo .dockerignore (sem node_modules/dist
 # locais, sem a LP, sem brain/Brain-Marketing/STUDIO-BRAIN).
 COPY . .
