@@ -33,6 +33,14 @@ export {
 
 export { buildClickUpMcpTool } from './clickup-mcp-tool.js';
 
+export {
+  embedText,
+  embedBatch,
+  __setEmbeddingsClientForTest,
+  EMBEDDING_MODEL,
+  EMBEDDING_DIMENSIONS,
+} from './embeddings-client.js';
+
 export { BUDGET_CONFIG } from './budget.js';
 
 export {
