@@ -73,6 +73,20 @@ export interface OrganizacaoDoUsuario {
   name: string;
 }
 
+/**
+ * A MARCA da empresa ativa, como o brand-provider aplica: primary/secondary/
+ * accent alimentam os tokens `--color-brand-*`. Vem de `GET /me`
+ * (`organizacao_ativa.marca`) desde que a API passou a devolvê-la (migração
+ * 0049); ausente ou com campos `null` = marca do produto, estado legítimo.
+ */
+export interface MarcaDaOrganizacao {
+  primary?: string | null;
+  secondary?: string | null;
+  accent?: string | null;
+  logo_url?: string | null;
+  nome_assistente?: string | null;
+}
+
 export interface MeResponse {
   id: string;
   email: string;
@@ -92,7 +106,7 @@ export interface MeResponse {
    * hoje existe uma só, então a interface não mostra escolha — porque não há.
    */
   organizacoes?: OrganizacaoDoUsuario[];
-  organizacao_ativa?: OrganizacaoDoUsuario | null;
+  organizacao_ativa?: (OrganizacaoDoUsuario & { slug?: string; marca?: MarcaDaOrganizacao; eh_provedora?: boolean }) | null;
   /** Opera no nível da plataforma. Nunca derivado só do papel. */
   eh_provider?: boolean;
 }
@@ -538,6 +552,18 @@ export interface ClientSummaryWire {
   clickup_url?: string | null;
   /** Idem: id do projeto de chat vinculado a este cliente, se existir. */
   project_id?: string | null;
+  /**
+   * QUANDO ESTE CLIENTE SE MEXEU PELA ÚLTIMA VEZ — três estados, não dois:
+   *
+   *   string     — a data. Houve movimento.
+   *   `null`     — nunca houve. Estado legítimo de cliente recém cadastrado.
+   *   `undefined`— não deu para ler. A API diz isso em `atividade_lida`.
+   *
+   * Juntar os dois últimos faria "não consegui medir" virar "parado há muito
+   * tempo", que é inventar um alarme a partir de uma falha de leitura.
+   */
+  ultima_atividade?: string | null;
+  pedidos_30d?: number;
 }
 
 /**
@@ -559,6 +585,9 @@ export interface ClientSummary {
   clickupUrl: string | null;
   projectId: string | null;
   natureza: NaturezaDeCliente;
+  /** Ver `ClientSummaryWire.ultima_atividade`: três estados, de propósito. */
+  ultimaAtividade: string | null | undefined;
+  pedidos30d: number | undefined;
 }
 
 export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
@@ -573,6 +602,10 @@ export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
     // API antiga sem o campo trata tudo como cliente — o comportamento de
     // antes, não um default que esconde fixture sem avisar.
     natureza: wire.natureza ?? 'CLIENTE',
+    // Repassado SEM `?? null`: aqui `undefined` carrega informação ("não deu
+    // para ler") e virar `null` o transformaria em "nunca se mexeu".
+    ultimaAtividade: wire.ultima_atividade,
+    pedidos30d: wire.pedidos_30d,
   };
 }
 
@@ -901,6 +934,10 @@ export interface NotionIntegrationStatusWire {
   connected: boolean;
   /** false = o Orchestrator não tem NOTION_CLIENT_ID/SECRET/REDIRECT_URI. */
   configured: boolean;
+  /** QUAIS variáveis faltam. Vazio quando `configured` é true. Existe porque
+   *  quem lê esse aviso na agência costuma ser quem pode resolvê-lo — e
+   *  "não configurado" sozinho não diz o que configurar. */
+  missing_env?: string[];
   workspace_name?: string | null;
   connected_at?: ISODateString | null;
   destinos: Array<{ id: string; title: string }>;
@@ -914,6 +951,283 @@ export interface ClickUpIntegrationStatusWire {
   workspace_name?: string | null;
   last_synced_at?: ISODateString | null;
   connected_at?: ISODateString | null;
+}
+
+/**
+ * Meta Ads (Facebook for Business) — OAuth É POR COLABORADOR
+ * (/integrations/meta/*), mas qual Ad Account pertence a qual cliente é
+ * sempre decidido em /clients/:id/meta-accounts (nunca aqui). Ver
+ * apps/api/src/clients/routes.ts e o §34-38 do prompt de refinamento.
+ */
+export interface MetaIntegrationStatusWire {
+  connected: boolean;
+  /** false = o Orchestrator não tem META_APP_ID/SECRET/REDIRECT_URI configurados. */
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface MetaBusinessWire {
+  id: string;
+  name: string;
+}
+
+export interface MetaAdAccountWire {
+  /** Já vem com o prefixo "act_" — formato exigido de volta pela Graph API. */
+  id: string;
+  account_id: string;
+  name: string | null;
+  status: number | null;
+  currency: string | null;
+  business_id: string | null;
+  business_name: string | null;
+}
+
+/** Linha de /clients/:id/meta-accounts — o VÍNCULO cliente↔conta, não a conta "crua" da Graph API. */
+export interface ClientMetaAccountWire {
+  account_id: string;
+  business_id: string | null;
+  is_primary: boolean;
+  label: string | null;
+  /** false = o vínculo existe mas a conexão OAuth que o criou foi desconectada/expirou. */
+  connected: boolean;
+  created_at: ISODateString;
+}
+
+export interface MetaAccountInsightsWire {
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  cpc: number | null;
+  cpm: number | null;
+  frequency: number | null;
+  results: number | null;
+  period_start: string | null;
+  period_end: string | null;
+}
+
+export interface MetaCampaignSummaryWire {
+  id: string;
+  name: string;
+  status: string;
+  spend: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+/** GET /clients/:id/media/meta/summary — `connected:false` é estado normal (cliente sem mídia ainda), nunca erro. */
+export type ClientMetaSummaryWire =
+  | { connected: false }
+  | { connected: true; account_id: string; data_available: false; reason: string }
+  | { connected: true; account_id: string; data_available: true; insights: MetaAccountInsightsWire | null; campaigns: MetaCampaignSummaryWire[] };
+
+/**
+ * Google Ads — mesma separação do Meta: OAuth é por colaborador
+ * (/integrations/google-ads/*), vínculo cliente↔Customer ID é sempre em
+ * /clients/:id/google-ads-accounts (§43-45 do prompt de refinamento).
+ */
+export interface GoogleAdsIntegrationStatusWire {
+  connected: boolean;
+  /** false = falta GOOGLE_ADS_CLIENT_ID/SECRET/REDIRECT_URI/DEVELOPER_TOKEN no Orchestrator. */
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface GoogleAdsAccountWire {
+  customer_id: string;
+  descriptive_name: string | null;
+  currency_code: string | null;
+  status: string | null;
+  manager_customer_id: string | null;
+}
+
+export interface ClientGoogleAdsAccountWire {
+  customer_id: string;
+  login_customer_id: string | null;
+  is_primary: boolean;
+  label: string | null;
+  connected: boolean;
+  created_at: ISODateString;
+}
+
+export interface GoogleAdsAccountInsightsWire {
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  average_cpc: number | null;
+  conversions: number | null;
+  conversions_value: number | null;
+}
+
+export interface GoogleAdsCampaignSummaryWire {
+  id: string;
+  name: string;
+  status: string;
+  spend: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+/** GET/POST /calendar/events — Calendar Core (prompt "CALENDAR + AUTOMATIONS + BENTO V2", 06/10/2026). */
+export interface CalendarEventWire {
+  id: string;
+  client_id: string | null;
+  start_at: ISODateString;
+  end_at: ISODateString;
+  timezone: string;
+  status: string;
+  /** false = evento privado de outra pessoa — só isto é mostrado, nunca o resto (§27). */
+  visible: boolean;
+  title: string | null;
+  description: string | null;
+  location: string | null;
+  meeting_url: string | null;
+  source: string;
+  created_by: string;
+}
+
+export interface CalendarConflictWire {
+  member_id: string;
+  busy_slot: { start: ISODateString; end: ISODateString };
+}
+
+export interface CalendarAvailabilitySlotWire {
+  start: ISODateString;
+  end: ISODateString;
+}
+
+/** GET /calendar/events/:id/meeting-brief — Meeting Prep (§51-53 do prompt "CALENDAR + AUTOMATIONS + BENTO V2", 06/10/2026). */
+export interface MeetingBriefWire {
+  event: {
+    id: string;
+    title: string | null;
+    description: string | null;
+    start_at: ISODateString;
+    end_at: ISODateString;
+    location: string | null;
+    meeting_url: string | null;
+  };
+  client: { id: string; name: string };
+  participants: {
+    internal: Array<{ user_id: string; name: string; response_status: string }>;
+    external: Array<{ contact_id: string | null; name: string | null; email: string | null }>;
+  };
+  demands: { open_count: number; items: Array<{ id: string; title: string; status: string; due_date: ISODateString | null }> };
+  briefs: { open_count: number; items: Array<{ id: string; status: string; demand_title: string }> };
+  approvals: { pending_count: number; items: Array<{ id: string; resource_type: string; created_at: ISODateString }> };
+  last_conversation: { id: string; title: string | null; status: string; updated_at: ISODateString } | null;
+  previous_meeting: { id: string; title: string | null; description: string | null; start_at: ISODateString } | null;
+}
+
+/** GET /integrations/google-calendar/status — OAuth pessoal (Parte F do prompt "CALENDAR + AUTOMATIONS + BENTO V2"). */
+export interface GoogleCalendarIntegrationStatusWire {
+  connected: boolean;
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface GoogleCalendarListEntryWire {
+  id: string;
+  summary: string | null;
+  primary: boolean;
+  access_role: string;
+}
+
+export interface MemberCalendarAccountWire {
+  id: string;
+  external_calendar_id: string;
+  is_primary: boolean;
+  connected: boolean;
+  last_synced_at: ISODateString | null;
+}
+
+/** GET /integrations/microsoft-calendar/status — Outlook/Microsoft 365, mesmo desenho do Google Calendar (07/10/2026). */
+export interface MicrosoftCalendarIntegrationStatusWire {
+  connected: boolean;
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface MicrosoftCalendarListEntryWire {
+  id: string;
+  name: string | null;
+  is_default: boolean;
+  can_edit: boolean;
+}
+
+/** GET/POST /clients/:id/reports — Relatórios PDF (§46-51 do prompt de refinamento). */
+export interface ClientReportWire {
+  id: string;
+  /** 'queued' | 'processing' | 'ready' | 'failed'. */
+  status: string;
+  channels: string[];
+  period_days: number;
+  period_start: ISODateString;
+  period_end: ISODateString;
+  storage_url: string | null;
+  error_message: string | null;
+  created_at: ISODateString;
+}
+
+export type ClientGoogleAdsSummaryWire =
+  | { connected: false }
+  | { connected: true; customer_id: string; data_available: false; reason: string }
+  | { connected: true; customer_id: string; data_available: true; insights: GoogleAdsAccountInsightsWire | null; campaigns: GoogleAdsCampaignSummaryWire[] };
+
+/** GET /agency-control-center — "Controle da Agência" (§52-59 do prompt de refinamento). */
+export interface AgencyControlCenterWire {
+  kpis: {
+    clientes_ativos: number;
+    conversas_aguardando: number;
+    demandas_abertas: number;
+    atrasados: number;
+    aguardando_aprovacao: number;
+    previstas_hoje: number;
+  };
+  funil_de_workflow: {
+    novas: number;
+    briefing: number;
+    producao: number;
+    revisao: number;
+    aprovacao: number;
+    concluido: number;
+  };
+  clientes_em_atencao: Array<{
+    client_id: string;
+    client_name: string;
+    responsavel: string | null;
+    demandas_atrasadas: number;
+    aprovacoes_pendentes: number;
+  }>;
+  operacao_por_colaborador: Array<{
+    id: string;
+    name: string;
+    clientes: number;
+    em_andamento: number;
+    atrasados: number;
+    aprovacoes_pendentes: number;
+  }>;
+  media_summary: {
+    clientes_com_meta_conectado: number;
+    clientes_com_google_ads_conectado: number;
+    performance_agregada_disponivel: false;
+  };
+  /** Opcional: versão antiga do backend não manda — a seção some, não quebra. */
+  clickup_summary?: {
+    total_tarefas: number;
+    abertas: number;
+    atrasadas: number;
+    por_status: Array<{ status: string; total: number }>;
+  };
+  integration_health: {
+    clickup: { status: string; last_event_at: string | null };
+    whatsapp: { status: string };
+    meta: { status: string; collaborator_connections: number };
+    google_ads: { status: string; collaborator_connections: number };
+    calendar: { status: 'nao_implementado' };
+  };
+  gerado_em: ISODateString;
 }
 
 /**
@@ -977,6 +1291,10 @@ export interface AgencyTasksResponseWire {
   tasks: AgencyTaskWire[];
   /** true = bateu no teto de páginas (20 x 100 tarefas) - a lista é um MÍNIMO. */
   truncated: boolean;
+  /** Nomes de clientes cuja organização tem conector ClickUp quebrado —
+   *  ficaram de fora deste agregado (redesenho multi-org, 06/10/2026). Nunca
+   *  um id de organização, só o nome do cliente visível a quem pergunta. */
+  unavailable_clients?: string[];
 }
 
 export interface ClickUpSyncResultWire {
@@ -2163,4 +2481,243 @@ export function mapFontCatalogEntry(wire: FontCatalogEntryWire): FontCatalogEntr
     styles: wire.styles,
     defaultSubset: wire.default_subset,
   };
+}
+
+/**
+ * INBOX (P1-A/C, 06/10/2026) — conversa externa (hoje WhatsApp). Distinto do
+ * chat interno com Bento (`ConversationDetailWire` acima): aqui o
+ * interlocutor é um CONTATO (telefone), não outro colaborador.
+ */
+export type InboxThreadStatus = 'open' | 'waiting_client' | 'waiting_agency' | 'archived';
+
+export interface InboxThreadWire {
+  id: string;
+  client_id: string | null;
+  client_name: string | null;
+  contact_id: string;
+  contact_name: string;
+  contact_phone: string | null;
+  channel: string;
+  status: InboxThreadStatus;
+  assigned_to_user_id: string | null;
+  last_message_at: string | null;
+  /** Prévia da última mensagem (lista da Inbox) — opcional: versão antiga da
+   * API não manda, a lista cai pra mostrar só nome/horário (ver ThreadList). */
+  last_message_preview?: string | null;
+  /** Mensagens não lidas nesta conversa — mesmo contrato opcional acima. */
+  unread_count?: number;
+}
+
+export interface InboxThread {
+  id: string;
+  clientId: string | null;
+  clientName: string | null;
+  contactId: string;
+  contactName: string;
+  contactPhone: string | null;
+  channel: string;
+  status: InboxThreadStatus;
+  assignedToUserId: string | null;
+  lastMessageAt: string | null;
+  lastMessagePreview: string | null;
+  unreadCount: number;
+}
+
+export function mapInboxThread(wire: InboxThreadWire): InboxThread {
+  return {
+    id: wire.id,
+    clientId: wire.client_id,
+    clientName: wire.client_name,
+    contactId: wire.contact_id,
+    contactName: wire.contact_name,
+    contactPhone: wire.contact_phone,
+    channel: wire.channel,
+    status: wire.status,
+    assignedToUserId: wire.assigned_to_user_id,
+    lastMessageAt: wire.last_message_at,
+    lastMessagePreview: wire.last_message_preview ?? null,
+    unreadCount: wire.unread_count ?? 0,
+  };
+}
+
+export interface InboxMessageWire {
+  id: string;
+  direction: 'inbound' | 'outbound';
+  sender_contact_id: string | null;
+  sender_user_id: string | null;
+  content: string | null;
+  attachment_url: string | null;
+  delivery_status: string;
+  created_at: string;
+}
+
+export interface InboxMessage {
+  id: string;
+  direction: 'inbound' | 'outbound';
+  senderContactId: string | null;
+  senderUserId: string | null;
+  content: string | null;
+  attachmentUrl: string | null;
+  deliveryStatus: string;
+  createdAt: string;
+}
+
+export function mapInboxMessage(wire: InboxMessageWire): InboxMessage {
+  return {
+    id: wire.id,
+    direction: wire.direction,
+    senderContactId: wire.sender_contact_id,
+    senderUserId: wire.sender_user_id,
+    content: wire.content,
+    attachmentUrl: wire.attachment_url,
+    deliveryStatus: wire.delivery_status,
+    createdAt: wire.created_at,
+  };
+}
+
+/** Demand (P1-D, 06/10/2026) — "o cliente pediu algo". */
+export type DemandStatus = 'new' | 'briefing' | 'in_production' | 'done' | 'cancelled';
+export type DemandSource = 'whatsapp' | 'manual' | 'bento';
+export type DemandPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+export interface DemandWire {
+  id: string;
+  client_id: string;
+  client_name: string | null;
+  owner_id: string | null;
+  title: string;
+  description: string | null;
+  source: DemandSource;
+  status: DemandStatus;
+  priority: DemandPriority;
+  requested_at: string;
+  due_date: string | null;
+  clickup_task_url: string | null;
+}
+
+export interface Demand {
+  id: string;
+  clientId: string;
+  clientName: string | null;
+  ownerId: string | null;
+  title: string;
+  description: string | null;
+  source: DemandSource;
+  status: DemandStatus;
+  priority: DemandPriority;
+  requestedAt: string;
+  dueDate: string | null;
+  clickupTaskUrl: string | null;
+}
+
+export function mapDemand(wire: DemandWire): Demand {
+  return {
+    id: wire.id,
+    clientId: wire.client_id,
+    clientName: wire.client_name,
+    ownerId: wire.owner_id,
+    title: wire.title,
+    description: wire.description,
+    source: wire.source,
+    status: wire.status,
+    priority: wire.priority,
+    requestedAt: wire.requested_at,
+    dueDate: wire.due_date,
+    clickupTaskUrl: wire.clickup_task_url,
+  };
+}
+
+/** Brief + BriefVersion (P1-E/F/G, 06/10/2026). */
+export type BriefStatus = 'draft' | 'in_review' | 'approved' | 'sent_to_production';
+
+export interface BriefContentWire {
+  objective?: string;
+  deliverable?: string;
+  channel?: string;
+  format?: string;
+  deadline?: string;
+  references?: string[];
+  direction?: string;
+  restrictions?: string;
+  assets?: string[];
+  notes?: string;
+}
+
+export interface BriefVersionWire {
+  id: string;
+  brief_id: string;
+  version: number;
+  content: BriefContentWire;
+  source: 'ai_draft' | 'human_edit';
+  created_at: string;
+}
+
+export interface BriefWire {
+  id: string;
+  client_id: string;
+  demand_id: string;
+  status: BriefStatus;
+  approved_version_id: string | null;
+  external_task_id: string | null;
+  external_task_provider: string | null;
+  versions?: BriefVersionWire[];
+  draft_version?: BriefVersionWire;
+}
+
+/** Aprovação genérica de recurso de negócio (P1-I/J, 06/10/2026) — distinta
+ *  da fila de aprovação de tool-call da IA (ToolCall acima). */
+export type ApprovalResourceType = 'brief' | 'creative' | 'copy' | 'task' | 'campaign' | 'budget' | 'publication';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'changes_requested';
+
+export interface ApprovalRequestWire {
+  id: string;
+  client_id: string | null;
+  resource_type: ApprovalResourceType;
+  resource_id: string;
+  version: string | null;
+  requested_by: string;
+  approver_id: string | null;
+  status: ApprovalStatus;
+  comment: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/** Responsabilidade operacional de um membro sobre um cliente (P0-C,
+ *  06/10/2026) — distinta do `role` de acesso ao workspace. Texto livre
+ *  validado no backend, não enum de banco (`packages/types/client-assignment.ts`). */
+export const CLIENT_RESPONSIBILITIES = [
+  'account',
+  'traffic',
+  'design',
+  'copy',
+  'social',
+  'video',
+  'manager',
+  'sales',
+  'other',
+] as const;
+export type ClientResponsibility = (typeof CLIENT_RESPONSIBILITIES)[number];
+
+export interface ClientAssignmentWire {
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  responsibility: string;
+}
+
+/** GET /organizations/:id/connectors — credenciais mascaradas, nunca o secret inteiro. */
+export interface OrganizationConnectorWire {
+  provider: string;
+  status: string;
+  credentials: Record<string, string>;
+  created_at: ISODateString | null;
+  updated_at: ISODateString | null;
+}
+
+/** GET /organizations/:id/connectors/whatsapp/health (07/10/2026). */
+export interface WhatsappHealthWire {
+  connected: boolean;
+  configured: boolean;
+  detail?: string | null;
 }

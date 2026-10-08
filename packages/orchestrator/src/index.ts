@@ -18,6 +18,7 @@ export * from './pubsub';
 export * from './cost-service';
 export * from './learning';
 export * from './memory-engine';
+export * from './memory-embeddings';
 export * from './proactivity';
 export * from './event-store';
 export * from './agent-probe';
