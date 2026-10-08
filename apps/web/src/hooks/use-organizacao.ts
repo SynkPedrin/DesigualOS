@@ -62,6 +62,99 @@ export interface MudancaDeEmpresa {
   status?: 'ativa' | 'suspensa';
 }
 
+export type PapelDeEmpresa = 'owner' | 'admin' | 'collaborator';
+
+export interface MembroDaEmpresa {
+  id: string;
+  nome: string | null;
+  email: string;
+  papel: PapelDeEmpresa;
+  ativa: boolean;
+  ultimo_acesso: string | null;
+  membro_desde: string | null;
+}
+
+export interface ConvitePendente {
+  id: string;
+  email: string;
+  papel: PapelDeEmpresa;
+  status: string;
+  convidado_em: string | null;
+}
+
+export interface MembrosDaEmpresa {
+  membros: MembroDaEmpresa[];
+  convites_pendentes: ConvitePendente[];
+}
+
+/**
+ * Quem trabalha na empresa, incluindo convite pendente — separado da ficha
+ * (`useOrganizacao`) porque é o endpoint que também serve as mutações de
+ * convidar/trocar papel/remover, e refaz essa lista sozinho sem invalidar a
+ * ficha inteira.
+ */
+export function useMembrosDaEmpresa(id: string | undefined) {
+  return useQuery({
+    queryKey: ['organizacao', id, 'membros'],
+    queryFn: () => apiFetch<MembrosDaEmpresa>(`/organizations/${id}/members`),
+    enabled: Boolean(id),
+  });
+}
+
+function useInvalidarMembros(id: string | undefined) {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ['organizacao', id, 'membros'] });
+    void queryClient.invalidateQueries({ queryKey: ['organizacao', id] });
+  };
+}
+
+export function useConvidarParaEmpresa(id: string | undefined) {
+  const invalidar = useInvalidarMembros(id);
+  return useMutation({
+    mutationFn: (dados: { email: string; role: PapelDeEmpresa }) =>
+      apiFetch<{ email: string; papel: PapelDeEmpresa; status: string; membro_criado: boolean; email_enviado: boolean; motivo: string | null }>(
+        `/organizations/${id}/invites`,
+        { method: 'POST', body: JSON.stringify(dados) },
+      ),
+    onSuccess: invalidar,
+  });
+}
+
+export function useTrocarPapelDeMembro(id: string | undefined) {
+  const invalidar = useInvalidarMembros(id);
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: PapelDeEmpresa }) =>
+      apiFetch(`/organizations/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useRemoverMembro(id: string | undefined) {
+  const invalidar = useInvalidarMembros(id);
+  return useMutation({
+    mutationFn: (userId: string) => apiFetch(`/organizations/${id}/members/${userId}`, { method: 'DELETE' }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useReenviarConvite(id: string | undefined) {
+  const invalidar = useInvalidarMembros(id);
+  return useMutation({
+    mutationFn: (inviteId: string) =>
+      apiFetch<{ email_enviado: boolean; motivo: string | null }>(`/organizations/${id}/invites/${inviteId}/reenviar`, { method: 'POST' }),
+    onSuccess: invalidar,
+  });
+}
+
+export function useRevogarConvite(id: string | undefined) {
+  const invalidar = useInvalidarMembros(id);
+  return useMutation({
+    mutationFn: (inviteId: string) => apiFetch(`/organizations/${id}/invites/${inviteId}`, { method: 'DELETE' }),
+    onSuccess: invalidar,
+  });
+}
+
 export function useConfigurarEmpresa(id: string | undefined) {
   const queryClient = useQueryClient();
 
