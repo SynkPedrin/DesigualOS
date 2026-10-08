@@ -18,6 +18,7 @@ import {
   enviarAnexo,
 } from '@/hooks/use-pipelines';
 import type { PipelineBoardWire } from '@/lib/api/contracts';
+import { ApiRequestError } from '@/lib/api/client';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useCollaborators } from '@/hooks/use-collaborators';
 import { ClientDemandsPanel } from '@/components/clients/client-demands-panel';
@@ -683,7 +684,18 @@ function PipelineBoardUI() {
         <EmptyState
           icon={SquareKanban}
           title="Não consegui carregar seus quadros"
-          description={error instanceof Error ? error.message : 'A API não respondeu. Tente de novo em instantes.'}
+          /**
+           * O `detalhe` do corpo entra junto quando existe. É onde a API põe o
+           * que FAZER — por exemplo o comando da migration quando as tabelas
+           * ainda não foram criadas. Mostrar só `message` deixaria a metade
+           * acionável do erro no servidor.
+           */
+          description={[
+            error instanceof Error ? error.message : 'A API não respondeu.',
+            error instanceof ApiRequestError ? (error.body as { detalhe?: string } | undefined)?.detalhe : undefined,
+          ]
+            .filter(Boolean)
+            .join(' ')}
         />
       </div>
     );

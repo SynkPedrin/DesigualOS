@@ -38,6 +38,28 @@ import { auditarAcao } from '../lib/auditoria';
  * foi parar o funil. É a mesma armadilha que já escondeu cliente inteiro neste
  * repositório, e o teste ao lado existe pra que ela não volte.
  */
+/**
+ * TABELA QUE AINDA NÃO FOI MIGRADA NÃO É "ERRO INTERNO".
+ *
+ * `42P01` é o código do Postgres para "relação não existe". Ele acontece numa
+ * janela específica e perfeitamente previsível: o código novo subiu e a
+ * migration ainda não rodou. Nessa janela, cada rota daqui devolvia 500
+ * "Internal Server Error" — e quem recebe isso vai procurar bug no código,
+ * que é o lugar onde ele não está.
+ *
+ * Dizer o comando que resolve custa uma linha e economiza a hora que eu mesmo
+ * teria gastado procurando. 503 e não 500: o servidor está bem, falta um
+ * passo de implantação.
+ */
+function respondeuTabelaAusente(erro: unknown, reply: { code: (n: number) => { send: (b: unknown) => void } }): boolean {
+  if ((erro as { code?: string })?.code !== '42P01') return false;
+  reply.code(503).send({
+    error: 'As tabelas de pipeline ainda não existem neste banco.',
+    detalhe: 'A migration que as cria não foi aplicada. Rode: pnpm --filter @desigual-os/database db:migrate',
+  });
+  return true;
+}
+
 export function quadrosVisiveisPara(userId: string, organizationId: string) {
   return and(
     eq(schema.pipelineBoards.organizationId, organizationId),
@@ -158,26 +180,31 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     const user = request.authUser!;
     const organizationId = request.tenantContext!.organizationId;
 
-    const quadros = await db
-      .select()
-      .from(schema.pipelineBoards)
-      .where(quadrosVisiveisPara(user.id, organizationId))
-      .orderBy(asc(schema.pipelineBoards.posicao), asc(schema.pipelineBoards.createdAt));
+    try {
+      const quadros = await db
+        .select()
+        .from(schema.pipelineBoards)
+        .where(quadrosVisiveisPara(user.id, organizationId))
+        .orderBy(asc(schema.pipelineBoards.posicao), asc(schema.pipelineBoards.createdAt));
 
-    if (quadros.length === 0) return { boards: [] };
+      if (quadros.length === 0) return { boards: [] };
 
-    const cartoes = await db
-      .select()
-      .from(schema.pipelineCards)
-      .where(
-        and(
-          inArray(schema.pipelineCards.boardId, quadros.map((q) => q.id)),
-          isNull(schema.pipelineCards.deletedAt),
-        ),
-      )
-      .orderBy(asc(schema.pipelineCards.posicao), asc(schema.pipelineCards.createdAt));
+      const cartoes = await db
+        .select()
+        .from(schema.pipelineCards)
+        .where(
+          and(
+            inArray(schema.pipelineCards.boardId, quadros.map((q) => q.id)),
+            isNull(schema.pipelineCards.deletedAt),
+          ),
+        )
+        .orderBy(asc(schema.pipelineCards.posicao), asc(schema.pipelineCards.createdAt));
 
-    return { boards: quadros.map((q) => wireQuadro(q, cartoes)) };
+      return { boards: quadros.map((q) => wireQuadro(q, cartoes)) };
+    } catch (erro) {
+      if (respondeuTabelaAusente(erro, reply)) return;
+      throw erro;
+    }
   });
 
   app.post('/pipelines', { preHandler: [requireAuth] }, async (request, reply) => {
