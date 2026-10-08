@@ -14,7 +14,25 @@ import { useMetaIntegration } from '@/hooks/use-meta-integration';
 import { useGoogleAdsIntegration } from '@/hooks/use-google-ads-integration';
 import { useMicrosoftCalendarIntegration } from '@/hooks/use-microsoft-calendar';
 import { useGoogleCalendarIntegration } from '@/hooks/use-google-calendar';
-import { MetaConnect, GoogleAdsConnect, MicrosoftCalendarConnect, GoogleCalendarConnect } from '@/components/settings/conexao-oauth-card';
+import { MetaConnect, GoogleAdsConnect } from '@/components/settings/conexao-oauth-card';
+/**
+ * O painel COMPLETO, o mesmo que a página /calendar usa: conectar, escolher a
+ * agenda e sincronizar. Eu tinha escrito uma segunda versão aqui que só fazia
+ * o OAuth — e com o mesmo nome, o que é como um painel ganha dois donos e
+ * começa a divergir. Conectar sem escolher a agenda não traz evento nenhum,
+ * que é exatamente o estado em que a conexão da Microsoft está hoje no banco:
+ * `integration_connections` tem a linha, `member_calendar_accounts` está
+ * vazia.
+ */
+import { GoogleCalendarConnect } from '@/components/calendar/google-calendar-connect';
+/**
+ * Microsoft vinha do cartão só-de-OAuth, e isso tinha consequência medida: em
+ * 08/10/2026 o banco tinha a linha em `integration_connections` (OAuth feito)
+ * e `member_calendar_accounts` VAZIA — ou seja, alguém conectou pela tela de
+ * Integrações, nunca viu o passo de escolher a agenda, e nenhum evento
+ * chegou. A conexão existia e não servia pra nada.
+ */
+import { MicrosoftCalendarConnect } from '@/components/calendar/microsoft-calendar-connect';
 import { IntegracaoDialog } from '@/components/settings/integracao-dialog';
 import { Consentimento } from '@/components/settings/consentimento';
 import { ClickUpIntegrationSection } from '@/components/settings/clickup-integration-card';

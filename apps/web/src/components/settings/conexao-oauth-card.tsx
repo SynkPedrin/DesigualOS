@@ -11,7 +11,6 @@ import {
   useGoogleAdsIntegration,
 } from '@/hooks/use-google-ads-integration';
 import { useConnectMicrosoftCalendar, useMicrosoftCalendarIntegration } from '@/hooks/use-microsoft-calendar';
-import { useGoogleCalendarIntegration, useConnectGoogleCalendar } from '@/hooks/use-google-calendar';
 
 /**
  * CONEXÃO OAUTH — o botão que faltava.
@@ -233,55 +232,18 @@ export function GoogleAdsConnect() {
  * atrás seria pior que não oferecer.
  */
 /**
- * GOOGLE CALENDAR — a integração que existia inteira e não tinha porta.
+ * A VERSÃO SÓ-DE-OAUTH DO CALENDÁRIO FOI REMOVIDA DAQUI (08/10/2026).
  *
- * Achado em 08/10/2026 clicando a tela de Integrações no navegador: a API
- * tinha as cinco rotas (`authorize`, `callback`, `status`, `calendars` e o
- * vínculo por membro), as três variáveis de ambiente estavam preenchidas e
- * `/integrations/google-calendar/status` respondia `configured: true` — mas a
- * tela nunca desenhou um cartão pra ela. Backend pronto que ninguém alcança é
- * indistinguível, pra quem usa, de backend que não existe.
+ * Existiam duas `MicrosoftCalendarConnect`: esta, que só fazia o OAuth, e a de
+ * `components/calendar/`, que faz o fluxo inteiro — conectar, ESCOLHER A
+ * AGENDA e sincronizar. Mesmo nome, donos diferentes.
+ *
+ * A consequência estava no banco: `integration_connections` tinha a conexão
+ * da Microsoft e `member_calendar_accounts` estava vazia. Alguém conectou pela
+ * tela de Integrações, que usava esta versão, nunca viu o passo de escolher a
+ * agenda, e nenhum evento chegou ao Calendário. A conexão existia e não servia
+ * pra nada.
+ *
+ * Meta e Google Ads continuam aqui porque neles o OAuth É o fluxo inteiro: a
+ * escolha de conta de anúncio acontece depois, por cliente, dentro da ficha.
  */
-export function GoogleCalendarConnect() {
-  const google = useGoogleCalendarIntegration();
-  const conectarGoogle = useConnectGoogleCalendar();
-
-  return (
-    <ConexaoOAuth
-      nome="Google Calendar"
-      descricao="Conecte sua agenda do Google pra que as reuniões apareçam no Calendário."
-      descricaoConectado="Conectado. Sua agenda do Google aparece no Calendário."
-      variaveis={['GOOGLE_CALENDAR_CLIENT_ID', 'GOOGLE_CALENDAR_CLIENT_SECRET', 'GOOGLE_CALENDAR_REDIRECT_URI']}
-      status={google.data}
-      carregando={google.isPending}
-      conectar={() => conectarGoogle.mutate()}
-      conectando={conectarGoogle.isPending}
-      erroConectar={conectarGoogle.error}
-      paramCallback="google_calendar"
-    />
-  );
-}
-
-export function MicrosoftCalendarConnect() {
-  const microsoft = useMicrosoftCalendarIntegration();
-  const conectarMicrosoft = useConnectMicrosoftCalendar();
-
-  return (
-    <ConexaoOAuth
-      nome="Microsoft Calendar"
-        descricao="Conecte sua agenda do Outlook/Microsoft 365 pra que as reuniões apareçam no Calendário."
-        descricaoConectado="Conectado. Sua agenda da Microsoft aparece no Calendário."
-        variaveis={[
-          'MICROSOFT_CALENDAR_CLIENT_ID',
-          'MICROSOFT_CALENDAR_CLIENT_SECRET',
-          'MICROSOFT_CALENDAR_REDIRECT_URI',
-        ]}
-        status={microsoft.data}
-        carregando={microsoft.isPending}
-        conectar={() => conectarMicrosoft.mutate()}
-        conectando={conectarMicrosoft.isPending}
-      erroConectar={conectarMicrosoft.error}
-      paramCallback="microsoft_calendar"
-    />
-  );
-}
