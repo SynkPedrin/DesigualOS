@@ -500,18 +500,51 @@ export async function getTaskComments(config: ClickUpConfig, taskId: string): Pr
 const taskLookupSchema = z.object({
   id: z.string(),
   list: z.object({ id: z.string() }),
+  /**
+   * Nome e status são opcionais NO SCHEMA, não na API: ela sempre manda os
+   * dois. Opcional aqui para que uma resposta parcial (ou uma tarefa em
+   * estado estranho) devolva a lista mesmo assim — este lookup é o que
+   * autoriza escrever na tarefa, e falhá-lo por causa do nome seria trocar
+   * uma função que funciona por uma que quebra.
+   */
+  name: z.string().nullish(),
+  status: z.object({ status: z.string().nullish() }).nullish(),
 });
 
-/** Lista à qual a tarefa pertence: como o POST de comentário confirma que a
- * tarefa é de um cliente conhecido antes de escrever nela. */
-export async function getTaskListId(config: ClickUpConfig, taskId: string): Promise<string> {
+export interface ClickUpTaskResumo {
+  listId: string;
+  name: string | null;
+  status: string | null;
+}
+
+/**
+ * O MESMO GET que já era feito, com os campos que já vinham na resposta e
+ * eram descartados.
+ *
+ * `getTaskListId` fazia `GET /task/:id` e jogava fora tudo menos `list.id`. O
+ * webhook do ClickUp não manda o nome da tarefa em evento nenhum, então sem
+ * isto a linha do tempo só consegue dizer "Atualizou uma tarefa". Mesma
+ * chamada, mesmo custo de rede: muda só o que a gente guarda dela.
+ */
+export async function getTaskResumo(config: ClickUpConfig, taskId: string): Promise<ClickUpTaskResumo> {
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}`, {
     headers: { Authorization: config.apiKey },
   });
   if (!response.ok) {
     throw new Error(`ClickUp task lookup failed (${response.status}): ${await response.text()}`);
   }
-  return taskLookupSchema.parse(await response.json()).list.id;
+  const t = taskLookupSchema.parse(await response.json());
+  return {
+    listId: t.list.id,
+    name: t.name?.trim() ? t.name.trim() : null,
+    status: t.status?.status?.trim() ? t.status.status.trim() : null,
+  };
+}
+
+/** Lista à qual a tarefa pertence: como o POST de comentário confirma que a
+ * tarefa é de um cliente conhecido antes de escrever nela. */
+export async function getTaskListId(config: ClickUpConfig, taskId: string): Promise<string> {
+  return (await getTaskResumo(config, taskId)).listId;
 }
 
 const taskDetailSchema = z.object({
