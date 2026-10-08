@@ -1159,6 +1159,7 @@ export const handlers = [
       priority: 'normal' as const,
       requested_at: new Date().toISOString(),
       due_date: null,
+      clickup_task_url: null,
     };
     mockDemands.unshift(demand);
     return HttpResponse.json(demand, { status: 201 });

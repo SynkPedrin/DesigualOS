@@ -58,8 +58,16 @@ function saudacao(hora: number): string {
   if (hora < 18) return 'Boa tarde';
   return 'Boa noite';
 }
-function primeiroNome(nome: string): string {
-  return nome.trim().split(/\s+/)[0] ?? nome;
+/**
+ * `nome` é tipado como string, e mesmo assim chega `undefined` na prática: o
+ * /me vem do servidor e o tipo é uma promessa do contrato, não uma garantia de
+ * runtime. Sem esta guarda, um perfil sem nome derrubava a tela HOJE — a
+ * primeira que um colaborador recém-convidado abre (medido em 08/10/2026 pelo
+ * teste de fumaça do sidebar).
+ */
+function primeiroNome(nome: string | null | undefined): string {
+  const limpo = (nome ?? '').trim();
+  return limpo ? (limpo.split(/\s+/)[0] ?? limpo) : 'Time';
 }
 
 type Tom = 'urgent' | 'warning' | 'neutral';
@@ -115,7 +123,6 @@ export default function TodayPage() {
 
   const minhasTarefas = useMyTasks();
   const conversasAguardando = useInboxThreads({ status: 'waiting_agency' });
-  const demandasNovas = useDemands({ status: 'new' });
   const eventosHoje = useCalendarEvents({ from: inicioDoDia(agora), to: fimDoDia(agora) });
   const aprovacoesPendentes = useApprovals({ status: 'pending' });
 
@@ -158,7 +165,10 @@ export default function TodayPage() {
       href: `/inbox?t=${t.id}`,
     });
   }
-  for (const d of demandasNovas.data ?? []) {
+  // Prioridades são DA PESSOA: demanda nova de outro dono não é prioridade
+  // minha só por existir. minhasDemandas já vem filtrada por ownerId (linha
+  // acima, reaproveitada do resumo do dia) — aqui só recorta as "new".
+  for (const d of (minhasDemandas.data ?? []).filter((d) => d.status === 'new')) {
     prioridades.push({
       id: `demanda-${d.id}`,
       entidade: d.clientName ?? 'Cliente',
@@ -185,7 +195,7 @@ export default function TodayPage() {
     .sort((a, b) => (a.badge.tom === 'urgent' ? -1 : b.badge.tom === 'urgent' ? 1 : 0))
     .slice(0, 4);
 
-  const algumPending = minhasTarefas.isPending || conversasAguardando.isPending || demandasNovas.isPending || eventosHoje.isPending;
+  const algumPending = minhasTarefas.isPending || conversasAguardando.isPending || minhasDemandas.isPending || eventosHoje.isPending;
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-6">
@@ -217,7 +227,7 @@ export default function TodayPage() {
           icon={CheckSquare}
           iconClassName="bg-sucesso/15 text-sucesso"
           label="Tarefas para hoje"
-          value={minhasTarefas.data?.tasks.length ?? 0}
+          value={minhasTarefas.data?.tasks?.length ?? 0}
           isLoading={minhasTarefas.isPending}
           isError={minhasTarefas.isError && !clickupNaoVinculado(minhasTarefas.error)}
           href="/tasks"

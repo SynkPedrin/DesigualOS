@@ -14,6 +14,10 @@ export class ApiRequestError extends Error {
     message: string,
     public readonly status: number,
     public readonly details?: Array<{ path: string; message: string }>,
+    /** O corpo JSON inteiro do erro, quando a rota manda mais que `{error, details}`
+     *  (ex.: `{conflicts, suggested_slots}` do 409 de Calendar, §19). Opcional — a
+     *  maioria dos chamadores só usa `.message`. */
+    public readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiRequestError';
@@ -80,7 +84,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit, options?: Ap
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as ApiError | null;
-      throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details);
+      throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details, body ?? undefined);
     }
 
     if (response.status === 204) {

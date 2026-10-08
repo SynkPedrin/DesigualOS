@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api/client';
-import type { ClientMetaAccountWire, ClientMetaSummaryWire } from '@/lib/api/contracts';
+import { apiFetch, ApiRequestError } from '@/lib/api/client';
+import type { ClientMetaAccountWire, ClientMetaCreativesWire, ClientMetaSummaryWire } from '@/lib/api/contracts';
 
 /** Contas Meta vinculadas a ESTE cliente — nunca a de outro (ver apps/api/src/clients/routes.ts). */
 export function useClientMetaAccounts(clientId: string | null) {
@@ -43,5 +43,23 @@ export function useClientMetaSummary(clientId: string | null, hasAccount: boolea
     queryKey: ['clients', clientId, 'meta-summary'],
     queryFn: () => apiFetch<ClientMetaSummaryWire>(`/clients/${clientId}/media/meta/summary`),
     enabled: Boolean(clientId) && hasAccount,
+  });
+}
+
+/**
+ * Os criativos deste cliente. `enabled` espelha o do summary: sem conta
+ * vinculada não há o que perguntar, e disparar a consulta geraria um
+ * "connected: false" inútil a cada visita.
+ *
+ * `staleTime` alto de propósito — criativo não troca de minuto em minuto, e
+ * cada consulta é uma ida à Graph API com rate limit real.
+ */
+export function useClientMetaCreatives(clientId: string, hasAccount: boolean) {
+  return useQuery({
+    queryKey: ['clients', clientId, 'meta', 'creatives'],
+    queryFn: () => apiFetch<ClientMetaCreativesWire>(`/clients/${clientId}/media/meta/creatives`),
+    enabled: hasAccount,
+    staleTime: 5 * 60_000,
+    retry: (failureCount, error) => !(error instanceof ApiRequestError && error.status === 403) && failureCount < 1,
   });
 }

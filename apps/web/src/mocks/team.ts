@@ -1,17 +1,24 @@
 import type { CollaboratorClickUpWire, TeamMemberWire } from '@/lib/api/contracts';
+import { dicebearAvatarUrl } from './avatar';
 
+/**
+ * Persona da demo (07/10/2026): Pedro Gabriel, dono/super da agência —
+ * "user-admin-master" é só o id histórico do fixture (usado em dezenas de
+ * outros registros); o papel real dele aqui é master (só ele cria acesso
+ * novo e dá permissão de admin/colaborador).
+ */
 export const mockTeamMembers: TeamMemberWire[] = [
-  { id: 'user-admin-master', name: 'Instituto Almada', email: 'admin@institutoalmada.com.br', avatar_url: null, roles: ['master'] },
-  { id: 'user-colaborador-1', name: 'Beatriz Souza', email: 'beatriz@institutoalmada.org', avatar_url: null, roles: ['colaborador'] },
-  { id: 'user-colaborador-2', name: 'Rafael Lima', email: 'rafael@institutoalmada.org', avatar_url: null, roles: ['colaborador'] },
-  { id: 'user-colaborador-3', name: 'Carla Nogueira', email: 'carla@institutoalmada.org', avatar_url: null, roles: ['colaborador'] },
+  { id: 'user-admin-master', name: 'Pedro Gabriel', email: 'pedro@desigual.com.br', avatar_url: dicebearAvatarUrl('Pedro Gabriel'), roles: ['master'] },
+  { id: 'user-colaborador-1', name: 'Matheus Rial', email: 'matheus@desigual.com.br', avatar_url: dicebearAvatarUrl('Matheus Rial'), roles: ['colaborador'] },
+  { id: 'user-colaborador-2', name: 'Tami Alves', email: 'tami@desigual.com.br', avatar_url: dicebearAvatarUrl('Tami Alves'), roles: ['colaborador'] },
+  { id: 'user-colaborador-3', name: 'Julia Prado', email: 'julia@desigual.com.br', avatar_url: dicebearAvatarUrl('Julia Prado'), roles: ['colaborador'] },
 ];
 
 // Membros do ClickUp casados por e-mail (nem todo colaborador tem conta lá),
 // espelhando o join que GET /collaborators faz com users.clickup_email/email.
 export const mockClickUpByUserId: Record<string, CollaboratorClickUpWire> = {
-  'user-admin-master': { id: 88120001, username: 'Instituto Almada', email: 'admin@institutoalmada.com.br', profile_picture: null, initials: 'IA', color: '#e0245e' },
-  'user-colaborador-1': { id: 88120002, username: 'Beatriz Souza', email: 'beatriz@institutoalmada.org', profile_picture: null, initials: 'BS', color: '#7b68ee' },
+  'user-admin-master': { id: 88120001, username: 'Pedro Gabriel', email: 'pedro@desigual.com.br', profile_picture: null, initials: 'PG', color: '#e0245e' },
+  'user-colaborador-1': { id: 88120002, username: 'Matheus Rial', email: 'matheus@desigual.com.br', profile_picture: null, initials: 'MR', color: '#7b68ee' },
 };
 
 // Presença (users.last_seen_at): um online agora, um visto há 2h, um nunca

@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { useMemo, useState } from 'react';
 import { Link2, Loader2, Unlink } from 'lucide-react';
 import { useMetaIntegration, useConnectMeta, useMetaBusinesses, useMetaAdAccounts } from '@/hooks/use-meta-integration';
-import { useClientMetaAccounts, useLinkClientMetaAccount, useUnlinkClientMetaAccount, useClientMetaSummary } from '@/hooks/use-client-meta-accounts';
+import { useClientMetaCreatives, useClientMetaAccounts, useLinkClientMetaAccount, useUnlinkClientMetaAccount, useClientMetaSummary } from '@/hooks/use-client-meta-accounts';
 import { ApiRequestError } from '@/lib/api/client';
 
 /**
@@ -232,8 +232,65 @@ function ConnectedSummary({ clientId, accountId, businessId, label }: { clientId
               </table>
             </div>
           )}
+
+          <GaleriaDeCriativos clientId={clientId} />
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * AS PEÇAS QUE ESTÃO RODANDO.
+ *
+ * Número de campanha responde "quanto"; o criativo responde "o quê" — e é o
+ * "o quê" que o time de criação usa pra decidir o que repetir. Esta galeria é
+ * a primeira vez que o produto mostra a peça, não só a linha da planilha.
+ *
+ * A consulta é SEPARADA da do resumo de propósito: ela custa uma ida a mais à
+ * Graph API, e quem abriu a ficha pra ver quanto gastou não deveria pagar por
+ * ela. Falhar aqui não derruba o resumo — a seção some.
+ */
+function GaleriaDeCriativos({ clientId }: { clientId: string }) {
+  const criativos = useClientMetaCreatives(clientId, true);
+
+  if (criativos.isPending || criativos.isError) return null;
+  const dados = criativos.data;
+  if (!dados?.connected || !dados.data_available || dados.creatives.length === 0) return null;
+
+  // Sem imagem não é peça pra mostrar: anúncio de texto puro entra na tabela
+  // de campanhas, não numa galeria visual.
+  const comImagem = dados.creatives.filter((c) => c.thumbnail_url || c.image_url);
+  if (comImagem.length === 0) return null;
+
+  return (
+    <div>
+      <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-nevoa">
+        Criativos no ar ({comImagem.length})
+      </p>
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+        {comImagem.map((c) => (
+          <figure key={c.id} className="overflow-hidden rounded-lg border border-grafite-elevado bg-carbono">
+            {/* `img` cru, não next/image: estas URLs são assinadas pelo Meta,
+              * expiram em horas e mudam a cada leitura — otimizar e cachear
+              * uma URL efêmera só produz imagem quebrada mais tarde. */}
+            <img
+              src={(c.thumbnail_url ?? c.image_url)!}
+              alt={c.name}
+              loading="lazy"
+              className="h-28 w-full bg-grafite object-cover"
+            />
+            <figcaption className="px-2.5 py-2">
+              <p className="truncate text-[12px] text-branco-cru" title={c.name}>
+                {c.name}
+              </p>
+              <p className="mt-0.5 font-mono text-[10px] text-nevoa">
+                {formatCurrency(c.spend)} · CTR {c.ctr != null ? `${c.ctr.toFixed(2)}%` : '—'}
+              </p>
+            </figcaption>
+          </figure>
+        ))}
+      </div>
     </div>
   );
 }
