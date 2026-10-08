@@ -12,6 +12,7 @@ import {
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth } from '../auth/middleware';
 import { encryptToken } from '../lib/token-crypto';
+import { urlDoAppCom } from '../lib/url-do-app';
 
 const logger = createLogger({ service: 'integrations-clickup-mcp' });
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -62,11 +63,10 @@ function parseMcpOAuthState(state: string): { userId: string; codeVerifier: stri
 }
 
 function frontendUrl(path: string): string {
-  const base = (process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
-  return `${base}${path}`;
+  return urlDoAppCom(path);
 }
 
-function mcpRedirectUri(): string {
+export function mcpRedirectUri(): string {
   const base = (process.env.API_PUBLIC_URL ?? 'http://localhost:3001').replace(/\/+$/, '');
   return `${base}/integrations/clickup-mcp/callback`;
 }

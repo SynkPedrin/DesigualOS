@@ -6,11 +6,13 @@ import {
   exchangeNotionCode,
   getNotionOAuthConfig,
   listarDestinosNotion,
+  variaveisFaltantesDoNotion,
 } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth } from '../auth/middleware';
 import { decryptToken, encryptToken } from '../lib/token-crypto';
 import { buildOAuthState, frontendUrl, parseOAuthState } from './routes';
+import { conferirEnderecoDeRetorno } from '../lib/endereco-de-retorno';
 
 /**
  * notion-routes.ts — "o colaborador clica, conecta no Notion dele, e depois de
@@ -57,8 +59,24 @@ export async function registerNotionRoutes(app: FastifyInstance): Promise<void> 
     const config = getNotionOAuthConfig();
     if (!config) {
       reply.code(500);
-      return { error: 'NOTION_CLIENT_ID/NOTION_CLIENT_SECRET/NOTION_REDIRECT_URI não configurados no Orchestrator' };
+      return {
+        error: `Falta configurar no servidor: ${variaveisFaltantesDoNotion().join(', ')}. As credenciais saem de uma integração pública criada em notion.so/my-integrations.`,
+      };
     }
+
+    /**
+     * O MESMO cuidado do ClickUp, pela mesma razão: endereço de retorno morto
+     * vira erro no domínio do provedor, longe daqui e sem conserto à vista.
+     * Ver lib/endereco-de-retorno.ts — e o histórico do túnel efêmero que
+     * derrubou o ClickUp em 07/10/2026.
+     */
+    const retorno = await conferirEnderecoDeRetorno(config.redirectUri, 'Notion', 'NOTION_REDIRECT_URI');
+    if (!retorno.ok) {
+      logger.warn({ redirectUri: config.redirectUri }, 'Endereço de retorno do Notion inalcançável');
+      reply.code(503);
+      return { error: retorno.motivo };
+    }
+
     return { authorize_url: buildNotionAuthorizeUrl(config, buildOAuthState(request.authUser!.id)) };
   });
 
@@ -72,16 +90,16 @@ export async function registerNotionRoutes(app: FastifyInstance): Promise<void> 
     '/integrations/notion/callback',
     async (request, reply) => {
       const config = getNotionOAuthConfig();
-      if (!config) return reply.redirect(frontendUrl('/settings?notion=erro_config'));
-      if (request.query.error) return reply.redirect(frontendUrl('/settings?notion=recusado'));
+      if (!config) return reply.redirect(frontendUrl('/integrations?notion=erro_config'));
+      if (request.query.error) return reply.redirect(frontendUrl('/integrations?notion=recusado'));
 
       const { code, state } = request.query;
-      if (!code || !state) return reply.redirect(frontendUrl('/settings?notion=erro_parametros'));
+      if (!code || !state) return reply.redirect(frontendUrl('/integrations?notion=erro_parametros'));
 
       const parsed = parseOAuthState(state);
       if (!parsed) {
         logger.warn('Callback do Notion com state inválido ou expirado');
-        return reply.redirect(frontendUrl('/settings?notion=erro_state'));
+        return reply.redirect(frontendUrl('/integrations?notion=erro_state'));
       }
 
       try {
@@ -108,10 +126,10 @@ export async function registerNotionRoutes(app: FastifyInstance): Promise<void> 
         });
 
         logger.info({ userId: parsed.userId, workspace: grant.workspaceName }, 'Notion conectado');
-        return reply.redirect(frontendUrl('/settings?notion=conectado'));
+        return reply.redirect(frontendUrl('/integrations?notion=conectado'));
       } catch (error) {
         logger.error({ error }, 'Falha ao concluir OAuth do Notion');
-        return reply.redirect(frontendUrl('/settings?notion=erro_troca'));
+        return reply.redirect(frontendUrl('/integrations?notion=erro_troca'));
       }
     },
   );
@@ -139,7 +157,16 @@ export async function registerNotionRoutes(app: FastifyInstance): Promise<void> 
       .limit(1);
 
     if (!linha || linha.status !== 'connected') {
-      return { connected: false, workspace_name: null, destinos: [], configured: getNotionOAuthConfig() !== null };
+      const faltando = variaveisFaltantesDoNotion();
+      return {
+        connected: false,
+        workspace_name: null,
+        destinos: [],
+        configured: faltando.length === 0,
+        // O NOME do que falta, não só o fato de faltar: quem lê este aviso na
+        // agência é quem tem permissão de resolvê-lo.
+        missing_env: faltando,
+      };
     }
 
     const token = await getNotionToken(request.authUser!.id);
@@ -150,6 +177,7 @@ export async function registerNotionRoutes(app: FastifyInstance): Promise<void> 
       connected_at: linha.updatedAt,
       destinos: destinos.map((d) => ({ id: d.id, title: d.title })),
       configured: true,
+      missing_env: [],
     };
   });
 

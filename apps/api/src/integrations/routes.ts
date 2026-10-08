@@ -13,6 +13,8 @@ import { requireAuth, requirePermission } from '../auth/middleware';
 import { encryptToken } from '../lib/token-crypto';
 import { CLICKUP_PROVIDER, getClickUpConnection, resolveClickUpAccess } from './access';
 import { syncClickUpClients } from './clickup-sync';
+import { urlDoAppCom } from '../lib/url-do-app';
+import { conferirEnderecoDeRetorno } from '../lib/endereco-de-retorno';
 
 const logger = createLogger({ service: 'integrations' });
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -60,8 +62,7 @@ export function parseOAuthState(state: string): { userId: string } | null {
 }
 
 export function frontendUrl(path: string): string {
-  const base = (process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
-  return `${base}${path}`;
+  return urlDoAppCom(path);
 }
 
 export async function registerIntegrationRoutes(app: FastifyInstance): Promise<void> {
@@ -72,6 +73,19 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       reply.code(500);
       return { error: 'CLICKUP_CLIENT_ID/CLICKUP_CLIENT_SECRET/CLICKUP_REDIRECT_URI not configured on the Orchestrator' };
     }
+    /**
+     * Confere o endereço de retorno ANTES de mandar a pessoa para o ClickUp.
+     * Sem isto, um redirect morto vira "Opa! Não foi possível autorizar suas
+     * equipes" no domínio do ClickUp — erro opaco, em tela alheia, sem volta.
+     * Ver lib/endereco-de-retorno.ts.
+     */
+    const retorno = await conferirEnderecoDeRetorno(config.redirectUri, 'ClickUp', 'CLICKUP_REDIRECT_URI');
+    if (!retorno.ok) {
+      logger.warn({ redirectUri: config.redirectUri }, 'Endereço de retorno do ClickUp inalcançável');
+      reply.code(503);
+      return { error: retorno.motivo };
+    }
+
     const state = buildOAuthState(request.authUser!.id);
     return { authorize_url: buildClickUpAuthorizeUrl(config, state) };
   });
@@ -85,15 +99,15 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
    */
   app.get<{ Querystring: { code?: string; state?: string } }>('/integrations/clickup/callback', async (request, reply) => {
     const config = getOAuthConfig();
-    if (!config) return reply.redirect(frontendUrl('/settings?clickup=erro_config'));
+    if (!config) return reply.redirect(frontendUrl('/integrations?clickup=erro_config'));
 
     const { code, state } = request.query;
-    if (!code || !state) return reply.redirect(frontendUrl('/settings?clickup=erro_parametros'));
+    if (!code || !state) return reply.redirect(frontendUrl('/integrations?clickup=erro_parametros'));
 
     const parsed = parseOAuthState(state);
     if (!parsed) {
       logger.warn('Callback do ClickUp com state inválido ou expirado');
-      return reply.redirect(frontendUrl('/settings?clickup=erro_state'));
+      return reply.redirect(frontendUrl('/integrations?clickup=erro_state'));
     }
 
     try {
@@ -130,10 +144,10 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       });
 
       logger.info({ userId: parsed.userId, workspace: team?.name }, 'ClickUp conectado');
-      return reply.redirect(frontendUrl('/settings?clickup=conectado'));
+      return reply.redirect(frontendUrl('/integrations?clickup=conectado'));
     } catch (error) {
       logger.error({ error }, 'Falha ao concluir OAuth do ClickUp');
-      return reply.redirect(frontendUrl('/settings?clickup=erro_troca'));
+      return reply.redirect(frontendUrl('/integrations?clickup=erro_troca'));
     }
   });
 

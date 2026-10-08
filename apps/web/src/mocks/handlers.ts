@@ -28,10 +28,18 @@ import { createStudioJob, deleteStudioAsset, deleteStudioJob, listActiveStudioJo
 import { mockNotifications } from './notifications';
 import { buildCostsByAgent, buildCostsByClient, buildCostsByUser, buildCostsOverview } from './costs';
 import { addProjectFile, appendAssistantMessage, appendUserMessage, createProject, deleteConversation, deleteProject, deleteProjectFile, getConversation, getConversationMessages, listConversations, listProjectFiles, listProjects, toConversationDetailWire, updateConversation, updateProject } from './conversations';
+import { apresentarConector, mockConnectors, salvarConector } from './connectors';
 import { mockClickUpByUserId, mockLastSeenByUserId, mockTeamMembers } from './team';
 import { createMessage, getThreadPrefs, listThreadMessages, listThreadPartnerIds, markThreadRead, updateThreadPrefs } from './messages';
 import { inviteMockUser, mockAdminUsers, USERS_WITH_HISTORY } from './admin';
 import { mockToolCalls } from './tool-calls';
+import { addInboxMessage, mockInboxMessages, mockInboxThreads, nextInboxMessageId } from './inbox';
+import { mockApprovals, mockBriefs, mockBriefVersions, mockDemands, nextMockId } from './demands';
+import { mockAgencyTasks } from './clickup-tasks';
+import { findTeamMember, mockClientAssignments } from './client-assignments';
+import { dicebearAvatarUrl } from './avatar';
+import { mockCalendarEventParticipants, mockCalendarEvents } from './calendar';
+import { modulosPadrao } from '@desigual-os/types';
 
 /** Chunked to avoid blowing the call stack on `String.fromCharCode(...bytes)` for large files
  * (avatar/attachment uploads allow up to 25MB). */
@@ -45,27 +53,31 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+/** Conectado nesta demo (07/10/2026) — o resto da tela (Tarefas, tags de
+ *  cliente no ClickUp) já conta com sync real; desconectado por padrão
+ *  contaria uma história inconsistente com o que as outras telas mostram. */
 const mockClickUpConnection: ClickUpIntegrationStatusWire = {
-  connected: false,
+  connected: true,
   configured: true,
-  workspace_id: null,
-  workspace_name: null,
-  last_synced_at: null,
-  connected_at: null,
+  workspace_id: '9014937439',
+  workspace_name: 'Desigual OS',
+  last_synced_at: new Date(Date.now() - 8 * 60_000).toISOString(),
+  connected_at: new Date(Date.now() - 180 * 86_400_000).toISOString(),
 };
 
+/** Persona da demo (07/10/2026): Pedro Gabriel, dono/super da agência — ver nota em mocks/team.ts. */
 const mockMe: MeResponse = {
   id: 'user-admin-master',
-  email: 'admin@institutoalmada.com.br',
-  name: 'Instituto Almada',
+  email: 'pedro@desigual.com.br',
+  name: 'Pedro Gabriel',
   roles: ['master'],
   permissions: [
     { resource: '*', action: '*' },
   ],
-  avatarUrl: null,
+  avatarUrl: dicebearAvatarUrl('Pedro Gabriel'),
   language: 'pt-BR',
   theme: 'system',
-  clickupEmail: null,
+  clickupEmail: 'pedro@desigual.com.br',
 };
 
 interface MockAutomation {
@@ -146,10 +158,13 @@ export const handlers = [
       name: body.name,
       slug: body.slug,
       status: 'active',
-      clickupListId: null,
-      clickupUrl: null,
-      projectId: null,
+      clickup_list_id: null,
+      clickup_url: null,
+      project_id: null,
       natureza: 'CLIENTE' as const,
+      // Cliente recém-criado nunca se mexeu — e isso é `null`, não zero dias.
+      ultima_atividade: null,
+      pedidos_30d: 0,
     };
     mockClients.push(created);
     return HttpResponse.json(created, { status: 201 });
@@ -299,10 +314,45 @@ export const handlers = [
     return HttpResponse.json(merged);
   }),
 
+  // Aba "Visão geral" do cliente (modal do cliente e Inbox) — sem handler
+  // de mock até aqui, 404 silencioso em qualquer sessão de demonstração.
+  // Deriva do MESMO fixture que a Central de Tasks usa (mockAgencyTasks),
+  // nunca um número paralelo inventado.
+  http.get('/clients/:clientId/overview', ({ params }) => {
+    const clientId = String(params.clientId);
+    const tasks = mockAgencyTasks.filter((t) => t.client?.id === clientId);
+    const assets = mockStudioAssets.filter((a) => a.client_id === clientId);
+
+    const porStatus = new Map<string, { status: string; color: string | null; count: number }>();
+    for (const t of tasks) {
+      if (!t.status) continue;
+      const atual = porStatus.get(t.status) ?? { status: t.status, color: null, count: 0 };
+      atual.count += 1;
+      porStatus.set(t.status, atual);
+    }
+
+    return HttpResponse.json({
+      clickup:
+        tasks.length === 0
+          ? null
+          : {
+              total_tasks: tasks.length,
+              open_tasks: tasks.filter((t) => t.status_type !== 'closed').length,
+              by_status: [...porStatus.values()],
+              latest_comments: [],
+            },
+      conversations: { total: 0, latest: [] },
+      studio: {
+        total: assets.length,
+        latest: assets.slice(0, 4).map((a) => ({ id: a.id, type: a.type, filename: a.filename, storage_url: a.storage_url, created_at: a.created_at })),
+      },
+    });
+  }),
+
   http.get('/clients/:clientId/clickup/tasks', ({ params }) => {
     const client = mockClients.find((c) => c.id === String(params.clientId));
     if (!client) return HttpResponse.json({ error: 'Cliente não encontrado.' }, { status: 404 });
-    if (!client.clickupListId) {
+    if (!client.clickup_list_id) {
       return HttpResponse.json({ error: 'Client is not linked to a ClickUp list yet.' }, { status: 409 });
     }
     const pessoa = (id: number, name: string, initials: string, color: string): ClickUpPersonWire =>
@@ -313,14 +363,153 @@ export const handlers = [
     return HttpResponse.json({
       tasks: [
         { ...base, id: 'cu-1', name: 'Aprovar criativos da campanha de setembro', status: 'aberto',
-          url: client.clickupUrl, due_date: null, assignees: [pessoa(1, 'Endrigo Almada', 'EA', '#7C3AED')] },
+          url: client.clickup_url, due_date: null, assignees: [pessoa(1, 'Endrigo Almada', 'EA', '#7C3AED')] },
         { ...base, id: 'cu-2', name: 'Revisar copy do carrossel', status: 'em andamento',
-          status_color: '#E1F900', url: client.clickupUrl, due_date: null,
+          status_color: '#E1F900', url: client.clickup_url, due_date: null,
           assignees: [pessoa(2, 'Bento Desigual', 'BD', '#0f9d9f')] },
         { ...base, id: 'cu-3', name: 'Subir relatório mensal', status: 'aberto',
-          url: client.clickupUrl, due_date: null, assignees: [] },
+          url: client.clickup_url, due_date: null, assignees: [] },
       ],
     });
+  }),
+
+  // Workspace Builder (§5-13, 06/10/2026) — sem handler, a sidebar falha
+  // aberta (mostra tudo) mas o ⌘K/página nunca tinham como demonstrar o
+  // gate de módulo em modo mock. `configured: false` = ninguém mexeu ainda
+  // no workspace desta pessoa, cai no padrão do papel (mesma regra do
+  // backend real).
+  // Conectores por empresa (WhatsApp/W-API, 07/10/2026) — sem `:id` real de
+  // tenant em modo mock, os handlers aceitam qualquer valor de `:id`.
+  http.get('/organizations/:id/connectors', ({ params }) => {
+    const linhas = mockConnectors.filter((c) => c.organizationId === params.id);
+    return HttpResponse.json({ connectors: linhas.map(apresentarConector) });
+  }),
+
+  http.get('/organizations/:id/connectors/whatsapp/health', ({ params }) => {
+    const linha = mockConnectors.find((c) => c.organizationId === params.id && c.provider === 'whatsapp');
+    if (!linha) return HttpResponse.json({ connected: false, configured: false });
+    // Modo mock não fala com nenhum provedor de verdade — "configurado" nunca vira "conectado" sozinho.
+    return HttpResponse.json({ connected: false, configured: true, detail: 'Modo mock: nenhuma chamada real ao provedor.' });
+  }),
+
+  http.put('/organizations/:id/connectors/:provider', async ({ params, request }) => {
+    const body = (await request.json()) as { credentials?: Record<string, string> };
+    const salvo = salvarConector(params.id as string, params.provider as string, body.credentials ?? {});
+    return HttpResponse.json(apresentarConector(salvo));
+  }),
+
+  http.delete('/organizations/:id/connectors/:provider', ({ params }) => {
+    const indice = mockConnectors.findIndex((c) => c.organizationId === params.id && c.provider === params.provider);
+    if (indice === -1) return HttpResponse.json({ error: 'Conector não encontrado.' }, { status: 404 });
+    mockConnectors.splice(indice, 1);
+    return HttpResponse.json({ ok: true });
+  }),
+
+  http.get('/me/workspace', () => {
+    return HttpResponse.json({
+      template_id: null,
+      modules: [...modulosPadrao(mockMe.roles.includes('master'))],
+      configured: false,
+    });
+  }),
+
+  // Calendário (Fase 1 do redesenho de front, 06/10/2026) — "Hoje" e
+  // `/calendar` consomem o mesmo endpoint.
+  http.get('/calendar/events', ({ request }) => {
+    const url = new URL(request.url);
+    const from = url.searchParams.get('from');
+    const to = url.searchParams.get('to');
+    const clientId = url.searchParams.get('client_id');
+    const memberId = url.searchParams.get('member_id');
+    let events = mockCalendarEvents;
+    if (from) events = events.filter((e) => e.start_at >= from);
+    if (to) events = events.filter((e) => e.start_at < to);
+    if (clientId) events = events.filter((e) => e.client_id === clientId);
+    // Sem isso, a Agenda da Agência mostrava os MESMOS eventos em toda coluna
+    // (nenhum handler filtrava por pessoa). Evento criado dinamicamente (POST,
+    // sem entrada no mapa) cai no fallback created_by — nunca some de quem criou.
+    if (memberId) events = events.filter((e) => (mockCalendarEventParticipants[e.id] ?? [e.created_by]).includes(memberId));
+    return HttpResponse.json({ events: [...events].sort((a, b) => a.start_at.localeCompare(b.start_at)) });
+  }),
+
+  http.post('/calendar/events', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    const evento = {
+      id: `cal-event-mock-${mockCalendarEvents.length + 1}`,
+      client_id: (body.client_id as string) ?? null,
+      start_at: body.start_at as string,
+      end_at: body.end_at as string,
+      timezone: 'America/Sao_Paulo',
+      status: 'confirmed',
+      visible: true,
+      title: (body.title as string) ?? null,
+      description: (body.description as string) ?? null,
+      location: (body.location as string) ?? null,
+      meeting_url: (body.meeting_url as string) ?? null,
+      source: 'desigual_os',
+      created_by: mockMe.id,
+    };
+    mockCalendarEvents.push(evento);
+    return HttpResponse.json(evento, { status: 201 });
+  }),
+
+  http.delete('/calendar/events/:id', ({ params }) => {
+    const idx = mockCalendarEvents.findIndex((e) => e.id === params.id);
+    if (idx === -1) return HttpResponse.json({ error: 'Event not found' }, { status: 404 });
+    mockCalendarEvents.splice(idx, 1);
+    return HttpResponse.json({ ok: true });
+  }),
+
+  // Central de Tasks (P1-H, 06/10/2026) — "Minhas tarefas" x "Todas as
+  // tarefas da agência", mesmo contrato AgencyTaskWire usado pela Central
+  // real e pelo board Kanban.
+  http.get('/clickup/tasks/agency', () => {
+    return HttpResponse.json({ tasks: mockAgencyTasks, truncated: false });
+  }),
+
+  http.get('/clickup/tasks/me', () => {
+    if (!mockMe.clickupEmail) {
+      return HttpResponse.json({ error: 'No ClickUp email linked for this user yet.' }, { status: 409 });
+    }
+    const minhas = mockAgencyTasks.filter((t) => t.assignees.includes(mockMe.name));
+    return HttpResponse.json({ tasks: minhas, truncated: false });
+  }),
+
+  // Quem responde por este cliente (P0-C/P1-K, 06/10/2026) — distinto de
+  // acesso ao workspace.
+  http.get('/clients/:clientId/assignments', ({ params }) => {
+    const assignments = mockClientAssignments.filter((a) => a.client_id === String(params.clientId));
+    return HttpResponse.json({ assignments: assignments.map(({ client_id: _clientId, ...rest }) => rest) });
+  }),
+
+  http.put('/clients/:clientId/assignments', async ({ params, request }) => {
+    const clientId = String(params.clientId);
+    const body = (await request.json()) as { userId: string; responsibility: string };
+    const existing = mockClientAssignments.find(
+      (a) => a.client_id === clientId && a.user_id === body.userId && a.responsibility === body.responsibility,
+    );
+    if (!existing) {
+      const member = findTeamMember(body.userId);
+      mockClientAssignments.push({
+        client_id: clientId,
+        user_id: body.userId,
+        user_name: member?.name ?? body.userId,
+        user_email: member?.email ?? '',
+        responsibility: body.responsibility,
+      });
+    }
+    return HttpResponse.json({ client_id: clientId, user_id: body.userId, responsibility: body.responsibility }, { status: 201 });
+  }),
+
+  http.delete('/clients/:clientId/assignments', async ({ params, request }) => {
+    const clientId = String(params.clientId);
+    const body = (await request.json()) as { userId: string; responsibility: string };
+    const idx = mockClientAssignments.findIndex(
+      (a) => a.client_id === clientId && a.user_id === body.userId && a.responsibility === body.responsibility,
+    );
+    if (idx === -1) return HttpResponse.json({ error: 'Assignment not found' }, { status: 404 });
+    mockClientAssignments.splice(idx, 1);
+    return HttpResponse.json({ ok: true });
   }),
 
   http.get('/clickup/tasks/:taskId/comments', ({ params }) => {
@@ -355,9 +544,9 @@ export const handlers = [
       workspace_name: 'Agência Desigual (mock)',
       connected_at: new Date().toISOString(),
     });
-    // Sem redirect real: devolve a própria tela de settings com o mesmo
+    // Sem redirect real: devolve a própria tela de integrações com o mesmo
     // parâmetro que o callback verdadeiro usaria.
-    return HttpResponse.json({ authorize_url: '/settings?clickup=conectado' });
+    return HttpResponse.json({ authorize_url: '/integrations?clickup=conectado' });
   }),
 
   http.delete('/integrations/clickup', () => {
@@ -882,5 +1071,468 @@ export const handlers = [
     }
     const [approved] = mockToolCalls.splice(index, 1);
     return HttpResponse.json({ id: approved!.id, tool: approved!.tool, status: 'completed' });
+  }),
+
+  // INBOX (P1-A/C, 06/10/2026). O adapter real de WhatsApp está
+  // BLOCKED_EXTERNAL (sem credencial de instância Evolution nesta sessão) —
+  // isto é fixture de dev, nunca produção (NEXT_PUBLIC_API_MODE=live não
+  // passa por aqui).
+  http.get('/inbox/threads', ({ request }) => {
+    const url = new URL(request.url);
+    const status = url.searchParams.get('status');
+    const assigned = url.searchParams.get('assigned');
+    let threads = mockInboxThreads;
+    if (status) threads = threads.filter((t) => t.status === status);
+    if (assigned === 'unassigned') threads = threads.filter((t) => !t.assigned_to_user_id);
+    if (assigned === 'me') threads = threads.filter((t) => t.assigned_to_user_id === mockMe.id);
+    return HttpResponse.json({ threads: [...threads].sort((a, b) => (b.last_message_at ?? '').localeCompare(a.last_message_at ?? '')) });
+  }),
+
+  http.get('/inbox/threads/:id', ({ params }) => {
+    const thread = mockInboxThreads.find((t) => t.id === params.id);
+    if (!thread) return HttpResponse.json({ error: 'Thread not found' }, { status: 404 });
+    return HttpResponse.json(thread);
+  }),
+
+  http.get('/inbox/threads/:id/messages', ({ params }) => {
+    return HttpResponse.json({ messages: mockInboxMessages[String(params.id)] ?? [] });
+  }),
+
+  http.post('/inbox/threads/:id/messages', async ({ params, request }) => {
+    const threadId = String(params.id);
+    const thread = mockInboxThreads.find((t) => t.id === threadId);
+    if (!thread) return HttpResponse.json({ error: 'Thread not found' }, { status: 404 });
+    const body = (await request.json()) as { text: string };
+    const mensagem = {
+      id: nextInboxMessageId(),
+      direction: 'outbound' as const,
+      sender_contact_id: null,
+      sender_user_id: mockMe.id,
+      content: body.text,
+      attachment_url: null,
+      delivery_status: 'sent',
+      created_at: new Date().toISOString(),
+    };
+    addInboxMessage(threadId, mensagem);
+    return HttpResponse.json(mensagem, { status: 201 });
+  }),
+
+  http.patch('/inbox/threads/:id/assign', async ({ params, request }) => {
+    const thread = mockInboxThreads.find((t) => t.id === params.id);
+    if (!thread) return HttpResponse.json({ error: 'Thread not found' }, { status: 404 });
+    const body = (await request.json()) as { userId: string | null };
+    thread.assigned_to_user_id = body.userId;
+    return HttpResponse.json({ id: thread.id, assigned_to_user_id: thread.assigned_to_user_id });
+  }),
+
+  // DEMAND / BRIEF / APPROVAL (P1-D/E/F/G/I, 06/10/2026) — core workflow.
+  http.get('/demands', ({ request }) => {
+    const url = new URL(request.url);
+    const clientId = url.searchParams.get('clientId');
+    const status = url.searchParams.get('status');
+    const ownerId = url.searchParams.get('ownerId');
+    let demands = mockDemands;
+    if (clientId) demands = demands.filter((d) => d.client_id === clientId);
+    if (status) demands = demands.filter((d) => d.status === status);
+    if (ownerId) demands = demands.filter((d) => d.owner_id === ownerId);
+    return HttpResponse.json({ demands });
+  }),
+
+  http.get('/demands/:id', ({ params }) => {
+    const demand = mockDemands.find((d) => d.id === params.id);
+    if (!demand) return HttpResponse.json({ error: 'Demand not found' }, { status: 404 });
+    return HttpResponse.json(demand);
+  }),
+
+  http.post('/demands', async ({ request }) => {
+    const body = (await request.json()) as { clientId: string; title: string; description?: string | null; source: string; conversationThreadId?: string | null };
+    const client = mockClients.find((c) => c.id === body.clientId);
+    const demand = {
+      id: nextMockId('demand'),
+      client_id: body.clientId,
+      client_name: client?.name ?? null,
+      owner_id: mockMe.id,
+      title: body.title,
+      description: body.description ?? null,
+      source: body.source as 'whatsapp' | 'manual' | 'bento',
+      status: 'new' as const,
+      priority: 'normal' as const,
+      requested_at: new Date().toISOString(),
+      due_date: null,
+    };
+    mockDemands.unshift(demand);
+    return HttpResponse.json(demand, { status: 201 });
+  }),
+
+  http.patch('/demands/:id/status', async ({ params, request }) => {
+    const demand = mockDemands.find((d) => d.id === params.id);
+    if (!demand) return HttpResponse.json({ error: 'Demand not found' }, { status: 404 });
+    const body = (await request.json()) as { status: typeof demand.status };
+    demand.status = body.status;
+    return HttpResponse.json(demand);
+  }),
+
+  http.post('/briefs', async ({ request }) => {
+    const body = (await request.json()) as { demandId: string; content: Record<string, unknown> };
+    const briefId = nextMockId('brief');
+    const brief = { id: briefId, client_id: mockDemands.find((d) => d.id === body.demandId)?.client_id ?? '', demand_id: body.demandId, status: 'draft' as const, approved_version_id: null, external_task_id: null, external_task_provider: null };
+    mockBriefs[briefId] = brief;
+    mockBriefVersions[briefId] = [{ id: nextMockId('version'), brief_id: briefId, version: 1, content: body.content, source: 'human_edit', created_at: new Date().toISOString() }];
+    return HttpResponse.json(brief, { status: 201 });
+  }),
+
+  http.get('/demands/:id/briefs', ({ params }) => {
+    const briefs = Object.values(mockBriefs).filter((b) => b.demand_id === params.id);
+    return HttpResponse.json({ briefs });
+  }),
+
+  http.post('/demands/:id/draft-brief', ({ params }) => {
+    const demand = mockDemands.find((d) => d.id === params.id);
+    if (!demand) return HttpResponse.json({ error: 'Demand not found' }, { status: 404 });
+    const briefId = nextMockId('brief');
+    const draftVersion = { id: nextMockId('version'), brief_id: briefId, version: 1, content: { notes: demand.description ?? '(sem conversa vinculada nesta fixture)' }, source: 'ai_draft' as const, created_at: new Date().toISOString() };
+    const brief = { id: briefId, client_id: demand.client_id, demand_id: demand.id, status: 'draft' as const, approved_version_id: null, external_task_id: null, external_task_provider: null };
+    mockBriefs[briefId] = brief;
+    mockBriefVersions[briefId] = [draftVersion];
+    return HttpResponse.json({ ...brief, draft_version: draftVersion }, { status: 201 });
+  }),
+
+  http.get('/briefs/:id', ({ params }) => {
+    const brief = mockBriefs[String(params.id)];
+    if (!brief) return HttpResponse.json({ error: 'Brief not found' }, { status: 404 });
+    return HttpResponse.json({ ...brief, versions: mockBriefVersions[brief.id] ?? [] });
+  }),
+
+  http.post('/briefs/:id/versions', async ({ params, request }) => {
+    const brief = mockBriefs[String(params.id)];
+    if (!brief) return HttpResponse.json({ error: 'Brief not found' }, { status: 404 });
+    const body = (await request.json()) as { content: Record<string, unknown> };
+    const versoes = mockBriefVersions[brief.id] ?? [];
+    const nova = { id: nextMockId('version'), brief_id: brief.id, version: versoes.length + 1, content: body.content, source: 'human_edit' as const, created_at: new Date().toISOString() };
+    mockBriefVersions[brief.id] = [...versoes, nova];
+    return HttpResponse.json(nova, { status: 201 });
+  }),
+
+  http.patch('/briefs/:id/approve-version', async ({ params, request }) => {
+    const brief = mockBriefs[String(params.id)];
+    if (!brief) return HttpResponse.json({ error: 'Brief not found' }, { status: 404 });
+    const body = (await request.json()) as { versionId: string };
+    brief.approved_version_id = body.versionId;
+    brief.status = 'approved';
+    return HttpResponse.json(brief);
+  }),
+
+  http.post('/briefs/:id/send-to-production', ({ params }) => {
+    const brief = mockBriefs[String(params.id)];
+    if (!brief) return HttpResponse.json({ error: 'Brief not found' }, { status: 404 });
+    if (!brief.approved_version_id) return HttpResponse.json({ error: 'Brief has no approved version yet.' }, { status: 409 });
+    brief.status = 'sent_to_production';
+    brief.external_task_id = `clickup-mock-${brief.id}`;
+    brief.external_task_provider = 'clickup';
+    const demand = mockDemands.find((d) => d.id === brief.demand_id);
+    if (demand) demand.status = 'in_production';
+    return HttpResponse.json(brief);
+  }),
+
+  http.get('/approvals', ({ request }) => {
+    const url = new URL(request.url);
+    const status = url.searchParams.get('status');
+    let approvals = mockApprovals;
+    if (status) approvals = approvals.filter((a) => a.status === status);
+    return HttpResponse.json({ approvals });
+  }),
+
+  http.post('/approvals', async ({ request }) => {
+    const body = (await request.json()) as { clientId?: string | null; resourceType: string; resourceId: string };
+    const approval = {
+      id: nextMockId('approval'),
+      client_id: body.clientId ?? null,
+      resource_type: body.resourceType as 'brief',
+      resource_id: body.resourceId,
+      version: null,
+      requested_by: mockMe.id,
+      approver_id: null,
+      status: 'pending' as const,
+      comment: null,
+      created_at: new Date().toISOString(),
+      resolved_at: null,
+    };
+    mockApprovals.unshift(approval);
+    return HttpResponse.json(approval, { status: 201 });
+  }),
+
+  http.patch('/approvals/:id', async ({ params, request }) => {
+    const approval = mockApprovals.find((a) => a.id === params.id);
+    if (!approval) return HttpResponse.json({ error: 'Approval not found' }, { status: 404 });
+    if (approval.resolved_at) return HttpResponse.json({ error: 'Already resolved' }, { status: 409 });
+    const body = (await request.json()) as { status: 'approved' | 'rejected' | 'changes_requested'; comment?: string };
+    approval.status = body.status;
+    approval.comment = body.comment ?? null;
+    approval.approver_id = mockMe.id;
+    approval.resolved_at = new Date().toISOString();
+    return HttpResponse.json(approval);
+  }),
+
+  // Control Plane (demo "dia real de operação", 07/10/2026) — /panorama,
+  // /agency-control-center, /mcp/status e /signals nunca tiveram handler de
+  // mock, então a home (`Visão geral`) sempre mostrou "não consegui montar" em
+  // modo mock. Números coerentes com o resto da demo (mockDemands/mockApprovals/mockClients).
+  http.get('/panorama', () => {
+    return HttpResponse.json({
+      carteira: { clientes: mockClients.filter((c) => c.natureza === 'CLIENTE').length, internos: 0 },
+      equipe: { pessoas: mockTeamMembers.length, usando: mockTeamMembers.length, sem_clickup: 0 },
+      inteligencia: {
+        pedidos_30d: 212,
+        por_agente: [
+          { agente: 'bento', total: 148 },
+          { agente: 'jarbas', total: 41 },
+          { agente: 'otto', total: 23 },
+        ],
+        serie_14d: Array.from({ length: 14 }, (_, i) => {
+          const total = 8 + ((i * 3) % 11);
+          return { dia: new Date(Date.now() - (13 - i) * 86_400_000).toISOString().slice(0, 10), total, ok: total - (i % 2), falhou: i % 2 };
+        }),
+        taxa_de_falha_14d: 0.04,
+      },
+      conhecimento: { memorias: 86 },
+      atencao: { sinais_abertos: 2 },
+      gerado_em: new Date().toISOString(),
+    });
+  }),
+
+  http.get('/agency-control-center', () => {
+    const pendentes = mockDemands.filter((d) => d.status !== 'done' && d.status !== 'cancelled');
+    const atrasadas = pendentes.filter((d) => d.due_date !== null && new Date(d.due_date).getTime() < Date.now());
+    return HttpResponse.json({
+      kpis: {
+        clientes_ativos: mockClients.filter((c) => c.status === 'active').length,
+        conversas_aguardando: 2,
+        demandas_abertas: pendentes.length,
+        atrasados: atrasadas.length,
+        aguardando_aprovacao: mockApprovals.filter((a) => a.status === 'pending').length,
+        previstas_hoje: 4,
+      },
+      funil_de_workflow: {
+        novas: mockDemands.filter((d) => d.status === 'new').length,
+        briefing: mockDemands.filter((d) => d.status === 'briefing').length,
+        producao: mockDemands.filter((d) => d.status === 'in_production').length,
+        revisao: 0,
+        aprovacao: mockApprovals.filter((a) => a.status === 'pending').length,
+        concluido: mockDemands.filter((d) => d.status === 'done').length,
+      },
+      clientes_em_atencao: [
+        { client_id: 'client-cosentino', client_name: 'Cosentino', responsavel: 'Pedro Gabriel', demandas_atrasadas: 0, aprovacoes_pendentes: 1 },
+        { client_id: 'client-g4-educacao', client_name: 'G4 Educação', responsavel: 'Pedro Gabriel', demandas_atrasadas: 0, aprovacoes_pendentes: 1 },
+      ],
+      operacao_por_colaborador: mockTeamMembers.map((m) => ({
+        id: m.id,
+        name: m.name,
+        clientes: m.id === 'user-admin-master' ? 4 : 2,
+        em_andamento: m.id === 'user-admin-master' ? 5 : 2,
+        atrasados: m.id === 'user-admin-master' ? 2 : 0,
+        aprovacoes_pendentes: m.id === 'user-admin-master' ? 1 : 0,
+      })),
+      media_summary: { clientes_com_meta_conectado: 3, clientes_com_google_ads_conectado: 2, performance_agregada_disponivel: false },
+      clickup_summary: {
+        total_tarefas: mockAgencyTasks.length,
+        abertas: mockAgencyTasks.filter((t) => t.status_type !== 'closed').length,
+        atrasadas: mockAgencyTasks.filter((t) => t.due_date !== null && t.due_date < Date.now() && t.status_type !== 'closed').length,
+        por_status: Object.entries(
+          mockAgencyTasks.reduce<Record<string, number>>((acc, t) => {
+            const chave = t.status ?? 'sem status';
+            acc[chave] = (acc[chave] ?? 0) + 1;
+            return acc;
+          }, {}),
+        ).map(([status, total]) => ({ status, total })),
+      },
+      integration_health: {
+        clickup: { status: 'ok', last_event_at: new Date(Date.now() - 20 * 60_000).toISOString() },
+        whatsapp: { status: 'ok' },
+        meta: { status: 'ok', collaborator_connections: 1 },
+        google_ads: { status: 'ok', collaborator_connections: 1 },
+        calendar: { status: 'nao_implementado' },
+      },
+      gerado_em: new Date().toISOString(),
+    });
+  }),
+
+  // Mídia (demo "dia real de operação", 07/10/2026) — Meta/Google Ads por
+  // colaborador, conectadas nesta demo pra "Integrações" não mostrar tudo
+  // cinza (regra #83 do briefing: zero integração fake apresentada como
+  // real, mas aqui É pra parecer um dia normal de agência conectada).
+  http.get('/integrations/meta/status', () => {
+    return HttpResponse.json({ connected: true, configured: true, connected_at: new Date(Date.now() - 12 * 86_400_000).toISOString() });
+  }),
+
+  http.get('/integrations/google-ads/status', () => {
+    return HttpResponse.json({ connected: true, configured: true, connected_at: new Date(Date.now() - 30 * 86_400_000).toISOString() });
+  }),
+
+  http.get('/mcp/status', () => {
+    return HttpResponse.json({
+      endpoint: 'https://mcp.desigual-os.com/sse',
+      base: 'https://mcp.desigual-os.com',
+      conexoes_vivas: 1,
+      pessoas_conectadas: 1,
+      pessoas: [{ user_id: mockMe.id, nome: mockMe.name, scopes: ['clients:read', 'demands:read'], conexoes: 1, desde: new Date(Date.now() - 3 * 3_600_000).toISOString() }],
+      chamadas_24h: 37,
+      sucessos_24h: 35,
+      por_ferramenta: [
+        { tool: 'get_demands', total: 14, sucesso: 14 },
+        { tool: 'get_clients', total: 11, sucesso: 10 },
+        { tool: 'get_pending_business_approvals', total: 12, sucesso: 11 },
+      ],
+      conexoes_recentes: [
+        { id: 'mcp-conn-1', session_id: 'sess-1', user_id: mockMe.id, nome: mockMe.name, summary: 'Sessão do Claude Code', at: new Date(Date.now() - 3 * 3_600_000).toISOString(), scopes: ['clients:read'], chamadas_24h: 37, conexao_viva: true },
+      ],
+      ultimas: [
+        { tool: 'get_demands', result: 'ok', user_name: mockMe.name, client_id: 'client-cosentino', request_id: 'req-1', at: new Date(Date.now() - 5 * 60_000).toISOString() },
+      ],
+    });
+  }),
+
+  http.get('/signals', ({ request }) => {
+    const url = new URL(request.url);
+    const status = url.searchParams.get('status') ?? 'open';
+    const signals = [
+      {
+        id: 'signal-1',
+        rule: 'demanda_parada',
+        agent: 'bento',
+        severity: 'medium' as const,
+        title: 'Demanda sem movimento há 2 dias',
+        body: '"Mídia Patrocinada" da Cosentino está em briefing sem atualização.',
+        recommended_action: 'Confirmar com o time de tráfego se o planejamento já começou.',
+        client_id: 'client-cosentino',
+        client_name: 'Cosentino',
+        entity: 'demand-midia-patrocinada',
+        confidence: 0.8,
+        status: 'open',
+        created_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+      },
+      {
+        id: 'signal-2',
+        rule: 'aprovacao_proxima_do_prazo',
+        agent: 'jarbas',
+        severity: 'high' as const,
+        title: 'Aprovação de campanha vence em breve',
+        body: 'A campanha de outubro da Cosentino está aguardando aprovação há mais de 2h.',
+        recommended_action: 'Avisar o responsável para revisar hoje.',
+        client_id: 'client-cosentino',
+        client_name: 'Cosentino',
+        entity: 'approval-campanha-outubro',
+        confidence: 0.72,
+        status: 'open',
+        created_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+      },
+    ].filter((s) => (status === 'all' ? true : s.status === status));
+    return HttpResponse.json({ total: signals.length, mostrando: signals.length, signals });
+  }),
+
+  // Google Calendar + Notion + Consentimento + Motion providers (demo
+  // "dia real de operação", 07/10/2026) — nenhum tinha handler de mock, então
+  // essas seções de /calendar e /integrations sempre mostravam "não consegui
+  // carregar". Google Calendar e consentimento aparecem CONECTADOS (coerente
+  // com o resto da demo); Notion e os provedores de motion aparecem
+  // honestamente desconectados — não fazem parte da história de hoje.
+  http.get('/integrations/google-calendar/status', () => {
+    return HttpResponse.json({ connected: true, configured: true, connected_at: new Date(Date.now() - 45 * 86_400_000).toISOString() });
+  }),
+
+  http.get('/calendar/google/accounts', () => {
+    return HttpResponse.json({
+      accounts: [
+        { id: 'gcal-pedro', external_calendar_id: 'pedro@desigual.com.br', is_primary: true, connected: true, last_synced_at: new Date(Date.now() - 15 * 60_000).toISOString() },
+      ],
+    });
+  }),
+
+  // Microsoft/Outlook Calendar (07/10/2026) — é o provider que a operação
+  // usa de verdade; aparece CONECTADO no mock pelo mesmo motivo do Google
+  // acima (coerência com a demo "dia real de operação").
+  http.get('/integrations/microsoft-calendar/status', () => {
+    return HttpResponse.json({ connected: true, configured: true, connected_at: new Date(Date.now() - 45 * 86_400_000).toISOString() });
+  }),
+
+  http.get('/calendar/microsoft/accounts', () => {
+    return HttpResponse.json({
+      accounts: [
+        { id: 'mscal-pedro', external_calendar_id: 'pedro@agenciadesigual.com.br', is_primary: true, connected: true, last_synced_at: new Date(Date.now() - 15 * 60_000).toISOString() },
+      ],
+    });
+  }),
+
+  http.get('/integrations/notion/status', () => {
+    return HttpResponse.json({ connected: false, configured: true, workspace_name: null, connected_at: null, destinos: [] });
+  }),
+
+  http.get('/consent/fontes', () => {
+    return HttpResponse.json({
+      fontes: [
+        { id: 'whatsapp', nome: 'WhatsApp', permite: ['Ler e responder conversas de clientes', 'Anexar arquivos recebidos'] },
+        { id: 'clickup', nome: 'ClickUp', permite: ['Ler tarefas, prazos e responsáveis', 'Atualizar status ao mover um cartão de pipeline'] },
+        { id: 'meta_ads', nome: 'Meta Ads', permite: ['Ler campanhas e métricas de Instagram/Facebook dos clientes conectados'] },
+        { id: 'google_ads', nome: 'Google Ads', permite: ['Ler campanhas e métricas de busca/display dos clientes conectados'] },
+        { id: 'google_calendar', nome: 'Google Calendar', permite: ['Ler e criar eventos na agenda conectada'] },
+      ],
+      nao_faz: ['Ler conversas privadas do Claude', 'Enviar mensagem sem uma pessoa confirmar', 'Compartilhar dado de um cliente com outro'],
+    });
+  }),
+
+  http.get('/consent', () => {
+    return HttpResponse.json({
+      consentimentos: [
+        {
+          id: 'consent-1',
+          quando: new Date(Date.now() - 45 * 86_400_000).toISOString(),
+          quem: mockMe.name,
+          fontes: ['whatsapp', 'clickup', 'meta_ads', 'google_ads', 'google_calendar'],
+          texto_apresentado: 'Autorizo o Desigual OS a conectar e usar: WhatsApp, ClickUp, Meta Ads, Google Ads, Google Calendar.',
+        },
+      ],
+    });
+  }),
+
+  http.post('/consent', async ({ request }) => {
+    const body = (await request.json()) as { fontes: string[]; texto_apresentado: string };
+    return HttpResponse.json({ id: `consent-${Date.now()}`, quando: new Date().toISOString() });
+  }),
+
+  // /activity (demo "dia real de operação", 07/10/2026) — nunca teve handler
+  // de mock, então "Na operação" em /activity sempre mostrava "não consegui
+  // ler". task_name/changes preenchidos de propósito: sem isso a frase cai
+  // no fallback pobre "Atualizou uma tarefa" (ver apresentacao/atividade.ts).
+  http.get('/activity', ({ request }) => {
+    const url = new URL(request.url);
+    const limite = Number(url.searchParams.get('limit') ?? 50);
+    const clientId = url.searchParams.get('client_id');
+    const source = url.searchParams.get('source');
+    const eventosBase = [
+      { id: 'act-1', source: 'clickup', type: 'task.updated', client_id: 'client-cosentino', client_name: 'Cosentino', actor: 'Pedro Gabriel', occurred_at: new Date(Date.now() - 18 * 60_000).toISOString(), payload: { task_name: 'Responder cliente Cosentino', changes: [{ rotulo: 'status', de: 'Para fazer', para: 'Em produção' }] } },
+      { id: 'act-2', source: 'clickup', type: 'task.created', client_id: 'client-g4-educacao', client_name: 'G4 Educação', actor: null, occurred_at: new Date(Date.now() - 42 * 60_000).toISOString(), payload: { task_name: 'Enviar proposta — G4' } },
+      { id: 'act-3', source: 'chat', type: 'CLIENT_DECISION', client_id: 'client-clinica-bela', client_name: 'Clínica Belá', actor: 'Pedro Gabriel', occurred_at: new Date(Date.now() - 3_600_000).toISOString(), payload: { summary: 'Decidido: campanha semanal recorrente, sem revisão prévia de copy.' } },
+      { id: 'act-4', source: 'clickup', type: 'task.updated', client_id: 'client-autovisual', client_name: 'Autovisual', actor: null, occurred_at: new Date(Date.now() - 3 * 3_600_000).toISOString(), payload: { task_name: 'Confirmar cronograma de vídeos — Autovisual', changes: [{ rotulo: 'prazo', para: '07/10' }] } },
+      { id: 'act-5', source: 'mcp', type: 'CONNECTION_CREATED', client_id: null, client_name: null, actor: null, occurred_at: new Date(Date.now() - 3 * 3_600_000).toISOString(), payload: {} },
+      { id: 'act-6', source: 'clickup', type: 'task.updated', client_id: 'client-cosentino', client_name: 'Cosentino', actor: 'Pedro Gabriel', occurred_at: new Date(Date.now() - 18 * 3_600_000).toISOString(), payload: { task_name: 'Confirmar cronograma de vídeos', changes: [{ rotulo: 'status', de: 'Para fazer', para: 'Concluído' }] } },
+    ].filter((e) => (clientId ? e.client_id === clientId : true)).filter((e) => (source ? e.source === source : true));
+    return HttpResponse.json({
+      events: eventosBase.slice(0, limite),
+      sources: [
+        { source: 'clickup', total: eventosBase.filter((e) => e.source === 'clickup').length },
+        { source: 'chat', total: eventosBase.filter((e) => e.source === 'chat').length },
+        { source: 'mcp', total: eventosBase.filter((e) => e.source === 'mcp').length },
+      ],
+      organizacao: { id: 'org-desigual', name: 'Desigual' },
+    });
+  }),
+
+  http.get('/motion/providers', () => {
+    const base = { remedy: 'Conecte em Configurações → Motion.', account: null, model: null, motionCapable: false, details: {}, checkedAt: new Date().toISOString() };
+    return HttpResponse.json({
+      providers: [
+        { ...base, provider: 'claude' as const, state: 'disconnected', message: 'Claude não conectado ainda.' },
+        { ...base, provider: 'chatgpt' as const, state: 'disconnected', message: 'ChatGPT não conectado ainda.' },
+      ],
+    });
   }),
 ];

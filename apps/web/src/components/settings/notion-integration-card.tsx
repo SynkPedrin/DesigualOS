@@ -76,10 +76,36 @@ export function NotionIntegrationSection() {
         {conectado && <Check size={16} className="mt-1 shrink-0 text-sinal" />}
       </div>
 
+      {/*
+        * "FALE COM O ADMIN" ERA UM BECO. Na agência, quem abre Integrações e vê
+        * este aviso é justamente quem tem acesso ao servidor — mandar essa
+        * pessoa falar com o administrador é mandar ela falar sozinha. O aviso
+        * agora nomeia o que falta e onde se consegue, que é a diferença entre
+        * um bloqueio e uma tarefa de dois minutos.
+        */}
       {status?.configured === false && (
-        <p className="mb-3 rounded-md bg-erro/10 px-3 py-2 text-sm text-erro">
-          O servidor ainda não tem as credenciais do Notion. Fale com o Admin.
-        </p>
+        <div className="mb-3 rounded-md border border-aviso/40 bg-aviso/10 px-3 py-2.5 text-sm text-aviso">
+          <p className="font-medium">Falta configurar o Notion no servidor.</p>
+          <p className="mt-1 text-[13px]">
+            Crie uma integração <strong>pública</strong> em{' '}
+            <a
+              href="https://www.notion.so/my-integrations"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              notion.so/my-integrations
+            </a>
+            , aponte o endereço de retorno dela para{' '}
+            <code className="font-mono text-[12px]">/integrations/notion/callback</code> desta API, e preencha no{' '}
+            <code className="font-mono text-[12px]">.env</code>:
+          </p>
+          <ul className="mt-1.5 font-mono text-[11px]">
+            {(status.missing_env ?? ['NOTION_CLIENT_ID', 'NOTION_CLIENT_SECRET', 'NOTION_REDIRECT_URI']).map((nome) => (
+              <li key={nome}>· {nome}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {semDestino && (
