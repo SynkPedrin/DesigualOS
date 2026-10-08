@@ -61,30 +61,54 @@ export async function registerDataQualityRoutes(app: FastifyInstance): Promise<v
             select organization_id from organization_members where user_id = ${user.id}::uuid
           ))`;
 
-    const clientes = await db
-      .select({ id: schema.clients.id, name: schema.clients.name, clickupListId: schema.clients.clickupListId })
-      .from(schema.clients)
-      .where(and(isNull(schema.clients.deletedAt), daMinhaEmpresa(schema.clients.organizationId)));
-
-    const memorias = await db
-      .select({
-        id: schema.memories.id,
-        content: schema.memories.content,
-        sourceType: schema.memories.sourceType,
-        environment: schema.memories.environment,
-        clientId: schema.memories.clientId,
-      })
-      .from(schema.memories)
-      .where(daMinhaEmpresa(schema.memories.organizationId));
-
-    const episodios = await db
-      .select({
-        id: schema.agentEpisodes.id,
-        summary: schema.agentEpisodes.summary,
-        environment: schema.agentEpisodes.environment,
-      })
-      .from(schema.agentEpisodes)
-      .where(daMinhaEmpresa(schema.agentEpisodes.organizationId));
+    /**
+     * AS TRÊS JUNTAS, NÃO UMA DEPOIS DA OUTRA.
+     *
+     * Nenhuma depende do resultado da outra — o cruzamento todo acontece em
+     * memória, depois. Em série cada uma pagava a ida e volta até o Postgres
+     * do Supabase em us-east-1, medido em 08/10/2026 deste checkout:
+     *
+     *   clients          1347ms   (58 linhas)
+     *   memories         1013ms   (594 linhas, 996KB — o `content` inteiro)
+     *   agent_episodes    166ms   (40 linhas)
+     *
+     * 2,5s em série contra ~1,3s em paralelo, que é o custo da mais lenta
+     * sozinha. A rota inteira media 5,51s em produção, a segunda pior do
+     * sistema depois de /clickup/tasks/agency.
+     *
+     * Não dá pra encolher o `memories` filtrando ambiente no SQL, e eu conferi
+     * antes de tentar: 544 das 594 linhas são de produção (857KB dos 866KB).
+     * O filtro economizaria 9KB. E o filtro que de fato importa aqui
+     * (`pareceArtefatoDeTeste`) é uma lista de regex com suíte própria em
+     * packages/context-engine — reescrevê-la em SQL deixaria a mesma regra
+     * viva em dois lugares, que é como ela começa a divergir.
+     *
+     * `DATABASE_POOL_MAX` é 3: três consultas simultâneas cabem exatamente.
+     */
+    const [clientes, memorias, episodios] = await Promise.all([
+      db
+        .select({ id: schema.clients.id, name: schema.clients.name, clickupListId: schema.clients.clickupListId })
+        .from(schema.clients)
+        .where(and(isNull(schema.clients.deletedAt), daMinhaEmpresa(schema.clients.organizationId))),
+      db
+        .select({
+          id: schema.memories.id,
+          content: schema.memories.content,
+          sourceType: schema.memories.sourceType,
+          environment: schema.memories.environment,
+          clientId: schema.memories.clientId,
+        })
+        .from(schema.memories)
+        .where(daMinhaEmpresa(schema.memories.organizationId)),
+      db
+        .select({
+          id: schema.agentEpisodes.id,
+          summary: schema.agentEpisodes.summary,
+          environment: schema.agentEpisodes.environment,
+        })
+        .from(schema.agentEpisodes)
+        .where(daMinhaEmpresa(schema.agentEpisodes.organizationId)),
+    ]);
 
     const idsDeCliente = new Set(clientes.map((c) => c.id));
 
