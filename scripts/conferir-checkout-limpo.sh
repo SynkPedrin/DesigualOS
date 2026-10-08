@@ -17,9 +17,24 @@
 # BM por cliente — não existia em commit nenhum.
 #
 # Uso:
-#   bash scripts/conferir-checkout-limpo.sh            # HEAD, node_modules ligados (rápido)
+#   bash scripts/conferir-checkout-limpo.sh            # HEAD, com install de verdade
 #   bash scripts/conferir-checkout-limpo.sh <ref>      # outro commit/branch
-#   INSTALAR=1 bash scripts/conferir-checkout-limpo.sh # install de verdade (lento, mais fiel)
+#   RAPIDO=1 bash scripts/conferir-checkout-limpo.sh   # sem install — VER O AVISO ABAIXO
+#
+# O MODO RÁPIDO TEM UM PONTO CEGO, e é grande o bastante pra ele ter deixado
+# passar 14 erros reais em 08/10/2026, no mesmo commit que ele aprovou.
+#
+# Ligar o `node_modules` da árvore principal traz junto os links que o pnpm
+# cria para os pacotes do próprio workspace: dentro da árvore limpa,
+# `@desigual-os/database` continua apontando para
+# `/Users/.../DesigualOS/packages/database` — a árvore SUJA. Então todo símbolo
+# que atravessa pacote é resolvido contra arquivo não commitado, e o portão não
+# enxerga justamente a classe de defeito que ele existe pra pegar
+# (`resolverPessoaPorEmail` exportado só em disco, por exemplo).
+#
+# Por isso o install de verdade virou o padrão. Ele custa um ou dois minutos;
+# o modo rápido custou quatro ciclos de build quebrado na VPS, descobertos um
+# por vez.
 #
 # Sai com código != 0 se qualquer app não compilar: serve em portão de release.
 set -uo pipefail
@@ -34,19 +49,15 @@ trap limpar EXIT
 printf '\033[1;36m=== checkout limpo de %s ===\033[0m\n' "$(git rev-parse --short "$REF")"
 git worktree add -q --detach "$ARVORE" "$REF" || { echo "não consegui criar a árvore"; exit 1; }
 
-if [ "${INSTALAR:-0}" = "1" ]; then
-  echo "instalando dependências (--frozen-lockfile)..."
+if [ "${RAPIDO:-0}" != "1" ]; then
+  echo "instalando dependências na árvore limpa (--frozen-lockfile)... leva um minuto"
   (cd "$ARVORE" && pnpm install --frozen-lockfile >/dev/null 2>&1) || { echo "install falhou"; exit 1; }
 else
-  # Ligar o node_modules da árvore principal é uma APROXIMAÇÃO: pega import
-  # quebrado e prop que não existe, que é o que este script existe pra pegar.
-  # NÃO pega dependência declarada a menos no package.json — pra isso,
-  # INSTALAR=1. Três defeitos desse tipo já passaram por aqui, então a opção
-  # existe e o portão de release deveria usá-la.
   while read -r d; do
     [ -e "$ARVORE/$d" ] || ln -sfn "$RAIZ/$d" "$ARVORE/$d" 2>/dev/null
   done < <(find . -maxdepth 3 -name node_modules -type d -not -path "*/node_modules/*" 2>/dev/null | sed 's|^\./||')
-  echo "node_modules ligados da árvore principal (use INSTALAR=1 pra install real)"
+  printf '\033[1;33mMODO RÁPIDO: pacotes @desigual-os/* resolvem contra a árvore SUJA.\n'
+  printf 'Erro que atravessa pacote NÃO aparece aqui. Não use isto como portão.\033[0m\n'
 fi
 
 TSC="$ARVORE/node_modules/.bin/tsc"
