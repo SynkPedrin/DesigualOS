@@ -64,7 +64,7 @@ const USER = {
 function fakeRequest(): FastifyRequest {
   return {
     headers: { authorization: 'Bearer token-abc' },
-    log: { warn: vi.fn() },
+    log: { warn: vi.fn(), error: vi.fn() },
   } as unknown as FastifyRequest;
 }
 
@@ -121,6 +121,52 @@ describe('requireAuth', () => {
 
     expect(reply.code).toHaveBeenCalledWith(401);
     expect(request.authUser).toBeUndefined();
+  });
+
+  /**
+   * Medido em 08/10/2026 contra o Supabase real: com o pooler no limite
+   * (`XX000 (EMAXCONNSESSION) max clients reached in session mode`), um token
+   * válido recebia 401 "Invalid or expired token". A pessoa é mandada a sair e
+   * entrar de novo — e cada nova tentativa abre mais uma conexão no pooler que
+   * já estourou, então o conselho errado PIORA a causa.
+   *
+   * O que este teste trava não é o número 503: é que o 401 não pode ser
+   * emitido por quem não julgou o token.
+   */
+  it('banco fora não vira "token inválido": o token foi aceito, quem falhou fomos nós', async () => {
+    const { requireAuth } = await import('./middleware');
+
+    const erroDoPooler = Object.assign(new Error('max clients reached in session mode'), {
+      name: 'PostgresError',
+      code: 'XX000',
+    });
+    resolveOrProvisionUser.mockRejectedValueOnce(erroDoPooler);
+
+    const reply = fakeReply();
+    const request = fakeRequest();
+    await requireAuth(request, reply);
+
+    expect(verifySupabaseToken).toHaveBeenCalledTimes(1);
+    expect(reply.code).toHaveBeenCalledWith(503);
+    expect(reply.code).not.toHaveBeenCalledWith(401);
+    expect(request.authUser).toBeUndefined();
+  });
+
+  it('a mensagem do erro de infraestrutura chega ao log (o serializador do pino descarta `message`)', async () => {
+    const { requireAuth } = await import('./middleware');
+
+    loadUserAccess.mockRejectedValueOnce(
+      Object.assign(new Error('max clients reached in session mode'), { name: 'PostgresError', code: 'XX000' }),
+    );
+
+    const request = fakeRequest();
+    await requireAuth(request, fakeReply());
+
+    const log = request.log as unknown as { error: ReturnType<typeof vi.fn> };
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ causa: 'max clients reached in session mode' }),
+      expect.any(String),
+    );
   });
 
   it('invalidateUserAccessCache força a releitura (mudança de papel vale na hora)', async () => {

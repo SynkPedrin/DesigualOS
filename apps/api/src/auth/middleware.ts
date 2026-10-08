@@ -161,9 +161,35 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
     return;
   }
 
+  /**
+   * O 401 só pode sair DAQUI — de quem realmente julga o token.
+   *
+   * Antes, uma única `try` cobria a verificação do token e todas as consultas
+   * ao banco que vêm depois, e o `catch` respondia 401 "Invalid or expired
+   * token" para qualquer coisa que desse errado no caminho. Medido em
+   * 08/10/2026: com o pooler do Supabase no limite
+   * (`XX000 (EMAXCONNSESSION) max clients reached in session mode`), um token
+   * perfeitamente válido recebia "token inválido ou expirado".
+   *
+   * Esse erro manda a pessoa fazer exatamente a coisa que não resolve — sair
+   * e entrar de novo —, e cada tentativa abre mais uma conexão no pooler que
+   * já estava estourado. O diagnóstico certo (banco indisponível) fica
+   * invisível justamente quando mais se precisa dele.
+   *
+   * Separar em duas `try` não é estilo: é a única forma de o status dizer a
+   * verdade. Token ruim é 401 e é problema de quem chama; banco fora é 503 e
+   * é problema nosso.
+   */
+  let claims: Awaited<ReturnType<typeof verifySupabaseToken>>;
   try {
-    const claims = await verifySupabaseToken(token, supabaseUrl);
+    claims = await verifySupabaseToken(token, supabaseUrl);
+  } catch (error) {
+    request.log.warn({ error }, 'Auth token rejected');
+    reply.code(401).send({ error: 'Invalid or expired token' });
+    return;
+  }
 
+  try {
     const cached = getCachedAccess(claims.sub);
     const user = cached?.user ?? (await resolveOrProvisionUser(claims, getMasterEmails()));
 
@@ -196,8 +222,22 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
 
     touchLastSeen(user.id);
   } catch (error) {
-    request.log.warn({ error }, 'Auth token rejected');
-    reply.code(401).send({ error: 'Invalid or expired token' });
+    /**
+     * O token já foi aceito acima. O que falhou aqui é infraestrutura nossa
+     * (banco, principalmente), e o log precisa carregar a causa: o
+     * serializador de erro do pino guarda `name`/`code` e DESCARTA `message`,
+     * então sem este campo explícito o log registrava
+     * `{"name":"PostgresError","code":"XX000"}` e nada mais — um código que
+     * não diz qual dos muitos XX000 aconteceu.
+     */
+    request.log.error(
+      { error, causa: error instanceof Error ? error.message : String(error) },
+      'Falha de infraestrutura ao resolver o usuário autenticado',
+    );
+    reply.code(503).send({
+      error: 'Não consegui consultar o seu perfil agora',
+      detalhe: 'O problema é do lado do servidor, não do seu acesso. Entrar de novo não resolve; tente em instantes.',
+    });
   }
 }
 
@@ -209,6 +249,36 @@ export function requirePermission(resource: string, action: string) {
     }
     if (!hasPermission(request.authUser.permissions, resource, action)) {
       reply.code(403).send({ error: `Missing permission ${resource}:${action}` });
+      return;
+    }
+  };
+}
+
+/**
+ * PAPEL, não permissão — a diferença importa aqui.
+ *
+ * `requirePermission('users','write')` responde "esta pessoa pode administrar
+ * gente?", e a resposta vem de linhas em `permissions`, que são DADO: basta
+ * uma linha `users:write` no papel colaborador (um seed antigo, uma correção
+ * feita às pressas num ambiente) para que criar conta deixe de ser privilégio
+ * de administrador sem ninguém mudar uma linha de código.
+ *
+ * Criar usuário é a mutação que fabrica acesso novo ao sistema inteiro, então
+ * ela pede as DUAS portas: a permissão (que continua sendo o contrato de RBAC
+ * e segue sendo checada primeiro) e o papel, que é identidade e não se
+ * configura por linha de tabela.
+ */
+export function requireRole(...papeis: RoleName[]) {
+  return async function checkRole(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    if (!request.authUser) {
+      reply.code(401).send({ error: 'Not authenticated' });
+      return;
+    }
+    if (!papeis.some((papel) => request.authUser!.roles.includes(papel))) {
+      reply.code(403).send({
+        error: 'Somente um administrador pode fazer isso.',
+        detalhe: `Papel necessário: ${papeis.join(' ou ')}.`,
+      });
       return;
     }
   };
