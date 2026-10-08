@@ -1,6 +1,7 @@
 export * from './schema';
 export * from './rules';
 export * from './route';
+export * from './pergunta-factual';
 export * from './classifier';
 export * from './marketing-copy';
 export * from './safe-complete';

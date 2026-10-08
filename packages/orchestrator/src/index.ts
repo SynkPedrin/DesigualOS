@@ -26,3 +26,4 @@ export * from './agent-sync';
 export * from './alerts';
 export * from './worker-heartbeat';
 export * from './thumbnail-queue';
+export * from './client-report-queue';
