@@ -23,6 +23,13 @@ export interface TenantContext {
   membershipId: string;
   role: string;
   permissions: { resource: string; action: string }[];
+  /**
+   * `true` quando quem está operando é o PROVEDOR dentro de uma empresa em que
+   * não tem vínculo — a Desigual mexendo na conta do cliente, não alguém da
+   * casa. O helper de auditoria (lib/auditoria.ts) grava isso como
+   * `metadata.acting_as_provider: true` nas escritas da requisição.
+   */
+  actingAsProvider: boolean;
 }
 
 declare module 'fastify' {
@@ -103,6 +110,7 @@ export async function requireTenant(request: FastifyRequest, reply: FastifyReply
     membershipId: vinculo?.id ?? '',
     role: vinculo?.role ?? 'provedor',
     permissions: user.permissions,
+    actingAsProvider: escopo.ehProvider && !vinculo,
   };
 }
 
@@ -110,4 +118,19 @@ export async function clientBelongsToTenant(clientId: string, organizationId: st
   const [client] = await db.select({ id: schema.clients.id }).from(schema.clients)
     .where(and(eq(schema.clients.id, clientId), eq(schema.clients.organizationId, organizationId), isNull(schema.clients.deletedAt)));
   return Boolean(client);
+}
+
+/**
+ * Mesmo princípio de `clientBelongsToTenant`, para o alvo de uma mutação sobre
+ * PESSOA (apps/api/src/admin/routes.ts): sem isto, `users:write` sozinho
+ * bastava para um master da empresa A mudar papel, desativar, renomear ou
+ * apagar um usuário cujo único vínculo é a empresa B, bastando saber o uuid -
+ * a permissão responde "esta pessoa pode administrar gente?", nunca "gente de
+ * qual empresa?" (a mesma distinção que `GET /admin/users` já aplica via
+ * `recorteDePessoasVisiveis`, e que faltava nas rotas de mutação).
+ */
+export async function userBelongsToTenant(userId: string, organizationId: string): Promise<boolean> {
+  const [membro] = await db.select({ id: schema.organizationMembers.id }).from(schema.organizationMembers)
+    .where(and(eq(schema.organizationMembers.userId, userId), eq(schema.organizationMembers.organizationId, organizationId)));
+  return Boolean(membro);
 }

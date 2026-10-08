@@ -45,10 +45,55 @@ export function urlDoApp(): string {
 }
 
 /**
- * O endereço do front com um caminho — o jeito certo de montar qualquer link
- * que saia daqui para o navegador de alguém (convite, redefinição, callback de
- * OAuth). `caminho` começa com barra.
+ * O endereço do front com um caminho, DENTRO desta instalação — o callback de
+ * OAuth que volta pro navegador que acabou de sair daqui. `caminho` começa
+ * com barra.
+ *
+ * Para link que vai num E-MAIL, use `urlPublicaDoAppCom`. A diferença é quem
+ * abre: aqui é o mesmo navegador, na mesma máquina; lá é outra pessoa.
  */
 export function urlDoAppCom(caminho: string): string {
   return `${urlDoApp()}${caminho.startsWith('/') ? caminho : `/${caminho}`}`;
+}
+
+/**
+ * ─── O ENDEREÇO QUE PODE VIAJAR ─────────────────────────────────────────
+ *
+ * O DEFEITO (08/10/2026, relatado como "o e-mail de acesso não funciona"): o
+ * link de convite saía com `redirect_to=http://localhost:3000/convite`. Quem
+ * recebe o e-mail clica, o Supabase valida o token e manda o navegador DELE
+ * para localhost:3000 — a máquina dele, onde não há nada. O convite chegava,
+ * o token era válido, e o acesso era impossível.
+ *
+ * A causa é uma suposição minha que não se sustentou. `urlDoApp` devolve a
+ * PRIMEIRA entrada de FRONTEND_URL, e eu escrevi que "em produção a lista
+ * começa pelo endereço de produção". A lista real começa por localhost, porque
+ * ela nasceu para o CORS — e lá a ordem não significa nada.
+ *
+ * A regra que vale aqui não depende de ordem: UM LINK QUE SAI DESTA MÁQUINA
+ * NÃO PODE APONTAR PARA ESTA MÁQUINA. Então entre as origens declaradas,
+ * prefere-se a primeira que não seja local. Se só existe localhost (dev puro,
+ * sem front publicado), ela continua valendo — aí o e-mail é para você mesmo.
+ */
+const LOCAIS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+
+function ehLocal(origem: string): boolean {
+  try {
+    // `new URL('http://[::1]:3000').hostname` devolve "[::1]", COM colchetes —
+    // o teste pegou isso. Sem tirar, o IPv6 local passava por endereço público.
+    return LOCAIS.has(new URL(origem).hostname.replace(/^\[|\]$/g, ''));
+  } catch {
+    return false;
+  }
+}
+
+/** O endereço do front que faz sentido para quem está FORA desta máquina. */
+export function urlPublicaDoApp(): string {
+  const origens = origensDoFront();
+  return origens.find((o) => !ehLocal(o)) ?? origens[0]!;
+}
+
+/** `urlPublicaDoApp` com um caminho — para link de e-mail (convite, senha). */
+export function urlPublicaDoAppCom(caminho: string): string {
+  return `${urlPublicaDoApp()}${caminho.startsWith('/') ? caminho : `/${caminho}`}`;
 }

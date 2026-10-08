@@ -15,6 +15,34 @@ const logger = createLogger({ service: 'event-store' });
  * IDEMPOTÊNCIA é o ponto central: integração externa reentrega evento (o ClickUp reentrega
  * em retry), e o mesmo acontecimento não pode ser contado nem memorizado duas vezes. A
  * garantia é o índice único `(source, external_id)` no banco, não uma checagem em memória.
+ *
+ * ── CONTRATO CANÔNICO DO EVENTO (01/10/2026) ─────────────────────────────
+ *
+ * Dois produtores gravam em `operational_events` e precisam produzir o MESMO
+ * shape, porque os consumidores (get_recent_events do MCP, processPendingEvents
+ * do worker, eventsSince abaixo) leem as mesmas colunas:
+ *
+ *   source         de onde veio ('clickup' = webhook, 'chat' = MCP, ...)
+ *   type           tipo normalizado ('task.updated', 'CLIENT_DECISION', ...)
+ *   externalId     chave de dedup da origem — idempotência por (source, external_id)
+ *   organizationId dono do evento (o webhook preenche desde 01/10/2026, via
+ *                  clients.organization_id; antes nascia null e o get_recent_events
+ *                  tinha um fallback transicional por client_id)
+ *   userId         quem, como users.id (null quando o autor não é resolvível)
+ *   employeeId     organization_members.id de quem, naquela org
+ *   clientId       cliente afetado, quando há
+ *   entityType/Id  entidade afetada ('task' + id do ClickUp, ...)
+ *   taskId         id da task na ferramenta quando a entidade é uma task
+ *   actor          nome legível de quem causou. NULL quando a origem não diz e
+ *                  a resolução falha — NUNCA inventado (o webhook registra como
+ *                  chegou à conclusão em payload.actor_resolution:
+ *                  'link' | 'email' | 'nao_resolvido')
+ *   summary        frase legível (MCP sempre escreve; webhook nunca — o payload
+ *                  do ClickUp não traz texto de mudança)
+ *   importance     'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL' (default 'LOW')
+ *   visibility     'PRIVATE' | 'TEAM' | 'CLIENT_SCOPED' (default 'TEAM')
+ *   payload        dados normalizados; raw guarda o corpo cru pra auditoria
+ *   occurredAt     quando aconteceu NA ORIGEM (≠ quando chegou aqui)
  */
 
 export type EventSource = 'clickup' | 'chat' | 'whatsapp' | 'meta_ads' | 'studio' | 'system';
@@ -25,10 +53,22 @@ export interface RecordEventInput {
   type: string;
   /** Id do evento na origem. Sem ele não há como deduplicar — ver nota abaixo. */
   externalId?: string | null;
+  /** Dono do evento (contrato acima). Null só para evento realmente sem tenant. */
+  organizationId?: string | null;
+  /** users.id de quem causou, quando resolvido. */
+  userId?: string | null;
+  /** organization_members.id de quem causou, naquela org. */
+  employeeId?: string | null;
   clientId?: string | null;
   entityType?: string | null;
   entityId?: string | null;
+  /** Id da task na ferramenta (texto: o ClickUp usa id alfanumérico). */
+  taskId?: string | null;
   actor?: string | null;
+  /** Frase legível do acontecimento (o webhook do ClickUp nunca tem uma). */
+  summary?: string | null;
+  importance?: 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL' | null;
+  visibility?: 'PRIVATE' | 'TEAM' | 'CLIENT_SCOPED' | null;
   payload?: Record<string, unknown>;
   raw?: Record<string, unknown>;
   occurredAt?: Date | null;
@@ -60,11 +100,17 @@ export async function recordOperationalEvent(input: RecordEventInput): Promise<R
         source: input.source,
         type: input.type,
         externalId,
+        organizationId: input.organizationId ?? null,
+        userId: input.userId ?? null,
+        employeeId: input.employeeId ?? null,
         clientId: input.clientId ?? null,
         entityType: input.entityType ?? null,
         entityId: input.entityId ?? null,
+        taskId: input.taskId ?? null,
         actor: input.actor ?? null,
-        payload: input.payload ?? {},
+        summary: input.summary ?? null,
+        ...(input.importance ? { importance: input.importance } : {}),
+        ...(input.visibility ? { visibility: input.visibility } : {}),        payload: input.payload ?? {},
         raw: input.raw ?? null,
         occurredAt: input.occurredAt ?? null,
       })
