@@ -211,7 +211,7 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
 
           {tipo === 'tarefas' && (
             <div>
-              <label className="mb-1 block text-xs text-nevoa">Estágios — só os status que existem no ClickUp</label>
+              <label className="mb-1 block text-xs text-nevoa">Estágios, só os status que existem no ClickUp</label>
               <div className="space-y-1.5 rounded-md border border-grafite-elevado bg-carbono p-2.5">
                 {CLICKUP_STATUSES_DISPONIVEIS.map((s) => (
                   <label key={s.status} className="flex items-center gap-2 text-sm text-branco-cru">
@@ -280,7 +280,7 @@ function ConfigurarPipelineModal({ board, onSave, onClose }: { board: PipelineBo
                 value={stage.label}
                 onChange={(e) => renomear(stage.id, e.target.value)}
                 disabled={Boolean(stage.clickupStatus)}
-                title={stage.clickupStatus ? 'Nome vem do status do ClickUp — não dá pra editar aqui' : undefined}
+                title={stage.clickupStatus ? 'Nome vem do status do ClickUp, não dá pra editar aqui' : undefined}
                 className="min-w-0 flex-1 rounded-md border border-grafite-elevado bg-grafite px-2.5 py-1.5 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none disabled:opacity-60"
               />
               <div className="flex shrink-0 gap-1">
@@ -688,7 +688,7 @@ function PipelineBoardUI() {
          */
         onSuccess: () => {
           if (board.tipo === 'tarefas' && stage?.clickupStatus) {
-            toast(`"${card.name}" → ${stage.label} — status atualizado no ClickUp.`, 'success');
+            toast(`"${card.name}" → ${stage.label}, status atualizado no ClickUp.`, 'success');
           }
         },
         onError: (erro) =>
@@ -700,7 +700,7 @@ function PipelineBoardUI() {
   if (isPending) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PageHeader eyebrow="Operação" title="Pipelines" description="Cliente, tarefas do ClickUp ou carga da equipe — cada quadro do seu jeito." />
+        <PageHeader eyebrow="Operação" title="Pipelines" description="Cliente, tarefas do ClickUp ou carga da equipe, cada quadro do seu jeito." />
         <div className="mt-6 flex gap-3">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-64 flex-1 animate-pulse rounded-lg border border-grafite-elevado bg-grafite/40" />
@@ -713,7 +713,7 @@ function PipelineBoardUI() {
   if (isError) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PageHeader eyebrow="Operação" title="Pipelines" description="Cliente, tarefas do ClickUp ou carga da equipe — cada quadro do seu jeito." />
+        <PageHeader eyebrow="Operação" title="Pipelines" description="Cliente, tarefas do ClickUp ou carga da equipe, cada quadro do seu jeito." />
         <EmptyState
           icon={SquareKanban}
           title="Não consegui carregar seus quadros"
@@ -737,11 +737,11 @@ function PipelineBoardUI() {
   if (!board) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PageHeader eyebrow="Operação" title="Pipelines" description="Cliente, tarefas do ClickUp ou carga da equipe — cada quadro do seu jeito." />
+        <PageHeader eyebrow="Operação" title="Pipelines" description="Cliente, tarefas do ClickUp ou carga da equipe, cada quadro do seu jeito." />
         <EmptyState
           icon={SquareKanban}
           title="Nenhum quadro ainda"
-          description="Crie o primeiro. Um quadro pessoal é seu e só seu — você organiza as colunas do jeito que funciona pra você. O da agência todo mundo da empresa vê."
+          description="Crie o primeiro. Um quadro pessoal é seu e só seu, você organiza as colunas do jeito que funciona pra você. O da agência todo mundo da empresa vê."
         />
         <div className="flex justify-center">
           <button
@@ -796,7 +796,7 @@ function PipelineBoardUI() {
         <PageHeader
           eyebrow="Operação"
           title="Pipelines"
-          description="Cliente, tarefas do ClickUp ou carga da equipe — cada quadro do seu jeito."
+          description="Cliente, tarefas do ClickUp ou carga da equipe, cada quadro do seu jeito."
           actions={
             <div className="flex items-center gap-2">
               <button
@@ -883,7 +883,7 @@ function PipelineBoardUI() {
           { rotulo: 'Cartões no quadro', valor: String(resumo.total), detalhe: `${board.stages.length} coluna(s)` },
           {
             rotulo: 'Valor no quadro',
-            valor: resumo.somaCentavos > 0 ? formatarCentavos(resumo.somaCentavos) : '—',
+            valor: resumo.somaCentavos > 0 ? formatarCentavos(resumo.somaCentavos) : ', ',
             // Dizer quantos ficaram de fora é o que separa uma soma de uma
             // soma confiável: sem isso o total parece cobrir o quadro inteiro.
             detalhe: resumo.semValor > 0 ? `${resumo.semValor} sem valor legível` : 'todos com valor',
@@ -891,7 +891,7 @@ function PipelineBoardUI() {
           },
           {
             rotulo: 'Maior acúmulo',
-            valor: maiorColuna && maiorColuna.quantidade > 0 ? String(maiorColuna.quantidade) : '—',
+            valor: maiorColuna && maiorColuna.quantidade > 0 ? String(maiorColuna.quantidade) : ', ',
             detalhe: maiorColuna && maiorColuna.quantidade > 0 ? maiorColuna.label : 'quadro vazio',
           },
           {

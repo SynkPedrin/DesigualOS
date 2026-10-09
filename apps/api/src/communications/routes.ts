@@ -204,7 +204,7 @@ async function registerWhatsappWebhook(app: FastifyInstance): Promise<void> {
 
     const apikeyRecebida = (request.body as Record<string, unknown> | null)?.['apikey'];
     if (apikeyRecebida !== conector.apiKey) {
-      logger.warn({ organizationId, instance: evento.instance }, 'Webhook do WhatsApp com apikey que não confere com o conector gravado — descartado');
+      logger.warn({ organizationId, instance: evento.instance }, 'Webhook do WhatsApp com apikey que não confere com o conector gravado, descartado');
       reply.code(200); // não confirma ao remetente se a causa foi auth ou payload — evita oráculo pra quem está testando o endpoint
       return { ignored: true };
     }

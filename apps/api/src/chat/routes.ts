@@ -646,7 +646,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         ? [
             operationalTurn.briefingBlock,
             operationalListing
-              ? `\n\nITENS QUE SUSTENTAM O BRIEFING ACIMA (mesma consulta, item a item — use para NOMEAR tarefa, responsável e prazo em vez de falar por cima):\n${operationalListing}`
+              ? `\n\nITENS QUE SUSTENTAM O BRIEFING ACIMA (mesma consulta, item a item, use para NOMEAR tarefa, responsável e prazo em vez de falar por cima):\n${operationalListing}`
               : '',
           ]
             .filter(Boolean)

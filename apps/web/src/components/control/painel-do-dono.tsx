@@ -35,7 +35,7 @@ export function PainelDoDono() {
     return (
       <SemNadaAinda
         titulo="Não consegui montar o panorama"
-        explicacao="A consulta falhou. Isto não quer dizer que a operação está parada — quer dizer que não deu para olhar."
+        explicacao="A consulta falhou. Isto não quer dizer que a operação está parada, quer dizer que não deu para olhar."
       />
     );
   }
@@ -113,7 +113,7 @@ export function PainelDoDono() {
             <Aviso
               href="/people"
               titulo={`${equipe.sem_clickup} pessoa(s) sem vínculo com o ClickUp`}
-              corpo="O trabalho delas não aparece em nenhuma consulta do sistema — parece que não há tarefa, quando falta o vínculo."
+              corpo="O trabalho delas não aparece em nenhuma consulta do sistema, parece que não há tarefa, quando falta o vínculo."
             />
           )}
         </div>

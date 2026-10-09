@@ -57,7 +57,7 @@ export function LinhaDoTempo({ limite = 50, clientId }: { limite?: number; clien
     return (
       <SemNadaAinda
         titulo="Não consegui ler a atividade"
-        explicacao="A consulta falhou. Isto não quer dizer que nada aconteceu — quer dizer que não deu para olhar agora."
+        explicacao="A consulta falhou. Isto não quer dizer que nada aconteceu, quer dizer que não deu para olhar agora."
       />
     );
   }

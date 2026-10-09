@@ -35,7 +35,7 @@ export const DEMO_CLIENT_INFO: Record<string, DemoClientInfo> = {
     email: 'parceria@g4educacao.com',
     telefone: '+55 11 93456-7890',
     localizacao: 'São Paulo, SP',
-    observacoes: 'Campanhas recorrentes de lançamento de turma — janelas curtas, aprovação rápida é crítica.',
+    observacoes: 'Campanhas recorrentes de lançamento de turma, janelas curtas, aprovação rápida é crítica.',
     badges: ['Educação', 'Performance'],
     descricaoCurta: 'Escola de negócios focada em formação executiva de alta performance.',
   },
@@ -55,14 +55,14 @@ export const DEMO_CLIENT_INFO: Record<string, DemoClientInfo> = {
     email: 'contato@autovisual.com.br',
     telefone: '+55 11 95678-9012',
     localizacao: 'São Paulo, SP',
-    observacoes: 'Conteúdo em vídeo é o carro-chefe — cronograma de produção semanal.',
+    observacoes: 'Conteúdo em vídeo é o carro-chefe, cronograma de produção semanal.',
     badges: ['Automotivo', 'Vídeo'],
     descricaoCurta: 'Rede de estética automotiva premium com unidades na grande São Paulo.',
   },
 };
 
 export const DEMO_CLIENT_INFO_FALLBACK: DemoClientInfo = {
-  clienteDesde: '—',
+  clienteDesde: ', ',
   segmento: '[CONFIRMAR: segmento]',
   email: '[CONFIRMAR: e-mail]',
   telefone: '[CONFIRMAR: telefone]',

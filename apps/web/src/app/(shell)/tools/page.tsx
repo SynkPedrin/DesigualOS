@@ -65,11 +65,11 @@ export default function ToolsPage() {
         />
       ) : (
         <>
-          <Secao titulo={`Escrita — alteram a operação (${escrita.length})`}>
+          <Secao titulo={`Escrita, alteram a operação (${escrita.length})`}>
             <Inventario lista={escrita} chamadas={chamadasPorTool} />
           </Secao>
 
-          <Secao titulo={`Leitura — só consultam (${leitura.length})`}>
+          <Secao titulo={`Leitura, só consultam (${leitura.length})`}>
             <Inventario lista={leitura} chamadas={chamadasPorTool} />
           </Secao>
         </>
@@ -119,10 +119,10 @@ function Inventario({
                     )}
                   </span>
                 ) : (
-                  <span className="text-nevoa">—</span>
+                  <span className="text-nevoa">-</span>
                 )}
               </Td>
-              <Td className="text-nevoa">{f.description || '—'}</Td>
+              <Td className="text-nevoa">{f.description || ', '}</Td>
             </tr>
           );
         })}

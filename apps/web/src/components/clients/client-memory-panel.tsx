@@ -32,7 +32,7 @@ export function ClientMemoryPanel({ clientId }: { clientId: string }) {
     return (
       <SemNadaAinda
         titulo="Não consegui ler a memória deste cliente"
-        explicacao="A consulta falhou. É a API, não a conta — se continuar, vale avisar quem cuida do sistema."
+        explicacao="A consulta falhou. É a API, não a conta, se continuar, vale avisar quem cuida do sistema."
       />
     );
   }
@@ -42,7 +42,7 @@ export function ClientMemoryPanel({ clientId }: { clientId: string }) {
     return (
       <SemNadaAinda
         titulo="Nada aprendido sobre este cliente ainda"
-        explicacao="Quando alguém corrigir uma entrega, declarar uma preferência ou fechar uma decisão no chat, vira registro e aparece aqui — sem precisar repetir na próxima."
+        explicacao="Quando alguém corrigir uma entrega, declarar uma preferência ou fechar uma decisão no chat, vira registro e aparece aqui, sem precisar repetir na próxima."
       />
     );
   }
@@ -102,7 +102,7 @@ function Registro({ memoria: m }: { memoria: MemoriaWire }) {
       </div>
       <p className="mt-1.5 text-sm text-branco-cru">{m.content}</p>
       <p className="mt-1 font-mono text-[10px] text-nevoa">
-        {m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : '—'}
+        {m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : ', '}
         {m.author_name && ` · por ${m.author_name}`}
         {m.source_type && ` · via ${m.source_type}`}
       </p>

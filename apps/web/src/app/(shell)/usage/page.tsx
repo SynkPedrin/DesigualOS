@@ -28,7 +28,7 @@ export default function UsagePage() {
   for (const e of execucoes ?? []) {
     const chave = e.userId ?? 'desconhecido';
     const atual = porPessoa.get(chave) ?? {
-      nome: e.userName ?? '—',
+      nome: e.userName ?? ', ',
       total: 0,
       entregues: 0,
       falhas: 0,
@@ -53,7 +53,7 @@ export default function UsagePage() {
         description="Quem está usando a inteligência, quanto, e com que resultado."
       />
 
-      <Secao titulo="Por pessoa — janela das 50 execuções mais recentes">
+      <Secao titulo="Por pessoa, janela das 50 execuções mais recentes">
         {isPending ? (
           <LinhasFantasma linhas={5} />
         ) : isError ? (

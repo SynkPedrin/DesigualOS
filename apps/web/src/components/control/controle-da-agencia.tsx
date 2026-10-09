@@ -35,7 +35,7 @@ export function ControleDaAgencia() {
     return (
       <SemNadaAinda
         titulo="Não consegui montar o controle da agência"
-        explicacao="A consulta falhou. Isto não quer dizer que a operação está parada — quer dizer que não deu para olhar."
+        explicacao="A consulta falhou. Isto não quer dizer que a operação está parada, quer dizer que não deu para olhar."
       />
     );
   }

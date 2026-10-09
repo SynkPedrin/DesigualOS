@@ -216,7 +216,7 @@ function EquipeParaAdministrador() {
           titulo="Nenhuma pessoa cadastrada"
           explicacao={
             isMaster
-              ? 'Convide alguém em "Convidar pessoa" — a conta nasce dentro da empresa em que você está.'
+              ? 'Convide alguém em "Convidar pessoa", a conta nasce dentro da empresa em que você está.'
               : 'Quando alguém for convidado para o sistema, aparece aqui.'
           }
         />
@@ -247,7 +247,7 @@ function EquipeParaAdministrador() {
               <p className="mt-1 text-[13px] text-nevoa">
                 As tarefas de {semClickUp.map((p) => p.name).join(', ')} não são alcançadas por nenhuma consulta
                 do sistema. Perguntar &ldquo;o que o fulano tem em aberto?&rdquo; responde{' '}
-                <span className="text-branco-cru">nada</span> — e parece que não há trabalho, quando o que falta é
+                <span className="text-branco-cru">nada</span>, e parece que não há trabalho, quando o que falta é
                 o vínculo.
               </p>
             </div>
@@ -292,7 +292,7 @@ function EquipeParaAdministrador() {
           {semUso.length > 0 && (
             <Secao titulo="Sem usar há mais de 30 dias">
               <p className="text-[13px] text-nevoa">
-                {semUso.map((p) => p.name).join(', ')}. Não é cobrança — é o sinal de que a ferramenta não
+                {semUso.map((p) => p.name).join(', ')}. Não é cobrança, é o sinal de que a ferramenta não
                 entrou no dia dessas pessoas, e isso se resolve conversando, não medindo.
               </p>
             </Secao>

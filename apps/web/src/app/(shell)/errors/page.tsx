@@ -34,7 +34,7 @@ export default function ErrorsPage() {
     <div className="mx-auto max-w-[1400px]">
       <ControlHeader
         title="Incidentes"
-        description="Execuções que terminaram mal — e o que ainda falta pra separar quebra de recusa aqui."
+        description="Execuções que terminaram mal, e o que ainda falta pra separar quebra de recusa aqui."
       />
 
       <Secao titulo={`${falhas.length} execução(ões) terminaram em falha`}>
@@ -45,13 +45,13 @@ export default function ErrorsPage() {
         ) : falhas.length === 0 ? (
           <SemNadaAinda
             titulo="Nenhuma falha nas últimas 50"
-            explicacao="Nada terminou mal na janela que a API devolve. Não é a mesma coisa que 'nunca falhou' — é a janela que existe."
+            explicacao="Nada terminou mal na janela que a API devolve. Não é a mesma coisa que 'nunca falhou', é a janela que existe."
           />
         ) : (
           <>
             {/* O aviso vem ANTES da tabela: depois dela, ninguém leria. */}
             <p className="mb-3 rounded-md border border-aviso/30 bg-aviso/5 px-3.5 py-2.5 text-sm text-nevoa">
-              Parte destas linhas é o sistema <span className="text-branco-cru">se comportando</span> — recusa por falta
+              Parte destas linhas é o sistema <span className="text-branco-cru">se comportando</span>, recusa por falta
               de permissão, por não identificar a task, por não ter o dado. A listagem não devolve o motivo, então a
               separação entre quebra e recusa exige abrir o detalhe.
             </p>
@@ -76,13 +76,13 @@ export default function ErrorsPage() {
                       <Td className="whitespace-nowrap font-mono text-[12px] text-nevoa">
                         {quando
                           ? new Date(quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                          : '—'}
+                          : ', '}
                       </Td>
-                      <Td className="truncate">{e.userName ?? '—'}</Td>
+                      <Td className="truncate">{e.userName ?? ', '}</Td>
                       <Td className="text-nevoa">{AGENT_META[e.agent]?.label ?? e.agent}</Td>
                       <Td className="truncate font-mono text-[12px] text-nevoa">{e.intent}</Td>
                       <Td className="truncate text-nevoa">
-                        {e.clientId ? (nomePorCliente.get(e.clientId) ?? '—') : '—'}
+                        {e.clientId ? (nomePorCliente.get(e.clientId) ?? ', ') : ', '}
                       </Td>
                       <Td>
                         <StatusLabel estado="erro">{e.status}</StatusLabel>

@@ -97,7 +97,7 @@ export function AutomationMetrics({ proxima }: { proxima?: { quando: Date; nome:
         icon: CalendarCheck,
         iconClassName: 'bg-grafite-elevado text-nevoa',
         label: 'Próxima execução',
-        value: '—',
+        value: ', ',
         caption: 'nada agendado',
       };
 

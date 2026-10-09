@@ -23,7 +23,7 @@ export const mockAgencyTasks: AgencyTaskWire[] = [
   },
   {
     id: 'task-proposta-g4',
-    name: 'Enviar proposta — G4',
+    name: 'Enviar proposta, G4',
     description: null,
     status: 'Para fazer',
     status_type: 'open',
@@ -40,7 +40,7 @@ export const mockAgencyTasks: AgencyTaskWire[] = [
   },
   {
     id: 'task-artes-clinica-bela',
-    name: 'Revisar artes — Clínica Belá',
+    name: 'Revisar artes, Clínica Belá',
     description: '3 artes para a campanha da semana.',
     status: 'Em produção',
     status_type: 'custom',
@@ -74,7 +74,7 @@ export const mockAgencyTasks: AgencyTaskWire[] = [
   },
   {
     id: 'task-landing-page-cosentino',
-    name: 'Aprovar landing page — Cosentino',
+    name: 'Aprovar landing page, Cosentino',
     description: null,
     status: 'Revisão',
     status_type: 'custom',
@@ -91,7 +91,7 @@ export const mockAgencyTasks: AgencyTaskWire[] = [
   },
   {
     id: 'task-reuniao-resultados-cosentino',
-    name: 'Preparar reunião de resultados — Cosentino',
+    name: 'Preparar reunião de resultados, Cosentino',
     description: null,
     status: 'Para fazer',
     status_type: 'open',
@@ -108,7 +108,7 @@ export const mockAgencyTasks: AgencyTaskWire[] = [
   },
   {
     id: 'task-cronograma-autovisual',
-    name: 'Confirmar cronograma de vídeos — Autovisual',
+    name: 'Confirmar cronograma de vídeos, Autovisual',
     description: null,
     status: 'Para fazer',
     status_type: 'open',

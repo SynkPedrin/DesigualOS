@@ -243,7 +243,7 @@ export async function registerCalendarRoutes(app: FastifyInstance): Promise<void
       const brief = await buildMeetingBrief(request.params.id, organizationId);
       if (!brief) {
         reply.code(404);
-        return { error: 'Evento não encontrado ou sem cliente vinculado — Meeting Brief só existe para reunião de cliente.' };
+        return { error: 'Evento não encontrado ou sem cliente vinculado, Meeting Brief só existe para reunião de cliente.' };
       }
       if (!(await hasClientAccess(request.authUser!, brief.client.id))) {
         reply.code(403);

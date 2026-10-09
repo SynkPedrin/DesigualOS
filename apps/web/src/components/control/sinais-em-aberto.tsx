@@ -74,7 +74,7 @@ export function SinaisEmAberto() {
         {(data?.signals ?? []).slice(0, 3).map((s) => (
           <li key={s.id} className="truncate text-[13px] text-nevoa">
             · {s.title}
-            {s.client_name && <span className="text-nevoa/70"> — {s.client_name}</span>}
+            {s.client_name && <span className="text-nevoa/70">, {s.client_name}</span>}
           </li>
         ))}
       </ul>

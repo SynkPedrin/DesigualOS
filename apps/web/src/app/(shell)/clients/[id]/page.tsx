@@ -133,7 +133,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         <EmptyState
           icon={MessageCircle}
           title={/not found/i.test(msg) ? 'Este cliente não existe ou não é seu' : 'Não conseguimos carregar este cliente'}
-          {...(/not found/i.test(msg) ? {} : { description: 'A consulta falhou — tente de novo.' })}
+          {...(/not found/i.test(msg) ? {} : { description: 'A consulta falhou, tente de novo.' })}
         />
       </div>
     );
@@ -231,7 +231,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               label="Próxima reunião"
               value={proximoEvento ? 1 : 0}
               isLoading={eventosQuery.isPending}
-              formatValue={() => (proximoEvento ? formatClockTime(proximoEvento.start_at) : '—')}
+              formatValue={() => (proximoEvento ? formatClockTime(proximoEvento.start_at) : ', ')}
             />
           </div>
 

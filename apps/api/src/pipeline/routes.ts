@@ -226,7 +226,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       reply.code(403);
       return {
         error: 'Só um administrador cria quadro da agência.',
-        detalhe: 'Você pode criar quantos quadros pessoais quiser — eles são seus e ninguém mais vê.',
+        detalhe: 'Você pode criar quantos quadros pessoais quiser, eles são seus e ninguém mais vê.',
       };
     }
 

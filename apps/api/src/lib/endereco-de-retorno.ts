@@ -104,7 +104,7 @@ export async function conferirEnderecoDeRetorno(
       return {
         ok: false,
         motivo:
-          `${abertura} Esse é um túnel temporário, e ele ganha um endereço novo toda vez que sobe — o que estava registrado morreu junto com o túnel anterior. ` +
+          `${abertura} Esse é um túnel temporário, e ele ganha um endereço novo toda vez que sobe, o que estava registrado morreu junto com o túnel anterior. ` +
           `Suba o túnel de novo e atualize ${variavel} E o endereço registrado no app do ${provedor} com o hostname novo, ou aponte os dois para um endereço estável.`,
       };
     }
@@ -113,7 +113,7 @@ export async function conferirEnderecoDeRetorno(
       return {
         ok: false,
         motivo:
-          `${abertura} Esse hostname não existe no DNS — não resolve para lugar nenhum, então nem chega a ser uma questão de o serviço estar no ar. ` +
+          `${abertura} Esse hostname não existe no DNS, não resolve para lugar nenhum, então nem chega a ser uma questão de o serviço estar no ar. ` +
           `Crie o registro apontando ${url.hostname} para onde esta API roda, ou troque ${variavel} por um endereço que já exista.`,
       };
     }

@@ -45,7 +45,7 @@ export async function recusarEnsinoEmProducao(mensagem: string, clientId: string
   if (c?.environment !== 'qa') {
     throw new Error(
       `[guard] "${mensagem.slice(0, 60)}..." ensina um fato e ${c?.name ?? clientId} é PRODUÇÃO. ` +
-        'Teste que escreve memória roda só em QA — foi assim que um trace inverteu o decisor de um cliente real.',
+        'Teste que escreve memória roda só em QA, foi assim que um trace inverteu o decisor de um cliente real.',
     );
   }
 }

@@ -55,7 +55,7 @@ export default function HealthPage() {
           <CartaoDeEstado rotulo="Execuções" valor={String(resumo.total)} estado="ok" />
           <CartaoDeEstado
             rotulo="Entregues"
-            valor={resumo.total > 0 ? `${Math.round((resumo.entregues / resumo.total) * 100)}%` : '—'}
+            valor={resumo.total > 0 ? `${Math.round((resumo.entregues / resumo.total) * 100)}%` : ', '}
             estado={resumo.total === 0 ? 'desconhecido' : resumo.entregues / resumo.total >= 0.9 ? 'ok' : 'atencao'}
             detalhe={`${resumo.entregues} de ${resumo.total}`}
           />
@@ -63,7 +63,7 @@ export default function HealthPage() {
             rotulo="Terminaram em falha"
             valor={String(resumo.quebras)}
             estado={resumo.quebras === 0 ? 'ok' : 'atencao'}
-            detalhe="inclui recusas — ver Incidentes"
+            detalhe="inclui recusas, ver Incidentes"
           />
           <CartaoDeEstado rotulo="Em andamento" valor={String(resumo.andando)} estado="desconhecido" />
           <CartaoDeEstado rotulo="Mediana" valor={formatarDuracao(resumo.medianaMs)} estado="ok" />
@@ -87,7 +87,7 @@ export default function HealthPage() {
         ) : isError || !infra ? (
           <SemNadaAinda
             titulo="Não consegui ler a infraestrutura"
-            explicacao="A consulta falhou. Enquanto ela não responder, o estado dos nós é desconhecido — e desconhecido não é saudável."
+            explicacao="A consulta falhou. Enquanto ela não responder, o estado dos nós é desconhecido, e desconhecido não é saudável."
           />
         ) : (
           <Tabela>
@@ -112,7 +112,7 @@ export default function HealthPage() {
                     </Td>
                     <Td className="font-mono text-[12px] text-nevoa">{n.latencyMs}ms</Td>
                     <Td className="font-mono text-[12px] text-nevoa">
-                      {n.lastHeartbeatAt ? new Date(n.lastHeartbeatAt).toLocaleString('pt-BR') : '—'}
+                      {n.lastHeartbeatAt ? new Date(n.lastHeartbeatAt).toLocaleString('pt-BR') : ', '}
                     </Td>
                   </tr>
                 );

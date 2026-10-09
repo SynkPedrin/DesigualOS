@@ -77,7 +77,7 @@ export function InteligenciaConectada() {
             <Numero rotulo="Chamadas 24h" valor={String(mcp?.chamadas_24h ?? 0)} />
             {/* Taxa só existe se houve chamada. "100%" sobre zero chamada é o
              * tipo de número que parece ótimo e não significa nada. */}
-            <Numero rotulo="Sucesso" valor={taxa === null ? '—' : `${taxa}%`} />
+            <Numero rotulo="Sucesso" valor={taxa === null ? ', ' : `${taxa}%`} />
           </div>
         )}
       </div>

@@ -162,7 +162,7 @@ export function MotionBriefCard({
           <Check size={14} className="shrink-0 text-roxo-eletrico" />
           <span>
             Briefing enviado
-            {fields.campaignName.trim() ? ` — ${fields.campaignName.trim()}` : ''}
+            {fields.campaignName.trim() ? `, ${fields.campaignName.trim()}` : ''}
           </span>
         </div>
         <p className="mt-1 text-[11px] text-branco-cru/50">O Otto já está trabalhando no motion.</p>

@@ -56,7 +56,7 @@ export default function SignalsPage() {
         ) : isError ? (
           <SemNadaAinda
             titulo="Não consegui ler os sinais"
-            explicacao="A consulta falhou. Enquanto ela não responder, não dá pra afirmar que está tudo calmo — só que não deu pra olhar."
+            explicacao="A consulta falhou. Enquanto ela não responder, não dá pra afirmar que está tudo calmo, só que não deu pra olhar."
           />
         ) : lista.length === 0 ? (
           <SemNadaAinda
@@ -64,7 +64,7 @@ export default function SignalsPage() {
             explicacao={
               status === 'pending'
                 ? 'A consulta rodou e não há sinal em aberto. Aqui, diferente das outras telas, vazio é o resultado desejado.'
-                : 'O sistema ainda não gerou sinal nenhum. Quando uma regra perceber algo — prazo em risco, criativo rejeitado, decisão de cliente — aparece aqui.'
+                : 'O sistema ainda não gerou sinal nenhum. Quando uma regra perceber algo, prazo em risco, criativo rejeitado, decisão de cliente, aparece aqui.'
             }
           />
         ) : (
@@ -86,7 +86,7 @@ export default function SignalsPage() {
 
 function rotuloDaContagem(pagina: { total: number; mostrando: number } | undefined): string {
   if (!pagina) return 'Sinais';
-  if (pagina.total > pagina.mostrando) return `${pagina.mostrando} de ${pagina.total} sinal(is) — os mais recentes`;
+  if (pagina.total > pagina.mostrando) return `${pagina.mostrando} de ${pagina.total} sinal(is), os mais recentes`;
   return `${pagina.total} sinal(is)`;
 }
 
@@ -156,7 +156,7 @@ function Cartao({
 
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
         <p className="font-mono text-[10px] text-nevoa">
-          {s.created_at ? new Date(s.created_at).toLocaleString('pt-BR') : '—'} · regra {s.rule}
+          {s.created_at ? new Date(s.created_at).toLocaleString('pt-BR') : ', '} · regra {s.rule}
           {/* Confiança só aparece quando a regra declarou. Ausente não vira 0. */}
           {s.confidence !== null && ` · confiança ${Math.round(s.confidence * 100)}%`}
         </p>

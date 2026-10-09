@@ -35,7 +35,7 @@ export default function DecisionsPage() {
   const rotulo = !pagina
     ? 'Registros'
     : pagina.total > pagina.mostrando
-      ? `${pagina.mostrando} de ${pagina.total} registro(s) — os mais recentes`
+      ? `${pagina.mostrando} de ${pagina.total} registro(s), os mais recentes`
       : `${pagina.total} registro(s)`;
 
   return (
@@ -64,12 +64,12 @@ export default function DecisionsPage() {
         ) : isError ? (
           <SemNadaAinda
             titulo="Não consegui ler os registros"
-            explicacao="A consulta falhou. É a API, não o conteúdo — se continuar, vale avisar quem cuida do sistema."
+            explicacao="A consulta falhou. É a API, não o conteúdo, se continuar, vale avisar quem cuida do sistema."
           />
         ) : lista.length === 0 ? (
           <SemNadaAinda
             titulo="Nada fechado ainda neste recorte"
-            explicacao="Decisão vira registro quando alguém fecha uma questão no chat — 'tá decidido', 'pode seguir', 'vamos com'. Preferência e correção entram do mesmo jeito."
+            explicacao="Decisão vira registro quando alguém fecha uma questão no chat, 'tá decidido', 'pode seguir', 'vamos com'. Preferência e correção entram do mesmo jeito."
           />
         ) : (
           <ul className="space-y-2.5">
@@ -153,7 +153,7 @@ function Registro({ episodio: e }: { episodio: Episodio }) {
       )}
 
       <p className="mt-2 font-mono text-[10px] text-nevoa">
-        {e.occurred_at ? new Date(e.occurred_at).toLocaleString('pt-BR') : '—'}
+        {e.occurred_at ? new Date(e.occurred_at).toLocaleString('pt-BR') : ', '}
         {e.author_name && ` · por ${e.author_name}`}
         {e.agent && ` · via ${e.agent}`}
       </p>

@@ -62,15 +62,15 @@ export default function AuditPage() {
                 return (
                   <tr key={e.executionId}>
                     <Td className="whitespace-nowrap font-mono text-[12px] text-nevoa">
-                      {quando ? new Date(quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                      {quando ? new Date(quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ', '}
                     </Td>
-                    {/* "—" e nunca em branco: usuário apagado precisa parecer
+                    {/* ", " e nunca em branco: usuário apagado precisa parecer
                      * ausência, não um autor sem nome. */}
-                    <Td className="truncate">{e.userName ?? '—'}</Td>
+                    <Td className="truncate">{e.userName ?? ', '}</Td>
                     <Td className="text-nevoa">{AGENT_META[e.agent]?.label ?? e.agent}</Td>
                     <Td className="truncate font-mono text-[12px] text-nevoa">{e.intent}</Td>
                     <Td className="truncate text-nevoa">
-                      {e.clientId ? (nomePorCliente.get(e.clientId) ?? '—') : '—'}
+                      {e.clientId ? (nomePorCliente.get(e.clientId) ?? ', ') : ', '}
                     </Td>
                     <Td>
                       <StatusLabel estado={estado}>{e.status}</StatusLabel>

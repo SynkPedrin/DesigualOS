@@ -112,7 +112,7 @@ export async function registerMicrosoftCalendarIntegrationRoutes(app: FastifyIns
       const access = await resolveMicrosoftCalendarAccess(request.authUser!.id);
       if (!access) {
         reply.code(409);
-        return { error: 'Microsoft Calendar connection expired — reconecte.' };
+        return { error: 'Microsoft Calendar connection expired, reconecte.' };
       }
       const agendas = await listMicrosoftCalendars(access.accessToken);
       return { calendars: agendas.map((a) => ({ id: a.id, name: a.name, is_default: a.isDefault, can_edit: a.canEdit })) };

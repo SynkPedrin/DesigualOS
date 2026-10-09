@@ -152,7 +152,7 @@ export async function registerDataQualityRoutes(app: FastifyInstance): Promise<v
         codigo: 'CLIENTE_SEM_LISTA',
         titulo: 'Cliente da carteira sem lista do ClickUp',
         oQueFazer:
-          'Vincular a lista. Sem ela, o cliente existe no cadastro e NENHUMA consulta de operação o alcança — é invisível em silêncio.',
+          'Vincular a lista. Sem ela, o cliente existe no cadastro e NENHUMA consulta de operação o alcança, é invisível em silêncio.',
         quantos: semLista.length,
         gravidade: 'ALTO',
         exemplos: semLista.slice(0, 5).map((c) => c.name),

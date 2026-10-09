@@ -1122,7 +1122,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
               account_id: vinculo.accountId,
               account_label: vinculo.label,
               data_available: false as const,
-              reason: 'Vínculo sem conexão OAuth válida — reconecte o Meta em Integrações.',
+              reason: 'Vínculo sem conexão OAuth válida, reconecte o Meta em Integrações.',
             };
           }
 
@@ -1175,7 +1175,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
       if (!mapping) return { connected: false };
 
       if (!mapping.connectionId) {
-        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'Vínculo sem conexão OAuth associada — reconecte o Meta.' };
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'Vínculo sem conexão OAuth associada, reconecte o Meta.' };
       }
 
       const access = await resolveMetaAccessByConnectionId(mapping.connectionId);
@@ -1381,7 +1381,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
 
       if (!mapping) return { connected: false };
       if (!mapping.connectionId) {
-        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'Vínculo sem conexão OAuth associada — reconecte o Meta.' };
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'Vínculo sem conexão OAuth associada, reconecte o Meta.' };
       }
 
       const access = await resolveMetaAccessByConnectionId(mapping.connectionId);
@@ -1435,7 +1435,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
       if (!mapping) return { connected: false };
 
       if (!mapping.connectionId) {
-        return { connected: true, customer_id: mapping.customerId, data_available: false, reason: 'Vínculo sem conexão OAuth associada — reconecte o Google Ads.' };
+        return { connected: true, customer_id: mapping.customerId, data_available: false, reason: 'Vínculo sem conexão OAuth associada, reconecte o Google Ads.' };
       }
 
       const access = await resolveGoogleAdsAccessByConnectionId(mapping.connectionId);

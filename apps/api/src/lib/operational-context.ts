@@ -200,7 +200,7 @@ async function resolveSelectionTurn(params: {
     // carteira atrás de algo que "combine".
     const block = [
       `A seleção atual desta conversa tem ${atualizada.tasks.length} tasks (${atualizada.reasonLabel}).`,
-      'A referência não aponta pra nenhuma delas — me diga o número ou o nome da task dentro dessa lista.',
+      'A referência não aponta pra nenhuma delas, me diga o número ou o nome da task dentro dessa lista.',
     ].join('\n');
     return {
       // `openTasks` vazio de propósito: este caminho responde pela SELEÇÃO da
@@ -610,7 +610,7 @@ export function formatOperationalContextForPrompt(
       'FALHA DE FERRAMENTA (obrigatório reconhecer):',
       `Não foi possível consultar o ClickUp agora: ${context.failure}.`,
       'Diga isso de forma curta e direta. NUNCA invente quantidade de tarefa, prazo, cliente ou métrica.',
-      'Se souber algo do contexto que não dependa dessa consulta, pode usar — mas separando o que é dado atual do que não é.',
+      'Se souber algo do contexto que não dependa dessa consulta, pode usar, mas separando o que é dado atual do que não é.',
     ].join('\n');
   }
   return context.block;

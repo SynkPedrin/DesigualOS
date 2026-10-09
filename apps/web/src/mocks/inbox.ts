@@ -129,7 +129,7 @@ export const mockInboxThreads: InboxThreadWire[] = [
     client_id: null,
     client_name: null,
     contact_id: 'contact-prospect-estetica',
-    contact_name: 'Novo cliente — Estética',
+    contact_name: 'Novo cliente, Estética',
     contact_phone: '5511912340099',
     channel: 'whatsapp',
     status: 'open',

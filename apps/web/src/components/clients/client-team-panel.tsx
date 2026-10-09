@@ -42,7 +42,7 @@ export function ClientTeamPanel({ clientId }: { clientId: string }) {
     return (
       <SemNadaAinda
         titulo="Não consegui ler a equipe deste cliente"
-        explicacao="A consulta falhou. É a API, não a conta — se continuar, vale avisar quem cuida do sistema."
+        explicacao="A consulta falhou. É a API, não a conta, se continuar, vale avisar quem cuida do sistema."
       />
     );
   }
@@ -98,7 +98,7 @@ export function ClientTeamPanel({ clientId }: { clientId: string }) {
       {!assignments || assignments.length === 0 ? (
         <SemNadaAinda
           titulo="Ninguém atribuído a este cliente ainda"
-          explicacao="Atribua quem responde pelo atendimento, tráfego, design ou qualquer outra frente — vira o responsável padrão de demandas novas deste cliente."
+          explicacao="Atribua quem responde pelo atendimento, tráfego, design ou qualquer outra frente, vira o responsável padrão de demandas novas deste cliente."
         />
       ) : (
         <ul className="space-y-2">

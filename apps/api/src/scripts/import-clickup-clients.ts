@@ -23,7 +23,7 @@ async function main(): Promise<void> {
 
   const organizationId = organizacaoProvedora();
   if (!organizationId) {
-    logger.error('PROVIDER_ORGANIZATION_ID não configurado no .env — sem ele não há empresa pra gravar nos clientes importados');
+    logger.error('PROVIDER_ORGANIZATION_ID não configurado no .env, sem ele não há empresa pra gravar nos clientes importados');
     process.exit(1);
   }
 

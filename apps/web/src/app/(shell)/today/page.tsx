@@ -82,7 +82,7 @@ const BADGE_CLASS: Record<Tom, string> = {
  * organizador); nunca inventar presença real de cliente, então isto só cobre
  * a reunião interna, cujos nomes são o próprio time da demo. */
 const PARTICIPANTES_POR_TITULO: Record<string, string[]> = {
-  'Reunião interna — Atendimento': ['Pedro Gabriel', 'Matheus Rial', 'Tami Alves'],
+  'Reunião interna, Atendimento': ['Pedro Gabriel', 'Matheus Rial', 'Tami Alves'],
 };
 
 /**
@@ -97,7 +97,7 @@ function fraseDoResumo(dados: { reunioes: number; demandasVencendo: number; conv
   if (dados.demandasVencendo > 0) clausulas.push(`${dados.demandasVencendo} demanda${dados.demandasVencendo > 1 ? 's' : ''} vencendo hoje`);
   if (dados.conversasAguardando > 0) clausulas.push(`${dados.conversasAguardando} cliente${dados.conversasAguardando > 1 ? 's' : ''} aguardando seu retorno`);
 
-  if (clausulas.length === 0) return 'Nada urgente te esperando agora — bom momento pra avançar o que já está em andamento.';
+  if (clausulas.length === 0) return 'Nada urgente te esperando agora, bom momento pra avançar o que já está em andamento.';
   if (clausulas.length === 1) return `Hoje você tem ${clausulas[0]}.`;
   const ultima = clausulas.pop();
   return `Hoje você tem ${clausulas.join(', ')} e ${ultima}.`;
@@ -173,7 +173,7 @@ export default function TodayPage() {
       id: `demanda-${d.id}`,
       entidade: d.clientName ?? 'Cliente',
       titulo: d.clientName ?? 'Cliente',
-      descricao: `Nova demanda recebida — "${d.title}"`,
+      descricao: `Nova demanda recebida, "${d.title}"`,
       badge: { label: 'Nova demanda', tom: 'neutral' },
       quando: formatRelativeTime(d.requestedAt),
       href: `/demands/${d.id}`,
@@ -189,7 +189,7 @@ export default function TodayPage() {
       id: `demanda-vence-${d.id}`,
       entidade: d.clientName ?? 'Cliente',
       titulo: d.clientName ?? 'Cliente',
-      descricao: `Vence hoje — "${d.title}"`,
+      descricao: `Vence hoje, "${d.title}"`,
       badge: { label: 'Vence hoje', tom: 'urgent' },
       quando: formatRelativeTime(d.dueDate!),
       href: `/demands/${d.id}`,

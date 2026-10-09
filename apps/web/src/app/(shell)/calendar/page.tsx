@@ -148,7 +148,7 @@ function CalendarPageContent() {
           </button>
           {visao === 'pessoal' ? (
             <p className="ml-2 text-sm text-branco-cru">
-              {inicioSemana.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} — {new Date(fimSemana.getTime() - 86_400_000).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+              {inicioSemana.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}, {new Date(fimSemana.getTime() - 86_400_000).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
             </p>
           ) : (
             <p className="ml-2 text-sm text-branco-cru">
@@ -187,7 +187,7 @@ function CalendarPageContent() {
           <div className="w-full max-w-sm rounded-lg border border-grafite-elevado bg-grafite p-5" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-heading text-sm font-semibold text-branco-cru">{selecionado.visible ? selecionado.title : 'Ocupado'}</h2>
             <p className="mt-1 font-mono text-[11px] text-nevoa">
-              {new Date(selecionado.start_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })} —{' '}
+              {new Date(selecionado.start_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })} , {' '}
               {new Date(selecionado.end_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
             </p>
             {selecionado.visible && selecionado.location && <p className="mt-2 text-sm text-nevoa">{selecionado.location}</p>}

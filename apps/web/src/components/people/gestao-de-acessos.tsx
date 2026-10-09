@@ -76,7 +76,7 @@ function ehSucessoPelaMetade(mensagem: string): boolean {
  */
 const RECADO_TECNICO: Record<string, string> = {
   'Not Found':
-    'O sistema não encontrou essa rota na API. Em geral isso é o Orchestrator reiniciando ou fora do ar — confira se ele está rodando e tente de novo.',
+    'O sistema não encontrou essa rota na API. Em geral isso é o Orchestrator reiniciando ou fora do ar, confira se ele está rodando e tente de novo.',
   'Failed to fetch':
     'Não consegui falar com a API. Confira se o Orchestrator está rodando e tente de novo.',
   'Internal Server Error': 'A API falhou ao processar o convite. O time técnico consegue ver o motivo no log dela.',
@@ -185,7 +185,7 @@ export function ConvitePessoa({ onPronto }: { onPronto: () => void }) {
 
       {convidar.isError && sucessoPelaMetade && (
         <div className="mt-3 rounded-md border border-aviso/40 bg-aviso/10 p-3">
-          <p className="font-medium text-sm text-aviso">A conta foi criada — mas nem tudo deu certo.</p>
+          <p className="font-medium text-sm text-aviso">A conta foi criada, mas nem tudo deu certo.</p>
           <p className="mt-1 text-[13px] text-aviso">{mensagem}</p>
         </div>
       )}

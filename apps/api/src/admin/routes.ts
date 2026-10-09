@@ -228,7 +228,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
             return {
               error:
                 `O provedor de e-mail recusou a entrega para ${body.email} (${evento}). ` +
-                `Isso acontece quando o endereço não existe ou já devolveu uma mensagem antes — ` +
+                `Isso acontece quando o endereço não existe ou já devolveu uma mensagem antes, ` +
                 `a partir daí ele entra numa lista de supressão e nada mais chega nele. ` +
                 `Confira o endereço; se ele estiver certo, remova-o da lista de supressão no painel do Resend.`,
             };
@@ -322,7 +322,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         error:
           `Convite criado e e-mail enviado, mas não consegui registrar a pessoa no banco: ` +
           `${erro instanceof Error ? erro.message : String(erro)}. ` +
-          `Ela vai conseguir entrar, mas sem papel e sem empresa — convide de novo depois que isso for resolvido.`,
+          `Ela vai conseguir entrar, mas sem papel e sem empresa, convide de novo depois que isso for resolvido.`,
       };
     }
 

@@ -43,7 +43,7 @@ export function ClientDemandsPanel({
     return (
       <SemNadaAinda
         titulo="Não consegui ler as demandas deste cliente"
-        explicacao="A consulta falhou. É a API, não a conta — se continuar, vale avisar quem cuida do sistema."
+        explicacao="A consulta falhou. É a API, não a conta, se continuar, vale avisar quem cuida do sistema."
       />
     );
   }
@@ -93,7 +93,7 @@ export function ClientDemandsPanel({
       {!demands || demands.length === 0 ? (
         <SemNadaAinda
           titulo="Nenhuma demanda deste cliente ainda"
-          explicacao="Demandas chegam pelo Inbox (conversa real) ou são lançadas aqui direto — do pedido ao briefing aprovado."
+          explicacao="Demandas chegam pelo Inbox (conversa real) ou são lançadas aqui direto, do pedido ao briefing aprovado."
         />
       ) : (
         <ul className="space-y-2">

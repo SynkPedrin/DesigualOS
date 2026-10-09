@@ -191,7 +191,7 @@ function montarTexto(conteudo: ConteudoDoEmail): string {
     '',
     semTags(conteudo.rodape),
     '',
-    '— Desigual OS',
+    ',  Desigual OS',
   ].join('\n');
 }
 
@@ -305,7 +305,7 @@ export async function sendInviteEmail(params: {
       titulo: 'Você tem acesso ao Desigual OS',
       paragrafos: [
         `${saudacao} Você foi convidado(a) para ${destino} como <strong style="color:${BRANCO_CRU};">${escapeHtml(papel)}</strong>.`,
-        'O botão abaixo abre o cadastro para você definir a sua senha. A partir daí é só entrar — o sistema já sabe quem você é e o que você pode acessar.',
+        'O botão abaixo abre o cadastro para você definir a sua senha. A partir daí é só entrar, o sistema já sabe quem você é e o que você pode acessar.',
       ],
       botao: { texto: 'Aceitar convite', href: params.inviteLink },
       mostrarLinkCru: true,
@@ -329,7 +329,7 @@ export async function sendResetPasswordEmail(params: { to: string; name: string 
       ],
       botao: { texto: 'Redefinir senha', href: params.resetLink },
       mostrarLinkCru: true,
-      rodape: 'Se você não pediu essa redefinição, pode ignorar este e-mail — a sua senha continua a mesma.',
+      rodape: 'Se você não pediu essa redefinição, pode ignorar este e-mail, a sua senha continua a mesma.',
     },
   });
 }
@@ -354,7 +354,7 @@ export async function sendAddedToOrganizationEmail(params: { to: string; name: s
       titulo: `Bem-vindo(a) à ${params.organizationName}`,
       paragrafos: [
         `${saudacao} Você foi adicionado(a) à empresa <strong style="color:${BRANCO_CRU};">${empresa}</strong> no Desigual OS.`,
-        'Entre com a sua conta de sempre — a empresa já aparece para você, sem cadastro novo e sem senha nova.',
+        'Entre com a sua conta de sempre, a empresa já aparece para você, sem cadastro novo e sem senha nova.',
       ],
       botao: { texto: 'Abrir o Desigual OS', href: appUrl },
       mostrarLinkCru: false,

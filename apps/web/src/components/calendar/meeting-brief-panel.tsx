@@ -47,7 +47,7 @@ export function MeetingBriefPanel({ eventId, onClose }: { eventId: string; onClo
               <p className="font-heading text-base font-semibold text-branco-cru">{brief.event.title ?? 'Reunião'}</p>
               <p className="mt-0.5 text-sm text-nevoa">{brief.client.name}</p>
               <p className="mt-1 font-mono text-[11px] text-nevoa">
-                {new Date(brief.event.start_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })} —{' '}
+                {new Date(brief.event.start_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })} , {' '}
                 {new Date(brief.event.end_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
               </p>
               {brief.event.location && <p className="mt-1 text-sm text-nevoa">{brief.event.location}</p>}

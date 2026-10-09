@@ -24,12 +24,12 @@ import { ApiRequestError } from '@/lib/api/client';
  * diretas do login), não um <select> alimentado por uma chamada própria.
  */
 function formatCurrency(value: number | null, currency = 'BRL'): string {
-  if (value === null) return '—';
+  if (value === null) return ', ';
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(value);
 }
 
 function formatNumber(value: number | null): string {
-  if (value === null) return '—';
+  if (value === null) return ', ';
   return new Intl.NumberFormat('pt-BR').format(Math.round(value));
 }
 
@@ -80,7 +80,7 @@ function LinkAccountPicker({ clientId }: { clientId: string }) {
     <div className="rounded-lg border border-grafite-elevado p-4">
       <div className="mb-2 flex items-center gap-2">
         <GoogleAdsLogo />
-        <p className="text-sm font-semibold text-branco-cru">Google Ads conectado — vincule a conta deste cliente</p>
+        <p className="text-sm font-semibold text-branco-cru">Google Ads conectado, vincule a conta deste cliente</p>
       </div>
 
       <div className="space-y-3">
@@ -128,7 +128,7 @@ function LinkAccountPicker({ clientId }: { clientId: string }) {
                 <option value="">Selecione…</option>
                 {options.map((a) => (
                   <option key={a.customer_id} value={a.customer_id}>
-                    {a.descriptive_name ?? a.customer_id} ({a.currency_code ?? '—'})
+                    {a.descriptive_name ?? a.customer_id} ({a.currency_code ?? ', '})
                   </option>
                 ))}
               </select>
@@ -207,7 +207,7 @@ function ConnectedSummary({ clientId, customerId, loginCustomerId, label }: { cl
             {[
               ['Investimento (30d)', formatCurrency(insights?.spend ?? null)],
               ['Conversões', formatNumber(insights?.conversions ?? null)],
-              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : '—'],
+              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : ', '],
               ['CPC médio', formatCurrency(insights?.average_cpc ?? null)],
             ].map(([k, v]) => (
               <div key={k} className="rounded-lg border border-grafite-elevado p-3">
@@ -234,7 +234,7 @@ function ConnectedSummary({ clientId, customerId, loginCustomerId, label }: { cl
                       <td className="px-3 py-2 text-branco-cru">{c.name}</td>
                       <td className="px-3 py-2 text-nevoa">{c.status}</td>
                       <td className="px-3 py-2 text-right text-branco-cru">{formatCurrency(c.spend)}</td>
-                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : '—'}</td>
+                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : ', '}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -19,12 +19,12 @@ import { ApiRequestError } from '@/lib/api/client';
  *   3. vinculado -> resumo de performance (ou aviso de reconexão, nunca número inventado).
  */
 function formatCurrency(value: number | null, currency = 'BRL'): string {
-  if (value === null) return '—';
+  if (value === null) return ', ';
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(value);
 }
 
 function formatNumber(value: number | null): string {
-  if (value === null) return '—';
+  if (value === null) return ', ';
   return new Intl.NumberFormat('pt-BR').format(Math.round(value));
 }
 
@@ -75,7 +75,7 @@ function LinkAccountPicker({ clientId }: { clientId: string }) {
     <div className="rounded-lg border border-grafite-elevado p-4">
       <div className="mb-2 flex items-center gap-2">
         <MetaLogo />
-        <p className="text-sm font-semibold text-branco-cru">Meta Ads conectado — vincule a conta deste cliente</p>
+        <p className="text-sm font-semibold text-branco-cru">Meta Ads conectado, vincule a conta deste cliente</p>
       </div>
 
       {businesses.isPending ? (
@@ -123,7 +123,7 @@ function LinkAccountPicker({ clientId }: { clientId: string }) {
                   <option value="">Selecione…</option>
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.name ?? a.id} ({a.currency ?? '—'})
+                      {a.name ?? a.id} ({a.currency ?? ', '})
                     </option>
                   ))}
                 </select>
@@ -198,7 +198,7 @@ function ConnectedSummary({ clientId, accountId, businessId, label }: { clientId
             {[
               ['Investimento (30d)', formatCurrency(insights?.spend ?? null)],
               ['Resultados', formatNumber(insights?.results ?? null)],
-              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : '—'],
+              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : ', '],
               ['CPM', formatCurrency(insights?.cpm ?? null)],
             ].map(([k, v]) => (
               <div key={k} className="rounded-lg border border-grafite-elevado p-3">
@@ -225,7 +225,7 @@ function ConnectedSummary({ clientId, accountId, businessId, label }: { clientId
                       <td className="px-3 py-2 text-branco-cru">{c.name}</td>
                       <td className="px-3 py-2 text-nevoa">{c.status}</td>
                       <td className="px-3 py-2 text-right text-branco-cru">{formatCurrency(c.spend)}</td>
-                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : '—'}</td>
+                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : ', '}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -285,7 +285,7 @@ function GaleriaDeCriativos({ clientId }: { clientId: string }) {
                 {c.name}
               </p>
               <p className="mt-0.5 font-mono text-[10px] text-nevoa">
-                {formatCurrency(c.spend)} · CTR {c.ctr != null ? `${c.ctr.toFixed(2)}%` : '—'}
+                {formatCurrency(c.spend)} · CTR {c.ctr != null ? `${c.ctr.toFixed(2)}%` : ', '}
               </p>
             </figcaption>
           </figure>

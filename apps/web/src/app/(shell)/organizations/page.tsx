@@ -66,7 +66,7 @@ export default function EmpresasPage() {
         ) : isError ? (
           <SemNadaAinda
             titulo="Não consegui ler as empresas"
-            explicacao="A consulta falhou. Isto não quer dizer que não há empresas — quer dizer que não deu para olhar."
+            explicacao="A consulta falhou. Isto não quer dizer que não há empresas, quer dizer que não deu para olhar."
           />
         ) : empresas.length === 0 ? (
           <SemNadaAinda

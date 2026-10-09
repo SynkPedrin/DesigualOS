@@ -39,7 +39,7 @@ function duracao(e: ExecutionListItem): string | null {
 
 function horario(e: ExecutionListItem): string {
   const iso = e.startedAt ?? e.createdAt ?? e.completedAt;
-  if (!iso) return '—';
+  if (!iso) return ', ';
   return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -55,7 +55,7 @@ export function FeedDeAtividade({ limite = 12 }: { limite?: number }) {
     return (
       <SemNadaAinda
         titulo="Não consegui ler a atividade"
-        explicacao="A consulta às execuções falhou. Isso é a API, não a sua operação — se continuar, vale avisar quem cuida do sistema."
+        explicacao="A consulta às execuções falhou. Isso é a API, não a sua operação, se continuar, vale avisar quem cuida do sistema."
       />
     );
   }
@@ -86,7 +86,7 @@ export function FeedDeAtividade({ limite = 12 }: { limite?: number }) {
                 {/* O autor primeiro: é a pergunta que alguém faz olhando um log
                  * de auditoria. "—" quando o usuário foi apagado — nunca outro
                  * nome, nunca em branco parecendo dado. */}
-                <span className="font-medium">{e.userName ?? '—'}</span>
+                <span className="font-medium">{e.userName ?? ', '}</span>
                 <span className="text-nevoa"> · via {agente}</span>
               </p>
               <p className="mt-0.5 truncate font-mono text-[11px] text-nevoa">

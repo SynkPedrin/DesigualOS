@@ -103,7 +103,7 @@ export async function registerGoogleCalendarIntegrationRoutes(app: FastifyInstan
       const access = await resolveGoogleCalendarAccess(request.authUser!.id);
       if (!access) {
         reply.code(409);
-        return { error: 'Google Calendar connection expired — reconecte.' };
+        return { error: 'Google Calendar connection expired, reconecte.' };
       }
       const agendas = await listGoogleCalendars(access.accessToken);
       return { calendars: agendas.map((a) => ({ id: a.id, summary: a.summary, primary: a.primary, access_role: a.accessRole })) };

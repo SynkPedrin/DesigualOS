@@ -39,7 +39,7 @@ export default function DataQualityPage() {
         <ControlHeader title="Qualidade do dado" />
         <SemNadaAinda
           titulo="Visível só para master"
-          explicacao="É uma tela de manutenção do cadastro, não de operação. Isso é o controle de acesso funcionando — não uma tela vazia."
+          explicacao="É uma tela de manutenção do cadastro, não de operação. Isso é o controle de acesso funcionando, não uma tela vazia."
         />
       </div>
     );
@@ -49,7 +49,7 @@ export default function DataQualityPage() {
     <div className="mx-auto max-w-[1100px]">
       <ControlHeader
         title="Qualidade do dado"
-        description="O que está torto no acervo, medido agora. A tela aponta e diz o que fazer — quem resolve é gente."
+        description="O que está torto no acervo, medido agora. A tela aponta e diz o que fazer, quem resolve é gente."
       />
 
       {isPending ? (
@@ -57,7 +57,7 @@ export default function DataQualityPage() {
       ) : isError ? (
         <SemNadaAinda
           titulo="Não consegui medir o acervo"
-          explicacao={`A consulta falhou${error instanceof Error ? ` (${error.message})` : ''}. Sem ela não dá pra afirmar que está tudo certo — ausência de medição não é ausência de problema.`}
+          explicacao={`A consulta falhou${error instanceof Error ? ` (${error.message})` : ''}. Sem ela não dá pra afirmar que está tudo certo, ausência de medição não é ausência de problema.`}
         />
       ) : !data ? null : (
         <>
@@ -94,7 +94,7 @@ export default function DataQualityPage() {
             {data.alertas.length === 0 ? (
               <SemNadaAinda
                 titulo="Nada apontado nesta medição"
-                explicacao="As regras que existem hoje não acharam nada. Não é o mesmo que 'o acervo está perfeito' — é o que estas regras alcançam."
+                explicacao="As regras que existem hoje não acharam nada. Não é o mesmo que 'o acervo está perfeito', é o que estas regras alcançam."
               />
             ) : (
               <ul className="space-y-2.5">

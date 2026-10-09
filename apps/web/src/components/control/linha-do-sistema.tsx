@@ -85,7 +85,7 @@ export function LinhaDoSistema() {
             texto:
               desconhecidos.length === sinais.length
                 ? 'ainda consultando o estado do sistema'
-                : `${desconhecidos.map((s) => s.nome).join(', ')} sem resposta — o resto está no ar`,
+                : `${desconhecidos.map((s) => s.nome).join(', ')} sem resposta, o resto está no ar`,
           }
         : { estado: 'ok' as Estado, texto: 'sistema no ar, tudo respondendo' };
 

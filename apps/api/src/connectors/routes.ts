@@ -398,7 +398,7 @@ export async function registerConnectorRoutes(app: FastifyInstance): Promise<voi
       const admin = resolveEvolutionAdminConfig();
       if (admin) {
         await evolutionDeleteInstance(admin, evolutionInstanceNameFor(acesso.orgId)).catch((error: unknown) => {
-          request.log.warn({ error, organizationId: acesso.orgId }, 'Falha ao apagar a instância Evolution ao desconectar o WhatsApp — conector local já removido');
+          request.log.warn({ error, organizationId: acesso.orgId }, 'Falha ao apagar a instância Evolution ao desconectar o WhatsApp, conector local já removido');
         });
       }
     }
