@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 let donoDaLista: { id: string; organizationId: string | null } | null = null;
 /** Conteúdo da "última mensagem do assistente" pra hasPendingDeleteConfirmation — cada teste ajusta. */
 let ultimaMensagemAssistente: string | null = null;
+/** Captura toda linha que o código tentou gravar em audit_logs — Bento 3.0, Fase 2. */
+const auditInserts: Record<string, unknown>[] = [];
 
 vi.mock('drizzle-orm', () => ({
   eq: (col: { __col?: string }, value: unknown) => ({ op: 'eq', col: col?.__col, value }),
@@ -27,10 +29,17 @@ vi.mock('@desigual-os/database', () => ({
         }),
       }),
     }),
+    insert: (_table: unknown) => ({
+      values: (valores: Record<string, unknown>) => {
+        auditInserts.push(valores);
+        return { catch: () => Promise.resolve(undefined) };
+      },
+    }),
   },
   schema: {
     clients: { id: { __col: 'id' }, organizationId: { __col: 'organizationId' }, clickupListId: { __col: 'clickupListId' } },
     messages: { conversationId: { __col: 'conversationId' }, role: { __col: 'role' }, content: { __col: 'content' }, createdAt: { __col: 'createdAt' } },
+    auditLogs: {},
   },
 }));
 

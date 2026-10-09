@@ -1,7 +1,54 @@
+import { db, schema } from '@desigual-os/database';
 import { createTask, findMemberByEmail, getTask, type ClickUpConfig, type CreatedTask, type TaskDetail } from './clickup-client';
 import { queryOperationTasks } from './clickup-operation';
 import { findDuplicateTask } from './task-verification';
 import { verifyTaskState, type ExpectedTaskState, type TaskVerification } from './task-verification';
+
+/**
+ * AUDITORIA DA ESCRITA DO AGENTE (Bento 3.0, Fase 2 — fundação).
+ *
+ * Achado da investigação forense: toda mutação que um humano faz pela API
+ * (criar cliente, mudar papel, excluir usuário) grava uma linha em
+ * `audit_logs` via `auditarAcao` — a rota tem o `FastifyRequest`, então sabe
+ * quem pediu. O worker não tem request nenhum (é fila, não HTTP), e por isso
+ * NENHUMA escrita do Bento no ClickUp — criar, atualizar, apagar task —
+ * deixava rastro em `audit_logs`. Dava pra responder "o Bento já fez isso
+ * nesta conversa?" (`execution-record.ts`, outro propósito: continuidade),
+ * mas não "quem autorizou o Bento a apagar a task X, e quando", do jeito que
+ * já existia pra ação humana.
+ *
+ * Mesma tabela, mesma forma — só a fonte dos dados muda (contexto do agente
+ * em vez de `request`). Nunca derruba a ação por falha de auditoria, mesmo
+ * critério de `auditoria.ts`.
+ */
+export async function auditarEscritaDoAgente(entrada: {
+  agent: SeniorAgent;
+  userId: string;
+  organizationId: string;
+  action: string;
+  resourceId: string;
+  resourceType?: string;
+  oldValue?: Record<string, unknown> | null;
+  newValue?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await db
+    .insert(schema.auditLogs)
+    .values({
+      userId: entrada.userId,
+      organizationId: entrada.organizationId,
+      agent: entrada.agent,
+      action: entrada.action,
+      result: 'completed',
+      source: 'agent',
+      resourceType: entrada.resourceType ?? 'clickup_task',
+      resourceId: entrada.resourceId,
+      oldValue: entrada.oldValue ?? null,
+      newValue: entrada.newValue ?? null,
+      metadata: entrada.metadata ?? {},
+    })
+    .catch(() => undefined);
+}
 
 export type SeniorAgent = 'bento' | 'otto';
 
@@ -212,6 +259,15 @@ export async function createVerifiedSeniorTask(
   }
   const verification = verifyTaskState(actual, expected);
   if (!verification.ok) return { success: false, errorCode: 'verification_failed', message: verification.mismatches.join('; '), retryable: true };
+  await auditarEscritaDoAgente({
+    agent: context.agent,
+    userId: context.userId,
+    organizationId: context.organizationId,
+    action: 'clickup.task_created',
+    resourceId: created.id,
+    newValue: { name: params.name, listId: params.listId, assignee: assignee?.username ?? null, priority: params.priority ?? null, dueDate: params.dueDate ?? null },
+    metadata: { executionId: context.executionId, url: created.url },
+  });
   return { success: true, resourceId: created.id, resourceUrl: created.url, verified: true, data: actual, assignedTo: assignee, ...(responsavelPendente ? { responsavelPendente } : {}), wasExisting: false };
 }
 

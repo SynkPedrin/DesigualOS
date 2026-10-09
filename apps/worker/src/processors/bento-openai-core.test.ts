@@ -8,7 +8,7 @@ vi.mock('@desigual-os/tool-gateway', async () => {
   const actual = await vi.importActual<typeof import('@desigual-os/tool-gateway')>('@desigual-os/tool-gateway');
   // createTaskComment precisa devolver promessa: desde 28/09/2026 o core
   // registra procedência também em mudança de RESPONSÁVEL, não só de status.
-  return { ...actual, createVerifiedSeniorTask: vi.fn(), createTaskComment: vi.fn(async () => ({ id: 'c1' })), getTaskComments: vi.fn(async () => []) };
+  return { ...actual, createVerifiedSeniorTask: vi.fn(), createTaskComment: vi.fn(async () => ({ id: 'c1' })), getTaskComments: vi.fn(async () => []), auditarEscritaDoAgente: vi.fn(async () => undefined) };
 });
 vi.mock('./bento-action-guard', () => ({
   // A cerca de QA (write-scope) vive no guard; o core consulta estes dois pra

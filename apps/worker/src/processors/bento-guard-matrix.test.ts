@@ -80,6 +80,7 @@ function resetTaskState() {
 }
 
 vi.mock('@desigual-os/tool-gateway', () => ({
+  auditarEscritaDoAgente: vi.fn(async () => {}),
   createTask: vi.fn(async () => {
     chamadas.createTask += 1;
     return { id: 'nova-qa-create', url: 'https://app.clickup.com/t/novaqacreate' };

@@ -1,6 +1,7 @@
 import { and, desc, eq, gt } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
+  auditarEscritaDoAgente,
   createTaskComment,
   deleteTask,
   findMemberByName,
@@ -1372,7 +1373,7 @@ async function resolveTaskClientAuthorization(
   return 'unknown';
 }
 
-async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, logger: Logger): Promise<ExecuteResponse> {
+async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, logger: Logger, auditContext?: SeniorToolContext | null): Promise<ExecuteResponse> {
   const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
   const start = performance.now();
   const record = (tool: string, input: string, ok: boolean, error?: string) => {
@@ -1422,6 +1423,21 @@ async function executeConfirmedDelete(config: ClickUpConfig, taskId: string, log
       aindaExisteDepois === null ? 'não consegui reler pra confirmar ausência' : aindaExiste ? 'task ainda existe após delete' : undefined,
     );
     logger.info({ intent_classification: 'delete', task_id: taskId, confirmed: true, verified: !aindaExiste, read_back_uncertain: aindaExisteDepois === null }, '[guard] exclusão executada');
+    // Auditoria (Bento 3.0, Fase 2): ação destrutiva, grava mesmo quando o
+    // read-back não confirmou a ausência — "mandei apagar" já é o fato que
+    // importa pra quem audita depois, o `verified` dentro de `metadata` diz
+    // se a releitura bateu.
+    if (auditContext) {
+      await auditarEscritaDoAgente({
+        agent: auditContext.agent,
+        userId: auditContext.userId,
+        organizationId: auditContext.organizationId,
+        action: 'clickup.task_deleted',
+        resourceId: taskId,
+        oldValue: { snapshot_antes: antes },
+        metadata: { executionId: auditContext.executionId, verified: !aindaExiste, read_back_uncertain: aindaExisteDepois === null },
+      });
+    }
     return guardResponse({
       ok: true,
       toolCalls,
@@ -1577,7 +1593,7 @@ export async function tryBentoActionGuard(params: {
             metadata: { guard: 'bento-action', action: 'denied_cross_client_target', write_authorized: false, verified: false, authorization: autorizacao },
           });
         }
-        return executeConfirmedDelete(confirmConfig, confirmContext.pendingDeleteTaskId, logger);
+        return executeConfirmedDelete(confirmConfig, confirmContext.pendingDeleteTaskId, logger, params.seniorToolContext);
       }
     }
   }
@@ -2051,6 +2067,7 @@ export async function tryBentoActionGuard(params: {
         solicitacaoAnterior: context.solicitacaoAnterior,
         mapStatus: mapStatusHintToRealStatus,
         logger,
+        ...(params.seniorToolContext ? { auditContext: params.seniorToolContext } : {}),
       });
     }
 
@@ -2062,6 +2079,17 @@ export async function tryBentoActionGuard(params: {
         const comentarios = await getTaskComments(config, taskId).catch(() => []);
         const presente = comentarios.some((c) => c.id === criado.id) || comentarios.some((c) => c.text.includes(intent.text));
         record('clickup.get_task_comments', `read-back ${taskId}`, presente, presente ? undefined : 'comentário não apareceu na releitura');
+        if (params.seniorToolContext) {
+          await auditarEscritaDoAgente({
+            agent: params.seniorToolContext.agent,
+            userId: params.seniorToolContext.userId,
+            organizationId: params.seniorToolContext.organizationId,
+            action: 'clickup.task_commented',
+            resourceId: taskId,
+            newValue: { comment_id: criado.id, text: intent.text },
+            metadata: { executionId: params.seniorToolContext.executionId, verified_by_readback: presente },
+          });
+        }
         return guardResponse({
           ok: true,
           toolCalls,

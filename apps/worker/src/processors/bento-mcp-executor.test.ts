@@ -4,6 +4,7 @@ vi.mock('@desigual-os/openai-provider', async () => {
   const actual = await vi.importActual<typeof import('@desigual-os/openai-provider')>('@desigual-os/openai-provider');
   return { ...actual, callResponses: vi.fn() };
 });
+const auditCalls: Record<string, unknown>[] = [];
 vi.mock('@desigual-os/tool-gateway', async () => {
   const actual = await vi.importActual<typeof import('@desigual-os/tool-gateway')>('@desigual-os/tool-gateway');
   return {
@@ -13,6 +14,8 @@ vi.mock('@desigual-os/tool-gateway', async () => {
     getTaskComments: vi.fn(),
     queryOperationTasks: vi.fn(),
     resolveMemberByName: vi.fn(),
+    // Bento 3.0, Fase 2: captura em vez de gravar de verdade.
+    auditarEscritaDoAgente: vi.fn(async (entrada: Record<string, unknown>) => { auditCalls.push(entrada); }),
   };
 });
 
@@ -103,6 +106,19 @@ describe('executeViaMcp (mockado — zero chamada real a OpenAI/ClickUp MCP)', (
     const call = vi.mocked(callResponses).mock.calls[0]![0];
     expect(call.tools?.[0]).toMatchObject({ type: 'mcp', server_url: 'https://mcp.clickup.com/mcp' });
     expect((call.tools?.[0] as { allowed_tools?: unknown }).allowed_tools).toBeUndefined();
+  });
+
+  /** Bento 3.0, Fase 2: a escrita via MCP também grava audit_logs, igual ao gateway legado. */
+  it('grava audit_logs quando auditContext é passado', async () => {
+    auditCalls.length = 0;
+    vi.mocked(callResponses).mockResolvedValue(responsesOk(JSON.stringify({ id: 'T1' })));
+    vi.mocked(getTask).mockResolvedValue(taskDetail());
+
+    const envelope = await executeViaMcp(params({ auditContext: { agent: 'bento', userId: 'user-7', organizationId: 'org-7', executionId: 'exe-7' } }));
+
+    expect(envelope.success).toBe(true);
+    expect(auditCalls).toHaveLength(1);
+    expect(auditCalls[0]).toMatchObject({ agent: 'bento', userId: 'user-7', organizationId: 'org-7', resourceId: 'T1' });
   });
 
   it('a instrução exige output estruturado (TASK_ID/TASK_URL) e a chave da operação vai no input', async () => {

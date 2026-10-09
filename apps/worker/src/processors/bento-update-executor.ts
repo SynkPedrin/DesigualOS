@@ -14,8 +14,10 @@ import {
   setCustomFieldValue,
   updateTask,
   uploadTaskAttachment,
+  auditarEscritaDoAgente,
   type ClickUpConfig,
   type TaskDetail,
+  type SeniorAgent,
 } from '@desigual-os/tool-gateway';
 import { ehFalhaDeCampo, explicarFalhaDeCampo, resolverCampoPersonalizado } from './bento-field-values';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
@@ -185,8 +187,12 @@ export async function executeTaskUpdate(params: {
   solicitacaoAnterior?: string | null;
   mapStatus: (hint: string, statuses: string[]) => string | undefined;
   logger: Logger;
+  /** Quem autorizou esta escrita, pra registro em audit_logs (Bento 3.0, Fase 2).
+   *  Opcional de propósito: quem ainda não tem o contexto (chamadores antigos)
+   *  continua funcionando, só sem a linha de auditoria. */
+  auditContext?: { agent: SeniorAgent; userId: string; organizationId: string; executionId: string };
 }): Promise<ExecuteResponse> {
-  const { config, taskId, logger } = params;
+  const { config, taskId, logger, auditContext } = params;
   const toolCalls: { tool: string; input_summary: string; ok: boolean; duration_ms: number; error?: string }[] = [];
   const startedAt = performance.now();
   const record = (tool: string, input: string, ok: boolean, error?: string) => {
@@ -812,6 +818,29 @@ export async function executeTaskUpdate(params: {
     { task_id: taskId, campos: outcomes.map((o) => `${o.field}:${o.error ? 'erro' : o.verified ? 'ok' : 'pendente'}`) },
     '[update] atualização de task existente concluída',
   );
+
+  // Auditoria (Bento 3.0, Fase 2): só os campos que de fato mudaram e
+  // confirmaram na releitura — um campo "pendente"/com erro não é uma
+  // mutação, é uma tentativa, e não deve parecer um fato gravado.
+  //
+  // SEM `oldValue` POR CAMPO DE PROPÓSITO: `o.field` ('due', 'assignee'...) é
+  // um identificador interno do executor, não o nome da propriedade em
+  // `TaskDetail` — mapear um pro outro às cegas arriscava gravar um valor
+  // "antigo" ERRADO, que é pior que não gravar nenhum (um audit log em que não
+  // se pode confiar no oldValue é um audit log que mente). `atual` (estado
+  // antes de qualquer escrita) fica inteiro como referência.
+  if (auditContext && verificados.length > 0) {
+    await auditarEscritaDoAgente({
+      agent: auditContext.agent,
+      userId: auditContext.userId,
+      organizationId: auditContext.organizationId,
+      action: 'clickup.task_updated',
+      resourceId: taskId,
+      oldValue: { snapshot_antes: atual },
+      newValue: Object.fromEntries(verificados.map((o) => [o.field, valorDoCampo(o, fields, member, put)])),
+      metadata: { executionId: auditContext.executionId, task_name: nomeTask, campos_alterados: verificados.map((o) => o.field) },
+    });
+  }
 
   return respond(linhas.join('\n'), tudoOk, {
     guard: 'bento-action',

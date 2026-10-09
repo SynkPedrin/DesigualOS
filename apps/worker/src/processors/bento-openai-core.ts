@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Logger } from '@desigual-os/logging';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
-import { createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, replyToComment, updateTask, type SeniorToolContext } from '@desigual-os/tool-gateway';
+import { auditarEscritaDoAgente, createTaskComment, findMemberByEmail, getTaskComments, normalizeTaskName, replyToComment, updateTask, type SeniorToolContext } from '@desigual-os/tool-gateway';
 import { createVerifiedSeniorTask, MutationBudget } from '@desigual-os/tool-gateway';
 import {
   classificarAcesso,
@@ -577,6 +577,7 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       operationId,
       possibleDuplicate: decision.possibleDuplicate,
       logger: params.logger,
+      auditContext: params.seniorToolContext,
     });
     params.logger.info({ conversationId: params.conversationId, mcp_exec_ms: Math.round(performance.now() - __mcpStart), verified: envelope.verified }, '[bento-openai-core] executeViaMcp respondeu');
     // F-08: foco só com id REAL — success com resourceIds vazios não registra
@@ -770,6 +771,15 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
       const verified = respondendo ? Boolean(created.id) : comments.some((c) => c.id === created.id);
       const newState = applyExecutionToState(effectiveResourceState, { operation: 'comment_task', resourceIds: [decision.resolvedResourceId], verified, created: false });
       await persistResourceState(params.conversationId, newState);
+      await auditarEscritaDoAgente({
+        agent: 'bento',
+        userId: params.seniorToolContext.userId,
+        organizationId: params.seniorToolContext.organizationId,
+        action: 'clickup.task_commented',
+        resourceId: decision.resolvedResourceId,
+        newValue: { comment_id: created.id, text, reply_to: respondendo ?? null },
+        metadata: { executionId: params.seniorToolContext.executionId, verified, provider: 'LEGACY_GATEWAY' },
+      });
       const envelope: WriteEnvelope = { success: true, verified, provider, resourceIds: [decision.resolvedResourceId], operation: 'comment_task', changes: { comment: text }, error: null, retryable: false, sources: [`CLICKUP_TASK:${decision.resolvedResourceId}`, `CLICKUP_COMMENT:${created.id}`] };
       return envelopeToExecuteResponse('bento', envelope, 'Comentário adicionado.', executionRecordFromEnvelope(envelope, recordExtras));
     } catch (error) {
@@ -861,6 +871,7 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
     // traduzir status nenhum, então nada mudava. Reusa o mapeador do guard.
     mapStatus: mapStatusHintToRealStatus,
     logger: params.logger,
+    auditContext: params.seniorToolContext,
   });
   params.logger.info({ conversationId: params.conversationId, legacy_update_ms: Math.round(performance.now() - __updateStart) }, '[bento-openai-core] executeTaskUpdate respondeu');
 

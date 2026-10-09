@@ -16,8 +16,11 @@ const chamadas = {
   put: [] as Array<Record<string, unknown>>,
   upload: 0,
 };
+/** Bento 3.0, Fase 2: captura toda tentativa de gravar audit_logs. */
+const auditCalls: Record<string, unknown>[] = [];
 
 vi.mock('@desigual-os/tool-gateway', () => ({
+  auditarEscritaDoAgente: vi.fn(async (entrada: Record<string, unknown>) => { auditCalls.push(entrada); }),
   getTask: vi.fn(async (_c: unknown, taskId: string) => ({
     id: taskId,
     name: estado.name,
@@ -74,6 +77,30 @@ describe('executeTaskUpdate — conteúdo/título/anexo na MESMA task', () => {
     estado.name = 'Task de QA';
     chamadas.put.length = 0;
     chamadas.upload = 0;
+    auditCalls.length = 0;
+  });
+
+  /**
+   * Bento 3.0, Fase 2 — achado da investigação forense: `executeTaskUpdate`
+   * não gravava nada em `audit_logs`. Prova que, com `auditContext`, a
+   * atualização verificada grava a linha certa — e sem ele, não quebra (os
+   * chamadores antigos que não têm o contexto ainda não são obrigados a tê-lo).
+   */
+  it('grava audit_logs quando auditContext é passado, e não quebra quando não é', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const semContexto = await executeTaskUpdate(base({ clearDescription: true }));
+    expect(semContexto.status).toBe('completed');
+    expect(auditCalls).toHaveLength(0);
+
+    // A primeira chamada já zerou a descrição — sem resetar, a segunda seria
+    // "já estava assim" (zero escrita) em vez de uma mudança de verdade.
+    estado.description = 'BRIEFING ANTIGO que precisa sair';
+    const comContexto = await executeTaskUpdate(
+      base({ clearDescription: true }, { auditContext: { agent: 'bento', userId: 'user-9', organizationId: 'org-9', executionId: 'exe-9' } }),
+    );
+    expect(comContexto.status).toBe('completed');
+    expect(auditCalls).toHaveLength(1);
+    expect(auditCalls[0]).toMatchObject({ agent: 'bento', userId: 'user-9', organizationId: 'org-9', action: 'clickup.task_updated', resourceId: 'task-qa-1' });
   });
 
   it('clearDescription esvazia a descrição da MESMA task (PUT description vazio + read-back)', async () => {

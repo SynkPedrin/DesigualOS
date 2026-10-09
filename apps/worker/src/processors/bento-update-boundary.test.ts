@@ -24,6 +24,7 @@ const chamadas = {
 const ITEM11_ID = 'task-item-11';
 
 vi.mock('@desigual-os/tool-gateway', () => ({
+  auditarEscritaDoAgente: vi.fn(async () => {}),
   createTask: vi.fn(async () => {
     chamadas.createTask += 1;
     throw new Error('createTask NÃO PODE ser chamado num fluxo de update');

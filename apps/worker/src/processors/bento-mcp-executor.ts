@@ -6,6 +6,7 @@ import {
   type BudgetTier,
 } from '@desigual-os/openai-provider';
 import {
+  auditarEscritaDoAgente,
   findDuplicateTask,
   getClickUpMcpAccessToken,
   getTask,
@@ -149,6 +150,9 @@ export interface ExecuteViaMcpParams {
   /** Sinal da policy (C.2/F-05): título idêntico a um create recente da conversa — reconcile-first obrigatório e logado. */
   possibleDuplicate?: boolean;
   logger: Logger;
+  /** Quem autorizou esta escrita, pra audit_logs (Bento 3.0, Fase 2). Opcional
+   *  pra não quebrar chamador que ainda não o tenha. */
+  auditContext?: { agent: 'bento' | 'otto'; userId: string; organizationId: string; executionId: string } | null;
 }
 
 function fail(operation: string, error: string, retryable: boolean, provider: WriteProvider | null = 'MCP'): McpWriteEnvelope {
@@ -452,6 +456,22 @@ export async function executeViaMcp(params: ExecuteViaMcpParams): Promise<McpWri
     }
   } else if (resourceId) {
     params.logger.warn({ operationId: params.operationId, resourceId }, '[bento-mcp-executor] sem config REST legado: read-back indisponível (degradado)');
+  }
+
+  // Auditoria (Bento 3.0, Fase 2): mesma regra do gateway legado — grava só
+  // quando há um recurso real pra apontar. `success: true` sem `resourceId`
+  // não acontece neste ponto (os ramos sem id já retornaram antes), mas o
+  // `if` fica explícito em vez de assumir.
+  if (resourceId && params.auditContext) {
+    await auditarEscritaDoAgente({
+      agent: params.auditContext.agent,
+      userId: params.auditContext.userId,
+      organizationId: params.auditContext.organizationId,
+      action: action.intent === 'create_task' ? 'clickup.task_created' : action.intent === 'comment_task' ? 'clickup.task_commented' : 'clickup.task_updated',
+      resourceId,
+      newValue: action.changes ?? {},
+      metadata: { executionId: params.auditContext.executionId, provider: 'MCP', verified, operationId: params.operationId },
+    });
   }
 
   return {
