@@ -27,6 +27,7 @@ import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 import { resolveClickUpAccess } from '../integrations/access';
 import { resolveMetaAccess, resolveMetaAccessByConnectionId } from '../integrations/meta-access';
 import { getGoogleAdsEnvConfig, resolveGoogleAdsAccess, resolveGoogleAdsAccessByConnectionId } from '../integrations/google-ads-access';
+import { tarefasDaListaComCache } from '../clickup/cache-de-lista';
 
 const logger = createLogger({ service: 'clients' });
 
@@ -731,7 +732,20 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
       }
 
       try {
-        const tasks = await getTasksInList(access.token, client.clickupListId, request.query.include_closed === 'true');
+        /**
+         * O cache é por (token, lista, incluir fechadas) e o webhook de tarefa
+         * alterada o esvazia — por isso "ler direto do ClickUp" continua
+         * valendo: a tela não serve cópia velha, serve a última leitura, e
+         * qualquer mudança feita no ClickUp invalida tudo na hora.
+         *
+         * Sem ele esta rota levava 12,6s, 8,3s e 5,8s em três cargas seguidas
+         * da mesma tela, e uma quarta não respondeu em 18s.
+         */
+        const incluirFechadas = request.query.include_closed === 'true';
+        const listId = client.clickupListId;
+        const tasks = await tarefasDaListaComCache(access.token, listId, incluirFechadas, () =>
+          getTasksInList(access.token, listId, incluirFechadas),
+        );
         return {
           tasks: tasks.map((task) => ({
             id: task.id,

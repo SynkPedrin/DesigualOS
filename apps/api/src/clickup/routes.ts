@@ -41,6 +41,7 @@ import { extrairContextoDoHistoryItem } from './webhook-actor';
 import { extrairMudancas, frasearEventoDeTarefa, mudancaDeStatus } from './webhook-mudancas';
 import { respondAsBento } from '../lib/bento-mention';
 import { detectMentionedAgent, respondAsAgent, respondAsOtto } from '../lib/agent-mention';
+import { esquecerTarefasDaLista } from './cache-de-lista';
 
 const logger = createLogger({ service: 'clickup-webhook' });
 
@@ -486,6 +487,9 @@ async function handleTaskChanged(
   // abaixo desista (sem config, evento de lista desconhecida), porque a mudança
   // aconteceu de qualquer jeito.
   esquecerTarefasEmCache();
+  // O cache por lista (cache-de-lista.ts), que serve a ficha do cliente, está
+  // velho pelo mesmo motivo e pela mesma razão vai junto.
+  esquecerTarefasDaLista();
 
   const config = getClickUpConfig();
   if (!config) return;

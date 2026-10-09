@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -16,6 +16,7 @@ import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { supabase } from '@/lib/supabase/client';
 import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
 import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
+import { saudeEmCor } from '@/lib/saude-em-cor';
 
 function formatBackupTime(iso: string | null) {
   if (!iso) return 'Sem registro';
@@ -44,6 +45,29 @@ export function Sidebar({
   const setStudioModalOpen = useUiStore((state) => state.setStudioModalOpen);
   const { isMaster } = useIsMaster();
   const { data: health, isPending, isError } = useInfrastructureHealth(isMaster);
+
+  /**
+   * Saber se a lista continua abaixo. Medido do DOM, não deduzido da altura da
+   * janela: o que cabe depende de quantos itens o PAPEL da pessoa libera, e
+   * isso muda de usuário pra usuário.
+   */
+  const navRef = useRef<HTMLElement | null>(null);
+  const [temMais, setTemMais] = useState(false);
+  const conferirSeTemMais = useCallback(() => {
+    const el = navRef.current;
+    if (!el) return;
+    setTemMais(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  }, []);
+  useEffect(() => {
+    conferirSeTemMais();
+    const el = navRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    // A lista muda de tamanho sem a janela mudar: seção recolhida, item que
+    // some por permissão, badge que aparece. O observer pega os três.
+    const observador = new ResizeObserver(conferirSeTemMais);
+    observador.observe(el);
+    return () => observador.disconnect();
+  }, [conferirSeTemMais]);
   const { data: me } = useMe();
   const { data: workspace } = useMyWorkspace();
   const { logoSrc } = useBrandAssets();
@@ -148,7 +172,7 @@ export function Sidebar({
         collapsed ? 'w-[76px]' : 'w-64',
       )}
     >
-      <div className="flex items-center justify-between gap-2 px-4 py-6">
+      <div className="flex items-center justify-between gap-2 px-4 py-4">
         {!collapsed && (
           <Image src={logoSrc} alt="desigual OS" width={160} height={53} priority className="h-auto w-[150px]" />
         )}
@@ -190,7 +214,7 @@ export function Sidebar({
         </Link>
       )}
 
-      <div className={cn('mx-4 mb-4 rounded-lg bg-grafite px-3 py-3', collapsed && 'mx-2 px-2')}>
+      <div className={cn('mx-4 mb-3 rounded-lg bg-grafite px-3 py-2.5', collapsed && 'mx-2 px-2')}>
         <div className="flex items-center gap-3">
           <div className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru">
             {me?.avatarUrl ? (
@@ -232,7 +256,31 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav aria-label="Navegação principal" className="flex-1 space-y-1 overflow-y-auto px-3">
+      {/*
+        * O CORTE DEIXA DE SER SILENCIOSO.
+        *
+        * São dezoito itens; em monitor de 1080 eles cabem, em notebook não. A
+        * lista sempre rolou, mas sem nenhuma marca disso: o último item visível
+        * terminava rente à borda e parecia o fim da lista. Pedro relatou em
+        * 09/10/2026 como tela "cortada", e é exatamente isso que parecia.
+        *
+        * A sombra só aparece quando há mesmo o que ver abaixo, e some ao chegar
+        * no fim. Esconder a dica quando ela não se aplica é o que a torna
+        * confiável quando aplica.
+        */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {temMais && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-carbono to-transparent"
+          />
+        )}
+      <nav
+        ref={navRef}
+        onScroll={conferirSeTemMais}
+        aria-label="Navegação principal"
+        className="flex-1 space-y-0.5 overflow-y-auto px-3"
+      >
         {NAV_SECTIONS.map((secao) => {
         const itensDaSecao = visibleNavItems.filter((i) => i.section === secao.id);
         if (itensDaSecao.length === 0) return null;
@@ -244,7 +292,7 @@ export function Sidebar({
         const aberta = collapsed || abertas.has(secao.id);
         const podeRecolher = !collapsed && Boolean(secao.recolhida);
         return (
-        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-4')}>
+        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-3')}>
           {/*
             * O rótulo da seção some quando a sidebar está colapsada — ali só
             * cabe ícone, e um texto truncado em 3 letras não agrupa nada.
@@ -284,7 +332,7 @@ export function Sidebar({
           const isActive = caminhoDoItem === '/' ? pathname === '/' : pathname.startsWith(caminhoDoItem);
           const Icon = item.icon;
           const itemClassName = cn(
-            'relative flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-colors',
+            'relative flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors',
             isActive ? 'bg-grafite text-branco-cru' : 'text-nevoa hover:bg-grafite/60 hover:text-branco-cru',
           );
           const itemContent = (
@@ -339,9 +387,10 @@ export function Sidebar({
          * Eram duas listas da mesma coisa, e a de fora era a mais pobre. Uma
          * lista de conversas pertence ao lugar onde se conversa. */}
       </nav>
+      </div>
 
       {isMaster && (
-        <div className={cn('m-3 rounded-lg border border-grafite-elevado bg-grafite p-3', collapsed && 'hidden')}>
+        <div className={cn('m-2 rounded-lg border border-grafite-elevado bg-grafite p-2.5', collapsed && 'hidden')}>
           {isPending ? (
             <div className="space-y-2">
               <div className="h-3 w-3/4 animate-pulse rounded bg-grafite-elevado" />
@@ -354,10 +403,28 @@ export function Sidebar({
             // em vez da falta dele.
             <p className="font-mono text-xs text-erro">Não consegui carregar a saúde da infraestrutura.</p>
           ) : (
-            <dl className="space-y-1.5 font-mono text-xs">
+            <dl className="space-y-1 font-mono text-xs">
               <div className="flex items-center justify-between">
                 <dt className="text-nevoa">Saúde geral</dt>
-                <dd className="tabular-nums text-sinal">{health?.overallHealthPercent}%</dd>
+                {/*
+                  * A COR SEGUE O NÚMERO, e antes não seguia.
+                  *
+                  * Era `text-sinal` fixo: 20% e 82% saíam da mesma cor, então a
+                  * cor não dizia nada e o número parecia alarme permanente no
+                  * rodapé de todas as telas. Relatado assim pelo Pedro em
+                  * 09/10/2026: "saúde operacional sempre vermelho fica
+                  * estranho".
+                  *
+                  * A régua não existe pra deixar o número bonito. 20% continua
+                  * 20% e continua vermelho enquanto o worker estiver parado; o
+                  * que muda é que agora verde quer dizer alguma coisa.
+                  */}
+                <dd
+                  className={cn('tabular-nums', saudeEmCor(health?.overallHealthPercent ?? null))}
+                  title={`${health?.overallHealthPercent ?? 0}% dos sistemas respondendo`}
+                >
+                  {health?.overallHealthPercent}%
+                </dd>
               </div>
               <div className="flex items-center gap-1.5">
                 <span
