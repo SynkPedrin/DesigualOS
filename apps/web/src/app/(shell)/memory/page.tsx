@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { cn } from '@/lib/utils';
+import { apresentarConhecimento } from '@/lib/apresentacao/conhecimento';
 import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusDot, type Estado } from '@/components/control/primitives';
 import { useMemories, useMemoryKinds, type MemoriaWire } from '@/hooks/use-memories';
 
@@ -52,14 +54,14 @@ export default function MemoryPage() {
   const rotulo = !pagina
     ? 'Registros'
     : pagina.total > pagina.mostrando
-      ? `${pagina.mostrando} de ${pagina.total} registro(s) — os mais recentes`
+      ? `${pagina.mostrando} de ${pagina.total} registro(s), os mais recentes`
       : `${pagina.total} registro(s)`;
 
   return (
     <div className="mx-auto max-w-[1400px]">
       <ControlHeader
-        title="Memória"
-        description="Conhecimento institucional persistente: o que o sistema aprendeu, de onde veio, e se ainda vale."
+        title="Conhecimento"
+        description="O que a empresa sabe sobre cada cliente: contexto, preferências, pessoas, processos e aprendizados."
       />
 
       <Secao titulo="Filtros">
@@ -73,11 +75,26 @@ export default function MemoryPage() {
           <Pilula ativa={kind === null} onClick={() => setKind(null)}>
             Todos
           </Pilula>
-          {(tipos ?? []).slice(0, 8).map((t) => (
-            <Pilula key={t.kind} ativa={kind === t.kind} onClick={() => setKind(t.kind)}>
-              {t.kind} <span className="text-nevoa/70">{t.total}</span>
-            </Pilula>
-          ))}
+          {/*
+            * CATEGORIA HUMANA NO FILTRO, não o `kind` do banco.
+            *
+            * Era `{t.kind}` — a pessoa via "agent.episode" e "client.profile"
+            * como opções de filtro. O valor que vai pra API continua sendo o
+            * kind: a tradução é de apresentação, e o modelo interno não muda.
+            *
+            * Os tipos que não são conhecimento (registro de turno, anotação
+            * privada, acontecimento) nem viram pílula — ver apresentacao/
+            * conhecimento.ts, com o levantamento dos 12 tipos reais.
+            */}
+          {(tipos ?? [])
+            .filter((t) => apresentarConhecimento({ kind: t.kind }).visivelNoProduto)
+            .slice(0, 8)
+            .map((t) => (
+              <Pilula key={t.kind} ativa={kind === t.kind} onClick={() => setKind(t.kind)}>
+                {apresentarConhecimento({ kind: t.kind }).categoria}{' '}
+                <span className="text-nevoa/70">{t.total}</span>
+              </Pilula>
+            ))}
           <label className="ml-auto flex cursor-pointer items-center gap-2 font-mono text-[11px] text-nevoa">
             <input
               type="checkbox"
@@ -96,7 +113,7 @@ export default function MemoryPage() {
         ) : isError ? (
           <SemNadaAinda
             titulo="Não consegui ler a memória"
-            explicacao="A consulta falhou. É a API, não o conteúdo — se continuar, vale avisar quem cuida do sistema."
+            explicacao="A consulta falhou. É a API, não o conteúdo, se continuar, vale avisar quem cuida do sistema."
           />
         ) : (memorias ?? []).length === 0 ? (
           <SemNadaAinda
@@ -173,10 +190,53 @@ function SeloDeAlcance({ escopo }: { escopo: string }) {
   );
 }
 
+
+/**
+ * O TEXTO DA MEMÓRIA — recortado no DOM, inteiro quando se pede.
+ *
+ * Medido em produção em 08/10/2026: a tela entregava 312 mil caracteres de
+ * texto visível e 1724 elementos, levando 5,3s até aparecer. É a tela mais
+ * pesada do sistema por uma ordem de grandeza, e o motivo era desperdício
+ * puro: o conteúdo INTEIRO de cada memória ia pro DOM, enquanto o
+ * `line-clamp-4` mostrava quatro linhas. Memórias longas aqui passam de dois
+ * mil caracteres; a tela mostrava duzentos.
+ *
+ * E o recorte era mudo: o que passava de quatro linhas ficava inalcançável.
+ * `line-clamp` esconde, não resume — não havia como ler o resto.
+ *
+ * O dado já está em memória no cache do React Query. O que pesa é o DOM. Então
+ * o padrão é o recorte, e abrir mostra o texto completo sem ida ao servidor —
+ * leve por padrão, inteiro quando alguém precisa.
+ */
+const LIMITE_DE_PREVIA = 600;
+
+function TextoDaMemoria({ conteudo }: { conteudo: string }) {
+  const [aberto, setAberto] = useState(false);
+  const longo = conteudo.length > LIMITE_DE_PREVIA;
+
+  if (!longo) return <p className="mt-2 whitespace-pre-wrap text-sm text-branco-cru">{conteudo}</p>;
+
+  return (
+    <div className="mt-2">
+      <p className={cn('whitespace-pre-wrap text-sm text-branco-cru', !aberto && 'line-clamp-4')}>
+        {aberto ? conteudo : `${conteudo.slice(0, LIMITE_DE_PREVIA)}…`}
+      </p>
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        className="mt-1 font-mono text-[10px] uppercase tracking-wider text-roxo-eletrico transition-colors hover:text-branco-cru"
+      >
+        {aberto ? 'recolher' : `ver tudo · ${conteudo.length.toLocaleString('pt-BR')} caracteres`}
+      </button>
+    </div>
+  );
+}
+
+
 function CartaoDeMemoria({ memoria: m }: { memoria: MemoriaWire }) {
   const aposentada = m.status !== 'active';
   const estado: Estado = aposentada ? 'desconhecido' : 'ok';
-  const quando = m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : '—';
+  const quando = m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : ', ';
 
   return (
     <li
@@ -188,7 +248,10 @@ function CartaoDeMemoria({ memoria: m }: { memoria: MemoriaWire }) {
       <div className="flex items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2">
           <StatusDot estado={estado} />
-          <span className="truncate font-mono text-[11px] uppercase tracking-wider text-nevoa">{m.kind}</span>
+          {/* Categoria, nunca o nome interno do tipo. */}
+          <span className="truncate text-[11px] uppercase tracking-wider text-nevoa">
+            {apresentarConhecimento({ kind: m.kind, metadata: (m as { metadata?: unknown }).metadata }).categoria}
+          </span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
           {/* O ALCANCE vem antes do cliente: é o que diz o tamanho do estrago
@@ -203,7 +266,7 @@ function CartaoDeMemoria({ memoria: m }: { memoria: MemoriaWire }) {
         </span>
       </div>
 
-      <p className="mt-2 line-clamp-4 text-sm text-branco-cru">{m.content}</p>
+      <TextoDaMemoria conteudo={m.content} />
 
       <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-nevoa">
         <span>{quando}</span>
@@ -212,7 +275,7 @@ function CartaoDeMemoria({ memoria: m }: { memoria: MemoriaWire }) {
         {/* Aposentada precisa dizer que foi aposentada. Sem isso ela some no
          * meio das ativas com a única diferença sendo opacidade, que ninguém lê
          * como "isto não vale mais". */}
-        {aposentada && <span className="text-aviso">aposentada — não vale mais</span>}
+        {aposentada && <span className="text-aviso">aposentada, não vale mais</span>}
       </div>
     </li>
   );
