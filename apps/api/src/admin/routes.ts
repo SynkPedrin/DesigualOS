@@ -600,10 +600,46 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
        * `onDelete: 'set null'` (a linha do que aconteceu fica, só perde o
        * vínculo com uma conta que não existe mais — é o comportamento certo
        * de log de auditoria: o evento não deixa de ter acontecido). Só
-       * `executions.userId` é `NOT NULL` + `restrict`, e é o único que
-       * precisa de uma linha explícita abaixo — sem ela o DELETE de
-       * `users` falha com violação de FK em vez de limpar.
+       * `executions.userId` é `NOT NULL` + `restrict`, e precisa da linha
+       * explícita abaixo — sem ela o DELETE de `users` falha com violação de
+       * FK em vez de limpar.
+       *
+       * MAS ELE NÃO É O ÚNICO, e afirmar que era custou um 500 em produção
+       * (relato do Pedro, 09/10/2026: "pedin barroso09: Internal Server Error"
+       * enquanto as outras contas recebiam mensagem clara). Há mais CINCO
+       * referências `NOT NULL` + `restrict` a `users`, todas de tabelas que
+       * nasceram depois deste comentário: demands.created_by,
+       * briefs.created_by, calendar_events.created_by,
+       * approval_requests.requested_by e client_reports.requested_by.
+       *
+       * Essas cinco NÃO são apagadas junto, de propósito. Execução é registro
+       * de máquina; demanda, briefing, evento de agenda, pedido de aprovação e
+       * relatório são TRABALHO DA AGÊNCIA, que não deixa de existir porque quem
+       * criou saiu. Apagá-los pra viabilizar a exclusão de uma conta destruiria
+       * entrega de cliente pra limpar um cadastro.
+       *
+       * Então a conta com esse vínculo é recusada com 409 e a razão nomeada —
+       * não com "Internal Server Error", que não diz nada e ainda parece
+       * defeito do sistema. A exclusão segue incondicional pra todo o resto
+       * (execução, auditoria, conversa, mensagem), que é o caso das contas de
+       * QA que o Pedro precisa limpar.
        */
+      const bloqueios = await Promise.all([
+        db.select({ id: schema.demands.id }).from(schema.demands).where(eq(schema.demands.createdBy, request.params.id)).limit(1),
+        db.select({ id: schema.briefs.id }).from(schema.briefs).where(eq(schema.briefs.createdBy, request.params.id)).limit(1),
+        db.select({ id: schema.calendarEvents.id }).from(schema.calendarEvents).where(eq(schema.calendarEvents.createdBy, request.params.id)).limit(1),
+        db.select({ id: schema.approvalRequests.id }).from(schema.approvalRequests).where(eq(schema.approvalRequests.requestedBy, request.params.id)).limit(1),
+        db.select({ id: schema.clientReports.id }).from(schema.clientReports).where(eq(schema.clientReports.requestedBy, request.params.id)).limit(1),
+      ]);
+      const NOMES_DO_BLOQUEIO = ['demandas', 'briefings', 'eventos de agenda', 'pedidos de aprovação', 'relatórios de cliente'];
+      const impedem = bloqueios.map((linhas, i) => (linhas.length > 0 ? NOMES_DO_BLOQUEIO[i] : null)).filter(Boolean);
+      if (impedem.length > 0) {
+        reply.code(409);
+        return {
+          error: `Esta pessoa criou ${impedem.join(', ')} — trabalho da agência, que não some junto com a conta. Use "Desativar": corta o acesso na hora e mantém a entrega no lugar.`,
+        };
+      }
+
       await db.delete(schema.executions).where(eq(schema.executions.userId, request.params.id));
 
       const supabaseUrl = process.env.SUPABASE_URL;
