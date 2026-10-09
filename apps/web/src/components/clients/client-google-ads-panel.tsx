@@ -128,7 +128,7 @@ function LinkAccountPicker({ clientId }: { clientId: string }) {
                 <option value="">Selecione…</option>
                 {options.map((a) => (
                   <option key={a.customer_id} value={a.customer_id}>
-                    {a.descriptive_name ?? a.customer_id} ({a.currency_code ?? ', '})
+                    {a.descriptive_name ?? a.customer_id} ({a.currency_code ?? 'sem dado'})
                   </option>
                 ))}
               </select>
@@ -207,7 +207,7 @@ function ConnectedSummary({ clientId, customerId, loginCustomerId, label }: { cl
             {[
               ['Investimento (30d)', formatCurrency(insights?.spend ?? null)],
               ['Conversões', formatNumber(insights?.conversions ?? null)],
-              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : ', '],
+              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : 'sem dado'],
               ['CPC médio', formatCurrency(insights?.average_cpc ?? null)],
             ].map(([k, v]) => (
               <div key={k} className="rounded-lg border border-grafite-elevado p-3">
@@ -234,7 +234,7 @@ function ConnectedSummary({ clientId, customerId, loginCustomerId, label }: { cl
                       <td className="px-3 py-2 text-branco-cru">{c.name}</td>
                       <td className="px-3 py-2 text-nevoa">{c.status}</td>
                       <td className="px-3 py-2 text-right text-branco-cru">{formatCurrency(c.spend)}</td>
-                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : ', '}</td>
+                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : 'sem dado'}</td>
                     </tr>
                   ))}
                 </tbody>

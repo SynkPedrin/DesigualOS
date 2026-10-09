@@ -28,7 +28,7 @@ export default function UsagePage() {
   for (const e of execucoes ?? []) {
     const chave = e.userId ?? 'desconhecido';
     const atual = porPessoa.get(chave) ?? {
-      nome: e.userName ?? ', ',
+      nome: e.userName ?? 'sem nome',
       total: 0,
       entregues: 0,
       falhas: 0,

@@ -156,7 +156,7 @@ function Cartao({
 
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
         <p className="font-mono text-[10px] text-nevoa">
-          {s.created_at ? new Date(s.created_at).toLocaleString('pt-BR') : ', '} · regra {s.rule}
+          {s.created_at ? new Date(s.created_at).toLocaleString('pt-BR') : 'sem data'} · regra {s.rule}
           {/* Confiança só aparece quando a regra declarou. Ausente não vira 0. */}
           {s.confidence !== null && ` · confiança ${Math.round(s.confidence * 100)}%`}
         </p>

@@ -86,7 +86,7 @@ export function FeedDeAtividade({ limite = 12 }: { limite?: number }) {
                 {/* O autor primeiro: é a pergunta que alguém faz olhando um log
                  * de auditoria. "—" quando o usuário foi apagado — nunca outro
                  * nome, nunca em branco parecendo dado. */}
-                <span className="font-medium">{e.userName ?? ', '}</span>
+                <span className="font-medium">{e.userName ?? 'sem dado'}</span>
                 <span className="text-nevoa"> · via {agente}</span>
               </p>
               <p className="mt-0.5 truncate font-mono text-[11px] text-nevoa">

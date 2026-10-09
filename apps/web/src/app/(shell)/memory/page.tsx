@@ -236,7 +236,7 @@ function TextoDaMemoria({ conteudo }: { conteudo: string }) {
 function CartaoDeMemoria({ memoria: m }: { memoria: MemoriaWire }) {
   const aposentada = m.status !== 'active';
   const estado: Estado = aposentada ? 'desconhecido' : 'ok';
-  const quando = m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : ', ';
+  const quando = m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : 'sem data';
 
   return (
     <li

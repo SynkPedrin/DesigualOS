@@ -883,7 +883,7 @@ function PipelineBoardUI() {
           { rotulo: 'Cartões no quadro', valor: String(resumo.total), detalhe: `${board.stages.length} coluna(s)` },
           {
             rotulo: 'Valor no quadro',
-            valor: resumo.somaCentavos > 0 ? formatarCentavos(resumo.somaCentavos) : ', ',
+            valor: resumo.somaCentavos > 0 ? formatarCentavos(resumo.somaCentavos) : 'sem valor',
             // Dizer quantos ficaram de fora é o que separa uma soma de uma
             // soma confiável: sem isso o total parece cobrir o quadro inteiro.
             detalhe: resumo.semValor > 0 ? `${resumo.semValor} sem valor legível` : 'todos com valor',
@@ -891,7 +891,7 @@ function PipelineBoardUI() {
           },
           {
             rotulo: 'Maior acúmulo',
-            valor: maiorColuna && maiorColuna.quantidade > 0 ? String(maiorColuna.quantidade) : ', ',
+            valor: maiorColuna && maiorColuna.quantidade > 0 ? String(maiorColuna.quantidade) : 'vazio',
             detalhe: maiorColuna && maiorColuna.quantidade > 0 ? maiorColuna.label : 'quadro vazio',
           },
           {

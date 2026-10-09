@@ -122,7 +122,7 @@ function Inventario({
                   <span className="text-nevoa">-</span>
                 )}
               </Td>
-              <Td className="text-nevoa">{f.description || ', '}</Td>
+              <Td className="text-nevoa">{f.description || 'sem descrição'}</Td>
             </tr>
           );
         })}

@@ -31,11 +31,11 @@ import type { MediaOverviewClientWire } from '@/lib/api/contracts';
 const MOEDA = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
 function dinheiro(valor: number | null | undefined): string {
-  return typeof valor === 'number' ? MOEDA.format(valor) : ', ';
+  return typeof valor === 'number' ? MOEDA.format(valor) : 'sem dado';
 }
 
 function numero(valor: number | null | undefined): string {
-  return typeof valor === 'number' ? new Intl.NumberFormat('pt-BR').format(valor) : ', ';
+  return typeof valor === 'number' ? new Intl.NumberFormat('pt-BR').format(valor) : 'sem dado';
 }
 
 export default function MidiasPage() {
@@ -201,7 +201,7 @@ function CartaoDeCliente({ cliente }: { cliente: MediaOverviewClientWire }) {
           <span className="text-branco-cru">{numero(i?.clicks)}</span> cliques
         </span>
         <span>
-          CTR <span className="text-branco-cru">{typeof i?.ctr === 'number' ? `${i.ctr.toFixed(2)}%` : ', '}</span>
+          CTR <span className="text-branco-cru">{typeof i?.ctr === 'number' ? `${i.ctr.toFixed(2)}%` : 'sem dado'}</span>
         </span>
       </div>
       {cliente.account_label && (

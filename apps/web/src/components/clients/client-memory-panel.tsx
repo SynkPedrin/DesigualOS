@@ -102,7 +102,7 @@ function Registro({ memoria: m }: { memoria: MemoriaWire }) {
       </div>
       <p className="mt-1.5 text-sm text-branco-cru">{m.content}</p>
       <p className="mt-1 font-mono text-[10px] text-nevoa">
-        {m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : ', '}
+        {m.created_at ? new Date(m.created_at).toLocaleDateString('pt-BR') : 'sem dado'}
         {m.author_name && ` · por ${m.author_name}`}
         {m.source_type && ` · via ${m.source_type}`}
       </p>

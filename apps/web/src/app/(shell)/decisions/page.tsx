@@ -153,7 +153,7 @@ function Registro({ episodio: e }: { episodio: Episodio }) {
       )}
 
       <p className="mt-2 font-mono text-[10px] text-nevoa">
-        {e.occurred_at ? new Date(e.occurred_at).toLocaleString('pt-BR') : ', '}
+        {e.occurred_at ? new Date(e.occurred_at).toLocaleString('pt-BR') : 'sem data'}
         {e.author_name && ` · por ${e.author_name}`}
         {e.agent && ` · via ${e.agent}`}
       </p>

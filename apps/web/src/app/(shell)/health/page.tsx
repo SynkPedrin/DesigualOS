@@ -55,7 +55,7 @@ export default function HealthPage() {
           <CartaoDeEstado rotulo="Execuções" valor={String(resumo.total)} estado="ok" />
           <CartaoDeEstado
             rotulo="Entregues"
-            valor={resumo.total > 0 ? `${Math.round((resumo.entregues / resumo.total) * 100)}%` : ', '}
+            valor={resumo.total > 0 ? `${Math.round((resumo.entregues / resumo.total) * 100)}%` : 'sem envios'}
             estado={resumo.total === 0 ? 'desconhecido' : resumo.entregues / resumo.total >= 0.9 ? 'ok' : 'atencao'}
             detalhe={`${resumo.entregues} de ${resumo.total}`}
           />
@@ -112,7 +112,7 @@ export default function HealthPage() {
                     </Td>
                     <Td className="font-mono text-[12px] text-nevoa">{n.latencyMs}ms</Td>
                     <Td className="font-mono text-[12px] text-nevoa">
-                      {n.lastHeartbeatAt ? new Date(n.lastHeartbeatAt).toLocaleString('pt-BR') : ', '}
+                      {n.lastHeartbeatAt ? new Date(n.lastHeartbeatAt).toLocaleString('pt-BR') : 'nunca respondeu'}
                     </Td>
                   </tr>
                 );

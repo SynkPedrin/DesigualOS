@@ -76,13 +76,13 @@ export default function ErrorsPage() {
                       <Td className="whitespace-nowrap font-mono text-[12px] text-nevoa">
                         {quando
                           ? new Date(quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                          : ', '}
+                          : 'sem dado'}
                       </Td>
-                      <Td className="truncate">{e.userName ?? ', '}</Td>
+                      <Td className="truncate">{e.userName ?? 'sem dado'}</Td>
                       <Td className="text-nevoa">{AGENT_META[e.agent]?.label ?? e.agent}</Td>
                       <Td className="truncate font-mono text-[12px] text-nevoa">{e.intent}</Td>
                       <Td className="truncate text-nevoa">
-                        {e.clientId ? (nomePorCliente.get(e.clientId) ?? ', ') : ', '}
+                        {e.clientId ? (nomePorCliente.get(e.clientId) ?? 'sem dado') : 'sem dado'}
                       </Td>
                       <Td>
                         <StatusLabel estado="erro">{e.status}</StatusLabel>

@@ -62,7 +62,7 @@ export const DEMO_CLIENT_INFO: Record<string, DemoClientInfo> = {
 };
 
 export const DEMO_CLIENT_INFO_FALLBACK: DemoClientInfo = {
-  clienteDesde: ', ',
+  clienteDesde: 'sem registro',
   segmento: '[CONFIRMAR: segmento]',
   email: '[CONFIRMAR: e-mail]',
   telefone: '[CONFIRMAR: telefone]',

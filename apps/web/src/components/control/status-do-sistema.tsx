@@ -80,7 +80,7 @@ export function StatusDoSistema() {
       <CartaoDeEstado rotulo="API" valor={textoInfra} estado={estadoInfra} />
       <CartaoDeEstado
         rotulo="Nós"
-        valor={infra ? `${infra.agentsConnected.online}/${infra.agentsConnected.total} online` : ', '}
+        valor={infra ? `${infra.agentsConnected.online}/${infra.agentsConnected.total} online` : 'sem dado'}
         estado={
           !infra ? 'desconhecido' : infra.agentsConnected.online === infra.agentsConnected.total ? 'ok' : 'atencao'
         }

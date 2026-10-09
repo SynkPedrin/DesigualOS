@@ -123,7 +123,7 @@ function LinkAccountPicker({ clientId }: { clientId: string }) {
                   <option value="">Selecione…</option>
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.name ?? a.id} ({a.currency ?? ', '})
+                      {a.name ?? a.id} ({a.currency ?? 'sem dado'})
                     </option>
                   ))}
                 </select>
@@ -198,7 +198,7 @@ function ConnectedSummary({ clientId, accountId, businessId, label }: { clientId
             {[
               ['Investimento (30d)', formatCurrency(insights?.spend ?? null)],
               ['Resultados', formatNumber(insights?.results ?? null)],
-              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : ', '],
+              ['CTR', insights?.ctr != null ? `${insights.ctr.toFixed(2)}%` : 'sem dado'],
               ['CPM', formatCurrency(insights?.cpm ?? null)],
             ].map(([k, v]) => (
               <div key={k} className="rounded-lg border border-grafite-elevado p-3">
@@ -225,7 +225,7 @@ function ConnectedSummary({ clientId, accountId, businessId, label }: { clientId
                       <td className="px-3 py-2 text-branco-cru">{c.name}</td>
                       <td className="px-3 py-2 text-nevoa">{c.status}</td>
                       <td className="px-3 py-2 text-right text-branco-cru">{formatCurrency(c.spend)}</td>
-                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : ', '}</td>
+                      <td className="px-3 py-2 text-right text-nevoa">{c.ctr != null ? `${c.ctr.toFixed(2)}%` : 'sem dado'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -285,7 +285,7 @@ function GaleriaDeCriativos({ clientId }: { clientId: string }) {
                 {c.name}
               </p>
               <p className="mt-0.5 font-mono text-[10px] text-nevoa">
-                {formatCurrency(c.spend)} · CTR {c.ctr != null ? `${c.ctr.toFixed(2)}%` : ', '}
+                {formatCurrency(c.spend)} · CTR {c.ctr != null ? `${c.ctr.toFixed(2)}%` : 'sem dado'}
               </p>
             </figcaption>
           </figure>

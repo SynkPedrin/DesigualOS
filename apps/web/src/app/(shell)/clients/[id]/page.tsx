@@ -231,7 +231,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               label="Próxima reunião"
               value={proximoEvento ? 1 : 0}
               isLoading={eventosQuery.isPending}
-              formatValue={() => (proximoEvento ? formatClockTime(proximoEvento.start_at) : ', ')}
+              formatValue={() => (proximoEvento ? formatClockTime(proximoEvento.start_at) : 'nada marcado')}
             />
           </div>
 
