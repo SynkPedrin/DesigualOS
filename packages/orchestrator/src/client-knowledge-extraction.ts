@@ -219,7 +219,21 @@ export function extractClientFacts(message: string): ExtractedClientFact[] {
  * próprio fato, senão cada fato novo apagaria o anterior — e perder
  * conhecimento silenciosamente é o oposto do que este módulo existe pra fazer.
  */
-export function clientFactSubject(clientId: string, fact: ExtractedClientFact): string {
+/**
+ * O parâmetro pede só o que a função LÊ, e isso não é detalhe de estilo.
+ *
+ * Ela exigia um `ExtractedClientFact` inteiro e usa dois campos. Quando o tipo
+ * ganhou `clientNameCandidates` (campo que diz respeito a quem RESOLVE o nome,
+ * não a quem monta o subject), seis chamadas de teste pararam de compilar sem
+ * que nada do comportamento desta função tivesse mudado.
+ *
+ * Assinatura que pede demais transforma cada campo novo do tipo em quebra em
+ * lugares que não têm relação com o campo.
+ */
+export function clientFactSubject(
+  clientId: string,
+  fact: Pick<ExtractedClientFact, 'aspect' | 'value'>,
+): string {
   if (fact.aspect !== 'geral') return `cliente:${clientId}:aprendizado:${fact.aspect}`;
   const slug = fact.value
     .normalize('NFD')

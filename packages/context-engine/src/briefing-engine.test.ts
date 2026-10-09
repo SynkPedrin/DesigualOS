@@ -150,9 +150,29 @@ describe('formatBriefingForPrompt', () => {
     const texto = formatBriefingForPrompt(b);
     // A instrução tem que proibir INVENTAR e, ao mesmo tempo, proibir RECUSAR: a primeira
     // versão só proibia inventar e o Bento passou a recusar o pedido inteiro.
-    expect(texto).toMatch(/NÃO invente conteúdo/);
+    //
+    // A caixa da frase é livre de propósito. O que este teste protege é a REGRA,
+    // e já houve uma reescrita do prompt (01/10/2026) que manteve a regra intacta
+    // e quebrou o teste só por trocar "NÃO invente" por "Não invente". Um teste
+    // que falha por maiúscula treina quem vem depois a ignorá-lo.
+    expect(texto).toMatch(/n[ãa]o invente conte[úu]do/i);
     expect(texto).toMatch(/NUNCA\s+recuse o pedido/);
-    expect(texto).toMatch(/\[MISSING\] Público-alvo/);
+    // O QUE ESTA LINHA PROVA, E O QUE ELA NUNCA PROVOU.
+    //
+    // Prova uma coisa estrutural: o campo sem preenchimento aparece DECLARADO, com
+    // o rótulo junto, em vez de sumir do prompt. Por isso os dois marcadores valem.
+    //
+    // Não prova — e nunca provou — que o briefing só afirma ausência depois de ter
+    // procurado. Com o marcador antigo o prompt dizia "não há fonte para isto", que
+    // é afirmação sobre o MUNDO vinda de um campo de FORMULÁRIO vazio, e esta mesma
+    // asserção passava. Essa é a diferença entre os dois marcadores, e ela é real.
+    //
+    // Deixar o regex aceitar os dois é deliberado: quem está reescrevendo o prompt
+    // (diff não commitado em briefing-engine.ts, 09/10/2026) ainda pode reverter, e
+    // um teste meu não deve prender a decisão de outra pessoa. Quando esse diff for
+    // commitado, a propriedade nova — "procure no dossiê antes de declarar ausência"
+    // — merece teste próprio. Hoje ela não tem nenhum.
+    expect(texto).toMatch(/\[(MISSING|NÃO PREENCHIDO NO FORMULÁRIO)\] Público-alvo/);
     expect(texto).toMatch(/\[DERIVED\]/);
   });
 

@@ -36,9 +36,38 @@ export function encodedDimension(value: number, scale: number): number {
   return Math.floor((value * scale) / 2) * 2;
 }
 
-/** Escala do preview: altura ~720 (§23), nunca ampliando. */
-export function previewScale(compositionHeight: number): number {
-  return Math.min(1, 720 / compositionHeight);
+function mdc(a: number, b: number): number {
+  return b === 0 ? a : mdc(b, a % b);
+}
+
+/**
+ * Escala do preview: altura ~720 (§23), nunca ampliando, SEMPRE inteira.
+ *
+ * Era `720 / altura`, e isso quebrava o render de verdade. O Remotion valida
+ * que largura e altura escaladas são inteiras e aborta o render inteiro quando
+ * não são — medido em 09/10/2026 numa composição 479x854, que a 720/854 pedia
+ * largura 403.8407494145199 e derrubava o pipeline com
+ * "The width prop passed to stitchFramesToVideo() must be an integer".
+ *
+ * A conta certa não é sobre a altura sozinha. Escalando por `k`, as dimensões
+ * só caem em inteiro quando `k = m / mdc(largura, altura)`: aí a largura vira
+ * `(largura/mdc) * m` e a altura `(altura/mdc) * m`, as duas inteiras por
+ * construção. Então a escolha livre não é a escala, é o `m`.
+ *
+ * Escolhemos o `m` que chega mais perto de 720 de altura sem passar de 1 de
+ * escala. Em 1080x1920 dá exatamente os 0,375 de sempre. Em formatos cuja
+ * razão não se reduz — 479x854, mdc 1 — o único `m` válido é 1, e o preview
+ * sai em tamanho cheio. É menos economia do que gostaríamos, e é a resposta
+ * honesta: não existe downscale proporcional inteiro ali, e inventar um
+ * significaria devolver ao QA um frame que não corresponde ao final.
+ */
+export function previewScale(compositionWidth: number, compositionHeight: number): number {
+  if (compositionHeight <= 720) return 1;
+  const divisor = mdc(compositionWidth, compositionHeight);
+  const alturaReduzida = compositionHeight / divisor;
+  // `m` entre 1 e o divisor: acima do divisor a escala passaria de 1 (ampliar).
+  const m = Math.min(divisor, Math.max(1, Math.round(720 / alturaReduzida)));
+  return m / divisor;
 }
 
 export interface RenderResult {
@@ -82,7 +111,7 @@ export async function renderMotion(options: RenderOptions): Promise<RenderResult
   });
 
   const preset = QUALITY_PRESETS[quality];
-  const scale = quality === 'preview' ? previewScale(composition.height) : 1;
+  const scale = quality === 'preview' ? previewScale(composition.width, composition.height) : 1;
   const directory = quality === 'preview' ? workspace.previews : workspace.output;
   await fs.mkdir(directory, { recursive: true });
   const file = path.join(directory, `${quality}.mp4`);

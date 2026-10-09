@@ -193,7 +193,46 @@ describe('dimensão do encoder', () => {
   });
 
   it('escala do preview nunca amplia', () => {
-    expect(previewScale(1920)).toBeCloseTo(0.375);
-    expect(previewScale(480)).toBe(1);
+    expect(previewScale(1080, 1920)).toBeCloseTo(0.375);
+    expect(previewScale(270, 480)).toBe(1);
+  });
+
+  /**
+   * A propriedade que o render inteiro depende, e que faltava aqui.
+   *
+   * O Remotion aborta quando largura ou altura escalada não é inteira. Até
+   * 09/10/2026 a escala saía de `720 / altura`, que acerta no 1080x1920 e erra
+   * em qualquer razão que não se reduza — e o teste acima, sozinho, aprovava
+   * as duas. Foi um 479x854 que derrubou o pipeline em produção de teste.
+   *
+   * Por isso este teste não confere números escolhidos a dedo: varre formatos,
+   * inclusive os esquisitos, e exige inteiro nos dois eixos.
+   */
+  it('qualquer formato produz dimensão inteira nos dois eixos', () => {
+    const formatos: Array<[number, number]> = [
+      [1080, 1920], // 9:16
+      [1920, 1080], // 16:9
+      [1080, 1080], // 1:1
+      [1080, 1350], // 4:5
+      [479, 854], // o que quebrou: razão que não se reduz (mdc 1)
+      [480, 854],
+      [1001, 1733], // primos entre si, altura bem acima de 720
+      [720, 1280],
+      [360, 640],
+    ];
+    for (const [largura, altura] of formatos) {
+      const escala = previewScale(largura, altura);
+      expect(escala).toBeGreaterThan(0);
+      expect(escala).toBeLessThanOrEqual(1);
+      expect(Number.isInteger(largura * escala)).toBe(true);
+      expect(Number.isInteger(altura * escala)).toBe(true);
+    }
+  });
+
+  it('não desce abaixo de 720 de altura quando existe escala inteira que chega lá', () => {
+    // 1080x1920 reduz pra 9x16, então m=45 dá exatamente 720 de altura.
+    expect(1920 * previewScale(1080, 1920)).toBe(720);
+    // 720x1280 reduz pra 9x16 também: m=45 sobre mdc 80.
+    expect(1280 * previewScale(720, 1280)).toBe(720);
   });
 });
