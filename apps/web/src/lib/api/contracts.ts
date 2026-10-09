@@ -2057,6 +2057,13 @@ export interface AutomationWire {
   /** Estimativa de minutos economizados por execução; null quando nunca informada. */
   estimated_minutes_saved: number | null;
   last_run_at: ISODateString | null;
+  /**
+   * Quando o AGENDADOR vai disparar de novo — o `next` do repeatable job do
+   * BullMQ, não um recálculo do cron. `null` significa que a automação existe
+   * no banco e não está agendada em lugar nenhum, que é um estado que a tela
+   * precisa poder mostrar.
+   */
+  next_run_at: ISODateString | null;
   created_at: ISODateString;
 }
 
@@ -2072,6 +2079,7 @@ export interface Automation {
   enabled: boolean;
   estimatedMinutesSaved: number | null;
   lastRunAt: ISODateString | null;
+  nextRunAt: ISODateString | null;
   createdAt: ISODateString;
 }
 
@@ -2088,6 +2096,7 @@ export function mapAutomation(wire: AutomationWire): Automation {
     enabled: wire.enabled,
     estimatedMinutesSaved: wire.estimated_minutes_saved,
     lastRunAt: wire.last_run_at,
+    nextRunAt: wire.next_run_at,
     createdAt: wire.created_at,
   };
 }

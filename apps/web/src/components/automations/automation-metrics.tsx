@@ -55,13 +55,22 @@ function MetricCard({ icon: Icon, iconClassName, label, value, delta, deltaTone 
   );
 }
 
-export function AutomationMetrics() {
+/**
+ * A PRÓXIMA EXECUÇÃO vem de fora, da listagem, e não das métricas agregadas.
+ *
+ * O motivo é a fonte: ela sai do `next` do repeatable job do BullMQ — a hora
+ * que o agendador de fato vai disparar — e quem tem essa informação é a lista
+ * de automações, não o endpoint de métricas. Recalcular o cron aqui seria uma
+ * segunda opinião sobre o mesmo agendamento, e as duas divergem assim que
+ * alguém edita o schedule.
+ */
+export function AutomationMetrics({ proxima }: { proxima?: { quando: Date; nome: string } | null } = {}) {
   const { data: metrics, isPending, isError } = useAutomationMetrics();
 
   if (isPending) {
     return (
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-[104px]" />
         ))}
       </div>
@@ -70,12 +79,35 @@ export function AutomationMetrics() {
 
   const unavailable = { title: 'Não foi possível carregar esta métrica.' };
 
+  /**
+   * O cartão da próxima execução existe SEMPRE, mesmo sem nada agendado — e
+   * nesse caso diz "nada agendado" em vez de sumir. Um indicador que desaparece
+   * quando o valor é ruim esconde justamente o estado que alguém precisa ver:
+   * automações cadastradas e nenhuma delas vai rodar.
+   */
+  const cartaoDaProxima: MetricCardProps = proxima
+    ? {
+        icon: CalendarCheck,
+        iconClassName: 'bg-ametista/10 text-ametista',
+        label: 'Próxima execução',
+        value: proxima.quando.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        caption: `${proxima.nome} · ${proxima.quando.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}`,
+      }
+    : {
+        icon: CalendarCheck,
+        iconClassName: 'bg-grafite-elevado text-nevoa',
+        label: 'Próxima execução',
+        value: '—',
+        caption: 'nada agendado',
+      };
+
   const cards: MetricCardProps[] = isError || !metrics
     ? [
         { icon: Zap, iconClassName: 'bg-roxo-eletrico/10 text-ametista', label: 'Automações ativas', value: '-' },
         { icon: CalendarCheck, iconClassName: 'bg-info/10 text-info', label: 'Execuções hoje', value: '-' },
         { icon: Clock, iconClassName: 'bg-sinal/10 text-sinal', label: 'Economia de tempo', value: '-' },
         { icon: CheckCircle2, iconClassName: 'bg-sucesso/10 text-sucesso', label: 'Taxa de sucesso', value: '-' },
+        cartaoDaProxima,
       ]
     : [
         {
@@ -111,10 +143,11 @@ export function AutomationMetrics() {
           deltaTone:
             metrics.successDeltaWeek === null ? 'nevoa' : metrics.successDeltaWeek >= 0 ? 'sucesso' : 'erro',
         },
+        cartaoDaProxima,
       ];
 
   return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4" {...(isError ? unavailable : {})}>
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-5" {...(isError ? unavailable : {})}>
       {cards.map((card, i) => (
         <motion.div
           key={card.label}

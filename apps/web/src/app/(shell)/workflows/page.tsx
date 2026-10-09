@@ -85,6 +85,23 @@ function lastRunWithin(lastRunAt: string | null, period: AutomationFilters['last
 export default function WorkflowsPage() {
   const queryClient = useQueryClient();
   const { data: automations, isPending, isError, refetch } = useAutomations();
+
+  /**
+   * A PRÓXIMA A RODAR, entre todas as habilitadas.
+   *
+   * `next_run_at` vem do `next` do repeatable job do BullMQ — a hora que o
+   * agendador realmente vai disparar. Automação desabilitada fica de fora
+   * mesmo que ainda tenha repeatable órfão no Redis: o que a tela promete é o
+   * que vai acontecer, e uma automação desligada não vai rodar.
+   */
+  const proximaExecucao = useMemo(() => {
+    const candidatas = (automations ?? [])
+      .filter((a) => a.enabled && a.nextRunAt)
+      .map((a) => ({ quando: new Date(a.nextRunAt as string), nome: a.name }))
+      .filter((c) => Number.isFinite(c.quando.getTime()))
+      .sort((a, b) => a.quando.getTime() - b.quando.getTime());
+    return candidatas[0] ?? null;
+  }, [automations]);
   const { data: clients } = useClients();
   const { isMaster } = useIsMaster();
   // Master-only no backend (nodes:read): pro colaborador a query nem dispara e
@@ -248,7 +265,7 @@ export default function WorkflowsPage() {
       />
 
       <div className="mb-6">
-        <AutomationMetrics />
+        <AutomationMetrics proxima={proximaExecucao} />
       </div>
 
       {notice && (
@@ -346,7 +363,7 @@ export default function WorkflowsPage() {
           runningIds={runningIds}
           clientNameFor={(clientId) => (clientId ? (clientNameById.get(clientId) ?? null) : null)}
           agentStatusFor={(agent: AgentName): NodeStatus | undefined =>
-            health?.nodes.find((node) => node.agent === agent)?.status
+            health?.nodes?.find((node) => node.agent === agent)?.status
           }
           onEdit={setEditing}
           onViewHistory={setHistoryFor}

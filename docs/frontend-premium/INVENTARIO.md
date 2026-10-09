@@ -89,3 +89,15 @@ concessionária é o cliente.
   limita em 300 registros e existem 456; a tela despeja o conteúdo inteiro de cada um.
   É a tela mais pesada do sistema por uma ordem de grandeza. Precisa de recorte com
   prévia, não de mais estilo.
+
+## Instável conhecido, não corrigido de propósito
+
+`packages/otto-motion/src/pipeline.versioning.test.ts` falha de vez em quando com
+`RENDER_FAILED` quando roda junto com a suíte inteira. Não é timeout — os tetos já são
+de 5 minutos. É o Chrome headless do Remotion falhando sob disputa de CPU, fazendo
+webpack, render e encode de verdade, duas vezes.
+
+Não pus retry: retry aqui esconderia falha real de render, que é justamente o que este
+teste existe pra pegar. Isolado passa em 10s; na segunda rodada da suíte completa deu
+20/20. Se virar incômodo, o caminho é baixar a concorrência do render no teste, não
+repetir até passar.

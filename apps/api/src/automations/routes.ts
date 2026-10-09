@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { registerAutomationJob, removeAutomationJob, runAutomationNow } from '@desigual-os/orchestrator';
+import { proximasExecucoes, registerAutomationJob, removeAutomationJob, runAutomationNow } from '@desigual-os/orchestrator';
 import { AGENT_NAMES, type AgentName } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { requireModule } from '../auth/require-module';
 import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 
 const agentNameSchema = z.enum([...AGENT_NAMES] as [AgentName, ...AgentName[]]);
@@ -29,7 +30,15 @@ const updateAutomationSchema = z.object({
   schedule_label: z.string().min(1).optional(),
 });
 
-function serializeAutomation(row: typeof schema.automations.$inferSelect) {
+/**
+ * `proximaExecucao` em ms vem de FORA: é o `next` do repeatable job do BullMQ,
+ * ou seja, a hora que o agendador realmente vai disparar — não um recálculo
+ * nosso do cron, que viraria uma segunda opinião e divergiria no momento em
+ * que alguém editasse o schedule. `null` quando a automação não tem repeatable
+ * registrado, e essa ausência é informação: ela está no banco e não está
+ * agendada em lugar nenhum.
+ */
+function serializeAutomation(row: typeof schema.automations.$inferSelect, proximaExecucaoMs?: number | undefined) {
   return {
     id: row.id,
     name: row.name,
@@ -42,6 +51,7 @@ function serializeAutomation(row: typeof schema.automations.$inferSelect) {
     enabled: row.enabled,
     estimated_minutes_saved: row.estimatedMinutesSaved,
     last_run_at: row.lastRunAt?.toISOString() ?? null,
+    next_run_at: proximaExecucaoMs !== undefined ? new Date(proximaExecucaoMs).toISOString() : null,
     created_at: row.createdAt.toISOString(),
   };
 }
@@ -57,18 +67,26 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     await requireAuth(request, reply);
     if (!reply.sent) await requireTenant(request, reply);
   });
-  app.get('/automations', async (request, reply) => {
+  app.get('/automations', { preHandler: requireModule('automations') }, async (request, reply) => {
     if (!request.authUser) { reply.code(401); return { error: 'Not authenticated' }; }
     const rows = await db.select().from(schema.automations)
       .where(eq(schema.automations.organizationId, request.tenantContext!.organizationId))
       .orderBy(desc(schema.automations.createdAt));
-    return { automations: rows.map(serializeAutomation) };
+    /**
+     * Falha ao falar com o Redis NÃO derruba a listagem: sem o mapa, cada
+     * automação sai com `next_run_at: null`, que a tela já sabe apresentar
+     * ("sem agendamento conhecido"). Trocar a lista inteira por um erro
+     * porque o horário da próxima execução não pôde ser lido seria perder o
+     * que funciona por causa do que é acessório.
+     */
+    const proximas = await proximasExecucoes().catch(() => new Map<string, number>());
+    return { automations: rows.map((row) => serializeAutomation(row, proximas.get(row.id))) };
   });
 
   // Registrada antes das rotas com :id para não disputar matching com
   // /automations/:id/... (Fastify dá prioridade a rota estática, mas assim
   // a intenção fica explícita).
-  app.get('/automations/metrics', async (request) => {
+  app.get('/automations/metrics', { preHandler: requireModule('automations') }, async (request) => {
     const tenantFilter = eq(schema.automations.organizationId, request.tenantContext!.organizationId);
     const runFilter = inArray(schema.automationRuns.automationId,
       db.select({ id: schema.automations.id }).from(schema.automations).where(tenantFilter));
@@ -161,7 +179,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
 
   app.post(
     '/automations',
-    { preHandler: [requireAuth, requirePermission('chat', 'write')] },
+    { preHandler: [requireAuth, requirePermission('chat', 'write'), requireModule('automations')] },
     async (request, reply) => {
       const body = createAutomationSchema.parse(request.body);
       const user = request.authUser;
@@ -217,7 +235,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
 
   app.patch<{ Params: { id: string } }>(
     '/automations/:id',
-    { preHandler: [requireAuth, requirePermission('chat', 'write')] },
+    { preHandler: [requireAuth, requirePermission('chat', 'write'), requireModule('automations')] },
     async (request, reply) => {
       const body = updateAutomationSchema.parse(request.body);
       const [existing] = await db.select().from(schema.automations).where(eq(schema.automations.id, request.params.id));
@@ -275,7 +293,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
   // a automação desabilitada - o worker só pula enabled=false em disparo agendado.
   app.post<{ Params: { id: string } }>(
     '/automations/:id/run',
-    { preHandler: [requireAuth, requirePermission('chat', 'write')] },
+    { preHandler: [requireAuth, requirePermission('chat', 'write'), requireModule('automations')] },
     async (request, reply) => {
       const [existing] = await db
         .select({ id: schema.automations.id, organizationId: schema.automations.organizationId })
@@ -298,7 +316,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
 
   app.delete<{ Params: { id: string } }>(
     '/automations/:id',
-    { preHandler: [requireAuth, requirePermission('chat', 'write')] },
+    { preHandler: [requireAuth, requirePermission('chat', 'write'), requireModule('automations')] },
     async (request, reply) => {
       const [existing] = await db.select().from(schema.automations).where(eq(schema.automations.id, request.params.id));
       if (!existing) {
@@ -319,7 +337,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
 
   app.get<{ Params: { id: string } }>(
     '/automations/:id/runs',
-    { preHandler: requireAuth },
+    { preHandler: [requireAuth, requireModule('automations')] },
     async (request, reply) => {
       const [automation] = await db.select({ id: schema.automations.id }).from(schema.automations).where(eq(schema.automations.id, request.params.id));
       if (!automation) {
