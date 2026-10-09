@@ -1,5 +1,32 @@
 # Mockup × tela real — o que falta, tela por tela
 
+> **Estado em 09/10/2026, fim do dia.** A lista abaixo foi escrita ANTES da
+> rodada de implementação e está mantida como registro do que faltava. O que
+> foi entregue desde então está no quadro logo abaixo; o resto do documento
+> continua valendo como lista do que não foi feito.
+>
+> | Tela | Estado | Commit |
+> |---|---|---|
+> | Hoje | entregue | `325a385` |
+> | Tarefas | entregue | `a1bc03c` |
+> | Visão geral | entregue | `847754a` |
+> | Empresas | entregue | `700945f` |
+> | Mídias | entregue | `bc4557a` |
+> | Integrações | entregue | `1469757` |
+> | Pipeline | entregue | `0c688c8` |
+> | Automações | entregue | `1e82835`, `83d635f` |
+> | Barra lateral | entregue | `8b9d650` |
+>
+> **O que continua valendo como decisão, não como pendência:** ROAS e CAC em
+> Mídias, delta e mini-gráfico na maioria dos KPIs, e taxa de conversão no
+> Pipeline. Os três exigem dado que o sistema não tem (receita, série
+> histórica, e saber qual coluna significa ganho). Não entraram como zero nem
+> como traço: não entraram.
+>
+> **Regra que passou a ser verificada sozinha:** nenhum cartão aparece cortado.
+> O portão de captura mede isso nas 18 telas em três resoluções, e recusa a
+> captura nomeando o bloco e o tamanho da sobra.
+
 Comparação feita em 09/10/2026 entre `assets/TELASS - TUTORIAL/*.png` e capturas
 do produto rodando com dado real, conta de QA, tema escuro, 1920×1080.
 
