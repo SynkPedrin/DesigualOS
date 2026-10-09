@@ -162,11 +162,24 @@ export function ConexaoOAuth({
  * também o do Google Ads.
  */
 /*
- * "criativos" não aparece na descrição porque o produto não lê criativo
- * nenhum: o tool-gateway tem getMetaBusinesses, getMetaAdAccounts,
- * getMetaCampaigns e getMetaAccountInsights — o nível mais granular é
- * CAMPANHA, não anúncio. Era o único lugar do produto prometendo o que não
- * existe (apontado pela desigualos-4a, 08/10/2026).
+ * "CRIATIVOS" VOLTOU À DESCRIÇÃO EM 09/10/2026, e o caminho dessa frase vale
+ * registrar porque ela já esteve errada nos dois sentidos.
+ *
+ * Em 08/10 a desigualos-4a apontou, com razão, que o cartão prometia criativo
+ * e o gateway só ia até CAMPANHA (getMetaBusinesses, getMetaAdAccounts,
+ * getMetaCampaigns, getMetaAccountInsights). Tirei a palavra.
+ *
+ * Depois disso alguém construiu o nível de ANÚNCIO. Hoje `getMetaAds` lê
+ * `/{adAccountId}/ads` pedindo `creative{id,thumbnail_url,image_url}`, e é
+ * chamado de dois lugares de verdade: a rota GET /clients/:id/media/meta/
+ * creatives e o processador do relatório em PDF. Conferi também o escopo, que
+ * é o que importa num cartão de AUTORIZAÇÃO: pedimos `ads_read`, e é ele que
+ * cobre a leitura de anúncio pela Marketing API.
+ *
+ * Então a descrição sem "criativos" passou de correta a tímida: estava
+ * escondendo da pessoa uma leitura que o produto de fato faz com a permissão
+ * que ela concede. Num cartão de conexão isso importa nos dois sentidos, e
+ * não só no de prometer demais.
  */
 export function MetaConnect() {
   const meta = useMetaIntegration();
@@ -176,8 +189,8 @@ export function MetaConnect() {
   return (
     <ConexaoOAuth
         nome="Meta Ads"
-        descricao="Conecte sua conta pra que os agentes leiam campanhas e resultados do Meta."
-        descricaoConectado="Conectado. Os agentes já leem suas campanhas do Meta."
+        descricao="Conecte sua conta pra que os agentes leiam campanhas, criativos e resultados do Meta."
+        descricaoConectado="Conectado. Os agentes já leem suas campanhas e criativos do Meta."
         variaveis={['META_APP_ID', 'META_APP_SECRET', 'META_REDIRECT_URI']}
         status={meta.data}
         carregando={meta.isPending}
