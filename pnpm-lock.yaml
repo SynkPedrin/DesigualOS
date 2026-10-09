@@ -184,6 +184,9 @@ importers:
       '@imgly/background-removal':
         specifier: ^1.5.7
         version: 1.7.0(onnxruntime-web@1.21.0)
+      '@remotion/player':
+        specifier: 4.0.528
+        version: 4.0.528(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@supabase/ssr':
         specifier: ^0.12.7
         version: 0.12.7(@supabase/supabase-js@2.116.0)
@@ -238,6 +241,9 @@ importers:
       recharts:
         specifier: ^3.10.1
         version: 3.10.1(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react-is@19.2.8)(react@19.2.8)(redux@5.0.1)
+      remotion:
+        specifier: 4.0.528
+        version: 4.0.528(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0

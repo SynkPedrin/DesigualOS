@@ -2,12 +2,13 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { HelpCircle, Menu, Monitor, Moon, Search, Sun } from 'lucide-react';
+import { GraduationCap, HelpCircle, Menu, Monitor, Moon, Search, Sparkles, Sun } from 'lucide-react';
 import { useUiStore } from '@/stores/ui-store';
 import { useMe } from '@/hooks/use-me';
 import { useTheme } from '@/hooks/use-theme';
 import { NotificationsMenu } from './notifications-menu';
 import type { Theme } from '@/lib/api/contracts';
+import { TutorialModal, useTutorial } from '@/components/tutorial/tutorial-modal';
 
 const THEME_CYCLE: Record<Theme, Theme> = { system: 'light', light: 'dark', dark: 'system' };
 const THEME_ICON: Record<Theme, typeof Sun> = { light: Sun, dark: Moon, system: Monitor };
@@ -24,7 +25,14 @@ export function Topbar() {
   const { theme, setTheme } = useTheme();
   const ThemeIcon = THEME_ICON[theme];
 
+  // O tutorial abre sozinho no primeiro acesso da conta e fica acessível daqui
+  // pra sempre. Vive na topbar porque é a única barra presente em TODAS as
+  // telas: quem travou numa tela específica não deveria ter que voltar ao
+  // começo pra achar onde pedir ajuda.
+  const tutorial = useTutorial();
+
   return (
+    <>
     <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-grafite-elevado bg-carbono px-4 sm:px-6">
       <button
         type="button"
@@ -41,7 +49,7 @@ export function Topbar() {
         className="flex w-full max-w-sm items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-left text-sm text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
       >
         <Search size={16} className="shrink-0" />
-        <span className="hidden flex-1 truncate sm:inline">Buscar ou executar um comando</span>
+        <span className="hidden flex-1 truncate sm:inline">Buscar cliente, tarefa, conversa...</span>
         <span className="flex-1 truncate sm:hidden">Buscar</span>
         <kbd className="hidden shrink-0 rounded border border-grafite-elevado bg-carbono px-1.5 py-0.5 font-mono text-[10px] text-nevoa sm:inline-block">
           ⌘K
@@ -49,6 +57,23 @@ export function Topbar() {
       </button>
 
       <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={tutorial.abrir}
+          aria-label="Ver o tutorial do Desigual OS"
+          title="Tutorial"
+          className="mr-1 hidden items-center gap-1.5 rounded-full border border-grafite-elevado px-3.5 py-2 text-sm font-medium text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru sm:inline-flex"
+        >
+          <GraduationCap size={15} />
+          Tutorial
+        </button>
+        <Link
+          href="/chat"
+          className="mr-1 hidden items-center gap-1.5 rounded-full bg-roxo-eletrico/15 px-3.5 py-2 text-sm font-medium text-roxo-eletrico transition-colors hover:bg-roxo-eletrico/25 sm:inline-flex"
+        >
+          <Sparkles size={15} />
+          Perguntar ao Bento
+        </Link>
         <button
           type="button"
           onClick={() => setTheme(THEME_CYCLE[theme])}
@@ -79,5 +104,7 @@ export function Topbar() {
         </Link>
       </div>
     </header>
+    <TutorialModal aberto={tutorial.aberto} onFechar={tutorial.fechar} />
+    </>
   );
 }
