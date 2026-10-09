@@ -1,11 +1,30 @@
 'use client';
 
 import Link from 'next/link';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowRight } from 'lucide-react';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ArrowRight, TrendingDown, TrendingUp } from 'lucide-react';
 import { usePanorama } from '@/hooks/use-panorama';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { LinhasFantasma, SemNadaAinda } from '@/components/control/primitives';
+import { BentoInsights, type InsightDoBento } from '@/components/bento/painel-de-insights';
+
+/**
+ * DELTA SÓ ONDE HÁ SÉRIE. O mockup põe uma variação ao lado de quase todo
+ * número, e a maioria deles não tem com que comparar: não existe histórico de
+ * "clientes na carteira" nem de "equipe usando a IA" em lugar nenhum do
+ * contrato. O único que tem é o volume de pedidos, porque `serie_14d` guarda
+ * o dia a dia, e aí dá pra medir os últimos 7 contra os 7 anteriores.
+ *
+ * Devolve `null` quando a série não cobre as duas janelas inteiras. Um delta
+ * calculado sobre meia janela pareceria apurado e não seria.
+ */
+function variacaoDeSeteDias(serie: Array<{ total: number }>): number | null {
+  if (serie.length < 14) return null;
+  const ultimos = serie.slice(-7).reduce((s, d) => s + d.total, 0);
+  const anteriores = serie.slice(-14, -7).reduce((s, d) => s + d.total, 0);
+  if (anteriores === 0) return null;
+  return Math.round(((ultimos - anteriores) / anteriores) * 100);
+}
 
 /**
  * O PAINEL DE QUEM É DONO DA AGÊNCIA.
@@ -55,6 +74,52 @@ export function PainelDoDono() {
     conhecimento = { memorias: 0 },
     atencao = { sinais_abertos: 0 },
   } = data;
+  const variacao = variacaoDeSeteDias(inteligencia.serie_14d ?? []);
+
+  const semUsar = Math.max(equipe.pessoas - equipe.usando, 0);
+  const recomendacoes: InsightDoBento[] = [];
+  if (semUsar > 0) {
+    recomendacoes.push({
+      id: 'uso-da-ia',
+      tom: 'atencao',
+      ...(isMaster ? { href: '/people' } : {}),
+      texto: (
+        <>
+          <strong className="font-semibold text-branco-cru">Aumentar o uso da IA na equipe.</strong>{' '}
+          {semUsar} pessoa{semUsar > 1 ? 's' : ''} não {semUsar > 1 ? 'usaram' : 'usou'} a IA nos últimos 30 dias.
+        </>
+      ),
+    });
+  }
+  if (inteligencia.taxa_de_falha_14d !== null && inteligencia.taxa_de_falha_14d > 0) {
+    recomendacoes.push({
+      id: 'falhas',
+      tom: inteligencia.taxa_de_falha_14d >= 15 ? 'urgente' : 'atencao',
+      href: '/errors',
+      texto: (
+        <>
+          <strong className="font-semibold text-branco-cru">Reduzir falhas de pedidos.</strong> A taxa dos últimos 14 dias está em{' '}
+          {inteligencia.taxa_de_falha_14d}%.
+        </>
+      ),
+    });
+  }
+  // Mesma regra do aviso acima: vincular e-mail de alguém é ação de
+  // administrador, e recomendar a quem não pode agir é ruído.
+  if (isMaster && equipe.sem_clickup > 0) {
+    recomendacoes.push({
+      id: 'clickup',
+      tom: 'atencao',
+      href: '/people',
+      texto: (
+        <>
+          <strong className="font-semibold text-branco-cru">Vincular a equipe ao ClickUp.</strong> {equipe.sem_clickup} pessoa
+          {equipe.sem_clickup > 1 ? 's' : ''} sem vínculo, e o trabalho dela{equipe.sem_clickup > 1 ? 's' : ''} não aparece em
+          consulta nenhuma.
+        </>
+      ),
+    });
+  }
   const serie = (inteligencia.serie_14d ?? []).map((d) => ({
     ...d,
     rotulo: new Date(`${d.dia}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
@@ -82,6 +147,7 @@ export function PainelDoDono() {
           valor={inteligencia.pedidos_30d.toLocaleString('pt-BR')}
           detalhe={`${conhecimento.memorias.toLocaleString('pt-BR')} coisas aprendidas`}
           href="/memory"
+          {...(variacao !== null ? { delta: variacao } : {})}
         />
         {/*
           * `null` = não houve pedido na janela. Mostrar "0%" aí seria pintar de
@@ -119,7 +185,7 @@ export function PainelDoDono() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr] xl:grid-cols-[1.5fr_1fr_1fr]">
         {/* USO AO LONGO DO TEMPO — a forma da curva diz mais que o total. */}
         <Cartao titulo="Uso da inteligência, dia a dia" legenda="Últimos 14 dias. A faixa escura é o que falhou.">
           {serie.length === 0 ? (
@@ -178,6 +244,17 @@ export function PainelDoDono() {
                   contentStyle={{ background: '#1a1a1d', border: '1px solid #2a2a2e', borderRadius: 8, fontSize: 13 }}
                 />
                 <Bar dataKey="total" name="pedidos" radius={[0, 4, 4, 0]}>
+                  {/* O NÚMERO AO LADO DA BARRA (mockup). Sem ele, comparar duas
+                    * barras parecidas exigia passar o mouse em cada uma, e um
+                    * painel que só entrega o valor sob passagem de mouse não
+                    * entrega o valor em tela nenhuma de toque. */}
+                  <LabelList
+                    dataKey="total"
+                    position="right"
+                    fill="#c9c9d1"
+                    fontSize={12}
+                    formatter={(v: unknown) => (typeof v === 'number' ? v.toLocaleString('pt-BR') : String(v ?? ''))}
+                  />
                   {(inteligencia.por_agente ?? []).map((a) => (
                     <Cell key={a.agente} fill={COR_DO_AGENTE[a.agente] ?? '#8b8b93'} />
                   ))}
@@ -186,6 +263,18 @@ export function PainelDoDono() {
             </ResponsiveContainer>
           )}
         </Cartao>
+
+        {/* RECOMENDAÇÕES DO BENTO (mockup). Cada uma é uma leitura do MESMO
+          * panorama que os números acima mostram, com o destino de quem
+          * conserta. Nada aqui é conselho genérico de produtividade: se o
+          * panorama não acusa nada, a coluna diz que não há o que recomendar,
+          * em vez de encher com três frases bonitas. */}
+        <BentoInsights
+          titulo="Recomendações do Bento"
+          subtitulo="A partir do panorama desta tela"
+          itens={recomendacoes}
+          vazio="Nada a recomendar: o panorama não acusa nada pendente agora."
+        />
       </div>
     </div>
   );
@@ -213,12 +302,20 @@ export function Numero({
   detalhe,
   href,
   alerta,
+  delta,
+  deltaBomQuandoSobe = true,
 }: {
   rotulo: string;
   valor: string;
   detalhe?: string | undefined;
   href?: string | undefined;
   alerta?: boolean;
+  /** Variação percentual contra o período anterior. Só passe quando existir
+   *  série histórica de verdade: sem ela, o lugar fica sem delta, nunca com
+   *  "0%", que leria como "não mudou" em vez de "não medi". */
+  delta?: number | undefined;
+  /** Em "falhas", subir é ruim. Sem isto, a seta verde elogiaria a piora. */
+  deltaBomQuandoSobe?: boolean;
 }) {
   const classe = [
     'group rounded-lg border bg-grafite px-4 py-3.5 transition-colors',
@@ -226,9 +323,28 @@ export function Numero({
     href ? (alerta ? 'hover:border-aviso/70' : 'hover:border-roxo-eletrico/50') : '',
   ].join(' ');
 
+  const subiu = (delta ?? 0) > 0;
+  const bom = delta === undefined || delta === 0 ? null : subiu === deltaBomQuandoSobe;
+  const SetaDoDelta = subiu ? TrendingUp : TrendingDown;
+
   const conteudo = (
     <>
-      <p className="text-[13px] text-nevoa">{rotulo}</p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[13px] text-nevoa">{rotulo}</p>
+        {delta !== undefined && (
+          <span
+            title="Últimos 7 dias contra os 7 anteriores"
+            className={[
+              'inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-semibold',
+              bom === null ? 'bg-grafite-elevado text-nevoa' : bom ? 'bg-sucesso/15 text-sucesso' : 'bg-erro/15 text-erro',
+            ].join(' ')}
+          >
+            {delta !== 0 && <SetaDoDelta size={11} />}
+            {delta > 0 ? '+' : ''}
+            {delta}%
+          </span>
+        )}
+      </div>
       <p className={['mt-1 font-heading text-2xl font-semibold', alerta ? 'text-aviso' : 'text-branco-cru'].join(' ')}>
         {valor}
       </p>

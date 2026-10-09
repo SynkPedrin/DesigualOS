@@ -63,8 +63,22 @@ const ROUTE_VIDEO: Record<string, (typeof VIDEOS)[number]> = {
   '/chat': VIDEOS[2],
 };
 
-/** Prefixo mais longo primeiro: "/clients/123" precisa cair em "/clients", não em "/". */
-export function titleCardVideoFor(pathname: string): string {
+/**
+ * Prefixo mais longo primeiro: "/clients/123" precisa cair em "/clients", não em "/".
+ *
+ * `pathname` É TIPADO COMO STRING E CHEGA NULL (09/10/2026). O tipo vem de
+ * `usePathname()`, que o Next declara como string e devolve `null` fora de um
+ * contexto de rota. Como o `PageHeader` chama isto no corpo do componente, o
+ * `null.startsWith` derrubava a TELA INTEIRA, não só o vídeo do cabeçalho:
+ * foi assim que os três testes da vitrine de Integrações quebraram assim que
+ * aquela tela passou a usar o PageHeader.
+ *
+ * Mesma família do `primeiroNome` no /today: tipo de contrato é promessa, não
+ * garantia de runtime, e um cabeçalho decorativo nunca pode derrubar a página
+ * que ele enfeita.
+ */
+export function titleCardVideoFor(pathname: string | null | undefined): string {
+  if (!pathname) return VIDEOS[0];
   const match = Object.keys(ROUTE_VIDEO)
     .sort((a, b) => b.length - a.length)
     .find((route) => pathname === route || pathname.startsWith(`${route}/`));
