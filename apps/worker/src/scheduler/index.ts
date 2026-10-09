@@ -9,6 +9,10 @@ import { keepInferenceWarm } from './inference-warmth.js';
 import { expireStaleStudioJobs } from './studio-queue-timeout.js';
 import { expireStaleExecutions } from './execution-timeout.js';
 import { avisarDeConexoesMcp } from './aviso-de-conexao-mcp.js';
+import { syncAllGoogleCalendars } from './google-calendar-sync.js';
+import { syncAllMicrosoftCalendars } from './microsoft-calendar-sync.js';
+import { prepararReunioesDeCliente } from './meeting-prep.js';
+import { reconciliarAutomacoes } from './reconciliar-automacoes.js';
 
 const QUEUE_NAME = 'daily-digest';
 const logger = createLogger({ service: 'worker:scheduler' });
@@ -31,6 +35,10 @@ const JOBS_REPETIVEIS = [
   'studio-queue-timeout',
   'execution-timeout',
   'aviso-conexao-mcp',
+  'google-calendar-sync',
+  'microsoft-calendar-sync',
+  'meeting-prep',
+  'reconciliar-automacoes',
 ] as const;
 
 /**
@@ -100,6 +108,30 @@ export function setupDailyJobs(): Worker {
     // se chegar no dia seguinte, e o vigia olha 15 min pra trás justamente pra
     // sobreviver a uma parada curta sem ressuscitar conexão velha.
     queue.add('aviso-conexao-mcp', {}, { repeat: { pattern: '*/2 * * * *' }, jobId: 'aviso-conexao-mcp' }),
+    // SYNC DO GOOGLE CALENDAR a cada 15 min (§25 do prompt "CALENDAR +
+    // AUTOMATIONS + BENTO V2", 06/10/2026) — mesma cadência da saúde de
+    // integração, cadência que não esgota a cota da Calendar API nem deixa
+    // a agenda ficar velha demais entre uma sync e outra.
+    queue.add('google-calendar-sync', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'google-calendar-sync' }),
+    // SYNC DO MICROSOFT/OUTLOOK CALENDAR (07/10/2026) — mesma cadência do
+    // Google, mesma razão: fresco o bastante sem esgotar cota do Graph.
+    queue.add('microsoft-calendar-sync', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'microsoft-calendar-sync' }),
+    // MEETING PREP a cada 5 min (§51-53 do mesmo prompt): aviso de reunião de
+    // cliente chega ~15 min antes dela — de 5 em 5 min porque o próprio
+    // dedup (notificação já existe pra este evento) protege contra repetir,
+    // então a cadência só precisa ser menor que a janela de aviso.
+    queue.add('meeting-prep', {}, { repeat: { pattern: '*/5 * * * *' }, jobId: 'meeting-prep' }),
+    // RECONCILIAR AUTOMAÇÕES de 15 em 15 min. O `enabled` mora no Postgres e o
+    // agendamento mora no Redis, e nada reconciliava os dois: perder o Redis
+    // deixava toda automação "ativa" na tela e morta no agendador, pra sempre,
+    // sem caminho de conserto (o PATCH só registra quando a agenda muda ou
+    // quando a automação sai de desligada). Medido em 09/10/2026 com a "ASDA".
+    //
+    // Cadência de 15 min, e não de minuto em minuto, porque a função lê o banco
+    // e lista os repeatables: é barata, não é de graça. Quinze minutos é bem
+    // menor que o intervalo de qualquer automação real e bem maior que o tempo
+    // de um reinício de Redis.
+    queue.add('reconciliar-automacoes', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'reconciliar-automacoes' }),
   ])
     /**
      * A lista é escrita à mão e já ficou para trás: ela anunciava cinco jobs
@@ -113,6 +145,17 @@ export function setupDailyJobs(): Worker {
         `Scheduler armado (${JOBS_REPETIVEIS.length} jobs repetiveis)`,
       ),
     )
+    /**
+     * RECONCILIA JÁ NO BOOT, além de a cada 15 min. O caso que esta função
+     * existe pra consertar é justamente a perda do Redis, e perda de Redis
+     * costuma vir junto com um reinício. Esperar o primeiro tique de 15 min
+     * deixaria as automações mortas por um quarto de hora logo depois do
+     * momento em que mais provavelmente morreram.
+     *
+     * Não derruba o boot se falhar: o worker tem outras doze funções, e ficar
+     * sem reconciliação é pior que ficar sem worker só na teoria.
+     */
+    .then(() => reconciliarAutomacoes())
     .catch((error: unknown) => logger.error({ error }, 'Failed to register daily digest repeatable jobs'));
 
   const worker = new Worker(
@@ -136,6 +179,14 @@ export function setupDailyJobs(): Worker {
         await expireStaleExecutions(logger);
       } else if (job.name === 'aviso-conexao-mcp') {
         await avisarDeConexoesMcp(logger);
+      } else if (job.name === 'google-calendar-sync') {
+        await syncAllGoogleCalendars(logger);
+      } else if (job.name === 'microsoft-calendar-sync') {
+        await syncAllMicrosoftCalendars(logger);
+      } else if (job.name === 'meeting-prep') {
+        await prepararReunioesDeCliente(logger);
+      } else if (job.name === 'reconciliar-automacoes') {
+        await reconciliarAutomacoes();
       }
     },
     { connection: getRedisConnection() },
