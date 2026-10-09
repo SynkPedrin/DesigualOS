@@ -73,13 +73,27 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       .where(eq(schema.automations.organizationId, request.tenantContext!.organizationId))
       .orderBy(desc(schema.automations.createdAt));
     /**
-     * Falha ao falar com o Redis NÃO derruba a listagem: sem o mapa, cada
-     * automação sai com `next_run_at: null`, que a tela já sabe apresentar
-     * ("sem agendamento conhecido"). Trocar a lista inteira por um erro
-     * porque o horário da próxima execução não pôde ser lido seria perder o
-     * que funciona por causa do que é acessório.
+     * O REDIS PRECISA DESISTIR SOZINHO, e `.catch()` não dá conta disso.
+     *
+     * Falha ao falar com o Redis não pode derrubar a listagem: sem o mapa,
+     * cada automação sai com `next_run_at: null`, que a tela já sabe
+     * apresentar. Mas tratar só a REJEIÇÃO deixa passar o caso mais comum —
+     * Redis fora do ar não rejeita rápido, o ioredis entra em retentativa e
+     * demora muito mais do que uma tela pode esperar.
+     *
+     * Medido em 09/10/2026, na captura visual: a tela de Automações ficou com
+     * seis esqueletos eternos num ambiente sem Redis local, enquanto todas as
+     * outras carregaram. A listagem não estava quebrada — estava esperando.
+     *
+     * Um segundo e meio é folgado pra um Redis que existe (responde em
+     * milissegundos) e curto pra um que não existe. O acessório nunca segura
+     * o essencial.
      */
-    const proximas = await proximasExecucoes().catch(() => new Map<string, number>());
+    const SEM_RESPOSTA = new Map<string, number>();
+    const proximas = await Promise.race([
+      proximasExecucoes().catch(() => SEM_RESPOSTA),
+      new Promise<Map<string, number>>((r) => setTimeout(() => r(SEM_RESPOSTA), 1500)),
+    ]);
     return { automations: rows.map((row) => serializeAutomation(row, proximas.get(row.id))) };
   });
 
@@ -101,69 +115,79 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     const sevenDaysAgo = new Date(now.getTime() - 7 * DAY_MS);
     const fourteenDaysAgo = new Date(now.getTime() - 14 * DAY_MS);
 
-    async function countRuns(from: Date, to?: Date): Promise<number> {
-      const conditions = [runFilter, gte(schema.automationRuns.startedAt, from)];
-      if (to) {
-        conditions.push(lt(schema.automationRuns.startedAt, to));
-      }
-      const [row] = await db
-        .select({ value: count() })
-        .from(schema.automationRuns)
-        .where(and(...conditions));
-      return row?.value ?? 0;
+    /**
+     * DUAS IDAS AO BANCO, e não nove. A conta que importa aqui não é latência,
+     * é CONEXÃO.
+     *
+     * A rota fazia nove consultas, cada uma esperando a anterior: contagens de
+     * janelas de tempo diferentes sobre as mesmas duas tabelas. Medido no
+     * navegador em 09/10/2026: 10,2s, a chamada mais lenta da tela.
+     *
+     * A primeira tentativa foi paralelizar com `Promise.all`, e NÃO FUNCIONOU —
+     * medido: 7,9s e depois 12,0s, pior que antes. O pool tem três conexões
+     * (`DATABASE_POOL_MAX`, default 3, comentado no client como "três consultas
+     * travadas deixam a API sem banco"). Oito consultas simultâneas não rodam
+     * juntas: fazem fila em levas de três E disputam conexão com a chamada
+     * vizinha, que nesta tela é o próprio `/automations`. Paralelismo acima do
+     * tamanho do pool troca espera em fila por espera em fila, com mais
+     * contenção.
+     *
+     * O que resolve é ir menos vezes. `count(*) filter (where ...)` dá todas as
+     * janelas numa varredura só, uma consulta por tabela.
+     *
+     * E os filtros usam os OPERADORES do drizzle (`gte`, `lt`, `eq`) em vez de
+     * escrever a comparação dentro do `sql`. Não é estilo: um `Date` cru
+     * interpolado num fragmento `sql` não é ligado como parâmetro e a consulta
+     * morre com "The string argument must be of type string... Received an
+     * instance of Date". A primeira versão disto devolveu 500 por exatamente
+     * isso, e o 500 só apareceu no navegador — typecheck e build passaram.
+     *
+     * Some junto um defeito de escala que estava escondido: `successRate`
+     * trazia TODAS as linhas de execução dos últimos 30 dias para contar status
+     * no Node. Funciona com dezenas, não com dezenas de milhares.
+     */
+    const [resumoDasAutomacoes] = await db
+      .select({
+        ativas: sql<number>`count(*) filter (where ${eq(schema.automations.enabled, true)})::int`,
+        criadasNoMes: sql<number>`count(*) filter (where ${gte(schema.automations.createdAt, startOfMonth)})::int`,
+        comEstimativa: sql<number>`count(*) filter (where ${isNotNull(schema.automations.estimatedMinutesSaved)})::int`,
+      })
+      .from(schema.automations)
+      .where(tenantFilter);
+
+    const [resumoDasExecucoes] = await db
+      .select({
+        hoje: sql<number>`count(*) filter (where ${gte(schema.automationRuns.startedAt, startOfToday)})::int`,
+        ontem: sql<number>`count(*) filter (where ${and(gte(schema.automationRuns.startedAt, startOfYesterday), lt(schema.automationRuns.startedAt, startOfToday))})::int`,
+        total30: sql<number>`count(*) filter (where ${gte(schema.automationRuns.startedAt, thirtyDaysAgo)})::int`,
+        ok30: sql<number>`count(*) filter (where ${and(gte(schema.automationRuns.startedAt, thirtyDaysAgo), eq(schema.automationRuns.status, 'dispatched'))})::int`,
+        total7: sql<number>`count(*) filter (where ${gte(schema.automationRuns.startedAt, sevenDaysAgo)})::int`,
+        ok7: sql<number>`count(*) filter (where ${and(gte(schema.automationRuns.startedAt, sevenDaysAgo), eq(schema.automationRuns.status, 'dispatched'))})::int`,
+        totalAnteriores7: sql<number>`count(*) filter (where ${and(gte(schema.automationRuns.startedAt, fourteenDaysAgo), lt(schema.automationRuns.startedAt, sevenDaysAgo))})::int`,
+        okAnteriores7: sql<number>`count(*) filter (where ${and(gte(schema.automationRuns.startedAt, fourteenDaysAgo), lt(schema.automationRuns.startedAt, sevenDaysAgo), eq(schema.automationRuns.status, 'dispatched'))})::int`,
+        minutosNoMes: sql<number>`coalesce(sum(${schema.automations.estimatedMinutesSaved}) filter (where ${gte(schema.automationRuns.startedAt, startOfMonth)}), 0)::int`,
+      })
+      .from(schema.automationRuns)
+      .innerJoin(schema.automations, eq(schema.automationRuns.automationId, schema.automations.id))
+      .where(tenantFilter);
+
+    /** Sem execução na janela não existe taxa. `null`, nunca 0% nem 100%. */
+    function taxa(ok: number, total: number): number | null {
+      return total === 0 ? null : Math.round((ok / total) * 1000) / 10;
     }
 
-    async function successRate(from: Date, to?: Date): Promise<number | null> {
-      const conditions = [runFilter, gte(schema.automationRuns.startedAt, from)];
-      if (to) {
-        conditions.push(lt(schema.automationRuns.startedAt, to));
-      }
-      const rows = await db
-        .select({ status: schema.automationRuns.status })
-        .from(schema.automationRuns)
-        .where(and(...conditions));
-      if (rows.length === 0) {
-        return null;
-      }
-      const dispatched = rows.filter((row) => row.status === 'dispatched').length;
-      return Math.round((dispatched / rows.length) * 1000) / 10;
-    }
-
-    const [activeRow] = await db
-      .select({ value: count() })
-      .from(schema.automations)
-      .where(and(tenantFilter, eq(schema.automations.enabled, true)));
-    const activeCount = activeRow?.value ?? 0;
-
-    const [createdMonthRow] = await db
-      .select({ value: count() })
-      .from(schema.automations)
-      .where(and(tenantFilter, gte(schema.automations.createdAt, startOfMonth)));
-    const createdThisMonth = createdMonthRow?.value ?? 0;
-
-    const runsToday = await countRuns(startOfToday);
-    const runsYesterday = await countRuns(startOfYesterday, startOfToday);
-
-    const rateLast30d = await successRate(thirtyDaysAgo);
-    const rateLast7d = await successRate(sevenDaysAgo);
-    const ratePrev7d = await successRate(fourteenDaysAgo, sevenDaysAgo);
+    const activeCount = resumoDasAutomacoes?.ativas ?? 0;
+    const createdThisMonth = resumoDasAutomacoes?.criadasNoMes ?? 0;
+    const runsToday = resumoDasExecucoes?.hoje ?? 0;
+    const runsYesterday = resumoDasExecucoes?.ontem ?? 0;
+    const rateLast30d = taxa(resumoDasExecucoes?.ok30 ?? 0, resumoDasExecucoes?.total30 ?? 0);
+    const rateLast7d = taxa(resumoDasExecucoes?.ok7 ?? 0, resumoDasExecucoes?.total7 ?? 0);
+    const ratePrev7d = taxa(resumoDasExecucoes?.okAnteriores7 ?? 0, resumoDasExecucoes?.totalAnteriores7 ?? 0);
 
     // Só faz sentido somar tempo economizado se ALGUMA automação tiver a
     // estimativa cadastrada; senão o campo sai null (não zero).
-    const [anyEstimated] = await db
-      .select({ id: schema.automations.id })
-      .from(schema.automations)
-      .where(and(tenantFilter, isNotNull(schema.automations.estimatedMinutesSaved)))
-      .limit(1);
-    let timeSavedMinutes: number | null = null;
-    if (anyEstimated) {
-      const [sumRow] = await db
-        .select({ total: sql<number>`coalesce(sum(${schema.automations.estimatedMinutesSaved}), 0)::int` })
-        .from(schema.automationRuns)
-        .innerJoin(schema.automations, eq(schema.automationRuns.automationId, schema.automations.id))
-        .where(and(tenantFilter, gte(schema.automationRuns.startedAt, startOfMonth)));
-      timeSavedMinutes = Number(sumRow?.total ?? 0);
-    }
+    const timeSavedMinutes =
+      (resumoDasAutomacoes?.comEstimativa ?? 0) > 0 ? (resumoDasExecucoes?.minutosNoMes ?? 0) : null;
 
     return {
       active_count: activeCount,
