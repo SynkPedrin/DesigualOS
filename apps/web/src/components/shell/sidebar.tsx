@@ -172,7 +172,7 @@ export function Sidebar({
         collapsed ? 'w-[76px]' : 'w-64',
       )}
     >
-      <div className="flex items-center justify-between gap-2 px-4 py-4">
+      <div className="flex items-center justify-between gap-2 px-4 py-3">
         {!collapsed && (
           <Image src={logoSrc} alt="desigual OS" width={160} height={53} priority className="h-auto w-[150px]" />
         )}
@@ -390,7 +390,7 @@ export function Sidebar({
       </div>
 
       {isMaster && (
-        <div className={cn('m-2 rounded-lg border border-grafite-elevado bg-grafite p-2.5', collapsed && 'hidden')}>
+        <div className={cn('mx-2 mb-2 mt-1.5 rounded-lg border border-grafite-elevado bg-grafite p-2.5', collapsed && 'hidden')}>
           {isPending ? (
             <div className="space-y-2">
               <div className="h-3 w-3/4 animate-pulse rounded bg-grafite-elevado" />

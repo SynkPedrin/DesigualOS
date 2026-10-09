@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import { CalendarDays, Search } from 'lucide-react';
-import { ClaudeMark, ControlHeader, Secao, StatusLabel, type Estado } from '@/components/control/primitives';
+import { ClaudeMark, Secao, StatusLabel, type Estado } from '@/components/control/primitives';
+import { PageHeader } from '@/components/ui/page-header';
 import { cn } from '@/lib/utils';
 import { useClickUpIntegration } from '@/hooks/use-clickup-integration';
 import { useNotionIntegration } from '@/hooks/use-notion-integration';
@@ -75,9 +76,23 @@ export default function IntegrationsPage() {
     microsoftCal,
     googleCal,
     { connected: whatsapp?.connected === true, configured: whatsapp !== undefined },
+    /**
+     * O CLAUDE ENTRA NA CONTA, e não entrava.
+     *
+     * A faixa dizia "de 7 integrações" com OITO cartões na grade logo abaixo.
+     * Os dois números saíam de listas diferentes, e quem lesse a tela tinha
+     * que escolher em qual acreditar. O Claude é uma integração como as
+     * outras: ele aparece como cartão, então conta.
+     *
+     * "Conectado" aqui é pessoa de fato conectada pelo MCP, que é o mesmo
+     * critério do cartão. `configured` é sempre verdadeiro porque o servidor
+     * MCP é parte do produto, não variável de ambiente que alguém esqueceu.
+     */
+    mcpPendente ? undefined : { connected: (mcp?.pessoas_conectadas ?? 0) > 0, configured: true },
   ]);
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState<CartaoProps | null>(null);
+  const [categoria, setCategoria] = useState<string>('todas');
 
   // Cada seção é uma lista de dados, não JSX solta: é o que permite a busca
   // filtrar cartão por cartão (e some a seção inteira se nada nela casar) sem
@@ -205,15 +220,29 @@ export default function IntegrationsPage() {
   ];
 
   const termo = busca.trim().toLowerCase();
-  const secoesFiltradas = termo
-    ? secoes
-        .map((s) => ({ ...s, itens: s.itens.filter((i) => i.nome.toLowerCase().includes(termo) || i.categoria.toLowerCase().includes(termo)) }))
-        .filter((s) => s.itens.length > 0)
-    : secoes;
+
+  /** Uma lista só: a categoria já é um campo de cada cartão, então agrupar em
+   *  seções fixas era uma segunda verdade sobre a mesma informação. */
+  const todosOsCartoes = secoes.flatMap((s) => s.itens);
+
+  const abas = [
+    { id: 'todas', rotulo: 'Todas', quantidade: todosOsCartoes.length },
+    ...[...new Set(todosOsCartoes.map((i) => i.categoria))].map((cat) => ({
+      id: cat,
+      rotulo: cat,
+      quantidade: todosOsCartoes.filter((i) => i.categoria === cat).length,
+    })),
+  ];
+
+  const visiveis = todosOsCartoes.filter((i) => {
+    if (categoria !== 'todas' && i.categoria !== categoria) return false;
+    if (!termo) return true;
+    return i.nome.toLowerCase().includes(termo) || i.categoria.toLowerCase().includes(termo);
+  });
 
   return (
     <div className="mx-auto max-w-[1200px]">
-      <ControlHeader
+      <PageHeader
         title="Integrações"
         description="Os sistemas que a inteligência alcança, e o estado de cada ligação."
         actions={
@@ -302,18 +331,52 @@ export default function IntegrationsPage() {
         </Secao>
       )}
 
-      {secoesFiltradas.length === 0 ? (
-        <p className="py-10 text-center text-sm text-nevoa">Nenhuma integração encontrada para &quot;{busca}&quot;.</p>
+      {/*
+        * ABAS POR CATEGORIA, com contagem que sai das integrações REAIS.
+        *
+        * O mockup traz "Todas 12 · Inteligência 3 · Comunicação 3 · Gestão 4 ·
+        * Mídia e Marketing 2". Os rótulos e os números aqui são derivados dos
+        * cartões que existem de fato — nenhuma categoria aparece vazia só pra
+        * bater com a imagem, e nenhuma integração foi inventada pra completar
+        * contagem.
+        */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        {abas.map((aba) => (
+          <button
+            key={aba.id}
+            type="button"
+            onClick={() => setCategoria(aba.id)}
+            aria-pressed={categoria === aba.id}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[13px] transition-colors',
+              categoria === aba.id
+                ? 'border-roxo-eletrico/60 bg-roxo-eletrico/15 text-branco-cru'
+                : 'border-grafite-elevado text-nevoa hover:border-nevoa/40 hover:text-branco-cru',
+            )}
+          >
+            {aba.rotulo}
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-0.5 font-mono text-[10px]',
+                categoria === aba.id ? 'bg-roxo-eletrico/25 text-branco-cru' : 'bg-grafite-elevado text-nevoa',
+              )}
+            >
+              {aba.quantidade}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {visiveis.length === 0 ? (
+        <p className="py-10 text-center text-sm text-nevoa">
+          {termo ? <>Nenhuma integração encontrada para &quot;{busca}&quot;.</> : 'Nenhuma integração nesta categoria.'}
+        </p>
       ) : (
-        secoesFiltradas.map((s) => (
-          <Secao key={s.titulo} titulo={s.titulo}>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {s.itens.map((item) => (
-                <Cartao key={item.nome} {...item} onAbrir={() => setAberto(item)} />
-              ))}
-            </div>
-          </Secao>
-        ))
+        <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {visiveis.map((item) => (
+            <Cartao key={item.nome} {...item} onAbrir={() => setAberto(item)} />
+          ))}
+        </div>
       )}
 
       {/*
@@ -363,21 +426,24 @@ function Cartao({ nome, categoria, bannerClassName, logo, estado, texto, onAbrir
     <button
       type="button"
       onClick={onAbrir}
-      className="group block w-full overflow-hidden rounded-xl border border-grafite-elevado bg-grafite text-left transition-colors hover:border-nevoa/30"
+      className="group flex w-full flex-col overflow-hidden rounded-xl border border-grafite-elevado bg-grafite/40 p-4 text-left transition-colors hover:border-roxo-eletrico/40"
     >
-      <div className={cn('flex h-28 items-center justify-center', bannerClassName)}>{logo}</div>
-      <div className="px-4 py-3.5">
-        <span className="inline-block rounded-full bg-grafite-elevado px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-nevoa">
-          {categoria}
+      <div className="flex items-start justify-between gap-3">
+        {/* O banner virou um quadrado de 40px: no mockup o cartão é compacto e
+            cabem quatro por linha. Uma faixa de 112px por cartão empurrava o
+            estado da ligação, que é o que a pessoa veio ver, pra fora da tela. */}
+        <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-lg', bannerClassName)}>
+          {logo}
         </span>
-        <p className="mt-2 font-heading text-base font-semibold text-branco-cru">{nome}</p>
-        <div className="mt-1.5">
-          <StatusLabel estado={estado}>{texto}</StatusLabel>
-        </div>
-        <p className="mt-2.5 font-mono text-[11px] font-semibold uppercase tracking-wide text-roxo-eletrico group-hover:text-branco-cru">
-          Configurar →
-        </p>
+        <StatusLabel estado={estado}>{texto}</StatusLabel>
       </div>
+
+      <p className="mt-3 font-heading text-[15px] font-semibold text-branco-cru">{nome}</p>
+      <span className="mt-0.5 font-mono text-[10px] uppercase tracking-wide text-nevoa">{categoria}</span>
+
+      <span className="mt-3 inline-flex items-center gap-1.5 self-start rounded-md border border-grafite-elevado px-2.5 py-1 text-[12px] text-nevoa transition-colors group-hover:border-roxo-eletrico/50 group-hover:text-branco-cru">
+        Configurar
+      </span>
     </button>
   );
 }

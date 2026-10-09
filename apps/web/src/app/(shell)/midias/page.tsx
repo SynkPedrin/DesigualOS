@@ -255,10 +255,23 @@ export default function MidiasPage() {
           </div>
 
           <aside className="min-w-0 space-y-4 xl:sticky xl:top-[150px] xl:self-start">
+            {/*
+              * ERRO É DIFERENTE DE VAZIO, e confundir os dois aqui dá boa
+              * notícia por omissão.
+              *
+              * "Toda conta está vinculada e respondendo" é uma AFIRMAÇÃO sobre
+              * a carteira. Se a consulta falhou, ninguém mediu coisa nenhuma, e
+              * a frase passa a jurar algo que não foi verificado — exatamente
+              * na tela onde isso custa dinheiro.
+              */}
             <BentoInsights
               titulo="Precisa de atenção"
               subtitulo="A partir do estado real das contas desta carteira"
               itens={insights}
+              carregando={isPending}
+              {...(isError
+                ? { erro: 'Não consegui ler as contas da carteira, então não dá para afirmar que está tudo certo.' }
+                : {})}
               vazio="Toda conta da carteira está vinculada e respondendo."
             />
             {alertas.length > insights.length && (
