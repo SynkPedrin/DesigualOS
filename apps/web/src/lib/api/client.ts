@@ -42,6 +42,27 @@ export function setAccessTokenAsyncProvider(provider: () => Promise<string | nul
   accessTokenAsyncProvider = provider;
 }
 
+/**
+ * CONTA DESATIVADA NÃO É "INFRAESTRUTURA FORA DO AR".
+ *
+ * `requireAuth` responde 403 "User account is deactivated" pra qualquer rota,
+ * e cada tela tinha a própria frase genérica pra erro de query ("não consegui
+ * carregar a saúde da infraestrutura", "não consegui carregar X") — nenhuma
+ * delas sabia que a causa era a CONTA de quem perguntou, não o que a tela
+ * mostra. Resultado medido (08/10/2026): a pessoa lia "infraestrutura" e
+ * procurava o problema lá, quando o problema era a própria sessão.
+ *
+ * Um único lugar sabe disso — aqui, onde toda resposta HTTP já passa — e
+ * avisa quem se inscrever (AuthProvider) pra mostrar UM aviso claro em vez
+ * de deixar cada tela inventar a própria explicação errada em paralelo.
+ */
+const MENSAGEM_DE_CONTA_DESATIVADA = 'User account is deactivated';
+let aoDesativarConta: (() => void) | null = null;
+
+export function setOnAccountDeactivated(callback: () => void) {
+  aoDesativarConta = callback;
+}
+
 /** Timeout default de toda chamada. Uploads de anexos passam um teto maior
  * via `timeoutMs` (arquivo grande em conexão lenta estouraria 30s fácil). */
 export const API_FETCH_DEFAULT_TIMEOUT_MS = 30_000;
@@ -84,6 +105,9 @@ export async function apiFetch<T>(path: string, init?: RequestInit, options?: Ap
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as ApiError | null;
+      if (response.status === 403 && body?.error === MENSAGEM_DE_CONTA_DESATIVADA) {
+        aoDesativarConta?.();
+      }
       throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details, body ?? undefined);
     }
 
