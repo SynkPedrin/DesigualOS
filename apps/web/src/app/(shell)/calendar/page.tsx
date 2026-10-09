@@ -169,7 +169,11 @@ function CalendarPageContent() {
       </div>
 
       {visao === 'pessoal' ? (
-        eventos.isPending ? <Skeleton className="h-[700px] w-full" /> : <WeekView dias={dias} eventosPorDia={eventosPorDia} onSelecionarEvento={setSelecionado} />
+        eventos.isPending ? (
+          <Skeleton className="h-[700px] w-full" />
+        ) : (
+          <WeekView dias={dias} eventosPorDia={eventosPorDia} onSelecionarEvento={setSelecionado} onSelecionarSlot={setCriando} />
+        )
       ) : agenciaPending && idsAgencia.length > 0 ? (
         <Skeleton className="h-[700px] w-full" />
       ) : (

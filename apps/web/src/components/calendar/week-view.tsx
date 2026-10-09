@@ -28,10 +28,13 @@ export function WeekView({
   dias,
   eventosPorDia,
   onSelecionarEvento,
+  onSelecionarSlot,
 }: {
   dias: Date[];
   eventosPorDia: Map<string, CalendarEventWire[]>;
   onSelecionarEvento: (evento: CalendarEventWire) => void;
+  /** Clicou numa hora vazia da grade: abre "Novo evento" já com esse horário. */
+  onSelecionarSlot?: (data: Date) => void;
 }) {
   const hoje = new Date();
   const ehHoje = (d: Date) => d.toDateString() === hoje.toDateString();
@@ -64,6 +67,27 @@ export function WeekView({
               {Array.from({ length: TOTAL_HORAS }, (_, i) => (
                 <div key={i} className="absolute left-0 right-0 border-t border-grafite-elevado/40" style={{ top: `${(i / TOTAL_HORAS) * 100}%` }} />
               ))}
+              {onSelecionarSlot &&
+                Array.from({ length: TOTAL_HORAS }, (_, i) => (
+                  <button
+                    key={`slot-${i}`}
+                    type="button"
+                    aria-label={`Criar evento às ${HORA_INICIO + i}h de ${dia.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'short' })}`}
+                    className="absolute left-0 right-0 cursor-pointer hover:bg-roxo-eletrico/5"
+                    style={{ top: `${(i / TOTAL_HORAS) * 100}%`, height: `${(1 / TOTAL_HORAS) * 100}%` }}
+                    onClick={(e) => {
+                      // Metade de cima da caixa = hora cheia, metade de baixo = :30 —
+                      // granularidade suficiente pro evento padrão de 30min, sem exigir
+                      // um seletor de hora separado pra quem só quer marcar rápido.
+                      const retangulo = e.currentTarget.getBoundingClientRect();
+                      const fracao = (e.clientY - retangulo.top) / retangulo.height;
+                      const minutos = fracao < 0.5 ? 0 : 30;
+                      const data = new Date(dia);
+                      data.setHours(HORA_INICIO + i, minutos, 0, 0);
+                      onSelecionarSlot(data);
+                    }}
+                  />
+                ))}
               {eventos.map((evento) => {
                 const topo = offsetPercent(new Date(evento.start_at), dia);
                 const fimPct = offsetPercent(new Date(evento.end_at), dia);
