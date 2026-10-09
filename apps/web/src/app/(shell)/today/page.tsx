@@ -179,6 +179,36 @@ export default function TodayPage() {
       href: `/demands/${d.id}`,
     });
   }
+  // Demanda que vence hoje mas não é nova (já em briefing/produção) some do
+  // painel sem isto — o loop acima só pega status 'new'. `!== 'new'` evita
+  // entrar duas vezes quando os dois são verdade pra mesma demanda.
+  for (const d of (minhasDemandas.data ?? []).filter(
+    (d) => d.status !== 'new' && d.status !== 'done' && d.status !== 'cancelled' && d.dueDate !== null && new Date(d.dueDate).getTime() <= fimHoje,
+  )) {
+    prioridades.push({
+      id: `demanda-vence-${d.id}`,
+      entidade: d.clientName ?? 'Cliente',
+      titulo: d.clientName ?? 'Cliente',
+      descricao: `Vence hoje — "${d.title}"`,
+      badge: { label: 'Vence hoje', tom: 'urgent' },
+      quando: formatRelativeTime(d.dueDate!),
+      href: `/demands/${d.id}`,
+    });
+  }
+  // Tarefa atrasada é a mesma contagem do StatCard "Tarefas para hoje" (9
+  // atrasadas) — antes só existia como número ali, nunca como item que dá
+  // pra abrir direto a partir daqui.
+  for (const t of (minhasTarefas.data?.tasks ?? []).filter((t) => t.due_date !== null && t.due_date < Date.now())) {
+    prioridades.push({
+      id: `tarefa-${t.id}`,
+      entidade: t.client?.name ?? 'Sem cliente',
+      titulo: t.name,
+      descricao: t.client?.name ? `Tarefa atrasada em "${t.client.name}"` : 'Tarefa atrasada',
+      badge: { label: 'Atrasada', tom: 'urgent' },
+      quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
+      href: t.url ?? '/tasks',
+    });
+  }
   const proximoEvento = (eventosHoje.data ?? []).find((e) => new Date(e.start_at).getTime() > Date.now());
   if (proximoEvento) {
     prioridades.push({
@@ -191,9 +221,13 @@ export default function TodayPage() {
       href: '/calendar',
     });
   }
+  // Teto subiu de 4 pra 10 em 08/10/2026: com tarefa atrasada e demanda
+  // vencendo agora entrando na lista (antes só contadas em StatCard), 4
+  // escondia a maioria do que "tarefas para hoje: 9 atrasadas" já avisava
+  // existir — a régua virou "cabe praticamente tudo", não "cabe uma amostra".
   const prioridadesOrdenadas = prioridades
     .sort((a, b) => (a.badge.tom === 'urgent' ? -1 : b.badge.tom === 'urgent' ? 1 : 0))
-    .slice(0, 4);
+    .slice(0, 10);
 
   const algumPending = minhasTarefas.isPending || conversasAguardando.isPending || minhasDemandas.isPending || eventosHoje.isPending;
 
@@ -292,6 +326,11 @@ export default function TodayPage() {
                 </li>
               ))}
             </ul>
+          )}
+          {prioridades.length > prioridadesOrdenadas.length && (
+            <p className="pt-3 text-center font-mono text-[11px] text-nevoa">
+              + {prioridades.length - prioridadesOrdenadas.length} outra(s) — veja tudo em Tarefas e Campanhas.
+            </p>
           )}
         </Surface>
 
