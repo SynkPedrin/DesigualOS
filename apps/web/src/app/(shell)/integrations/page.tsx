@@ -40,6 +40,7 @@ import { NotionIntegrationSection } from '@/components/settings/notion-integrati
 import { MotionProvidersSection } from '@/components/settings/motion-providers-card';
 import { WhatsAppConnectCard } from '@/components/settings/whatsapp-connect-card';
 import { InteligenciaConectada } from '@/components/control/inteligencia-conectada';
+import { saudeDasIntegracoes } from '@/lib/saude-das-integracoes';
 
 /**
  * INTEGRAÇÕES — com o que a inteligência fala.
@@ -58,7 +59,23 @@ export default function IntegrationsPage() {
   const { data: meta, isPending: metaPendente } = useMetaIntegration();
   const { data: googleAds, isPending: googleAdsPendente } = useGoogleAdsIntegration();
   const { data: microsoftCal, isPending: microsoftCalPendente } = useMicrosoftCalendarIntegration();
+
   const { data: googleCal, isPending: googleCalPendente } = useGoogleCalendarIntegration();
+  /**
+   * O conjunto, a partir dos MESMOS estados que alimentam cada cartão — nunca
+   * uma segunda contagem que possa divergir do que a tela mostra logo abaixo.
+   * O WhatsApp entra pelo que ele é hoje: existe no produto e não tem conexão,
+   * e omiti-lo faria o total parecer melhor do que é.
+   */
+  const saude = saudeDasIntegracoes([
+    clickup,
+    notion,
+    meta,
+    googleAds,
+    microsoftCal,
+    googleCal,
+    { connected: whatsapp?.connected === true, configured: whatsapp !== undefined },
+  ]);
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState<CartaoProps | null>(null);
 
@@ -212,6 +229,65 @@ export default function IntegrationsPage() {
           </div>
         }
       />
+
+      {/*
+        O ESTADO DO CONJUNTO, antes dos cartões um a um.
+
+        O mockup mostra "Saúde das integrações: Excelente · 100% operacionais"
+        com quatro de doze conectadas, e essa conta não fecha — 100% do quê?
+        Numa tela de integração, verde por omissão é a mentira mais fácil de
+        contar, porque ninguém confere "está tudo certo" e, quando descobre que
+        não estava, já perdeu o dia procurando o problema noutro lugar.
+
+        Aqui a saúde é a fração das CONFIGURADAS que estão conectadas, e o que
+        falta configuração aparece separado: uma conexão que um clique resolve e
+        uma que depende de alguém mexer no ambiente são problemas diferentes, e
+        somar as duas esconde as duas.
+      */}
+      {!termo && (
+        <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            {
+              rotulo: 'Conectadas',
+              valor: `${saude.conectadas}`,
+              detalhe: `de ${saude.total} integrações`,
+              tom: saude.conectadas > 0 ? 'text-sinal' : 'text-nevoa',
+            },
+            {
+              rotulo: 'Prontas pra conectar',
+              valor: `${saude.prontas}`,
+              detalhe: saude.prontas > 0 ? 'falta clicar em conectar' : 'nenhuma esperando',
+              tom: saude.prontas > 0 ? 'text-aviso' : 'text-branco-cru',
+            },
+            {
+              rotulo: 'Sem configuração',
+              valor: `${saude.semConfiguracao}`,
+              detalhe: saude.semConfiguracao > 0 ? 'dependem de administrador' : 'ambiente completo',
+              tom: saude.semConfiguracao > 0 ? 'text-nevoa' : 'text-branco-cru',
+            },
+            {
+              rotulo: 'Saúde',
+              valor: saude.rotulo,
+              detalhe:
+                saude.proporcao === null
+                  ? 'nada configurado ainda'
+                  : `${Math.round(saude.proporcao * 100)}% das configuradas`,
+              tom:
+                saude.proporcao === 1
+                  ? 'text-sinal'
+                  : saude.proporcao === null || saude.proporcao === 0
+                    ? 'text-nevoa'
+                    : 'text-aviso',
+            },
+          ].map((k) => (
+            <div key={k.rotulo} className="rounded-lg border border-grafite-elevado bg-grafite/60 px-4 py-3 transition-colors hover:border-roxo-eletrico/40">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">{k.rotulo}</p>
+              <p className={cn('mt-1 font-heading text-xl font-semibold', k.tom)}>{k.valor}</p>
+              <p className="mt-0.5 text-[11px] text-nevoa">{k.detalhe}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/*
         * VEIO DA HOME. Lá ocupava uma seção inteira para responder uma pergunta
