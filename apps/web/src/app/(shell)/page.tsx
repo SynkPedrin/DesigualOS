@@ -2,12 +2,16 @@
 
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
-import { ControlHeader, Secao } from '@/components/control/primitives';
+import { PageHeader } from '@/components/ui/page-header';
+import { Secao } from '@/components/control/primitives';
 import { LinhaDoSistema } from '@/components/control/linha-do-sistema';
 import { FeedDeAtividade } from '@/components/control/feed-de-atividade';
 import { ResumoDaOperacao } from '@/components/control/resumo-da-operacao';
 import { SinaisEmAberto } from '@/components/control/sinais-em-aberto';
 import { PainelDoDono } from '@/components/control/painel-do-dono';
+import { ControleDaAgencia } from '@/components/control/controle-da-agencia';
+import { useAgencyControlCenter } from '@/hooks/use-agency-control-center';
+import { ApiRequestError } from '@/lib/api/client';
 
 /**
  * A home do CONTROL PLANE.
@@ -25,9 +29,15 @@ import { PainelDoDono } from '@/components/control/painel-do-dono';
  * fonte aparece dizendo que não tem.
  */
 export default function ControlPlanePage() {
+  // Mesma query do componente — react-query deduplica pela queryKey, não dobra a chamada.
+  // 403 = o workspace desta pessoa não inclui "operação" (Workspace Builder): a seção
+  // some inteira, cabeçalho incluso, em vez de mostrar um título sem conteúdo embaixo.
+  const { error: erroDoControleDaAgencia } = useAgencyControlCenter();
+  const temControleDaAgencia = !(erroDoControleDaAgencia instanceof ApiRequestError && erroDoControleDaAgencia.status === 403);
+
   return (
     <div className="mx-auto max-w-[1400px]">
-      <ControlHeader
+      <PageHeader
         title="Desigual OS · Control Plane"
         description="Inteligência, memória e governança da operação."
       />
@@ -48,6 +58,18 @@ export default function ControlPlanePage() {
       <Secao titulo="A agência agora">
         <PainelDoDono />
       </Secao>
+
+      {/*
+        * O TRABALHO, não o uso da IA: demanda, aprovação, cliente em atenção,
+        * carga por colaborador (§52-59 do prompt de refinamento, 06/10/2026).
+        * Pergunta diferente da seção acima — "como está a agência usando a
+        * IA" não responde "o que está travado e com quem".
+        */}
+      {temControleDaAgencia && (
+        <Secao titulo="Controle da agência">
+          <ControleDaAgencia />
+        </Secao>
+      )}
 
       {/*
         * O ESTADO TÉCNICO EM UMA LINHA, e não mais numa faixa de seis cartões.

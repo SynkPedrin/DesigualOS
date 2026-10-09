@@ -2,8 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { ArrowRight, Link2, Search } from 'lucide-react';
-import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusLabel } from '@/components/control/primitives';
+import { PageHeader } from '@/components/ui/page-header';
+import { LinhasFantasma, Secao, SemNadaAinda, StatusLabel } from '@/components/control/primitives';
 import { useMediaOverview } from '@/hooks/use-media-overview';
 import { ApiRequestError } from '@/lib/api/client';
 import type { MediaOverviewClientWire } from '@/lib/api/contracts';
@@ -58,7 +60,7 @@ export default function MidiasPage() {
   if (isError && error instanceof ApiRequestError && error.status === 403) {
     return (
       <div className="mx-auto max-w-[1200px]">
-        <ControlHeader title="Mídias" description="Tráfego pago da carteira." />
+        <PageHeader title="Mídias" description="Tráfego pago da carteira." />
         <SemNadaAinda
           titulo="Mídia não faz parte do seu acesso"
           explicacao="Esta tela mostra investimento e resultado de campanha. Peça a quem administra a conta para incluir mídia no seu acesso."
@@ -69,7 +71,7 @@ export default function MidiasPage() {
 
   return (
     <div className="mx-auto max-w-[1200px]">
-      <ControlHeader
+      <PageHeader
         title="Mídias"
         description="Onde está entrando dinheiro agora, e o que ainda não está ligado."
       />
@@ -135,7 +137,10 @@ export default function MidiasPage() {
               <div className="space-y-2">
                 {comProblema.map((c) => (
                   <div key={c.client_id} className="rounded-lg border border-aviso/40 bg-aviso/5 px-4 py-3">
-                    <p className="font-heading text-sm font-semibold text-branco-cru">{c.client_name}</p>
+                    <div className="flex items-center gap-2">
+                      <LogoDaPlataforma />
+                      <p className="font-heading text-sm font-semibold text-branco-cru">{c.client_name}</p>
+                    </div>
                     <p className="mt-0.5 text-[13px] text-aviso">
                       {c.connected && !c.data_available ? c.reason : ''}
                     </p>
@@ -160,6 +165,16 @@ export default function MidiasPage() {
   );
 }
 
+/**
+ * A LOGO DA PLATAFORMA. `/media/overview` só lê `client_meta_accounts` hoje —
+ * Google Ads tem a própria tabela (`client-google-ads-accounts.ts`) e o
+ * próprio resolver de acesso, mas ainda não entra nesta agregação. Até esse
+ * merge acontecer, todo cartão aqui é Meta, de verdade, não um placeholder.
+ */
+function LogoDaPlataforma() {
+  return <Image src="/logos/meta.png" alt="Meta" width={16} height={16} unoptimized className="shrink-0 rounded-[4px]" />;
+}
+
 function CartaoDeCliente({ cliente }: { cliente: MediaOverviewClientWire }) {
   if (!cliente.connected || !cliente.data_available) return null;
   const i = cliente.insights;
@@ -170,7 +185,10 @@ function CartaoDeCliente({ cliente }: { cliente: MediaOverviewClientWire }) {
       className="group block rounded-lg border border-grafite-elevado bg-grafite px-4 py-3.5 transition-colors hover:border-roxo-eletrico/50"
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="font-heading text-sm font-semibold text-branco-cru">{cliente.client_name}</p>
+        <div className="flex items-center gap-2">
+          <LogoDaPlataforma />
+          <p className="font-heading text-sm font-semibold text-branco-cru">{cliente.client_name}</p>
+        </div>
         <StatusLabel estado="ok">ligado</StatusLabel>
       </div>
       <p className="mt-2 font-heading text-xl font-semibold text-branco-cru">{dinheiro(i?.spend)}</p>

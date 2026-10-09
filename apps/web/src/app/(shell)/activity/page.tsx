@@ -1,27 +1,39 @@
 'use client';
 
-import { ControlHeader, Secao } from '@/components/control/primitives';
+import { PageHeader } from '@/components/ui/page-header';
+import { Secao } from '@/components/control/primitives';
+import { LinhaDoTempo } from '@/components/control/linha-do-tempo';
 import { FeedDeAtividade } from '@/components/control/feed-de-atividade';
 
 /**
- * ATIVIDADE — o mesmo feed da home, sem corte.
+ * ATIVIDADE — o que a OPERAÇÃO fez.
  *
- * Fonte real: `/executions`, com o autor que passou a vir junto em 29/09/2026.
- * A API devolve as 50 mais recentes; enquanto não houver paginação, dizer isso
- * é melhor que deixar a pessoa achar que viu tudo.
+ * A tela lia `/executions`, que são os turnos do Bento ("o agente respondeu
+ * uma pergunta"). Útil, mas é a atividade do SISTEMA. O que a equipe fez —
+ * tarefa criada no ClickUp, conhecimento registrado pelo Claude — vivia em
+ * `operational_events`, e em 02/10/2026 eram 902 linhas sem nenhuma tela.
+ *
+ * Agora a operação vem primeiro e o motor fica abaixo, nomeado pelo que é.
  */
 export default function ActivityPage() {
   return (
     <div className="mx-auto max-w-[1100px]">
-      <ControlHeader
+      <PageHeader
         title="Atividade"
-        description="Tudo que foi pedido à inteligência, com autor, alvo e desfecho."
+        description="O que aconteceu na operação: quem fez, em qual cliente, por qual ferramenta e quando."
       />
-      <Secao titulo="Últimas 50 execuções">
-        <FeedDeAtividade limite={50} />
-        <p className="mt-3 font-mono text-[11px] text-nevoa/70">
-          A API devolve as 50 mais recentes. Ainda não há paginação — para histórico completo, use Histórico.
-        </p>
+
+      <Secao titulo="Na operação">
+        <LinhaDoTempo limite={60} />
+      </Secao>
+
+      {/*
+        * O motor continua visível, e separado. Misturar "o Bento respondeu uma
+        * pergunta" com "a Tammy criou uma tarefa" na mesma lista faz as duas
+        * coisas parecerem a mesma, e elas não são.
+        */}
+      <Secao titulo="Pedidos à inteligência">
+        <FeedDeAtividade limite={20} />
       </Secao>
     </div>
   );

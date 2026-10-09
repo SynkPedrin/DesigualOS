@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Building2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
-import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusLabel } from '@/components/control/primitives';
+import { PageHeader } from '@/components/ui/page-header';
+import { LinhasFantasma, Secao, SemNadaAinda, StatusLabel } from '@/components/control/primitives';
 import { useOrganizations, type EmpresaResumo } from '@/hooks/use-organizations';
 import { useMe } from '@/hooks/use-me';
 import { NovaEmpresa } from '@/components/control/nova-empresa';
@@ -35,7 +36,7 @@ export default function EmpresasPage() {
   if (me && me.eh_provider !== true) {
     return (
       <div className="mx-auto max-w-[1000px]">
-        <ControlHeader title="Empresas" description="A visão do provedor sobre as empresas atendidas." />
+        <PageHeader title="Empresas" description="A visão do provedor sobre as empresas atendidas." />
         <SemNadaAinda
           titulo="Esta tela é do provedor da plataforma"
           explicacao="Ela lista as empresas atendidas pela Desigual. Sua conta enxerga a própria empresa, e ela aparece nas demais telas."
@@ -48,7 +49,7 @@ export default function EmpresasPage() {
 
   return (
     <div className="mx-auto max-w-[1000px]">
-      <ControlHeader
+      <PageHeader
         title="Empresas"
         description="Cada empresa atendida, com o que dá para medir hoje: gente, carteira, conhecimento e última atividade."
       />

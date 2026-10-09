@@ -33,6 +33,34 @@ const ROUTE_VIDEO: Record<string, (typeof VIDEOS)[number]> = {
   '/admin': VIDEOS[2],
   '/settings': VIDEOS[3],
   '/messages': VIDEOS[0],
+  // Adicionadas em 08/10/2026 — navegação cresceu bastante desde o mapeamento
+  // original (Empresas, Campanhas, Mídias, Pipeline, Bento à vista etc.) e
+  // essas rotas caíam todas no fallback (sempre o mesmo vídeo), o que viola a
+  // regra de não repetir entre vizinhas da barra. Mesma lógica de escolha:
+  // nunca igual ao vizinho imediato (antes ou depois) na ordem da sidebar.
+  '/today': VIDEOS[0],
+  '/calendar': VIDEOS[1],
+  '/signals': VIDEOS[2],
+  '/organizations': VIDEOS[1],
+  '/inbox': VIDEOS[3],
+  '/demands': VIDEOS[0],
+  '/midias': VIDEOS[2],
+  '/pipeline': VIDEOS[1],
+  '/people': VIDEOS[3],
+  '/approvals': VIDEOS[2],
+  '/memory': VIDEOS[0],
+  '/decisions': VIDEOS[3],
+  '/health': VIDEOS[1],
+  '/activity': VIDEOS[2],
+  '/mcp': VIDEOS[0],
+  '/tools': VIDEOS[3],
+  '/permissions': VIDEOS[1],
+  '/audit': VIDEOS[2],
+  '/errors': VIDEOS[0],
+  '/integrations': VIDEOS[3],
+  '/data-quality': VIDEOS[1],
+  '/usage': VIDEOS[2],
+  '/chat': VIDEOS[2],
 };
 
 /** Prefixo mais longo primeiro: "/clients/123" precisa cair em "/clients", não em "/". */
