@@ -624,21 +624,34 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
        * (execução, auditoria, conversa, mensagem), que é o caso das contas de
        * QA que o Pedro precisa limpar.
        */
-      const bloqueios = await Promise.all([
-        db.select({ id: schema.demands.id }).from(schema.demands).where(eq(schema.demands.createdBy, request.params.id)).limit(1),
-        db.select({ id: schema.briefs.id }).from(schema.briefs).where(eq(schema.briefs.createdBy, request.params.id)).limit(1),
-        db.select({ id: schema.calendarEvents.id }).from(schema.calendarEvents).where(eq(schema.calendarEvents.createdBy, request.params.id)).limit(1),
-        db.select({ id: schema.approvalRequests.id }).from(schema.approvalRequests).where(eq(schema.approvalRequests.requestedBy, request.params.id)).limit(1),
-        db.select({ id: schema.clientReports.id }).from(schema.clientReports).where(eq(schema.clientReports.requestedBy, request.params.id)).limit(1),
+      /**
+       * MASTER APAGA QUALQUER CONTA, SEM EXCEÇÃO (pedido direto do Pedro,
+       * 09/10/2026). Antes isto recusava com 409 quando a pessoa tinha criado
+       * demanda, briefing, evento de agenda, pedido de aprovação ou relatório —
+       * as cinco FKs `NOT NULL` + `restrict` que sobraram além de `executions`.
+       *
+       * Mas apagar essas linhas junto seria destruir ENTREGA DE CLIENTE pra
+       * limpar um cadastro: a demanda não deixa de existir porque quem a criou
+       * saiu da agência. Então elas não são apagadas nem bloqueiam — passam a
+       * responder pelo master que está excluindo.
+       *
+       * Reatribuir em vez de apagar é o que a maioria dos sistemas faz quando
+       * alguém sai, e é honesto desde que FIQUE REGISTRADO: o audit_log abaixo
+       * guarda quantas linhas de cada tipo mudaram de dono, então ninguém
+       * descobre meses depois que a autoria mudou sem explicação.
+       */
+      const novoDono = request.authUser!.id;
+      const reatribuicoes = await Promise.all([
+        db.update(schema.demands).set({ createdBy: novoDono }).where(eq(schema.demands.createdBy, request.params.id)).returning({ id: schema.demands.id }),
+        db.update(schema.briefs).set({ createdBy: novoDono }).where(eq(schema.briefs.createdBy, request.params.id)).returning({ id: schema.briefs.id }),
+        db.update(schema.calendarEvents).set({ createdBy: novoDono }).where(eq(schema.calendarEvents.createdBy, request.params.id)).returning({ id: schema.calendarEvents.id }),
+        db.update(schema.approvalRequests).set({ requestedBy: novoDono }).where(eq(schema.approvalRequests.requestedBy, request.params.id)).returning({ id: schema.approvalRequests.id }),
+        db.update(schema.clientReports).set({ requestedBy: novoDono }).where(eq(schema.clientReports.requestedBy, request.params.id)).returning({ id: schema.clientReports.id }),
       ]);
-      const NOMES_DO_BLOQUEIO = ['demandas', 'briefings', 'eventos de agenda', 'pedidos de aprovação', 'relatórios de cliente'];
-      const impedem = bloqueios.map((linhas, i) => (linhas.length > 0 ? NOMES_DO_BLOQUEIO[i] : null)).filter(Boolean);
-      if (impedem.length > 0) {
-        reply.code(409);
-        return {
-          error: `Esta pessoa criou ${impedem.join(', ')} — trabalho da agência, que não some junto com a conta. Use "Desativar": corta o acesso na hora e mantém a entrega no lugar.`,
-        };
-      }
+      const TIPOS_REATRIBUIDOS = ['demandas', 'briefings', 'eventos_de_agenda', 'pedidos_de_aprovacao', 'relatorios'] as const;
+      const herdado = Object.fromEntries(
+        reatribuicoes.map((linhas, i) => [TIPOS_REATRIBUIDOS[i]!, linhas.length]).filter(([, n]) => (n as number) > 0),
+      );
 
       await db.delete(schema.executions).where(eq(schema.executions.userId, request.params.id));
 
@@ -665,7 +678,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         resourceType: 'user',
         resourceId: request.params.id,
         oldValue: { email: user.email, name: user.name, active: user.active },
-        newValue: null,
+        // `herdado` responde "o que era desta pessoa e agora é meu" — sem isso,
+        // a reatribuição seria uma mudança de autoria silenciosa.
+        newValue: Object.keys(herdado).length > 0 ? { herdado_por: novoDono, herdado } : null,
       });
 
       return { id: request.params.id, deleted: true };
