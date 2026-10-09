@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, FileText, Paperclip, Plus, Settings2, SquareKanban, Upload, X, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, CircleUserRound, FileText, Layers, Paperclip, Plus, Settings2, SquareKanban, Upload, Wallet, X, Search } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
@@ -317,11 +317,22 @@ interface NovoCartaoEntrada {
   nota: string;
 }
 
-function NovoCartaoModal({ board, onCreate, onClose }: { board: PipelineBoard; onCreate: (entrada: NovoCartaoEntrada) => void; onClose: () => void }) {
+function NovoCartaoModal({
+  board,
+  estagioInicial = null,
+  onCreate,
+  onClose,
+}: {
+  board: PipelineBoard;
+  /** Coluna de onde o pedido partiu. Sem ela, vale a primeira do quadro. */
+  estagioInicial?: string | null;
+  onCreate: (entrada: NovoCartaoEntrada) => void;
+  onClose: () => void;
+}) {
   const { data: collaboratorsData } = useCollaborators();
   const colaboradores = collaboratorsData?.collaborators ?? [];
   const [nome, setNome] = useState('');
-  const [estagio, setEstagio] = useState(board.stages[0]?.id ?? '');
+  const [estagio, setEstagio] = useState(estagioInicial ?? board.stages[0]?.id ?? '');
   const [responsavel, setResponsavel] = useState('');
   const [valor, setValor] = useState('');
   const [nota, setNota] = useState('');
@@ -627,6 +638,8 @@ function PipelineBoardUI() {
   const [boardIdEscolhido, setBoardId] = useState<string | null>(null);
   const [arrastando, setArrastando] = useState<string | null>(null);
   const [colunaSobre, setColunaSobre] = useState<string | null>(null);
+  /** Coluna de onde o pedido de novo cartão partiu, pra o modal já abrir nela. */
+  const [estagioInicial, setEstagioInicial] = useState<string | null>(null);
   const [criandoCartao, setCriandoCartao] = useState(false);
   const [criandoPipeline, setCriandoPipeline] = useState(false);
   const [configurando, setConfigurando] = useState(false);
@@ -880,8 +893,14 @@ function PipelineBoardUI() {
       */}
       <div className="mt-4 grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { rotulo: 'Cartões no quadro', valor: String(resumo.total), detalhe: `${board.stages.length} coluna(s)` },
           {
+            icone: <SquareKanban size={15} />,
+            rotulo: 'Cartões no quadro',
+            valor: String(resumo.total),
+            detalhe: `${board.stages.length} coluna(s)`,
+          },
+          {
+            icone: <Wallet size={15} />,
             rotulo: 'Valor no quadro',
             valor: resumo.somaCentavos > 0 ? formatarCentavos(resumo.somaCentavos) : 'sem valor',
             // Dizer quantos ficaram de fora é o que separa uma soma de uma
@@ -890,11 +909,13 @@ function PipelineBoardUI() {
             destaque: resumo.somaCentavos > 0,
           },
           {
+            icone: <Layers size={15} />,
             rotulo: 'Maior acúmulo',
             valor: maiorColuna && maiorColuna.quantidade > 0 ? String(maiorColuna.quantidade) : 'vazio',
             detalhe: maiorColuna && maiorColuna.quantidade > 0 ? maiorColuna.label : 'quadro vazio',
           },
           {
+            icone: <CircleUserRound size={15} />,
             rotulo: 'Sem responsável',
             valor: String(semResponsavel),
             detalhe: semResponsavel > 0 ? 'ninguém tocando' : 'todos atribuídos',
@@ -902,7 +923,24 @@ function PipelineBoardUI() {
           },
         ].map((kpi) => (
           <div key={kpi.rotulo} className="rounded-lg border border-grafite-elevado bg-grafite/60 px-4 py-3 transition-colors hover:border-roxo-eletrico/40">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">{kpi.rotulo}</p>
+            <div className="flex items-center gap-2">
+              {/* O ícone herda o tom do número: destaque, alerta ou neutro. Um
+                  ícone colorido ao lado de um número neutro vira decoração que
+                  sugere estado onde não há. */}
+              <span
+                className={cn(
+                  'flex size-7 shrink-0 items-center justify-center rounded-lg',
+                  kpi.destaque
+                    ? 'bg-sinal/15 text-sinal'
+                    : kpi.alerta
+                      ? 'bg-aviso/15 text-aviso'
+                      : 'bg-carbono text-nevoa',
+                )}
+              >
+                {kpi.icone}
+              </span>
+              <p className="truncate font-mono text-[10px] uppercase tracking-wider text-nevoa">{kpi.rotulo}</p>
+            </div>
             <p className={cn('mt-1 font-heading text-2xl font-semibold tabular-nums', kpi.destaque ? 'text-sinal' : kpi.alerta ? 'text-aviso' : 'text-branco-cru')}>
               {kpi.valor}
             </p>
@@ -1016,6 +1054,26 @@ function PipelineBoardUI() {
                     );
                   })
                 )}
+
+                {/*
+                  * ACRESCENTAR A PARTIR DA COLUNA, como o mockup faz.
+                  *
+                  * Já existia "Novo cartão" no topo da tela, e ele abre o modal
+                  * com a primeira coluna selecionada. Quem está olhando a
+                  * terceira coluna e quer um cartão ALI tinha que abrir o modal
+                  * e trocar o campo — um passo que a tela já sabia responder e
+                  * fazia a pessoa responder de novo.
+                  */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEstagioInicial(stage.id);
+                    setCriandoCartao(true);
+                  }}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-grafite-elevado py-2 text-[13px] text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
+                >
+                  <Plus size={14} /> Adicionar cartão
+                </button>
               </div>
             </div>
           );
@@ -1025,8 +1083,12 @@ function PipelineBoardUI() {
       {criandoCartao && (
         <NovoCartaoModal
           board={board}
+          estagioInicial={estagioInicial}
           onCreate={(entrada) => criarCartao.mutate({ boardId: board.id, ...entrada })}
-          onClose={() => setCriandoCartao(false)}
+          onClose={() => {
+            setCriandoCartao(false);
+            setEstagioInicial(null);
+          }}
         />
       )}
       {criandoPipeline && (
