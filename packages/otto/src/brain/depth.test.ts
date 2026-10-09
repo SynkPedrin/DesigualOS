@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CONTEXT_BLOCK_MARKER,
   classifyRetrievalDepth,
@@ -108,25 +108,39 @@ describe('classifyRetrievalDepth: robustez', () => {
     expect(classifyRetrievalDepth(message)).toEqual(classifyRetrievalDepth(message));
   });
 
-  it('custa muito menos que qualquer chamada de modelo', () => {
-    // O ponto do classificador é ser mais barato que o que ele evita: uma
-    // chamada ao modelo custa segundos, esta classificação custa microssegundos.
-    //
-    // O teto era 50 ms para 1000 classificações e passou a falhar em máquina
-    // carregada (61 ms medidos durante um release, com reconciliação e
-    // navegador rodando junto). Teste de tempo com folga apertada não mede
-    // qualidade, mede o que mais estava rodando na máquina — e teste que falha
-    // por ruído treina a equipe a ignorar teste vermelho. O teto novo segue
-    // provando a tese com duas ordens de grandeza de margem sobre uma chamada
-    // de modelo (~1000 ms para UMA), sem depender de a máquina estar ociosa.
-    const startedAt = performance.now();
-    for (let i = 0; i < 1000; i += 1) {
-      classifyRetrievalDepth('Preciso de uma campanha para o lancamento do novo rodizio da pizzaria Bravvo');
+  /**
+   * O QUE ESTE TESTE PROVA MUDOU, e a razão importa.
+   *
+   * Ele media TEMPO: 1000 classificações abaixo de um teto. O teto já tinha
+   * sido afrouxado uma vez (50ms -> 400ms) porque falhava em máquina
+   * carregada, e voltou a falhar assim mesmo — em 08/10/2026, durante uma
+   * rodada de release com build, navegador e reconciliação disputando a
+   * máquina.
+   *
+   * Afrouxar de novo seria a terceira vez tratando o sintoma. Teste de tempo
+   * com folga apertada não mede qualidade: mede o que mais estava rodando. E
+   * teste que falha por ruído ensina a equipe a ignorar vermelho — que é o
+   * dano real, porque o próximo vermelho pode ser de verdade.
+   *
+   * A tese do classificador nunca foi "é rápido". Era "é mais barato que o que
+   * ele evita, porque NÃO CHAMA MODELO". Isso é verificável sem cronômetro:
+   * uma chamada de modelo é I/O, I/O é assíncrono, e esta função é síncrona e
+   * não toca a rede. As duas asserções abaixo não têm como oscilar com a carga
+   * da máquina.
+   */
+  it('não chama modelo: é síncrona e não toca a rede', () => {
+    const fetchOriginal = globalThis.fetch;
+    const espiao = vi.fn();
+    globalThis.fetch = espiao as unknown as typeof fetch;
+    try {
+      const resultado = classifyRetrievalDepth('Preciso de uma campanha para o lancamento do rodizio da Bravvo');
+      // Uma chamada de modelo devolveria Promise. Esta devolve a decisão pronta.
+      expect(resultado).not.toBeInstanceOf(Promise);
+      expect(resultado.depth).toBeTruthy();
+      expect(espiao).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = fetchOriginal;
     }
-    const decorrido = performance.now() - startedAt;
-    expect(decorrido).toBeLessThan(400);
-    // Por classificação: continua na casa de microssegundos.
-    expect(decorrido / 1000).toBeLessThan(0.4);
   });
 });
 

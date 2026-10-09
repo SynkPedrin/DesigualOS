@@ -14,14 +14,31 @@ process.env.REDIS_URL ??= 'redis://localhost:6380';
 
 let redisUp = false;
 
+/**
+ * O PING AO REDIS PRECISA DESISTIR SOZINHO.
+ *
+ * Este preparo já sabia pular quando o Redis não está de pé — mas a TENTATIVA
+ * não tinha limite: sem servidor, o ioredis entra em retentativa e o `ping()`
+ * só rejeita depois de esgotar a política dele, bem além dos 10s do hook. O
+ * resultado era o teste falhar por timeout de preparo em vez de pular, e só em
+ * máquina sem Redis local — ou seja, de forma aparentemente aleatória para
+ * quem roda o portão de release.
+ *
+ * Dois segundos bastam: Redis que está de pé responde em milissegundos, e
+ * Redis que não está não vai responder nunca.
+ */
 beforeAll(async () => {
   const { getRedisConnection } = await import('@desigual-os/orchestrator');
-  redisUp = await getRedisConnection()
-    .ping()
-    .then(() => true)
-    .catch(() => false);
+  const desistir = new Promise<false>((r) => setTimeout(() => r(false), 2000));
+  redisUp = await Promise.race([
+    getRedisConnection()
+      .ping()
+      .then(() => true)
+      .catch(() => false),
+    desistir,
+  ]);
   if (!redisUp) console.warn('[motion] Redis indisponível: testes de lock pulados');
-});
+}, 15_000);
 
 afterAll(async () => {
   if (!redisUp) return;
