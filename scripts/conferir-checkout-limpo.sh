@@ -64,15 +64,34 @@ TSC="$ARVORE/node_modules/.bin/tsc"
 [ -x "$TSC" ] || TSC="$RAIZ/node_modules/.bin/tsc"
 falhou=0
 echo
-for app in apps/web apps/api apps/worker apps/mcp; do
+# OS PACKAGES ENTRAM JUNTO (09/10/2026). O laço cobria só os quatro apps, e
+# isso deixava um buraco do tamanho do problema que este portão existe pra
+# pegar: typecheck de app só alcança o que o app IMPORTA. Arquivo de package
+# que nenhum app importa, como o teste do próprio package, nunca era compilado.
+#
+# Foi assim que @desigual-os/orchestrator ficou com seis erros em
+# client-knowledge-extraction.test.ts enquanto o portão dizia "compila sozinho":
+# ExtractedClientFact ganhou um campo obrigatório e o teste subiu sem acompanhar.
+# O portão aprovou, e aprovou com razão dentro do que ele olhava. Achado pela
+# sessão desigualos-f9.
+#
+# A lista é descoberta, não escrita à mão: package novo passa a ser conferido
+# sozinho, sem ninguém lembrar de vir aqui acrescentar.
+ALVOS="apps/web apps/api apps/worker apps/mcp"
+for pacote in "$ARVORE"/packages/*/; do
+  [ -f "$pacote/tsconfig.json" ] || continue
+  ALVOS="$ALVOS packages/$(basename "$pacote")"
+done
+
+for app in $ALVOS; do
   [ -f "$ARVORE/$app/tsconfig.json" ] || continue
   saida="$(cd "$ARVORE/$app" && "$TSC" --noEmit 2>&1)"
   n="$(printf '%s' "$saida" | grep -c 'error TS' || true)"
   if [ "$n" -eq 0 ]; then
-    printf '  \033[1;32m%-14s ok\033[0m\n' "$app"
+    printf '  \033[1;32m%-28s ok\033[0m\n' "$app"
   else
     falhou=1
-    printf '  \033[1;31m%-14s %s erro(s)\033[0m\n' "$app" "$n"
+    printf '  \033[1;31m%-28s %s erro(s)\033[0m\n' "$app" "$n"
     printf '%s\n' "$saida" | grep 'error TS' | head -5 | sed 's/^/      /'
     [ "$n" -gt 5 ] && echo "      ... e mais $((n - 5))"
   fi
