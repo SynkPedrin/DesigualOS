@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Secao } from '@/components/control/primitives';
 import { LinhaDoTempo } from '@/components/control/linha-do-tempo';
 import { FeedDeAtividade } from '@/components/control/feed-de-atividade';
+import { ResumoDaAtividade } from '@/components/control/resumo-da-atividade';
 
 /**
  * ATIVIDADE — o que a OPERAÇÃO fez.
@@ -22,6 +23,12 @@ export default function ActivityPage() {
         title="Atividade"
         description="O que aconteceu na operação: quem fez, em qual cliente, por qual ferramenta e quando."
       />
+
+      {/* O resumo vem antes da lista: quem abre a tela quer saber o TAMANHO do
+          que aconteceu antes de ler item por item. */}
+      <div className="mb-6">
+        <ResumoDaAtividade />
+      </div>
 
       <Secao titulo="Na operação">
         <LinhaDoTempo limite={60} />

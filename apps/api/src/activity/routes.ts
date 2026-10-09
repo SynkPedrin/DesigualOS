@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
 import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
@@ -99,7 +99,44 @@ export async function registerActivityRoutes(app: FastifyInstance): Promise<void
         .groupBy(schema.operationalEvents.source)
         .catch(() => []);
 
+      /**
+       * PRINCIPAIS CLIENTES — agregado sobre a tabela inteira, nunca sobre a
+       * página de eventos que a tela acabou de buscar.
+       *
+       * A diferença não é detalhe: a listagem traz 60 eventos por vez, e
+       * "quem mais aparece nesses 60" é uma amostra da janela mais recente,
+       * não o cliente mais ativo da operação. Um ranking calculado assim
+       * muda a cada rolagem e aponta o cliente errado com a mesma confiança.
+       *
+       * Cliente nulo fica de fora: evento sem cliente é trabalho interno, e
+       * somá-lo como se fosse um cliente criaria uma linha fantasma no topo.
+       */
+      const clientesMaisAtivos = await db
+        .select({
+          clientId: schema.operationalEvents.clientId,
+          clientName: schema.clients.name,
+          total: sql<number>`count(*)::int`,
+        })
+        .from(schema.operationalEvents)
+        // O nome vive em `clients`; a tabela de eventos guarda só o id.
+        .leftJoin(schema.clients, eq(schema.clients.id, schema.operationalEvents.clientId))
+        .where(
+          and(
+            eq(schema.operationalEvents.organizationId, deTrabalho.id),
+            isNotNull(schema.operationalEvents.clientId),
+          ),
+        )
+        .groupBy(schema.operationalEvents.clientId, schema.clients.name)
+        .orderBy(desc(sql`count(*)`))
+        .limit(6)
+        .catch(() => []);
+
       return {
+        clientes: clientesMaisAtivos.map((c) => ({
+          client_id: c.clientId,
+          client_name: c.clientName,
+          total: c.total,
+        })),
         events: linhas.map((l) => ({
           id: l.id,
           source: l.source,

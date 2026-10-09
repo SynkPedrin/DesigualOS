@@ -20,6 +20,13 @@ export interface EventoDaAtividade extends EventoBruto {
 }
 
 export interface RespostaDaAtividade {
+  /**
+   * Os clientes mais ativos da operação, agregados no SERVIDOR sobre a tabela
+   * inteira. Calcular isso no cliente, sobre os eventos já baixados, daria o
+   * ranking da última página — que muda a cada rolagem e aponta o cliente
+   * errado com a mesma confiança.
+   */
+  clientes: Array<{ client_id: string | null; client_name: string | null; total: number }>;
   events: Array<{
     id: string;
     source: string | null;
