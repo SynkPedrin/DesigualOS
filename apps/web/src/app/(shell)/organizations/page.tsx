@@ -3,9 +3,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Building2 } from 'lucide-react';
+import { Brain, Briefcase, Building2, Users } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
 import { PageHeader } from '@/components/ui/page-header';
+import { StatCard } from '@/components/ui/stat-card';
 import { LinhasFantasma, Secao, SemNadaAinda, StatusLabel } from '@/components/control/primitives';
 import { useOrganizations, type EmpresaResumo } from '@/hooks/use-organizations';
 import { useMe } from '@/hooks/use-me';
@@ -47,12 +48,60 @@ export default function EmpresasPage() {
 
   const empresas = data?.organizations ?? [];
 
+  /**
+   * A FAIXA DE NÚMEROS que todas as outras telas ganharam com os mockups.
+   * Esta não tem mockup próprio, então o critério aqui é o mesmo das outras:
+   * cada número é uma SOMA do que já está na lista abaixo, nunca um
+   * indicador novo. Trocar a lista troca a faixa junto, e não há como uma
+   * divergir da outra.
+   *
+   * "Empresas ativas" não entrou, mesmo sendo o número que um painel de
+   * provedor normalmente estampa: não existe medição de atividade por tenant
+   * além do carimbo de última atividade, e contar "ativas" a partir dele
+   * seria eu escolhendo um prazo de corte e apresentando a escolha como fato.
+   */
+  const somaDe = (campo: 'pessoas' | 'clientes' | 'memorias') => empresas.reduce((s, e) => s + e[campo], 0);
+  const comAtividade = empresas.filter((e) => e.ultima_atividade !== null).length;
+
   return (
-    <div className="mx-auto max-w-[1000px]">
+    <div className="mx-auto max-w-[1400px]">
       <PageHeader
         title="Empresas"
         description="Cada empresa atendida, com o que dá para medir hoje: gente, carteira, conhecimento e última atividade."
       />
+
+      {!isPending && !isError && empresas.length > 0 && (
+        <div className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            icon={Building2}
+            iconClassName="bg-roxo-eletrico/15 text-roxo-eletrico"
+            label="Empresas atendidas"
+            value={empresas.length}
+            footer={`${comAtividade} com atividade registrada`}
+          />
+          <StatCard
+            icon={Users}
+            iconClassName="bg-info/15 text-info"
+            label="Pessoas no total"
+            value={somaDe('pessoas')}
+            footer="Somando todas as empresas"
+          />
+          <StatCard
+            icon={Briefcase}
+            iconClassName="bg-sucesso/15 text-sucesso"
+            label="Clientes no total"
+            value={somaDe('clientes')}
+            footer="A carteira somada de todas"
+          />
+          <StatCard
+            icon={Brain}
+            iconClassName="bg-ametista/15 text-ametista"
+            label="Coisas aprendidas"
+            value={somaDe('memorias')}
+            footer="Memória acumulada do conjunto"
+          />
+        </div>
+      )}
 
       {/* O botão vem ANTES da lista: criar empresa é a ação principal desta
         * tela, não um detalhe no rodapé. */}
@@ -74,7 +123,11 @@ export default function EmpresasPage() {
             explicacao="Quando a primeira empresa cliente for criada, ela aparece aqui ao lado da Desigual."
           />
         ) : (
-          <div className="space-y-2.5">
+          /* Duas colunas a partir de xl: a tela passou de 1000px pra 1400px
+             pra acompanhar as demais, e nessa largura um cartão por linha
+             deixava nome à esquerda e botões a meia tela de distância, com um
+             vão vazio no meio que não informava nada. */
+          <div className="grid gap-2.5 xl:grid-cols-2">
             {empresas.map((e) => (
               <Cartao key={e.id} empresa={e} ativa={me?.organizacao_ativa?.id === e.id} />
             ))}
