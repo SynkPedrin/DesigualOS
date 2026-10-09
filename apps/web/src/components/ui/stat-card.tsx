@@ -27,6 +27,7 @@ export function StatCard({
   label,
   value,
   sublabel,
+  footer,
   href,
   accent = false,
   formatValue = (v) => Math.round(v).toLocaleString('pt-BR'),
@@ -42,8 +43,13 @@ export function StatCard({
   /** Chip complementar ("3 urgentes", "2 atrasadas") ao lado do número. Nunca
    *  inventado: só passa quem já tem a contagem real da pergunta associada. */
   sublabel?: StatCardSublabel;
+  /** Terceira linha do card no mockup ("Tudo em dia!", "18 no prazo · 9
+   *  atrasadas", "Agenda livre hoje"): a leitura do número em palavras, pra
+   *  quem bate o olho e não quer interpretar o algarismo sozinho. Opcional,
+   *  e sempre derivada de contagem real, nunca de um texto decorativo fixo. */
+  footer?: string;
   /** Quando presente, o card inteiro vira link (rodapé com seta), igual ao
-   *  mockup — sem isso o card é só leitura, como já era. */
+   *  mockup. Sem isso o card é só leitura, como já era. */
   href?: string;
   accent?: boolean;
   formatValue?: (value: number) => string;
@@ -63,9 +69,15 @@ export function StatCard({
               <Icon size={24} />
             </span>
           )}
-          <div>
+          {/* ORDEM DO MOCKUP: a pergunta primeiro, a resposta embaixo.
+            * Antes o número vinha no topo e o rótulo embaixo em caixa alta,
+            * então o olho batia num "27" sem saber 27 do quê e só descobria
+            * depois. Lendo de cima pra baixo agora sai "Tarefas para hoje: 27,
+            * 18 no prazo e 9 atrasadas", que é como a pessoa fala. */}
+          <div className="min-w-0">
+            <p className="text-sm text-nevoa">{label}</p>
             {isLoading ? (
-              <Skeleton className="h-10 w-20" />
+              <Skeleton className="mt-2 h-10 w-20" />
             ) : isError ? (
               <p className="flex items-center gap-1.5 text-sm font-medium text-erro" title="Não foi possível carregar essa métrica.">
                 <span className="size-1.5 shrink-0 rounded-full bg-erro" />
@@ -88,7 +100,7 @@ export function StatCard({
                 )}
               </div>
             )}
-            <p className="mt-1.5 font-mono text-[11px] uppercase tracking-wider text-nevoa">{label}</p>
+            {footer && !isLoading && !isError && <p className="mt-1 text-xs text-nevoa">{footer}</p>}
           </div>
         </div>
         {href && <ChevronRight size={18} className="mt-3 shrink-0 text-nevoa" />}
