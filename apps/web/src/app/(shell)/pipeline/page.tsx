@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, FileText, Paperclip, Plus, Settings2, SquareKanban, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, FileText, Paperclip, Plus, Settings2, SquareKanban, Upload, X, Search } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
@@ -19,6 +19,7 @@ import {
 } from '@/hooks/use-pipelines';
 import type { PipelineBoardWire } from '@/lib/api/contracts';
 import { ApiRequestError } from '@/lib/api/client';
+import { formatarCentavos, resumoDoQuadro } from '@/lib/pipeline-resumo';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useCollaborators } from '@/hooks/use-collaborators';
 import { ClientDemandsPanel } from '@/components/clients/client-demands-panel';
@@ -613,6 +614,8 @@ function PipelineBoardUI() {
   const apagarPipeline = useApagarPipeline();
   const moverCartaoMut = useMoverCartao();
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [responsavelFiltro, setResponsavelFiltro] = useState('');
 
   const { boards, cards } = useMemo(() => daApi(data?.boards ?? []), [data]);
   /** Selo de "da agência" / "meu", direto do servidor. */
@@ -638,6 +641,36 @@ function PipelineBoardUI() {
   const board = boards.find((b) => b.id === boardIdEscolhido) ?? boards[0] ?? null;
   const boardId = board?.id ?? null;
   const cartoesDoBoard = useMemo(() => cards.filter((c) => c.boardId === boardId), [cards, boardId]);
+
+  /** Quem aparece como responsável NESTE quadro — a lista do filtro sai do dado, não de um cadastro à parte. */
+  const responsaveis = useMemo(
+    () => [...new Set(cartoesDoBoard.map((c) => c.responsavel).filter((r): r is string => Boolean(r)))].sort(),
+    [cartoesDoBoard],
+  );
+
+  /**
+   * O FILTRO MUDA O QUE SE VÊ, NÃO O QUE SE CONTA.
+   *
+   * Os indicadores do topo são do QUADRO inteiro: se eles seguissem o filtro,
+   * "valor no quadro" mudaria ao digitar na busca, e um número que se move
+   * conforme a pesquisa não serve pra decidir nada. Quem filtra quer achar um
+   * cartão, não redefinir o total.
+   */
+  const cartoesVisiveis = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return cartoesDoBoard.filter((c) => {
+      if (responsavelFiltro && c.responsavel !== responsavelFiltro) return false;
+      if (!termo) return true;
+      return [c.name, c.responsavel, c.valor, c.nota].some((campo) => campo?.toLowerCase().includes(termo));
+    });
+  }, [cartoesDoBoard, busca, responsavelFiltro]);
+
+  const resumo = useMemo(() => resumoDoQuadro(board?.stages ?? [], cartoesDoBoard), [board, cartoesDoBoard]);
+  const maiorColuna = useMemo(
+    () => [...resumo.estagios].sort((a, b) => b.quantidade - a.quantidade)[0] ?? null,
+    [resumo],
+  );
+  const semResponsavel = useMemo(() => cartoesDoBoard.filter((c) => !c.responsavel).length, [cartoesDoBoard]);
   const cartaoSelecionado = cards.find((c) => c.id === cartaoAberto) ?? null;
 
   function moverCartao(cardId: string, novoEstagio: string) {
@@ -835,9 +868,85 @@ function PipelineBoardUI() {
           })}
       </div>
 
+      {/*
+        INDICADORES DO QUADRO — só o que o dado sustenta.
+
+        O mockup mostra cinco, e dois deles não têm como ser calculados com
+        honestidade: "taxa de conversão" exige saber qual coluna significa
+        ganho, e as colunas aqui são livres, criadas por quem usa o quadro. Um
+        número de conversão inventado numa tela de funil é a pior espécie de
+        número errado, porque é exatamente o que alguém usa pra decidir. Então
+        ficaram quatro, todos derivados dos cartões reais.
+      */}
+      <div className="mt-4 grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { rotulo: 'Cartões no quadro', valor: String(resumo.total), detalhe: `${board.stages.length} coluna(s)` },
+          {
+            rotulo: 'Valor no quadro',
+            valor: resumo.somaCentavos > 0 ? formatarCentavos(resumo.somaCentavos) : '—',
+            // Dizer quantos ficaram de fora é o que separa uma soma de uma
+            // soma confiável: sem isso o total parece cobrir o quadro inteiro.
+            detalhe: resumo.semValor > 0 ? `${resumo.semValor} sem valor legível` : 'todos com valor',
+            destaque: resumo.somaCentavos > 0,
+          },
+          {
+            rotulo: 'Maior acúmulo',
+            valor: maiorColuna && maiorColuna.quantidade > 0 ? String(maiorColuna.quantidade) : '—',
+            detalhe: maiorColuna && maiorColuna.quantidade > 0 ? maiorColuna.label : 'quadro vazio',
+          },
+          {
+            rotulo: 'Sem responsável',
+            valor: String(semResponsavel),
+            detalhe: semResponsavel > 0 ? 'ninguém tocando' : 'todos atribuídos',
+            alerta: semResponsavel > 0,
+          },
+        ].map((kpi) => (
+          <div key={kpi.rotulo} className="rounded-lg border border-grafite-elevado bg-grafite/60 px-4 py-3 transition-colors hover:border-roxo-eletrico/40">
+            <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">{kpi.rotulo}</p>
+            <p className={cn('mt-1 font-heading text-2xl font-semibold tabular-nums', kpi.destaque ? 'text-sinal' : kpi.alerta ? 'text-aviso' : 'text-branco-cru')}>
+              {kpi.valor}
+            </p>
+            <p className="mt-0.5 text-[11px] text-nevoa">{kpi.detalhe}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Busca e filtro agem sobre o que APARECE, nunca sobre os números acima. */}
+      <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
+        <div className="relative min-w-56 flex-1">
+          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-nevoa" />
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar cartão, responsável ou nota..."
+            className="w-full rounded-md border border-grafite-elevado bg-carbono py-2 pl-9 pr-3 text-sm text-branco-cru outline-none transition-colors placeholder:text-nevoa focus:border-roxo-eletrico"
+          />
+        </div>
+        {responsaveis.length > 0 && (
+          <select
+            value={responsavelFiltro}
+            onChange={(e) => setResponsavelFiltro(e.target.value)}
+            className="rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico"
+          >
+            <option value="">Todos os responsáveis</option>
+            {responsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        )}
+        {(busca || responsavelFiltro) && (
+          <button
+            type="button"
+            onClick={() => { setBusca(''); setResponsavelFiltro(''); }}
+            className="rounded-md border border-grafite-elevado px-3 py-2 text-sm text-nevoa transition-colors hover:text-branco-cru"
+          >
+            Limpar · {cartoesVisiveis.length} de {resumo.total}
+          </button>
+        )}
+      </div>
+
       <div className="mt-4 flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2">
         {board.stages.map((stage) => {
-          const cartoesDoEstagio = cartoesDoBoard.filter((c) => c.stageId === stage.id);
+          const cartoesDoEstagio = cartoesVisiveis.filter((c) => c.stageId === stage.id);
+          const daColuna = resumo.estagios.find((e) => e.id === stage.id);
           const cor = STAGE_COLOR_CLASSES[stage.color];
           return (
             <div
@@ -859,7 +968,18 @@ function PipelineBoardUI() {
                   <span className={cn('size-2.5 rounded-full', cor.dot)} />
                   <h2 className="font-heading text-base font-semibold text-branco-cru">{stage.label}</h2>
                 </div>
-                <span className="rounded-full bg-grafite-elevado px-2.5 py-1 text-xs font-semibold text-nevoa">{cartoesDoEstagio.length}</span>
+                <div className="flex items-center gap-2">
+                  {/* A soma aparece ao lado da contagem, como no mockup — e some
+                      quando não há valor legível nenhum, em vez de mostrar R$ 0,
+                      que afirmaria que a coluna não vale nada. */}
+                  {daColuna && daColuna.somaCentavos > 0 && (
+                    <span className="font-mono text-[11px] text-sinal" title={daColuna.semValor > 0 ? `${daColuna.semValor} cartão(ões) sem valor legível ficaram fora desta soma` : undefined}>
+                      {formatarCentavos(daColuna.somaCentavos)}
+                      {daColuna.semValor > 0 && <span className="text-nevoa">{` +${daColuna.semValor}`}</span>}
+                    </span>
+                  )}
+                  <span className="rounded-full bg-grafite-elevado px-2.5 py-1 text-xs font-semibold text-nevoa">{cartoesDoEstagio.length}</span>
+                </div>
               </div>
 
               <div className="flex-1 space-y-3 overflow-y-auto p-3">
