@@ -236,6 +236,15 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
           // Card de briefing (24/09/2026): gravado em metadata.motion_brief_request
           // pelo mesmo guard; sem expor aqui o formulário nunca renderiza no chat.
           motion_brief_request: (row.metadata as { motion_brief_request?: unknown })?.motion_brief_request ?? null,
+          // Bento 3.0, Fase 3: sources/tool_calls gravados em metadata pelo
+          // worker (execute-job.ts). Sem isto, recarregar a conversa sempre
+          // zerava as fontes citadas — o dado nunca saía do banco pra cá.
+          sources: Array.isArray((row.metadata as { sources?: unknown })?.sources)
+            ? (row.metadata as { sources: string[] }).sources
+            : [],
+          tool_calls: Array.isArray((row.metadata as { tool_calls?: unknown })?.tool_calls)
+            ? (row.metadata as { tool_calls: unknown[] }).tool_calls
+            : [],
           created_at: row.createdAt.toISOString(),
         })),
       };

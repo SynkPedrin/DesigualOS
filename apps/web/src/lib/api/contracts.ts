@@ -444,13 +444,29 @@ export function mapChatResponse(wire: ChatResponseWire): ChatResponse {
   };
 }
 
+/**
+ * Uma ferramenta real que o agente executou no turno (ClickUp, principalmente).
+ * Bento 3.0, Fase 3: antes o worker calculava isto e descartava antes de
+ * chegar na API — o chat não tinha como mostrar o que de fato rodou.
+ *
+ * Nome `AgentToolCallWire`, não `ToolCallWire`: esse nome já existe abaixo
+ * pra outra coisa (fila de aprovação humana do Tool Gateway, seção 6.6).
+ */
+export interface AgentToolCallWire {
+  tool: string;
+  input_summary?: string;
+  ok: boolean;
+  duration_ms: number;
+  error?: string;
+}
+
 /** Sources cited by a step's answer: plain strings (e.g. Obsidian file paths like
  * "02 - Stack Tecnologica.md"), confirmed by the backend (2026-09-01). Not an object. */
 export interface ExecutionStepWire {
   step_index: number;
   agent: AgentName;
   status: ExecutionStatus;
-  output: { answer: string; sources: string[] } | null;
+  output: { answer: string; sources: string[]; tool_calls?: AgentToolCallWire[] } | null;
 }
 
 export interface ExecutionListItemWire {
@@ -504,6 +520,7 @@ export interface ExecutionStep {
   status: ExecutionStatus;
   answer: string | null;
   sources: string[];
+  toolCalls: AgentToolCallWire[];
 }
 
 export interface ExecutionDetail extends ExecutionListItem {
@@ -620,6 +637,7 @@ export function mapExecutionDetail(wire: ExecutionDetailWire): ExecutionDetail {
       status: step.status,
       answer: step.output?.answer ?? null,
       sources: step.output?.sources ?? [],
+      toolCalls: step.output?.tool_calls ?? [],
     })),
   };
 }
@@ -1599,6 +1617,10 @@ export interface ConversationMessageWire {
   attachments?: ChatAttachmentWire[];
   motion?: ChatMotionRefWire | null;
   motion_brief_request?: ChatMotionBriefRequestWire | null;
+  /** Bento 3.0, Fase 3: gravado em metadata.sources/tool_calls pelo worker.
+   * Opcional porque mensagens antigas (antes desta mudança) não têm a chave. */
+  sources?: string[];
+  tool_calls?: AgentToolCallWire[];
   created_at: ISODateString;
 }
 
@@ -1613,6 +1635,8 @@ export interface ConversationMessage {
   attachments: ChatAttachmentWire[];
   motion: ChatMotionRefWire | null;
   motionBriefRequest: ChatMotionBriefRequestWire | null;
+  sources: string[];
+  toolCalls: AgentToolCallWire[];
   createdAt: ISODateString;
 }
 
@@ -1642,6 +1666,8 @@ export function mapConversationMessage(wire: ConversationMessageWire): Conversat
     attachments,
     motion: wire.motion ?? null,
     motionBriefRequest: wire.motion_brief_request ?? null,
+    sources: wire.sources ?? [],
+    toolCalls: wire.tool_calls ?? [],
     createdAt: wire.created_at,
   };
 }

@@ -36,7 +36,7 @@ import { useSendMessage } from '@/hooks/use-messages';
 import { useMe } from '@/hooks/use-me';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { AGENT_SELECTIONS, type AgentSelection, type ChatAttachmentWire } from '@/lib/api/contracts';
+import { AGENT_SELECTIONS, type AgentSelection, type ChatAttachmentWire, type AgentToolCallWire } from '@/lib/api/contracts';
 
 let localMessageSeq = 0;
 function nextLocalId() {
@@ -69,6 +69,8 @@ interface PendingExchange {
   status: ExecutionStatus;
   answer: string;
   sources: string[];
+  /** Bento 3.0, Fase 3: o que o agente de fato executou neste turno. */
+  toolCalls: AgentToolCallWire[];
   clientName: string | null;
   /** Anexos enviados junto com a pergunta (já hospedados via POST /uploads), até 10. */
   attachments: ChatAttachmentWire[];
@@ -229,12 +231,13 @@ export function ChatThread() {
       const step = execution.steps.at(-1);
       const nextAnswer = step?.answer ?? '';
       const nextSources = step?.sources ?? [];
+      const nextToolCalls = step?.toolCalls ?? [];
       // Guarda de repintura: sem ela, uma execução que fica em 'failed' dispararia setPending a
       // cada render (o objeto novo muda a identidade e realimenta o efeito).
       if (pending.status === execution.status && pending.answer === nextAnswer) return;
       setPending((current) =>
         current
-          ? { ...current, status: execution.status, answer: nextAnswer, sources: nextSources }
+          ? { ...current, status: execution.status, answer: nextAnswer, sources: nextSources, toolCalls: nextToolCalls }
           : current,
       );
       if (pending.conversationId) {
@@ -337,7 +340,10 @@ export function ChatThread() {
     agent: message.agent ?? undefined,
     content: message.content,
     status: message.role === 'assistant' ? 'completed' : undefined,
-    sources: [],
+    // Bento 3.0, Fase 3: antes do backend gravar isto em metadata, não havia
+    // nada pra ler aqui, e recarregar a conversa sempre zerava a fonte citada.
+    sources: message.sources,
+    toolCalls: message.toolCalls,
     attachments: message.attachments.map((attachment) => ({
       url: attachment.url,
       type: attachment.contentType,
@@ -395,6 +401,7 @@ export function ChatThread() {
         content: pending.answer,
         status: pending.status,
         sources: pending.sources,
+        toolCalls: pending.toolCalls,
         clientName: pending.clientName,
         liveSteps: pending.liveSteps,
         createdAt: new Date(pending.sentAt).toISOString(),
@@ -442,6 +449,7 @@ export function ChatThread() {
       status: 'queued',
       answer: '',
       sources: [],
+      toolCalls: [],
       clientName,
       attachments: options?.attachments ?? [],
       sentAt,

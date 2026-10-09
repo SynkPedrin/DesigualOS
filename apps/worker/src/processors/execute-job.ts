@@ -2495,7 +2495,14 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     // Ver `vaiReprocessar`: enquanto ainda há retry pela frente, a resposta
     // NÃO é gravada — senão a pessoa lê a mesma coisa uma vez por tentativa.
     if (!vaiReprocessar) {
-      await recordAssistantMessage(conversationId, agent, result.answer, result.metadata);
+      // Bento 3.0, Fase 3: sources e tool_calls também viram metadata da
+      // mensagem — sem isso, GET /conversations/:id/messages (recarregar a
+      // conversa) não tinha de onde tirar fonte nenhuma, e zerava sempre.
+      const metadataComTransparencia =
+        result.sources.length > 0 || result.tool_calls.length > 0
+          ? { ...(result.metadata ?? {}), sources: result.sources, tool_calls: result.tool_calls }
+          : result.metadata;
+      await recordAssistantMessage(conversationId, agent, result.answer, metadataComTransparencia);
     }
     // Sem isso, GET /executions/:id sempre devolvia steps: [] pro caminho de
     // agente único (só processWorkflowStep grava execution_steps) - o balão
@@ -2515,6 +2522,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         output: {
           answer: result.answer ?? failureAnswer,
           sources: result.sources,
+          // Bento 3.0, Fase 3: a mesma lista que o node calculou (ferramenta,
+          // ok/erro, duração) — antes chegava até aqui e era descartada; o
+          // chat não tinha como mostrar o que o agente de fato executou.
+          tool_calls: result.tool_calls,
           ...(result.error ? { error: result.error } : {}),
           // Metadata do node (timings de fase do Otto: classify_ms,
           // retrieval_ms, llm_ms; bloco agentic do loop V2) — antes era
@@ -2532,6 +2543,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
           output: {
             answer: result.answer ?? failureAnswer,
             sources: result.sources,
+            tool_calls: result.tool_calls,
             ...(result.error ? { error: result.error } : {}),
             ...(result.metadata ? { metadata: result.metadata } : {}),
           },
@@ -2711,7 +2723,7 @@ async function processWorkflowStep(data: AgentJobData, logger: Logger): Promise<
     .update(schema.executionSteps)
     .set({
       status: result.status,
-      output: { answer: result.answer, sources: result.sources },
+      output: { answer: result.answer, sources: result.sources, tool_calls: result.tool_calls },
       completedAt: now,
     })
     .where(

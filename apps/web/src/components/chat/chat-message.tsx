@@ -13,7 +13,7 @@ import { useTypewriter } from '@/hooks/use-typewriter';
 import { formatClockTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { AgentName, ExecutionStatus } from '@desigual-os/types';
-import type { ChatMotionBriefRequestWire, TeamMember } from '@/lib/api/contracts';
+import type { ChatMotionBriefRequestWire, TeamMember, AgentToolCallWire } from '@/lib/api/contracts';
 
 /** Anexo de mensagem persistida (attachment_url/type/filename do backend). */
 export interface ChatUiAttachment {
@@ -29,6 +29,8 @@ export interface ChatUiMessage {
   content: string;
   status?: ExecutionStatus | undefined;
   sources?: string[];
+  /** Bento 3.0, Fase 3: o que o agente de fato executou no ClickUp neste turno. */
+  toolCalls?: AgentToolCallWire[];
   clientName?: string | null;
   /** @deprecated usar `attachments`; mantido pra não quebrar quem só manda um. */
   attachment?: ChatUiAttachment | null | undefined;
@@ -71,6 +73,64 @@ function ChatAttachmentView({ attachment }: { attachment: ChatUiAttachment }) {
       <span className="truncate">{attachment.filename ?? 'arquivo'}</span>
     </a>
   );
+}
+
+/**
+ * Fonte citada pelo backend vira chip. `CLICKUP_TASK:<id>` tem link real
+ * (permalink oficial do ClickUp); o resto (documento do vault, comentário sem
+ * deep-link estável, marcador plano tipo CLICKUP_OPERATION) mostra só o rótulo,
+ * do jeito que já funcionava antes — nenhuma fonte deixa de aparecer, só as
+ * que podem virar link viram.
+ */
+function fonteParaChip(source: string): { label: string; url?: string } {
+  const [prefixo, ...resto] = source.split(':');
+  const id = resto.join(':');
+  if (prefixo === 'CLICKUP_TASK' && id) {
+    return { label: `Tarefa ClickUp · ${id}`, url: `https://app.clickup.com/t/${id}` };
+  }
+  if (prefixo === 'CLICKUP_COMMENT' && id) {
+    return { label: `Comentário ClickUp · ${id}` };
+  }
+  if (source === 'CLICKUP_OPERATION') {
+    return { label: 'Consulta ao ClickUp' };
+  }
+  if (source === 'MATERIAL_ANEXADO') {
+    return { label: 'Material anexado' };
+  }
+  return { label: source };
+}
+
+/**
+ * Só `clickup.*` é ação de verdade no ClickUp — `guard.*` é checagem interna
+ * (autorização, qualidade de briefing) e confundiria quem só quer saber "o
+ * que o Bento fez", não "o que ele verificou antes de fazer".
+ */
+const NOME_DA_FERRAMENTA: Record<string, string> = {
+  'clickup.create_task': 'Criou a tarefa',
+  'clickup.update_task': 'Atualizou a tarefa',
+  'clickup.delete_task': 'Apagou a tarefa',
+  'clickup.create_comment': 'Comentou na tarefa',
+  'clickup.get_task': 'Conferiu a tarefa',
+  'clickup.get_task_comments': 'Conferiu os comentários',
+  'clickup.add_tag': 'Adicionou tag',
+  'clickup.remove_tag': 'Removeu tag',
+  'clickup.set_custom_field': 'Preencheu campo personalizado',
+  'clickup.create_checklist': 'Criou checklist',
+  'clickup.add_watcher': 'Adicionou observador',
+  'clickup.add_to_list': 'Moveu para outra lista',
+  'clickup.time_entry': 'Registrou tempo',
+  'clickup.add_dependency': 'Ligou dependência',
+  'clickup.upload_attachment': 'Anexou arquivo',
+  'clickup.selection_mutation': 'Alterou a seleção',
+};
+
+function ferramentaVisivel(toolCall: AgentToolCallWire): boolean {
+  return toolCall.tool.startsWith('clickup.');
+}
+
+function rotuloDaFerramenta(toolCall: AgentToolCallWire): string {
+  const nome = NOME_DA_FERRAMENTA[toolCall.tool] ?? toolCall.tool.replace(/^clickup\./, '').replace(/_/g, ' ');
+  return toolCall.ok ? nome : `${nome} — falhou`;
 }
 
 /** Quebra a mensagem do USUÁRIO em blocos (mesma fronteira do MarkdownLite:
@@ -223,8 +283,27 @@ export function ChatMessage({
 
               {message.sources && message.sources.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">
-                  {message.sources.map((source) => (
-                    <Chip key={source} label={source} />
+                  {message.sources.map((source) => {
+                    const chip = fonteParaChip(source);
+                    return <Chip key={source} label={chip.label} url={chip.url} />;
+                  })}
+                </div>
+              )}
+
+              {message.toolCalls && message.toolCalls.filter(ferramentaVisivel).length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">
+                  {message.toolCalls.filter(ferramentaVisivel).map((toolCall, indice) => (
+                    <span
+                      key={`${toolCall.tool}-${indice}`}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px]',
+                        toolCall.ok
+                          ? 'border-grafite-elevado bg-carbono text-nevoa'
+                          : 'border-erro/30 bg-erro/10 text-erro',
+                      )}
+                    >
+                      {rotuloDaFerramenta(toolCall)}
+                    </span>
                   ))}
                 </div>
               )}

@@ -309,7 +309,77 @@ quebraram ao herdar `auditContext` de verdade sem mock de
 **Verificação final**: suite completa do worker — 82 arquivos passando, 1601
 testes, 0 falha (`pnpm --filter @desigual-os/worker exec vitest run`).
 Typecheck limpo em `@desigual-os/worker` e `@desigual-os/tool-gateway`.
-Pendente antes do commit: `scripts/conferir-checkout-limpo.sh` (typecheck de
-árvore limpa, não da working tree).
+Commitado em `9367e2d`. Checado contra checkout limpo
+(`scripts/conferir-checkout-limpo.sh HEAD`): os 20 apps/packages compilam
+sozinhos — o código commitado não depende de nada que só existe na working tree.
 
-Próximo: FASE 3 — transparência de tool-call no frontend do chat.
+### FASE 3 — transparência de tool-call e fonte real no chat — CONCLUÍDO (09/10/2026)
+
+Fechou os dois achados do frontend da Fase 0: "o backend já calcula
+`tool_calls` e descarta antes de chegar na API" e "`sources` zera sempre que a
+conversa é recarregada". Investigação prévia (agente Explore) confirmou a
+causa exata dos dois: `tool_calls` morria em 3 pontos de persistência de
+`execute-job.ts`, e `ConversationMessageWire`/`ConversationMessage` nunca
+tiveram campo `sources` — por isso `chat-thread.tsx` zerava com `sources: []`
+hardcoded no recarregamento, não por bug de lógica, por falta de onde guardar.
+
+**Backend**:
+- `packages/node-protocol/src/execute.ts`: `tool_calls` deixou de ser
+  `z.array(z.unknown())` e virou `z.array(toolCallWireSchema)` — schema real
+  (`tool`, `ok`, `duration_ms`, `input_summary?`, `error?`), batendo com o
+  shape que `bento-action-guard.ts`/`bento-update-executor.ts`/
+  `bento-selection-executor.ts`/`agentic-dispatch.ts` já produziam. Conferido:
+  o único `.parse()` desse schema (`execute-job.ts:735`, resposta HTTP do
+  node) só vê `tool_calls: []` nos dois nodes reais (`desigual-node`,
+  `otto-node`) — a lista de verdade nasce DEPOIS, dentro do próprio worker, e
+  nunca passa por validação zod. Mudança de schema é segurança de tipo pra
+  frente, não risco de quebrar runtime agora.
+- `execute-job.ts`: `tool_calls` passa a ser gravado em
+  `execution_steps.output.tool_calls` (3 pontos de escrita — caminho de
+  agente único, `onConflictDoUpdate`, e o passo de workflow multi-etapa) e,
+  junto com `sources`, em `messages.metadata` (só quando há algo pra
+  guardar — mensagem sem fonte/ferramenta não ganha metadata extra à toa).
+- `apps/api/src/conversations/routes.ts` (`GET /conversations/:id/messages`):
+  passou a ler `sources`/`tool_calls` de `message.metadata`, do mesmo jeito
+  que já lia `motion`/`motion_brief_request` — era a única rota que falta
+  nesse pipeline.
+
+**Contratos** (`apps/web/src/lib/api/contracts.ts`): novo tipo
+`AgentToolCallWire` (não `ToolCallWire` — esse nome já existia pra outra
+coisa: a fila de aprovação humana do Tool Gateway, `GET/POST /tool-calls`;
+usar o mesmo nome teria mesclado as duas interfaces por declaration merging
+do TypeScript — pego pelo typecheck do app web antes de virar bug silencioso).
+`ExecutionStepWire.output.tool_calls` e `ConversationMessageWire.sources` /
+`.tool_calls` novos, ambos opcionais (mensagem antiga sem a chave não quebra).
+Mapeados em `mapExecutionDetail` e `mapConversationMessage`.
+
+**Frontend**:
+- `chat-thread.tsx`: `sources`/`toolCalls` agora vêm de verdade tanto no
+  caminho AO VIVO (poll de `GET /executions/:id`) quanto no RECARREGADO
+  (`GET /conversations/:id/messages`) — a linha `sources: []` hardcoded
+  (achado da Fase 0) virou `sources: message.sources`.
+- `chat-message.tsx`: `fonteParaChip()` transforma `CLICKUP_TASK:<id>` em
+  link de verdade (`https://app.clickup.com/t/<id>`, o mesmo formato que já
+  aparecia solto numa resposta de texto do core novo) via o prop `url` que o
+  `Chip` já aceitava e nunca recebia; `CLICKUP_COMMENT`/`CLICKUP_OPERATION`/
+  `MATERIAL_ANEXADO` e fontes desconhecidas (ex.: documento do vault) seguem
+  como chip só com rótulo, sem link — ClickUp não tem permalink estável de
+  comentário avulso. Nova seção de chips pra `toolCalls`, filtrada pra só
+  `clickup.*` (as chamadas internas `guard.*` — autorização, qualidade de
+  briefing — ficam de fora: são checagem, não ação, e confundiriam "o que o
+  Bento fez"), com rótulo em português por ferramenta e destaque visual
+  (vermelho) quando `ok: false`.
+
+**Verificado**: typecheck limpo em `node-protocol`, `worker`, `api`, `web`
+(os 4 tocados). Suite completa do worker re-rodada depois da mudança em
+`execute-job.ts` — 1608 testes, 0 falha. Suite do web — 445 testes, 0 falha
+(inclui o smoke test que renderiza `/chat` com API vazia). **Não verificado**:
+não subi um turno real do Bento contra o ClickUp num navegador autenticado
+pra ver o chip/link aparecer de ponta a ponta — o teste de unidade prova que
+o dado chega até o componente, não que a pessoa vê exatamente o que eu
+imaginei. Fica como item em aberto pra confirmação visual na próxima sessão
+com acesso a um ambiente logado.
+
+Próximo: FASE 4 — cobertura do ClickUp Tool Gateway (reconferir quais das ~7
+capacidades da Fase 0 já têm import em `bento-update-executor.ts` mas nenhum
+intent que as dispare — achado no meio da Fase 2, ainda não resolvido).
