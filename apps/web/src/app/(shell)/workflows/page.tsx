@@ -26,6 +26,7 @@ import { useClients } from '@/hooks/use-clients';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
 import { apiFetch } from '@/lib/api/client';
+import { BentoBriefing, type InsightDoBento } from '@/components/bento/painel-de-insights';
 import {
   mapAutomationRun,
   type Automation,
@@ -172,6 +173,72 @@ export default function WorkflowsPage() {
     });
   }, [automations, filters, runSummaries]);
 
+  /**
+   * O QUE O BENTO TEM A DIZER SOBRE ESTA TELA, e por que não é enfeite.
+   *
+   * A leitura mais valiosa aqui não aparece em nenhum número da faixa:
+   * automação LIGADA que não está agendada em lugar nenhum. `next_run_at` vem
+   * do `next` do repeatable job do BullMQ, não de um recálculo do cron, então
+   * `null` numa automação ativa quer dizer exatamente isso — ela existe no
+   * banco, a tela a mostra como ativa, e o agendador não sabe dela.
+   *
+   * Já aconteceu aqui: em 03/09/2026 uma remoção falhou em silêncio e deixou
+   * repeatable órfão no Redis. O caminho inverso tem o mesmo custo e é pior,
+   * porque a tela diz "ativa" e nada dispara.
+   */
+  const insightsDoBento = useMemo<InsightDoBento[]>(() => {
+    const lista = automations ?? [];
+    const itens: InsightDoBento[] = [];
+
+    const semAgendamento = lista.filter((a) => a.enabled && a.nextRunAt === null);
+    if (semAgendamento.length > 0) {
+      itens.push({
+        id: 'sem-agendamento',
+        tom: 'urgente',
+        texto: (
+          <>
+            <strong className="text-branco-cru">
+              {semAgendamento.length} automação(ões) ativa(s) sem agendamento
+            </strong>{' '}
+            no disparador: {semAgendamento.map((a) => a.name).slice(0, 3).join(', ')}
+            {semAgendamento.length > 3 ? ` e mais ${semAgendamento.length - 3}` : ''}. A tela mostra como ativa e nada
+            vai disparar.
+          </>
+        ),
+      });
+    }
+
+    const nuncaRodaram = lista.filter((a) => a.enabled && a.lastRunAt === null && a.nextRunAt !== null);
+    if (nuncaRodaram.length > 0) {
+      itens.push({
+        id: 'nunca-rodaram',
+        tom: 'atencao',
+        texto: (
+          <>
+            <strong className="text-branco-cru">{nuncaRodaram.length}</strong> automação(ões) está(ão) agendada(s) e
+            ainda não executou nenhuma vez. Vale conferir o primeiro disparo antes de confiar nela.
+          </>
+        ),
+      });
+    }
+
+    const desligadas = lista.filter((a) => !a.enabled);
+    if (desligadas.length > 0) {
+      itens.push({
+        id: 'desligadas',
+        tom: 'neutro',
+        texto: (
+          <>
+            <strong className="text-branco-cru">{desligadas.length}</strong> automação(ões) desligada(s) continua(m)
+            salva(s). Elas não disparam e não aparecem nos números de execução.
+          </>
+        ),
+      });
+    }
+
+    return itens;
+  }, [automations]);
+
   const sorted = useMemo(() => {
     const list = [...filtered];
     const byCreated = (a: Automation, b: Automation) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -266,6 +333,24 @@ export default function WorkflowsPage() {
 
       <div className="mb-6">
         <AutomationMetrics proxima={proximaExecucao} />
+      </div>
+
+      {/*
+        * ERRO É DIFERENTE DE VAZIO. Sem distinguir os dois, a lista vazia faria
+        * o Bento anunciar "toda automação está agendada e rodando" numa tela
+        * que não conseguiu ler automação nenhuma — boa notícia por omissão,
+        * sobre o que ninguém mediu.
+        */}
+      <div className="mb-6">
+        <BentoBriefing
+          subtitulo="O que eu vejo nas suas automações"
+          itens={insightsDoBento}
+          carregando={isPending}
+          {...(isError
+            ? { erro: 'Não consegui ler as automações, então não dá para afirmar que estão todas rodando.' }
+            : {})}
+          vazio="Toda automação ativa está agendada e já executou pelo menos uma vez."
+        />
       </div>
 
       {notice && (

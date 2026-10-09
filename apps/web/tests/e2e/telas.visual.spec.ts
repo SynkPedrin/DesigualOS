@@ -104,6 +104,75 @@ async function esconderFerramentasDeDev(page: Page) {
   });
 }
 
+/**
+ * CARTÃO CORTADO É DEFEITO, não detalhe estético.
+ *
+ * Regra do Pedro, 09/10/2026: "os cards sempre tem q aparecer por inteiros".
+ * Ele relatou duas vezes o mesmo problema — barra lateral com "Configurações"
+ * terminando 11px abaixo da caixa de rolagem, encoberto pelo cartão de saúde —
+ * e nas duas o corte fazia a lista PARECER acabada. Um item cortado não é um
+ * item menos bonito: é um item que a pessoa não sabe que existe.
+ *
+ * O que esta conta considera corte, e o que ela de propósito ignora:
+ *
+ * CORTE é um bloco que ultrapassa a caixa que o contém SEM QUE A ROLAGEM
+ * RESOLVA. Ou o ancestral tem `overflow: hidden` (nunca vai revelar), ou o
+ * ancestral rola mas já está no fim (não há mais pra onde ir).
+ *
+ * NÃO é corte um bloco abaixo da dobra de um container que ainda pode rolar:
+ * isso é lista comprida, e acusar isso faria o portão recusar toda tela com
+ * conteúdo. Por isso cada container é levado até o fim ANTES de medir — a
+ * pergunta não é "está visível agora", é "existe posição em que apareça
+ * inteiro".
+ */
+async function blocosCortados(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const raiz = document.querySelector('main')?.parentElement ?? document.body;
+
+    /** Ancestral que de fato recorta o elemento. */
+    function recortador(el: Element): Element | null {
+      let pai = el.parentElement;
+      while (pai && pai !== document.body) {
+        const s = getComputedStyle(pai);
+        if (/(hidden|auto|scroll)/.test(s.overflowY) || /(hidden|auto|scroll)/.test(s.overflowX)) return pai;
+        pai = pai.parentElement;
+      }
+      return null;
+    }
+
+    // Leva cada rolagem ao fim: o que aparece depois de rolar não é corte.
+    for (const el of raiz.querySelectorAll('*')) {
+      const s = getComputedStyle(el);
+      if (/(auto|scroll)/.test(s.overflowY)) el.scrollTop = el.scrollHeight;
+    }
+
+    const achados: string[] = [];
+    // Só blocos de verdade: cartão, item de navegação, linha de tabela.
+    const candidatos = raiz.querySelectorAll('a, button, li, tr, [class*="rounded-lg"], [class*="rounded-xl"]');
+
+    for (const el of candidatos) {
+      const caixa = el.getBoundingClientRect();
+      if (caixa.width * caixa.height < 600) continue;
+      const pai = recortador(el);
+      if (!pai) continue;
+      const limite = pai.getBoundingClientRect();
+      const sobraEmbaixo = caixa.bottom - limite.bottom;
+      const sobraNaDireita = caixa.right - limite.right;
+      // 2px de folga: arredondamento de layout não é corte.
+      if (sobraEmbaixo <= 2 && sobraNaDireita <= 2) continue;
+
+      const paiRolaMais =
+        (sobraEmbaixo > 2 && pai.scrollHeight - pai.scrollTop - pai.clientHeight > 2) ||
+        (sobraNaDireita > 2 && pai.scrollWidth - pai.scrollLeft - pai.clientWidth > 2);
+      if (paiRolaMais) continue;
+
+      const texto = (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 34) || el.tagName.toLowerCase();
+      achados.push(`"${texto}" sobra ${Math.round(Math.max(sobraEmbaixo, sobraNaDireita))}px`);
+    }
+    return [...new Set(achados)].slice(0, 6);
+  });
+}
+
 async function instalarContador(page: Page) {
   await page.addInitScript(() => {
     (window as unknown as { __esqueletos: () => number }).__esqueletos = () => {
@@ -194,8 +263,10 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );
+      const cortados = await blocosCortados(page);
 
-      const aceita = faltando.length === 0 && overlay === 0 && esqueleto === 0 && overflow === 0;
+      const aceita =
+        faltando.length === 0 && overlay === 0 && esqueleto === 0 && overflow === 0 && cortados.length === 0;
       if (aceita) {
         await page.screenshot({ path: `../../docs/frontend-premium/screenshots/${tela.nome}-${r.nome}.png`, fullPage: true });
       }
@@ -207,6 +278,7 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
       linhas.push(
         `${aceita ? 'ok  ' : 'NAO '}${tela.rota.padEnd(14)} ${r.nome.padEnd(8)}` +
           ` overflow:${String(overflow).padStart(4)} overlay:${overlay} esqueleto:${esqueleto}` +
+          `${cortados.length ? `  CORTADO: ${cortados.join('; ')}` : ''}` +
           `${faltando.length ? `  FALTA: ${faltando.join(', ')}` : ''}`,
       );
     }
