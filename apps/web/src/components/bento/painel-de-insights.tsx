@@ -86,12 +86,22 @@ export function BentoBriefing({
   itens,
   carregando = false,
   vazio = 'Sem nada fora do lugar agora.',
+  erro,
   acao,
 }: {
   subtitulo?: string;
   itens: InsightDoBento[];
   carregando?: boolean;
   vazio?: string;
+  /**
+   * VAZIO E ERRO NÃO SÃO A MESMA COISA, e tratá-los igual foi um defeito real
+   * (09/10/2026, tela de Tarefas): com `/clickup/tasks/agency` respondendo
+   * 400, a lista de insights nascia vazia e o cartão anunciava "nenhuma
+   * tarefa atrasada nem vencendo na semana". Isso afirma um fato que
+   * NINGUÉM mediu. Quem não conseguiu ler precisa dizer que não conseguiu
+   * ler, nunca dar a boa notícia por omissão.
+   */
+  erro?: string;
   acao?: { label: string; href: string };
 }) {
   return (
@@ -107,6 +117,11 @@ export function BentoBriefing({
             <Skeleton className="h-4 w-2/3" />
             <Skeleton className="h-4 w-1/2" />
           </div>
+        ) : erro ? (
+          <p className="flex items-center gap-2 text-sm text-aviso">
+            <span className="size-1.5 shrink-0 rounded-full bg-aviso" />
+            {erro}
+          </p>
         ) : itens.length === 0 ? (
           <p className="text-sm text-nevoa">{vazio}</p>
         ) : (
@@ -141,6 +156,7 @@ export function BentoInsights({
   itens,
   carregando = false,
   vazio = 'Nada a recomendar com os dados de agora.',
+  erro,
   acao,
 }: {
   titulo?: string;
@@ -148,6 +164,9 @@ export function BentoInsights({
   itens: InsightDoBento[];
   carregando?: boolean;
   vazio?: string;
+  /** Mesma distinção do `BentoBriefing`: não conseguir ler é diferente de ler
+   *  e não achar nada, e só um dos dois é boa notícia. */
+  erro?: string;
   acao?: { label: string; href: string };
 }) {
   return (
@@ -159,6 +178,11 @@ export function BentoInsights({
           <Skeleton className="h-14 w-full" />
           <Skeleton className="h-14 w-full" />
         </div>
+      ) : erro ? (
+        <p className="flex items-center gap-2 py-2 text-sm text-aviso">
+          <span className="size-1.5 shrink-0 rounded-full bg-aviso" />
+          {erro}
+        </p>
       ) : itens.length === 0 ? (
         <p className="py-4 text-center text-sm text-nevoa">{vazio}</p>
       ) : (

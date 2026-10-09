@@ -2,6 +2,7 @@
 
 import { CalendarDays, ExternalLink, UserRound } from 'lucide-react';
 import type { AgencyTaskWire } from '@/lib/api/contracts';
+import { CLASSE_DE_PRIORIDADE, classificarPrioridade } from '@/lib/prioridade-de-tarefa';
 import { cn } from '@/lib/utils';
 
 function dueLabel(ms: number | null): { text: string; late: boolean } | null {
@@ -83,8 +84,24 @@ export function AgencyTaskRow({ task, showClient }: { task: AgencyTaskWire; show
               {task.status}
             </span>
           )}
+          {/* PRIORIDADE COLORIDA (mockup). Ela estava cinza e com a mesma
+            * forma do status, ou seja, caía na mesma sopa de chips que o
+            * cabeçalho deste arquivo diz ter tirado o responsável de dentro.
+            * Prioridade existe pra ordenar o que vem antes; sem contraste ela
+            * não ordenava nada.
+            *
+            * O texto MOSTRADO continua sendo o do ClickUp, nunca o rótulo da
+            * classificação: se o workspace escreveu "urgente", a pessoa lê
+            * "urgente". A classificação decide só a cor, e quando não casa
+            * com nada o chip volta a ser neutro em vez de ganhar uma cor
+            * chutada. */}
           {task.priority && (
-            <span className="rounded border border-grafite-elevado px-1.5 py-0.5 text-[11px] text-nevoa">
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[11px] font-medium',
+                CLASSE_DE_PRIORIDADE[classificarPrioridade(task.priority) ?? 'nenhuma'],
+              )}
+            >
               {task.priority}
             </span>
           )}

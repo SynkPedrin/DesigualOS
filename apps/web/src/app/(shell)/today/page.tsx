@@ -369,19 +369,27 @@ export default function TodayPage() {
     });
   }
   const nEventos = eventosHoje.data?.length ?? 0;
-  insights.push({
-    id: 'agenda',
-    tom: nEventos > 0 ? 'neutro' : 'bom',
-    href: '/calendar',
-    texto:
-      nEventos > 0 ? (
-        <>
-          Agenda de hoje com <strong className="font-semibold text-branco-cru">{nEventos} reuni{nEventos > 1 ? 'ões' : 'ão'}</strong>.
-        </>
-      ) : (
-        <>Agenda livre hoje, bom momento pra avançar o que está em andamento.</>
-      ),
-  });
+  /**
+   * "Agenda livre" só pode ser dito por quem CONSEGUIU LER a agenda. Com a
+   * consulta em erro, `nEventos` também é 0, e sem esta guarda o Bento daria
+   * a boa notícia por omissão: anunciaria o dia livre de alguém que pode ter
+   * três reuniões. Falha de leitura vira silêncio, não otimismo.
+   */
+  if (!eventosHoje.isError) {
+    insights.push({
+      id: 'agenda',
+      tom: nEventos > 0 ? 'neutro' : 'bom',
+      href: '/calendar',
+      texto:
+        nEventos > 0 ? (
+          <>
+            Agenda de hoje com <strong className="font-semibold text-branco-cru">{nEventos} reuni{nEventos > 1 ? 'ões' : 'ão'}</strong>.
+          </>
+        ) : (
+          <>Agenda livre hoje, bom momento pra avançar o que está em andamento.</>
+        ),
+    });
+  }
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-6">
@@ -404,6 +412,9 @@ export default function TodayPage() {
         itens={insights}
         carregando={briefingPendente}
         vazio="Nada fora do lugar agora. Bom momento pra avançar o que já está em andamento."
+        {...(insights.length === 0 && (eventosHoje.isError || minhasDemandas.isError || aprovacoesPendentes.isError)
+          ? { erro: 'Não consegui ler parte dos seus dados agora, então não dá pra dizer que está tudo em ordem.' }
+          : {})}
         acao={{ label: 'Ver detalhes', href: '/chat' }}
       />
 
