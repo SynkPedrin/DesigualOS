@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { desc, eq, inArray, or } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { getSupabaseAdminClient } from '@desigual-os/auth';
@@ -585,39 +585,26 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       }
       if (!(await exigirAlvoNaOrganizacaoDeTrabalho(request, reply, request.params.id))) return;
 
-      const [hasExecutions, hasAuditLogs, hasConversations, hasDirectMessages] = await Promise.all([
-        db.select({ id: schema.executions.id }).from(schema.executions).where(eq(schema.executions.userId, request.params.id)).limit(1),
-        db.select({ id: schema.auditLogs.id }).from(schema.auditLogs).where(eq(schema.auditLogs.userId, request.params.id)).limit(1),
-        db.select({ id: schema.conversations.id }).from(schema.conversations).where(eq(schema.conversations.userId, request.params.id)).limit(1),
-        db
-          .select({ id: schema.directMessages.id })
-          .from(schema.directMessages)
-          .where(or(eq(schema.directMessages.senderId, request.params.id), eq(schema.directMessages.recipientId, request.params.id)))
-          .limit(1),
-      ]);
-
-      if (hasExecutions.length > 0 || hasAuditLogs.length > 0 || hasConversations.length > 0 || hasDirectMessages.length > 0) {
-        // A RECUSA ESTÁ CERTA; A MENSAGEM NÃO ESTAVA. Este texto chega inteiro
-        // na tela de Equipe, e mandava "usar PATCH /admin/users/:id/status" —
-        // instrução de API pra quem está olhando uma interface, em inglês. O
-        // efeito prático era "a exclusão está bloqueada" sem ninguém entender
-        // por quê nem o que fazer (relato do Pedro, 08/10/2026).
-        //
-        // Apagar quem já trabalhou deixaria execuções, auditoria e conversas
-        // apontando pra um usuário inexistente. Desativar não é consolo: corta
-        // o acesso na hora e preserva o rastro, que é o que a lei de quem opera
-        // uma agência exige.
-        const motivos = [
-          hasExecutions.length > 0 ? 'execuções' : null,
-          hasAuditLogs.length > 0 ? 'registros de auditoria' : null,
-          hasConversations.length > 0 ? 'conversas' : null,
-          hasDirectMessages.length > 0 ? 'mensagens' : null,
-        ].filter(Boolean);
-        reply.code(409);
-        return {
-          error: `Esta pessoa já tem histórico no sistema (${motivos.join(', ')}) e por isso não pode ser apagada — o rastro ficaria órfão. Use "Desativar" no lugar: corta o acesso na hora e preserva o histórico.`,
-        };
-      }
+      /**
+       * EXCLUSÃO É INCONDICIONAL PRA QUEM ADMINISTRA (pedido direto do Pedro,
+       * 08/10/2026, depois de travar numa conta de teste com histórico):
+       * administrador apaga qualquer conta, histórico incluso, sem pedir
+       * segunda permissão. A versão anterior recusava com 409 quando a pessoa
+       * tinha execução/auditoria/conversa/mensagem — e isso sobrava
+       * justamente nas contas de QA/teste que mais precisam ser limpas.
+       *
+       * O QUE CONTINUA SENDO PRESERVADO, por causa do schema, não de um
+       * `if` aqui: `conversations.userId` e `direct_messages.{sender,
+       * recipient}_id` são `onDelete: 'cascade'` (somem junto, de propósito —
+       * mensagem sem dono não serve pra nada) e `audit_logs.userId` é
+       * `onDelete: 'set null'` (a linha do que aconteceu fica, só perde o
+       * vínculo com uma conta que não existe mais — é o comportamento certo
+       * de log de auditoria: o evento não deixa de ter acontecido). Só
+       * `executions.userId` é `NOT NULL` + `restrict`, e é o único que
+       * precisa de uma linha explícita abaixo — sem ela o DELETE de
+       * `users` falha com violação de FK em vez de limpar.
+       */
+      await db.delete(schema.executions).where(eq(schema.executions.userId, request.params.id));
 
       const supabaseUrl = process.env.SUPABASE_URL;
       const secretKey = process.env.SUPABASE_SECRET_KEY;
