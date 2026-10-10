@@ -132,11 +132,22 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
      *   oito contagens em paralelo (pool 3) .......... 2148ms
      *   um agregado com filter ........................ 295ms
      *
-     * Paralelo era MAIS RÁPIDO que série, não mais lento. O pool de três não
-     * engasga com isso — a desigualos-7f mediu treze rotas simultâneas em 103ms
-     * total, com mediana de 0,1ms no servidor. A minha leitura de "paralelismo
-     * acima do pool troca fila por fila" não se sustenta e não deve ser
-     * generalizada.
+     * Paralelo era MAIS RÁPIDO que série, não mais lento. A minha leitura de
+     * "paralelismo acima do pool troca fila por fila" não se sustenta DENTRO de
+     * uma rota e não deve ser generalizada.
+     *
+     * Uma distinção que custou três retratações até ficar clara, e que vale
+     * escrita: contenção de pool É REAL, mas no nível da TELA, não da rota. Uma
+     * tela que dispara treze pedidos simultâneos contra um pool de três
+     * serializa mesmo, e cada ida ao Supabase tem piso de ~270ms (medido no
+     * responseTime da própria API; `/consent/fontes`, que não consulta nada,
+     * responde em 1ms). O que NÃO acontece é oito consultas de uma mesma rota
+     * ficarem mais lentas por serem paralelas.
+     *
+     * O pool é três por decisão, não por descuido: o Supabase trava o projeto
+     * em quinze sessões divididas entre API, worker e nodes, e está escrito em
+     * `packages/database/src/client.ts`. Aumentar tira conexão de outro
+     * processo.
      *
      * O QUE DE FATO CUSTAVA: `successRate` trazia TODAS as linhas de execução
      * da janela para contar status no Node, e a rota fazia isso TRÊS vezes (30

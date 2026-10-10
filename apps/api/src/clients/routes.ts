@@ -398,6 +398,22 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
           status: row.status,
           created_at: row.createdAt.toISOString(),
         })),
+        /**
+         * ESTES DOIS NÚMEROS ENGANAM A PARTIR DA VIGÉSIMA EXECUÇÃO, e isso está
+         * escrito aqui, no lugar onde alguém tropeça, em vez de só numa
+         * mensagem de commit que ninguém reencontra.
+         *
+         * `total_cost` soma apenas as vinte execuções mais recentes, porque é
+         * isso que a consulta acima traz (`limit(20)`). `execution_count` é o
+         * tamanho dessa página, não o total do cliente. Com vinte ou menos, os
+         * dois são exatos; acima disso, os dois dizem menos do que aparentam e
+         * nada na resposta avisa.
+         *
+         * Não foi corrigido em 09/10/2026 de propósito: consertar muda número
+         * que já está em tela, e isso é decisão de quem usa o painel, não de um
+         * commit de desempenho. O conserto é somar no banco (`sum` sobre todas
+         * as execuções do cliente) e contar separado do limite da listagem.
+         */
         cost_summary: { total_cost: totalCost, execution_count: executionRows.length },
       };
     },

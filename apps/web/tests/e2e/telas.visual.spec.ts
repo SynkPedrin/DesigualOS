@@ -185,7 +185,8 @@ async function instalarContador(page: Page) {
   });
 }
 
-async function prontaParaCaptura(page: Page, exige: readonly string[]) {
+/** Devolve em quantos ms a tela assentou, ou `null` se nunca assentou. */
+async function prontaParaCaptura(page: Page, exige: readonly string[]): Promise<number | null> {
   // 1. Overlay: modal, diálogo ou vídeo do tutorial cobrindo a tela.
   await expect(page.locator('[role="dialog"]')).toHaveCount(0, { timeout: 20_000 });
 
@@ -205,11 +206,32 @@ async function prontaParaCaptura(page: Page, exige: readonly string[]) {
       .catch(() => undefined);
   }
 
-  // 3. Esqueleto no CONTEÚDO, e só o que é bloco.
-  await page.waitForFunction(() => (window as unknown as { __esqueletos: () => number }).__esqueletos() === 0, undefined, { timeout: 20_000 }).catch(() => undefined);
+  /**
+   * 3. Esqueleto no CONTEÚDO, e só o que é bloco. O TEMPO É DEVOLVIDO, não
+   *    engolido.
+   *
+   * Antes isto era um `waitForFunction` de 20s com `.catch()`: ou passava, ou a
+   * captura era recusada sem dizer por quanto tempo. E 20s é um limite que a
+   * suíte mesma torna injusto — ela faz 54 navegações contra um processo de API
+   * só, carga que pessoa nenhuma produz. Medido em 09/10/2026: `/clients`
+   * assenta entre 5s e 10s numa sequência realista e estourava os 20s depois de
+   * 27 navegações seguidas.
+   *
+   * Afrouxar o limite até ficar verde esconderia a informação. Devolver o tempo
+   * faz a saída dizer "assentou em 8,2s" em vez de só "recusada", e aí dá pra
+   * separar tela lenta de tela quebrada — que é a distinção que importa.
+   */
+  const comecou = Date.now();
+  const assentou = await page
+    .waitForFunction(() => (window as unknown as { __esqueletos: () => number }).__esqueletos() === 0, undefined, {
+      timeout: 30_000,
+    })
+    .then(() => Date.now() - comecou)
+    .catch(() => null);
 
   // Deixa a animação de entrada assentar — framer-motion abre em ~180ms.
   await page.waitForTimeout(600);
+  return assentou;
 }
 
 test('capturas limpas das telas, em três resoluções', async ({ page }) => {
@@ -288,7 +310,7 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
       atual = `${tela.rota}@${r.nome}`;
       await page.setViewportSize({ width: r.width, height: r.height });
       await page.goto(tela.rota, { waitUntil: 'domcontentloaded' });
-      await prontaParaCaptura(page, tela.exige);
+      const assentouEm = await prontaParaCaptura(page, tela.exige);
 
       const corpo = (await page.locator('body').innerText()).toLowerCase();
       const faltando = tela.exige.filter((t) => !corpo.includes(t));
@@ -315,6 +337,7 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
       linhas.push(
         `${aceita ? 'ok  ' : 'NAO '}${tela.rota.padEnd(14)} ${r.nome.padEnd(8)}` +
           ` overflow:${String(overflow).padStart(4)} overlay:${overlay} esqueleto:${esqueleto}` +
+          ` assentou:${assentouEm === null ? ' nunca' : `${(assentouEm / 1000).toFixed(1)}s`}` +
           `${cortados.length ? `  CORTADO: ${cortados.join('; ')}` : ''}` +
           `${faltando.length ? `  FALTA: ${faltando.join(', ')}` : ''}`,
       );
