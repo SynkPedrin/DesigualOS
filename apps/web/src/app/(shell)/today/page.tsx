@@ -180,8 +180,20 @@ export default function TodayPage() {
    * chamada corrigir. Dado errado na tela por um instante é pior que tela
    * vazia por um instante, e ainda custava uma ida ao banco jogada fora.
    */
-  const minhasDemandas = useDemands(me?.id ? { ownerId: me.id } : {}, { enabled: Boolean(me?.id) });
-  const conversasAguardandoMinhas = useInboxThreads({ status: 'waiting_agency', assigned: 'me' });
+  const minhasDemandas = useDemands(me?.id ? { ownerId: me.id, limit: TETO_DE_PAGINA } : {}, { enabled: Boolean(me?.id) });
+  const conversasAguardandoMinhas = useInboxThreads({ status: 'waiting_agency', assigned: 'me', limit: TETO_DE_PAGINA });
+  /**
+   * CONTAGEM DERIVADA DE PÁGINA É PISO, NÃO TOTAL. As duas listas abaixo vêm
+   * paginadas em 30, então tudo que eu filtrar delas (demanda vencendo hoje,
+   * cliente aguardando retorno) é no máximo o que coube. Com a página cheia,
+   * o Bento diz "pelo menos N"; com página parcial, diz N, porque aí contou
+   * tudo que existe. A alternativa seria o Bento afirmar um número exato que
+   * ninguém apurou, e ele é justamente a parte da tela que a pessoa lê como
+   * conclusão pronta.
+   */
+  const demandasSaoPiso = veioCheia(minhasDemandas.data?.length);
+  const conversasSaoPiso = veioCheia(conversasAguardandoMinhas.data?.length);
+  const aoMenos = (ehPiso: boolean) => (ehPiso ? 'pelo menos ' : '');
   const fimHoje = fimDoDia(agora).getTime();
   const inicioHoje = inicioDoDia(agora).getTime();
   const demandasVencendoHoje = (minhasDemandas.data ?? []).filter(
@@ -359,6 +371,7 @@ export default function TodayPage() {
       href: '/demands',
       texto: (
         <>
+          {aoMenos(demandasSaoPiso)}
           <strong className="font-semibold text-branco-cru">{demandasVencendoHoje} demanda{demandasVencendoHoje > 1 ? 's' : ''}</strong> sua{demandasVencendoHoje > 1 ? 's' : ''} vence{demandasVencendoHoje > 1 ? 'm' : ''} hoje.
         </>
       ),
@@ -372,6 +385,7 @@ export default function TodayPage() {
       href: '/inbox',
       texto: (
         <>
+          {aoMenos(conversasSaoPiso)}
           <strong className="font-semibold text-branco-cru">{n} cliente{n > 1 ? 's' : ''}</strong> aguardando seu retorno.
         </>
       ),
@@ -969,9 +983,18 @@ function PainelDeRodape({
   );
 }
 
+/**
+ * Pede 4, mostra 4. Antes pedia a página inteira (30 linhas) pra exibir
+ * quatro, na tela mais lenta do produto. Pedir menos é seguro porque o
+ * servidor JÁ ordena por `last_message_at` desc (communications/service.ts),
+ * que é exatamente o critério que este painel usa: os 4 primeiros da rota
+ * são os mesmos 4 que a ordenação local escolhia dentro dos 30.
+ */
+const RECENTES_NO_RODAPE = 4;
+
 function ConversasRecentesPanel() {
-  const { data, isPending } = useInboxThreads({ assigned: 'me' });
-  const threads = [...(data ?? [])].sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? '')).slice(0, 4);
+  const { data, isPending } = useInboxThreads({ assigned: 'me', limit: RECENTES_NO_RODAPE });
+  const threads = [...(data ?? [])].sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? ''));
 
   return (
     <PainelDeRodape
@@ -1081,11 +1104,20 @@ const RESOURCE_TYPE_LABEL: Record<string, string> = {
   publication: 'Publicação',
 };
 
+/**
+ * MESMO FILTRO DO CARTÃO LÁ EM CIMA, de propósito: chave igual faz o React
+ * Query servir as duas da MESMA requisição. Um `limit` diferente aqui (4, que
+ * é o que o painel mostra) pareceria economia e custaria uma chamada extra na
+ * tela mais lenta do produto, porque viraria outra chave.
+ *
+ * O corte para 4 é local. A rota já ordena por `created_at` desc
+ * (approvals/service.ts), então os 4 primeiros da lista são os 4 certos.
+ */
 function AprovacoesPendentesPanel() {
-  const { data, isPending } = useApprovals({ status: 'pending' });
+  const { data, isPending } = useApprovals({ status: 'pending', limit: TETO_DE_PAGINA });
   const { data: clients } = useClients();
   const nomeDoCliente = (clientId: string | null) => clients?.find((c) => c.id === clientId)?.name ?? 'Interno';
-  const aprovacoes = (data ?? []).slice(0, 4);
+  const aprovacoes = (data ?? []).slice(0, RECENTES_NO_RODAPE);
 
   return (
     <PainelDeRodape

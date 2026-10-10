@@ -18,13 +18,17 @@ import { mapDemand, type Demand, type DemandSource, type DemandWire } from '@/li
  * tela que já faz treze sai cara duas vezes.
  */
 export function useDemands(
-  filter: { clientId?: string; status?: string; ownerId?: string } = {},
+  filter: { clientId?: string; status?: string; ownerId?: string; limit?: number } = {},
   options?: { enabled?: boolean },
 ) {
   const params = new URLSearchParams();
   if (filter.clientId) params.set('clientId', filter.clientId);
   if (filter.status) params.set('status', filter.status);
   if (filter.ownerId) params.set('ownerId', filter.ownerId);
+  // Teto declarado em vez de herdado: a rota usa 30 por padrão, e uma tela
+  // que conta linhas precisa saber qual é o teto pra não chamar de total o
+  // que é página (ver lib/teto-de-pagina.ts).
+  if (filter.limit !== undefined) params.set('limit', String(filter.limit));
   const qs = params.toString();
 
   return useQuery({
