@@ -240,6 +240,40 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
   page.on('response', (r) => {
     if (r.status() === 429) respostas429++;
   });
+
+  /**
+   * O INSTRUMENTO PARA DE DISPUTAR CONSIGO MESMO.
+   *
+   * Medido em 09/10/2026: `/clients` recusada nas três resoluções por
+   * esqueleto, e aberta sozinha ela assenta em 11,8s — dentro dos 20s que o
+   * portão espera. O mesmo valia pra /organizations (2,6s), /calendar (6,3s) e
+   * /settings (1,4s). Nenhuma tinha defeito.
+   *
+   * O que acontecia: a suíte navega 54 vezes seguidas e ia pra próxima tela com
+   * as consultas da anterior ainda no ar. O pool do Postgres tem TRÊS conexões
+   * (`DATABASE_POOL_MAX`), então a tela nova entrava na fila atrás da velha, e
+   * a soma passava dos 20s. O portão estava medindo a carga que ele mesmo
+   * criava e cobrando isso do produto.
+   *
+   * Esperar as requisições anteriores drenarem custa segundos e devolve o que
+   * a medição deveria ter: cada tela medida sozinha, como a pessoa a abre.
+   */
+  const emVoo = new Set<string>();
+  page.on('request', (r) => emVoo.add(r.url()));
+  page.on('response', (r) => emVoo.delete(r.request().url()));
+  page.on('requestfailed', (r) => emVoo.delete(r.url()));
+
+  async function esperarDrenar(limiteMs = 15_000) {
+    const ate = Date.now() + limiteMs;
+    while (Date.now() < ate) {
+      const pendentes = [...emVoo].filter((u) => {
+        const caminho = new URL(u).pathname;
+        return !caminho.startsWith('/_next') && !caminho.includes('.');
+      });
+      if (pendentes.length === 0) return;
+      await page.waitForTimeout(250);
+    }
+  }
   page.on('pageerror', (e) => problemas.push(`${atual} ESTOURO: ${e.message.slice(0, 120)}`));
   page.on('console', (m) => {
     if (m.type() === 'error' && !m.text().includes('404')) problemas.push(`${atual} CONSOLE: ${m.text().slice(0, 100)}`);
@@ -271,9 +305,12 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
         await page.screenshot({ path: `../../docs/frontend-premium/screenshots/${tela.nome}-${r.nome}.png`, fullPage: true });
       }
 
-      // Espaça as cargas: 21 páginas disparando ~15 consultas cada passa dos
+      // Espaça as cargas: 54 páginas disparando ~15 consultas cada passa dos
       // 300/min da API, e o limite transforma tela boa em tela recusada.
       await page.waitForTimeout(1500);
+      // E espera o que ficou no ar terminar, pra próxima tela não medir a fila
+      // da anterior (ver "O INSTRUMENTO PARA DE DISPUTAR CONSIGO MESMO").
+      await esperarDrenar();
 
       linhas.push(
         `${aceita ? 'ok  ' : 'NAO '}${tela.rota.padEnd(14)} ${r.nome.padEnd(8)}` +

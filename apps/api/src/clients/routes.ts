@@ -304,10 +304,60 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         return { error: 'No access granted to this client workspace' };
       }
 
+      /**
+       * CADA CONSULTA PEDE AS COLUNAS QUE A RESPOSTA USA, e não a linha inteira.
+       *
+       * Eram três `select()` sem projeção, trazendo todas as colunas de
+       * conversas, peças e execuções para montar uma resposta que usa cinco
+       * campos de cada. `executions` guarda prompt e resultado, então vinte
+       * linhas dela atravessavam a rede para virar id, agente e status.
+       *
+       * Medido em 09/10/2026: `/clients/:id/workspace` em 12s, e o painel
+       * lateral da tela de Clientes ficava em esqueleto além do limite do
+       * portão de captura, nas três resoluções.
+       *
+       * É o mesmo defeito que `/automations/metrics` tinha: embarcar linha para
+       * usar fora do banco. Lá a correção levou uma leitura de 2045ms para
+       * 295ms, e o custo não era o número de viagens.
+       */
       const [conversationRows, assetRows, executionRows, [project]] = await Promise.all([
-        db.select().from(schema.conversations).where(eq(schema.conversations.clientId, clientId)).orderBy(desc(schema.conversations.updatedAt)).limit(20),
-        db.select().from(schema.studioAssets).where(eq(schema.studioAssets.clientId, clientId)).orderBy(desc(schema.studioAssets.createdAt)).limit(20),
-        db.select().from(schema.executions).where(eq(schema.executions.clientId, clientId)).orderBy(desc(schema.executions.createdAt)).limit(20),
+        db
+          .select({
+            id: schema.conversations.id,
+            title: schema.conversations.title,
+            status: schema.conversations.status,
+            updatedAt: schema.conversations.updatedAt,
+          })
+          .from(schema.conversations)
+          .where(eq(schema.conversations.clientId, clientId))
+          .orderBy(desc(schema.conversations.updatedAt))
+          .limit(20),
+        db
+          .select({
+            id: schema.studioAssets.id,
+            type: schema.studioAssets.type,
+            filename: schema.studioAssets.filename,
+            storageUrl: schema.studioAssets.storageUrl,
+            createdAt: schema.studioAssets.createdAt,
+          })
+          .from(schema.studioAssets)
+          .where(eq(schema.studioAssets.clientId, clientId))
+          .orderBy(desc(schema.studioAssets.createdAt))
+          .limit(20),
+        db
+          .select({
+            id: schema.executions.id,
+            executionId: schema.executions.executionId,
+            agent: schema.executions.agent,
+            status: schema.executions.status,
+            createdAt: schema.executions.createdAt,
+            actualCost: schema.executions.actualCost,
+            estimatedCost: schema.executions.estimatedCost,
+          })
+          .from(schema.executions)
+          .where(eq(schema.executions.clientId, clientId))
+          .orderBy(desc(schema.executions.createdAt))
+          .limit(20),
         // Projeto de chat vinculado a este cliente (tela de Clientes ainda não
         // tinha como abrir o chat dele: faltava esse id pro botão "Abrir chat").
         db.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.clientId, clientId)).limit(1),

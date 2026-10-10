@@ -116,24 +116,38 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     const fourteenDaysAgo = new Date(now.getTime() - 14 * DAY_MS);
 
     /**
-     * DUAS IDAS AO BANCO, e não nove. A conta que importa aqui não é latência,
-     * é CONEXÃO.
+     * DUAS IDAS AO BANCO, e não nove — mas o motivo NÃO é o número de idas.
      *
-     * A rota fazia nove consultas, cada uma esperando a anterior: contagens de
-     * janelas de tempo diferentes sobre as mesmas duas tabelas. Medido no
-     * navegador em 09/10/2026: 10,2s, a chamada mais lenta da tela.
+     * `/automations/metrics` levava 10,2s, medido no navegador em 09/10/2026.
+     * A rota fazia nove consultas em série sobre as mesmas duas tabelas.
      *
-     * A primeira tentativa foi paralelizar com `Promise.all`, e NÃO FUNCIONOU —
-     * medido: 7,9s e depois 12,0s, pior que antes. O pool tem três conexões
-     * (`DATABASE_POOL_MAX`, default 3, comentado no client como "três consultas
-     * travadas deixam a API sem banco"). Oito consultas simultâneas não rodam
-     * juntas: fazem fila em levas de três E disputam conexão com a chamada
-     * vizinha, que nesta tela é o próprio `/automations`. Paralelismo acima do
-     * tamanho do pool troca espera em fila por espera em fila, com mais
-     * contenção.
+     * A PRIMEIRA EXPLICAÇÃO QUE EU ESCREVI AQUI ESTAVA ERRADA, e fica
+     * registrada porque o erro é instrutivo. Eu disse que paralelizar com
+     * `Promise.all` tinha piorado por contenção no pool de três conexões.
+     * Medido depois, contra o banco de verdade:
      *
-     * O que resolve é ir menos vezes. `count(*) filter (where ...)` dá todas as
-     * janelas numa varredura só, uma consulta por tabela.
+     *   uma successRate, que trazia as linhas ....... 2045ms
+     *   uma contagem simples .......................... 347ms
+     *   oito contagens em série ...................... 2710ms
+     *   oito contagens em paralelo (pool 3) .......... 2148ms
+     *   um agregado com filter ........................ 295ms
+     *
+     * Paralelo era MAIS RÁPIDO que série, não mais lento. O pool de três não
+     * engasga com isso — a desigualos-7f mediu treze rotas simultâneas em 103ms
+     * total, com mediana de 0,1ms no servidor. A minha leitura de "paralelismo
+     * acima do pool troca fila por fila" não se sustenta e não deve ser
+     * generalizada.
+     *
+     * O QUE DE FATO CUSTAVA: `successRate` trazia TODAS as linhas de execução
+     * da janela para contar status no Node, e a rota fazia isso TRÊS vezes (30
+     * dias, 7 dias, 7 anteriores). Dois segundos cada, seis no total, antes de
+     * qualquer outra coisa. O ganho veio de parar de embarcar linha para contar
+     * fora do banco, não de reduzir viagens: 2045ms viram 295ms na mesma
+     * pergunta.
+     *
+     * Reduzir nove consultas a duas é consequência de usar
+     * `count(*) filter (where ...)`, que resolve todas as janelas numa varredura
+     * só. É bom, mas é o efeito menor.
      *
      * E os filtros usam os OPERADORES do drizzle (`gte`, `lt`, `eq`) em vez de
      * escrever a comparação dentro do `sql`. Não é estilo: um `Date` cru
@@ -141,10 +155,6 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
      * morre com "The string argument must be of type string... Received an
      * instance of Date". A primeira versão disto devolveu 500 por exatamente
      * isso, e o 500 só apareceu no navegador — typecheck e build passaram.
-     *
-     * Some junto um defeito de escala que estava escondido: `successRate`
-     * trazia TODAS as linhas de execução dos últimos 30 dias para contar status
-     * no Node. Funciona com dezenas, não com dezenas de milhares.
      */
     const [resumoDasAutomacoes] = await db
       .select({
