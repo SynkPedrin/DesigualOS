@@ -380,6 +380,71 @@ o dado chega até o componente, não que a pessoa vê exatamente o que eu
 imaginei. Fica como item em aberto pra confirmação visual na próxima sessão
 com acesso a um ambiente logado.
 
-Próximo: FASE 4 — cobertura do ClickUp Tool Gateway (reconferir quais das ~7
-capacidades da Fase 0 já têm import em `bento-update-executor.ts` mas nenhum
-intent que as dispare — achado no meio da Fase 2, ainda não resolvido).
+### FASE 4 — cobertura do ClickUp Tool Gateway — CONCLUÍDO (10/10/2026)
+
+**O achado da Fase 0 ("7 de ~12 capacidades da missão nunca foram
+construídas") não resistiu à reconferência — estava errado, não desatualizado.**
+Ele vinha de grepar só `bento-action-guard.ts` (o guard legado de fato nunca
+ganhou essas 7). Olhando a cadeia inteira (schema → prompt → executor):
+
+- `packages/bento-core/src/types.ts`: o schema de saída estruturada do core
+  novo (OpenAI) já declara `addTags`, `removeTags`, `customFields`,
+  `checklistName`/`checklistItems`, `dependsOnTaskId`/`dependencyOfTaskId`,
+  `addWatchers`/`removeWatchers`, `alsoInClient`, `timeSpent`, `startDate`,
+  `timeEstimate` — todos datados de 28/09/2026, com comentário citando o
+  incidente real que motivou cada um (ex.: a Tammy pedindo "altere pra
+  urgente" e levando a lista de status de volta, quando o campo certo era
+  prioridade).
+- `packages/bento-core/src/planner.ts`: o PROMPT do planner instrui o modelo,
+  com frases reais em português, a preencher cada um desses campos — "marca
+  com urgente-cliente" → `addTags`, "abre um checklist com A, B e C" →
+  `checklistName`+`checklistItems`, "essa só começa depois da X" →
+  `dependsOnTaskId`, etc. Não é campo de schema esquecido sem instrução.
+- `apps/worker/src/processors/bento-update-executor.ts` (linhas 528-697):
+  CADA um desses campos já tem bloco de execução real contra
+  `@desigual-os/tool-gateway` (`addTaskTag`, `removeTaskTag`,
+  `listCustomFields`+`setCustomFieldValue`, `createChecklist`+
+  `addChecklistItem`, `updateTaskWatchers`, `addTaskToList`, `registrarTempo`,
+  `addTaskDependency`), com falha de UM campo isolada dos outros (pediu três
+  coisas, duas funcionam, a terceira é explicada — nunca um "não" genérico).
+
+**O que estava genuinamente faltando não era execução, era prova.** Nenhum
+teste exercitava essas 7 capacidades — só existia
+`bento-campos-novos-idempotencia.test.ts` (cobre a CHAVE de idempotência,
+não se a escrita de fato acontece). Então o código podia estar certo ou
+quebrado em produção sem que a suite notasse — exatamente o risco que a
+missão pede pra eliminar ("não declarar pronto sem teste real"). Fechado
+com 10 testes novos em `bento-update-executor.test.ts` (tag add/remove,
+campo personalizado — sucesso e campo inexistente, checklist, seguidor —
+sucesso e nome não resolvido, lista adicional, apontamento de horas,
+dependência nos dois sentidos), todos mockando o client real do ClickUp e
+conferindo a chamada exata + o texto da resposta. 20/20 passando.
+
+**Gap real, ainda aberto, e por quê não mexi agora**: `bento-mcp-executor.ts`
+(o caminho ClickUp MCP, hoje inativo — `selectWriteProvider` só escolhe MCP
+quando o OAuth está autorizado, e não está) só implementa
+title/description/dueDate/assignee/comment. Se/quando o OAuth for ligado e
+`selectWriteProvider` passar a escolher `'MCP'`, essas 7 capacidades somem em
+silêncio pro usuário do chat — sem erro, sem aviso, só deixam de acontecer.
+Não construí a paridade agora porque (a) o provider está inativo, não há
+urgência, e (b) não há OAuth disponível neste ambiente pra testar contra o
+ClickUp MCP de verdade — construir e não testar violaria a mesma regra que
+este achado está corrigindo. Fica registrado pra quando o OAuth for ligado:
+conferir `bento-mcp-executor.ts` contra esta lista ANTES de trocar o provider,
+não depois que alguém notar que parou de funcionar.
+
+Capacidade ainda não encontrada em lugar nenhum do código (não é "não
+reconferido", é ausência confirmada por grep): arquivamento de task. Não
+construída agora por não haver confirmação de que está no escopo da missão
+(a lista de 12 capacidades usada pra reconferência foi reconstruída a partir
+do que a Fase 0 já tinha citado, não lida de volta no prompt mestre
+original) — abrir escopo novo sem essa confirmação seria inventar trabalho,
+não fechar um gap real.
+
+**Verificado**: typecheck limpo em `@desigual-os/worker`. Suite completa —
+83 arquivos, 1618 testes, 0 falha.
+
+Próximo: FASE 5 — observabilidade da cascata de 3 camadas (qual fração dos
+turnos reais cai em core novo / guard legado / serviço externo `bento-qa` —
+hoje desconhecido, sinalizado na Fase 0 como a pergunta mais importante em
+aberto pra avaliar o risco de mexer em qualquer uma das três).

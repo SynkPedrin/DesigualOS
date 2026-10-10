@@ -11,10 +11,20 @@ const estado = {
   assignees: [{ id: 123, username: 'Pedro Gabriel' }] as Array<{ id: number; username: string }>,
   attachments: [] as Array<{ id: string | null; title: string | null }>,
   name: 'Task de QA',
+  /** Bento 3.0, Fase 4: o resto do ClickUp — tag, checklist, seguidor. */
+  tags: [] as string[],
+  checklists: [] as Array<{ name: string; items: string[] }>,
+  watchers: [] as Array<{ id: number; username: string | null }>,
 };
 const chamadas = {
   put: [] as Array<Record<string, unknown>>,
   upload: 0,
+  addTag: [] as string[],
+  removeTag: [] as string[],
+  setCustomField: [] as Array<{ taskId: string; fieldId: string; value: unknown }>,
+  addToList: [] as string[],
+  tempo: [] as Array<{ taskId: string; inicioMs: number; duracaoMs: number }>,
+  dependency: [] as Array<{ dependsOn?: string; dependencyOf?: string }>,
 };
 /** Bento 3.0, Fase 2: captura toda tentativa de gravar audit_logs. */
 const auditCalls: Record<string, unknown>[] = [];
@@ -31,6 +41,9 @@ vi.mock('@desigual-os/tool-gateway', () => ({
     assignees: estado.assignees,
     description: estado.description,
     attachments: estado.attachments,
+    tags: estado.tags,
+    checklists: estado.checklists,
+    watchers: estado.watchers,
   })),
   updateTask: vi.fn(async (_c: unknown, _id: string, params: Record<string, unknown>) => {
     chamadas.put.push(params);
@@ -51,6 +64,40 @@ vi.mock('@desigual-os/tool-gateway', () => ({
       ? { status: 'resolved', member: { id: 123, username: 'Pedro Gabriel', email: 'p@x.com' }, matchedBy: 'first_name' }
       : { status: 'not_found', candidates: [] },
   ),
+  addTaskTag: vi.fn(async (_c: unknown, _id: string, tag: string) => {
+    chamadas.addTag.push(tag);
+    estado.tags.push(tag.toLowerCase());
+  }),
+  removeTaskTag: vi.fn(async (_c: unknown, _id: string, tag: string) => {
+    chamadas.removeTag.push(tag);
+    estado.tags = estado.tags.filter((t) => t !== tag.toLowerCase());
+  }),
+  listCustomFields: vi.fn(async () => [
+    { id: 'campo-etapa', name: 'Etapa', type: 'drop_down', options: [{ id: 'opt-aprovacao', name: 'Aprovação' }] },
+  ]),
+  setCustomFieldValue: vi.fn(async (_c: unknown, taskId: string, fieldId: string, value: unknown) => {
+    chamadas.setCustomField.push({ taskId, fieldId, value });
+  }),
+  createChecklist: vi.fn(async (_c: unknown, _id: string, name: string) => {
+    estado.checklists.push({ name, items: [] });
+    return 'checklist-1';
+  }),
+  addChecklistItem: vi.fn(async (_c: unknown, _checklistId: string, item: string) => {
+    estado.checklists[estado.checklists.length - 1]!.items.push(item);
+  }),
+  updateTaskWatchers: vi.fn(async (_c: unknown, _id: string, params: { add?: number[]; remove?: number[] }) => {
+    for (const id of params.add ?? []) estado.watchers.push({ id, username: 'Convidado' });
+    if (params.remove) estado.watchers = estado.watchers.filter((w) => !params.remove!.includes(w.id));
+  }),
+  addTaskToList: vi.fn(async (_c: unknown, _id: string, listId: string) => {
+    chamadas.addToList.push(listId);
+  }),
+  registrarTempo: vi.fn(async (_c: unknown, _teamId: string, params: { taskId: string; inicioMs: number; duracaoMs: number }) => {
+    chamadas.tempo.push(params);
+  }),
+  addTaskDependency: vi.fn(async (_c: unknown, _id: string, params: { dependsOn?: string; dependencyOf?: string }) => {
+    chamadas.dependency.push(params);
+  }),
 }));
 
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never;
@@ -75,8 +122,17 @@ describe('executeTaskUpdate — conteúdo/título/anexo na MESMA task', () => {
     estado.assignees = [{ id: 123, username: 'Pedro Gabriel' }];
     estado.attachments = [];
     estado.name = 'Task de QA';
+    estado.tags = [];
+    estado.checklists = [];
+    estado.watchers = [];
     chamadas.put.length = 0;
     chamadas.upload = 0;
+    chamadas.addTag.length = 0;
+    chamadas.removeTag.length = 0;
+    chamadas.setCustomField.length = 0;
+    chamadas.addToList.length = 0;
+    chamadas.tempo.length = 0;
+    chamadas.dependency.length = 0;
     auditCalls.length = 0;
   });
 
@@ -181,5 +237,105 @@ describe('executeTaskUpdate — conteúdo/título/anexo na MESMA task', () => {
     const res = await executeTaskUpdate(base({ replacePersonName: 'Pedro' }));
     expect(chamadas.put).toHaveLength(0);
     expect(res.answer).toContain('Já estava assim');
+  });
+});
+
+/**
+ * Bento 3.0, Fase 4 (09-10/10/2026): "7 de ~12 capacidades da missão nunca
+ * foram construídas" (achado da Fase 0) não resistiu à conferência — o código
+ * de execução de tag/campo personalizado/checklist/seguidor/lista/tempo/
+ * dependência já existe nesta função desde 28/09/2026 (ver TaskUpdateFields)
+ * e já é preenchido pelo planner do core novo (packages/bento-core/src/planner.ts),
+ * só nunca tinha teste PROVANDO que a execução funciona — só a chave de
+ * idempotência (bento-campos-novos-idempotencia.test.ts) estava coberta.
+ */
+describe('executeTaskUpdate — o resto do ClickUp (tag, campo, checklist, seguidor, lista, tempo, dependência)', () => {
+  beforeEach(() => {
+    estado.tags = [];
+    estado.checklists = [];
+    estado.watchers = [];
+    chamadas.addTag.length = 0;
+    chamadas.removeTag.length = 0;
+    chamadas.setCustomField.length = 0;
+    chamadas.addToList.length = 0;
+    chamadas.tempo.length = 0;
+    chamadas.dependency.length = 0;
+  });
+
+  it('addTags aplica tag nova e é idempotente pra tag já aplicada', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    estado.tags = ['urgente-cliente'];
+    const res = await executeTaskUpdate(base({ addTags: ['urgente-cliente', 'qa-teste'] }));
+    expect(chamadas.addTag).toEqual(['qa-teste']);
+    expect(res.status).toBe('completed');
+    expect(res.answer).toContain('🏷️ Tag "qa-teste"');
+  });
+
+  it('removeTags tira a tag e confere pela releitura', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    estado.tags = ['rascunho'];
+    const res = await executeTaskUpdate(base({ removeTags: ['rascunho'] }));
+    expect(chamadas.removeTag).toEqual(['rascunho']);
+    expect(estado.tags).toEqual([]);
+    expect(res.answer).toContain('removida');
+  });
+
+  it('customFields resolve nome→id e valor→opção lendo a lista, sem o modelo chutar id', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ customFields: { Etapa: 'Aprovação' } }));
+    expect(chamadas.setCustomField).toEqual([{ taskId: 'task-qa-1', fieldId: 'campo-etapa', value: 'opt-aprovacao' }]);
+    expect(res.answer).toContain('🧩 Etapa');
+  });
+
+  it('customFields com campo que não existe na lista: erro de CAMPO, sem chamar o ClickUp', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ customFields: { Inexistente: 'x' } }));
+    expect(chamadas.setCustomField).toHaveLength(0);
+    expect(res.answer).toContain('não existe o campo "Inexistente"');
+  });
+
+  it('checklist cria o bloco e os itens, conferido pela releitura (checklistConfere)', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ checklistName: 'Aprovação', checklistItems: ['Logo', 'Copy'] }));
+    expect(estado.checklists).toEqual([{ name: 'Aprovação', items: ['Logo', 'Copy'] }]);
+    expect(res.status).toBe('completed');
+    expect(res.answer).toContain('☑️ Checklist "Aprovação"');
+  });
+
+  it('addWatcherNames resolve o membro e segue a task, sem virar responsável', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ addWatcherNames: ['Pedro'] }));
+    expect(estado.watchers).toEqual([{ id: 123, username: 'Convidado' }]);
+    expect(estado.assignees).toEqual([{ id: 123, username: 'Pedro Gabriel' }]);
+    expect(res.answer).toContain('👀 Seguidor');
+  });
+
+  it('addWatcherNames com nome que não resolve: erro de CAMPO explicando o motivo', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ addWatcherNames: ['Ninguém'] }));
+    expect(estado.watchers).toHaveLength(0);
+    expect(res.answer).toContain('não encontrei "Ninguém"');
+  });
+
+  it('addToListId adiciona a task a outra lista SEM tirar da origem ("também", nunca "moveu")', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ addToListId: 'lista-colormaq', addToListName: 'Colormaq' }));
+    expect(chamadas.addToList).toEqual(['lista-colormaq']);
+    expect(res.answer).toContain('Também na lista "Colormaq"');
+  });
+
+  it('tempo registra o apontamento de horas com início e duração', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ tempo: { inicioMs: 1000, duracaoMs: 7_200_000 } }));
+    expect(chamadas.tempo).toEqual([{ taskId: 'task-qa-1', inicioMs: 1000, duracaoMs: 7_200_000 }]);
+    expect(res.answer).toContain('⏲️ Horas apontadas');
+  });
+
+  it('dependsOnTaskId e dependencyOfTaskId viram chamadas separadas de dependência', async () => {
+    const { executeTaskUpdate } = await import('./bento-update-executor.js');
+    const res = await executeTaskUpdate(base({ dependsOnTaskId: 'task-x', dependencyOfTaskId: 'task-y' }));
+    expect(chamadas.dependency).toEqual([{ dependsOn: 'task-x' }, { dependencyOf: 'task-y' }]);
+    expect(res.answer).toContain('🔗 Depende de task-x');
+    expect(res.answer).toContain('🔗 Bloqueia task-y');
   });
 });
