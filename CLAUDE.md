@@ -39,31 +39,46 @@ local). O Motion Engine não escreve legenda e não fala com o otto-node.
 
 Os brains foram migrados de `arquivos clientes/CLIENTES/` (dossiês e fichas) e dos `.md` de cliente na raiz. Essas fontes continuam sendo o registro operacional (pendências, ClickUp, contas de mídia); o brain é o registro **criativo**. Ao descobrir informação permanente de cliente, atualize o brain e ofereça registrar.
 
-### Como os dois registros chegam aos agentes
+### Como os registros chegam aos agentes
 
 O Otto node e o Bento não leem o repositório: leem a tabela `memories`, kind
-`client.profile`. Cada cliente tem até dois registros, que **não se substituem**:
+`client.profile`. Cada cliente tem até quatro registros, que **não se substituem**:
 
 | Registro | Fonte | Subject | Importador |
 |---|---|---|---|
 | Criativo | `.claude/skills/otto/brains/<cliente>/BRAIN.md` | `cliente:<id>:brain` | `scripts/sync-brains.mts` |
 | Operacional | vault `brain-desigual/02-clientes/` | `cliente:<id>:dossie` | `scripts/sync-dossies.mts` |
+| Vault (nota solta) | o resto do vault Obsidian, fora de `02-clientes/` | `cliente:<id>:vault:<arquivo>` | `scripts/sync-obsidian-vault.mts` |
 | Aprendido | o que a equipe ensina no chat | `cliente:<id>:aprendizado:<aspecto>` | automático, a cada turno |
 
 ```bash
 pnpm --filter @desigual-os/worker exec tsx scripts/sync-brains.mts --aplicar
 pnpm --filter @desigual-os/worker exec tsx scripts/sync-dossies.mts --raiz <vault> --aplicar
+pnpm --filter @desigual-os/worker exec tsx scripts/sync-obsidian-vault.mts --raiz <vault> --aplicar
 ```
 
+O registro "Vault" é deliberadamente separado do Operacional: cobre nota
+solta, ata de reunião, briefing avulso — qualquer `.md` do mesmo vault que
+não seja um dossiê de `02-clientes/` (esse já tem dono, o importador acima).
+Casa arquivo com cliente pela mesma regra do dossiê — sem casar, o arquivo
+fica de fora, nunca entra no cliente errado. Isto substitui, com casamento
+explícito, a busca de texto livre que `nodes/desigual-node` fazia ao vivo no
+vault por `context_refs` (sem saber qual arquivo é de qual cliente — já
+causou alucinação documentada). Essa busca ao vivo continua existindo por uma
+regra de ouro própria (nunca sincronizar o vault pro servidor central); este
+importador é a via *explícita e consentida* pra o que vale a pena virar
+memória permanente.
+
 Os importadores são idempotentes: reimportar **atualiza** o registro, não
-empilha. Sem `--aplicar` é simulação. Editou um BRAIN.md ou um dossiê? Rode o
-importador, ou o agente continua com a versão velha.
+empilha. Sem `--aplicar` é simulação. Editou um BRAIN.md, um dossiê ou uma
+nota do vault? Rode o importador correspondente, ou o agente continua com a
+versão velha.
 
 ### Ensinar o agente durante o trabalho
 
-As duas primeiras fontes congelam entre importações, e toda ficha tem lacuna
-declarada. A terceira fonte fecha esse ciclo: o que for dito **com verbo de
-registro** vira conhecimento permanente na hora.
+As fontes importadas (brain, dossiê, vault) congelam entre importações, e toda
+ficha tem lacuna declarada. O que a equipe ensina no chat fecha esse ciclo: o
+que for dito **com verbo de registro** vira conhecimento permanente na hora.
 
 > Anota que o decisor da Colormaq é a Marina.
 > Corrige que a praça da Elite agora é Birigui e Penápolis.
@@ -85,7 +100,9 @@ Regras que valem a pena conhecer:
   rotulado como REGISTRO APRENDIDO, separado das fichas curadas, e por vir por
   último corrige o que elas disserem.
 
-**O vault de dossiês não mora no repositório.** Ele tem ID de conta de mídia, ID
-de membro do ClickUp e dado comercial, e este repositório é público. Vale a mesma
-regra que o `.gitignore` já aplica a `arquivos clientes/` e `brain/`. Por isso o
-`--raiz` é obrigatório em vez de um caminho fixo.
+**O vault (dossiês ou notas soltas) não mora no repositório.** Ele tem ID de
+conta de mídia, ID de membro do ClickUp e dado comercial, e este repositório é
+público. Vale a mesma regra que o `.gitignore` já aplica a `arquivos
+clientes/` e `brain/`. Por isso o `--raiz` é obrigatório nos dois
+importadores (`sync-dossies.mts`, `sync-obsidian-vault.mts`) em vez de um
+caminho fixo.

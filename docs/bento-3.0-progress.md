@@ -444,6 +444,74 @@ não fechar um gap real.
 **Verificado**: typecheck limpo em `@desigual-os/worker`. Suite completa —
 83 arquivos, 1618 testes, 0 falha.
 
+### FASE 4b — memória/Obsidian — CONCLUÍDO (10/10/2026)
+
+Investigando o achado "vault Obsidian desconectado da memória de verdade",
+achei uma tensão real que não é bug: `nodes/desigual-node/src/obsidian/reader.ts`
+(`searchVault`) tem comentário explícito — "regra de ouro 1: nunca sincronizar
+o vault pro servidor central" — busca de texto livre, local por máquina, sob
+demanda, por `context_refs`. É design deliberado, não esquecimento. O defeito
+real não é a existência da busca local, é ela não saber qual arquivo É o
+perfil de qual cliente — já causou alucinação documentada (D. Carvalho
+virando "rede de joias e relógios", achado em `client-context.ts`).
+
+Perguntei ao Pedro como tratar, já que mudar essa arquitetura é decisão de
+alto impacto (dado sensível de cliente, regra de ouro existente) e este
+ambiente de sessão não tem `OBSIDIAN_VAULT_PATH` nem vault real pra testar
+contra. Resposta: construir sync opt-in pro vault, no molde do
+`sync-dossies.mts`.
+
+**Construído**: `apps/worker/scripts/sync-obsidian-vault.mts` — varre o vault
+Obsidian (mesmo que `searchVault` busca ao vivo), casa cada `.md` com um
+cliente do banco pela MESMA heurística de `sync-dossies.mts`
+(`lib/clientes.mts`: frontmatter antes de nome de arquivo, exato antes de
+prefixo antes de conteúdo, nunca chuta), e grava em `memories` como
+`cliente:<id>:vault:<caminho-do-arquivo>` — subject POR ARQUIVO (não por
+cliente, diferente do dossiê) porque um cliente pode ter várias notas soltas,
+e duas pastas podem ter arquivo de mesmo nome; subject por caminho evita que
+a segunda reimportação apague a primeira nota.
+
+**Não duplica `sync-dossies.mts`**: pula explicitamente qualquer caminho sob
+`02-clientes/` (já tem dono) e pastas ocultas (`.obsidian/`, `.trash/`).
+Arquivo sem cliente reconhecível fica DE FORA, reportado, nunca gravado no
+cliente errado — mesma regra do dossiê. `rememberFact` sem confidence/
+importance explícitos deixa o padrão de `sourceType: 'vault'` (0,8/0,5)
+valer — não subi pra 0,9 como o dossiê faz, porque nota solta de vault é
+dado menos curado que um dossiê estruturado, e a estrutura dos dois registros
+já reflete essa hierarquia de confiança em `memory-engine.ts`.
+
+**Surge no turno sem mudar `client-context.ts`**: `fonteDoPerfil` já cai em
+`'outra'` ("REGISTRO ADICIONAL") pra qualquer subject que não reconhece, e a
+consulta que monta o perfil filtra só por `kind: 'client.profile'` +
+`clientId` + `environment`, não por subject — confirmado lendo o código antes
+de escrever qualquer linha nova, pra não construir sync que grava e nunca
+chega no agente.
+
+**Verificado nesta sessão, sem vault real** (não há `OBSIDIAN_VAULT_PATH` nem
+dado de cliente neste ambiente): 5 testes novos (`sync-obsidian-vault.test.ts`)
+provam o filtro/varredura com vault sintético em `/tmp` (ignora `02-clientes/`
+e pastas ocultas, acha o resto recursivamente, vault inexistente devolve
+lista vazia sem lançar) — mockando `@desigual-os/database`/`@desigual-os/orchestrator`
+pra não haver risco de bater em infra real durante o teste. Além disso, rodei
+o script de verdade em modo simulação (sem `--aplicar`, só leitura) contra um
+vault sintético em `/tmp/vault-smoke`: confirmou ignorar `02-clientes/` e
+`.obsidian/` numa árvore de diretório real, leu os 58 clientes reais do banco
+de dev, casou corretamente um arquivo `colormaq.md` com o cliente real
+"Colormaq", e reportou corretamente "sem cliente correspondente" pra um
+arquivo com nome genérico — zero escrita, confirmado pelo modo simulação.
+**O que fica para quem tiver acesso à máquina com o vault real**: rodar com
+`--aplicar` de verdade e medir a taxa de cobertura (quantos arquivos casam
+com um cliente vs. quantos ficam em "sem cliente correspondente") — essa
+métrica não existe nesta sessão porque não há vault real pra medir contra.
+
+Atualizado `CLAUDE.md` (seção "Como os registros chegam aos agentes") com a
+quarta linha da tabela e o novo comando.
+
+**Verificado**: suite completa do worker — 84 arquivos, 1623 testes, 0 falha.
+`tsc --noEmit` não cobre `scripts/` (tsconfig do worker só inclui `src/` —
+mesma lacuna que já existia pra `sync-dossies.mts`/`sync-brains.mts`, não
+introduzida agora); compensado pelo smoke-test real acima.
+
 Próximo: FASE 5 — observabilidade da cascata de 3 camadas (qual fração dos
 turnos reais cai em core novo / guard legado / serviço externo `bento-qa` —
 hoje desconhecido, sinalizado na Fase 0 como a pergunta mais importante em
