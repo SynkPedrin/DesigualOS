@@ -66,7 +66,19 @@ export function ControleDaAgencia() {
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-        <Numero rotulo="Clientes ativos" valor={String(kpis.clientes_ativos)} href="/clients" />
+        {/*
+          * "CADASTRADOS", NÃO "ATIVOS" (10/10/2026). A consulta por trás deste
+          * número (`cli_filtrado` em agency-control-center/routes.ts) conta
+          * todo cliente da organização que não foi apagado, SEM olhar
+          * `status` e sem separar trabalho interno de carteira. Chamá-lo de
+          * "ativos" descrevia um recorte que a consulta não faz.
+          *
+          * O defeito ficou visível quando a tela da Agência passou a mostrar,
+          * logo acima, a carteira de verdade: 49 ali e 58 aqui, dois números
+          * sobre clientes na mesma tela, sem nada que explicasse a diferença.
+          * Os dois estavam certos; um dos dois estava mal nomeado.
+          */}
+        <Numero rotulo="Clientes cadastrados" valor={String(kpis.clientes_ativos)} href="/clients" />
         <Numero
           rotulo="Conversas aguardando"
           valor={String(kpis.conversas_aguardando)}
