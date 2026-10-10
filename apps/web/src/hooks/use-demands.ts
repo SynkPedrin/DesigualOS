@@ -2,7 +2,25 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
 import { mapDemand, type Demand, type DemandSource, type DemandWire } from '@/lib/api/contracts';
 
-export function useDemands(filter: { clientId?: string; status?: string; ownerId?: string } = {}) {
+/**
+ * `enabled` existe por um motivo que não é performance (10/10/2026).
+ *
+ * Quem filtra por `ownerId` só sabe o id depois que o /me responde, e sem
+ * poder adiar a consulta o padrão viram DUAS chamadas: uma imediata SEM
+ * filtro e outra depois com o filtro. A primeira traz as demandas da
+ * organização INTEIRA, e a tela que pediu "as minhas" as exibe como minhas
+ * até a segunda chegar. Por um instante o Hoje listava, como prioridade sua,
+ * demanda de outra pessoa.
+ *
+ * O custo da ida perdida também não é pequeno aqui: o pool do Postgres tem 3
+ * conexões (teto do Supabase dividido entre API, worker e nodes) e cada
+ * consulta é uma ida de rede de ~130ms, então requisição desperdiçada numa
+ * tela que já faz treze sai cara duas vezes.
+ */
+export function useDemands(
+  filter: { clientId?: string; status?: string; ownerId?: string } = {},
+  options?: { enabled?: boolean },
+) {
   const params = new URLSearchParams();
   if (filter.clientId) params.set('clientId', filter.clientId);
   if (filter.status) params.set('status', filter.status);
@@ -16,6 +34,7 @@ export function useDemands(filter: { clientId?: string; status?: string; ownerId
       return wire.demands.map(mapDemand);
     },
     staleTime: 15_000,
+    enabled: options?.enabled ?? true,
   });
 }
 

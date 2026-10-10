@@ -171,7 +171,15 @@ export default function TodayPage() {
   );
   const eventosDoDia = useCalendarEvents(intervaloDoDiaEscolhido);
 
-  const minhasDemandas = useDemands(me?.id ? { ownerId: me.id } : {});
+  /**
+   * ESPERA O /me. Sem o `enabled`, esta consulta saía ANTES de existir id de
+   * dono, voltava com as demandas da organização inteira, e tudo aqui embaixo
+   * as tratava como "minhas": o painel de Prioridades chegava a listar demanda
+   * de outra pessoa como prioridade sua, até o /me responder e a segunda
+   * chamada corrigir. Dado errado na tela por um instante é pior que tela
+   * vazia por um instante, e ainda custava uma ida ao banco jogada fora.
+   */
+  const minhasDemandas = useDemands(me?.id ? { ownerId: me.id } : {}, { enabled: Boolean(me?.id) });
   const conversasAguardandoMinhas = useInboxThreads({ status: 'waiting_agency', assigned: 'me' });
   const fimHoje = fimDoDia(agora).getTime();
   const inicioHoje = inicioDoDia(agora).getTime();
