@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '@desigual-os/logging';
+import type { ExecuteResponse } from '@desigual-os/node-protocol';
 
 /**
  * execute-job.ts é o pipeline inteiro de execução (800+ linhas), acoplado a
@@ -765,5 +766,61 @@ describe('listasDeClickUpDaOrganizacao — P0.1 slice 2: isolamento cross-tenant
     const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
 
     expect(await listasDeClickUpDaOrganizacao(undefined)).toEqual([]);
+  });
+});
+
+/**
+ * Bento 3.0, Fase 5: qual camada da cascata (core novo / guard legado /
+ * serviço externo) respondeu cada turno era desconhecido — a própria Fase 0
+ * (investigação forense) não soube medir. `marcarCamadaDaCascata` é o ponto
+ * único de marcação, chamado nos 6 lugares onde `result`/`guardedResult`
+ * nasce (core, guard, atalhos antigos, loop agêntico, caminho direto,
+ * etapa de workflow) — testado aqui como a função pura que é.
+ */
+describe('marcarCamadaDaCascata (Fase 5: qual camada respondeu o turno)', () => {
+  it('marca a camada quando o resultado ainda não tem nenhuma', async () => {
+    const { marcarCamadaDaCascata } = await import('./execute-job.js');
+    const base: ExecuteResponse = { execution_id: 'e1', agent: 'bento', status: 'completed', answer: 'ok', sources: [], tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 } };
+
+    const marcado = marcarCamadaDaCascata(base, 'core_openai');
+
+    expect(marcado.metadata?.bento_cascade_tier).toBe('core_openai');
+  });
+
+  it('NUNCA sobrescreve uma marca já existente — a ordem de chamada não pode decidir por acidente qual camada "venceu"', async () => {
+    const { marcarCamadaDaCascata } = await import('./execute-job.js');
+    const jaMarcado = {
+      execution_id: 'e1',
+      agent: 'bento' as const,
+      status: 'completed' as const,
+      answer: 'ok',
+      sources: [],
+      tool_calls: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      metadata: { bento_cascade_tier: 'core_openai', outraCoisa: 1 },
+    };
+
+    const resultado = marcarCamadaDaCascata(jaMarcado, 'atalho_direto');
+
+    expect(resultado.metadata?.bento_cascade_tier).toBe('core_openai');
+    expect(resultado).toBe(jaMarcado);
+  });
+
+  it('preserva o resto da metadata ao marcar — não é um replace, é um merge', async () => {
+    const { marcarCamadaDaCascata } = await import('./execute-job.js');
+    const base = {
+      execution_id: 'e1',
+      agent: 'bento' as const,
+      status: 'completed' as const,
+      answer: 'ok',
+      sources: [],
+      tool_calls: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      metadata: { guard: 'bento-panorama', tasks: 12 },
+    };
+
+    const marcado = marcarCamadaDaCascata(base, 'atalho_direto');
+
+    expect(marcado.metadata).toEqual({ guard: 'bento-panorama', tasks: 12, bento_cascade_tier: 'atalho_direto' });
   });
 });

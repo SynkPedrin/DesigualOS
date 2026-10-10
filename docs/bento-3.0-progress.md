@@ -512,7 +512,79 @@ quarta linha da tabela e o novo comando.
 mesma lacuna que já existia pra `sync-dossies.mts`/`sync-brains.mts`, não
 introduzida agora); compensado pelo smoke-test real acima.
 
-Próximo: FASE 5 — observabilidade da cascata de 3 camadas (qual fração dos
-turnos reais cai em core novo / guard legado / serviço externo `bento-qa` —
-hoje desconhecido, sinalizado na Fase 0 como a pergunta mais importante em
-aberto pra avaliar o risco de mexer em qualquer uma das três).
+### FASE 5 — observabilidade da cascata de 3 camadas — CONCLUÍDO (10/10/2026)
+
+Fecha a pergunta que a própria Fase 0 marcou como "a mais importante em
+aberto": qual fração dos turnos reais é respondida pelo core novo (OpenAI),
+pelo guard legado ou pelo serviço externo (`bento-qa`) — hoje, sem isto,
+impossível de responder sem SSH na máquina de produção.
+
+**Construído**: `marcarCamadaDaCascata(resultado, camada)` em
+`execute-job.ts` — função pura, exportada, chamada nos 6 pontos onde
+`result`/`guardedResult` nasce:
+
+| Camada marcada | Onde |
+|---|---|
+| `core_openai` | merge do retorno de `runBentoOpenAiCore` |
+| `guard_legado` | merge do retorno de `tryBentoActionGuard` |
+| `atalho_direto` | painel, campanha, motion, confirmação de delete pendente — atalhos deterministas mais antigos que a própria cascata core→guard, nunca passam pelos dois merge points acima |
+| `externo_bento_qa_via_loop` | `callNode` chamado DENTRO do `dispatchWithAgentLoop` (AGENT_LOOP_V2 ligado) |
+| `externo_bento_qa_direto` | `callNode` direto, sem o loop (caminho que roda em produção hoje, por enquanto) |
+| `externo_bento_qa_workflow` | etapa de workflow multi-agente (`processWorkflowStep`), sempre externo |
+
+Regra central: a função **nunca sobrescreve** uma marca já existente — o
+merge point dos atalhos mais antigos roda DEPOIS que core/guard já teriam se
+marcado (se fosse o caso), e sobrescrever faria a ORDEM de checagem decidir
+por acidente qual camada "venceu" no dado, em vez da camada real.
+
+**Chega até o banco pela mesma tubulação da Fase 2/3**: `result.metadata` já
+flui pra `execution_steps.output.metadata` (3 pontos de escrita, um deles —
+o de workflow — não incluía `metadata` nenhuma até agora, corrigido aqui) e
+pra `messages.metadata`. Nenhuma migração nova, nenhuma tabela nova — só a
+marca chegando onde o dado já ia.
+
+**Como responder a pergunta da Fase 0 a partir de agora** (produção, não
+nesta sessão — aqui não há acesso a dados reais de execução):
+
+```sql
+select
+  output->'metadata'->>'bento_cascade_tier' as camada,
+  count(*) as turnos
+from execution_steps
+where output->'metadata'->>'bento_cascade_tier' is not null
+group by 1
+order by 2 desc;
+```
+
+**Verificado**: 3 testes novos em `execute-job.test.ts` provam a função pura
+— marca quando não há marca, NUNCA sobrescreve marca existente (inclusive
+confere que devolve a MESMA referência, sem clonar à toa), e faz merge
+(preserva o resto da metadata) em vez de substituir. Suite completa do
+worker — 84 arquivos, 1626 testes, 0 falha. Typecheck limpo em
+`@desigual-os/worker`.
+
+**O que fica em aberto, de propósito**: a MEDIÇÃO real (qual fração cai em
+cada camada, hoje) só existe depois que este código rodar em produção por um
+tempo — não é algo que uma sessão sem acesso a dados de execução reais possa
+preencher. O que esta fase entrega é a CAPACIDADE de medir, não o número.
+
+---
+
+## Veredito dos 5 passos (09-10/10/2026)
+
+Os 5 gaps que a Fase 0 (investigação forense) levantou — autorizados em bloco
+pelo Pedro ("faça todos em ordem, nn precisa ficar parando, corrija tudo") —
+estão fechados:
+
+1. Audit logging da escrita do agente — `9367e2d`
+2. Transparência de tool-call e fonte real no chat — `1ef60c8`
+3. Cobertura do ClickUp Tool Gateway (prova, não código novo — o achado da
+   Fase 0 estava errado) — `dfa9ca6`
+4. Memória/Obsidian (importador opt-in, decisão confirmada com o Pedro) —
+   `b949ddf`
+5. Observabilidade da cascata de 3 camadas — este commit
+
+Todos commitados nesta branch (`feat/otto-motion-engine`), cada um verificado
+contra checkout limpo (`scripts/conferir-checkout-limpo.sh`) antes do
+próximo começar. Nenhum deploy feito — produção é domínio exclusivo da sessão
+desigualos-c1, por acordo prévio desta missão.

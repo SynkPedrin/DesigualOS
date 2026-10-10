@@ -478,6 +478,21 @@ function failedAgentResponse(agent: AgentName, error: string): ExecuteResponse {
 }
 
 /**
+ * Bento 3.0, Fase 5: qual das camadas da cascata respondeu de verdade este
+ * turno é uma pergunta que nem a Fase 0 (investigação forense) soube
+ * responder — core novo (OpenAI), guard legado e serviço externo (bento-qa)
+ * coexistem, e não havia como medir a fração de turnos que cai em cada um.
+ * Nunca SOBRESCREVE uma marca que já existe: o merge point dos atalhos mais
+ * antigos (painel, campanha, motion) roda depois de core/guard já terem
+ * marcado o seu, e preservar em vez de reescrever evita que a ordem de
+ * chamada decida por acidente qual camada "venceu" no dado.
+ */
+export function marcarCamadaDaCascata(resultado: ExecuteResponse, camada: string): ExecuteResponse {
+  if (resultado.metadata?.bento_cascade_tier) return resultado;
+  return { ...resultado, metadata: { ...resultado.metadata, bento_cascade_tier: camada } };
+}
+
+/**
  * O susy-service às vezes devolve `ok: true` com um texto que é, na
  * verdade, um erro interno DELE vazando como se fosse resposta (medido em
  * produção, 2026-09-05: Suzy respondeu literalmente "No response from
@@ -1788,7 +1803,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         return failedAgentResponse(agent, 'Não consegui processar essa ação pelo novo runtime. Nada foi executado.');
       });
       if (core) {
-        guardedResult = { ...core, agent, execution_id: executionId };
+        // Marcado aqui (não em runBentoOpenAiCore, que tem múltiplos retornos
+        // internos) porque este é o ÚNICO ponto por onde QUALQUER resultado
+        // do core passa antes de virar guardedResult.
+        guardedResult = marcarCamadaDaCascata({ ...core, agent, execution_id: executionId }, 'core_openai');
       }
     }
 
@@ -1820,7 +1838,9 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       return failedAgentResponse(agent, 'Não consegui verificar a ação. Não vou confirmar a criação; confira a task antes de tentar novamente.');
     }) : null;
     if (guarded) {
-      guardedResult = { ...guarded, agent, execution_id: executionId };
+      // Mesma lógica do core acima — único ponto por onde QUALQUER retorno
+      // do guard legado passa antes de virar guardedResult.
+      guardedResult = marcarCamadaDaCascata({ ...guarded, agent, execution_id: executionId }, 'guard_legado');
       // INV-10: um delete confirmado pelo guard legado precisa derrubar o
       // foco do ConversationResourceState NOVO também — independente de
       // BENTO_OPENAI_CORE_ENABLED estar ligado nesta execução, a próxima
@@ -1954,7 +1974,13 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
   let nomeClienteDoTurno = '';
   let refsParaComparacao: string[] = [];
   if (guardedResult) {
-    result = guardedResult;
+    // Core novo e guard legado já se marcaram acima (marcarCamadaDaCascata
+    // não sobrescreve); o que chega aqui ainda sem marca é um dos atalhos
+    // deterministas mais antigos (painel, campanha, motion, confirmação de
+    // delete pendente) — rodam ANTES da cascata core→guard e nunca passam
+    // por nenhum dos dois merge points de cima. Não é "camada desconhecida":
+    // é uma 4ª categoria, de propósito mais estreito que as 3 da cascata real.
+    result = marcarCamadaDaCascata(guardedResult, 'atalho_direto');
   } else try {
     if (agentLoopV2Enabled(agent)) {
       // Caminho agêntico: o callNode vira uma ferramenta dentro do loop
@@ -1985,6 +2011,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             clientFeedbackHistory,
           ),
       });
+      // Dentro do loop, callAgent() acima é o mesmo callNode do caminho
+      // direto — o loop só adiciona planejamento em volta da mesma
+      // dependência externa (bento-qa). Mesma camada, tag própria pra não
+      // confundir com "sem marcação" caso o loop devolva algo sem passar
+      // pelo callAgent (ex.: falha antes de chamar a ferramenta).
+      result = marcarCamadaDaCascata(result, 'externo_bento_qa_via_loop');
     } else {
       /**
        * CAMINHO DIRETO (loop desligado) — o diálogo recente precisa ir mesmo
@@ -2226,6 +2258,9 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         operationalContext,
         clientFeedbackHistory,
       );
+      // AGENT_LOOP_V2 desligado pra este agente — vai direto no serviço
+      // externo (bento-qa), sem o loop de planejamento.
+      result = marcarCamadaDaCascata(result, 'externo_bento_qa_direto');
       /**
        * Resposta com glifo fora do idioma é DESCARTADA e regerada, não
        * remendada: o modelo local (família Qwen) troca uma palavra portuguesa
@@ -2700,6 +2735,9 @@ async function processWorkflowStep(data: AgentJobData, logger: Logger): Promise<
       undefined,
       attachments,
     );
+    // Etapa de workflow multi-agente — sempre vai direto no serviço externo,
+    // não existe guardedResult neste caminho.
+    result = marcarCamadaDaCascata(result, 'externo_bento_qa_workflow');
     if (result.answer)
       result = { ...result, answer: stripMarkdownArtifacts(stripBlockMarkers(stripEmDashes(result.answer))) };
     // Ver estimateTokenUsage: mesma lacuna do caminho de agente único quando
@@ -2723,7 +2761,12 @@ async function processWorkflowStep(data: AgentJobData, logger: Logger): Promise<
     .update(schema.executionSteps)
     .set({
       status: result.status,
-      output: { answer: result.answer, sources: result.sources, tool_calls: result.tool_calls },
+      output: {
+        answer: result.answer,
+        sources: result.sources,
+        tool_calls: result.tool_calls,
+        ...(result.metadata ? { metadata: result.metadata } : {}),
+      },
       completedAt: now,
     })
     .where(
