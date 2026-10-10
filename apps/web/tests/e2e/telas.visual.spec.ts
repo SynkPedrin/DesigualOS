@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { test, expect, type Page } from '@playwright/test';
 
 /**
@@ -187,6 +188,19 @@ async function instalarContador(page: Page) {
 
 /** Devolve em quantos ms a tela assentou, ou `null` se nunca assentou. */
 async function prontaParaCaptura(page: Page, exige: readonly string[]): Promise<number | null> {
+  /**
+   * O CRONÔMETRO COMEÇA AQUI, e não depois da espera por conteúdo.
+   *
+   * Ele ficava lá embaixo, depois do bloco que espera o texto que a tela
+   * promete. Resultado: as cinco telas que declaram `exige` tinham esse tempo
+   * descontado e as outras treze não, então a coluna comparava coisas
+   * diferentes. `/pipeline` e `/workflows` apareciam com 0.0s ao lado de
+   * `/activity` com 8.0s, e a diferença era o ponto de partida, não a tela.
+   *
+   * Medir desde o fim da navegação é o único começo que vale igual pra todas.
+   */
+  const comecou = Date.now();
+
   // 1. Overlay: modal, diálogo ou vídeo do tutorial cobrindo a tela.
   await expect(page.locator('[role="dialog"]')).toHaveCount(0, { timeout: 20_000 });
 
@@ -221,12 +235,53 @@ async function prontaParaCaptura(page: Page, exige: readonly string[]): Promise<
    * faz a saída dizer "assentou em 8,2s" em vez de só "recusada", e aí dá pra
    * separar tela lenta de tela quebrada — que é a distinção que importa.
    */
-  const comecou = Date.now();
-  const assentou = await page
-    .waitForFunction(() => (window as unknown as { __esqueletos: () => number }).__esqueletos() === 0, undefined, {
-      timeout: 30_000,
+  /**
+   * ZERO ESQUELETO ANTES DE RENDERIZAR NÃO É "ASSENTOU", É "NÃO COMEÇOU".
+   *
+   * A primeira versão disto esperava `__esqueletos() === 0` e voltava na hora,
+   * porque numa página recém-navegada ainda não existe esqueleto nenhum. A
+   * saída dizia coisas impossíveis: `/midias desktop esqueleto:6
+   * assentou:0.3s` — assentou e tem esqueleto, ao mesmo tempo.
+   *
+   * Contei a AUSÊNCIA de esqueleto e li como PRESENÇA de conteúdo, que é o
+   * mesmo erro que o cabeçalho deste arquivo já descreve sobre tema claro e
+   * tela vazia. Escrevi o aviso e caí nele.
+   *
+   * Dois consertos, e os dois são necessários:
+   *
+   * 1. Esperar a tela EXISTIR antes de julgar. `main` com texto de verdade é o
+   *    sinal de que houve render, e só a partir daí a contagem significa algo.
+   *
+   * 2. Exigir que o zero SE SUSTENTE. Esqueleto reaparece: uma consulta que
+   *    resolve e outra que monta depois produzem zero no meio do caminho.
+   *    `/clients` dizia "assentou em 2,2s" e terminava com 2 esqueletos — o
+   *    zero existiu, só não durou.
+   */
+  await page
+    .waitForFunction(() => ((document.querySelector('main')?.innerText ?? '').trim().length > 200), undefined, {
+      timeout: 25_000,
     })
-    .then(() => Date.now() - comecou)
+    .catch(() => undefined);
+
+  const QUIETO_MS = 1_500;
+  const assentou = await page
+    .waitForFunction(
+      (quieto) => {
+        // `number | null` e não opcional: com `exactOptionalPropertyTypes`,
+        // atribuir `undefined` a campo opcional é erro, e aqui zerar o relógio
+        // é justamente o que acontece sempre que um esqueleto reaparece.
+        const w = window as unknown as { __esqueletos: () => number; __zeroDesde: number | null };
+        if (w.__esqueletos() > 0) {
+          w.__zeroDesde = null;
+          return false;
+        }
+        w.__zeroDesde ??= Date.now();
+        return Date.now() - w.__zeroDesde >= quieto;
+      },
+      QUIETO_MS,
+      { timeout: 30_000, polling: 250 },
+    )
+    .then(() => Date.now() - comecou - QUIETO_MS)
     .catch(() => null);
 
   // Deixa a animação de entrada assentar — framer-motion abre em ~180ms.
@@ -301,6 +356,7 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
     if (m.type() === 'error' && !m.text().includes('404')) problemas.push(`${atual} CONSOLE: ${m.text().slice(0, 100)}`);
   });
 
+  const cargaInicial = os.loadavg()[0] ?? 0;
   await instalarContador(page);
   await esconderFerramentasDeDev(page);
   const linhas: string[] = [];
@@ -344,7 +400,29 @@ test('capturas limpas das telas, em três resoluções', async ({ page }) => {
     }
   }
 
+  /**
+   * O NÚMERO SAI COM A CARGA DA MÁQUINA JUNTO, e isso não é zelo excessivo.
+   *
+   * Em 09/10/2026 duas sessões mediram ao mesmo tempo nesta máquina e
+   * produziram tempos inflados — uma delas registrou 27,5s numa tela que, sozinha,
+   * assenta em segundos. Daqui a uma semana ninguém lembra que havia outra
+   * rodada concorrente, e o número vira "característica da tela".
+   *
+   * `loadavg` de um minuto é grosseiro e serve: acima do número de núcleos, os
+   * tempos abaixo dizem mais sobre a máquina do que sobre o produto.
+   */
+  const cargaFinal = os.loadavg()[0] ?? 0;
+  const nucleos = os.cpus().length;
+  const maquinaOcupada = cargaInicial > nucleos || cargaFinal > nucleos;
+
   console.log('\n=== CAPTURAS ===\n' + linhas.join('\n'));
+  console.log(
+    `\ncarga da máquina: ${cargaInicial.toFixed(1)} no início, ${cargaFinal.toFixed(1)} no fim, ` +
+      `com ${nucleos} núcleos` +
+      (maquinaOcupada
+        ? '\nATENÇÃO: havia carga concorrente. Os tempos de assentamento acima estão inflados e NÃO servem como característica das telas.'
+        : ''),
+  );
   console.log(`\n${problemas.length} problema(s) de console/JS`);
   if (problemas.length) console.log([...new Set(problemas)].join('\n'));
 
