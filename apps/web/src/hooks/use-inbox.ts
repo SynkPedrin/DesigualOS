@@ -11,12 +11,17 @@ import {
 export interface InboxThreadFilter {
   status?: InboxThreadStatus;
   assigned?: 'me' | 'unassigned';
+  /** Teto da página. A rota usa 30 por padrão e aceita até 100; mandar daqui
+   *  faz a tela CONHECER o próprio teto, que é o que permite dizer "30+" em
+   *  vez de estampar 30 como se fosse o total (ver lib/teto-de-pagina.ts). */
+  limit?: number;
 }
 
 function queryString(filter: InboxThreadFilter): string {
   const params = new URLSearchParams();
   if (filter.status) params.set('status', filter.status);
   if (filter.assigned) params.set('assigned', filter.assigned);
+  if (filter.limit !== undefined) params.set('limit', String(filter.limit));
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }

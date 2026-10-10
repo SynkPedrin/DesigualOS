@@ -30,6 +30,7 @@ import { useClients } from '@/hooks/use-clients';
 import { useCalendarEvents } from '@/hooks/use-calendar';
 import { formatClockTime, formatRelativeTime } from '@/lib/format';
 import { ApiRequestError } from '@/lib/api/client';
+import { TETO_DE_PAGINA, comoPiso, veioCheia } from '@/lib/teto-de-pagina';
 import { cn } from '@/lib/utils';
 
 /** 409 de "Minhas tarefas" = e-mail do ClickUp ainda não vinculado, estado
@@ -156,10 +157,10 @@ export default function TodayPage() {
 
   const minhasTarefas = useMyTasks();
   const tarefasDaAgencia = useAgencyTasks();
-  const conversasAguardando = useInboxThreads({ status: 'waiting_agency' });
+  const conversasAguardando = useInboxThreads({ status: 'waiting_agency', limit: TETO_DE_PAGINA });
   const intervaloDeHoje = useMemo(() => ({ from: inicioDoDia(agora), to: fimDoDia(agora) }), [agora]);
   const eventosHoje = useCalendarEvents(intervaloDeHoje);
-  const aprovacoesPendentes = useApprovals({ status: 'pending' });
+  const aprovacoesPendentes = useApprovals({ status: 'pending', limit: TETO_DE_PAGINA });
 
   // "Seu dia" acompanha o dia escolhido na tira da semana, enquanto o cartão
   // "Reuniões hoje" continua preso a HOJE. São duas perguntas diferentes, e
@@ -435,7 +436,14 @@ export default function TodayPage() {
           isLoading={conversasAguardando.isPending}
           isError={conversasAguardando.isError}
           href="/inbox"
-          footer={(conversasAguardando.data?.length ?? 0) === 0 ? 'Tudo respondido por aqui' : `${conversasUrgentes} parada(s) há mais de 10 min`}
+          formatValue={(v) => comoPiso(Math.round(v))}
+          footer={
+            (conversasAguardando.data?.length ?? 0) === 0
+              ? 'Tudo respondido por aqui'
+              : veioCheia(conversasAguardando.data?.length)
+                ? `pelo menos ${TETO_DE_PAGINA}, veja todas na Inbox`
+                : `${conversasUrgentes} parada(s) há mais de 10 min`
+          }
           {...(conversasUrgentes > 0 ? { sublabel: { text: `${conversasUrgentes} urgentes`, tone: 'urgent' as const } } : {})}
         />
         <StatCard
@@ -471,10 +479,13 @@ export default function TodayPage() {
           isLoading={aprovacoesPendentes.isPending}
           isError={aprovacoesPendentes.isError}
           href="/approvals"
+          formatValue={(v) => comoPiso(Math.round(v))}
           footer={
             (aprovacoesPendentes.data?.length ?? 0) === 0
               ? 'Tudo alinhado por aqui'
-              : `${aprovacoesParadas} parada(s) há mais de 2 dias`
+              : veioCheia(aprovacoesPendentes.data?.length)
+                ? `pelo menos ${TETO_DE_PAGINA}, veja todas em Aprovações`
+                : `${aprovacoesParadas} parada(s) há mais de 2 dias`
           }
         />
       </div>

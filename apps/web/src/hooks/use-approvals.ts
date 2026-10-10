@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
 import type { ApprovalRequestWire, ApprovalStatus } from '@/lib/api/contracts';
 
-export function useApprovals(filter: { mine?: boolean; requestedByMe?: boolean; status?: ApprovalStatus } = {}) {
+/** `limit` explícito pelo mesmo motivo de `useInboxThreads`: a rota pagina em
+ *  30 e a tela precisa saber disso pra não chamar de total o que é página. */
+export function useApprovals(filter: { mine?: boolean; requestedByMe?: boolean; status?: ApprovalStatus; limit?: number } = {}) {
   const params = new URLSearchParams();
   if (filter.mine) params.set('mine', 'true');
   if (filter.requestedByMe) params.set('requestedByMe', 'true');
   if (filter.status) params.set('status', filter.status);
+  if (filter.limit !== undefined) params.set('limit', String(filter.limit));
   const qs = params.toString();
 
   return useQuery({
