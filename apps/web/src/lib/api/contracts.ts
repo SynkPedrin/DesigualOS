@@ -181,6 +181,18 @@ export interface InfrastructureHealthWire {
    * em 10/09/2026.
    */
   worker?: WorkerHealthWire;
+  /**
+   * Se a camada do roteador que interpreta linguagem livre tem credencial.
+   *
+   * Opcional porque API mais antiga que o frontend não manda — e nesse caso a
+   * tela não afirma nada, em vez de assumir que está tudo certo.
+   *
+   * Sem ela, o assistente só entende os pedidos que casam com as regras
+   * determinísticas e responde "não entendi" a todo o resto. Medido em
+   * 09/10/2026: isso parecia o Bento quebrado, e virava um `logger.warn` que
+   * ninguém lê.
+   */
+  router_classifier_configured?: boolean;
   last_backup_at: ISODateString | null;
   nodes: NodeSummaryWire[];
 }
@@ -217,6 +229,11 @@ export interface InfrastructureHealth {
   agentsConnected: { online: number; total: number };
   /** `null` = a API não reportou. Desconhecido não é o mesmo que saudável. */
   worker: WorkerHealth | null;
+  /**
+   * `null` quando a API é mais velha que o frontend e não manda o campo. Aí a
+   * tela não afirma nada, em vez de assumir que está configurado.
+   */
+  routerClassifierConfigured: boolean | null;
   lastBackupAt: ISODateString | null;
   nodes: NodeSummary[];
 }
@@ -237,6 +254,7 @@ export function mapInfrastructureHealth(wire: InfrastructureHealthWire): Infrast
           lastHeartbeatAt: wire.worker.last_heartbeat_at,
         }
       : null,
+    routerClassifierConfigured: wire.router_classifier_configured ?? null,
     lastBackupAt: wire.last_backup_at,
     nodes: wire.nodes.map((node) => ({
       nodeId: node.node_id,

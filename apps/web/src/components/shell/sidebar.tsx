@@ -475,6 +475,27 @@ export function Sidebar({
                   </dd>
                 </div>
               ) : null}
+              {/*
+                * O ASSISTENTE SÓ ENTENDE REGRA DIRETA quando falta credencial.
+                *
+                * Aparece SÓ quando o estado é conhecido e negativo: campo
+                * ausente (API velha) não vira aviso, e configurado não vira
+                * linha. Linha que some quando está tudo bem é o que faz dela
+                * confiável quando aparece.
+                *
+                * Sem isso, a falha chegava à pessoa como "não entendi sua
+                * pergunta" no chat, e ela reescrevia a pergunta sem chance de
+                * acertar, porque a causa está no servidor.
+                */}
+              {health?.routerClassifierConfigured === false && (
+                <div
+                  className="flex items-center justify-between gap-2"
+                  title="Sem ANTHROPIC_API_KEY, o assistente só entende pedidos que casam com as regras diretas e pede esclarecimento para todo o resto."
+                >
+                  <dt className="text-nevoa">Interpretação</dt>
+                  <dd className="truncate text-erro">sem credencial</dd>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <dt className="text-nevoa">Último backup</dt>
                 <dd className="text-branco-cru">{formatBackupTime(health?.lastBackupAt ?? null)}</dd>

@@ -12,7 +12,7 @@ import {
   type SelectionSnapshot,
 } from '@desigual-os/context-engine';
 import { organizacaoDaConversa, organizacaoDaEscrita } from '@desigual-os/auth';
-import { route, type RouterDecision , ehPerguntaFactualSobreEntidade } from '@desigual-os/router';
+import { route, type RouterDecision , ehPerguntaFactualSobreEntidade, classificadorDisponivel } from '@desigual-os/router';
 import { dispatchChatMessage, touchConversation } from '@desigual-os/orchestrator';
 import {
   AGENT_NAMES,
@@ -512,10 +512,34 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
        * mesmo, sem execução, sem ferramenta e sem tocar em vault.
        */
       if (decision.intent === 'needs_routing_clarification') {
-        const pergunta =
-          'Não consegui identificar sozinho se isso é operação (tarefas e prazos), ' +
-          'mídia paga (resultado de anúncios) ou criação (legenda, título, roteiro). ' +
-          'Me diz qual dos três e eu sigo daqui.';
+        /**
+         * A MENSAGEM DIZ A CAUSA REAL, e antes culpava a pergunta da pessoa.
+         *
+         * Com `ANTHROPIC_API_KEY` ausente o classificador devolve `null` em
+         * TODA chamada, então todo turno que não casa com uma das regras
+         * determinísticas cai aqui. Medido em 09/10/2026: "Oi" terminava em
+         * clarification, sem agente.
+         *
+         * Pedir pra pessoa escolher entre operação, mídia e criação nesse
+         * estado é pedir que ela conserte o que não está quebrado nela: ela
+         * reescreve a pergunta dez vezes e recebe a mesma resposta, porque a
+         * causa é configuração do servidor.
+         *
+         * É a mesma família de defeito que este repositório persegue em outros
+         * lugares: ausência de leitura apresentada como afirmação sobre o
+         * mundo. "Não entendi sua pergunta" quando a verdade é "não tenho como
+         * entender pergunta nenhuma".
+         */
+        const pergunta = classificadorDisponivel()
+          ? 'Não consegui identificar sozinho se isso é operação (tarefas e prazos), ' +
+            'mídia paga (resultado de anúncios) ou criação (legenda, título, roteiro). ' +
+            'Me diz qual dos três e eu sigo daqui.'
+          : 'No momento só consigo entender pedidos que caem nas regras diretas, porque a ' +
+            'camada que interpreta linguagem livre está sem credencial neste ambiente. Não é a ' +
+            'sua pergunta: reescrevê-la não vai ajudar. Quem administra o sistema precisa ' +
+            'configurar ANTHROPIC_API_KEY. Enquanto isso, diga diretamente se é operação ' +
+            '(tarefas e prazos), mídia paga (resultado de anúncios) ou criação (legenda, ' +
+            'título, roteiro) e eu sigo daqui.';
         await db.insert(schema.messages).values({
           conversationId,
           // Mesma herança da mensagem do usuário: a resposta pertence à empresa
@@ -527,7 +551,10 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           metadata: { fast_path: 'needs_routing_clarification' },
         });
         await touchConversation(conversationId);
-        request.log.warn({ conversationId }, '[router] sem decisão de agente; pedindo esclarecimento');
+        request.log.warn(
+          { conversationId, classificadorDisponivel: classificadorDisponivel() },
+          '[router] sem decisão de agente; pedindo esclarecimento',
+        );
         reply.code(202);
         return { execution_id: null, conversation_id: conversationId, agent: null, status: 'clarification' };
       }

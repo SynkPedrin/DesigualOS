@@ -32,6 +32,24 @@ workflow só é preenchido (lista ordenada de agentes) se a tarefa precisar de m
  * A implementação segue a API documentada do SDK oficial; validar contra
  * uma chave real antes de confiar em produção.
  */
+/**
+ * SE A CAMADA PAGA TEM COMO FUNCIONAR, perguntável de fora.
+ *
+ * Sem `ANTHROPIC_API_KEY` o classificador devolve `null` em toda chamada, e
+ * todo turno que não casa com uma das regras determinísticas termina em
+ * `needs_routing_clarification`. Visto da tela, o assistente responde sempre
+ * "não entendi, me diz se é operação, mídia ou criação" — e a pessoa reescreve
+ * a pergunta sem nenhuma chance de acertar, porque o problema não é a pergunta.
+ *
+ * Esta função existe pra quem responde ao usuário poder DIZER isso, em vez de
+ * culpar a pergunta por ambiguidade que não existe. Ela não muda roteamento
+ * nenhum: só torna perguntável, de fora, o que até aqui virava um `logger.warn`
+ * que ninguém lê.
+ */
+export function classificadorDisponivel(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
 export async function classifyWithLLM(message: string, logger: FastifyBaseLogger): Promise<ClassifierResult | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
