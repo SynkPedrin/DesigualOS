@@ -143,6 +143,20 @@ export async function enviarAnexo(arquivo: File): Promise<{ id: string; nome: st
   return { id: crypto.randomUUID(), nome: enviado.filename, url: enviado.url, tipo: enviado.contentType };
 }
 
+/**
+ * Um cartão por cliente real da carteira que ainda não está no quadro — só
+ * existe em quadro `tipo='cliente'`. A API decide quem falta; esta tela só
+ * dispara e refaz a leitura.
+ */
+export function useSincronizarClientes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (boardId: string) =>
+      apiFetch<{ criados: number; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-clientes`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
 export function useApagarCartao() {
   const qc = useQueryClient();
   return useMutation({

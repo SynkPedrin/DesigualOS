@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { PIPELINE_STAGE_COLORS, PIPELINE_TIPOS } from '@desigual-os/types';
 import { resolveClickUpCredentialsForOrganizations, updateTask } from '@desigual-os/tool-gateway';
+import { separarCarteira } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
@@ -132,6 +133,22 @@ const atualizarCartaoSchema = z.object({
   nota: z.string().optional(),
   posicao: z.number().int().optional(),
 });
+
+/**
+ * SINCRONIZAR CLIENTES — quem da carteira ainda não tem cartão neste quadro.
+ *
+ * Pura de propósito (mesmo padrão de `quadrosVisiveisPara`/`decidirAcessoAoQuadro`
+ * acima): dado quem já é carteira real (fixture/interno já filtrados por quem
+ * chama, via `separarCarteira`) e quais client_id já viraram cartão, devolve
+ * só quem falta. Nunca cria cartão duplicado pro mesmo cliente no mesmo
+ * quadro — reimportar é idempotente, igual todo importador deste repositório.
+ */
+export function clientesSemCartao(
+  clientesDaCarteira: ReadonlyArray<{ id: string; name: string }>,
+  clientIdsJaRepresentados: ReadonlySet<string>,
+): Array<{ id: string; name: string }> {
+  return clientesDaCarteira.filter((c) => !clientIdsJaRepresentados.has(c.id));
+}
 
 function wireQuadro(
   b: typeof schema.pipelineBoards.$inferSelect,
@@ -372,6 +389,83 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
 
     reply.code(201);
     return wireQuadro(quadro, [criado!]).cards[0];
+  });
+
+  /**
+   * SINCRONIZAR CLIENTES — um cartão por cliente real da carteira que ainda
+   * não está neste quadro, todos na PRIMEIRA coluna (igual chegaria se
+   * alguém criasse o cartão à mão e não tivesse decidido ainda em que
+   * estágio ele está). Fixture/interno nunca entram — `separarCarteira` já
+   * exclui os dois, mesma régua operacional usada em panorama/qualidade de
+   * dado.
+   */
+  app.post<{ Params: { id: string } }>('/pipelines/:id/sincronizar-clientes', { preHandler: [requireAuth] }, async (request, reply) => {
+    await requireTenant(request, reply);
+    if (reply.sent) return;
+    const quadro = await quadroParaEscrita(request, reply, request.params.id);
+    if (!quadro) return;
+
+    if (quadro.tipo !== 'cliente') {
+      reply.code(400);
+      return { error: 'Sincronizar clientes só existe em quadro do tipo "cliente".' };
+    }
+    if (quadro.stages.length === 0) {
+      reply.code(400);
+      return { error: 'Este quadro não tem nenhuma coluna ainda.' };
+    }
+
+    const organizationId = request.tenantContext!.organizationId;
+    const todos = await db
+      .select({ id: schema.clients.id, name: schema.clients.name })
+      .from(schema.clients)
+      .where(
+        and(
+          eq(schema.clients.organizationId, organizationId),
+          eq(schema.clients.status, 'active'),
+          // QA nunca entra num quadro operacional — mesma regra do resto do
+          // produto (client-context.ts, listasDeClickUpDaOrganizacao...).
+          eq(schema.clients.environment, 'production'),
+          isNull(schema.clients.deletedAt),
+        ),
+      );
+    const { carteira } = separarCarteira(todos);
+
+    const existentes = await db
+      .select({ clientId: schema.pipelineCards.clientId })
+      .from(schema.pipelineCards)
+      .where(and(eq(schema.pipelineCards.boardId, quadro.id), isNull(schema.pipelineCards.deletedAt)));
+    const jaRepresentados = new Set(existentes.map((c) => c.clientId).filter((id): id is string => id !== null));
+
+    const faltando = clientesSemCartao(carteira, jaRepresentados);
+    if (faltando.length === 0) {
+      return { criados: 0, cards: [] };
+    }
+
+    const primeiraColuna = quadro.stages[0]!.id;
+    const criados = await db
+      .insert(schema.pipelineCards)
+      .values(
+        faltando.map((c) => ({
+          boardId: quadro.id,
+          stageId: primeiraColuna,
+          name: c.name,
+          clientId: c.id,
+          responsavel: null,
+          valor: null,
+          nota: '',
+        })),
+      )
+      .returning();
+
+    await auditarAcao(request, {
+      organizationId,
+      action: 'pipeline.board.clients_synced',
+      resourceType: 'pipeline_board',
+      resourceId: quadro.id,
+      metadata: { criados: criados.length },
+    });
+
+    return { criados: criados.length, cards: wireQuadro(quadro, criados).cards };
   });
 
   app.patch<{ Params: { id: string; cardId: string } }>(

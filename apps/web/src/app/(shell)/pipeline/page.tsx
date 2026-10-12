@@ -15,6 +15,7 @@ import {
   useAtualizarCartao,
   useApagarCartao,
   useMoverCartao,
+  useSincronizarClientes,
   enviarAnexo,
 } from '@/hooks/use-pipelines';
 import type { PipelineBoardWire } from '@/lib/api/contracts';
@@ -624,6 +625,7 @@ function PipelineBoardUI() {
   const apagarCartao = useApagarCartao();
   const apagarPipeline = useApagarPipeline();
   const moverCartaoMut = useMoverCartao();
+  const sincronizarClientes = useSincronizarClientes();
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
   const [busca, setBusca] = useState('');
   const [responsavelFiltro, setResponsavelFiltro] = useState('');
@@ -838,6 +840,30 @@ function PipelineBoardUI() {
               {board.tipo !== 'tarefas' && (
                 <button type="button" onClick={() => setConfigurando(true)} className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50">
                   <Settings2 size={15} /> Configurar
+                </button>
+              )}
+              {board.tipo === 'cliente' && (
+                <button
+                  type="button"
+                  disabled={sincronizarClientes.isPending}
+                  onClick={() => {
+                    sincronizarClientes.mutate(board.id, {
+                      onSuccess: (resultado) => {
+                        toast(
+                          resultado.criados > 0
+                            ? resultado.criados === 1
+                              ? '1 cliente entrou no quadro.'
+                              : `${resultado.criados} clientes entraram no quadro.`
+                            : 'Já estava tudo sincronizado — nenhum cliente novo.',
+                          'success',
+                        );
+                      },
+                      onError: (erro) => toast(erro instanceof Error ? erro.message : 'Não consegui sincronizar os clientes.', 'error'),
+                    });
+                  }}
+                  className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50 disabled:opacity-50"
+                >
+                  <Upload size={15} /> {sincronizarClientes.isPending ? 'Sincronizando...' : 'Sincronizar clientes'}
                 </button>
               )}
               <button type="button" onClick={() => setCriandoCartao(true)} className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50">
