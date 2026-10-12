@@ -38,14 +38,24 @@ import { cn } from '@/lib/utils';
  * para lista.
  */
 
-const STATUS_CHIPS = [
-  { key: 'todos', label: 'Todos' },
-  { key: 'active', label: 'Ativos' },
-  { key: 'onboarding', label: 'Em Onboarding' },
-  { key: 'paused', label: 'Em Pausa' },
-  { key: 'inactive', label: 'Inativos' },
-] as const;
-type StatusChip = (typeof STATUS_CHIPS)[number]['key'];
+/**
+ * OS CHIPS SAEM DO DADO, e antes saíam de uma lista escrita à mão.
+ *
+ * Eram cinco, fixos: todos, active, onboarding, paused, inactive. A carteira
+ * real tem `pontual` e `prospect` também — medido em 09/10/2026: 49 clientes,
+ * sendo 22 ativos, 19 PONTUAIS, 7 inativos e 1 PROSPECT. Vinte de quarenta e
+ * nove, 40% da carteira, não tinham chip que os alcançasse, e a soma dos
+ * chips não fechava com o total logo acima.
+ *
+ * Status é coluna de texto, cadastrada por quem usa: toda lista fixa aqui
+ * envelhece na primeira vez que alguém inventa um valor novo, e envelhece em
+ * silêncio, escondendo cliente em vez de dar erro.
+ *
+ * ORDEM: os conhecidos primeiro, na ordem de ciclo de vida que a equipe usa;
+ * os desconhecidos depois, por quantidade. Assim o chip novo aparece sem
+ * desarrumar o que as pessoas já sabem de cor.
+ */
+const ORDEM_CONHECIDA = ['active', 'onboarding', 'pontual', 'paused', 'inactive', 'prospect'] as const;
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   active: { label: 'Ativo', className: 'border-sinal/40 bg-sinal/10 text-sinal' },
@@ -53,7 +63,33 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   paused: { label: 'Em pausa', className: 'border-aviso/40 bg-aviso/10 text-aviso' },
   inactive: { label: 'Inativo', className: 'border-grafite-elevado bg-carbono text-nevoa' },
   pontual: { label: 'Pontual', className: 'border-roxo-eletrico/40 bg-roxo-eletrico/10 text-roxo-eletrico' },
+  prospect: { label: 'Prospect', className: 'border-info/40 bg-info/10 text-info' },
 };
+
+/**
+ * Status sem badge cadastrado aparece com o nome CRU, em cinza, nunca sem
+ * nada. Melhor a pessoa ler "prospect" e estranhar do que o cliente aparecer
+ * sem marca nenhuma e parecer igual a todos os outros.
+ */
+function badgeDoStatus(status: string): { label: string; className: string } {
+  return STATUS_BADGE[status] ?? { label: status, className: 'border-grafite-elevado bg-carbono text-nevoa' };
+}
+
+export function chipsDeStatus(statusDaCarteira: readonly string[]): Array<{ key: string; label: string }> {
+  const existentes = [...new Set(statusDaCarteira)];
+  const conhecidos = ORDEM_CONHECIDA.filter((s) => existentes.includes(s));
+  const desconhecidos = existentes
+    .filter((s) => !ORDEM_CONHECIDA.includes(s as (typeof ORDEM_CONHECIDA)[number]))
+    .sort((a, b) =>
+      statusDaCarteira.filter((x) => x === b).length - statusDaCarteira.filter((x) => x === a).length,
+    );
+  return [
+    { key: 'todos', label: 'Todos' },
+    ...[...conhecidos, ...desconhecidos].map((s) => ({ key: s, label: badgeDoStatus(s).label })),
+  ];
+}
+
+type StatusChip = string;
 
 const CENTER_TABS = ['Visão geral', 'Demandas', 'Tarefas', 'Calendário', 'Arquivos', 'Equipe', 'Memória', 'Mais'] as const;
 type CenterTab = (typeof CENTER_TABS)[number];
@@ -64,6 +100,8 @@ function ClientsPageContent() {
   const { data: clients, isPending, isError, refetch } = useClients();
   const [busca, setBusca] = useState('');
   const [statusChip, setStatusChip] = useState<StatusChip>('todos');
+  /** Os chips seguem a carteira: status novo aparece sozinho, sem ninguém editar lista. */
+  const chips = useMemo(() => chipsDeStatus((clients ?? []).map((c) => c.status)), [clients]);
   const [ordem, setOrdem] = useState<OrdemDaGrade>('natureza');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -156,7 +194,7 @@ function ClientsPageContent() {
             >
               Parados primeiro
             </button>
-            {STATUS_CHIPS.map(({ key, label }) => {
+            {chips.map(({ key, label }) => {
               const quantos = key === 'todos' ? clients.length : clients.filter((c) => c.status === key).length;
               return (
                 <button
@@ -212,7 +250,7 @@ function ClientsPageContent() {
                 <p className="p-4 text-center text-sm text-nevoa">Nada com esse filtro.</p>
               ) : (
                 filtrados.map((client) => {
-                  const badge = STATUS_BADGE[client.status];
+                  const badge = badgeDoStatus(client.status);
                   return (
                     <button
                       key={client.id}
@@ -262,7 +300,7 @@ function ClientCenterPanel({ client, tab, onTab }: { client: ClientSummary; tab:
   // fallback "[CONFIRMAR: ...]", que é honesto: diz que o campo não tem fonte,
   // em vez de atribuir um telefone inventado a um cliente de verdade.
   const info = (DEMO_MODE ? DEMO_CLIENT_INFO[client.id] : undefined) ?? DEMO_CLIENT_INFO_FALLBACK;
-  const badge = STATUS_BADGE[client.status];
+  const badge = badgeDoStatus(client.status);
   const demandasAtivas = useDemands({ clientId: client.id });
   const tarefas = useClientClickUpTasks(client.id);
   const now = useMemo(() => new Date(), []);
