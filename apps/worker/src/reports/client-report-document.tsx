@@ -35,7 +35,24 @@ function acharLogo(): string | null {
 }
 const LOGO_PATH = acharLogo();
 
-const ROXO = '#6b21a8';
+/**
+ * A PALETA É A DA MARCA, lida de `apps/web/src/styles/tokens.css` e não
+ * escolhida aqui. O roxo era `#6b21a8`, que é a `ametista` (secundária); a
+ * identidade da Desigual é `roxo-eletrico`, `#9333ea`. Um documento que vai
+ * pro cliente assinado pela agência não pode usar a cor de apoio como se
+ * fosse a principal.
+ *
+ * O MIOLO CONTINUA CLARO, de propósito. A interface é escura, mas isto é um
+ * PDF que a pessoa imprime, anexa em e-mail e abre no celular: fundo carbono
+ * numa folha A4 gasta tinta, perde contraste em impressora e vira mancha em
+ * leitor que força tema claro. A marca entra na faixa do topo, nas cores de
+ * destaque e na tipografia, que é onde ela se reconhece sem atrapalhar a
+ * leitura.
+ */
+const ROXO = '#9333ea';
+const ROXO_ESCURO = '#6b21a8';
+const CARBONO = '#0f0f0f';
+const SINAL = '#e1f900';
 const CINZA_TEXTO = '#404040';
 const CINZA_CLARO = '#8a8a8a';
 const BORDA = '#e5e5e5';
@@ -132,13 +149,48 @@ function formatarData(d: Date): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+/**
+ * SEM TRAVESSÃO, e não é preferência de estilo: é a regra de texto de produto
+ * da Desigual OS, e um relatório que vai pro cliente é o texto de produto mais
+ * exposto que existe aqui. "sem dado" também diz mais que um traço, que tanto
+ * pode ser zero quanto ausência quanto erro de leitura.
+ */
+const SEM_DADO = 'sem dado';
+
+/**
+ * O STATUS DA CAMPANHA CHEGA EM INGLÊS DA API DO META, e saía assim no PDF:
+ * um relatório em português, assinado pela agência e enviado ao cliente,
+ * dizendo "ACTIVE" e "PAUSED". Quem recebe não tem obrigação de saber ler
+ * jargão de plataforma.
+ *
+ * Status que eu não conheço sai COMO VEIO, em vez de virar "Desconhecida":
+ * um valor novo da plataforma é informação, e apagá-lo seria esconder o que
+ * está acontecendo na conta do cliente.
+ */
+const STATUS_EM_PORTUGUES: Record<string, string> = {
+  ACTIVE: 'Ativa',
+  PAUSED: 'Pausada',
+  DELETED: 'Excluída',
+  ARCHIVED: 'Arquivada',
+  ENABLED: 'Ativa',
+  REMOVED: 'Removida',
+  IN_PROCESS: 'Em processamento',
+  WITH_ISSUES: 'Com problemas',
+  CAMPAIGN_PAUSED: 'Campanha pausada',
+  ADSET_PAUSED: 'Conjunto pausado',
+};
+
+function statusLegivel(status: string): string {
+  return STATUS_EM_PORTUGUES[status.toUpperCase()] ?? status;
+}
+
 function formatarMoeda(valor: number | null): string {
-  if (valor === null) return '—';
+  if (valor === null) return SEM_DADO;
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
 }
 
 function formatarNumero(valor: number | null): string {
-  if (valor === null) return '—';
+  if (valor === null) return SEM_DADO;
   return new Intl.NumberFormat('pt-BR').format(Math.round(valor));
 }
 
@@ -171,13 +223,21 @@ function SecaoDeCanal({ titulo, canal }: { titulo: string; canal: ChannelReportD
     );
   }
 
+  /**
+   * SEM `break` FORÇADO. O canal conectado abria página nova sempre, e o
+   * resultado era uma folha 1 com quatro caixinhas e dois terços de papel em
+   * branco, visível no primeiro PDF que eu abri. Deixar o conteúdo fluir faz
+   * o resumo e o primeiro canal dividirem a mesma página; o `wrap={false}` da
+   * galeria continua impedindo que um bloco de criativos nasça partido ao
+   * meio.
+   */
   return (
-    <View break>
+    <View>
       <Text style={styles.sectionTitle}>{titulo}</Text>
       <View style={styles.kpiRow}>
         <KpiBox label="Investimento" valor={formatarMoeda(canal.atual?.spend ?? null)} deltaTexto={delta(canal.atual?.spend ?? null, canal.anterior?.spend ?? null)} deltaPositivoEhBom={false} />
         <KpiBox label="Resultados" valor={formatarNumero(canal.atual?.resultados ?? null)} deltaTexto={delta(canal.atual?.resultados ?? null, canal.anterior?.resultados ?? null)} deltaPositivoEhBom />
-        <KpiBox label="CTR" valor={canal.atual?.ctr != null ? `${canal.atual.ctr.toFixed(2)}%` : '—'} deltaTexto={delta(canal.atual?.ctr ?? null, canal.anterior?.ctr ?? null)} deltaPositivoEhBom />
+        <KpiBox label="CTR" valor={canal.atual?.ctr != null ? `${canal.atual.ctr.toFixed(2)}%` : SEM_DADO} deltaTexto={delta(canal.atual?.ctr ?? null, canal.anterior?.ctr ?? null)} deltaPositivoEhBom />
         <KpiBox label="Custo médio" valor={formatarMoeda(canal.atual?.custoMedio ?? null)} deltaTexto={delta(canal.atual?.custoMedio ?? null, canal.anterior?.custoMedio ?? null)} deltaPositivoEhBom={false} />
       </View>
 
@@ -186,15 +246,15 @@ function SecaoDeCanal({ titulo, canal }: { titulo: string; canal: ChannelReportD
           <View style={styles.tableHeaderRow}>
             <Text style={[styles.tableHeaderCell, styles.colName]}>Campanha</Text>
             <Text style={[styles.tableHeaderCell, styles.colStatus]}>Status</Text>
-            <Text style={[styles.tableHeaderCell, styles.colNum]}>Spend</Text>
+            <Text style={[styles.tableHeaderCell, styles.colNum]}>Investimento</Text>
             <Text style={[styles.tableHeaderCell, styles.colNum]}>CTR</Text>
           </View>
           {canal.campanhas.slice(0, 12).map((c) => (
             <View key={c.id} style={styles.tableRow}>
               <Text style={[styles.tableCell, styles.colName]}>{c.name}</Text>
-              <Text style={[styles.tableCell, styles.colStatus]}>{c.status}</Text>
+              <Text style={[styles.tableCell, styles.colStatus]}>{statusLegivel(c.status)}</Text>
               <Text style={[styles.tableCell, styles.colNum]}>{formatarMoeda(c.spend)}</Text>
-              <Text style={[styles.tableCell, styles.colNum]}>{c.ctr != null ? `${c.ctr.toFixed(2)}%` : '—'}</Text>
+              <Text style={[styles.tableCell, styles.colNum]}>{c.ctr != null ? `${c.ctr.toFixed(2)}%` : SEM_DADO}</Text>
             </View>
           ))}
         </View>
@@ -228,7 +288,7 @@ function GaleriaDeCriativos({ criativos }: { criativos: ReportCreative[] }) {
             <View style={styles.criativoLegenda}>
               <Text style={styles.criativoNome}>{c.name.slice(0, 34)}</Text>
               <Text style={styles.criativoNumero}>
-                {formatarMoeda(c.spend)} · CTR {c.ctr != null ? `${c.ctr.toFixed(2)}%` : '—'}
+                {formatarMoeda(c.spend)} · CTR {c.ctr != null ? `${c.ctr.toFixed(2)}%` : SEM_DADO}
               </Text>
             </View>
           </View>
@@ -239,42 +299,75 @@ function GaleriaDeCriativos({ criativos }: { criativos: ReportCreative[] }) {
 }
 
 export function ClientReportDocument({ data }: { data: ClientReportData }) {
+  /** Os canais que de fato foram LIDOS. Desconectado não entra na soma nem
+   *  no rótulo: ele não contribui com zero, ele não contribui. */
+  const canais: Array<{ nome: string; dados: ChannelReportData }> = [
+    ...(data.meta?.conectado ? [{ nome: 'Meta Ads', dados: data.meta }] : []),
+    ...(data.googleAds?.conectado ? [{ nome: 'Google Ads', dados: data.googleAds }] : []),
+  ];
+  const canaisLidos = canais.map((c) => c.nome);
+
+  /** Soma só o que veio com valor. Nenhum valor em canal nenhum devolve
+   *  ausência, nunca zero: zero é uma afirmação, ausência é a verdade. */
+  function somaDosCanais(ler: (c: ChannelReportData) => number | null, formatar: (v: number | null) => string): string {
+    const valores = canais.map((c) => ler(c.dados)).filter((v): v is number => v !== null);
+    return valores.length === 0 ? SEM_DADO : formatar(valores.reduce((a, b) => a + b, 0));
+  }
+
   return (
-    <Document title={`Relatório de Performance — ${data.clienteNome}`} author="Desigual OS">
+    <Document title={`Relatório de Performance · ${data.clienteNome}`} author="Desigual OS">
       <Page size="A4" style={styles.page}>
         <View style={styles.header}>
           {LOGO_PATH ? <Image src={LOGO_PATH} style={styles.logo} /> : <Text style={{ fontSize: 14, fontWeight: 700, color: ROXO }}>DESIGUAL</Text>}
           <View style={styles.headerRight}>
             <Text style={styles.title}>Relatório de Performance</Text>
             <Text style={styles.subtitle}>
-              {data.clienteNome} · {formatarData(data.periodoInicio)} — {formatarData(data.periodoFim)}
+              {data.clienteNome} · {formatarData(data.periodoInicio)} a {formatarData(data.periodoFim)}
             </Text>
           </View>
         </View>
 
         <Text style={styles.sectionTitle}>Resumo executivo</Text>
+        {/*
+          * "TOTAL" SÓ QUANDO É TOTAL. A versão anterior somava
+          * `(meta ?? 0) + (google ?? 0)` e chamava de "Investimento total":
+          * com um canal desconectado, o zero dele entrava na conta e o
+          * parcial virava total. Se o cliente também investe no canal que
+          * não está ligado, o relatório SUBESTIMA o gasto e nada na página
+          * avisa.
+          *
+          * Agora a soma percorre só os canais conectados e o rótulo diz
+          * quais são. Nenhum canal lido vira ausência, nunca R$ 0,00: num
+          * relatório que o cliente recebe, "zero investido" é uma afirmação
+          * sobre o mês dele.
+          */}
         <View style={styles.kpiRow}>
           <KpiBox
-            label="Investimento total"
-            valor={formatarMoeda((data.meta?.atual?.spend ?? 0) + (data.googleAds?.atual?.spend ?? 0) || null)}
+            label={canaisLidos.length === 0 ? 'Investimento' : `Investimento · ${canaisLidos.join(' e ')}`}
+            valor={somaDosCanais((c) => c.atual?.spend ?? null, formatarMoeda)}
             deltaTexto={null}
             deltaPositivoEhBom={false}
           />
           <KpiBox
-            label="Resultados totais"
-            valor={formatarNumero((data.meta?.atual?.resultados ?? 0) + (data.googleAds?.atual?.resultados ?? 0) || null)}
+            label={canaisLidos.length === 0 ? 'Resultados' : `Resultados · ${canaisLidos.join(' e ')}`}
+            valor={somaDosCanais((c) => c.atual?.resultados ?? null, formatarNumero)}
             deltaTexto={null}
             deltaPositivoEhBom
           />
-          <KpiBox label="Meta Ads" valor={data.meta?.conectado ? 'Conectado' : 'Não conectado'} deltaTexto={null} deltaPositivoEhBom />
-          <KpiBox label="Google Ads" valor={data.googleAds?.conectado ? 'Conectado' : 'Não conectado'} deltaTexto={null} deltaPositivoEhBom />
+          <KpiBox label="Período" valor={`${data.periodoDias} dias`} deltaTexto={null} deltaPositivoEhBom />
+          <KpiBox
+            label="Canais conectados"
+            valor={canaisLidos.length === 0 ? 'nenhum' : `${canaisLidos.length} de 2`}
+            deltaTexto={null}
+            deltaPositivoEhBom
+          />
         </View>
 
         {data.meta && <SecaoDeCanal titulo="Meta Ads" canal={data.meta} />}
         {data.googleAds && <SecaoDeCanal titulo="Google Ads" canal={data.googleAds} />}
 
         <View style={styles.footer} fixed>
-          <Text>Desigual OS — gerado em {data.geradoEm.toLocaleString('pt-BR')}</Text>
+          <Text>Desigual OS · gerado em {data.geradoEm.toLocaleString('pt-BR')}</Text>
           <Text render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
         </View>
       </Page>
