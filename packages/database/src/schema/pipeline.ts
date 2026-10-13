@@ -46,6 +46,15 @@ export const pipelineBoards = pgTable(
      * tem vida própria. A ordem do array É a ordem na tela.
      */
     stages: jsonb('stages').$type<PipelineStage[]>().notNull().default([]),
+    /**
+     * Só para `tipo='tarefas'`: QUAL cliente este quadro espelha. Existe
+     * porque status do ClickUp é POR LISTA — cada cliente tem o seu, nem
+     * sempre igual ao de outro — e sem saber de qual lista este quadro é
+     * espelho, não dá pra saber que status buscar nem em qual quadro
+     * encaixar uma task nova que chegou pelo webhook. `null` em quadro
+     * `cliente`/`colaborador`, que não têm essa amarração.
+     */
+    clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
     /** Ordem do quadro no seletor. Menor primeiro. */
     posicao: integer('posicao').notNull().default(0),
     ...timestampColumns,
@@ -53,6 +62,8 @@ export const pipelineBoards = pgTable(
   },
   (table) => ({
     porDono: index('pipeline_boards_org_owner_idx').on(table.organizationId, table.ownerId),
+    /** O webhook do ClickUp acha o(s) quadro(s) de um cliente por aqui. */
+    porCliente: index('pipeline_boards_client_idx').on(table.clientId),
   }),
 );
 

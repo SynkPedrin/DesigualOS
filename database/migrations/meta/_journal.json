@@ -484,6 +484,13 @@
       "when": 1791483472761,
       "tag": "0068_glamorous_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1791890643982,
+      "tag": "0069_uneven_black_panther",
+      "breakpoints": true
     }
   ]
 }

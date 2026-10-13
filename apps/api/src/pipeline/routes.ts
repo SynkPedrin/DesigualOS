@@ -3,11 +3,12 @@ import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { PIPELINE_STAGE_COLORS, PIPELINE_TIPOS } from '@desigual-os/types';
-import { resolveClickUpCredentialsForOrganizations, updateTask } from '@desigual-os/tool-gateway';
+import { listStatusesForList, queryOperationTasks, resolveClickUpCredentialsForOrganizations, updateTask } from '@desigual-os/tool-gateway';
 import { separarCarteira } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
+import { estagioPeloStatus, statusInvalidosParaALista } from './estagios';
 
 /**
  * QUEM PODE ESCREVER NUM QUADRO — a escada inteira, sem banco e sem Fastify.
@@ -98,6 +99,14 @@ const criarQuadroSchema = z.object({
    */
   escopo: z.enum(['agencia', 'pessoal']).default('pessoal'),
   stages: z.array(estagioSchema).min(1),
+  /**
+   * Só pra `tipo='tarefas'`: QUAL cliente este quadro espelha — obrigatório
+   * nesse tipo porque status do ClickUp é por lista (ver `pipeline.ts`,
+   * coluna `client_id`). Validado no handler, não aqui: zod não enxerga o
+   * `tipo` de uma chave pra exigir condicionalmente a outra sem perder a
+   * mensagem de erro específica que o handler dá.
+   */
+  client_id: z.string().uuid().nullable().optional(),
 });
 
 const atualizarQuadroSchema = z.object({
@@ -150,6 +159,10 @@ export function clientesSemCartao(
   return clientesDaCarteira.filter((c) => !clientIdsJaRepresentados.has(c.id));
 }
 
+// statusInvalidosParaALista / estagioPeloStatus vivem em ./estagios — o
+// webhook do ClickUp (clickup/routes.ts) também precisa delas, e rota não
+// importa de rota neste repositório.
+
 function wireQuadro(
   b: typeof schema.pipelineBoards.$inferSelect,
   cartoes: (typeof schema.pipelineCards.$inferSelect)[],
@@ -159,6 +172,7 @@ function wireQuadro(
     nome: b.nome,
     tipo: b.tipo,
     escopo: b.ownerId === null ? ('agencia' as const) : ('pessoal' as const),
+    client_id: b.clientId,
     stages: b.stages,
     posicao: b.posicao,
     cards: cartoes
@@ -247,6 +261,53 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       };
     }
 
+    /**
+     * QUADRO DE TAREFAS PRECISA SABER DE QUAL CLIENTE — status do ClickUp é
+     * por lista (13/10/2026, confirmado pela operação), então sem saber a
+     * lista não dá pra saber que status são reais nem onde encaixar task nova
+     * que chegar pelo webhook. Confere aqui, não só no zod: a mensagem certa
+     * ("esse cliente não tem ClickUp conectado") é mais útil que um 400 genérico.
+     */
+    if (body.tipo === 'tarefas') {
+      if (!body.client_id) {
+        reply.code(400);
+        return { error: 'Quadro de tarefas precisa de um cliente — os status são da lista dele no ClickUp.' };
+      }
+      const [cliente] = await db
+        .select({ id: schema.clients.id, clickupListId: schema.clients.clickupListId })
+        .from(schema.clients)
+        .where(and(eq(schema.clients.id, body.client_id), eq(schema.clients.organizationId, organizationId), isNull(schema.clients.deletedAt)));
+      if (!cliente) {
+        reply.code(404);
+        return { error: 'Cliente não encontrado.' };
+      }
+      if (!cliente.clickupListId) {
+        reply.code(400);
+        return { error: 'Este cliente não tem lista do ClickUp vinculada — não dá pra saber os status reais dele.' };
+      }
+      const credenciais = await resolveClickUpCredentialsForOrganizations([organizationId]);
+      const resolucao = credenciais.get(organizationId);
+      if (!resolucao?.credentials) {
+        reply.code(502);
+        return { error: 'Não consegui falar com o ClickUp para conferir os status desta lista.', detalhe: resolucao?.error ?? 'Empresa sem ClickUp conectado.' };
+      }
+      let statusReais: string[];
+      try {
+        statusReais = await listStatusesForList(resolucao.credentials, cliente.clickupListId);
+      } catch (erro) {
+        reply.code(502);
+        return { error: 'O ClickUp recusou devolver os status desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) };
+      }
+      const invalidos = statusInvalidosParaALista(body.stages, statusReais);
+      if (invalidos.length > 0) {
+        reply.code(400);
+        return {
+          error: `Os status "${invalidos.join('", "')}" não existem nesta lista do ClickUp.`,
+          detalhe: `Status reais: ${statusReais.join(', ')}`,
+        };
+      }
+    }
+
     const [criado] = await db
       .insert(schema.pipelineBoards)
       .values({
@@ -254,6 +315,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
         ownerId: body.escopo === 'agencia' ? null : user.id,
         nome: body.nome,
         tipo: body.tipo,
+        clientId: body.tipo === 'tarefas' ? (body.client_id ?? null) : null,
         stages: body.stages,
       })
       .returning();
@@ -466,6 +528,89 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     });
 
     return { criados: criados.length, cards: wireQuadro(quadro, criados).cards };
+  });
+
+  /**
+   * SINCRONIZAR TAREFAS — puxa as tasks REAIS da lista do cliente deste
+   * quadro e cria um cartão pra cada uma que ainda não tem (dedup por
+   * `clickup_task_id`, mesmo índice único que o banco já garante). Cobre o
+   * backfill: task que já existia no ClickUp antes do quadro nascer não
+   * chega sozinha — só task NOVA chega via webhook (ver clickup/routes.ts).
+   *
+   * Task cujo status real não bate com NENHUMA coluna deste quadro fica DE
+   * FORA, de propósito: a pessoa escolheu quais status viram coluna ao criar
+   * o quadro, e inventar uma coluna ou cair na primeira por acaso
+   * representaria a task num lugar que não é o dela.
+   */
+  app.post<{ Params: { id: string } }>('/pipelines/:id/sincronizar-tarefas', { preHandler: [requireAuth] }, async (request, reply) => {
+    await requireTenant(request, reply);
+    if (reply.sent) return;
+    const quadro = await quadroParaEscrita(request, reply, request.params.id);
+    if (!quadro) return;
+
+    if (quadro.tipo !== 'tarefas') {
+      reply.code(400);
+      return { error: 'Sincronizar tarefas só existe em quadro do tipo "tarefas".' };
+    }
+    if (!quadro.clientId) {
+      reply.code(400);
+      return { error: 'Este quadro de tarefas não está vinculado a um cliente.' };
+    }
+
+    const organizationId = request.tenantContext!.organizationId;
+    const [cliente] = await db
+      .select({ id: schema.clients.id, clickupListId: schema.clients.clickupListId })
+      .from(schema.clients)
+      .where(and(eq(schema.clients.id, quadro.clientId), isNull(schema.clients.deletedAt)));
+    if (!cliente?.clickupListId) {
+      reply.code(400);
+      return { error: 'O cliente deste quadro não tem lista do ClickUp vinculada.' };
+    }
+
+    const credenciais = await resolveClickUpCredentialsForOrganizations([organizationId]);
+    const resolucao = credenciais.get(organizationId);
+    if (!resolucao?.credentials) {
+      reply.code(502);
+      return { error: 'Não consegui falar com o ClickUp para buscar as tarefas.', detalhe: resolucao?.error ?? 'Empresa sem ClickUp conectado.' };
+    }
+
+    const pagina = await queryOperationTasks(resolucao.credentials, { listIds: [cliente.clickupListId], includeClosed: true, subtasks: true }).catch(
+      (erro: unknown) => {
+        reply.code(502).send({ error: 'O ClickUp recusou listar as tarefas desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) });
+        return null;
+      },
+    );
+    if (!pagina) return;
+
+    const existentes = await db
+      .select({ clickupTaskId: schema.pipelineCards.clickupTaskId })
+      .from(schema.pipelineCards)
+      .where(and(eq(schema.pipelineCards.boardId, quadro.id), isNull(schema.pipelineCards.deletedAt)));
+    const jaTemCartao = new Set(existentes.map((c) => c.clickupTaskId).filter((id): id is string => id !== null));
+
+    const paraCriar: Array<{ boardId: string; stageId: string; name: string; clickupTaskId: string }> = [];
+    let semColuna = 0;
+    for (const task of pagina.tasks) {
+      if (jaTemCartao.has(task.id)) continue;
+      const estagio = estagioPeloStatus(quadro.stages, task.status);
+      if (!estagio) {
+        semColuna++;
+        continue;
+      }
+      paraCriar.push({ boardId: quadro.id, stageId: estagio.id, name: task.name, clickupTaskId: task.id });
+    }
+
+    const criados = paraCriar.length > 0 ? await db.insert(schema.pipelineCards).values(paraCriar).returning() : [];
+
+    await auditarAcao(request, {
+      organizationId,
+      action: 'pipeline.board.tasks_synced',
+      resourceType: 'pipeline_board',
+      resourceId: quadro.id,
+      metadata: { criados: criados.length, sem_coluna: semColuna },
+    });
+
+    return { criados: criados.length, sem_coluna: semColuna, cards: wireQuadro(quadro, criados).cards };
   });
 
   app.patch<{ Params: { id: string; cardId: string } }>(

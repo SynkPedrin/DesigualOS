@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, resolveMemberByName, uploadTaskAttachment } from './clickup-client';
+import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, listStatusesForList, resolveMemberByName, uploadTaskAttachment } from './clickup-client';
 
 /**
  * Cobertura do timeout de rede adicionado na auditoria de production
@@ -261,5 +261,32 @@ describe('apelido cadastrado: a pessoa fala o nome inteiro, o ClickUp tem o apel
     const r = await resolveMemberByName(CONFIG, 'Gabriel');
     expect(r.status).toBe('ambiguous');
     if (r.status === 'ambiguous') expect(r.candidates).toHaveLength(2);
+  });
+});
+
+/**
+ * Pipeline `tipo='tarefas'` (13/10/2026): status é POR LISTA, nunca universal
+ * — duas listas de cliente podem ter conjuntos totalmente diferentes
+ * (confirmado pela operação). `listStatusesForList` é o que permite montar o
+ * quadro de um cliente com os status REAIS da lista dele, direto pelo
+ * clickup_list_id, sem precisar de uma task existente.
+ */
+describe('listStatusesForList', () => {
+  it('lê os status reais da lista, na ordem que o ClickUp devolveu', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ statuses: [{ status: 'aberto' }, { status: 'em produção' }, { status: 'fechado' }] }),
+    })));
+    expect(await listStatusesForList(CONFIG, 'lista-1')).toEqual(['aberto', 'em produção', 'fechado']);
+  });
+
+  it('lista sem status nenhum devolve array vazio, não lança', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })));
+    expect(await listStatusesForList(CONFIG, 'lista-1')).toEqual([]);
+  });
+
+  it('ClickUp recusando a lista vira erro explícito, não lista vazia disfarçada de "sem status"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => 'not found' })));
+    await expect(listStatusesForList(CONFIG, 'lista-inexistente')).rejects.toThrow('ClickUp list fetch failed (404)');
   });
 });

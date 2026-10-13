@@ -390,9 +390,14 @@ export async function updateTask(config: ClickUpConfig, taskId: string, params: 
   }
 }
 
-/** Status válidos da lista da task (workflow custom por lista no ClickUp). */
-export async function listStatusesForTask(config: ClickUpConfig, taskId: string): Promise<string[]> {
-  const listId = await getTaskListId(config, taskId);
+/**
+ * Status reais de UMA lista (workflow custom por lista no ClickUp — duas
+ * listas podem ter conjuntos totalmente diferentes, confirmado pela
+ * operação). Pipeline `tipo='tarefas'` (Bento 3.0/Pipeline, 13/10/2026) usa
+ * isto direto pelo `clickup_list_id` do cliente, sem precisar de uma task já
+ * existente pra descobrir a lista.
+ */
+export async function listStatusesForList(config: ClickUpConfig, listId: string): Promise<string[]> {
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${listId}`, {
     headers: { Authorization: config.apiKey },
   });
@@ -401,6 +406,12 @@ export async function listStatusesForTask(config: ClickUpConfig, taskId: string)
   }
   const body = (await response.json()) as { statuses?: { status: string }[] };
   return (body.statuses ?? []).map((entry) => entry.status);
+}
+
+/** Status válidos da lista da task (workflow custom por lista no ClickUp). */
+export async function listStatusesForTask(config: ClickUpConfig, taskId: string): Promise<string[]> {
+  const listId = await getTaskListId(config, taskId);
+  return listStatusesForList(config, listId);
 }
 
 /**

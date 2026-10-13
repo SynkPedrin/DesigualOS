@@ -42,6 +42,7 @@ import { extrairMudancas, frasearEventoDeTarefa, mudancaDeStatus } from './webho
 import { respondAsBento } from '../lib/bento-mention';
 import { detectMentionedAgent, respondAsAgent, respondAsOtto } from '../lib/agent-mention';
 import { esquecerTarefasDaLista } from './cache-de-lista';
+import { sincronizarCartaoDaTarefa } from '../pipeline/sincronizar-webhook';
 
 const logger = createLogger({ service: 'clickup-webhook' });
 
@@ -508,11 +509,13 @@ async function handleTaskChanged(
    */
   let listId = changed.listId;
   let nomeDaTarefa: string | null = null;
+  let statusAtual: string | null = null;
   if (changed.event !== 'taskDeleted') {
     try {
       const resumo = await resumoDaTarefa(config, changed.taskId);
       listId = listId ?? resumo.listId;
       nomeDaTarefa = resumo.name;
+      statusAtual = resumo.status;
     } catch (error) {
       // Degrada, não desiste: sem o nome o evento ainda vale (ator, cliente,
       // mudança de status). Só desiste se a lista também ficou desconhecida.
@@ -526,6 +529,25 @@ async function handleTaskChanged(
 
   const [client] = await db.select().from(schema.clients).where(eq(schema.clients.clickupListId, listId));
   if (!client) return;
+
+  /**
+   * PIPELINE DE TAREFAS (13/10/2026): task nova entra sozinha num quadro
+   * `tipo='tarefas'` deste cliente; task que mudou de status reposiciona o
+   * cartão dela; task apagada apaga o cartão. Nunca derruba o webhook — um
+   * quadro de pipeline é uma VIEW sobre o ClickUp, e o evento em si (ator,
+   * resumo, campanha) já é valioso mesmo que esta parte falhe.
+   */
+  if (changed.event === 'taskCreated' || changed.event === 'taskUpdated' || changed.event === 'taskDeleted') {
+    await sincronizarCartaoDaTarefa({
+      evento: changed.event,
+      clientId: client.id,
+      taskId: changed.taskId,
+      taskName: nomeDaTarefa,
+      statusAtual,
+    }).catch((error: unknown) => {
+      logger.warn({ error, taskId: changed.taskId }, 'ClickUp webhook: falha ao sincronizar cartão de pipeline');
+    });
+  }
 
   /**
    * ORGANIZAÇÃO + AUTOR (01/10/2026). Antes o evento nascia sem
