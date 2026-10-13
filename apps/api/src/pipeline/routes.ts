@@ -238,6 +238,46 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     }
   });
 
+  /**
+   * STATUS REAIS DE UM CLIENTE, pra montar as colunas de um quadro de
+   * tarefas ANTES de criar — sem isto a tela só tinha os 4 status inventados
+   * (`CLICKUP_STATUSES_DISPONIVEIS`) pra oferecer. Status é por lista, nunca
+   * universal (13/10/2026, confirmado pela operação).
+   */
+  app.get<{ Params: { clientId: string } }>('/pipelines/clientes/:clientId/status-clickup', { preHandler: [requireAuth] }, async (request, reply) => {
+    await requireTenant(request, reply);
+    if (reply.sent) return;
+    const organizationId = request.tenantContext!.organizationId;
+
+    const [cliente] = await db
+      .select({ id: schema.clients.id, clickupListId: schema.clients.clickupListId })
+      .from(schema.clients)
+      .where(and(eq(schema.clients.id, request.params.clientId), eq(schema.clients.organizationId, organizationId), isNull(schema.clients.deletedAt)));
+    if (!cliente) {
+      reply.code(404);
+      return { error: 'Cliente não encontrado.' };
+    }
+    if (!cliente.clickupListId) {
+      reply.code(400);
+      return { error: 'Este cliente não tem lista do ClickUp vinculada.' };
+    }
+
+    const credenciais = await resolveClickUpCredentialsForOrganizations([organizationId]);
+    const resolucao = credenciais.get(organizationId);
+    if (!resolucao?.credentials) {
+      reply.code(502);
+      return { error: 'Não consegui falar com o ClickUp.', detalhe: resolucao?.error ?? 'Empresa sem ClickUp conectado.' };
+    }
+
+    try {
+      const status = await listStatusesForList(resolucao.credentials, cliente.clickupListId);
+      return { status };
+    } catch (erro) {
+      reply.code(502);
+      return { error: 'O ClickUp recusou devolver os status desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) };
+    }
+  });
+
   app.post('/pipelines', { preHandler: [requireAuth] }, async (request, reply) => {
     await requireTenant(request, reply);
     if (reply.sent) return;

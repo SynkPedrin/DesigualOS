@@ -31,7 +31,36 @@ export function useCriarPipeline() {
       tipo: PipelineBoardWire['tipo'];
       escopo: PipelineBoardWire['escopo'];
       stages: PipelineStageWire[];
+      /** Obrigatório quando `tipo === 'tarefas'` — de qual cliente este quadro é espelho. */
+      client_id?: string | null;
     }) => apiFetch<PipelineBoardWire>('/pipelines', { method: 'POST', body: JSON.stringify(entrada) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+/**
+ * Status REAIS da lista de um cliente — status é por lista, nunca universal
+ * (confirmado pela operação). Usado na tela de criar quadro de tarefas, pra
+ * não oferecer status inventado como coluna.
+ */
+export function useStatusClickUpDoCliente(clientId: string | null) {
+  return useQuery({
+    queryKey: ['pipelines', 'status-clickup', clientId],
+    queryFn: () => apiFetch<{ status: string[] }>(`/pipelines/clientes/${clientId}/status-clickup`),
+    enabled: clientId !== null,
+  });
+}
+
+/**
+ * Backfill de um quadro de tarefas: tasks que já existiam no ClickUp antes
+ * do quadro nascer não chegam sozinhas (só task NOVA chega pelo webhook) —
+ * este botão puxa o que falta.
+ */
+export function useSincronizarTarefas() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (boardId: string) =>
+      apiFetch<{ criados: number; sem_coluna: number; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-tarefas`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
   });
 }

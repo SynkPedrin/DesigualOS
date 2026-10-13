@@ -2871,6 +2871,9 @@ export interface PipelineBoardWire {
   nome: string;
   tipo: 'cliente' | 'tarefas' | 'colaborador';
   escopo: 'agencia' | 'pessoal';
+  /** Só em `tipo='tarefas'`: de qual cliente este quadro é espelho — os
+   * status das colunas são da lista dele no ClickUp, nunca inventados. */
+  client_id: string | null;
   stages: PipelineStageWire[];
   posicao: number;
   cards: PipelineCardWire[];

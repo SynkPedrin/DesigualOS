@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowDown, ArrowUp, CircleUserRound, FileText, Layers, Paperclip, Plus, Settings2, SquareKanban, Upload, Wallet, X, Search } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -16,6 +16,8 @@ import {
   useApagarCartao,
   useMoverCartao,
   useSincronizarClientes,
+  useSincronizarTarefas,
+  useStatusClickUpDoCliente,
   enviarAnexo,
 } from '@/hooks/use-pipelines';
 import type { PipelineBoardWire } from '@/lib/api/contracts';
@@ -23,12 +25,12 @@ import { ApiRequestError } from '@/lib/api/client';
 import { formatarCentavos, resumoDoQuadro } from '@/lib/pipeline-resumo';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useCollaborators } from '@/hooks/use-collaborators';
+import { useClients } from '@/hooks/use-clients';
 import { ClientDemandsPanel } from '@/components/clients/client-demands-panel';
 import { ClientTasksPanel } from '@/components/clients/client-tasks-panel';
 import { ClientStudioGallery } from '@/components/clients/client-studio-gallery';
 import { toast } from '@/stores/toast-store';
 import {
-  CLICKUP_STATUSES_DISPONIVEIS,
   PIPELINE_STAGE_COLORS,
   type PipelineBoard,
   type PipelineCard,
@@ -40,16 +42,17 @@ import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 /**
- * PIPELINES — mais de um quadro, cada um de um tipo (demo "dia real de
- * operação", 07/10/2026):
+ * PIPELINES — mais de um quadro, cada um de um tipo:
  *
- *   cliente     — funil comercial, estágio livre (nome/ordem/cor configuráveis).
- *   tarefas     — um cartão por tarefa do ClickUp; estágio = status real da
- *                 tarefa, só pode usar status que existe no ClickUp
- *                 (`CLICKUP_STATUSES_DISPONIVEIS`) — nunca inventado.
+ *   cliente     — funil comercial, estágio livre (nome/ordem/cor configuráveis);
+ *                 "Sincronizar clientes" cria um cartão por cliente real da
+ *                 carteira que ainda não está no quadro.
+ *   tarefas     — espelho de UM cliente (status é por lista, nunca universal,
+ *                 13/10/2026): estágio = status real da lista dele, buscado
+ *                 ao vivo no ClickUp na criação do quadro, nunca inventado.
+ *                 Task nova entra sozinha (webhook); "Sincronizar tarefas"
+ *                 traz o que já existia antes do quadro nascer.
  *   colaborador — carga de trabalho por pessoa.
- *
- * Tudo em estado local da demo — não existe endpoint de pipeline ainda.
  */
 
 const TIPO_LABEL: Record<PipelineTipo, string> = { cliente: 'Cliente', tarefas: 'Tarefas (ClickUp)', colaborador: 'Colaborador' };
@@ -88,10 +91,17 @@ interface NovaPipelineEntrada {
   tipo: PipelineTipo;
   escopo: 'agencia' | 'pessoal';
   stages: PipelineStage[];
+  client_id?: string | null;
+}
+
+/** Cicla as cores do quadro pra uma lista de status real, sem repetir vizinho. */
+function corParaIndice(i: number): PipelineStageColor {
+  return PIPELINE_STAGE_COLORS[i % PIPELINE_STAGE_COLORS.length]!;
 }
 
 function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipelineEntrada) => void; onClose: () => void }) {
   const { isMaster } = useIsMaster();
+  const { data: clientesData } = useClients();
   const [nome, setNome] = useState('');
   const [tipo, setTipo] = useState<PipelineTipo>('cliente');
   /**
@@ -100,7 +110,20 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
    * Quem quer o compartilhado escolhe; ninguém publica sem querer.
    */
   const [escopo, setEscopo] = useState<'agencia' | 'pessoal'>('pessoal');
-  const [statusSelecionados, setStatusSelecionados] = useState<Set<string>>(new Set(CLICKUP_STATUSES_DISPONIVEIS.map((s) => s.status)));
+  const [clienteEscolhido, setClienteEscolhido] = useState<string | null>(null);
+  const [statusSelecionados, setStatusSelecionados] = useState<Set<string>>(new Set());
+
+  /** Clientes com ClickUp de verdade conectado — sem lista, não tem status pra buscar. */
+  const clientesComClickUp = (clientesData ?? []).filter((c) => c.clickupListId);
+  const { data: statusData, isPending: carregandoStatus, isError: erroStatus } = useStatusClickUpDoCliente(tipo === 'tarefas' ? clienteEscolhido : null);
+  const statusReais = statusData?.status ?? [];
+
+  // Ao chegar a lista real, todos entram marcados por padrão — igual o
+  // comportamento de antes com os 4 status inventados. A pessoa desmarca o
+  // que não quiser virar coluna, não o contrário.
+  useEffect(() => {
+    if (statusReais.length > 0) setStatusSelecionados(new Set(statusReais));
+  }, [statusData]);
 
   function alternarStatus(status: string) {
     setStatusSelecionados((atual) => {
@@ -115,7 +138,10 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
     if (!nome.trim()) return;
     let stages: PipelineStage[];
     if (tipo === 'tarefas') {
-      stages = CLICKUP_STATUSES_DISPONIVEIS.filter((s) => statusSelecionados.has(s.status)).map((s) => ({ id: s.status, label: s.status, color: s.color, clickupStatus: s.status }));
+      if (!clienteEscolhido) return;
+      stages = statusReais
+        .filter((s) => statusSelecionados.has(s))
+        .map((s, i) => ({ id: s, label: s, color: corParaIndice(i), clickupStatus: s }));
     } else if (tipo === 'colaborador') {
       stages = [
         { id: 'disponivel', label: 'Disponível', color: 'sinal' },
@@ -129,7 +155,7 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
         { id: 'concluido', label: 'Concluído', color: 'sinal' },
       ];
     }
-    onCreate({ nome: nome.trim(), tipo, escopo, stages });
+    onCreate({ nome: nome.trim(), tipo, escopo, stages, ...(tipo === 'tarefas' ? { client_id: clienteEscolhido } : {}) });
     onClose();
   }
 
@@ -212,15 +238,47 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
 
           {tipo === 'tarefas' && (
             <div>
-              <label className="mb-1 block text-xs text-nevoa">Estágios, só os status que existem no ClickUp</label>
-              <div className="space-y-1.5 rounded-md border border-grafite-elevado bg-carbono p-2.5">
-                {CLICKUP_STATUSES_DISPONIVEIS.map((s) => (
-                  <label key={s.status} className="flex items-center gap-2 text-sm text-branco-cru">
-                    <input type="checkbox" checked={statusSelecionados.has(s.status)} onChange={() => alternarStatus(s.status)} className="accent-roxo-eletrico" />
-                    {s.status}
-                  </label>
+              <label className="mb-1 block text-xs text-nevoa">De qual cliente — os status são da lista dele no ClickUp</label>
+              <select
+                value={clienteEscolhido ?? ''}
+                onChange={(e) => {
+                  setClienteEscolhido(e.target.value || null);
+                  // Troca de cliente invalida a seleção anterior: status de um
+                  // cliente não tem relação nenhuma com o de outro.
+                  setStatusSelecionados(new Set());
+                }}
+                className="w-full rounded-md border border-grafite-elevado bg-carbono px-2.5 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+              >
+                <option value="">Selecione um cliente</option>
+                {clientesComClickUp.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
-              </div>
+              </select>
+              {clientesComClickUp.length === 0 && (
+                <p className="mt-1 text-[11px] text-aviso">Nenhum cliente com lista do ClickUp vinculada ainda.</p>
+              )}
+
+              {clienteEscolhido && (
+                <div className="mt-3">
+                  <label className="mb-1 block text-xs text-nevoa">Estágios, só os status que existem nesta lista</label>
+                  {carregandoStatus ? (
+                    <p className="text-sm text-nevoa">Buscando os status reais no ClickUp...</p>
+                  ) : erroStatus ? (
+                    <p className="text-sm text-erro">Não consegui buscar os status deste cliente no ClickUp.</p>
+                  ) : statusReais.length === 0 ? (
+                    <p className="text-sm text-nevoa">Esta lista não tem status configurado.</p>
+                  ) : (
+                    <div className="space-y-1.5 rounded-md border border-grafite-elevado bg-carbono p-2.5">
+                      {statusReais.map((s) => (
+                        <label key={s} className="flex items-center gap-2 text-sm text-branco-cru">
+                          <input type="checkbox" checked={statusSelecionados.has(s)} onChange={() => alternarStatus(s)} className="accent-roxo-eletrico" />
+                          {s}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <p className="mt-1 text-[11px] text-nevoa">Mover um cartão entre estágios muda o status da tarefa no ClickUp.</p>
             </div>
           )}
@@ -231,7 +289,7 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
           <button
             type="button"
             onClick={criar}
-            disabled={!nome.trim() || (tipo === 'tarefas' && statusSelecionados.size === 0)}
+            disabled={!nome.trim() || (tipo === 'tarefas' && (!clienteEscolhido || statusSelecionados.size === 0))}
             className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-branco-cru transition-all hover:opacity-90 hover:shadow-glow disabled:opacity-40"
           >
             Criar pipeline
@@ -626,6 +684,7 @@ function PipelineBoardUI() {
   const apagarPipeline = useApagarPipeline();
   const moverCartaoMut = useMoverCartao();
   const sincronizarClientes = useSincronizarClientes();
+  const sincronizarTarefas = useSincronizarTarefas();
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
   const [busca, setBusca] = useState('');
   const [responsavelFiltro, setResponsavelFiltro] = useState('');
@@ -864,6 +923,26 @@ function PipelineBoardUI() {
                   className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50 disabled:opacity-50"
                 >
                   <Upload size={15} /> {sincronizarClientes.isPending ? 'Sincronizando...' : 'Sincronizar clientes'}
+                </button>
+              )}
+              {board.tipo === 'tarefas' && (
+                <button
+                  type="button"
+                  disabled={sincronizarTarefas.isPending}
+                  onClick={() => {
+                    sincronizarTarefas.mutate(board.id, {
+                      onSuccess: (resultado) => {
+                        const partes: string[] = [];
+                        if (resultado.criados > 0) partes.push(resultado.criados === 1 ? '1 tarefa entrou no quadro' : `${resultado.criados} tarefas entraram no quadro`);
+                        if (resultado.sem_coluna > 0) partes.push(`${resultado.sem_coluna} ficaram de fora (status sem coluna neste quadro)`);
+                        toast(partes.length > 0 ? `${partes.join('; ')}.` : 'Já estava tudo sincronizado — nenhuma tarefa nova.', 'success');
+                      },
+                      onError: (erro) => toast(erro instanceof Error ? erro.message : 'Não consegui sincronizar as tarefas.', 'error'),
+                    });
+                  }}
+                  className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50 disabled:opacity-50"
+                >
+                  <Upload size={15} /> {sincronizarTarefas.isPending ? 'Sincronizando...' : 'Sincronizar tarefas'}
                 </button>
               )}
               <button type="button" onClick={() => setCriandoCartao(true)} className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50">
