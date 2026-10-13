@@ -1,6 +1,7 @@
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { AgentName } from '@desigual-os/types';
+import { buscarEquipeVisivel, ehPrimeiraMensagemDoUsuario, equipeEmTexto } from './equipe-da-agencia';
 
 export interface RecentMessage {
   role: string;
@@ -34,6 +35,20 @@ export interface ExecutionContext {
    * sabia o que já tinha aprendido sobre o próprio trabalho.
    */
   recentLearnings: string[];
+  /**
+   * A equipe da agência, formatada (nome, função, entrada). `null` quando não
+   * há equipe visível — e aí o bloco NÃO entra no prompt, em vez de afirmar
+   * uma lista vazia. Pedido do Pedro (13/10/2026): o Bento precisa saber quem
+   * trabalha na casa, inclusive quem acabou de entrar. Ver equipe-da-agencia.ts.
+   */
+  equipeDaAgencia: string | null;
+  /**
+   * Esta é a primeira mensagem que a pessoa MANDA NO SISTEMA (não na conversa).
+   * O Bento abre com boas-vindas curtas antes de responder — pedido do Pedro
+   * para toda conta nova. Contada de verdade (mensagens dela em todas as
+   * conversas), não inferida da conversa atual.
+   */
+  primeiraMensagemDoUsuario: boolean;
 }
 
 const RECENT_MESSAGES_LIMIT = 5;
@@ -206,7 +221,7 @@ export async function buildContext(params: {
         )
       : Promise.resolve('production');
 
-  const [userRow, clientRows, recentRows, profileRows, fileRows, learningRows] = await Promise.all([
+  const [userRow, clientRows, recentRows, profileRows, fileRows, learningRows, equipeRows, primeiraMensagem] = await Promise.all([
     db
       .select({ name: schema.users.name })
       .from(schema.users)
@@ -343,6 +358,13 @@ export async function buildContext(params: {
             .catch(() => [] as { content: string }[]);
         })()
       : Promise.resolve([]),
+    // A equipe entra no MESMO lote paralelo: custa zero round-trips a mais.
+    // Falha nela não derruba o resto do contexto — turno sem equipe é turno
+    // mais pobre, não turno quebrado.
+    buscarEquipeVisivel(params.userId).catch(() => []),
+    // Ver o contrato de falha em equipe-da-agencia.ts: erro de leitura aqui
+    // vira "não é a primeira" — nunca uma boas-vindas errada.
+    ehPrimeiraMensagemDoUsuario(params.userId).catch(() => false),
   ]);
 
   const [user] = userRow;
@@ -361,6 +383,8 @@ export async function buildContext(params: {
     })),
     recentMessages: recentRows.reverse(),
     recentLearnings: learningRows.map((row) => truncateClean(soEstrategia(row.content), LEARNING_MAX_CHARS)),
+    equipeDaAgencia: equipeEmTexto(equipeRows),
+    primeiraMensagemDoUsuario: primeiraMensagem,
   };
 }
 
@@ -383,7 +407,21 @@ export function formatContextForPrompt(context: ExecutionContext): string {
   // usuário" faz parte do contexto mínimo), mas nunca chegava a entrar no
   // texto formatado, então o agente nunca sabia com quem estava falando.
   if (context.userName) lines.push(`Usuário: ${context.userName}`);
+  /**
+   * A PRIMEIRA MENSAGEM MERECE BOAS-VINDAS, e isso se diz ANTES dos dados.
+   *
+   * Pedido do Pedro (13/10/2026): toda conta nova que mandar a primeira
+   * mensagem recebe boas-vindas já na primeira resposta. A instrução fica no
+   * topo porque é ela que dá o TOM da resposta inteira — no fim do bloco ela
+   * virava rodapé que o modelo esquecia.
+   */
+  if (context.primeiraMensagemDoUsuario) {
+    lines.push(
+      'Esta é a PRIMEIRA mensagem que esta pessoa manda no sistema. Abra a resposta com boas-vindas curtas e calorosas pelo nome dela, diga em UMA frase o que você faz (acompanha a operação, os clientes, as tarefas e a memória da agência) e só então responda ao que ela perguntou. Não faça tour nem lista de funcionalidades.',
+    );
+  }
   if (context.clientName) lines.push(`Cliente: ${context.clientName}`);
+  if (context.equipeDaAgencia) lines.push(context.equipeDaAgencia);
   if (context.clientToneOfVoice) lines.push(`Tom de voz do cliente: ${context.clientToneOfVoice}`);
   if (context.clientProfile) {
     lines.push('O que sabemos deste cliente:');

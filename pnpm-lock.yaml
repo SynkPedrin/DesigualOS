@@ -609,6 +609,9 @@ importers:
 
   packages/context-engine:
     dependencies:
+      '@desigual-os/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@desigual-os/database':
         specifier: workspace:*
         version: link:../database

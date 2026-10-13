@@ -483,6 +483,47 @@ const AGENTES_ASK_DEFAULT_URL: Record<'jarbas' | 'suzy', string> = {
   suzy: 'http://100.86.237.73:3102',
 };
 
+/**
+ * A VIA DE LEITURA POR GPT (13/10/2026, pedido do Pedro).
+ *
+ * A conversa do Bento — pergunta, leitura, "o que é esse sistema?" — saía
+ * SÓ pelo serviço de Q&A na máquina da GPU (`callBento`). Quando ela falha,
+ * quem operava recebia "o servidor de inferência está sem capacidade" no
+ * lugar da resposta (medido ao vivo nesta data, INFERENCE_UPSTREAM_5XX), e
+ * o modelo local ainda corrompia idioma sob carga e inventava contexto
+ * (ambos documentados neste arquivo).
+ *
+ * Esta via responde com GPT usando o MESMO texto que iria para a GPU — que
+ * já carrega o contexto do turno (dossiê, memória, equipe, histórico)
+ * montado acima. Sem ferramenta nenhuma, como todo escritor de texto desta
+ * stack: leitura é texto, e texto não executa ação.
+ *
+ * Dois usos, decididos no ponto de chamada:
+ * - `BENTO_OPENAI_READ_ENABLED=true`: PRIMÁRIA — nem chama a GPU.
+ * - sem a flag: RESERVA — só roda quando a GPU falhou de verdade, então a
+ *   falha vira resposta em vez de erro na tela.
+ */
+export function bentoOpenAiReadEnabled(): boolean {
+  return process.env.BENTO_OPENAI_READ_ENABLED === 'true';
+}
+
+async function responderLeituraComOpenAI(mensagem: string, logger: Logger): Promise<ExecuteResponse | null> {
+  const resposta =
+    (await completeTextSafely(mensagem, logger, { maxTokens: 1200 })) ??
+    (await completeTextViaOpenAI(mensagem, logger, { maxTokens: 1200 }));
+  const limpa = resposta?.trim();
+  if (!limpa) return null;
+  return {
+    execution_id: '',
+    agent: 'bento',
+    status: 'completed',
+    answer: limpa,
+    sources: [],
+    tool_calls: [],
+    usage: { input_tokens: 0, output_tokens: 0 },
+  };
+}
+
 function failedAgentResponse(agent: AgentName, error: string): ExecuteResponse {
   return {
     execution_id: '',
@@ -2265,21 +2306,38 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         );
       }
 
-      result = await callNode(
-        agent,
-        executionId,
-        mensagemComDialogo,
-        refsDoTurno,
-        logger,
-        conversationId ?? undefined,
-        clientBrandKit,
-        attachments,
-        operationalContext,
-        clientFeedbackHistory,
-      );
-      // AGENT_LOOP_V2 desligado pra este agente — vai direto no serviço
-      // externo (bento-qa), sem o loop de planejamento.
-      result = marcarCamadaDaCascata(result, 'externo_bento_qa_direto');
+      /**
+       * BENTO POR GPT ANTES DA GPU quando a flag manda (13/10/2026).
+       *
+       * A flag existe porque a via da GPU é gratuita e a do GPT é paga — a
+       * decisão de qual é a primária é de custo, e por isso é uma flag e não
+       * uma escolha enterrada no código. O que NÃO é opcional é o fallback
+       * (mais abaixo): GPU sem resposta vira GPT de qualquer jeito, porque a
+       * alternativa é a pessoa receber "servidor de inferência sem capacidade"
+       * no lugar da resposta — que foi o defeito medido ao vivo hoje.
+       */
+      const viaPrimaria =
+        agent === 'bento' && bentoOpenAiReadEnabled()
+          ? await responderLeituraComOpenAI(mensagemComDialogo, logger)
+          : null;
+      if (viaPrimaria?.answer) {
+        result = marcarCamadaDaCascata({ ...viaPrimaria, execution_id: executionId }, 'openai_leitura_primaria');
+      } else {
+        result = await callNode(
+          agent,
+          executionId,
+          mensagemComDialogo,
+          refsDoTurno,
+          logger,
+          conversationId ?? undefined,
+          clientBrandKit,
+          attachments,
+          operationalContext,
+          clientFeedbackHistory,
+        );
+        // AGENT_LOOP_V2 desligado pra este agente — vai direto no serviço
+        // externo (bento-qa), sem o loop de planejamento.
+        result = marcarCamadaDaCascata(result, 'externo_bento_qa_direto');
       /**
        * Resposta com glifo fora do idioma é DESCARTADA e regerada, não
        * remendada: o modelo local (família Qwen) troca uma palavra portuguesa
@@ -2322,6 +2380,27 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       });
       if (prov) {
         result = { ...result, metadata: { ...(result.metadata ?? {}), agentic: { provenance: prov } } };
+      }
+      }
+      /**
+       * A GPU FALHOU DE VERDADE → o GPT responde, FLAG OU NÃO.
+       *
+       * A flag decide qual via é a PRIMÁRIA; isto aqui é outra coisa: é o
+       * piso. A pessoa que perguntou "o que é esse sistema?" e recebeu
+       * INFERENCE_UPSTREAM_5XX (13/10/2026) não tem como saber que a resposta
+       * existe e mora noutro servidor. Falha de infraestrutura chegando à
+       * tela como se fosse resposta é a mentira que este repositório mais
+       * persegue — aqui ela vira resposta.
+       *
+       * Fica FORA do bloco da GPU de propósito: se a via primária por GPT
+       * falhou E a GPU falhou, esta é a segunda e última tentativa do GPT.
+       */
+      if (agent === 'bento' && (result.status !== 'completed' || !result.answer)) {
+        const viaGpt = await responderLeituraComOpenAI(mensagemComDialogo, logger);
+        if (viaGpt?.answer) {
+          logger.warn({ executionId }, '[bento] GPU sem resposta; turno respondido via OpenAI');
+          result = marcarCamadaDaCascata({ ...viaGpt, execution_id: executionId }, 'openai_leitura_fallback_gpu');
+        }
       }
     }
     // Regra de ouro de craft: bot nunca usa travessão. Aplicado na borda,

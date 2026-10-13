@@ -433,6 +433,8 @@ describe('formatContextForPrompt', () => {
       projectFiles: [],
       recentMessages: [],
       recentLearnings: [],
+      equipeDaAgencia: null,
+      primeiraMensagemDoUsuario: false,
     });
 
     expect(formatted).toBe('');
@@ -459,6 +461,8 @@ describe('cross_client_knowledge_isolation no bloco de contexto', () => {
       projectFiles: [],
       recentMessages: [],
       recentLearnings: [episodio.replace(/^Objetivo:.*?(?=Estratégia vencedora:)/is, '').trim()],
+      equipeDaAgencia: null,
+      primeiraMensagemDoUsuario: false,
     });
     expect(bloco).not.toMatch(/loja de t[êe]nis/i);
     expect(bloco).toContain('Estratégia vencedora');
