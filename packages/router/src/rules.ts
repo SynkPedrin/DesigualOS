@@ -119,7 +119,7 @@ export const ROUTING_RULES: RoutingRule[] = [
      *
      * topicKeywords tem teto de 0,65 e o Router só decide a partir de 0,70:
      * sinal fraco existe pra ESCALAR pro classifier. Só que o classifier está
-     * indisponível em produção (ANTHROPIC_API_KEY vazia), então tudo que
+     * indisponível em produção (não havia credencial de LLM), então tudo que
      * depende dele cai no fallback — que é o Bento. Medido no front em
      * 24/09/2026: "faz 2 legendas pro aniversário da Cosentino" foi parar no
      * Bento, que respondeu com a data de fundação tirada do vault e zero

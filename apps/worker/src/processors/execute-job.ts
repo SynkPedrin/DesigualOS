@@ -243,7 +243,7 @@ export function limitarContexto(partes: Array<string | undefined>): string | und
 
 /**
  * Fallback de `completeTextSafely` (router, chamada direta à Anthropic) pra
- * quando ANTHROPIC_API_KEY não está configurada neste ambiente — o caso
+ * quando não há credencial de LLM configurada neste ambiente — o caso
  * real de hoje (21/09/2026): a chave está vazia em `.env`, então o gap-fill
  * do briefing (bento-action-guard.ts) silenciosamente não preenchia nada,
  * mesmo com a lógica de merge correta e testada. Usa o mesmo caminho que
@@ -256,7 +256,9 @@ export function limitarContexto(partes: Array<string | undefined>): string | und
  * ESCRITOR DE TEXTO VIA OPENAI (28/09/2026).
  *
  * Medido no mesmo dia, rodando a cadeia do briefing sem o planner: a
- * `ANTHROPIC_API_KEY` está VAZIA neste ambiente, então `completeTextSafely`
+ * (Escrito quando não havia credencial de LLM; desde 13/10/2026
+ * `completeTextSafely` usa GPT e `OPENAI_API_KEY` está configurada.) Se faltar
+ * credencial, `completeTextSafely`
  * devolvia null em 1ms e TODO briefing era escrito pelo Ollama local
  * (qwen2.5:14b). Era essa a causa do "conteúdo básico" — não o template, não o
  * prompt. O modelo local também não respeitava a restrição mais importante do

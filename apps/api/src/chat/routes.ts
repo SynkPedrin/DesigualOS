@@ -515,7 +515,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         /**
          * A MENSAGEM DIZ A CAUSA REAL, e antes culpava a pergunta da pessoa.
          *
-         * Com `ANTHROPIC_API_KEY` ausente o classificador devolve `null` em
+         * Sem credencial da OpenAI o classificador devolve `null` em
          * TODA chamada, então todo turno que não casa com uma das regras
          * determinísticas cai aqui. Medido em 09/10/2026: "Oi" terminava em
          * clarification, sem agente.
@@ -537,7 +537,7 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           : 'No momento só consigo entender pedidos que caem nas regras diretas, porque a ' +
             'camada que interpreta linguagem livre está sem credencial neste ambiente. Não é a ' +
             'sua pergunta: reescrevê-la não vai ajudar. Quem administra o sistema precisa ' +
-            'configurar ANTHROPIC_API_KEY. Enquanto isso, diga diretamente se é operação ' +
+            'configurar a credencial do provedor de linguagem. Enquanto isso, diga diretamente se é operação ' +
             '(tarefas e prazos), mídia paga (resultado de anúncios) ou criação (legenda, ' +
             'título, roteiro) e eu sigo daqui.';
         await db.insert(schema.messages).values({

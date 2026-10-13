@@ -6,7 +6,9 @@ import type { FastifyBaseLogger } from 'fastify';
  * Roteamento por LLM LOCAL.
  *
  * A camada paga (classifier.ts, Anthropic) nunca teve chave configurada em
- * produção — `ANTHROPIC_API_KEY` e `OPENAI_API_KEY` estão vazias. Como o rule
+ * produção. (Desatualizado em 13/10/2026: `OPENAI_API_KEY` está configurada e
+ * o classificador pago passou a usar GPT; este aqui segue como camada barata
+ * ANTES dele, não como substituto.) Como o rule
  * engine só decide a partir de 0,70 e `topicKeywords` tem teto de 0,65, TUDO
  * que dependia da classifier caía no fallback, que era o Bento. Medido no
  * front publicado em 24/09/2026: "como tá a 3Net esse mês?" foi para o Bento,
@@ -52,7 +54,7 @@ studio - GERAR imagem ou vídeo na GPU
 
 REGRA IMPORTANTE: "como tá o <cliente>", "como está o <cliente>", "e o <cliente>?" pergunta o
 DESEMPENHO de mídia do cliente -> jarbas. Só é bento quando a frase fala de TAREFA, DEMANDA,
-PRAZO, ENTREGA ou PESSOA da equipe.
+PRAZO, ENTREGA, PESSOA da equipe, ou pede um FATO do cliente (decisor, orçamento, contato).
 
 Exemplos:
 "como tá a 3Net?" -> jarbas
@@ -61,6 +63,8 @@ Exemplos:
 "qual campanha tá melhor?" -> jarbas
 "quais demandas da 3Net?" -> bento
 "quais as tarefas da Alícia?" -> bento
+"quem é o decisor da 3Net?" -> bento
+"qual o orçamento da Elite?" -> bento
 "o que tá pegando fogo na agência?" -> bento
 "faz uma legenda pra 3Net" -> otto
 "me dá 3 títulos" -> otto

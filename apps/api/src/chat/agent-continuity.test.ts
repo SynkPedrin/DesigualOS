@@ -14,7 +14,14 @@ const logger = { info() {}, warn() {}, error() {}, debug() {} } as never;
  * propósito: o que este arquivo testa é regra + continuidade, e uma chamada de
  * rede no meio disso só traz timeout e resultado que depende da máquina.
  */
-const SEM_CLASSIFIER = { classificadorLocal: async () => null };
+/**
+ * As DUAS camadas são desligadas. A local fala com o gateway da GPU; a paga
+ * fala com a OpenAI e CUSTA DINHEIRO — em 13/10/2026, ao ligar o GPT, estes
+ * testes passaram a gastar de verdade e a estourar o limite de 5s. Teste que
+ * depende de rede não é teste de roteamento: ou trava no timeout, ou
+ * passa/falha pelo motivo errado.
+ */
+const SEM_CLASSIFIER = { classificadorLocal: async () => null, classificadorPago: async () => null };
 
 const CRIATIVOS = [
   'Me explica.',
