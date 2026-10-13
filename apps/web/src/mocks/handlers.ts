@@ -1301,6 +1301,40 @@ export const handlers = [
     });
   }),
 
+  // Tela "Hoje" (13/10/2026): o agregado é a MESMA composição das respostas
+  // que os handlers acima devolvem uma a uma (mesmos filtros, mesmos limites),
+  // só que numa chamada. Toda seção `ok: true` aqui porque a demo não simula
+  // falha parcial; o formato `ok: false, status` é exercitado pelos testes da
+  // API (apps/api/src/today/routes.test.ts).
+  http.get('/today/summary', ({ request }) => {
+    const url = new URL(request.url);
+    const from = url.searchParams.get('from');
+    const to = url.searchParams.get('to');
+
+    const threadsOrdenadas = [...mockInboxThreads].sort((a, b) => (b.last_message_at ?? '').localeCompare(a.last_message_at ?? ''));
+    const aguardando = threadsOrdenadas.filter((t) => t.status === 'waiting_agency');
+    const minhas = threadsOrdenadas.filter((t) => t.assigned_to_user_id === mockMe.id);
+    const eventos = mockCalendarEvents
+      .filter((e) => (!from || e.start_at >= from) && (!to || e.start_at < to))
+      .sort((a, b) => a.start_at.localeCompare(b.start_at));
+
+    return HttpResponse.json({
+      me: { ok: true, dados: mockMe },
+      minhas_tarefas: mockMe.clickupEmail
+        ? { ok: true, dados: { tasks: mockAgencyTasks.filter((t) => t.assignees.includes(mockMe.name)), truncated: false } }
+        : { ok: false, status: 409 },
+      tarefas_da_agencia: { ok: true, dados: { tasks: mockAgencyTasks, truncated: false } },
+      conversas_aguardando: { ok: true, dados: { threads: aguardando } },
+      conversas_aguardando_minhas: { ok: true, dados: { threads: aguardando.filter((t) => t.assigned_to_user_id === mockMe.id) } },
+      conversas_recentes: { ok: true, dados: { threads: minhas.slice(0, 4) } },
+      eventos_hoje: { ok: true, dados: { events: eventos } },
+      aprovacoes_pendentes: { ok: true, dados: { approvals: mockApprovals.filter((a) => a.status === 'pending') } },
+      minhas_demandas: { ok: true, dados: { demands: mockDemands.filter((d) => d.owner_id === mockMe.id) } },
+      clientes: { ok: true, dados: { clients: mockClients } },
+      gerado_em: new Date().toISOString(),
+    });
+  }),
+
   http.get('/agency-control-center', () => {
     const pendentes = mockDemands.filter((d) => d.status !== 'done' && d.status !== 'cancelled');
     const atrasadas = pendentes.filter((d) => d.due_date !== null && new Date(d.due_date).getTime() < Date.now());

@@ -2,8 +2,14 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { apiFetch, ApiRequestError } from '@/lib/api/client';
 import type { CalendarAvailabilitySlotWire, CalendarConflictWire, CalendarEventWire, MeetingBriefWire } from '@/lib/api/contracts';
 
-/** Eventos no intervalo [from, to) — filtra por membro e/ou cliente quando dado. */
-export function useCalendarEvents(params: { from: Date; to: Date; memberId?: string | undefined; clientId?: string | undefined }) {
+/** Eventos no intervalo [from, to) — filtra por membro e/ou cliente quando dado.
+ *  `enabled` adia a consulta (13/10/2026, tela Hoje: enquanto o dia olhado É
+ *  hoje, os eventos vêm do agregado /today/summary e esta query fica quieta —
+ *  sem ela, a tela pagava uma segunda chamada idêntica à que o resumo já fez). */
+export function useCalendarEvents(
+  params: { from: Date; to: Date; memberId?: string | undefined; clientId?: string | undefined },
+  options?: { enabled?: boolean },
+) {
   const search = new URLSearchParams({ from: params.from.toISOString(), to: params.to.toISOString() });
   if (params.memberId) search.set('member_id', params.memberId);
   if (params.clientId) search.set('client_id', params.clientId);
@@ -14,6 +20,7 @@ export function useCalendarEvents(params: { from: Date; to: Date; memberId?: str
       const wire = await apiFetch<{ events: CalendarEventWire[] }>(`/calendar/events?${search.toString()}`);
       return wire.events;
     },
+    enabled: options?.enabled ?? true,
   });
 }
 

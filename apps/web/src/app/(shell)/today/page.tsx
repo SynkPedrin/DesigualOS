@@ -21,13 +21,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard } from '@/components/ui/stat-card';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { BentoBriefing, type InsightDoBento } from '@/components/bento/painel-de-insights';
-import { useMe } from '@/hooks/use-me';
-import { useAgencyTasks, useMyTasks } from '@/hooks/use-tasks';
-import { useInboxThreads } from '@/hooks/use-inbox';
-import { useDemands } from '@/hooks/use-demands';
-import { useApprovals } from '@/hooks/use-approvals';
-import { useClients } from '@/hooks/use-clients';
 import { useCalendarEvents } from '@/hooks/use-calendar';
+import { useTodaySummary, type SecaoAprovacoes, type SecaoClientes, type SecaoTarefas, type SecaoThreads } from '@/hooks/use-today-summary';
 import { formatClockTime, formatRelativeTime } from '@/lib/format';
 import { ApiRequestError } from '@/lib/api/client';
 import { TETO_DE_PAGINA, comoPiso, veioCheia } from '@/lib/teto-de-pagina';
@@ -145,43 +140,56 @@ interface ItemDePrioridade {
 }
 
 export default function TodayPage() {
-  const { data: me } = useMe();
-  // Fixado no MOUNT: recalcular a cada render mudaria a queryKey de
-  // useCalendarEvents (intervalo [from,to] levemente diferente toda vez) e a
-  // consulta nunca estabilizaria. Achado real, não hipotético (travou a aba
-  // Calendário da ficha de cliente antes deste mesmo fix).
+  // Fixado no MOUNT: recalcular a cada render mudaria a queryKey das consultas
+  // de calendário (intervalo [from,to] levemente diferente toda vez) e elas
+  // nunca estabilizariam. Achado real, não hipotético (travou a aba Calendário
+  // da ficha de cliente antes deste mesmo fix).
   const agora = useMemo(() => new Date(), []);
 
   const [recorte, setRecorte] = useState<Recorte>('minhas');
   const [deslocamentoDeDia, setDeslocamentoDeDia] = useState(0);
 
-  const minhasTarefas = useMyTasks();
-  const tarefasDaAgencia = useAgencyTasks();
-  const conversasAguardando = useInboxThreads({ status: 'waiting_agency', limit: TETO_DE_PAGINA });
   const intervaloDeHoje = useMemo(() => ({ from: inicioDoDia(agora), to: fimDoDia(agora) }), [agora]);
-  const eventosHoje = useCalendarEvents(intervaloDeHoje);
-  const aprovacoesPendentes = useApprovals({ status: 'pending', limit: TETO_DE_PAGINA });
+
+  /**
+   * UMA CHAMADA SÓ (13/10/2026). As treze requisições que esta tela disparava
+   * viraram o agregado /today/summary: o servidor chama as mesmas rotas por
+   * dentro e devolve cada resposta na própria seção, no mesmo formato de
+   * leitura dos hooks individuais (`data`/`isPending`/`isError`/`error`). Um
+   * `error` de seção carrega o status original da rota — é por isso que
+   * `clickupNaoVinculado` (409) e o "nenhum ClickUp conectado" (400) seguem
+   * funcionando abaixo sem mudança, e que uma lista vazia real nunca aparece
+   * como falha de leitura.
+   *
+   * Efeito colateral proposital: "minhas demandas" não espera mais o /me. O
+   * dono é resolvido no servidor, na mesma chamada — a dança anterior (busca
+   * sem filtro seguida de correção, que por um instante mostrava demanda de
+   * outra pessoa como prioridade sua) deixou de existir.
+   */
+  const resumo = useTodaySummary(intervaloDeHoje);
+  const me = resumo.me.data;
+  const minhasTarefas = resumo.minhasTarefas;
+  const tarefasDaAgencia = resumo.tarefasDaAgencia;
+  const conversasAguardando = resumo.conversasAguardando;
+  const conversasAguardandoMinhas = resumo.conversasAguardandoMinhas;
+  const eventosHoje = resumo.eventosHoje;
+  const aprovacoesPendentes = resumo.aprovacoesPendentes;
+  const minhasDemandas = resumo.minhasDemandas;
 
   // "Seu dia" acompanha o dia escolhido na tira da semana, enquanto o cartão
-  // "Reuniões hoje" continua preso a HOJE. São duas perguntas diferentes, e
-  // no dia de hoje as duas queries compartilham a mesma chave e um fetch só.
+  // "Reuniões hoje" continua preso a HOJE. São duas perguntas diferentes.
+  // Enquanto o dia olhado É hoje, os eventos são os que o agregado já trouxe;
+  // a query própria só dispara quando a pessoa navega pra outro dia.
   const diaSelecionado = useMemo(() => somaDias(agora, deslocamentoDeDia), [agora, deslocamentoDeDia]);
   const intervaloDoDiaEscolhido = useMemo(
     () => ({ from: inicioDoDia(diaSelecionado), to: fimDoDia(diaSelecionado) }),
     [diaSelecionado],
   );
-  const eventosDoDia = useCalendarEvents(intervaloDoDiaEscolhido);
-
-  /**
-   * ESPERA O /me. Sem o `enabled`, esta consulta saía ANTES de existir id de
-   * dono, voltava com as demandas da organização inteira, e tudo aqui embaixo
-   * as tratava como "minhas": o painel de Prioridades chegava a listar demanda
-   * de outra pessoa como prioridade sua, até o /me responder e a segunda
-   * chamada corrigir. Dado errado na tela por um instante é pior que tela
-   * vazia por um instante, e ainda custava uma ida ao banco jogada fora.
-   */
-  const minhasDemandas = useDemands(me?.id ? { ownerId: me.id, limit: TETO_DE_PAGINA } : {}, { enabled: Boolean(me?.id) });
-  const conversasAguardandoMinhas = useInboxThreads({ status: 'waiting_agency', assigned: 'me', limit: TETO_DE_PAGINA });
+  const olhandoHoje = deslocamentoDeDia === 0;
+  const eventosDoDiaRemoto = useCalendarEvents(intervaloDoDiaEscolhido, { enabled: !olhandoHoje });
+  const eventosDoDia = olhandoHoje
+    ? { data: eventosHoje.data, isPending: eventosHoje.isPending }
+    : { data: eventosDoDiaRemoto.data, isPending: eventosDoDiaRemoto.isPending };
   /**
    * CONTAGEM DERIVADA DE PÁGINA É PISO, NÃO TOTAL. As duas listas abaixo vêm
    * paginadas em 30, então tudo que eu filtrar delas (demanda vencendo hoje,
@@ -330,6 +338,18 @@ export default function TodayPage() {
     .slice(0, 10);
 
   const algumPending = minhasTarefas.isPending || conversasAguardando.isPending || minhasDemandas.isPending || eventosHoje.isPending;
+
+  /**
+   * VAZIO NÃO É ERRO. "Nada pedindo atenção" só pode ser dito por quem
+   * CONSEGUIU LER as fontes; com uma seção em falha e nenhuma prioridade
+   * montada, a frase certa é a de leitura incompleta. O 409 do ClickUp não
+   * entra: não é falha, é vínculo que ainda não existe.
+   */
+  const algumaFalhaDeLeitura =
+    (minhasTarefas.isError && !clickupNaoVinculado(minhasTarefas.error)) ||
+    conversasAguardando.isError ||
+    minhasDemandas.isError ||
+    eventosHoje.isError;
 
   /**
    * O BRIEFING DO BENTO. Cada marcador é uma contagem que esta mesma tela já
@@ -528,7 +548,9 @@ export default function TodayPage() {
               <Skeleton className="h-12 w-full" />
             </div>
           ) : prioridadesOrdenadas.length === 0 ? (
-            <p className="py-10 text-center text-sm text-nevoa">{VAZIO_POR_RECORTE[recorte]}</p>
+            <p className="py-10 text-center text-sm text-nevoa">
+              {algumaFalhaDeLeitura ? 'Não consegui ler parte das suas prioridades agora.' : VAZIO_POR_RECORTE[recorte]}
+            </p>
           ) : (
             <TabelaDePrioridades itens={prioridadesOrdenadas} />
           )}
@@ -608,7 +630,7 @@ export default function TodayPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <ConversasRecentesPanel />
+        <ConversasRecentesPanel consulta={resumo.conversasRecentes} />
         <TarefasDoDiaPanel
           atrasadas={tarefasAtrasadas}
           noPrazo={tarefasNoPrazo}
@@ -616,7 +638,7 @@ export default function TodayPage() {
           isPending={minhasTarefas.isPending}
           indisponivel={clickupNaoVinculado(minhasTarefas.error)}
         />
-        <AprovacoesPendentesPanel />
+        <AprovacoesPendentesPanel aprovacoes={aprovacoesPendentes} clientes={resumo.clientes} />
       </div>
     </div>
   );
@@ -835,7 +857,7 @@ const ROTULO_DA_SAUDE: Record<AbaDeSaude, string> = {
  * A barra mostra a fração do que está atrasado sobre o total aberto daquele
  * cliente, que é o que a régua mede.
  */
-function SaudeOperacional({ consulta }: { consulta: ReturnType<typeof useAgencyTasks> }) {
+function SaudeOperacional({ consulta }: { consulta: SecaoTarefas }) {
   const [aba, setAba] = useState<AbaDeSaude>('risco');
 
   const porCliente = useMemo(() => {
@@ -942,6 +964,7 @@ function PainelDeRodape({
   titulo,
   href,
   isPending,
+  isError = false,
   vazio,
   mensagemDeVazio = 'Nada por aqui no momento.',
   explicacaoDoVazio,
@@ -950,6 +973,9 @@ function PainelDeRodape({
   titulo: string;
   href: string;
   isPending: boolean;
+  /** Falha de leitura da seção. Distinta de vazio: um painel que não conseguiu
+   *  ler não pode posar de "nada por aqui". */
+  isError?: boolean;
   vazio: boolean;
   mensagemDeVazio?: string;
   /** Segunda linha do estado vazio (mockup): o que fará aparecer algo aqui. */
@@ -970,6 +996,8 @@ function PainelDeRodape({
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
         </div>
+      ) : isError ? (
+        <p className="py-6 text-center text-sm text-nevoa">Não consegui ler isto agora.</p>
       ) : vazio ? (
         <div className="flex flex-col items-center gap-1.5 py-6 text-center">
           <Inbox size={22} className="text-nevoa/60" />
@@ -984,23 +1012,22 @@ function PainelDeRodape({
 }
 
 /**
- * Pede 4, mostra 4. Antes pedia a página inteira (30 linhas) pra exibir
- * quatro, na tela mais lenta do produto. Pedir menos é seguro porque o
- * servidor JÁ ordena por `last_message_at` desc (communications/service.ts),
- * que é exatamente o critério que este painel usa: os 4 primeiros da rota
- * são os mesmos 4 que a ordenação local escolhia dentro dos 30.
+ * As 4 conversas do rodapé chegam pelo agregado (/today/summary), que pede
+ * `assigned=me&limit=4` à mesma rota de antes. O corte em 4 continua seguro
+ * porque o servidor ordena por `last_message_at` desc (communications/
+ * service.ts), exatamente o critério que este painel usa.
  */
 const RECENTES_NO_RODAPE = 4;
 
-function ConversasRecentesPanel() {
-  const { data, isPending } = useInboxThreads({ assigned: 'me', limit: RECENTES_NO_RODAPE });
-  const threads = [...(data ?? [])].sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? ''));
+function ConversasRecentesPanel({ consulta }: { consulta: SecaoThreads }) {
+  const threads = [...(consulta.data ?? [])].sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? ''));
 
   return (
     <PainelDeRodape
       titulo="Conversas recentes"
       href="/inbox"
-      isPending={isPending}
+      isPending={consulta.isPending}
+      isError={consulta.isError}
       vazio={threads.length === 0}
       mensagemDeVazio="Nenhuma conversa atribuída a você."
       explicacaoDoVazio="Conversas que chegarem pra você aparecem aqui."
@@ -1105,31 +1132,27 @@ const RESOURCE_TYPE_LABEL: Record<string, string> = {
 };
 
 /**
- * MESMO FILTRO DO CARTÃO LÁ EM CIMA, de propósito: chave igual faz o React
- * Query servir as duas da MESMA requisição. Um `limit` diferente aqui (4, que
- * é o que o painel mostra) pareceria economia e custaria uma chamada extra na
- * tela mais lenta do produto, porque viraria outra chave.
- *
- * O corte para 4 é local. A rota já ordena por `created_at` desc
- * (approvals/service.ts), então os 4 primeiros da lista são os 4 certos.
+ * As aprovações e os nomes de cliente chegam pelo agregado (/today/summary),
+ * na mesma página de 30 que o cartão lá em cima lê — o corte para 4 é local.
+ * A rota ordena por `created_at` desc (approvals/service.ts), então os 4
+ * primeiros da lista são os 4 certos.
  */
-function AprovacoesPendentesPanel() {
-  const { data, isPending } = useApprovals({ status: 'pending', limit: TETO_DE_PAGINA });
-  const { data: clients } = useClients();
-  const nomeDoCliente = (clientId: string | null) => clients?.find((c) => c.id === clientId)?.name ?? 'Interno';
-  const aprovacoes = (data ?? []).slice(0, RECENTES_NO_RODAPE);
+function AprovacoesPendentesPanel({ aprovacoes, clientes }: { aprovacoes: SecaoAprovacoes; clientes: SecaoClientes }) {
+  const nomeDoCliente = (clientId: string | null) => clientes.data?.find((c) => c.id === clientId)?.name ?? 'Interno';
+  const lista = (aprovacoes.data ?? []).slice(0, RECENTES_NO_RODAPE);
 
   return (
     <PainelDeRodape
       titulo="Aprovações pendentes"
       href="/approvals"
-      isPending={isPending}
-      vazio={aprovacoes.length === 0}
+      isPending={aprovacoes.isPending || clientes.isPending}
+      isError={aprovacoes.isError || clientes.isError}
+      vazio={lista.length === 0}
       mensagemDeVazio="Nada por aqui no momento."
       explicacaoDoVazio="Quando houver aprovações pendentes, elas aparecerão aqui."
     >
       <ul className="space-y-2">
-        {aprovacoes.map((a) => (
+        {lista.map((a) => (
           <li key={a.id}>
             <Link href="/approvals" className="flex items-center gap-2.5">
               <EntityAvatar name={nomeDoCliente(a.client_id)} kind="client" size="sm" />

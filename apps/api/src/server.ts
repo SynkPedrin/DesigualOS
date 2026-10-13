@@ -25,6 +25,7 @@ import { registerPipelineRoutes } from './pipeline/routes';
 import { registerSignalsRoutes } from './signals/routes';
 import { registerActivityRoutes } from './activity/routes';
 import { registerPanoramaRoutes } from './panorama/routes';
+import { registerTodayRoutes } from './today/routes';
 import { registerOrganizationRoutes } from './organizations/routes';
 import { registerOrganizationMemberRoutes } from './organizations/membros';
 import { registerConnectorRoutes } from './connectors/routes';
@@ -253,6 +254,7 @@ async function start(): Promise<void> {
   await app.register(registerPipelineRoutes);
   await app.register(registerSignalsRoutes);
   await app.register(registerPanoramaRoutes);
+  await app.register(registerTodayRoutes);
   await app.register(registerActivityRoutes);
   await app.register(registerOrganizationRoutes);
   await app.register(registerOrganizationMemberRoutes);

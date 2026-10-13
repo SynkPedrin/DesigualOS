@@ -32,6 +32,7 @@ import {
   type CanvaPage,
   type ImageSearchResultWire,
   type ImageSearchProvider,
+  type ResumoDeHoje,
 } from '@desigual-os/types';
 
 export type ISODateString = string;
@@ -2882,3 +2883,22 @@ export interface PipelineBoardWire {
 export interface PipelinesResponseWire {
   boards: PipelineBoardWire[];
 }
+
+/**
+ * GET /today/summary (13/10/2026) — o agregado da tela "Hoje": uma chamada no
+ * lugar das treze. Cada seção é um `ResultadoDeSecao` (tipo canônico em
+ * `@desigual-os/types`) carregando EXATAMENTE o payload da rota original; o
+ * agregado só evita viagem, nunca cria dado. `ok: false` carrega o status
+ * HTTP que a rota de origem devolveu — é o que permite à tela distinguir o
+ * 409 de "ClickUp não vinculado" (estado esperado) de uma falha de leitura,
+ * e os dois de uma lista vazia de verdade (`ok: true` com `[]`).
+ */
+export type TodaySummaryWire = ResumoDeHoje<
+  MeResponse,
+  AgencyTasksResponseWire,
+  { threads: InboxThreadWire[] },
+  { events: CalendarEventWire[] },
+  { approvals: ApprovalRequestWire[] },
+  { demands: DemandWire[] },
+  { clients: ClientSummaryWire[] }
+>;

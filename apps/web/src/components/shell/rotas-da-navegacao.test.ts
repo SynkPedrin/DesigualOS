@@ -40,18 +40,17 @@ function existeNoGit(caminho: string): boolean {
 
 /**
  * DÍVIDA CONHECIDA EM 09/10/2026, com data porque ela tem que encolher.
+ * ZERADA em 48668e0 ("adota as telas que já estavam no ar mas fora do
+ * repositório") — /inbox e /demands foram commitadas lá, e a remoção daqui em
+ * 13/10/2026 é o que o segundo teste abaixo manda fazer.
  *
- * Estas páginas existem no disco e NÃO no repositório. Funcionam para quem
- * desenvolve e somem no primeiro deploy feito de clone limpo. Não foram
- * adotadas aqui porque são de outra sessão e adotar trabalho de terceiro sem
- * perguntar é pior que a dívida.
- *
- * A lista está aqui para o portão valer HOJE contra caso NOVO, em vez de
- * esperar alguém resolver o passado. Ela não é um depósito: o segundo teste
- * abaixo reprova se uma entrada daqui já tiver sido commitada, obrigando a
- * remoção. Dívida registrada que ninguém remove vira permissão permanente.
+ * A lista existe para o portão valer contra caso NOVO: página que existe no
+ * disco e não no repositório entra aqui, temporariamente, até ser adotada.
+ * Ela não é um depósito: o segundo teste reprova se uma entrada daqui já
+ * tiver sido commitada, obrigando a remoção. Dívida registrada que ninguém
+ * remove vira permissão permanente.
  */
-const PENDENTES_DE_COMMIT = ['/inbox', '/demands'] as const;
+const PENDENTES_DE_COMMIT: readonly string[] = [];
 
 describe('destinos da navegação', () => {
   const internos = NAV_ITEMS.filter((item) => item.href.startsWith('/') && !item.href.startsWith('//'));
