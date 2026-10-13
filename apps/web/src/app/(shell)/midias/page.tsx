@@ -98,7 +98,11 @@ export default function MidiasPage() {
     () =>
       alertas.slice(0, 6).map((a) => ({
         id: a.id,
-        href: `/clients/${a.clienteId}`,
+        // Central de Tráfego, não ficha do cliente: quem clica num alerta de
+        // mídia quer resolver mídia. Vale inclusive pro alerta de "sem conta",
+        // porque a Central mostra a aba da plataforma com o caminho pra amarrar
+        // em vez de escondê-la.
+        href: `/midias/${a.clienteId}`,
         /**
          * Conta que o sistema NÃO CONSEGUE LER é urgente; cliente sem conta
          * vinculada e campanha sem resultado são atenção. A diferença é quem
@@ -496,7 +500,7 @@ function LinhaDoCliente({ cliente }: { cliente: MediaOverviewClientWire }) {
   return (
     <tr className="transition-colors hover:bg-grafite/60">
       <Td className="max-w-[200px] truncate">
-        <Link href={`/clients/${cliente.client_id}`} className="text-branco-cru hover:text-roxo-eletrico">
+        <Link href={`/midias/${cliente.client_id}`} className="text-branco-cru hover:text-roxo-eletrico">
           {cliente.client_name}
         </Link>
       </Td>
@@ -511,7 +515,7 @@ function LinhaDoCliente({ cliente }: { cliente: MediaOverviewClientWire }) {
       <Td>
         {!cliente.connected ? (
           <Link
-            href={`/clients/${cliente.client_id}`}
+            href={`/midias/${cliente.client_id}`}
             className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-grafite-elevado px-2 py-0.5 text-[11px] text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
           >
             <Link2 size={11} /> vincular
