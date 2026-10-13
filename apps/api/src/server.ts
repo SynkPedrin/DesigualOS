@@ -144,7 +144,13 @@ app.setErrorHandler((error, _request, reply) => {
     return;
   }
 
-  logger.error({ error }, 'Unhandled request error');
+  // { error } com um Error de verdade serializa como {} — message e stack não
+  // são enumeráveis. O convite quebrou em produção (13/10/2026) e o log dizia
+  // exatamente "error: {}". Mensagem e stack explicitados, sempre.
+  logger.error(
+    { error, errorMessage: error instanceof Error ? error.message : String(error), errorStack: error instanceof Error ? error.stack : undefined },
+    'Unhandled request error',
+  );
   // error.statusCode só existe quando uma rota lançou de propósito (ex:
   // reply.code(4xx) explícito antes); nesse caso a mensagem já foi escrita
   // pensando em quem chama a API. Qualquer erro sem statusCode é uma falha
