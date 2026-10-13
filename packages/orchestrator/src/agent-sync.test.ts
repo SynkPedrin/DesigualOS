@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decideNodeStatus, isOrphanProbeRow } from './agent-sync';
 
 /**
@@ -81,10 +81,24 @@ describe('diagnoseTextEngine (via syncAgents)', () => {
    * e nenhuma tela ligava uma coisa na outra - o usuário descobriu agente
    * por agente, tentando conversar. O teste trava a ligação.
    */
+  // PROBE_AGENTS vem do .env de quem roda a suíte: com "bento" lá, o Studio
+  // sai da lista e o teste falhava na máquina de quem opera, não no código.
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('a lista de serviços do Studio identifica o Ollama pelo nome que o diagnóstico procura', async () => {
+    vi.stubEnv('PROBE_AGENTS', '');
     const { getProbeTargets } = await import('./agent-probe');
     const studio = getProbeTargets().find((target) => target.agent === 'studio');
 
     expect(studio?.services.map((service) => service.name)).toContain('ollama');
+  });
+
+  it('PROBE_AGENTS deixa de fora quem não está na lista', async () => {
+    vi.stubEnv('PROBE_AGENTS', 'bento');
+    const { getProbeTargets } = await import('./agent-probe');
+
+    expect(getProbeTargets().map((target) => target.agent)).toEqual(['bento']);
   });
 });
