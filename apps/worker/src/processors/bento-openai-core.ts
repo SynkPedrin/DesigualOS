@@ -12,6 +12,7 @@ import {
   type StructuredAction,
   type WriteEnvelope,
 } from '@desigual-os/bento-core';
+import { currentBudgetTier } from '@desigual-os/openai-provider';
 import { ehQaBot, getClickUpConfigOrNull, mapStatusHintToRealStatus, podeEscreverEmProducao } from './bento-action-guard';
 import { resolveWriteTarget } from './write-target';
 import { executeTaskUpdate } from './bento-update-executor';
@@ -568,11 +569,27 @@ async function runBentoOpenAiCoreTimed(params: BentoOpenAiCoreParams): Promise<E
 
   if (providerSelection.provider === 'MCP') {
     const __mcpStart = performance.now();
+    /**
+     * O ORÇAMENTO CHEGA À ESCRITA, e até aqui não chegava.
+     *
+     * `executeViaMcp` aceita `budgetTier` desde sempre, mas nenhum chamador
+     * passava — então TODA escrita no ClickUp saía em terra, mesmo com o
+     * teto mensal estourando. A política que o repositório construiu
+     * (restringe sol a 70%, quase tudo em luna a 95%) valia para o briefing
+     * e não para a operação que custa mais.
+     *
+     * Consultar aqui é barato e no lugar certo: escrita é rara perto de
+     * leitura, e uma contagem no ledger por escrita é o preço exato de
+     * respeitar o teto. `currentBudgetTier` falha seguro: erro de leitura
+     * vira 'exhausted' (luna), nunca derruba o turno.
+     */
+    const faixa = await currentBudgetTier().catch(() => ({ tier: 'exhausted' as const, spentUsd: 0 }));
     const envelope = await executeViaMcp({
       action,
       resolvedResourceId: decision.resolvedResourceId,
       listId: target?.listId ?? null,
       mcpToken: providerSelection.mcpToken,
+      budgetTier: faixa.tier,
       legacyReadConfig: config,
       operationId,
       possibleDuplicate: decision.possibleDuplicate,

@@ -54,8 +54,11 @@ import type { Logger } from '@desigual-os/logging';
 import { completeTextSafely } from '@desigual-os/router';
 import {
   callResponses,
+  currentBudgetTier,
   isOpenAICredentialConfigured,
   OPENAI_MODELS,
+  pickModel,
+  type OpenAIModelId,
   type OpenAIModelTier,
 } from '@desigual-os/openai-provider';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
@@ -280,8 +283,22 @@ async function completeTextViaOpenAI(
   opts?: { maxTokens?: number },
 ): Promise<string | null> {
   if (!isOpenAICredentialConfigured()) return null;
-  const tier = (process.env.BENTO_BRIEFING_MODEL ?? 'sol') as OpenAIModelTier;
-  const model = OPENAI_MODELS[tier] ?? OPENAI_MODELS.sol;
+  /**
+   * `sol` por padrão é a escolha deliberada da operação (28/09: "aqui é
+   * JULGAMENTO"), e o override de ambiente vence sempre — é admin explícito.
+   * Mas o padrão passa a respeitar a escada de orçamento como todo o resto:
+   * acima de 70% do teto mensal, `pickModel` já bloqueia sol sozinho.
+   * Qualidade máxima enquanto há orçamento; degradação automática quando
+   * aperta — era a única chamada de escrita que ignorava a política.
+   */
+  const tierEnv = process.env.BENTO_BRIEFING_MODEL as OpenAIModelTier | undefined;
+  let model: OpenAIModelId;
+  if (tierEnv && OPENAI_MODELS[tierEnv]) {
+    model = OPENAI_MODELS[tierEnv];
+  } else {
+    const faixa = await currentBudgetTier().catch(() => ({ tier: 'exhausted' as const, spentUsd: 0 }));
+    model = pickModel('explicit_high_quality_final', faixa.tier).model;
+  }
   try {
     const r = await callResponses(
       {
