@@ -131,6 +131,13 @@ backfillThumbnails(logger).catch((error: unknown) => logger.error({ error }, 'Fa
 const clientReportsWorker = new Worker<ClientReportJobData>(
   CLIENT_REPORTS_QUEUE_NAME,
   async (job) => {
+    // Import TARDIO (13/10/2026): generate-client-report.ts puxa
+    // @react-pdf/renderer → pdfkit, e o pdfkit resolve as fontes padrão por
+    // imports de pacote (`#standard-fonts/Helvetica`), que o Node só resolve
+    // DENTRO do pacote. Empacotado pelo esbuild e carregado no boot, o worker
+    // inteiro morria em MODULE_NOT_FOUND antes de processar qualquer job —
+    // mesmo padrão do import tardio do pipeline de Motion em queue.ts.
+    const { generateClientReport } = await import('./processors/generate-client-report.js');
     await generateClientReport(job.data.reportId, logger);
   },
   { connection: getRedisConnection(), concurrency: 1 },

@@ -22,8 +22,14 @@ import { shaDeRelease, versaoDoSchema } from '../../scripts/identidade-de-releas
  * `tsx`. Ao contrário da API, o worker RENDERIZA de verdade, então aqui eles
  * não podem só sumir: ficam externos e precisam existir em node_modules na
  * imagem do worker (ver o estágio `worker` em Dockerfile.prod).
+ *
+ * @react-pdf/renderer entra por outro motivo (13/10/2026): o pdfkit dentro
+ * dele resolve as fontes padrão por imports de pacote (`#standard-fonts/*`),
+ * que o Node só consegue resolver de dentro do pacote original. Empacotado,
+ * o require vazava pro bundle e o worker morria em MODULE_NOT_FOUND. Externo,
+ * ele é resolvido do node_modules da imagem, onde o imports dele vale.
  */
-const NATIVOS_DO_MOTION = ['@remotion/renderer', '@remotion/bundler', 'sharp'];
+const NATIVOS_DO_MOTION = ['@remotion/renderer', '@remotion/bundler', 'sharp', '@react-pdf/renderer'];
 
 await build({
   entryPoints: ['src/index.ts'],
