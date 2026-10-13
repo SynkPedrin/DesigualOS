@@ -95,7 +95,7 @@ export default function McpPage() {
               {/* O endereço vem da API. Quando não vier, a tela diz que não
                * sabe — nunca um endereço plausível escrito aqui. */}
               <p className="truncate font-mono text-sm text-branco-cru">
-                {mcp?.endpoint ?? (isPending ? '—' : 'não configurado')}
+                {mcp?.endpoint ?? (isPending ? 'consultando' : 'não configurado')}
               </p>
             </div>
           </div>
@@ -110,7 +110,7 @@ export default function McpPage() {
             titulo="Não consegui ler as conexões"
             explicacao="A consulta falhou. Enquanto ela não responder, não dá pra afirmar nem que há conexão nem que não há."
           />
-        ) : (mcp?.pessoas.length ?? 0) === 0 ? (
+        ) : (mcp?.pessoas?.length ?? 0) === 0 ? (
           <SemNadaAinda
             titulo="Ninguém conectou ainda"
             explicacao="Quando alguém autorizar o Claude a usar o Desigual, a conexão aparece aqui com os escopos concedidos."
@@ -132,7 +132,7 @@ export default function McpPage() {
                   key={p.user_id}
                   className={p.user_id === destacado ? 'bg-roxo-eletrico/10' : undefined}
                 >
-                  <Td className="truncate">{p.nome ?? '—'}</Td>
+                  <Td className="truncate">{p.nome ?? 'sem nome'}</Td>
                   <Td>
                     <span className="flex items-center gap-1.5">
                       <ClaudeMark size={16} />
@@ -158,7 +158,7 @@ export default function McpPage() {
                   </Td>
                   <Td className="font-mono text-[13px]">{p.conexoes}</Td>
                   <Td className="font-mono text-[12px] text-nevoa">
-                    {p.desde ? new Date(p.desde).toLocaleString('pt-BR') : '—'}
+                    {p.desde ? new Date(p.desde).toLocaleString('pt-BR') : 'sem data'}
                   </Td>
                 </tr>
               ))}
@@ -170,10 +170,10 @@ export default function McpPage() {
       <Secao titulo="Conexões recentes">
         {isPending ? (
           <LinhasFantasma linhas={3} />
-        ) : (mcp?.conexoes_recentes.length ?? 0) === 0 ? (
+        ) : (mcp?.conexoes_recentes?.length ?? 0) === 0 ? (
           <SemNadaAinda
             titulo="Nenhuma conexão registrada"
-            explicacao="O servidor grava um evento a cada sessão de MCP aberta. Sem evento aqui, ninguém abriu sessão nesta instalação — não é falha de leitura."
+            explicacao="O servidor grava um evento a cada sessão de MCP aberta. Sem evento aqui, ninguém abriu sessão nesta instalação, não é falha de leitura."
           />
         ) : (
           <>
@@ -204,12 +204,12 @@ export default function McpPage() {
                 {(mcp?.conexoes_recentes ?? []).map((c) => (
                   <tr key={c.id} className={c.user_id === destacado ? 'bg-roxo-eletrico/10' : undefined}>
                     <Td className="whitespace-nowrap font-mono text-[12px] text-nevoa">
-                      {c.at ? new Date(c.at).toLocaleString('pt-BR') : '—'}
+                      {c.at ? new Date(c.at).toLocaleString('pt-BR') : 'sem data'}
                     </Td>
                     <Td className="truncate">
                       <span className="flex items-center gap-1.5">
                         <ClaudeMark size={14} />
-                        {c.nome ?? '—'}
+                        {c.nome ?? 'sem nome'}
                       </span>
                     </Td>
                     <Td>
@@ -243,15 +243,15 @@ export default function McpPage() {
         ) : (mcp?.chamadas_24h ?? 0) === 0 ? (
           <SemNadaAinda
             titulo="Nenhuma chamada em 24h"
-            explicacao="Há conexão, mas ninguém pediu nada ao Desigual pelo Claude nesta janela. Não é falha — é silêncio."
+            explicacao="Há conexão, mas ninguém pediu nada ao Desigual pelo Claude nesta janela. Não é falha, é silêncio."
           />
         ) : (
           <>
             <div className="mb-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <Numero rotulo="Chamadas" valor={String(mcp?.chamadas_24h ?? 0)} />
-              <Numero rotulo="Sucesso" valor={taxa === null ? '—' : `${taxa}%`} />
-              <Numero rotulo="Ferramentas usadas" valor={String(mcp?.por_ferramenta.length ?? 0)} />
-              <Numero rotulo="Servidas pelo MCP" valor={ferramentas ? String(ferramentas.length) : '—'} />
+              <Numero rotulo="Sucesso" valor={taxa === null ? 'sem chamadas' : `${taxa}%`} />
+              <Numero rotulo="Ferramentas usadas" valor={String(mcp?.por_ferramenta?.length ?? 0)} />
+              <Numero rotulo="Servidas pelo MCP" valor={ferramentas ? String(ferramentas.length) : 'sem dado'} />
             </div>
             <Tabela>
               <thead>
@@ -267,14 +267,14 @@ export default function McpPage() {
                 {(mcp?.ultimas ?? []).map((c, i) => (
                   <tr key={`${c.request_id ?? i}`}>
                     <Td className="whitespace-nowrap font-mono text-[12px] text-nevoa">
-                      {c.at ? new Date(c.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                      {c.at ? new Date(c.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'sem hora'}
                     </Td>
-                    <Td className="font-mono text-[13px]">{c.tool ?? '—'}</Td>
-                    <Td className="truncate">{c.user_name ?? '—'}</Td>
+                    <Td className="font-mono text-[13px]">{c.tool ?? 'sem ferramenta'}</Td>
+                    <Td className="truncate">{c.user_name ?? 'sem nome'}</Td>
                     <Td>
                       <StatusLabel estado={c.result === 'success' ? 'ok' : 'erro'}>{c.result}</StatusLabel>
                     </Td>
-                    <Td className="truncate font-mono text-[11px] text-nevoa">{c.request_id ?? '—'}</Td>
+                    <Td className="truncate font-mono text-[11px] text-nevoa">{c.request_id ?? 'sem id'}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -298,7 +298,7 @@ export default function McpPage() {
         {!ferramentas ? (
           <SemNadaAinda
             titulo="Não consegui ler as ferramentas"
-            explicacao="O inventário vem do próprio servidor. Prefiro dizer que não li a mostrar uma lista guardada — a última que ficou salva já estava com duas ferramentas a menos que a realidade."
+            explicacao="O inventário vem do próprio servidor. Prefiro dizer que não li a mostrar uma lista guardada, a última que ficou salva já estava com duas ferramentas a menos que a realidade."
           />
         ) : (
           <Tabela>

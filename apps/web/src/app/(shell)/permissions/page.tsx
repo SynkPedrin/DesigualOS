@@ -36,7 +36,7 @@ export default function PermissionsPage() {
     <div className="mx-auto max-w-[1200px]">
       <ControlHeader
         title="Permissões"
-        description="Quem pode o quê. Hoje: o papel de cada pessoa; em breve: o escopo concedido por conexão."
+        description="Quem pode o quê: o papel de cada pessoa no produto e o escopo que ela concedeu ao Claude ao conectar."
       />
 
       <Secao titulo="Papéis">
@@ -55,13 +55,13 @@ export default function PermissionsPage() {
             </thead>
             <tbody>
               {(pessoas?.collaborators ?? []).map((p) => {
-                const master = p.roles.includes('master');
+                const master = p.roles?.includes('master') ?? false;
                 return (
                   <tr key={p.userId}>
                     <Td className="truncate">{p.name}</Td>
                     <Td>
                       <span className={master ? 'font-mono text-[11px] text-sinal' : 'font-mono text-[11px] text-nevoa'}>
-                        {p.roles.join(', ') || '—'}
+                        {p.roles.join(', ') || 'sem papel'}
                       </span>
                     </Td>
                     <Td className="text-nevoa">
@@ -80,7 +80,7 @@ export default function PermissionsPage() {
       <Secao titulo="Escopos concedidos ao Claude">
         {mcpPendente ? (
           <LinhasFantasma linhas={4} />
-        ) : (mcp?.pessoas.length ?? 0) === 0 ? (
+        ) : (mcp?.pessoas?.length ?? 0) === 0 ? (
           <SemNadaAinda
             titulo="Ninguém autorizou o Claude ainda"
             explicacao={
@@ -102,7 +102,7 @@ export default function PermissionsPage() {
               <tbody>
                 {(mcp?.pessoas ?? []).map((p) => (
                   <tr key={p.user_id}>
-                    <Td className="truncate">{p.nome ?? '—'}</Td>
+                    <Td className="truncate">{p.nome ?? 'sem nome'}</Td>
                     <Td>
                       <span className="flex items-center gap-1.5">
                         <ClaudeMark size={16} />

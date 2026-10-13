@@ -44,7 +44,7 @@ export function AgentsPanel() {
             <AgentCard
               key={agent}
               agent={agent}
-              status={health?.nodes.find((n) => n.agent === agent)?.status}
+              status={health?.nodes?.find((n) => n.agent === agent)?.status}
               stats={agentStatsOrDefault(stats, agent)}
               compact
               onSelect={() => setSelectedAgent(agent)}
@@ -53,7 +53,7 @@ export function AgentsPanel() {
 
       <AgentDetailModal
         agent={selectedAgent}
-        node={health?.nodes.find((n) => n.agent === selectedAgent)}
+        node={health?.nodes?.find((n) => n.agent === selectedAgent)}
         onClose={() => setSelectedAgent(null)}
       />
     </aside>

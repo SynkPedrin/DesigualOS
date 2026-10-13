@@ -49,8 +49,13 @@ export function ContextoDaEmpresa() {
    * A faixa só faz sentido quando a pessoa está numa empresa que NÃO é a dela
    * por natureza — ou seja, quando é o provedor visitando um cliente. Sem isso,
    * todo mundo veria uma faixa dizendo o óbvio.
+   *
+   * Por IDENTIDADE ESTÁVEL, não por nome: `eh_provedora` é o id da empresa
+   * comparado ao PROVIDER_ORGANIZATION_ID no servidor. A versão anterior
+   * testava `name.toLowerCase().includes('desigual')` — um tenant chamado
+   * "Desigual Advocacia" esconderia a faixa exatamente onde ela mais importa.
    */
-  const visitando = ehProvider && ativa && !ativa.name.toLowerCase().includes('desigual');
+  const visitando = ehProvider && ativa !== null && ativa.eh_provedora === false;
   if (!visitando) return null;
 
   return (

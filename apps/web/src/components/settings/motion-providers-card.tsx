@@ -134,8 +134,17 @@ export function MotionProvidersSection() {
   // A seção some em vez de mostrar erro: não há nada pra configurar.
   if (error instanceof ApiRequestError && error.status === 404) return null;
 
-  const claude = data?.providers.find((provider) => provider.provider === 'claude');
-  const chatgpt = data?.providers.find((provider) => provider.provider === 'chatgpt');
+  /**
+   * `data?.providers ?? []` em vez de `data?.providers.find(...)`: o `?.`
+   * protegia só o `data`. Uma resposta que chegue sem a lista — API mais
+   * velha num deploy escalonado, corpo truncado — estourava aqui DENTRO do
+   * render, e como esta seção é filha da página de Integrações, o estouro
+   * levava a vitrine inteira junto: nenhum cartão abria. Mesmo defeito que o
+   * bloco de consentimento tinha (08/10/2026).
+   */
+  const providers = data?.providers ?? [];
+  const claude = providers.find((provider) => provider.provider === 'claude');
+  const chatgpt = providers.find((provider) => provider.provider === 'chatgpt');
 
   return (
     <section className="flex flex-col gap-3">

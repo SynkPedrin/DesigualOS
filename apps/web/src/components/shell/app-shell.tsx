@@ -11,6 +11,7 @@ import { NotificationInboxPopup } from './notification-inbox-popup';
 import { MockModeBanner } from './mock-mode-banner';
 import { MobileNavDrawer } from './mobile-nav-drawer';
 import { StudioModal } from '@/components/studio/studio-modal';
+import { BentoBolha } from '@/components/chat/bento-bolha';
 import { useRealtimeEvents } from '@/hooks/use-realtime-events';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -33,7 +34,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             * se está não pode competir por atenção com busca e notificação. */}
           <ContextoDaEmpresa />
           <Topbar />
-          <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {/* A PÁGINA NÃO ROLA; O CONTEÚDO ROLA (09/10/2026, pedido da operação).
+              * Antes o scroll era deste <main>, então o cabeçalho da tela subia
+              * junto com a lista e quem rolava perdia o título, os filtros e a
+              * busca de vista — justo o que precisa ficar à mão numa tela de
+              * lista. Agora o quadro é fixo, como a sidebar sempre foi, e quem
+              * rola é a área de conteúdo logo abaixo. */}
+            <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <AnimatePresence mode="wait">
               <motion.div
                 key={pathname}
@@ -41,7 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.25, ease: 'easeOut' }}
-                className="mx-auto flex min-h-full w-full flex-col px-8 py-8"
+                className="mx-auto flex h-full min-h-0 w-full flex-col overflow-y-auto px-8 pb-8"
               >
                 {children}
               </motion.div>
@@ -54,6 +61,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <NotificationInboxPopup />
       <MockModeBanner />
       <MobileNavDrawer />
+      {/* Por FORA do <main>: a bolha do Bento não pode ser remontada pela
+        * transição de rota (AnimatePresence lá em cima troca o filho a cada
+        * navegação), ou a conversa aberta se perderia a cada clique no menu. */}
+      <BentoBolha />
     </div>
   );
 }

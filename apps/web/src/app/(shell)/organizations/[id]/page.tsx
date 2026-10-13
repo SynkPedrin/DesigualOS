@@ -5,10 +5,21 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowLeft, Check, LogIn } from 'lucide-react';
+import { ArrowLeft, Check, LogIn, Mail, RotateCw, Trash2, UserPlus, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api/client';
 import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, Tabela, Td, Th } from '@/components/control/primitives';
-import { useConfigurarEmpresa, useOrganizacao, type FichaDaEmpresa } from '@/hooks/use-organizacao';
+import {
+  useConfigurarEmpresa,
+  useConvidarParaEmpresa,
+  useMembrosDaEmpresa,
+  useOrganizacao,
+  useReenviarConvite,
+  useRemoverMembro,
+  useRevogarConvite,
+  useTrocarPapelDeMembro,
+  type FichaDaEmpresa,
+  type PapelDeEmpresa,
+} from '@/hooks/use-organizacao';
 import { useMe } from '@/hooks/use-me';
 
 /**
@@ -50,7 +61,7 @@ export default function FichaDaEmpresaPage({ params }: { params: Promise<{ id: s
           explicacao={
             /não encontrad/i.test(msg)
               ? 'Ou ela não existe, ou sua conta não responde por ela. Quem só trabalha numa empresa não configura a identidade dela.'
-              : 'A consulta falhou. Isto não quer dizer que a empresa sumiu — quer dizer que não deu para olhar agora.'
+              : 'A consulta falhou. Isto não quer dizer que a empresa sumiu, quer dizer que não deu para olhar agora.'
           }
           acao={
             <Link href="/organizations" className="text-[13px] text-roxo-eletrico hover:underline">
@@ -146,7 +157,7 @@ function Atividade({ ficha }: { ficha: FichaDaEmpresa }) {
     dias === 0
       ? 'Sem janela para medir ainda.'
       : dias < 30
-        ? `Desde que a empresa existe — ${dias} dia(s).`
+        ? `Desde que a empresa existe, ${dias} dia(s).`
         : 'Últimos 30 dias.';
 
   return (
@@ -238,7 +249,7 @@ function Entrar({ ficha }: { ficha: FichaDaEmpresa }) {
   });
 
   if (ficha.status !== 'ativa') {
-    return <span className="text-[13px] text-aviso">Suspensa — reative abaixo para poder entrar.</span>;
+    return <span className="text-[13px] text-aviso">Suspensa, reative abaixo para poder entrar.</span>;
   }
 
   return (
@@ -393,65 +404,220 @@ function Identidade({ ficha }: { ficha: FichaDaEmpresa }) {
   );
 }
 
+const ROTULO_DO_PAPEL: Record<PapelDeEmpresa, string> = { owner: 'Dono', admin: 'Admin', collaborator: 'Colaborador' };
+
 /**
- * Quem trabalha nesta empresa. Só LEITURA por enquanto, e a tela diz isso em
- * vez de mostrar botões que não fazem nada: convidar e trocar papel passam
- * pelo fluxo de convite, que tem tela própria e manda e-mail.
+ * Quem trabalha NESTA empresa — e só nesta: convidar aqui cria vínculo de
+ * EMPRESA (owner/admin/collaborator em organization_members daquela
+ * organização), não o convite de plataforma de /admin. São rotas diferentes
+ * de propósito (ver membros.ts) — a de plataforma nunca escopa ninguém a uma
+ * empresa cliente específica.
  */
 function Pessoas({ ficha }: { ficha: FichaDaEmpresa }) {
-  if (ficha.pessoas.length === 0) {
-    return (
-      <Secao titulo="Pessoas">
-        <SemNadaAinda
-          titulo="Ninguém nesta empresa ainda"
-          explicacao="Quando alguém for convidado e aceitar, aparece aqui com o papel que tem."
-        />
-      </Secao>
-    );
-  }
+  const { data, isPending, isError } = useMembrosDaEmpresa(ficha.id);
+  const trocarPapel = useTrocarPapelDeMembro(ficha.id);
+  const remover = useRemoverMembro(ficha.id);
+  const [confirmandoRemocao, setConfirmandoRemocao] = useState<string | null>(null);
+
+  const membros = data?.membros ?? [];
+  const convites = data?.convites_pendentes ?? [];
 
   return (
-    <Secao titulo={ficha.pessoas.length === 1 ? '1 pessoa' : `${ficha.pessoas.length} pessoas`}>
-      <Tabela>
-        <thead>
-          <tr>
-            <Th>Pessoa</Th>
-            <Th>Papel</Th>
-            <Th className="w-32">Conta</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {ficha.pessoas.map((p) => (
-            <tr key={p.id}>
-              <Td>
-                <span className="block text-[14px]">{p.nome ?? p.email}</span>
-                {p.nome && <span className="block text-[13px] text-nevoa">{p.email}</span>}
-              </Td>
-              <Td>
-                <span className="text-[13px] text-nevoa">{p.papel}</span>
-                {p.responde_pela_empresa && (
-                  <span className="ml-2 rounded-full border border-roxo-eletrico/50 bg-roxo-eletrico/10 px-2 py-0.5 text-[11px] text-branco-cru">
-                    responde pela empresa
-                  </span>
-                )}
-              </Td>
-              <Td>
-                <span className={p.ativa ? 'text-[13px] text-nevoa' : 'text-[13px] text-aviso'}>
-                  {p.ativa ? 'ativa' : 'desativada'}
-                </span>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </Tabela>
-      <p className="mt-2 text-[13px] text-nevoa">
-        Convidar alguém e trocar papel acontecem em{' '}
-        <Link href="/people" className="text-roxo-eletrico hover:underline">
-          Pessoas
-        </Link>
-        , onde o convite por e-mail é enviado.
-      </p>
+    <Secao titulo={membros.length === 1 ? '1 pessoa' : `${membros.length} pessoas`}>
+      {isPending ? (
+        <LinhasFantasma linhas={2} />
+      ) : isError ? (
+        <p className="text-[13px] text-erro">Não consegui carregar quem trabalha nesta empresa.</p>
+      ) : membros.length === 0 && convites.length === 0 ? (
+        <SemNadaAinda
+          titulo="Ninguém nesta empresa ainda"
+          explicacao="Convide alguém abaixo, quando aceitar, aparece aqui com o papel que tem."
+        />
+      ) : (
+        <>
+          {membros.length > 0 && (
+            <Tabela>
+              <thead>
+                <tr>
+                  <Th>Pessoa</Th>
+                  <Th className="w-36">Papel</Th>
+                  <Th className="w-24">Conta</Th>
+                  <Th className="w-10" />
+                </tr>
+              </thead>
+              <tbody>
+                {membros.map((m) => (
+                  <tr key={m.id}>
+                    <Td>
+                      <span className="block text-[14px]">{m.nome ?? m.email}</span>
+                      {m.nome && <span className="block text-[13px] text-nevoa">{m.email}</span>}
+                    </Td>
+                    <Td>
+                      <select
+                        value={m.papel}
+                        disabled={trocarPapel.isPending}
+                        onChange={(e) => trocarPapel.mutate({ userId: m.id, role: e.target.value as PapelDeEmpresa })}
+                        className="rounded-md border border-grafite-elevado bg-carbono px-2 py-1 text-[13px] text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+                      >
+                        {(Object.keys(ROTULO_DO_PAPEL) as PapelDeEmpresa[]).map((p) => (
+                          <option key={p} value={p}>
+                            {ROTULO_DO_PAPEL[p]}
+                          </option>
+                        ))}
+                      </select>
+                    </Td>
+                    <Td>
+                      <span className={m.ativa ? 'text-[13px] text-nevoa' : 'text-[13px] text-aviso'}>{m.ativa ? 'ativa' : 'desativada'}</span>
+                    </Td>
+                    <Td>
+                      {confirmandoRemocao === m.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={remover.isPending}
+                            onClick={() => remover.mutate(m.id, { onSettled: () => setConfirmandoRemocao(null) })}
+                            className="text-[12px] font-medium text-erro hover:underline"
+                          >
+                            Remover
+                          </button>
+                          <button type="button" onClick={() => setConfirmandoRemocao(null)} className="text-[12px] text-nevoa hover:text-branco-cru">
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmandoRemocao(m.id)}
+                          title="Remover desta empresa"
+                          className="text-nevoa transition-colors hover:text-erro"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Tabela>
+          )}
+          {trocarPapel.isError && (
+            <p className="mt-2 text-[13px] text-erro">{trocarPapel.error instanceof Error ? trocarPapel.error.message : 'Não consegui trocar o papel.'}</p>
+          )}
+          {remover.isError && (
+            <p className="mt-2 text-[13px] text-erro">{remover.error instanceof Error ? remover.error.message : 'Não consegui remover.'}</p>
+          )}
+
+          {convites.length > 0 && <ConvitesPendentes ficha={ficha} convites={convites} />}
+        </>
+      )}
+
+      <ConvidarPessoa ficha={ficha} />
     </Secao>
+  );
+}
+
+function ConvitesPendentes({ ficha, convites }: { ficha: FichaDaEmpresa; convites: { id: string; email: string; papel: PapelDeEmpresa; convidado_em: string | null }[] }) {
+  const reenviar = useReenviarConvite(ficha.id);
+  const revogar = useRevogarConvite(ficha.id);
+  const [idAtivo, setIdAtivo] = useState<string | null>(null);
+
+  return (
+    <div className="mt-4 rounded-md border border-grafite-elevado bg-carbono px-4 py-3">
+      <p className="mb-2 text-[12px] uppercase tracking-wide text-nevoa/70">Convites pendentes</p>
+      <ul className="space-y-2">
+        {convites.map((c) => (
+          <li key={c.id} className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span className="text-[14px] text-branco-cru">{c.email}</span>
+              <span className="ml-2 text-[13px] text-nevoa">{ROTULO_DO_PAPEL[c.papel]}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={reenviar.isPending}
+                onClick={() => {
+                  setIdAtivo(c.id);
+                  reenviar.mutate(c.id, { onSettled: () => setIdAtivo(null) });
+                }}
+                className="inline-flex items-center gap-1 text-[12px] text-roxo-eletrico hover:underline disabled:opacity-40"
+              >
+                <RotateCw size={12} />
+                Reenviar
+              </button>
+              <button
+                type="button"
+                disabled={revogar.isPending}
+                onClick={() => {
+                  setIdAtivo(c.id);
+                  revogar.mutate(c.id, { onSettled: () => setIdAtivo(null) });
+                }}
+                className="inline-flex items-center gap-1 text-[12px] text-erro hover:underline disabled:opacity-40"
+              >
+                <X size={12} />
+                Revogar
+              </button>
+            </div>
+            {idAtivo === c.id && reenviar.isError && (
+              <p className="w-full text-[12px] text-erro">{reenviar.error instanceof Error ? reenviar.error.message : 'Não consegui reenviar.'}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ConvidarPessoa({ ficha }: { ficha: FichaDaEmpresa }) {
+  const convidar = useConvidarParaEmpresa(ficha.id);
+  const [email, setEmail] = useState('');
+  const [papel, setPapel] = useState<PapelDeEmpresa>('collaborator');
+
+  const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+  return (
+    <div className="mt-4 flex flex-col gap-2 border-t border-grafite-elevado pt-4 sm:flex-row sm:items-end">
+      <label className="block flex-1">
+        <span className="block text-[13px] text-nevoa">Convidar para esta empresa</span>
+        <span className="mt-1 flex items-center gap-2 rounded-md border border-grafite-elevado bg-carbono px-3 py-2 focus-within:border-roxo-eletrico/60">
+          <Mail size={14} className="shrink-0 text-nevoa" />
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="pessoa@empresa.com"
+            className="w-full bg-transparent text-[14px] text-branco-cru placeholder:text-nevoa/50 focus:outline-none"
+          />
+        </span>
+      </label>
+      <select
+        value={papel}
+        onChange={(e) => setPapel(e.target.value as PapelDeEmpresa)}
+        className="rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-[14px] text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+      >
+        {(Object.keys(ROTULO_DO_PAPEL) as PapelDeEmpresa[]).map((p) => (
+          <option key={p} value={p}>
+            {ROTULO_DO_PAPEL[p]}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={!emailValido || convidar.isPending}
+        onClick={() => convidar.mutate({ email: email.trim(), role: papel }, { onSuccess: () => setEmail('') })}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-roxo-eletrico px-4 py-2 text-[14px] font-medium text-branco-cru transition-opacity hover:opacity-90 disabled:opacity-40"
+      >
+        <UserPlus size={14} />
+        {convidar.isPending ? 'Convidando...' : 'Convidar'}
+      </button>
+      {convidar.isError && (
+        <p className="w-full text-[13px] text-erro">{convidar.error instanceof Error ? convidar.error.message : 'Não consegui convidar.'}</p>
+      )}
+      {convidar.isSuccess && !convidar.isPending && email === '' && (
+        <p className="w-full text-[13px] text-sucesso">
+          {convidar.data?.membro_criado ? 'Adicionado, já tinha conta, entra na empresa no próximo acesso.' : 'Convite enviado.'}
+        </p>
+      )}
+    </div>
   );
 }
 

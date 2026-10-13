@@ -21,11 +21,11 @@ import { useMe } from '@/hooks/use-me';
  * formas que ninguém testa — e o suporte vira refém de uma escolha de cor de um
  * cliente.
  *
- * ESTADO DE HOJE, dito com clareza para ninguém achar que está pronto: a
- * configuração de marca por empresa ainda NÃO existe no banco (é schema, e está
- * com a outra sessão). Então este componente hoje não muda nada — ele é o
- * encaixe pronto, não a feature entregue. Quando os campos existirem, é aqui
- * que entram, e nenhuma tela precisa mudar.
+ * DE ONDE A MARCA VEM: `GET /me` devolve `organizacao_ativa.marca` (a API lê
+ * as colunas de identidade da empresa — migration 0046 — na mesma consulta do
+ * contexto). Empresa sem cor configurada devolve os campos `null` e os tokens
+ * voltam ao da Desigual, que é o comportamento certo e o único que não
+ * precisa ser mantido em dois lugares.
  */
 
 export interface MarcaDaEmpresa {
@@ -67,9 +67,10 @@ export function aplicarMarca(raiz: HTMLElement, marca: MarcaDaEmpresa | null): v
 
 export function BrandProvider({ children }: { children: React.ReactNode }) {
   const { data: me } = useMe();
-  // A configuração de marca ainda não existe no banco; quando existir, virá
-  // aqui dentro de `organizacao_ativa` e nada mais precisa mudar.
-  const marca = (me?.organizacao_ativa as { marca?: MarcaDaEmpresa } | null | undefined)?.marca ?? null;
+  // `/me` devolve `organizacao_ativa.marca` (shape MarcaDaOrganizacao do
+  // contracts.ts); empresa sem identidade configurada manda campos `null` e
+  // aplicarMarca remove as sobrescritas — os tokens voltam ao do produto.
+  const marca = me?.organizacao_ativa?.marca ?? null;
 
   useEffect(() => {
     if (typeof document === 'undefined') return;

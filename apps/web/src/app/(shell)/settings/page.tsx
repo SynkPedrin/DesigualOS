@@ -13,6 +13,8 @@ import { useHoverSound } from '@/hooks/use-hover-sound';
 import { ApiRequestError } from '@/lib/api/client';
 import { LANGUAGES, THEMES, type Language, type Theme } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
+import { Administracao } from '@/components/shell/administracao';
+import { EmpresaConfig } from '@/components/settings/empresa-config';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiRequestError ? error.message : fallback;
@@ -118,7 +120,15 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <PageHeader eyebrow="Conta" title="Configurações" description="Sua conta: foto, nome, idioma e tema. Conectar fontes é em Integrações." />
 
-      <Surface level="grafite" className="p-0">
+      {/*
+        * MINHA CONTA x EMPRESA. A tela misturava os dois assuntos sem dizer
+        * qual era qual; agora a conta da pessoa (o que só ela vê) vem primeiro
+        * e a configuração da empresa — quando ela existe e cabe aqui — vem
+        * em bloco próprio logo abaixo, gravando no mesmo PATCH da ficha.
+        */}
+      <section>
+        <h2 className="text-[15px] font-medium text-branco-cru">Minha conta</h2>
+      <Surface level="grafite" className="mt-4 p-0">
         {/*
           * EMPILHADO, não em quatro colunas.
           *
@@ -145,9 +155,10 @@ export default function SettingsPage() {
                 className="group relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-lg font-semibold text-branco-cru disabled:opacity-60"
               >
                 {me.avatarUrl ? (
-                  <Image src={me.avatarUrl} alt={me.name} fill sizes="64px" unoptimized className="object-cover" />
+                  <Image src={me.avatarUrl} alt={me.name ?? ''} fill sizes="64px" unoptimized className="object-cover" />
                 ) : (
-                  me.name.charAt(0).toUpperCase()
+                  // Perfil sem nome ainda não é erro — é conta recém-criada.
+                  (me.name?.charAt(0) ?? '?').toUpperCase()
                 )}
                 <span className="absolute inset-0 flex items-center justify-center bg-carbono/60 opacity-0 transition-opacity group-hover:opacity-100">
                   <Camera size={18} />
@@ -264,6 +275,21 @@ export default function SettingsPage() {
           </section>
         </div>
       </Surface>
+      </section>
+
+      {/* A ficha da empresa ativa, quando a organização ativa é um tenant. O
+        * componente decide sozinho se aparece e se edita (quem não responde
+        * pela empresa lê, não escreve — e a API é quem defende de verdade). */}
+      <EmpresaConfig />
+
+      {/*
+        * A PORTA DAS FERRAMENTAS TÉCNICAS. A navegação principal saiu de 30
+        * itens para 9; as 22 rotas escondidas continuam existindo e precisam
+        * de caminho. Esconder sem dar caminho é perder a funcionalidade com
+        * passos extras. Só aparece para quem opera a plataforma, no contexto
+        * da provedora — dentro de um tenant o bloco some (ver administracao.tsx).
+        */}
+      <Administracao />
     </div>
   );
 }

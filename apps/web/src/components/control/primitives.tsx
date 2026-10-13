@@ -98,7 +98,7 @@ export function ControlHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <header className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-grafite-elevado pb-5">
+    <header className="sticky top-0 z-20 -mx-8 mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-grafite-elevado bg-carbono px-8 pb-5 pt-8">
       <div className="min-w-0">
         <h1 className="font-heading text-xl font-semibold tracking-tight text-branco-cru">{title}</h1>
         {description && <p className="mt-1 max-w-2xl text-sm text-nevoa">{description}</p>}

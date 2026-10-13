@@ -15,8 +15,11 @@ import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useApproveToolCall, useToolCalls } from '@/hooks/use-tool-calls';
+import { useApprovals, useResolveApproval } from '@/hooks/use-approvals';
+import { useClients } from '@/hooks/use-clients';
+import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { ApiRequestError } from '@/lib/api/client';
-import type { ToolCall } from '@/lib/api/contracts';
+import type { ApprovalRequestWire, ToolCall } from '@/lib/api/contracts';
 
 /** Ferramentas críticas do Tool Gateway (seção 6.6) que passam por esta fila hoje. Qualquer
  * `tool` fora deste mapa ainda aparece (rótulo cru + ícone genérico) em vez de sumir da lista. */
@@ -109,6 +112,85 @@ function ToolCallCard({ call }: { call: ToolCall }) {
   );
 }
 
+const RESOURCE_TYPE_LABEL: Record<string, string> = {
+  brief: 'Briefing', creative: 'Criativos', copy: 'Copy', task: 'Tarefa', campaign: 'Campanha', budget: 'Orçamento', publication: 'Publicação',
+};
+
+function BusinessApprovalCard({ approval, clientName }: { approval: ApprovalRequestWire; clientName: string }) {
+  const resolver = useResolveApproval();
+
+  function decidir(status: 'approved' | 'rejected') {
+    resolver.mutate(
+      { id: approval.id, status },
+      {
+        onSuccess: () => toast(status === 'approved' ? 'Aprovado.' : 'Recusado.', status === 'approved' ? 'success' : 'info'),
+        onError: () => toast('Não foi possível registrar a decisão.', 'error'),
+      },
+    );
+  }
+
+  return (
+    <Surface className="flex flex-col gap-4 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <EntityAvatar name={clientName} kind="client" size="sm" />
+          <span className="text-sm font-semibold text-branco-cru">{RESOURCE_TYPE_LABEL[approval.resource_type] ?? approval.resource_type}</span>
+          <span className="text-nevoa">·</span>
+          <span className="text-sm text-nevoa">{clientName}{approval.version ? ` · ${approval.version}` : ''}</span>
+        </div>
+        <span className="shrink-0 font-mono text-[11px] text-nevoa" title={new Date(approval.created_at).toLocaleString('pt-BR')}>
+          {formatRelativeTime(approval.created_at)}
+        </span>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => decidir('rejected')}
+          disabled={resolver.isPending}
+          className="rounded-md border border-grafite-elevado px-4 py-2 text-sm font-medium text-nevoa transition-colors hover:text-branco-cru disabled:opacity-50"
+        >
+          Recusar
+        </button>
+        <button
+          type="button"
+          onClick={() => decidir('approved')}
+          disabled={resolver.isPending}
+          className="flex items-center gap-2 rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow disabled:opacity-50"
+        >
+          {resolver.isPending ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+          Aprovar
+        </button>
+      </div>
+    </Surface>
+  );
+}
+
+function BusinessApprovalsSection() {
+  const { data: approvals, isPending } = useApprovals({ status: 'pending' });
+  const { data: clients } = useClients();
+  const nomeDoCliente = (clientId: string | null) => clients?.find((c) => c.id === clientId)?.name ?? 'Interno';
+
+  if (isPending) {
+    return (
+      <div className="mb-8 space-y-4">
+        <Skeleton className="h-40 rounded-lg" />
+      </div>
+    );
+  }
+  if (!approvals || approvals.length === 0) return null;
+
+  return (
+    <div className="mb-8 space-y-4">
+      <h2 className="font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Decisões de negócio, brief, criativo, campanha</h2>
+      <AnimatePresence initial={false}>
+        {approvals.map((a) => (
+          <BusinessApprovalCard key={a.id} approval={a} clientName={nomeDoCliente(a.client_id)} />
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function ApprovalsPage() {
   const { isMaster, isPending: rolePending } = useIsMaster();
   const { data: toolCalls, isPending, isError, refetch } = useToolCalls(isMaster);
@@ -128,8 +210,10 @@ export default function ApprovalsPage() {
       <PageHeader
         eyebrow="Governança"
         title="Aprovações"
-        description="Orçamento de Meta Ads, publicações no Instagram e exclusões no ClickUp propostas pelos agentes ficam pendentes aqui até um master aprovar."
+        description="Decisões de negócio (brief, criativo, campanha) e ações críticas dos agentes (orçamento de Meta Ads, publicação no Instagram, exclusão no ClickUp) ficam pendentes aqui até um master decidir."
       />
+
+      <BusinessApprovalsSection />
 
       {rolePending || isPending ? (
         <div className="space-y-4">
@@ -150,6 +234,7 @@ export default function ApprovalsPage() {
         />
       ) : (
         <div className="space-y-4">
+          <h2 className="font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Ações da IA</h2>
           <AnimatePresence initial={false}>
             {toolCalls.map((call) => (
               <ToolCallCard key={call.id} call={call} />

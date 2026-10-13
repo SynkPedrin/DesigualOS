@@ -5,6 +5,7 @@ import { Copy, FileText, Forward, RotateCcw } from 'lucide-react';
 import { AgentAvatar } from '@/components/ui/agent-avatar';
 import { Chip } from '@/components/ui/chip';
 import { MarkdownLite } from '@/lib/markdown-lite';
+import { AbrirPrevia } from '@/components/ui/previa-de-anexo';
 import { AGENT_META } from '@/lib/agent-meta';
 import { ThinkingSteps } from './thinking-steps';
 import { MotionCard, type ChatMotionRef } from './motion-card';
@@ -50,28 +51,40 @@ export interface ChatUiMessage {
 
 /** Anexo no balão: imagem vira thumbnail clicável; qualquer outro tipo vira
  * chip com ícone + nome + link (abre numa aba nova). */
+/**
+ * Anexo no balão. Imagem e PDF abrem em PRÉVIA sobre a tela, sem trocar de
+ * aba — quem está no meio de um turno de chat perde o fio ao sair. O resto
+ * continua indo para a aba nova, como sempre foi.
+ */
 function ChatAttachmentView({ attachment }: { attachment: ChatUiAttachment }) {
+  const anexo = {
+    url: attachment.url,
+    filename: attachment.filename ?? null,
+    contentType: attachment.type ?? null,
+  };
+
   if (attachment.type?.startsWith('image/')) {
     return (
-      <a href={attachment.url} target="_blank" rel="noreferrer" className="block">
+      <AbrirPrevia anexo={anexo} className="block">
         <img
           src={attachment.url}
           alt={attachment.filename ?? 'imagem anexada'}
           className="h-auto max-w-[240px] rounded-md border border-white/10 object-cover"
         />
-      </a>
+      </AbrirPrevia>
     );
   }
+
+  const ehPdf = attachment.type === 'application/pdf';
   return (
-    <a
-      href={attachment.url}
-      target="_blank"
-      rel="noreferrer"
+    <AbrirPrevia
+      anexo={anexo}
       className="flex max-w-[240px] items-center gap-2 rounded-md border border-white/10 bg-carbono/40 px-3 py-2 text-xs text-branco-cru/80 transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
     >
       <FileText size={14} className="shrink-0" />
       <span className="truncate">{attachment.filename ?? 'arquivo'}</span>
-    </a>
+      {ehPdf && <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-nevoa">ver</span>}
+    </AbrirPrevia>
   );
 }
 

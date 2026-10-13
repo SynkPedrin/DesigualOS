@@ -72,12 +72,23 @@ export function Consentimento() {
     return (
       <SemNadaAinda
         titulo="Não consegui carregar as permissões"
-        explicacao="Sem essa lista não dá para pedir autorização — e pedir autorização sem dizer para quê seria pior que não pedir."
+        explicacao="Sem essa lista não dá para pedir autorização, e pedir autorização sem dizer para quê seria pior que não pedir."
       />
     );
   }
 
-  const ultimo = historico?.consentimentos[0] ?? null;
+  /**
+   * `historico?.consentimentos?.[0]`, com o segundo `?.` — e ele não é
+   * decoração. O primeiro protege `historico`; sem o segundo, uma resposta que
+   * chegue sem a lista (versão mais velha da API, deploy escalonado, corpo
+   * truncado) estoura aqui dentro do render. E como este componente é filho da
+   * página de Integrações, o estouro leva a VITRINE INTEIRA junto: todos os
+   * cartões somem, e quem está olhando conclui que "nenhuma integração abre"
+   * (relato de 08/10/2026). Um pedido de consentimento que não carregou não
+   * pode derrubar a tela onde as conexões vivem.
+   */
+  const consentimentos = historico?.consentimentos ?? [];
+  const ultimo = consentimentos[0] ?? null;
   // Capturado depois da guarda acima: o TypeScript não estreita `catalogo`
   // dentro de uma função declarada no mesmo escopo.
   const dados = catalogo;
@@ -188,16 +199,16 @@ export function Consentimento() {
         <p className="font-heading text-[15px] font-semibold text-branco-cru">Autorizações registradas</p>
         {!historico ? (
           <LinhasFantasma linhas={2} />
-        ) : historico.consentimentos.length === 0 ? (
+        ) : consentimentos.length === 0 ? (
           <p className="mt-1 text-[13px] text-nevoa">
             Nenhuma ainda. Enquanto não houver, nenhuma fonte foi autorizada por esta via.
           </p>
         ) : (
           <ul className="mt-3 space-y-2">
-            {historico.consentimentos.map((c) => (
+            {consentimentos.map((c) => (
               <li key={c.id} className="rounded-md border border-grafite-elevado bg-carbono px-3 py-2">
                 <p className="text-[13px] text-branco-cru">
-                  {c.fontes.join(', ')} — por {c.quem ?? 'alguém'}
+                  {c.fontes.join(', ')}, por {c.quem ?? 'alguém'}
                 </p>
                 <p className="mt-0.5 text-[12px] text-nevoa">
                   {c.quando ? new Date(c.quando).toLocaleString('pt-BR') : 'sem data'}

@@ -28,7 +28,12 @@ export function PageHeader({
   const pathname = usePathname();
   const videoSrc = titleCardVideoFor(pathname);
 
+  // GRUDA NO TOPO enquanto a lista rola por baixo. O `pt-8` vem pra cá porque o
+  // container de conteúdo perdeu o dele: sem isso, os 32px acima do cabeçalho
+  // virariam um vão transparente por onde a lista apareceria passando. O
+  // `bg-carbono` fecha esse vão, e o `-mx-8` faz o fundo cobrir a largura toda.
   return (
+    <div className="sticky top-0 z-20 -mx-8 bg-carbono px-8 pt-8">
     <BrandBanner className="mb-8 p-6 md:p-8" videoSrc={videoSrc}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -43,5 +48,6 @@ export function PageHeader({
         {actions && <div className="flex items-center gap-2">{actions}</div>}
       </div>
     </BrandBanner>
+    </div>
   );
 }

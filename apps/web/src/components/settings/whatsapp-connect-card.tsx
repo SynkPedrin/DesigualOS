@@ -36,7 +36,7 @@ export function WhatsAppConnectCard() {
     return <Skeleton className="h-28 w-full" />;
   }
 
-  const conector = conectores.data?.connectors.find((c) => c.provider === 'whatsapp') ?? null;
+  const conector = conectores.data?.connectors?.find((c) => c.provider === 'whatsapp') ?? null;
   const erro = salvar.error instanceof ApiRequestError ? salvar.error.message : salvar.isError ? 'Não foi possível salvar.' : null;
 
   if (conector) {
@@ -52,7 +52,7 @@ export function WhatsAppConnectCard() {
           </span>
         </div>
         <p className="mt-2 font-mono text-[11px] text-nevoa">
-          instância {conector.credentials.instanceId ?? conector.credentials.instance ?? '—'}
+          instância {conector.credentials.instanceId ?? conector.credentials.instance ?? 'sem dado'}
           {saude.data?.detail ? ` · ${saude.data.detail}` : ''}
         </p>
         <button

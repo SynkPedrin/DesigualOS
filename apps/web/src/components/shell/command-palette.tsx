@@ -6,9 +6,12 @@ import { Command } from 'cmdk';
 import { Users, Bot, Building2 } from 'lucide-react';
 import { useUiStore } from '@/stores/ui-store';
 import { useIsMaster } from '@/hooks/use-is-master';
+import { useMe } from '@/hooks/use-me';
+import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useSearch } from '@/hooks/use-search';
 import { matchesQuery } from '@/lib/search-match';
 import { NAV_ITEMS } from './nav-items';
+import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
 
 export function CommandPalette() {
   const router = useRouter();
@@ -16,6 +19,8 @@ export function CommandPalette() {
   const setOpen = useUiStore((state) => state.setCommandPaletteOpen);
   const setStudioModalOpen = useUiStore((state) => state.setStudioModalOpen);
   const { isMaster } = useIsMaster();
+  const { data: me } = useMe();
+  const { data: workspace } = useMyWorkspace();
   const [query, setQuery] = useState('');
   const { data: results } = useSearch(query);
   // Depende de `query`, então precisa vir DEPOIS do useState: o .filter roda
@@ -26,9 +31,17 @@ export function CommandPalette() {
   // O filtro do cmdk está desligado (shouldFilter={false}), então a navegação
   // é filtrada aqui. O motivo de desligar está em lib/search-match.ts: o
   // filtro dele escondia cliente que o servidor tinha encontrado.
-  const visibleNavItems = NAV_ITEMS.filter(
-    (item) => (!item.masterOnly || isMaster) && matchesQuery(item.label, query),
-  );
+  //
+  // OS MESMOS GATES DA SIDEBAR (05/10/2026): antes daqui só `masterOnly` era
+  // filtrado — tudo que a navegação esconde por `administracao`, `providerOnly`
+  // ou contexto continuava alcançável pelo ⌘K, a segunda porta sem a regra da
+  // primeira.
+  const visibleNavItems = itensVisiveisNaNavegacao(NAV_ITEMS, {
+    isMaster,
+    ehProvider: me?.eh_provider === true,
+    dentroDeTenant: estaDentroDeTenant(me),
+    modulosHabilitados: workspace ? new Set(workspace.modules) : null,
+  }).filter((item) => matchesQuery(item.label, query));
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
