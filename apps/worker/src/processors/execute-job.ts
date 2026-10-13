@@ -62,6 +62,7 @@ import {
   type OpenAIModelTier,
 } from '@desigual-os/openai-provider';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
+import { lerComGptPrimeiro, montarPromptDeLeitura, type CamadaDeLeitura } from './bento-leitura-gpt';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation, getClickUpConfigOrNull, ehQaBot } from './bento-action-guard';
@@ -2047,6 +2048,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // Caminho agêntico: o callNode vira uma ferramenta dentro do loop
       // understand→context→plan→act→observe→evaluate→replan, com checkpoint
       // no Postgres e outcome gravado por execução.
+      let camadaDaLeitura: CamadaDeLeitura | null = null;
       result = await dispatchWithAgentLoop({
         data,
         userId: runningExecution?.userId ?? null,
@@ -2055,29 +2057,51 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         clientBrandKit,
         clientFeedbackHistory,
         logger,
-        callAgent: (msg, contextoApartado) =>
-          callNode(
-            agent,
-            executionId,
-            msg,
-            contextRefs,
-            logger,
-            conversationId ?? undefined,
-            clientBrandKit,
-            attachments,
-            // O contexto apartado entra pelo campo próprio, junto com o que já
-            // viesse de operacional. Ver `aceitaContextoNaMensagem`: pro Bento,
-            // contexto dentro da pergunta sequestra a intenção dele.
-            limitarContexto([operationalContext, contextoApartado]),
-            clientFeedbackHistory,
-          ),
+        callAgent: async (msg, contextoApartado) => {
+          // O contexto apartado entra pelo campo próprio, junto com o que já
+          // viesse de operacional. Ver `aceitaContextoNaMensagem`: pro Bento,
+          // contexto dentro da pergunta sequestra a intenção dele.
+          const contexto = limitarContexto([operationalContext, contextoApartado]);
+          const perguntarAGpu = () =>
+            callNode(
+              agent,
+              executionId,
+              msg,
+              contextRefs,
+              logger,
+              conversationId ?? undefined,
+              clientBrandKit,
+              attachments,
+              contexto,
+              clientFeedbackHistory,
+            );
+          if (agent !== 'bento') return perguntarAGpu();
+          // GPT → GPU → GPT: ver bento-leitura-gpt.ts, e por que isto não
+          // podia ficar só no caminho direto.
+          const leitura = await lerComGptPrimeiro({
+            gptPrimario: bentoOpenAiReadEnabled(),
+            perguntarAoGpt: () => responderLeituraComOpenAI(montarPromptDeLeitura(msg, contexto), logger),
+            perguntarAGpu,
+          });
+          camadaDaLeitura = leitura.camada;
+          if (leitura.camada === 'openai_leitura_fallback_gpu') {
+            logger.warn({ executionId }, '[bento] GPU sem resposta; turno respondido via OpenAI');
+          }
+          return { ...leitura.resposta, execution_id: executionId };
+        },
       });
       // Dentro do loop, callAgent() acima é o mesmo callNode do caminho
       // direto — o loop só adiciona planejamento em volta da mesma
       // dependência externa (bento-qa). Mesma camada, tag própria pra não
       // confundir com "sem marcação" caso o loop devolva algo sem passar
-      // pelo callAgent (ex.: falha antes de chamar a ferramenta).
-      result = marcarCamadaDaCascata(result, 'externo_bento_qa_via_loop');
+      // pelo callAgent (ex.: falha antes de chamar a ferramenta). Quando o
+      // GPT respondeu, a marca diz isso.
+      result = marcarCamadaDaCascata(
+        result,
+        camadaDaLeitura === 'openai_leitura_primaria' || camadaDaLeitura === 'openai_leitura_fallback_gpu'
+          ? `${camadaDaLeitura}_via_loop`
+          : 'externo_bento_qa_via_loop',
+      );
     } else {
       /**
        * CAMINHO DIRETO (loop desligado) — o diálogo recente precisa ir mesmo
