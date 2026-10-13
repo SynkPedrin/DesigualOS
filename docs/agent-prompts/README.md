@@ -37,5 +37,10 @@ system prompt real de cada serviço.
 
 ## Arquivos
 
-- `bento.md` - prompt completo do Bento (57 seções).
+- `bento-guardiao-do-brain.md` - prompt do Bento como GUARDIÃO DO BRAIN
+  (01/10/2026, 33 seções). Sucede o `bento.md` e é o prompt do produto
+  white-label: descreve o mecanismo Bento sobre o Brain de qualquer
+  organização, não o Bento da casa. Também não é lido em runtime.
+- `bento.md` - prompt completo do Bento (57 seções), versão da Agência
+  Desigual (08/09/2026). Mantido: o novo não cobre tudo que há aqui.
 - `jarbas.md` - prompt completo do Jarbas (78 seções).

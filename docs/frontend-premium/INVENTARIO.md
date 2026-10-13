@@ -1,3 +1,13 @@
+# PENDÊNCIA QUE NÃO PODE SER ESQUECIDA
+
+**Apagar a conta `qa-bot@institutoalmada.org` ao fim desta missão.** Criada em
+09/10/2026 a pedido do Pedro, exclusivamente para a validação em navegador, com a
+instrução explícita de remover depois. Existe no Supabase Auth, na tabela `users`,
+com papel master e vínculo na empresa provedora. As credenciais estão em
+`.env.local` (gitignored) e saem junto.
+
+---
+
 # Transformação premium do frontend — inventário e acompanhamento
 
 Arquivo de continuidade: se o contexto da sessão for compactado, retome por aqui.
