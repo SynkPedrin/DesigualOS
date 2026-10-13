@@ -149,7 +149,9 @@ export function Sidebar({
   async function handleSignOut() {
     await supabase.auth.signOut();
     onNavigate?.();
-    router.replace('/login');
+    // Navegação dura: o próximo login pode ser OUTRA conta, e o cache desta
+    // não pode sobreviver até lá.
+    window.location.assign('/login');
   }
 
   /** Mesmo rota não reseta o estado local do ChatThread - o nonce em ?new= é o

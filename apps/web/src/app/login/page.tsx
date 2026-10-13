@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { LogIn } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/auth-layout';
 import { supabase } from '@/lib/supabase/client';
@@ -20,7 +20,6 @@ function safeNextPath(next: string | null): string {
 }
 
 function LoginPageContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,7 +36,11 @@ function LoginPageContent() {
       setError(authError.message);
       return;
     }
-    router.push(safeNextPath(searchParams.get('next')));
+    // Navegação DURA, não router.push: uma troca de conta dentro da mesma aba
+    // mantém o cache do React Query da conta anterior (medido em 13/10/2026:
+    // login como master mostrando a conta do colaborador recém-criado). Página
+    // nova = cache novo = identidade certa.
+    window.location.assign(safeNextPath(searchParams.get('next')));
   }
 
   return (

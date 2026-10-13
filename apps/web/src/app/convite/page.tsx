@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { KeyRound } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/auth-layout';
@@ -24,7 +24,6 @@ import { apiFetch } from '@/lib/api/client';
  * oferece a troca, em vez de mexer na conta errada.
  */
 function ConviteForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const emailDoConvite = searchParams.get('email')?.toLowerCase() ?? null;
 
@@ -122,7 +121,9 @@ function ConviteForm() {
     }
 
     setIsSubmitting(false);
-    router.replace('/');
+    // Navegação dura: a conta acabou de nascer nesta aba; o cache da conta
+    // anterior não pode atravessar para ela.
+    window.location.assign('/');
   }
 
   if (status === 'checking') {
@@ -165,7 +166,7 @@ function ConviteForm() {
           type="button"
           onClick={async () => {
             await supabase.auth.signOut();
-            router.replace('/login');
+            window.location.assign('/login');
           }}
           className="mb-4 flex w-full items-center justify-center gap-2 rounded-md bg-roxo-eletrico py-2.5 text-sm font-semibold text-branco-cru transition-opacity hover:opacity-90"
         >

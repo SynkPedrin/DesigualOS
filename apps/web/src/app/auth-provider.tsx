@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase, wireSupabaseAccessToken } from '@/lib/supabase/client';
 import { setOnAccountDeactivated } from '@/lib/api/client';
 
@@ -9,11 +10,31 @@ import { setOnAccountDeactivated } from '@/lib/api/client';
  *  every page guessing its own (wrong) reason for the 403 it got back. */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [contaDesativada, setContaDesativada] = useState(false);
+  const queryClient = useQueryClient();
+  const usuarioAtual = useRef<string | null>(null);
 
   useEffect(() => {
     wireSupabaseAccessToken();
     setOnAccountDeactivated(() => setContaDesativada(true));
-  }, []);
+
+    /**
+     * TRAVA DE TROCA DE CONTA (13/10/2026, incidente real): o master aceitou
+     * um convite na mesma aba em que estava logado e a tela continuou dizendo
+     * "super" com a sessão já trocada. Login/convite/sair agora navegam com
+     * reload inteiro (cache novo), mas este listener cobre o que escapa: a
+     * sessão trocar SEM passar por essas telas (outra aba, refresh de token
+     * depois de um convite, etc.). Conta diferente entrando = todo o cache de
+     * dados da conta anterior é apagado na hora.
+     */
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      const id = session?.user.id ?? null;
+      if (event === 'SIGNED_IN' && id && usuarioAtual.current && id !== usuarioAtual.current) {
+        queryClient.clear();
+      }
+      usuarioAtual.current = id;
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [queryClient]);
 
   if (contaDesativada) {
     return (
