@@ -1,9 +1,11 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
+import {
+  callResponses,
+  isOpenAICredentialConfigured,
+  pickModel,
+} from '@desigual-os/openai-provider';
+import type { FastifyBaseLogger } from 'fastify';
 import type { BrandKit } from './dna.js';
-
-const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
-type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
 
 /** Interface mínima e estrutural (não a Logger completa do pino/@desigual-os/logging):
  * quem chama isto é normalmente uma rota Fastify passando request.log, cujo tipo
@@ -28,17 +30,6 @@ const generatedCaptionSchema = z.object({
 });
 
 export type GeneratedImageCaption = z.infer<typeof generatedCaptionSchema>;
-
-function detectMediaType(url: string, contentType: string | null): ImageMediaType {
-  if (contentType && (IMAGE_MEDIA_TYPES as readonly string[]).includes(contentType)) {
-    return contentType as ImageMediaType;
-  }
-  const ext = (url.split('?')[0] ?? url).split('.').pop()?.toLowerCase();
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'gif') return 'image/gif';
-  return 'image/png';
-}
 
 function buildSystemPrompt(brandKit?: GenerateImageCaptionInput['brandKit']): string {
   const toneLine = brandKit?.toneOfVoice
@@ -72,51 +63,51 @@ function buildSystemPrompt(brandKit?: GenerateImageCaptionInput['brandKit']): st
  *
  * Mesma ressalva de packages/router/src/classifier.ts: implementação segue a
  * API documentada do SDK, mas não foi validada contra uma chamada real nesta
- * sessão (sem ANTHROPIC_API_KEY configurada/testável no ambiente de auditoria
- * onde isto foi escrito). Testar contra uma chave real antes de confiar em
- * produção.
+ * sessão. Testar contra uma chave real antes de confiar em produção.
+ *
+ * Migrou de Anthropic pra OpenAI em 13/10/2026, por decisão do Pedro: "não
+ * vai utilizar anthropic api key, e sim o gpt". A imagem vai como parte
+ * `input_image` da Responses API; o modelo sai da mesma escada de custo do
+ * resto do Otto (pickModel), não de uma escolha solta aqui.
  */
 export async function generateImageCaption(input: GenerateImageCaptionInput): Promise<GeneratedImageCaption | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    input.logger?.warn('ANTHROPIC_API_KEY not configured, image caption unavailable');
+  if (!isOpenAICredentialConfigured()) {
+    input.logger?.warn('OPENAI_API_KEY não configurada; legenda de imagem indisponível');
     return null;
   }
 
-  const imageResponse = await fetch(input.imageUrl);
-  if (!imageResponse.ok) {
-    throw new Error(`Não consegui baixar a imagem para análise (HTTP ${imageResponse.status}).`);
-  }
-  const mediaType = detectMediaType(input.imageUrl, imageResponse.headers.get('content-type'));
-  const base64Data = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
+  const decision = pickModel('otto_creative_normal', 'normal');
+  const logger = (input.logger ?? console) as unknown as FastifyBaseLogger;
 
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model: 'claude-sonnet-5',
-    max_tokens: 512,
-    system: buildSystemPrompt(input.brandKit),
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64Data } },
-          { type: 'text', text: `Briefing original desta peça: ${input.briefing || '(nenhum briefing registrado)'}` },
-        ],
-      },
-    ],
-  });
+  const result = await callResponses(
+    {
+      model: decision.model,
+      instructions: `${buildSystemPrompt(input.brandKit)}\n\nResponda SOMENTE com um JSON válido, sem markdown, sem texto antes ou depois.`,
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_image', image_url: input.imageUrl, detail: 'auto' },
+            { type: 'input_text', text: `Briefing original desta peça: ${input.briefing || '(nenhum briefing registrado)'}` },
+          ],
+        },
+      ],
+      maxOutputTokens: 512,
+    },
+    logger,
+  );
 
-  const textBlock = response.content.find((block) => block.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    input.logger?.error({ response }, 'generateImageCaption: resposta sem bloco de texto');
+  const texto = result.outputText.trim();
+  if (!texto) {
+    input.logger?.error({ responseId: result.responseId }, 'generateImageCaption: resposta sem texto');
     return null;
   }
 
   try {
-    const parsed: unknown = JSON.parse(textBlock.text);
+    const parsed: unknown = JSON.parse(texto);
     return generatedCaptionSchema.parse(parsed);
   } catch (error) {
-    input.logger?.error({ error, raw: textBlock.text }, 'generateImageCaption: resposta não parseável');
+    input.logger?.error({ error, raw: texto }, 'generateImageCaption: resposta não parseável');
     return null;
   }
 }

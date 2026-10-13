@@ -14,7 +14,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.27.3",
     "@desigual-os/logging": "workspace:*",
     "@desigual-os/openai-provider": "workspace:*",
     "zod": "^3.23.8",

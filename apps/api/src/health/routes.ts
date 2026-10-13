@@ -143,7 +143,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
       /**
        * A CAMADA QUE INTERPRETA LINGUAGEM LIVRE TEM CREDENCIAL?
        *
-       * Sem `ANTHROPIC_API_KEY` o classificador do roteador devolve `null` em
+       * Sem `OPENAI_API_KEY` o classificador do roteador devolve `null` em
        * toda chamada, e todo pedido que não casa com uma das regras
        * determinísticas vira "não entendi, me diz se é operação, mídia ou
        * criação". Visto da tela, o assistente está quebrado.

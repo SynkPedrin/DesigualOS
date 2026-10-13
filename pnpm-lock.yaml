@@ -799,9 +799,6 @@ importers:
 
   packages/otto:
     dependencies:
-      '@anthropic-ai/sdk':
-        specifier: ^0.27.3
-        version: 0.27.3
       '@desigual-os/logging':
         specifier: workspace:*
         version: link:../logging

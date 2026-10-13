@@ -29,6 +29,7 @@ export {
   type ResponsesToolDefinition,
   type ResponsesFunctionToolDefinition,
   type ResponsesMcpToolDefinition,
+  type ResponsesInputContent,
 } from './responses-client.js';
 
 export { buildClickUpMcpTool } from './clickup-mcp-tool.js';

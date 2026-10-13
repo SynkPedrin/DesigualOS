@@ -43,12 +43,22 @@ export interface ResponsesMcpToolDefinition {
 
 export type ResponsesToolDefinition = ResponsesFunctionToolDefinition | ResponsesMcpToolDefinition;
 
+/**
+ * Um item de conteúdo estruturado na entrada da Responses API. Texto puro
+ * continua sendo uma string em `input`; isto existe pra quem precisa mandar
+ * IMAGEM junto (visão), como a legenda do Otto que olha a peça gerada
+ * (packages/otto/src/creative/caption-from-image.ts).
+ */
+export type ResponsesInputContent =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string; detail: 'low' | 'high' | 'auto' };
+
 export interface ResponsesRequest {
   model: OpenAIModelId;
   /** Prefixo estável (seção 10, prompt caching): instruções, identidade, política de tool, definições de tool. */
   instructions: string;
-  /** Conteúdo dinâmico, SEMPRE depois do prefixo estável. */
-  input: string;
+  /** Conteúdo dinâmico, SEMPRE depois do prefixo estável. String para texto puro; lista de partes quando há imagem. */
+  input: string | Array<{ role: 'user'; content: ResponsesInputContent[] }>;
   tools?: ResponsesToolDefinition[];
   maxOutputTokens: number;
   previousResponseId?: string;
