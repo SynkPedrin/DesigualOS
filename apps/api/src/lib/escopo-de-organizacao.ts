@@ -8,9 +8,11 @@ import type { AuthenticatedUser } from '../auth/middleware';
  */
 import {
   decidirEscopo,
+  descendentesTransitivos,
   ehPapelDePlataforma,
   organizacaoProvedora,
   type EscopoDeOrganizacao,
+  type NoDaArvore,
 } from '@desigual-os/auth';
 
 export { decidirEscopo, ehPapelDePlataforma, organizacaoProvedora, type EscopoDeOrganizacao };
@@ -99,6 +101,89 @@ export async function colegasVisiveis(user: AuthenticatedUser): Promise<{ userId
   // A própria pessoa sempre entra: sem isso, alguém fora de qualquer
   // organização deixaria de se ver na própria tela de equipe.
   return { userIds: [...new Set([user.id, ...linhas.map((l) => l.userId)])], ehProvider: false };
+}
+
+/**
+ * A SUBÁRVORE de uma empresa: ela mesma + descendentes diretos e transitivos.
+ *
+ * É a metade COM BANCO da regra pura de `packages/auth`
+ * (hierarquia-de-organizacao.ts): aqui se carrega a árvore, lá se decide.
+ * `organizations` é pequena (casa das dezenas mesmo com todos os clientes do
+ * provedor migrados), então a árvore inteira vem numa consulta só e o BFS
+ * acontece em memória — alternativa seria uma CTE recursiva por chamada, que
+ * custaria uma ida ao banco por nível da árvore num pool de três conexões.
+ *
+ * ESTE HELPER É A PEÇA PRONTA da fronteira de leitura hierárquica. O rollout
+ * nos leitores de memória (os 24 arquivos que hoje recortam só pela org
+ * ativa) é follow-up documentado — quando acontecer, é daqui que cada um
+ * busca a subárvore, nunca de uma query improvisada.
+ */
+export async function subarvoreDe(organizationId: string): Promise<string[]> {
+  const arvore = await arvoreDeOrganizacoes();
+  return [organizationId, ...descendentesTransitivos(arvore, organizationId)];
+}
+
+/**
+ * A árvore inteira de empresas (id + pai). Separada de `subarvoreDe` porque
+ * quem precisa da subárvore de VÁRIAS raízes (ex: GET /organizations de um
+ * dono de agência com duas empresas) carrega uma vez e desce por todas —
+ * uma ida ao banco por raiz, num pool de três conexões, é a armadilha
+ * medida no /panorama.
+ */
+export async function arvoreDeOrganizacoes(): Promise<NoDaArvore[]> {
+  return db
+    .select({ id: schema.organizations.id, parentId: schema.organizations.parentId })
+    .from(schema.organizations)
+    .catch(() => [] as NoDaArvore[]);
+}
+
+/**
+ * Os papéis que a pessoa tem em CADA empresa de que é membro — a metade com
+ * banco de "quem administra o quê". O papel de plataforma (user.roles) não
+ * responde isto: `master` da Cosentino é master da Cosentino, e só.
+ */
+export async function papeisPorOrganizacao(user: AuthenticatedUser): Promise<Map<string, string>> {
+  const linhas = await db
+    .select({
+      organizationId: schema.organizationMembers.organizationId,
+      role: schema.organizationMembers.role,
+    })
+    .from(schema.organizationMembers)
+    .where(eq(schema.organizationMembers.userId, user.id))
+    .catch(() => [] as Array<{ organizationId: string; role: string }>);
+
+  return new Map(linhas.map((l) => [l.organizationId, l.role]));
+}
+
+/**
+ * O recorte pela EMPRESA DE TRABALHO, como FRAGMENTO DE SQL — a regra decidida
+ * em 05/10/2026 depois do vazamento cross-tenant confirmado em runtime (um
+ * provedor dentro da "Empresa QA White Label" recebeu 50 memórias da operação
+ * da Desigual por `GET /memories`).
+ *
+ * A regra tem DUAS pernas, e a segunda é a que importa:
+ *
+ *   1. a linha pertence à empresa de trabalho resolvida server-side (a mesma
+ *      de `requireTenant` e de `GET /activity` — `organizacao_ativa`, nunca um
+ *      id vindo do navegador);
+ *   2. `organization_id IS NULL` é LEGADO PRÉ-MIGRAÇÃO 0045 — dado da própria
+ *      plataforma, de quando existia uma empresa só. Entra SOMENTE quando a
+ *      empresa de trabalho é a provedora; dentro de um tenant vendido, NULL
+ *      NUNCA entra, nem para master. "Master dentro da Desigual vê o legado;
+ *      master dentro da Empresa QA vê só Empresa QA."
+ *
+ * Antes desta função, cada rota improvisava: `tenantSharingScope` unia TODAS
+ * as empresas da pessoa (e master atravessava tudo), e a CTE do `/panorama`
+ * deixava `organization_id is null` entrar para qualquer um. As três formas
+ * deram o mesmo vazamento em três telas.
+ */
+export function recorteDaOrganizacaoDeTrabalho(
+  organizacaoDeTrabalhoId: string,
+  coluna: SQL | unknown,
+): SQL {
+  const provedora = organizacaoProvedora();
+  const legadoVisivel = provedora !== null && organizacaoDeTrabalhoId === provedora;
+  return sql`(${coluna} = ${organizacaoDeTrabalhoId}::uuid or (${legadoVisivel} and ${coluna} is null))`;
 }
 
 /**

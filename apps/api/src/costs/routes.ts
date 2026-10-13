@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { and, gte, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth, requirePermission } from '../auth/middleware';
-import { recorteViaClienteOuPessoa } from '../lib/escopo-de-organizacao';
+import { escopoDeOrganizacao, organizacaoProvedora, recorteViaClienteOuPessoa } from '../lib/escopo-de-organizacao';
+import { organizacaoDeTrabalhoDe } from '../organizations/contexto';
 
 function rangeToDate(range: string | undefined): Date {
   const days = range?.endsWith('d') ? Number(range.slice(0, -1)) : 30;
@@ -24,11 +25,14 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
       /**
        * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
        *
-       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
-       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
-       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
-       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
-       * três vezes hoje em lugares diferentes.
+       * `cost_records` ganhou `organization_id` na migração 0049 (escrita +
+       * backfill), mas a fronteira aqui continua saindo do vínculo — cliente
+       * ou pessoa: é o que mantém visíveis as linhas antigas sem vínculo
+       * nenhum e compatível o recorte de quem já dependia dele. Sem isto, uma
+       * empresa enxerga o volume de uso da outra — que é vazamento por
+       * agregação, o mesmo padrão que já apareceu três vezes em lugares
+       * diferentes. Custo por empresa com subárvore (white label) tem rota
+       * própria: GET /organizations/:id/costs.
        */
       const daMinhaEmpresa = recorteViaClienteOuPessoa(
         usuario,
@@ -51,11 +55,11 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
         })
         .from(schema.tokenUsage)
         /**
-         * `token_usage` não tem cliente NEM pessoa — só `execution_id`. E
-         * `executions` ganhou `organization_id` na 0045, então a ligação
-         * existe e é por ali. Execução sem dono (linha antiga) continua
-         * entrando, pelo mesmo motivo das outras: sumir com número hoje
-         * confundiria mais do que protege.
+         * `token_usage` ganhou `organization_id` na 0049, mas linhas antigas
+         * sem vínculo continuam existindo — então a fronteira aqui segue pela
+         * execution, que é o vínculo que SEMPRE existiu. Execução sem dono
+         * continua entrando: sumir com número hoje confundiria mais do que
+         * protege.
          */
         .where(
           and(
@@ -100,11 +104,14 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
       /**
        * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
        *
-       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
-       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
-       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
-       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
-       * três vezes hoje em lugares diferentes.
+       * `cost_records` ganhou `organization_id` na migração 0049 (escrita +
+       * backfill), mas a fronteira aqui continua saindo do vínculo — cliente
+       * ou pessoa: é o que mantém visíveis as linhas antigas sem vínculo
+       * nenhum e compatível o recorte de quem já dependia dele. Sem isto, uma
+       * empresa enxerga o volume de uso da outra — que é vazamento por
+       * agregação, o mesmo padrão que já apareceu três vezes em lugares
+       * diferentes. Custo por empresa com subárvore (white label) tem rota
+       * própria: GET /organizations/:id/costs.
        */
       const daMinhaEmpresa = recorteViaClienteOuPessoa(
         usuario,
@@ -144,11 +151,14 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
       /**
        * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
        *
-       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
-       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
-       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
-       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
-       * três vezes hoje em lugares diferentes.
+       * `cost_records` ganhou `organization_id` na migração 0049 (escrita +
+       * backfill), mas a fronteira aqui continua saindo do vínculo — cliente
+       * ou pessoa: é o que mantém visíveis as linhas antigas sem vínculo
+       * nenhum e compatível o recorte de quem já dependia dele. Sem isto, uma
+       * empresa enxerga o volume de uso da outra — que é vazamento por
+       * agregação, o mesmo padrão que já apareceu três vezes em lugares
+       * diferentes. Custo por empresa com subárvore (white label) tem rota
+       * própria: GET /organizations/:id/costs.
        */
       const daMinhaEmpresa = recorteViaClienteOuPessoa(
         usuario,
@@ -190,19 +200,25 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
       }
       const since = rangeToDate(request.query.range);
       /**
-       * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
+       * ESTA ERA A ÚNICA ROTA DE CUSTO SEM RECORTE NENHUM — agregava
+       * `economy_records` do banco INTEIRO para qualquer conta com
+       * `costs:read`. Correção de 05/10/2026, do mesmo vazamento cross-tenant
+       * de `/memories`: vazamento por agregação continua vazamento (o tamanho
+       * da operação do outro tenant já entrega carteira e volume).
        *
-       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
-       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
-       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
-       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
-       * três vezes hoje em lugares diferentes.
+       * `economy_records` não tem `organization_id` própria; o vínculo é o que
+       * sempre existiu: `execution_id -> executions.organization_id` (a coluna
+       * é NOT NULL — toda linha tem execution). A regra de NULL (legado
+       * pré-0045, visível SOMENTE no contexto da provedora) vale sobre a org
+       * da EXECUTION, como no resto do produto.
        */
-      const daMinhaEmpresa = recorteViaClienteOuPessoa(
-        usuario,
-        schema.costRecords.clientId,
-        schema.costRecords.userId,
-      );
+      const escopo = await escopoDeOrganizacao(usuario);
+      const deTrabalho = await organizacaoDeTrabalhoDe(usuario, { escopo });
+      if (!deTrabalho) {
+        reply.code(403);
+        return { error: 'Sem empresa de trabalho definida.' };
+      }
+      const legadoVisivel = organizacaoProvedora() === deTrabalho.id;
       const [totals] = await db
         .select({
           estimatedCost: sql<string>`coalesce(sum(${schema.economyRecords.estimatedCost}), 0)`,
@@ -211,7 +227,17 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
           executionCount: sql<number>`count(*)`,
         })
         .from(schema.economyRecords)
-        .where(gte(schema.economyRecords.createdAt, since));
+        .where(
+          and(
+            gte(schema.economyRecords.createdAt, since),
+            sql`exists (
+              select 1 from executions e
+              where e.id = ${schema.economyRecords.executionId}
+                and (e.organization_id = ${deTrabalho.id}::uuid
+                     or (${legadoVisivel} and e.organization_id is null))
+            )`,
+          ),
+        );
 
       const estimatedCost = Number(totals?.estimatedCost ?? 0);
       const savedAmount = Number(totals?.savedAmount ?? 0);
@@ -242,11 +268,14 @@ export async function registerCostRoutes(app: FastifyInstance): Promise<void> {
       /**
        * QUANTO A MINHA EMPRESA GASTOU, não quanto todas gastaram.
        *
-       * `cost_records` não tem `organization_id` (ficou fora da 0045 por não
-       * ser conteúdo do Brain), então a fronteira vem do vínculo que existe:
-       * cliente ou pessoa. Sem isto, uma empresa enxerga o volume de uso da
-       * outra — que é vazamento por agregação, o mesmo padrão que já apareceu
-       * três vezes hoje em lugares diferentes.
+       * `cost_records` ganhou `organization_id` na migração 0049 (escrita +
+       * backfill), mas a fronteira aqui continua saindo do vínculo — cliente
+       * ou pessoa: é o que mantém visíveis as linhas antigas sem vínculo
+       * nenhum e compatível o recorte de quem já dependia dele. Sem isto, uma
+       * empresa enxerga o volume de uso da outra — que é vazamento por
+       * agregação, o mesmo padrão que já apareceu três vezes em lugares
+       * diferentes. Custo por empresa com subárvore (white label) tem rota
+       * própria: GET /organizations/:id/costs.
        */
       const daMinhaEmpresa = recorteViaClienteOuPessoa(
         usuario,

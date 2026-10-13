@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, like, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
-import { tenantSharingScope } from '../lib/access';
+import { escopoDeOrganizacao, recorteDaOrganizacaoDeTrabalho } from '../lib/escopo-de-organizacao';
+import { organizacaoDeTrabalhoDe } from '../organizations/contexto';
 import { somenteMemoriaVisivel } from './visibilidade';
 
 /**
@@ -53,22 +54,25 @@ export async function registerMemoryRoutes(app: FastifyInstance): Promise<void> 
     }
 
     /**
-     * MESMA FRONTEIRA DAS OUTRAS LISTAGENS (P0-02, 22/09/2026): sem recorte de
-     * organização, qualquer colaborador autenticado leria a memória de qualquer
-     * outra. Aqui doeria mais que em execuções: memória carrega preferência,
-     * restrição e decisão de cliente.
+     * A FRONTEIRA É A EMPRESA DE TRABALHO, resolvida server-side — a mesma de
+     * `requireTenant` e de `GET /activity`. Antes daqui havia
+     * `tenantSharingScope` (a união de TODAS as empresas da pessoa, com bypass
+     * de master) e NENHUM filtro por `organization_id`: em 05/10/2026, um
+     * provedor dentro da "Empresa QA White Label" recebeu 50 memórias da
+     * operação da Desigual — todas linhas legado com `organization_id NULL`.
+     *
+     * A regra de NULL (legado pré-migração 0045, visível SOMENTE no contexto
+     * da provedora) mora em `recorteDaOrganizacaoDeTrabalho` — ver
+     * lib/escopo-de-organizacao.ts. O front não manda cabeçalho: a empresa vem
+     * de `organizacao_ativa`, validada no banco.
      */
-    const isMaster = user.roles.includes('master');
-    const scope = isMaster ? null : await tenantSharingScope(user.id);
-    const recorteDeTenant: SQL | undefined =
-      scope === null
-        ? undefined
-        : or(
-            scope.allowedClientIds.length > 0 ? inArray(schema.memories.clientId, scope.allowedClientIds) : undefined,
-            // Memória da agência (sem cliente) é do time: quem compartilha
-            // organização com quem escreveu, lê.
-            and(isNull(schema.memories.clientId), inArray(schema.memories.userId, scope.teammateUserIds)),
-          );
+    const escopo = await escopoDeOrganizacao(user);
+    const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+    if (!deTrabalho) {
+      reply.code(403);
+      return { error: 'Sem empresa de trabalho definida.' };
+    }
+    const recorteDeTenant: SQL = recorteDaOrganizacaoDeTrabalho(deTrabalho.id, schema.memories.organizationId);
 
     const status = request.query.status ?? 'active';
     const limite = Math.min(Math.max(Number(request.query.limit ?? 100), 1), 300);
@@ -168,12 +172,20 @@ export async function registerMemoryRoutes(app: FastifyInstance): Promise<void> 
     }
     // A contagem por tipo segue a MESMA regra de privacidade da listagem:
     // um número que inclui o que a lista esconde denuncia a existência do que
-    // deveria estar escondido.
+    // deveria estar escondido. E o MESMO recorte de empresa: esta rota nem
+    // recorte tinha — contava o banco inteiro para qualquer conta autenticada.
+    const escopo = await escopoDeOrganizacao(user);
+    const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+    if (!deTrabalho) {
+      reply.code(403);
+      return { error: 'Sem empresa de trabalho definida.' };
+    }
     const linhas = await db
       .select({ kind: schema.memories.kind, id: schema.memories.id })
       .from(schema.memories)
       .where(
         and(
+          recorteDaOrganizacaoDeTrabalho(deTrabalho.id, schema.memories.organizationId),
           eq(schema.memories.environment, 'production'),
           eq(schema.memories.status, 'active'),
           somenteMemoriaVisivel(user.id),

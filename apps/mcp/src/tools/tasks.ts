@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
-import { avaliarDuplicata, chaveDeIdempotencia } from '@desigual-os/mcp-domain';
+import { avaliarDuplicata, chaveDeIdempotencia, type McpPrincipal } from '@desigual-os/mcp-domain';
 import { registrarAuditoria } from '../audit.js';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
+import { autorDoRegistro, autoriaNoPayload } from './autoria.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
 
 /**
@@ -324,7 +325,7 @@ export function registrarToolsDeTarefa(deps: RegistrarToolDeps): void {
  * já mudou no ClickUp, e voltar erro faria o Claude achar que não mudou.
  */
 async function registrarEventoDeTask(
-  ctx: { principal: { userId: string; organizationId: string; employeeId: string; name: string }; logger: { warn: (o: object, m: string) => void } },
+  ctx: { principal: McpPrincipal; logger: { warn: (o: object, m: string) => void } },
   tipo: string,
   taskId: string,
   clientId: string | null,
@@ -342,10 +343,12 @@ async function registrarEventoDeTask(
       taskId,
       entityType: 'task',
       entityId: taskId,
-      actor: ctx.principal.name,
+      // QUEM AGE, quando a credencial carrega identidade — ver ./autoria.ts.
+      actor: autorDoRegistro(ctx.principal),
       summary: resumo,
       importance: 'LOW',
       visibility: 'TEAM',
+      payload: autoriaNoPayload(ctx.principal),
       occurredAt: new Date(),
       processedAt: new Date(),
     });

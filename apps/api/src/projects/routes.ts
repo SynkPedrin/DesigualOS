@@ -1,24 +1,36 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { requireAuth, requirePermission, type AuthenticatedUser } from '../auth/middleware';
+import { requireAuth, requirePermission } from '../auth/middleware';
 import { deleteUserFile, uploadUserFile } from '../lib/storage';
-import { tenantSharingScope } from '../lib/access';
+import {
+  escopoDeOrganizacao,
+  organizacaoProvedora,
+  recorteDaOrganizacaoDeTrabalho,
+} from '../lib/escopo-de-organizacao';
+import { organizacaoDeTrabalhoDe } from '../organizations/contexto';
 
 /**
- * P0-02 (auditoria de release readiness, 22/09/2026): mesma falha estrutural
- * de `/conversations`/`/executions` — "compartilhado com a equipe" presumia
- * UMA organização só. Projeto com cliente herda a organização do cliente;
- * projeto sem cliente (deck/material solto da agência) é escopado por quem
- * criou, igual à regra que já existe pra conversa sem cliente.
+ * A FRONTEIRA É A EMPRESA DE TRABALHO, resolvida server-side (05/10/2026).
+ *
+ * Antes: `tenantSharingScope` — a união de TODAS as empresas da pessoa, com
+ * bypass de master — e a tabela nem `organization_id` tinha. Um provedor
+ * dentro da conta de um cliente via e editava os projetos da Desigual, e um
+ * master de tenant alcançava os da provedora. Agora o projeto pertence a UMA
+ * empresa (coluna gravada na criação, backfill via cliente nas antigas), e
+ * `organization_id IS NULL` é legado pré-migração: visível SOMENTE no
+ * contexto da provedora (ver `recorteDaOrganizacaoDeTrabalho` em
+ * lib/escopo-de-organizacao.ts).
  */
-async function canAccessProject(user: AuthenticatedUser, project: { clientId: string | null; createdBy: string }): Promise<boolean> {
-  if (user.roles.includes('master')) return true;
-  if (project.createdBy === user.id) return true;
-  const scope = await tenantSharingScope(user.id);
-  return project.clientId ? scope.allowedClientIds.includes(project.clientId) : scope.teammateUserIds.includes(project.createdBy);
+function canAccessProject(
+  project: { organizationId: string | null },
+  organizacaoDeTrabalhoId: string,
+): boolean {
+  if (project.organizationId === organizacaoDeTrabalhoId) return true;
+  // NULL = legado da plataforma: só entra no contexto da org provedora.
+  return project.organizationId === null && organizacaoDeTrabalhoId === organizacaoProvedora();
 }
 
 const PROJECT_FILE_KINDS = ['identidade_visual', 'briefing', 'referencia'] as const;
@@ -52,6 +64,7 @@ function toWire(project: typeof schema.projects.$inferSelect) {
     id: project.id,
     name: project.name,
     client_id: project.clientId,
+    organization_id: project.organizationId,
     created_by: project.createdBy,
     created_at: project.createdAt.toISOString(),
     updated_at: project.updatedAt.toISOString(),
@@ -72,12 +85,23 @@ function serializeProjectFile(row: typeof schema.projectFiles.$inferSelect) {
   };
 }
 
+/** O cliente precisa ser DA empresa de trabalho — anexar cliente de outro
+ *  tenant mudaria o dono do projeto em silêncio. "Não encontrado" de
+ *  propósito: dizer "existe mas não é seu" confirma a existência do cliente. */
+async function clienteDaEmpresa(clientId: string, organizacaoDeTrabalhoId: string): Promise<boolean> {
+  const [client] = await db
+    .select({ id: schema.clients.id })
+    .from(schema.clients)
+    .where(and(eq(schema.clients.id, clientId), eq(schema.clients.organizationId, organizacaoDeTrabalhoId)));
+  return Boolean(client);
+}
+
 /**
  * Projetos do Chat (a seção "Projetos" da sidebar, estilo Claude): estrutura
- * compartilhada por quem está na MESMA organização — qualquer colaborador da
- * organização vê os projetos dela e, com chat:write, cria/edita/apaga. A
+ * compartilhada por quem está na MESMA organização de trabalho — qualquer
+ * colaborador dela vê os projetos dela e, com chat:write, cria/edita/apaga. A
  * privacidade fina mora nas CONVERSAS (visibility em conversations), não no
- * projeto; o escopo aqui é só a fronteira de organização (P0-02, 22/09/2026).
+ * projeto; o escopo aqui é a fronteira de empresa de trabalho (05/10/2026).
  */
 export async function registerProjectRoutes(app: FastifyInstance): Promise<void> {
   app.get('/projects', { preHandler: requireAuth }, async (request, reply) => {
@@ -86,16 +110,17 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       reply.code(401);
       return { error: 'Not authenticated' };
     }
-    const isMaster = user.roles.includes('master');
-    const scope = isMaster ? null : await tenantSharingScope(user.id);
-    const scopeCondition =
-      scope === null
-        ? undefined
-        : or(
-            scope.allowedClientIds.length > 0 ? inArray(schema.projects.clientId, scope.allowedClientIds) : undefined,
-            and(isNull(schema.projects.clientId), inArray(schema.projects.createdBy, scope.teammateUserIds)),
-          );
-    const rows = await db.select().from(schema.projects).where(scopeCondition).orderBy(asc(schema.projects.name));
+    const escopo = await escopoDeOrganizacao(user);
+    const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+    if (!deTrabalho) {
+      reply.code(403);
+      return { error: 'Sem empresa de trabalho definida.' };
+    }
+    const rows = await db
+      .select()
+      .from(schema.projects)
+      .where(recorteDaOrganizacaoDeTrabalho(deTrabalho.id, schema.projects.organizationId))
+      .orderBy(asc(schema.projects.name));
     return { projects: rows.map(toWire) };
   });
 
@@ -107,17 +132,28 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       return { error: 'Not authenticated' };
     }
 
-    if (body.client_id) {
-      const [client] = await db.select({ id: schema.clients.id }).from(schema.clients).where(eq(schema.clients.id, body.client_id));
-      if (!client) {
-        reply.code(404);
-        return { error: `Client '${body.client_id}' not found` };
-      }
+    const escopo = await escopoDeOrganizacao(user);
+    const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+    if (!deTrabalho) {
+      reply.code(403);
+      return { error: 'Sem empresa de trabalho definida.' };
+    }
+
+    if (body.client_id && !(await clienteDaEmpresa(body.client_id, deTrabalho.id))) {
+      reply.code(404);
+      return { error: `Client '${body.client_id}' not found` };
     }
 
     const [project] = await db
       .insert(schema.projects)
-      .values({ name: body.name.trim(), clientId: body.client_id ?? null, createdBy: user.id })
+      .values({
+        name: body.name.trim(),
+        clientId: body.client_id ?? null,
+        // A empresa de trabalho é o dono: é o que faz o projeto aparecer na
+        // listagem de quem criou e NUNCA na de outro tenant.
+        organizationId: deTrabalho.id,
+        createdBy: user.id,
+      })
       .returning();
     reply.code(201);
     return { project: toWire(project!) };
@@ -134,22 +170,22 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       }
       const body = updateProjectSchema.parse(request.body);
 
-      const [existing] = await db.select({ clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
-      if (!existing) {
-        reply.code(404);
-        return { error: `Project '${request.params.id}' not found` };
+      const escopo = await escopoDeOrganizacao(user);
+      const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+      if (!deTrabalho) {
+        reply.code(403);
+        return { error: 'Sem empresa de trabalho definida.' };
       }
-      if (!(await canAccessProject(user, existing))) {
+
+      const [existing] = await db.select({ organizationId: schema.projects.organizationId }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+      if (!existing || !canAccessProject(existing, deTrabalho.id)) {
         reply.code(404);
         return { error: `Project '${request.params.id}' not found` };
       }
 
-      if (body.client_id) {
-        const [client] = await db.select({ id: schema.clients.id }).from(schema.clients).where(eq(schema.clients.id, body.client_id));
-        if (!client) {
-          reply.code(404);
-          return { error: `Client '${body.client_id}' not found` };
-        }
+      if (body.client_id && !(await clienteDaEmpresa(body.client_id, deTrabalho.id))) {
+        reply.code(404);
+        return { error: `Client '${body.client_id}' not found` };
       }
 
       const [project] = await db
@@ -180,12 +216,14 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
         reply.code(401);
         return { error: 'Not authenticated' };
       }
-      const [project] = await db.select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
-      if (!project) {
-        reply.code(404);
-        return { error: `Project '${request.params.id}' not found` };
+      const escopo = await escopoDeOrganizacao(user);
+      const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+      if (!deTrabalho) {
+        reply.code(403);
+        return { error: 'Sem empresa de trabalho definida.' };
       }
-      if (!(await canAccessProject(user, project))) {
+      const [project] = await db.select({ id: schema.projects.id, organizationId: schema.projects.organizationId }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+      if (!project || !canAccessProject(project, deTrabalho.id)) {
         reply.code(404);
         return { error: `Project '${request.params.id}' not found` };
       }
@@ -211,15 +249,18 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
         return { error: 'Not authenticated' };
       }
 
+      const escopo = await escopoDeOrganizacao(user);
+      const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+      if (!deTrabalho) {
+        reply.code(403);
+        return { error: 'Sem empresa de trabalho definida.' };
+      }
+
       const [project] = await db
-        .select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy })
+        .select({ id: schema.projects.id, clientId: schema.projects.clientId, organizationId: schema.projects.organizationId })
         .from(schema.projects)
         .where(eq(schema.projects.id, request.params.id));
-      if (!project) {
-        reply.code(404);
-        return { error: `Project '${request.params.id}' not found` };
-      }
-      if (!(await canAccessProject(user, project))) {
+      if (!project || !canAccessProject(project, deTrabalho.id)) {
         reply.code(404);
         return { error: `Project '${request.params.id}' not found` };
       }
@@ -279,12 +320,14 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       reply.code(401);
       return { error: 'Not authenticated' };
     }
-    const [project] = await db.select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
-    if (!project) {
-      reply.code(404);
-      return { error: `Project '${request.params.id}' not found` };
+    const escopo = await escopoDeOrganizacao(user);
+    const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+    if (!deTrabalho) {
+      reply.code(403);
+      return { error: 'Sem empresa de trabalho definida.' };
     }
-    if (!(await canAccessProject(user, project))) {
+    const [project] = await db.select({ id: schema.projects.id, organizationId: schema.projects.organizationId }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+    if (!project || !canAccessProject(project, deTrabalho.id)) {
       reply.code(404);
       return { error: `Project '${request.params.id}' not found` };
     }
@@ -306,8 +349,14 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
         reply.code(401);
         return { error: 'Not authenticated' };
       }
-      const [project] = await db.select({ id: schema.projects.id, clientId: schema.projects.clientId, createdBy: schema.projects.createdBy }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
-      if (!project || !(await canAccessProject(user, project))) {
+      const escopo = await escopoDeOrganizacao(user);
+      const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+      if (!deTrabalho) {
+        reply.code(403);
+        return { error: 'Sem empresa de trabalho definida.' };
+      }
+      const [project] = await db.select({ id: schema.projects.id, organizationId: schema.projects.organizationId }).from(schema.projects).where(eq(schema.projects.id, request.params.id));
+      if (!project || !canAccessProject(project, deTrabalho.id)) {
         reply.code(404);
         return { error: `Project file '${request.params.fileId}' not found` };
       }

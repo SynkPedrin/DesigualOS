@@ -6,3 +6,4 @@ export * from './bearer';
 export * from './organizacao-da-escrita';
 export * from './escopo-de-organizacao';
 export * from './organizacao-de-trabalho';
+export * from './hierarquia-de-organizacao';

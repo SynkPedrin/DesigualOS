@@ -36,6 +36,19 @@ export const MCP_EVENT_TYPES = [
    * chega.
    */
   'CONNECTION_CREATED',
+  /**
+   * Telemetria de CHAMADA de tool — emitida pelo wrapper `registrarTool`
+   * (apps/mcp/src/tools/kit.ts) ao fim de toda execução, sucesso ou erro,
+   * leitura ou escrita, com `processedAt` PREENCHIDO: é registro de uso, não
+   * acontecimento de negócio, e por isso nunca entra na fila de sinais
+   * proativos nem é promovida a memória (ver knowledge-promotion.ts).
+   *
+   * Convive de propósito com os tipos acima: `MCP_TOOL_CALLED` responde "a
+   * tool foi chamada, por quem, quanto levou, com qual resultado"; o evento
+   * de negócio que a própria tool grava (ex.: `TASK_COMPLETED`) responde "o
+   * que mudou na operação". Camadas diferentes, nenhuma substitui a outra.
+   */
+  'MCP_TOOL_CALLED',
 ] as const;
 
 export type McpEventType = (typeof MCP_EVENT_TYPES)[number];

@@ -3,7 +3,8 @@ import { sql } from 'drizzle-orm';
 import { db } from '@desigual-os/database';
 import { naturezaDoCliente } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
-import { ehPapelDePlataforma, organizacaoProvedora } from '../lib/escopo-de-organizacao';
+import { organizacaoProvedora } from '../lib/escopo-de-organizacao';
+import { contextoCompletoDe } from '../organizations/contexto';
 
 /**
  * O PANORAMA DA AGÊNCIA — a resposta de "como estamos?" numa chamada só.
@@ -37,37 +38,31 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
     }
 
     /**
-     * O RECORTE DE EMPRESA, que esta rota nasceu SEM — e o registro fica.
+     * O RECORTE É A EMPRESA DE TRABALHO, não "tudo que a pessoa alcança".
      *
-     * Escrevi `/panorama` em 30/09/2026 e ela foi para o inventário forense na
-     * lista de "nem papel nem organização", seis horas depois de eu corrigir
-     * exatamente esse defeito em `/memories`. Não é desatenção pontual: é a
-     * demonstração de que fronteira por convenção não se sustenta, feita por
-     * quem estava escrevendo o documento que diz isso.
+     * Correção de 05/10/2026, do mesmo vazamento cross-tenant de `/memories`:
+     * a CTE anterior deixava `organization_id IS NULL` entrar para QUALQUER um
+     * ("senão os números encolhem sem ninguém entender por quê"). Com um
+     * segundo tenant no banco, isso entregou o legado inteiro da Desigual —
+     * clientes, execuções, memórias, sinais — dentro da conta de um cliente.
+     * A regra decidida: NULL é legado da plataforma e entra SOMENTE quando a
+     * empresa de trabalho é a provedora. Master dentro de um tenant vê só o
+     * tenant.
      *
-     * Por isso a correção não é um `where` a mais aqui — é passar a usar a
-     * fonte canônica (`lib/escopo-de-organizacao.ts`), para a próxima rota
-     * herdar a regra em vez de precisar lembrar dela.
+     * UMA ida ao banco para resolver a empresa de trabalho (contextoCompletoDe
+     * junta vínculos + ativa + marca numa consulta — ver a nota de latência lá),
+     * e a segunda é a CTE única abaixo. A armadilha medida continua valendo:
+     * o pool tem três conexões, e somar viagens ANTES da consulta principal foi
+     * o que derrubou esta rota duas vezes.
      */
-    /**
-     * O RECORTE DE EMPRESA VAI DENTRO DA CONSULTA, não antes dela.
-     *
-     * A primeira versão do recorte chamava `colegasVisiveis()`, que faz duas
-     * idas ao banco, e só então montava a consulta principal. Três viagens onde
-     * havia uma — e o efeito foi medido: /panorama voltou de 0,16s para 2,9s, e
-     * o painel parou de aparecer em 20 segundos sob carga da suíte.
-     *
-     * É a MESMA contenção que eu já tinha corrigido nesta rota horas antes
-     * (sete consultas em Promise.all contra um pool de três). Recriei ao
-     * acrescentar segurança — e é por isso que fica escrito: a lição não é
-     * "cuidado com consulta lenta", é que somar uma pergunta ANTES da consulta
-     * principal custa uma conexão do pool, e o pool aqui tem três.
-     *
-     * O papel de plataforma sai do token, em memória; o que exige banco —
-     * pertencer à organização provedora — entra como CTE.
-     */
-    const papelDePlataforma = ehPapelDePlataforma(user.roles);
-    const provedora = organizacaoProvedora();
+    const contexto = await contextoCompletoDe(user);
+    const deTrabalho = contexto.deTrabalho;
+    if (!deTrabalho) {
+      reply.code(403);
+      return { error: 'Sem empresa de trabalho definida.' };
+    }
+    const orgDeTrabalho = deTrabalho.id;
+    const legadoVisivel = organizacaoProvedora() === orgDeTrabalho;
 
     /**
      * UMA VIAGEM SÓ AO BANCO, e o motivo é medido.
@@ -86,33 +81,10 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
      * isso sem suar; o caro sempre foi o pedágio de rede a ~130ms por consulta,
      * multiplicado por sete, multiplicado pela espera de conexão.
      */
-    const bruto: any = await db.execute(sql`
+    const bruto = await db.execute(sql`
       with
       /*
-       * MATERIALIZED: avalia UMA vez, não a cada subconsulta que a referencia.
-       *
-       * Sem a dica, o Postgres pode reavaliar a CTE em cada um dos seis lugares
-       * que a usam. Medido: /panorama saiu de 0,35s para 1,06s quando o recorte
-       * passou a valer para todas as contagens, e voltou a estourar os 20s da
-       * suíte sob carga — a terceira vez que esta rota me ensina a mesma coisa
-       * sobre o pool de três conexões.
-       */
-      minhas_orgs as materialized (
-        select organization_id from organization_members where user_id = ${user.id}
-      ),
-      /*
-       * Provider = papel de plataforma E pertencer à provedora. As duas
-       * condições juntas, sempre — ver lib/escopo-de-organizacao.ts.
-       */
-      escopo as materialized (
-        select (
-          ${papelDePlataforma}
-          and ${provedora}::uuid is not null
-          and exists (select 1 from minhas_orgs where organization_id = ${provedora}::uuid)
-        ) as eh_provider
-      ),
-      /*
-       * TODA CONTAGEM RECORTADA, não só a de pessoas.
+       * TODA CONTAGEM RECORTADA PELA EMPRESA DE TRABALHO, não só a de pessoas.
        *
        * A primeira versão recortou gente e deixou clientes, execuções,
        * memórias e sinais contando o banco inteiro. Invisível com uma
@@ -125,15 +97,16 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
        * motivo. Número agregado não parece dado sensível até ser de outra
        * empresa.)
        *
-       * organization_id is null continua entrando: são as linhas anteriores
-       * à migração 0045 que não resolveram vínculo. Excluí-las faria os
-       * números encolherem hoje sem ninguém entender por quê.
+       * organization_id is null entra SOMENTE no contexto da provedora
+       * (o booleano interpolado em cada perna abaixo): são as linhas
+       * anteriores à migração 0045 que não resolveram vínculo. Dentro de um
+       * tenant, NULL fica de fora — ver o comentário no topo da rota.
        */
       cli as (
         select c.name from clients c
         where c.deleted_at is null
-          and ((select eh_provider from escopo) or c.organization_id is null
-               or c.organization_id in (select organization_id from minhas_orgs))
+          and (c.organization_id = ${orgDeTrabalho}::uuid
+               or (${legadoVisivel} and c.organization_id is null))
       ),
       exec_dia as (
         select created_at::date as dia,
@@ -142,30 +115,28 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
                count(*) filter (where status = 'failed')::int as falhou
         from executions
         where created_at > now() - interval '14 days'
-          and ((select eh_provider from escopo) or organization_id is null
-               or organization_id in (select organization_id from minhas_orgs))
+          and (organization_id = ${orgDeTrabalho}::uuid
+               or (${legadoVisivel} and organization_id is null))
         group by 1 order by 1
       ),
       exec_agente as (
         select agent, count(*)::int as total
         from executions
         where created_at > now() - interval '30 days' and agent is not null
-          and ((select eh_provider from escopo) or organization_id is null
-               or organization_id in (select organization_id from minhas_orgs))
+          and (organization_id = ${orgDeTrabalho}::uuid
+               or (${legadoVisivel} and organization_id is null))
         group by 1 order by 2 desc
       ),
       gente as (
         select u.id, u.clickup_email from users u
         where u.active = true and u.deleted_at is null
           and (
-            (select eh_provider from escopo)
-            or exists (
+            exists (
               select 1 from organization_members om
-              where om.user_id = u.id
-                and om.organization_id in (select organization_id from minhas_orgs)
+              where om.user_id = u.id and om.organization_id = ${orgDeTrabalho}::uuid
             )
-            -- A própria pessoa sempre se vê, mesmo sem organização nenhuma.
-            or u.id = ${user.id}
+            -- A própria pessoa sempre se vê, mesmo sem vínculo na empresa.
+            or u.id = ${user.id}::uuid
           )
       ),
       ativos as (
@@ -181,15 +152,15 @@ export async function registerPanoramaRoutes(app: FastifyInstance): Promise<void
         (select count(*)::int from gente g where exists (select 1 from ativos a where a.user_id = g.id)) as usando,
         (select count(*)::int from memories
           where status = 'active' and environment = 'production'
-            and ((select eh_provider from escopo) or organization_id is null
-                 or organization_id in (select organization_id from minhas_orgs))) as memorias,
+            and (organization_id = ${orgDeTrabalho}::uuid
+                 or (${legadoVisivel} and organization_id is null))) as memorias,
         (select count(*)::int from proactive_signals
           where status = 'pending'
-            and ((select eh_provider from escopo) or organization_id is null
-                 or organization_id in (select organization_id from minhas_orgs))) as sinais
+            and (organization_id = ${orgDeTrabalho}::uuid
+                 or (${legadoVisivel} and organization_id is null))) as sinais
     `);
 
-    const linha = (bruto.rows ?? bruto)[0] as {
+    const linha = bruto[0] as {
       clientes: string[];
       serie: Array<{ dia: string; total: number; ok: number; falhou: number }>;
       agentes: Array<{ agent: string; total: number }>;

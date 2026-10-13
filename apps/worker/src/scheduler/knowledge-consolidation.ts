@@ -38,7 +38,14 @@ export async function runKnowledgeConsolidation(
   logger.info({ status: saude.status, minutosSemEvento: saude.minutosSemEvento }, '[consolidacao] saúde da integração');
 
   const clientes = await db
-    .select({ id: schema.clients.id, name: schema.clients.name, listId: schema.clients.clickupListId })
+    .select({
+      id: schema.clients.id,
+      name: schema.clients.name,
+      listId: schema.clients.clickupListId,
+      // A empresa dona do cliente: decide a credencial do conector na
+      // reconciliação (subconta lê a plataforma dela, não a da agência).
+      organizationId: schema.clients.organizationId,
+    })
     .from(schema.clients)
     .where(isNull(schema.clients.deletedAt))
     .catch(() => []);
@@ -61,7 +68,9 @@ export async function runKnowledgeConsolidation(
   let campanhasAtualizadas = 0;
   let erros = 0;
   for (const c of alvo) {
-    const r = await sincronizarCampanhasDoCliente(c.id, c.listId!, buscarTasksDaLista).catch((error: unknown) => {
+    const r = await sincronizarCampanhasDoCliente(c.id, c.listId!, (listId) =>
+      buscarTasksDaLista(listId, c.organizationId),
+    ).catch((error: unknown) => {
       logger.warn({ error, cliente: c.name }, '[consolidacao] falha ao reconciliar cliente');
       erros += 1;
       return null;

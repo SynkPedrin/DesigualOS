@@ -4,6 +4,7 @@ import { AGENT_NAMES, type AgentName } from '@desigual-os/types';
 import { createLogger } from '@desigual-os/logging';
 import {
   AUTOMATIONS_QUEUE_NAME,
+  CLIENT_REPORTS_QUEUE_NAME,
   expireStaleMemories,
   flushPendingLearnings,
   getRedisConnection,
@@ -14,11 +15,13 @@ import {
   THUMBNAILS_QUEUE_NAME,
   type AgentJobData,
   type AutomationJobData,
+  type ClientReportJobData,
 } from '@desigual-os/orchestrator';
 import { iniciarGpuGateway } from './gpu-gateway.js';
-import { processAgentJob } from './processors/execute-job.js';
+import { agentLoopEnabledFor, processAgentJob } from './processors/execute-job.js';
 import { processAutomationJob } from './processors/run-automation.js';
 import { backfillThumbnails, generateThumbnail } from './processors/generate-thumbnail.js';
+import { generateClientReport } from './processors/generate-client-report.js';
 import { setupDailyJobs } from './scheduler/index.js';
 import { ottoMotionEnabled, startMotionWorker } from '@desigual-os/otto-motion';
 
@@ -122,6 +125,20 @@ thumbnailsWorker.on('failed', (job, error) => {
 
 backfillThumbnails(logger).catch((error: unknown) => logger.error({ error }, 'Falha no backfill de thumbnails'));
 
+// Relatórios PDF por cliente (§46-51, 06/10/2026). Concurrency 1: renderToBuffer
+// do @react-pdf/renderer é CPU-bound e um relatório não é urgente o bastante
+// pra disputar recurso com os agentes - gerar um por vez é suficiente.
+const clientReportsWorker = new Worker<ClientReportJobData>(
+  CLIENT_REPORTS_QUEUE_NAME,
+  async (job) => {
+    await generateClientReport(job.data.reportId, logger);
+  },
+  { connection: getRedisConnection(), concurrency: 1 },
+);
+clientReportsWorker.on('failed', (job, error) => {
+  logger.error({ jobId: job?.id, reportId: job?.data.reportId, error: error.message }, 'Client report job failed');
+});
+
 // Sinal de vida, lido pela API em /health/infrastructure. Ver worker-heartbeat.ts pro defeito
 // que isto fecha: worker morto por 10 minutos com o painel estampando "Todos os sistemas online".
 const pararBatimento = startWorkerHeartbeat();
@@ -169,6 +186,25 @@ const gpuGateway = iniciarGpuGateway();
 logger.info({ agents: AGENT_NAMES, pid: process.pid }, 'Worker started, listening on all agent queues');
 
 /**
+ * O estado resolvido do Agentic V2 POR AGENTE, uma vez no boot (07/10/2026).
+ *
+ * Achado real: este worker ficou de pé por quase dois dias com
+ * `AGENT_LOOP_BENTO_V2=true` já gravado no `.env`, mas sem nunca ter relido
+ * o arquivo — processo longo não reabre `.env` sozinho, só no próximo boot.
+ * O Bento ficou respondendo sem a identidade do cliente (o mesmo bug que já
+ * tinha confundido D. Carvalho com joalheria) e nada no log acusava —
+ * descobrir isso exigiu ler código e checar a idade do processo na mão.
+ *
+ * Logar o valor RESOLVIDO (não o texto cru da env, que pode ter typo ou vir
+ * da lista legada `AGENT_LOOP_V2`) é o que deixa esse descompasso visível no
+ * boot seguinte, sem precisar de investigação manual de novo.
+ */
+logger.info(
+  { agentLoopV2: Object.fromEntries(AGENT_NAMES.map((agent) => [agent, agentLoopEnabledFor(agent)])) },
+  'Agentic V2 resolvido por agente neste boot',
+);
+
+/**
  * Desligamento: termina o job em execução antes de sair.
  *
  * Medido em 10/09/2026: com o processo morto no meio de um job, o usuário recebia a bolha de
@@ -195,7 +231,7 @@ async function shutdown(motivo: string): Promise<void> {
   await stopWorkerHeartbeat();
 
   const dreno = Promise.all(
-    [...workers, dailyDigestWorker, automationsWorker, thumbnailsWorker, ...(motionWorker ? [motionWorker] : [])].map(
+    [...workers, dailyDigestWorker, automationsWorker, thumbnailsWorker, clientReportsWorker, ...(motionWorker ? [motionWorker] : [])].map(
       (worker) => worker.close(),
     ),
   );

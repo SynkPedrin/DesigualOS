@@ -12,6 +12,30 @@ import { papelDaMembership, scopesEfetivos, temScope, type McpRole, type McpScop
  * `isAdmin`, não há booleano de bypass. A decisão passa sempre por papel +
  * scope + fronteira de organização.
  */
+/**
+ * A identidade operacional que AGE, quando o token é uma credencial de conexão
+ * gerada pelo master — distinta de `userId`, que diz quem AUTORIZOU.
+ *
+ * `null` = comportamento legado (todo token OAuth e os 250+ tokens antigos):
+ * quem autorizou é quem age, e nada muda.
+ *
+ * A regra inegociável mora em `actorType`: `shared_account` é a EQUIPE agindo,
+ * nunca uma pessoa — `personId` vem nulo de propósito, mesmo que a conta tenha
+ * um membro só (hoje é uma, amanhã são três, e o histórico já teria nome
+ * gravado). A composição é informação para explicar a ambiguidade, jamais para
+ * resolvê-la (ver packages/database/src/resolucao-de-ator.ts, de onde isto vem
+ * já resolvido).
+ */
+export interface AtorDoPrincipal {
+  /** `operational_identities.id`. */
+  identityId: string;
+  /** Como chamar o ator numa frase: "Pedro Claude", "Equipe Atendimento". */
+  displayName: string;
+  actorType: 'person' | 'shared_account' | 'service';
+  /** A pessoa, SÓ quando `actorType === 'person'`. Nulo em conta compartilhada. */
+  personId: string | null;
+}
+
 export interface McpPrincipal {
   /** `users.id` — quem é a pessoa no Desigual OS. */
   userId: string;
@@ -50,6 +74,11 @@ export interface McpPrincipal {
   scopes: McpScope[];
   /** Sessão MCP viva (`mcp_sessions.id`), para auditoria e correlação. */
   sessionId: string;
+  /**
+   * QUEM AGE, resolvido da credencial de conexão — ver `AtorDoPrincipal`.
+   * `null` = legado: quem autorizou (`userId`/`name`) é quem age.
+   */
+  ator: AtorDoPrincipal | null;
 }
 
 export interface MembershipRow {
@@ -79,6 +108,7 @@ export function montarPrincipal(
   scopesDoToken: readonly string[],
   sessionId: string,
   escopoDePlataforma: { organizationIds: string[]; ehProvider: boolean },
+  ator: AtorDoPrincipal | null = null,
 ): McpPrincipal {
   const role = papelDaMembership(membership.role);
   return {
@@ -92,6 +122,7 @@ export function montarPrincipal(
     role,
     scopes: scopesEfetivos(role, scopesDoToken),
     sessionId,
+    ator,
   };
 }
 

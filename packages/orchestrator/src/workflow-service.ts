@@ -134,6 +134,10 @@ export async function startWorkflow(params: WorkflowDispatchParams): Promise<Cha
         message,
         contextRefs: decision.context,
         ...(attachments?.length ? { attachments } : {}),
+        // Mesma propagação do chat-service: etapa de workflow também é turno
+        // de agente, e o planner do worker lê o intent do job.
+        intent: decision.intent,
+        routingConfidence: decision.confidence,
         conversationId,
         workflowId: workflow.id,
         stepIndex: 0,

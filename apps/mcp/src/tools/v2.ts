@@ -62,8 +62,8 @@ export function registrarToolsV2(deps: RegistrarToolDeps): void {
     descricao:
       'O que os agentes (Claude de cada funcionário, via este MCP) ESCREVERAM recentemente na operação — quem, ' +
       'qual ferramenta, sobre qual cliente, e se deu certo. É auditoria, não estado operacional: mostra AÇÃO, não ' +
-      'tarefa. Só cobre escrita — leitura (buscar cliente, ver tarefa) não gera linha de auditoria, por desenho: ' +
-      'auditar toda leitura de todo funcionário seria vigilância, não governança. ' +
+      'tarefa. O audit_log cobre escrita; o USO completo (toda chamada, leitura inclusive, com duração e resultado) ' +
+      'vira telemetria MCP_TOOL_CALLED em operational_events desde 01/10/2026 — consulte get_recent_events para ela. ' +
       'Papel de governança — só quem administra a organização enxerga o que os outros fizeram.',
     entrada: {
       hours: z.number().int().min(1).max(168).optional().describe('Janela em horas. Padrão 24.'),

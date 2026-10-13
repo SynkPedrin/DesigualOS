@@ -178,11 +178,20 @@ export async function emitirTokens(input: ConcessaoInput): Promise<ParDeTokens> 
 export interface TokenVerificado {
   tokenId: string;
   clientId: string;
+  /**
+   * Quem AUTORIZOU. No fluxo OAuth é a própria pessoa (ela fez login); numa
+   * credencial de conexão é o master que a gerou. NUNCA confundir com quem age.
+   */
   userId: string;
   organizationId: string;
   scopes: string[];
   expiresAt: Date;
   resource: string | null;
+  /**
+   * Qual identidade operacional está AGINDO. `null` em todo token OAuth e nos
+   * 250 legados — ali quem autoriza é quem age, e nada muda.
+   */
+  actorIdentityId: string | null;
 }
 
 /**
@@ -201,6 +210,7 @@ export async function verificarAccessToken(token: string): Promise<TokenVerifica
       scopes: schema.mcpTokens.scopes,
       expiresAt: schema.mcpTokens.expiresAt,
       resource: schema.mcpTokens.resource,
+      actorIdentityId: schema.mcpTokens.actorIdentityId,
       clienteDesligadoEm: schema.mcpClients.disabledAt,
     })
     .from(schema.mcpTokens)
@@ -208,12 +218,28 @@ export async function verificarAccessToken(token: string): Promise<TokenVerifica
     .where(
       and(
         eq(schema.mcpTokens.tokenHash, hashToken(token)),
-        eq(schema.mcpTokens.kind, 'access'),
+        /**
+         * DOIS TIPOS NO MESMO CAMINHO, de propósito. 'access' nasce do OAuth;
+         * 'connection' é a credencial que o master gera para uma identidade
+         * operacional. Validar os dois aqui é o que mantém revogação, expiração
+         * e cliente desligado sendo UMA regra — dois caminhos de validação são
+         * dois lugares para esquecer de revogar, e revogação esquecida não
+         * avisa.
+         */
+        or(eq(schema.mcpTokens.kind, 'access'), eq(schema.mcpTokens.kind, 'connection'))!,
         isNull(schema.mcpTokens.revokedAt),
         sql`${schema.mcpTokens.expiresAt} > now()`,
       ),
     );
   if (!row || row.clienteDesligadoEm) return null;
+  /**
+   * `last_used_at` existe desde a migração da coluna e NUNCA foi escrito — a
+   * função `marcarUso` estava órfã, e a tela do master respondia "esta conexão
+   * está viva?" com uma coluna eternamente nula. Fire-and-forget de propósito:
+   * sem `await`, o carimbo não atrasa a autenticação, e o `catch` dentro de
+   * `marcarUso` garante que perder o carimbo não derruba o turno.
+   */
+  void marcarUso(row.id);
   return {
     tokenId: row.id,
     clientId: row.clientId,
@@ -222,7 +248,93 @@ export async function verificarAccessToken(token: string): Promise<TokenVerifica
     scopes: row.scopes,
     expiresAt: row.expiresAt,
     resource: row.resource,
+    actorIdentityId: row.actorIdentityId,
   };
+}
+
+/**
+ * A credencial de CONEXÃO: longa, revogável, presa a uma identidade operacional.
+ *
+ * É o que permite o modelo "uma conta de login, muitas pessoas na operação": o
+ * master gera aqui, entrega à pessoa, e ela cola no Claude dela sem nunca
+ * entrar no Desigual.
+ *
+ * O SEGREDO SÓ EXISTE NESTE RETORNO. No banco vai só o sha256 — quem perder a
+ * credencial rotaciona, não recupera.
+ *
+ * SEM EXPIRAÇÃO OBRIGATÓRIA, e é decisão registrada: `expiraEm` é opcional.
+ * Jev ficou em 0,53 nessa pergunta (moeda ao ar). O que desempatou foi o
+ * produto: o funcionário não tem conta no Desigual, então não há canal para
+ * avisá-lo de que a credencial vai vencer — expiração silenciosa quebraria o
+ * trabalho de alguém sem aviso possível. Quem some da equipe tem a conexão
+ * revogada, que é um ato explícito e auditável.
+ */
+export async function emitirCredencialDeConexao(input: {
+  clientId: string;
+  /** Quem autorizou: o master. */
+  userId: string;
+  organizationId: string;
+  actorIdentityId: string;
+  scopes: string[];
+  resource?: string | null;
+  expiraEm?: Date | null;
+}): Promise<{ credencial: string; tokenId: string }> {
+  const credencial = gerarToken('dsgx');
+  const [linha] = await db
+    .insert(schema.mcpTokens)
+    .values({
+      kind: 'connection',
+      tokenHash: hashToken(credencial),
+      clientId: input.clientId,
+      userId: input.userId,
+      organizationId: input.organizationId,
+      actorIdentityId: input.actorIdentityId,
+      scopes: input.scopes,
+      resource: input.resource ?? null,
+      // Dez anos quando não há data: é "sem expiração" sem precisar tornar a
+      // coluna nullable e mexer na checagem que todos os outros tipos usam.
+      expiresAt: input.expiraEm ?? new Date(Date.now() + 10 * 365 * 24 * 3600 * 1000),
+    })
+    .returning({ id: schema.mcpTokens.id });
+
+  return { credencial, tokenId: linha!.id };
+}
+
+/**
+ * Revoga TODAS as credenciais de uma identidade operacional e devolve quantas
+ * caíram. Usada tanto por "revogar" quanto por "rotacionar".
+ *
+ * A ROTAÇÃO REVOGA A ANTIGA NO MESMO INSTANTE, sem período de graça. Jev ficou
+ * em 0,47 (empate); desempatei pelo motivo de existir: quem rotaciona está
+ * supondo que a credencial velha vazou, e deixá-la viva "por um tempo" é
+ * manter viva exatamente a que se quis matar.
+ */
+export async function revogarCredenciaisDaIdentidade(
+  organizationId: string,
+  actorIdentityId: string,
+): Promise<number> {
+  const linhas = await db
+    .update(schema.mcpTokens)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(schema.mcpTokens.organizationId, organizationId),
+        eq(schema.mcpTokens.actorIdentityId, actorIdentityId),
+        eq(schema.mcpTokens.kind, 'connection'),
+        isNull(schema.mcpTokens.revokedAt),
+      ),
+    )
+    .returning({ id: schema.mcpTokens.id });
+  return linhas.length;
+}
+
+/** Marca o uso. Não bloqueia a chamada: perder o carimbo não pode derrubar o turno. */
+export async function marcarUso(tokenId: string): Promise<void> {
+  await db
+    .update(schema.mcpTokens)
+    .set({ lastUsedAt: new Date() })
+    .where(eq(schema.mcpTokens.id, tokenId))
+    .catch(() => undefined);
 }
 
 /** Troca um refresh válido por um par novo, revogando o antigo (rotação). */

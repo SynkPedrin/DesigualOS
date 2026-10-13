@@ -16,6 +16,7 @@ import { createLogger } from '@desigual-os/logging';
 import {
   CLICKUP_INTEGRATION,
   formatOperationalContextForPrompt,
+  perguntaSobreTarefas,
   resolveOperationalTurn,
 } from './operational-context';
 
@@ -48,7 +49,7 @@ async function contextoOperacionalDaMencao(question: string): Promise<string | u
   try {
     const turn = await resolveOperationalTurn(question, CLICKUP_INTEGRATION);
     // Briefing tem precedência sobre a lista crua, mesma regra do chat.
-    const bloco = turn.briefingBlock ?? formatOperationalContextForPrompt(turn.context);
+    const bloco = turn.briefingBlock ?? formatOperationalContextForPrompt(turn.context, perguntaSobreTarefas(question));
     return bloco ?? undefined;
   } catch (error) {
     // Pergunta não-operacional e falha de consulta caem no mesmo lugar: seguir sem o bloco é

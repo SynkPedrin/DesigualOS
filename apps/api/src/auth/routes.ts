@@ -9,6 +9,7 @@ import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
 import { contextoCompletoDe } from '../organizations/contexto';
 import { uploadUserFile } from '../lib/storage';
 import { sendResetPasswordEmail } from '../lib/email';
+import { urlPublicaDoAppCom } from '../lib/url-do-app';
 
 const logger = createLogger({ service: 'auth-recovery' });
 const forgotPasswordSchema = z.object({ email: z.string().email() });
@@ -63,7 +64,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const admin = getSupabaseAdminClient(supabaseUrl, secretKey);
-      const redirectTo = `${process.env.FRONTEND_URL ?? 'http://localhost:3000'}/reset-password`;
+      const redirectTo = urlPublicaDoAppCom('/reset-password');
       const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
 
       try {

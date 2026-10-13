@@ -403,8 +403,30 @@ export function buildOperationalBriefing(input: BriefingInput): OperationalBrief
   sections.push({
     title: 'Contexto do cliente',
     fields: [
+      /**
+       * O BRIEFING APONTA PARA O DOSSIÊ; NÃO FAZ UMA CÓPIA PIOR DELE.
+       *
+       * Era `slice(0, 600)` de um dossiê que, na Cosentino, tem 9.147
+       * caracteres. Os primeiros 600 são cabeçalho — identificação, data de
+       * atualização e um `Responsável: [FALTA]`. Medido em 01/10/2026: o Bento
+       * leu essa cabeça truncada e respondeu que "o Dossiê Real listado como
+       * [REGISTRO CRIATIVO] está vazio e marcado com [FALTA]", enquanto o mesmo
+       * prompt carregava o dossiê inteiro noutro bloco — com uma seção
+       * "## 2. POSICIONAMENTO" que começa dizendo ser a mais bem definida da
+       * carteira.
+       *
+       * Duas cópias da mesma fonte, uma delas cortada no cabeçalho, é um
+       * convite a responder pela pior. O campo agora CONFIRMA que a fonte
+       * existe e manda ler onde ela está inteira.
+       */
       input.clientProfile?.trim()
-        ? known('Dossiê', input.clientProfile.trim().slice(0, 600), 'memória: client.profile')
+        ? known(
+            'Dossiê',
+            `registrado e disponível (${input.clientProfile.trim().length} caracteres). ` +
+              'O conteúdo COMPLETO está no bloco de contexto do cliente deste mesmo turno — ' +
+              'leia lá antes de afirmar que algo não está documentado.',
+            'memória: client.profile',
+          )
         : missing('Dossiê do cliente'),
       input.toneOfVoice?.trim()
         ? known('Tom de voz', input.toneOfVoice.trim(), 'banco: client_brand_kits')
@@ -412,7 +434,36 @@ export function buildOperationalBriefing(input: BriefingInput): OperationalBrief
       input.projectFiles?.length
         ? known('Materiais', input.projectFiles.map((f) => `${f.filename} (${f.kind})`).join(', '), 'banco: project_files')
         : missing('Materiais de referência'),
-      // O template pede público/oferta/mensagem: nada disso é derivável de task.
+      /**
+       * O template pede público, oferta e mensagem — e nada disso é derivável
+       * de TASK. Mas "não sai de task" nunca quis dizer "não existe": é
+       * exatamente o que o dossiê criativo documenta.
+       *
+       * Medido em 01/10/2026, terceira iteração do caso Cosentino: depois de
+       * já estar usando o brain (trouxe os quatro arquétipos de público e
+       * cruzou com tarefa vencida há 106 dias), o Bento ainda fechou com "não
+       * há dados no sistema sobre Tom de voz, Dossiê completo ou Mensagem
+       * principal" — porque estes campos continuavam declarados como lacuna
+       * num formulário que ele lê como autoridade.
+       *
+       * Com dossiê presente, o campo deixa de afirmar lacuna e passa a apontar
+       * onde a resposta está. Sem dossiê, segue lacuna de verdade.
+       */
+      /**
+       * REVERTIDO em 01/10/2026, e o motivo fica registrado porque o erro foi meu.
+       *
+       * Tentei transformar estes campos em `known('consulte o dossiê')`. A
+       * resposta PIOROU: o Bento passou a dizer "o campo [KNOWN] contém apenas
+       * métricas operacionais e não o dossiê estratégico" — pior que a iteração
+       * anterior, que ao menos trouxe os arquétipos do brain.
+       *
+       * Foi a quarta redação seguida do mesmo bloco, cada uma validada por UMA
+       * amostra. Isso não é medição: é afinar prompt no escuro, que é
+       * exatamente o que o briefing deste P0 proibiu. Volta ao estado anterior.
+       *
+       * O caminho certo não é a palavra certa aqui — é o árbitro de evidência e
+       * o guarda de afirmação negativa, que são determinísticos e testáveis.
+       */
       missing('Público-alvo'),
       missing('Oferta'),
       missing('Mensagem principal'),
@@ -521,9 +572,12 @@ export function formatBriefingForPrompt(briefing: OperationalBriefing): string {
       '[KNOWN] e [DERIVED] — nomeie tarefas, responsáveis, prazos e números, agrupe por',
       'cliente ou por prioridade, aponte risco e o que dá pra adiantar. Escreva como um',
       'gestor de operação escreve, não como relatório de sistema.',
-      'Os campos [MISSING] não têm fonte: NÃO invente conteúdo pra eles, mas também NUNCA',
-      'recuse o pedido por causa deles — liste no fim, em uma linha, o que falta pra',
-      'completar. Um briefing com lacunas declaradas é entrega; recusar é não entregar.',
+      'Campo marcado [NÃO PREENCHIDO NO FORMULÁRIO] significa SÓ isso: aquele campo deste',
+      'formulário está vazio. NÃO é afirmação de que a informação não existe. Antes de dizer',
+      'que algo falta, procure no dossiê do cliente, na memória e nos demais blocos do',
+      'contexto — se a informação estiver lá, RESPONDA COM ELA e cite de onde veio.',
+      'Só declare ausência depois de olhar todas as fontes. Não invente conteúdo, e NUNCA',
+      'recuse o pedido por causa de campo vazio — liste no fim, em uma linha, o que falta.',
     ].join('\n'),
   );
   linhas.push('');
@@ -553,7 +607,35 @@ export function formatBriefingForPrompt(briefing: OperationalBriefing): string {
     linhas.push(section.title.toUpperCase());
     for (const f of section.fields) {
       if (f.provenance === 'MISSING') {
-        linhas.push(`- [MISSING] ${f.label}: não há fonte para isto`);
+        /**
+         * "NÃO PREENCHIDO AQUI" — e nunca mais "não há fonte para isto".
+         *
+         * A frase antiga era uma afirmação sobre O MUNDO feita a partir de um
+         * campo vazio de FORMULÁRIO, e o modelo fez o que era racional fazer:
+         * acreditou nela.
+         *
+         * MEDIDO EM 01/10/2026, na Cosentino. O turno levou ao prompt um bloco
+         * de cliente de 10.441 caracteres contendo `REGISTRO CRIATIVO` e a
+         * palavra `posicionamento`. Perguntado qual era o posicionamento, o
+         * Bento respondeu "Não tenho dados no briefing sobre posicionamento da
+         * Cosentino" e listou como ausentes justamente Dossiê, Tom de voz,
+         * Público-alvo e Mensagem principal. A proveniência ainda citou "o
+         * dossiê do cliente registrado no sistema" como fonte — citando o que
+         * foi ENVIADO, não o que foi usado.
+         *
+         * Duas evidências contraditórias no mesmo prompt: um bloco narrativo
+         * com a informação, e uma linha declarando que fonte não existe. A
+         * linha declarativa venceu, porque era explícita.
+         *
+         * A regra que isto passa a respeitar: ausência de campo NÃO é evidência
+         * de ausência de fato. Só é lacuna de verdade depois de olhar dossiê,
+         * memória, recall e eventos — e quem faz essa conta não é o formulário.
+         */
+        linhas.push(
+          `- [NÃO PREENCHIDO NO FORMULÁRIO] ${f.label}: este campo estruturado está vazio. ` +
+            'Isto NÃO quer dizer que a informação não exista — procure no dossiê, na memória e nos ' +
+            'blocos abaixo antes de afirmar qualquer ausência.',
+        );
       } else {
         linhas.push(`- [${f.provenance}] ${f.label}: ${f.value}${f.source ? ` (fonte: ${f.source})` : ''}`);
       }

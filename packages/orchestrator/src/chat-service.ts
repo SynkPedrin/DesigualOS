@@ -113,6 +113,10 @@ export async function createAndEnqueueExecution(
         ...(operationalContext ? { operationalContext } : {}),
         ...(motionBrief ? { motionBrief } : {}),
         ...(clienteDoEscopo ? { clienteDoEscopo } : {}),
+        // O intent do Router viaja com o job: é o que o retrieval planner do
+        // worker lê pra decidir as fontes do turno (ver AgentJobData.intent).
+        intent: decision.intent,
+        routingConfidence: decision.confidence,
         conversationId,
       },
       {

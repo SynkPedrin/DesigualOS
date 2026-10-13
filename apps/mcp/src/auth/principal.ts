@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, isNull } from 'drizzle-orm';
-import { db, schema } from '@desigual-os/database';
-import { montarPrincipal, type McpPrincipal } from '@desigual-os/mcp-domain';
+import { db, resolverAtor, schema } from '@desigual-os/database';
+import { montarPrincipal, type AtorDoPrincipal, type McpPrincipal } from '@desigual-os/mcp-domain';
 import { decidirEscopo, loadUserAccess, organizacaoProvedora } from '@desigual-os/auth';
 
 /**
@@ -10,6 +10,12 @@ import { decidirEscopo, loadUserAccess, organizacaoProvedora } from '@desigual-o
  * pessoa PODE hoje. Os dois são lidos a cada chamada e a interseção é o que
  * vale. Um funcionário rebaixado perde acesso no turno seguinte, sem esperar o
  * token expirar — e sem ninguém precisar lembrar de revogar nada.
+ *
+ * E, desde a credencial de conexão, uma segunda pergunta: QUEM AGE. `userId`
+ * continua dizendo quem AUTORIZOU (no fluxo OAuth é a própria pessoa; na
+ * credencial de conexão é o master que a gerou). `actorIdentityId` aponta para
+ * a identidade operacional que executa — "Pedro Claude" (person) ou "Equipe
+ * Atendimento" (shared_account, e aí NUNCA uma pessoa nomeada).
  */
 
 export interface ResolverPrincipalInput {
@@ -17,6 +23,52 @@ export interface ResolverPrincipalInput {
   organizationId: string;
   scopesDoToken: string[];
   sessionId: string;
+  /** `mcp_tokens.actor_identity_id`. `null` = legado: quem autorizou age. */
+  actorIdentityId?: string | null;
+}
+
+/**
+ * Resolve a identidade operacional que AGE. A organização entra na consulta
+ * sempre: identidade de um tenant jamais resolve no outro.
+ *
+ * FALHA NUNCA DERRUBA A REQUEST. Identidade apagada, inativa, de outra
+ * organização ou banco indisponível viram `ator: null` — o principal segue no
+ * comportamento legado (quem autorizou age) em vez de derrubar o trabalho de
+ * alguém por causa de um metadado de autoria.
+ */
+async function resolverAtorDaCredencial(organizationId: string, actorIdentityId: string): Promise<AtorDoPrincipal | null> {
+  try {
+    const [identidade] = await db
+      .select({
+        source: schema.operationalIdentities.source,
+        externalId: schema.operationalIdentities.externalId,
+      })
+      .from(schema.operationalIdentities)
+      .where(
+        and(
+          eq(schema.operationalIdentities.id, actorIdentityId),
+          eq(schema.operationalIdentities.organizationId, organizationId),
+        ),
+      );
+    if (!identidade) return null;
+
+    /**
+     * A resolução canônica (`resolucao-de-ator.ts`, testada) decide o resto:
+     * identidade inativa vira null; `personId` só vem preenchido em 'person'
+     * — em conta compartilhada é nulo SEMPRE, e é esse nulo que impede o
+     * sistema de chutar autoria. Não reinventar aqui.
+     */
+    const resolvido = await resolverAtor(organizationId, identidade.source, identidade.externalId);
+    if (!resolvido) return null;
+    return {
+      identityId: resolvido.identityId,
+      displayName: resolvido.nome,
+      actorType: resolvido.actorType,
+      personId: resolvido.personId,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -58,11 +110,14 @@ export async function resolverPrincipal(input: ResolverPrincipalInput): Promise<
    * não do papel por função do MCP (`organization_members.role`) — são dois
    * eixos diferentes, e `decidirEscopo` foi desenhado pro primeiro.
    */
-  const [todasAsOrganizacoes, acesso] = await Promise.all([
+  const [todasAsOrganizacoes, acesso, ator] = await Promise.all([
     db.select({ organizationId: schema.organizationMembers.organizationId })
       .from(schema.organizationMembers)
       .where(eq(schema.organizationMembers.userId, row.userId)),
     loadUserAccess(row.userId),
+    input.actorIdentityId
+      ? resolverAtorDaCredencial(input.organizationId, input.actorIdentityId)
+      : Promise.resolve(null),
   ]);
   const escopo = decidirEscopo(
     [...new Set(todasAsOrganizacoes.map((o) => o.organizationId))],
@@ -82,6 +137,7 @@ export async function resolverPrincipal(input: ResolverPrincipalInput): Promise<
     input.scopesDoToken,
     input.sessionId,
     escopo,
+    ator,
   );
 }
 

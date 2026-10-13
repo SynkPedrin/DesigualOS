@@ -166,7 +166,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
   // humano (ver comentário em health/routes.ts), então usa RBAC de usuário.
   app.post<{ Params: { node_id: string } }>(
     '/nodes/:node_id/command',
-    { preHandler: [requireAuth, requirePermission('nodes', 'write')] },
+    { preHandler: [requireAuth, requirePermission('nodes', 'write'), exigirProvedor()] },
     async (request, reply) => {
       const { command } = nodeCommandSchema.parse(request.body);
 

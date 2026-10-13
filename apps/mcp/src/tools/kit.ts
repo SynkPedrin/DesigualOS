@@ -6,6 +6,7 @@ import {
   exigirScope, McpAuthorizationError, type McpPrincipal, type McpScope, type ProviderSet,
 } from '@desigual-os/mcp-domain';
 import { registrarAuditoria } from '../audit.js';
+import { registrarTelemetriaDeTool } from './telemetria.js';
 import type { Logger } from '@desigual-os/logging';
 
 /**
@@ -18,6 +19,11 @@ import type { Logger } from '@desigual-os/logging';
  *  2. **A auditoria de escrita** roda depois, sempre, inclusive quando o corpo
  *     falha ou é negado — negação é informação de segurança, não silêncio.
  *  3. **O erro sai legível**, com código estável, em vez de vazar stack.
+ *
+ * E, desde 01/10/2026, uma quarta: **toda chamada vira telemetria**
+ * (`MCP_TOOL_CALLED` em operational_events, ver ./telemetria.ts) — sucesso ou
+ * erro, leitura ou escrita. Telemetria é fire-and-forget e nunca muda a
+ * resposta da tool.
  *
  * Toda tool é declarada por `definirTool`. Uma tool que precise fugir deste
  * molde é sinal de que o molde está errado, não de que a exceção é justificada.
@@ -151,6 +157,10 @@ export function registrarTool<TInput extends z.ZodRawShape>(
             ctx.logger,
           );
         }
+        void registrarTelemetriaDeTool(
+          { principal: ctx.principal, tool: def.nome, acesso: def.acesso, recurso: def.recurso, requestId, duracaoMs: Date.now() - inicio, resultado: 'negada', args: args as Record<string, unknown> },
+          ctx.logger,
+        );
         return envelopeDeErro(e.code, e.message, e.detalhe);
       }
 
@@ -160,9 +170,19 @@ export function registrarTool<TInput extends z.ZodRawShape>(
           { tool: def.nome, request_id: requestId, user_id: ctx.principal.userId, duracao_ms: Date.now() - inicio, acesso: def.acesso },
           '[mcp] tool concluída',
         );
+        void registrarTelemetriaDeTool(
+          { principal: ctx.principal, tool: def.nome, acesso: def.acesso, recurso: def.recurso, requestId, duracaoMs: Date.now() - inicio, resultado: 'ok', args: args as Record<string, unknown> },
+          ctx.logger,
+        );
         return envelope(resultado);
       } catch (erro) {
         if (erro instanceof McpAuthorizationError) {
+          // Autorização lançada de DENTRO do corpo (ex.: exigirMesmaOrganizacao):
+          // a chamada aconteceu e foi negada — é telemetria como a porta de scope.
+          void registrarTelemetriaDeTool(
+            { principal: ctx.principal, tool: def.nome, acesso: def.acesso, recurso: def.recurso, requestId, duracaoMs: Date.now() - inicio, resultado: 'negada', args: args as Record<string, unknown> },
+            ctx.logger,
+          );
           return envelopeDeErro(erro.code, erro.message, erro.detalhe);
         }
         const mensagem = erro instanceof Error ? erro.message : String(erro);
@@ -176,6 +196,10 @@ export function registrarTool<TInput extends z.ZodRawShape>(
             ctx.logger,
           );
         }
+        void registrarTelemetriaDeTool(
+          { principal: ctx.principal, tool: def.nome, acesso: def.acesso, recurso: def.recurso, requestId, duracaoMs: Date.now() - inicio, resultado: 'erro', args: args as Record<string, unknown>, erro: mensagem },
+          ctx.logger,
+        );
         /**
          * A mensagem do erro vai, a stack não. O Claude precisa saber o que deu
          * errado para decidir o próximo passo; expor caminho de arquivo e

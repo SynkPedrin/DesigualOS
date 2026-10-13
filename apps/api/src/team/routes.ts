@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
 import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
@@ -56,5 +56,51 @@ export async function registerTeamRoutes(app: FastifyInstance): Promise<void> {
     }
 
     return { members: [...byId.values()] };
+  });
+
+  /**
+   * CLIENT ASSIGNMENT (P0-C, 06/10/2026): os clientes e responsabilidades de
+   * UM colega — a metade "member → assigned clients" da feature cuja outra
+   * metade é `GET /clients/:id/assignments`. Mesma fronteira de
+   * `GET /team/members`: só enxerga quem compartilha empresa com o
+   * chamador (`recorteDePessoasVisiveis`), embutida na própria consulta —
+   * alvo inválido ou de outra empresa devolve lista vazia, não 404 (mesmo
+   * critério de não confirmar existência de pessoa de outro tenant).
+   */
+  app.get<{ Params: { id: string } }>('/team/members/:id/assignments', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+
+    const recorte = recorteDePessoasVisiveis(user, schema.users.id);
+
+    const rows = await db
+      .select({
+        clientId: schema.clients.id,
+        clientName: schema.clients.name,
+        responsibility: schema.clientUsers.responsibility,
+      })
+      .from(schema.users)
+      .innerJoin(schema.clientUsers, eq(schema.clientUsers.userId, schema.users.id))
+      .innerJoin(schema.clients, eq(schema.clients.id, schema.clientUsers.clientId))
+      .where(
+        and(
+          eq(schema.users.id, request.params.id),
+          isNotNull(schema.clientUsers.responsibility),
+          isNull(schema.clients.deletedAt),
+          recorte,
+        ),
+      )
+      .orderBy(asc(schema.clients.name));
+
+    return {
+      assignments: rows.map((r) => ({
+        client_id: r.clientId,
+        client_name: r.clientName,
+        responsibility: r.responsibility,
+      })),
+    };
   });
 }

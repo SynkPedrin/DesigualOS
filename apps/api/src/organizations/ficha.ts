@@ -102,6 +102,16 @@ export interface FichaDaEmpresa {
    */
   numeros: { clientes: number; pessoas: number; memorias: number; conversas: number };
   /**
+   * AS SUBCONTAS DIRETAS desta empresa (white label: os clientes da agência).
+   * Só o primeiro nível — netos aparecem na ficha do filho, e a árvore inteira
+   * a tela monta encadeando fichas ou pela lista de empresas (que já traz
+   * parent_id). Vazio na maioria das empresas, e isso é a resposta certa:
+   * empresa sem subconta não é empresa incompleta.
+   */
+  subcontas: { id: string; nome: string; slug: string; status: string }[];
+  /** O pai desta empresa, quando ela é uma subconta. `null` = raiz. */
+  parent_id: string | null;
+  /**
    * COMO ESTA EMPRESA SE MEXEU, dia a dia. É o que transforma a ficha de um
    * cadastro num painel: quatro números parados dizem o tamanho da conta, a
    * curva diz se ela está viva.
@@ -146,6 +156,17 @@ export async function fichaDaEmpresa(
         isNull(schema.users.deletedAt),
       ),
     )
+    .catch(() => []);
+
+  const subcontas = await db
+    .select({
+      id: schema.organizations.id,
+      nome: schema.organizations.name,
+      slug: schema.organizations.slug,
+      status: schema.organizations.status,
+    })
+    .from(schema.organizations)
+    .where(eq(schema.organizations.parentId, organizationId))
     .catch(() => []);
 
   /**
@@ -248,6 +269,8 @@ export async function fichaDaEmpresa(
       responde_pela_empresa: PAPEIS_QUE_RESPONDEM.has(p.papel.toLowerCase()),
     })),
     numeros: n,
+    subcontas,
+    parent_id: org.parentId,
     atividade,
     atividade_desde: atividade[0]?.dia ?? null,
     ultima_atividade: ultima.quando ? new Date(ultima.quando).toISOString() : null,

@@ -34,6 +34,13 @@ export interface NovaEmpresa {
   slug: string;
   /** Quem está criando. Vira `created_by` e entra como membro. */
   criadoPor: string;
+  /**
+   * A empresa PAI, quando esta nasce como subconta (white label: agência →
+   * clientes). `null`/ausente = empresa raiz. Quem decide se o chamador pode
+   * pendurar a empresa aqui é a ROTA (podeCriarSubconta em packages/auth);
+   * aqui dentro o pai só é validado como existente.
+   */
+  parentId?: string | null;
   /** Opcionais, porque empresa sem identidade usa a do produto. */
   corPrimaria?: string | null;
   corSecundaria?: string | null;
@@ -82,6 +89,21 @@ export async function criarEmpresa(entrada: NovaEmpresa): Promise<EmpresaCriada>
   if (!valido.ok) throw new Error(valido.motivo);
 
   /**
+   * O PAI É VALIDADO ANTES DA TRANSAÇÃO, pelo mesmo motivo do dono: consulta
+   * barata fora dela, e a transação não segura conexão do pool à toa. Um pai
+   * inexistente é erro de quem chamou, não um estado que o banco deva aceitar
+   * e a FK rejeitar depois com mensagem ilegível.
+   */
+  if (entrada.parentId) {
+    const [pai] = await db
+      .select({ id: schema.organizations.id })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, entrada.parentId))
+      .catch(() => []);
+    if (!pai) throw new Error('A empresa mãe não existe.');
+  }
+
+  /**
    * O DONO É RESOLVIDO ANTES DA TRANSAÇÃO.
    *
    * Consultar dentro da transação seguraria a conexão do pool por mais tempo —
@@ -109,6 +131,7 @@ export async function criarEmpresa(entrada: NovaEmpresa): Promise<EmpresaCriada>
       .values({
         name: entrada.nome.trim(),
         slug,
+        parentId: entrada.parentId ?? null,
         corPrimaria: entrada.corPrimaria ?? null,
         corSecundaria: entrada.corSecundaria ?? null,
         logoUrl: entrada.logoUrl ?? null,
@@ -149,7 +172,7 @@ export async function criarEmpresa(entrada: NovaEmpresa): Promise<EmpresaCriada>
       action: 'organization.create',
       result: 'success',
       source: 'app',
-      metadata: { slug: org.slug, nome: org.name, dono_vinculado: Boolean(donoId) },
+      metadata: { slug: org.slug, nome: org.name, dono_vinculado: Boolean(donoId), parent_id: entrada.parentId ?? null },
     });
 
     return {

@@ -10,6 +10,7 @@ import {
 } from '@desigual-os/mcp-domain';
 import { registrarAuditoria } from '../audit.js';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
+import { autorDoRegistro, autoriaNoMetadata } from './autoria.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
 import { fronteiraDeOrganizacao } from './fronteira-de-organizacao.js';
 
@@ -248,10 +249,12 @@ export function registrarToolsV1(deps: RegistrarToolDeps): void {
             mcp_scope: escopo,
             mcp_status: 'OBSERVED',
             subject: args.subject ?? null,
-            recorded_by: ctx.principal.name,
+            // QUEM AGE, não quem autorizou — ver ./autoria.ts.
+            recorded_by: autorDoRegistro(ctx.principal),
             employee_id: ctx.principal.employeeId,
             organization_id: ctx.principal.organizationId,
             session_id: ctx.principal.sessionId,
+            ...autoriaNoMetadata(ctx.principal),
           },
         })
         .returning({ id: schema.memories.id });

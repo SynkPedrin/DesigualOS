@@ -281,6 +281,15 @@ export class DesigualOAuthProvider implements OAuthServerProvider {
         userId: verificado.userId,
         organizationId: verificado.organizationId,
         tokenId: verificado.tokenId,
+        /**
+         * QUEM AGE, quando o token é uma credencial de conexão (kind
+         * 'connection'). Era o único ponto de perda da corrente inteira: o
+         * valor já vinha do banco em `verificado.actorIdentityId` (migração
+         * 0053) e simplesmente não era copiado — as oito camadas seguintes
+         * nunca tiveram o que carregar. `null` nos tokens OAuth e nos 250+
+         * legados: ali quem autorizou é quem age, e nada muda.
+         */
+        actorIdentityId: verificado.actorIdentityId ?? null,
       },
     };
   }

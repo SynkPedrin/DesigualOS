@@ -13,12 +13,14 @@ import { abrirSessao, resolverPrincipal } from './auth/principal.js';
 import { ClickUpTaskProvider } from './providers/clickup-task-provider.js';
 import { JarbasTrafficProvider } from './providers/jarbas-traffic-provider.js';
 import { StudioAssetProvider } from './providers/studio-asset-provider.js';
+import { resolveClickUpCredentials, ConnectorConfigError } from '@desigual-os/tool-gateway';
 import { registrarToolsDeIdentidadeEClientes } from './tools/identity-clients.js';
 import { registrarToolsDeTarefa } from './tools/tasks.js';
 import { registrarToolsDeMemoriaEEventos } from './tools/memory-events.js';
 import { registrarToolsDeOperacao } from './tools/operation.js';
 import { registrarToolsV1 } from './tools/v1.js';
 import { registrarToolsV2 } from './tools/v2.js';
+import { registrarToolsDeDemanda } from './tools/demand-engine.js';
 import { db } from '@desigual-os/database';
 import { sql } from 'drizzle-orm';
 import type { ContextoDaTool } from './tools/kit.js';
@@ -88,12 +90,50 @@ function montarServidor(): McpServer {
   const server = new McpServer(
     { name: 'desigual-os', version: '0.1.0' },
     {
-      instructions:
-        'Desigual OS: o sistema operacional da Agência Desigual. Use estas ferramentas para saber o estado real da ' +
-        'operação (clientes, tarefas, prazos, responsáveis), para recuperar a memória institucional da agência ' +
-        '(decisões, preferências de cliente, aprendizados) e para registrar o que foi decidido ou concluído. ' +
-        'Chame get_current_user no início para saber com quem está falando e o que essa pessoa pode fazer. ' +
-        'Antes de criar uma tarefa, procure se ela já existe. Registre só conhecimento confirmado, nunca hipótese.',
+      /**
+       * AS INSTRUÇÕES SÃO O ÚNICO CANAL que o Desigual tem para pedir algo ao
+       * Claude de quem está trabalhando. Elas eram PASSIVAS: diziam que as
+       * ferramentas servem para registrar, sem dizer QUANDO registrar.
+       *
+       * MEDIDO EM 01/10/2026: cinco pessoas com token vivo, e ZERO chamadas de
+       * ferramenta nas últimas 24h — só quatro eventos de CONNECTION_CREATED.
+       * Em 29 e 30/09 houve 14 e 21 chamadas, então o caminho funciona; o que
+       * falta é alguém lembrar de usá-lo. Conectar não é usar, e um sensor que
+       * depende de a pessoa lembrar é um sensor que fica cego na semana cheia.
+       *
+       * O GATILHO FICA EXPLÍCITO ABAIXO, por tipo de acontecimento, porque é
+       * isso que transforma "tem ferramenta de memória" em "a memória cresce
+       * sozinha enquanto a equipe trabalha". A regra que NÃO muda: só o que
+       * está confirmado vira registro — hipótese, rascunho e suposição ficam
+       * de fora, porque dossiê errado é pior que dossiê vazio.
+       */
+      instructions: [
+        'Desigual OS: o sistema operacional da Agência Desigual. Estas ferramentas dão o estado real da operação',
+        '(clientes, tarefas, prazos, responsáveis), a memória institucional (decisões, preferências de cliente,',
+        'aprendizados) e o registro do que foi decidido ou concluído.',
+        '',
+        'COMECE por get_current_user, para saber com quem você está falando e o que essa pessoa pode fazer.',
+        'Antes de criar tarefa, procure se ela já existe.',
+        '',
+        'REGISTRE SEM ESPERAR QUE PEÇAM. Durante o trabalho, quando algo dos tipos abaixo for CONFIRMADO,',
+        'chame a ferramenta correspondente na hora — a pessoa não precisa dizer "salva isso":',
+        '',
+        '- DECISÃO tomada sobre cliente, campanha ou processo -> remember (kind de decisão)',
+        '- PREFERÊNCIA do cliente ("daqui pra frente prefere X") -> save_client_feedback',
+        '- FEEDBACK do cliente sobre peça ou direção -> save_client_feedback',
+        '- APRENDIZADO reutilizável ("isso não funcionou para esse público") -> save_learning',
+        '- MUDANÇA DE PROCESSO ("a aprovação agora passa por Y") -> save_learning',
+        '- FATO DE CLIENTE (decisor, praça, público, restrição, produto) -> remember',
+        '- APROVAÇÃO ou REJEIÇÃO explícita do cliente -> log_operational_event',
+        '- TRABALHO concluído que o ClickUp não captura -> log_work',
+        '',
+        'SÓ O CONFIRMADO. Hipótese, rascunho, ideia em discussão e suposição NÃO viram registro.',
+        'Na dúvida entre registrar e não registrar, não registre — e, se for relevante, pergunte à pessoa.',
+        '',
+        'DIGA O QUE REGISTROU, em uma linha, para a pessoa poder corrigir na hora.',
+        'Sempre amarre o registro ao cliente certo. Sem cliente identificável com segurança, não grave:',
+        'informação no cliente errado é pior que informação ausente.',
+      ].join('\n'),
     },
   );
 
@@ -104,6 +144,7 @@ function montarServidor(): McpServer {
   registrarToolsDeOperacao(deps);
   registrarToolsV1(deps);
   registrarToolsV2(deps);
+  registrarToolsDeDemanda(deps);
   return server;
 }
 
@@ -131,11 +172,23 @@ function montarServidorPorRequisicao(): McpServer {
   return montarServidor();
 }
 
-function montarProviders(organizationId: string): ProviderSet {
-  const config = {
-    apiKey: process.env.CLICKUP_API_KEY ?? '',
-    teamId: process.env.CLICKUP_TEAM_ID ?? '',
-  };
+/**
+ * P0-B (06/10/2026): esta função recebia `organizationId` e o IGNORAVA,
+ * montando a credencial do ClickUp direto de env global — o bypass mais
+ * barato de corrigir do inventário, porque o parâmetro já existia e não
+ * era usado. Agora resolve pelo `organization_connectors` da empresa
+ * (mesma fonte de `resolveTaskProvider`, nunca uma segunda leitura) e só
+ * cai pro fallback de env quando a empresa não tem conector próprio.
+ *
+ * Pode LANÇAR `ConnectorConfigError` quando a empresa TEM conector mas ele
+ * está quebrado — de propósito, pra nunca servir o workspace de outro
+ * tenant em silêncio. Quem chama (`POST /mcp`) precisa tratar isso.
+ */
+async function montarProviders(organizationId: string): Promise<ProviderSet> {
+  const credenciais = await resolveClickUpCredentials(organizationId);
+  const config = credenciais
+    ? { apiKey: credenciais.apiKey, teamId: credenciais.teamId }
+    : { apiKey: process.env.CLICKUP_API_KEY ?? '', teamId: process.env.CLICKUP_TEAM_ID ?? '' };
   return {
     tasks: new ClickUpTaskProvider({
       config,
@@ -270,6 +323,11 @@ async function main(): Promise<void> {
         res.status(401).json({ error: 'invalid_token' });
         return;
       }
+      /**
+       * A identidade operacional que AGE (credencial de conexão), distinta de
+       * quem autorizou (userId). `null`/ausente = legado: quem autorizou age.
+       */
+      const actorIdentityId = (auth?.extra?.actorIdentityId as string | null | undefined) ?? null;
 
       const transportSessionId = (req.headers['mcp-session-id'] as string | undefined) ?? null;
       const sessionId = await abrirSessao({
@@ -283,16 +341,33 @@ async function main(): Promise<void> {
        * valer no turno seguinte, sem esperar o token de 1h expirar e sem
        * ninguém precisar lembrar de revogar nada.
        */
-      const principal = await resolverPrincipal({ userId, organizationId, scopesDoToken: auth?.scopes ?? [], sessionId });
+      const principal = await resolverPrincipal({ userId, organizationId, scopesDoToken: auth?.scopes ?? [], sessionId, actorIdentityId });
       if (!principal) {
         res.status(403).json({ error: 'forbidden' });
+        return;
+      }
+
+      let providers: ProviderSet;
+      try {
+        providers = await montarProviders(organizationId);
+      } catch (erro) {
+        // Conector próprio da empresa existe e está quebrado — resposta
+        // clara, nunca o workspace de outro tenant em silêncio. Sem isto, um
+        // throw aqui dentro de um handler Express async não tratado derruba
+        // o processo inteiro (sem try/catch nem handler global de
+        // unhandledRejection neste servidor) — um conector quebrado de UMA
+        // empresa tiraria o MCP do ar para todas.
+        logger.error({ erro, organizationId }, 'Falha ao montar providers do MCP');
+        res.status(503).json({
+          error: erro instanceof ConnectorConfigError ? erro.message : 'A integração desta empresa está indisponível no momento.',
+        });
         return;
       }
 
       const requestId = randomUUID();
       const contexto: ContextoDaTool = {
         principal,
-        providers: montarProviders(organizationId),
+        providers,
         logger,
         requestId,
       };

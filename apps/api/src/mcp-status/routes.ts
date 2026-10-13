@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, gte, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
-import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
+import { escopoDeOrganizacao, recorteDaOrganizacaoDeTrabalho } from '../lib/escopo-de-organizacao';
+import { organizacaoDeTrabalhoDe } from '../organizations/contexto';
 
 /**
  * O ESTADO REAL DO MCP, pro Control Plane.
@@ -36,6 +37,24 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
     }
 
     const endpoint = process.env.MCP_PUBLIC_URL ?? null;
+
+    /**
+     * O RECORTE É A EMPRESA DE TRABALHO, PELA COLUNA — correção de 05/10/2026.
+     *
+     * Antes, os tokens eram recortados "por pessoas visíveis" (vínculo de
+     * membership) e as chamadas de ferramenta e as conexões recentes não eram
+     * recortadas NEM um pouco — qualquer conta autenticada via as chamadas de
+     * MCP de todos os tenants. `mcp_tokens`, `audit_logs` e
+     * `operational_events` já têm `organization_id`: a fronteira passa a ser a
+     * coluna, com a regra de NULL de sempre (legado pré-0045, visível SOMENTE
+     * no contexto da provedora — ver `recorteDaOrganizacaoDeTrabalho`).
+     */
+    const escopo = await escopoDeOrganizacao(user);
+    const deTrabalho = await organizacaoDeTrabalhoDe(user, { escopo });
+    if (!deTrabalho) {
+      reply.code(403);
+      return { error: 'Sem empresa de trabalho definida.' };
+    }
     /**
      * A BASE do servidor, pro navegador poder falar direto com ele.
      *
@@ -71,10 +90,12 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
       .from(schema.mcpTokens)
       .leftJoin(schema.users, eq(schema.users.id, schema.mcpTokens.userId))
       /**
-       * Só quem é da minha empresa. Esta rota mostra QUEM está conectado e com
-       * quais escopos — com dois tenants, seria a lista de acessos do outro.
+       * Só os tokens DA empresa de trabalho, pela coluna. Esta rota mostra
+       * QUEM está conectado e com quais escopos — com dois tenants, o recorte
+       * por "pessoas visíveis" deixava entrar qualquer conexão de quem
+       * compartilhasse empresa com a pessoa, e NULL entrava para todos.
        */
-      .where(and(conexaoViva(), recorteDePessoasVisiveis(user, schema.mcpTokens.userId)))
+      .where(and(conexaoViva(), recorteDaOrganizacaoDeTrabalho(deTrabalho.id, schema.mcpTokens.organizationId)))
       .orderBy(desc(schema.mcpTokens.createdAt));
 
     const porPessoa = new Map<
@@ -111,6 +132,13 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
      * número que esta tela existe pra mostrar.
      */
     const desde24h = new Date(Date.now() - 24 * 3_600_000);
+    const recorteDeChamadas = and(
+      gte(schema.auditLogs.timestamp, desde24h),
+      sql`${schema.auditLogs.tool} is not null`,
+      // MESMO recorte dos tokens: chamada de ferramenta é atividade da empresa
+      // — sem isto, a lista de tools do outro tenant aparecia aqui inteira.
+      recorteDaOrganizacaoDeTrabalho(deTrabalho.id, schema.auditLogs.organizationId),
+    );
     const chamadas = await db
       .select({
         tool: schema.auditLogs.tool,
@@ -124,7 +152,7 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
       })
       .from(schema.auditLogs)
       .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.userId))
-      .where(and(gte(schema.auditLogs.timestamp, desde24h), sql`${schema.auditLogs.tool} is not null`))
+      .where(recorteDeChamadas)
       .orderBy(desc(schema.auditLogs.timestamp))
       .limit(200);
 
@@ -165,7 +193,7 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
     const chamadasPorPessoa = await db
       .select({ userId: schema.auditLogs.userId, total: sql<number>`count(*)::int` })
       .from(schema.auditLogs)
-      .where(and(gte(schema.auditLogs.timestamp, desde24h), sql`${schema.auditLogs.tool} is not null`))
+      .where(recorteDeChamadas)
       .groupBy(schema.auditLogs.userId);
 
     const totalPorPessoa = new Map(chamadasPorPessoa.filter((c) => c.userId).map((c) => [c.userId!, c.total]));
@@ -180,7 +208,12 @@ export async function registerMcpStatusRoutes(app: FastifyInstance): Promise<voi
         sessionId: schema.operationalEvents.entityId,
       })
       .from(schema.operationalEvents)
-      .where(eq(schema.operationalEvents.type, 'CONNECTION_CREATED'))
+      .where(
+        and(
+          eq(schema.operationalEvents.type, 'CONNECTION_CREATED'),
+          recorteDaOrganizacaoDeTrabalho(deTrabalho.id, schema.operationalEvents.organizationId),
+        ),
+      )
       .orderBy(desc(schema.operationalEvents.occurredAt))
       .limit(20);
 

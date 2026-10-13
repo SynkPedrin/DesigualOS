@@ -7,6 +7,8 @@ import {
 } from '@desigual-os/mcp-domain';
 import { registrarAuditoria } from '../audit.js';
 import { registrarTool, type RegistrarToolDeps } from './kit.js';
+import { autorDoRegistro, autoriaNoMetadata, autoriaNoPayload } from './autoria.js';
+import { promoverEventoParaMemoria } from './promocao-de-conhecimento.js';
 import { carregarClienteDaOrganizacao, resumoDeTask } from './identity-clients.js';
 import { somenteMemoriaVisivelNoMcp } from './visibilidade-de-memoria.js';
 import { fronteiraDeOrganizacao } from './fronteira-de-organizacao.js';
@@ -181,11 +183,13 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
           taskId: args.task_id ?? null,
           entityType: args.task_id ? 'task' : 'note',
           entityId: args.task_id ?? null,
-          actor: ctx.principal.name,
+          // QUEM AGE, quando a credencial carrega identidade operacional — ver
+          // ./autoria.ts. Sem ator: principal.name, exatamente como antes.
+          actor: autorDoRegistro(ctx.principal),
           summary: args.summary,
           importance: args.importance ?? importanciaPadrao(args.event_type),
           visibility: args.visibility ?? 'TEAM',
-          payload: (args.detail ?? {}) as Record<string, unknown>,
+          payload: { ...(args.detail ?? {}), ...autoriaNoPayload(ctx.principal) } as Record<string, unknown>,
           occurredAt: new Date(),
           /**
            * SEM processedAt aqui, de propósito (30/09/2026): marcado como já
@@ -208,7 +212,30 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
         { principal: ctx.principal, tool: 'log_operational_event', resourceType: 'operational_event', resourceId: inseridas[0]!.id, clientId: args.client_id ?? null, newValue: { type: args.event_type, summary: args.summary }, requestId: ctx.requestId, result: 'success' },
         ctx.logger,
       );
-      return { status: 'RECORDED', event_id: inseridas[0]!.id, type: args.event_type };
+      /**
+       * PROMOÇÃO: tipo rico (CLIENT_DECISION, CLIENT_FEEDBACK, PROCESS_LEARNING...)
+       * vira memória na mesma hora — o evento responde "o que aconteceu", a memória
+       * responde "o que sabemos". Tipos operacionais passam direto (a função
+       * devolve promovido: false). Nunca lança: o evento já está gravado acima.
+       */
+      const promocao = await promoverEventoParaMemoria(
+        {
+          id: inseridas[0]!.id,
+          type: args.event_type,
+          summary: args.summary,
+          clientId: args.client_id ?? null,
+          taskId: args.task_id ?? null,
+          importance: args.importance ?? importanciaPadrao(args.event_type),
+        },
+        ctx.principal,
+        ctx.logger,
+      );
+      return {
+        status: 'RECORDED',
+        event_id: inseridas[0]!.id,
+        type: args.event_type,
+        ...(promocao.promovido ? { promoted_to_memory: true, memory_id: promocao.memoryId } : {}),
+      };
     },
   });
 
@@ -235,7 +262,8 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
           organizationId: ctx.principal.organizationId, userId: ctx.principal.userId,
           employeeId: ctx.principal.employeeId, clientId: args.client_id ?? null,
           taskId: args.task_id ?? null, entityType: 'work', entityId: args.task_id ?? null,
-          actor: ctx.principal.name, summary: args.summary, importance: 'NORMAL', visibility: 'TEAM',
+          actor: autorDoRegistro(ctx.principal), summary: args.summary, importance: 'NORMAL', visibility: 'TEAM',
+          payload: autoriaNoPayload(ctx.principal),
           // Sem processedAt — mesmo motivo do log_operational_event acima.
           occurredAt: new Date(),
         })
@@ -283,9 +311,13 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
           status: 'active',
           metadata: {
             mcp_status: statusInicial('claude'),
-            recorded_by: ctx.principal.name,
+            // QUEM AGE, não quem autorizou — com credencial de conta
+            // compartilhada, gravar principal.name atribuía ao master o
+            // conhecimento da equipe. Ver ./autoria.ts.
+            recorded_by: autorDoRegistro(ctx.principal),
             employee_id: ctx.principal.employeeId,
             session_id: ctx.principal.sessionId,
+            ...autoriaNoMetadata(ctx.principal),
           },
         })
         .returning({ id: schema.memories.id });
@@ -295,9 +327,10 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
         externalId: `mcp:feedback:${memoria!.id}`,
         organizationId: ctx.principal.organizationId, userId: ctx.principal.userId,
         employeeId: ctx.principal.employeeId, clientId: cliente.id,
-        entityType: 'memory', entityId: memoria!.id, actor: ctx.principal.name,
+        entityType: 'memory', entityId: memoria!.id, actor: autorDoRegistro(ctx.principal),
         summary: `Feedback de ${cliente.name}: ${args.feedback.slice(0, 200)}`,
         importance: args.is_restriction ? 'HIGH' : 'NORMAL', visibility: 'CLIENT_SCOPED',
+        payload: autoriaNoPayload(ctx.principal),
         // Sem processedAt — mesmo motivo do log_operational_event acima.
         occurredAt: new Date(),
       }).onConflictDoNothing();
@@ -340,9 +373,34 @@ export function registrarToolsDeMemoriaEEventos(deps: RegistrarToolDeps): void {
           organizationId: ctx.principal.organizationId,
           clientId: args.client_id ?? null, userId: ctx.principal.userId,
           sourceType: 'claude', confidence: String(confiancaInicial('claude')), status: 'active',
-          metadata: { mcp_status: statusInicial('claude'), recorded_by: ctx.principal.name, session_id: ctx.principal.sessionId },
+          metadata: {
+            mcp_status: statusInicial('claude'),
+            recorded_by: autorDoRegistro(ctx.principal),
+            session_id: ctx.principal.sessionId,
+            ...autoriaNoMetadata(ctx.principal),
+          },
         })
         .returning({ id: schema.memories.id });
+
+      /**
+       * Simetria com save_client_feedback (01/10/2026): aprendizado também é
+       * ACONTECIMENTO, não só memória — sem a linha em operational_events, um
+       * aprendizado gravado não aparecia em get_recent_events nem gerava sinal
+       * proativo, e o colega só o descobria se adivinhasse a busca.
+       */
+      await db.insert(schema.operationalEvents).values({
+        source: 'chat', type: 'PROCESS_LEARNING',
+        externalId: `mcp:learning:${memoria!.id}`,
+        organizationId: ctx.principal.organizationId, userId: ctx.principal.userId,
+        employeeId: ctx.principal.employeeId, clientId: args.client_id ?? null,
+        entityType: 'memory', entityId: memoria!.id, actor: autorDoRegistro(ctx.principal),
+        summary: `Aprendizado registrado: ${args.learning.slice(0, 200)}`,
+        importance: 'NORMAL', visibility: 'TEAM',
+        payload: autoriaNoPayload(ctx.principal),
+        // Sem processedAt — mesmo motivo do log_operational_event acima.
+        occurredAt: new Date(),
+      }).onConflictDoNothing();
+
       await registrarAuditoria(
         { principal: ctx.principal, tool: 'save_learning', resourceType: 'memory', resourceId: memoria!.id, clientId: args.client_id ?? null, newValue: { learning: args.learning.slice(0, 500) }, requestId: ctx.requestId, result: 'success' },
         ctx.logger,
