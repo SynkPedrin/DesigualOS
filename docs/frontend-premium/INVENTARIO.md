@@ -1,12 +1,14 @@
-# PENDÊNCIA QUE NÃO PODE SER ESQUECIDA
+# CONTA DE QA — RESOLVIDO (13/10/2026)
 
-**Apagar a conta `qa-bot@institutoalmada.org` ao fim desta missão.** Criada em
-09/10/2026 a pedido do Pedro, exclusivamente para a validação em navegador, com a
-instrução explícita de remover depois. Existe no Supabase Auth, na tabela `users`,
-com papel master e vínculo na empresa provedora. As credenciais estão em
-`.env.local` (gitignored) e saem junto.
+A conta `qa-bot@institutoalmada.org` foi apagada na limpeza de contas do
+próprio Pedro (ele recriou a conta dele às 15:54 e varreu o resto — a
+instrução original era justamente "depois de finalizar, exclua ela"). As
+credenciais em `.env.local` estão mortas e podem sair. Se uma nova
+validação autenticada em produção for necessária, recriar é uma decisão
+dele — a conta já foi varrida duas vezes por limpezas dele.
 
 ---
+
 
 # Transformação premium do frontend — inventário e acompanhamento
 
