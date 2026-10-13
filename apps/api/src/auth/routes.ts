@@ -23,6 +23,9 @@ const updateMeSchema = z.object({
   // Tema da UI: claro, escuro, ou segue o SO ("system"). Persistido pra
   // valer em qualquer aparelho que o usuário logar, não só localStorage.
   theme: z.enum(['light', 'dark', 'system']).optional(),
+  // Função na operação (Tráfego, Atendimento...), pedida no primeiro acesso
+  // pelo convite. null apaga de propósito.
+  job_title: z.string().min(1).max(80).nullable().optional(),
   // Widgets escolhidos pelo colaborador pro dashboard personalizado dele
   // (pedido do usuário). IDs livres (o frontend decide o catálogo); isso
   // só é preferência de exibição, cada widget busca dado de uma rota com
@@ -190,6 +193,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.language !== undefined ? { language: body.language } : {}),
         ...(body.theme !== undefined ? { theme: body.theme } : {}),
+        ...(body.job_title !== undefined ? { jobTitle: body.job_title } : {}),
         ...(body.dashboard_widgets !== undefined
           ? { dashboardWidgets: body.dashboard_widgets }
           : {}),
@@ -216,6 +220,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       theme: updated.theme,
       dashboard_widgets: updated.dashboardWidgets,
       avatar_url: updated.avatarUrl,
+      job_title: updated.jobTitle,
     };
   });
 

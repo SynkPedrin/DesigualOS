@@ -123,6 +123,7 @@ export interface AuthenticatedUser {
   theme: string;
   dashboardWidgets: string[];
   clickupEmail: string | null;
+  jobTitle: string | null;
   roles: RoleName[];
   permissions: { resource: string; action: string }[];
 }
@@ -216,6 +217,7 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
       theme: user.theme,
       dashboardWidgets: user.dashboardWidgets,
       clickupEmail: user.clickupEmail,
+      jobTitle: user.jobTitle,
       roles: access.roles,
       permissions: access.permissions,
     };

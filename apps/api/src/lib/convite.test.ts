@@ -63,7 +63,7 @@ describe('enviarConviteDeOrganizacao', () => {
       expect.objectContaining({
         type: 'invite',
         email: 'pessoa@cliente.com',
-        options: expect.objectContaining({ redirectTo: 'https://app.desigual.com/convite' }),
+        options: expect.objectContaining({ redirectTo: expect.stringContaining('/convite?email=') }),
       }),
     );
     expect(mockInviteUserByEmail).not.toHaveBeenCalled();

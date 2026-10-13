@@ -98,6 +98,8 @@ export interface MeResponse {
   language: Language;
   theme: Theme;
   clickupEmail: string | null;
+  /** Função na operação (Tráfego, Atendimento...), perguntada no primeiro acesso. */
+  jobTitle?: string | null;
   /**
    * DE QUAL EMPRESA A PESSOA É — o campo que a interface não tinha.
    *

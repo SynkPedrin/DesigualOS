@@ -51,7 +51,8 @@ export async function enviarConviteDeOrganizacao(params: {
   }
 
   const admin = getSupabaseAdminClient(supabaseUrl, secretKey);
-  const redirectTo = urlPublicaDoAppCom('/convite');
+  // Mesmo motivo do /admin/invite: a tela precisa saber para quem o link era.
+  const redirectTo = urlPublicaDoAppCom(`/convite?email=${encodeURIComponent(params.email)}`);
   const metadata = { invited_org_role: params.papel, invited_org_name: params.nomeDaEmpresa, invited_name: params.nome ?? null };
 
   const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);

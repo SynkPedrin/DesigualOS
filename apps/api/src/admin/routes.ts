@@ -115,7 +115,11 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const admin = getSupabaseAdminClient(supabaseUrl, secretKey);
-    const redirectTo = urlPublicaDoAppCom('/convite');
+    // O e-mail do convidado vai no redirect: o link de uso único pode chegar
+    // já consumido (scanner de e-mail abre o link antes da pessoa — medido em
+    // produção, 13/10/2026), e sem isto a página de convite não tem como saber
+    // PARA QUEM o link era e aceitava trocar a senha de quem já estava logado.
+    const redirectTo = urlPublicaDoAppCom(`/convite?email=${encodeURIComponent(body.email)}`);
 
     // Com Resend configurado, geramos o link de convite pelo Supabase (sem
     // deixar ele mandar o e-mail padrão dele) e mandamos nosso próprio

@@ -28,6 +28,11 @@ export const users = pgTable('users', {
   // (não é enum): cada widget já busca dado de uma rota com RBAC própria,
   // então a lista aqui é só preferência de exibição, sem risco de acesso.
   dashboardWidgets: jsonb('dashboard_widgets').$type<string[]>().notNull().default([]),
+  // Função da pessoa na agência (Tráfego, Atendimento, Criação...), perguntada
+  // no primeiro acesso pelo convite (13/10/2026, pedido do Pedro: "não perguntou
+  // meu cargo pra realizar as configurações iniciais"). Diferente de `roles`:
+  // aquilo é permissão de plataforma; isto é o que a pessoa FAZ na operação.
+  jobTitle: text('job_title'),
   active: boolean('active').notNull().default(true),
   // Presença leve: atualizado pelo requireAuth (no máximo 1x por minuto por
   // usuário). "Online" é calculado no cliente (ex.: visto nos últimos 3 min).
