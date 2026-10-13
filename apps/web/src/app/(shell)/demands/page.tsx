@@ -92,7 +92,7 @@ export default function DemandsPage() {
         <EmptyState
           icon={ClipboardList}
           title="Nenhuma quinzena aqui"
-          description="Quinzenas chegam pelo Inbox (botão 'Criar quinzena' numa conversa), são lançadas pela equipe, ou pelo botão 'Nova quinzena' acima."
+          description="Quinzenas chegam pelo Inbox (aba Quinzenas, numa conversa com cliente), são lançadas pela equipe, ou pelo botão 'Nova quinzena' acima."
         />
       ) : (
         <div className="space-y-2">
