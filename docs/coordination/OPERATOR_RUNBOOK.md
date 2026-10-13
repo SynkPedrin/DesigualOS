@@ -98,7 +98,30 @@ lista antes de rodar.
 
 ## F — Comandos canônicos de deploy
 
-**Não descobertos neste repositório.** Não existe `ecosystem.config.js`, não
+### Web (Vercel) — descoberto e medido em 13/10/2026
+
+O projeto Vercel `desigual-os` tem integração com o GitHub: push em qualquer
+branch gera Preview automático (~2 min de build). O caminho que funciona bem:
+
+```bash
+git push                                    # dispara a Preview do commit
+vercel ls desigual-os                       # espera a Preview ficar Ready
+vercel promote <url-da-preview> --yes       # rebuilda c/ env de produção e promove
+```
+
+Medido: push → Preview Ready em 2min → promote → produção no ar em mais ~2min.
+
+O caminho que NÃO presta: `vercel --prod` por upload do diretório. Fica
+UNKNOWN/Queued por 20+ minutos (duas tentativas travaram assim em 13/10) e,
+pior, mandaria a ÁRVORE DE TRABALHO — com os arquivos não commitados de
+outras sessões. A via git+promote deploya exatamente o commit.
+
+E um achado que vale registrar: deploys anteriores por CLI saíam do diretório
+de trabalho, não do commit — o que estava no ar podia depender de arquivo que
+o repositório não conhecia (foi o caso do `bento-bolha.tsx`).
+
+### API/worker (VPS) — ainda não descoberto
+ Não existe `ecosystem.config.js`, não
 existe `scripts/deploy*`, não existe pipeline de CD (`.github/workflows/ci.yml`
 é só gate de qualidade: install → build → typecheck → lint → test, não
 deploy). O relatório de lançamento anterior (`f973ddc`,
