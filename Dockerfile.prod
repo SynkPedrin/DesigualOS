@@ -12,7 +12,7 @@
 # Por isso a imagem final não precisa copiar node_modules, só o dist/ e o
 # package.json do próprio app (para o Node reconhecer "type": "module").
 
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 # Versão fixa, igual ao "packageManager" do package.json raiz: evita a
 # imagem de produção usar um pnpm diferente do que gerou o pnpm-lock.yaml.
 RUN corepack enable && corepack prepare pnpm@9.9.0 --activate
@@ -35,7 +35,7 @@ RUN pnpm --filter @desigual-os/api build
 RUN pnpm --filter @desigual-os/worker build
 
 # --- Runtime da API (apps/api) ---
-FROM node:20-alpine AS api
+FROM node:22-alpine AS api
 ENV NODE_ENV=production
 WORKDIR /app
 # package.json só para o Node reconhecer "type": "module" ao rodar o dist/
@@ -59,7 +59,7 @@ CMD ["node", "apps/api/dist/server.js"]
 # Em musl isso é terreno não suportado pelo Remotion. A VPS é Debian 12, e o
 # compositor nativo correto (`@remotion/compositor-linux-x64-gnu`) é o que o
 # npm resolve aqui. A API continua em Alpine porque nunca renderiza nada.
-FROM node:20-slim AS worker
+FROM node:22-slim AS worker
 ENV NODE_ENV=production
 WORKDIR /app
 # procps traz pgrep, usado só pelo HEALTHCHECK do docker-compose.prod.yml

@@ -36,7 +36,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node20',
+  target: 'node22',
   outfile: 'dist/index.js',
   external: NATIVOS_DO_MOTION,
   sourcemap: true,
