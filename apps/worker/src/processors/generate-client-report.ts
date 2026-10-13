@@ -81,6 +81,24 @@ export async function generateClientReport(reportId: string, logger: Logger): Pr
     const supabase = getSupabase();
     const { error } = await supabase.storage.from(BUCKET).upload(path, pdfBuffer, { contentType: 'application/pdf', upsert: true });
     if (error) throw new Error(`Upload do relatório falhou: ${error.message}`);
+    /**
+     * URL PÚBLICA E PERMANENTE, POR DECISÃO DO PEDRO (13/10/2026). Não trocar
+     * por `createSignedUrl` sem falar com ele.
+     *
+     * O caso foi levantado e decidido: este PDF carrega investimento,
+     * campanhas e resultados de um cliente, e `user-uploads` é o bucket
+     * público, o mesmo de avatar e imagem de e-mail. Quem tiver o endereço vê
+     * o arquivo, para sempre, e não há revogação.
+     *
+     * A razão de ser assim é o uso: o relatório existe pra ser ENVIADO ao
+     * cliente, e link que expira vira relatório que não abre mais quando a
+     * pessoa procura o e-mail antigo. Ele escolheu o link que sempre funciona
+     * em cima do link que sempre pode ser cortado, sabendo da troca.
+     *
+     * Fica escrito aqui porque `getPublicUrl` sobre dado de performance tem
+     * cara de descuido, e sem este comentário a próxima pessoa que passar por
+     * aqui "conserta" uma decisão que foi tomada de propósito.
+     */
     const { data: publicUrlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
 
     await db
