@@ -85,7 +85,7 @@ export function ControleDaAgencia() {
           href="/inbox"
           alerta={kpis.conversas_aguardando > 0}
         />
-        <Numero rotulo="Demandas abertas" valor={String(kpis.demandas_abertas)} href="/demands" />
+        <Numero rotulo="Quinzenas abertas" valor={String(kpis.demandas_abertas)} href="/demands" />
         <Numero rotulo="Atrasados" valor={String(kpis.atrasados)} href="/demands" alerta={kpis.atrasados > 0} />
         <Numero
           rotulo="Aguardando aprovação"
@@ -129,7 +129,7 @@ export function ControleDaAgencia() {
                   </Link>
                   <span className="shrink-0 font-mono text-[11px] text-aviso">
                     {[
-                      c.demandas_atrasadas > 0 ? `${c.demandas_atrasadas} atrasada(s)` : null,
+                      c.demandas_atrasadas > 0 ? `${c.demandas_atrasadas} quinzena(s) atrasada(s)` : null,
                       c.aprovacoes_pendentes > 0 ? `${c.aprovacoes_pendentes} aprovação(ões)` : null,
                     ]
                       .filter(Boolean)
