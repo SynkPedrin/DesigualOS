@@ -71,8 +71,38 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [
+    /**
+     * PROJETO DAS CAPTURAS VISUAIS, separado do resto.
+     *
+     * Tem setup próprio (login + tutorial dispensado, salvos em storageState) e
+     * tema escuro, porque o padrão do Playwright é `prefers-color-scheme:
+     * light` e isso já custou uma rodada inteira de capturas do produto na
+     * aparência errada.
+     *
+     * Fica num projeto à parte de propósito: os specs existentes fazem o
+     * próprio login e NÃO devem herdar sessão nem tutorial dispensado — vários
+     * deles existem justamente pra testar o caminho de quem chega sem nada.
+     */
+    {
+      name: 'visual-setup',
+      testMatch: /visual\.setup\.ts/,
+      use: { ...devices['Desktop Chrome'], colorScheme: 'dark' },
+    },
+    {
+      name: 'visual',
+      testMatch: /\.visual\.spec\.ts/,
+      dependencies: ['visual-setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        colorScheme: 'dark',
+        storageState: 'tests/e2e/.auth/visual.json',
+      },
+    },
     {
       name: 'chromium',
+      // As capturas têm projeto próprio; sem isto elas rodariam duas vezes, e a
+      // segunda sem a sessão preparada.
+      testIgnore: [/visual\.setup\.ts/, /\.visual\.spec\.ts/],
       use: {
         ...devices['Desktop Chrome'],
         // Opt-in explícito (E2E_INSECURE_BROWSER=1) pra rodar a suíte com o

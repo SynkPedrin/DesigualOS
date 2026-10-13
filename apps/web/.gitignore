@@ -8,3 +8,4 @@ playwright-report
 # Screenshots e PNGs das baterias E2E do Canva (Gate 2.3): artefato de execução,
 # nao codigo. Nunca versionar - pode conter dado de cliente de teste.
 tests/e2e/artifacts
+tests/e2e/.auth/

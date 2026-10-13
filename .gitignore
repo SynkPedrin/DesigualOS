@@ -27,6 +27,12 @@ LP - DESIGUAL OS/
 # notas soltas por cliente) - nunca devem ir pro repositório público no
 # GitHub, mesmo que o resto do projeto vá (2026-09-10).
 arquivos clientes/
+# MESMA regra, pasta nova colocada direto na raiz do repo pelo usuário
+# (07/10/2026): um markdown por cliente, dado real de operação — exatamente
+# o que a regra acima já protege, só que `arquivos clientes/` não cobria por
+# ser um nome de pasta diferente. Estava SEM proteção (git status mostrava
+# `??`) até esta linha.
+MD Clientes/
 # Ancorado na raiz DE PROPOSITO. Sem a barra inicial, a regra casava qualquer
 # pasta chamada "brain" em qualquer nivel — e engolia packages/otto/src/brain/,
 # que e CODIGO do pacote do Otto, nao vault. Cinco arquivos de fonte do Otto

@@ -164,7 +164,9 @@ Fonte: briefing D.Carvalho acrescenta personalidade e tom (ainda não o bloco op
   3. Dossiê de registro, 07/10/2026 (tabela de pendências do mesmo documento): verde `#367C2B`, amarelo `#FFDC00`
   `[CONFIRMAR: qual par de hex é o oficial — #367C2B/#FFDE00 (já registrado), #367e33/#fcda15 (texto do dossiê) ou #367C2B/#FFDC00 (tabela de pendências do dossiê)? Até confirmação do cliente, usar "verde e amarelo D. Carvalho" em texto sem fixar o hex em peça que dependa da cor exata.]`
   - Fonte: dossiê de registro, 07/10/2026 (tabela de pendências) também confirma o mandatory de **não usar vermelho** — ver §8.
-- **Tipografia — também com divergência:** já registrado neste brain (migração anterior): Big Shoulders Display (display) e Work Sans (texto). Dossiê de registro, 07/10/2026, cita **Trade Gothic LT** como fonte em uso, com nota de que "havia dúvida com Montserrat + Open Sans". A tabela de pendências do mesmo dossiê também cita apenas "Trade Gothic". `[CONFIRMAR: Trade Gothic LT é a fonte que substituiu Big Shoulders Display/Work Sans, ou são usos diferentes (ex.: uma para peça social, outra para apresentação)? Não assumir substituição sem confirmação do cliente.]`
+- **Tipografia:** Big Shoulders Display (display) e Work Sans (texto)
+  - Já registrado neste brain (migração anterior) — é o par usado até hoje em peça, e segue valendo enquanto a divergência abaixo não for resolvida.
+  - `[CONFIRMAR: divergência de tipografia]` Dossiê de registro, 07/10/2026, cita **Trade Gothic LT** como fonte em uso, com nota de que "havia dúvida com Montserrat + Open Sans". A tabela de pendências do mesmo dossiê também cita apenas "Trade Gothic". Não está confirmado se Trade Gothic LT substituiu Big Shoulders Display/Work Sans ou se são usos diferentes (ex.: uma para peça social, outra para apresentação) — não assumir substituição sem confirmação do cliente.
 - **Marca d'água:** motivo do cervo
 - **Formatos de entrega:** apresentações e relatórios em PPTX no padrão da marca
 - Estilo fotográfico e o que a marca evita visualmente: `[FALTA]`
