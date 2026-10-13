@@ -484,7 +484,8 @@ const AGENTES_ASK_DEFAULT_URL: Record<'jarbas' | 'suzy', string> = {
 };
 
 /**
- * A VIA DE LEITURA POR GPT (13/10/2026, pedido do Pedro).
+ * A VIA DE LEITURA POR GPT É A PRIMÁRIA, SEMPRE (13/10/2026, pedido do Pedro:
+ * "o gpt é a via primária de resposta sempre").
  *
  * A conversa do Bento — pergunta, leitura, "o que é esse sistema?" — saía
  * SÓ pelo serviço de Q&A na máquina da GPU (`callBento`). Quando ela falha,
@@ -498,13 +499,13 @@ const AGENTES_ASK_DEFAULT_URL: Record<'jarbas' | 'suzy', string> = {
  * montado acima. Sem ferramenta nenhuma, como todo escritor de texto desta
  * stack: leitura é texto, e texto não executa ação.
  *
- * Dois usos, decididos no ponto de chamada:
- * - `BENTO_OPENAI_READ_ENABLED=true`: PRIMÁRIA — nem chama a GPU.
- * - sem a flag: RESERVA — só roda quando a GPU falhou de verdade, então a
- *   falha vira resposta em vez de erro na tela.
+ * A GPU vira RESERVA: só é chamada quando o GPT não responde. Quem precisar
+ * do comportamento antigo (GPU primária, GPT só no socorro) declara
+ * `BENTO_OPENAI_READ_ENABLED=false` — o default é o que a operação pediu,
+ * não o que custa menos.
  */
 export function bentoOpenAiReadEnabled(): boolean {
-  return process.env.BENTO_OPENAI_READ_ENABLED === 'true';
+  return process.env.BENTO_OPENAI_READ_ENABLED !== 'false';
 }
 
 async function responderLeituraComOpenAI(mensagem: string, logger: Logger): Promise<ExecuteResponse | null> {
@@ -2307,14 +2308,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       }
 
       /**
-       * BENTO POR GPT ANTES DA GPU quando a flag manda (13/10/2026).
+       * GPT PRIMEIRO, GPU DE RESERVA (13/10/2026, "a via primária sempre").
        *
-       * A flag existe porque a via da GPU é gratuita e a do GPT é paga — a
-       * decisão de qual é a primária é de custo, e por isso é uma flag e não
-       * uma escolha enterrada no código. O que NÃO é opcional é o fallback
-       * (mais abaixo): GPU sem resposta vira GPT de qualquer jeito, porque a
-       * alternativa é a pessoa receber "servidor de inferência sem capacidade"
-       * no lugar da resposta — que foi o defeito medido ao vivo hoje.
+       * Se o GPT não respondeu, a GPU tenta; se a GPU falha, o GPT tenta de
+       * novo (o piso, mais abaixo). A alternativa a esta ordem era a pessoa
+       * receber "servidor de inferência sem capacidade" no lugar da resposta,
+       * que foi o defeito medido ao vivo hoje.
        */
       const viaPrimaria =
         agent === 'bento' && bentoOpenAiReadEnabled()
