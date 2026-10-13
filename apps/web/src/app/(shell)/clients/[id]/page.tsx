@@ -64,7 +64,7 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
  * existia — `GrantAccessForm` também só vivia no overlay órfão. Era uma
  * instrução apontando para lugar nenhum.
  */
-const TABS = ['Visão geral', 'Conversas', 'Demandas', 'Tarefas', 'Arquivos', 'Calendário', 'Aprovações', 'Mídia', 'Relatórios', 'Acesso'] as const;
+const TABS = ['Visão geral', 'Conversas', 'Quinzenas', 'Tarefas', 'Arquivos', 'Calendário', 'Aprovações', 'Mídia', 'Relatórios', 'Acesso'] as const;
 type Tab = (typeof TABS)[number];
 
 function inicioDoDia(d: Date): Date {
@@ -174,10 +174,10 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           )}
           <button
             type="button"
-            onClick={() => setTab('Demandas')}
+            onClick={() => setTab('Quinzenas')}
             className="rounded-md bg-roxo-eletrico px-3 py-2 text-sm font-semibold text-branco-cru transition-all hover:opacity-90"
           >
-            Nova demanda
+            Nova quinzena
           </button>
         </div>
       </div>
@@ -204,7 +204,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             <StatCard
               icon={ClipboardList}
               iconClassName="bg-roxo-eletrico/15 text-roxo-eletrico"
-              label="Demandas ativas"
+              label="Quinzenas ativas"
               value={demandasAtivas.length}
               isLoading={demandsQuery.isPending}
               isError={demandsQuery.isError}
@@ -266,7 +266,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         </Surface>
       )}
 
-      {tab === 'Demandas' && (
+      {tab === 'Quinzenas' && (
         <Surface className="p-5">
           <ClientDemandsPanel clientId={id} />
         </Surface>

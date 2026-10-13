@@ -11,7 +11,7 @@ const ROTULO_DO_MODULO: Record<string, string> = {
   hoje: 'Hoje',
   clientes: 'Clientes',
   inbox: 'Inbox',
-  demandas: 'Demandas',
+  demandas: 'Quinzenas',
   tarefas: 'Tarefas',
   aprovacoes: 'Aprovações',
   operacao: 'Controle da agência',

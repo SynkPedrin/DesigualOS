@@ -242,7 +242,7 @@ export default function TodayPage() {
       id: `demanda-${d.id}`,
       titulo: d.title,
       cliente: d.clientName ?? 'Cliente',
-      badge: { label: 'Nova demanda', tom: 'neutral' },
+      badge: { label: 'Nova quinzena', tom: 'neutral' },
       quando: formatRelativeTime(d.requestedAt),
       href: `/demands/${d.id}`,
       atrasada: false,
@@ -392,7 +392,7 @@ export default function TodayPage() {
       texto: (
         <>
           {aoMenos(demandasSaoPiso)}
-          <strong className="font-semibold text-branco-cru">{demandasVencendoHoje} demanda{demandasVencendoHoje > 1 ? 's' : ''}</strong> sua{demandasVencendoHoje > 1 ? 's' : ''} vence{demandasVencendoHoje > 1 ? 'm' : ''} hoje.
+          <strong className="font-semibold text-branco-cru">{demandasVencendoHoje} quinzena{demandasVencendoHoje > 1 ? 's' : ''}</strong> sua{demandasVencendoHoje > 1 ? 's' : ''} vence{demandasVencendoHoje > 1 ? 'm' : ''} hoje.
         </>
       ),
     });

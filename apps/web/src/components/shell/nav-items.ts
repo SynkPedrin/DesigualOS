@@ -183,13 +183,14 @@ export const NAV_ITEMS: NavItem[] = [
   // Continua em /demands e na tabela `demands` por baixo — renomear a rota/
   // schema seria mexer num dado de produção já estável só por rótulo, risco
   // que ninguém decidiu correr (08/10/2026). O que muda é só o que a pessoa
-  // lê: cada "demanda" agora é o espaço de uma campanha — briefing, arquivos
-  // e histórico, vinculados ao cliente.
-  { href: '/demands', label: 'Campanhas', icon: ClipboardList, section: 'dia', modulo: 'demandas' },
+  // lê. 08/10: cada "demanda" virou o espaço de uma campanha. 13/10 (pedido
+  // do Pedro): o espaço agora é a QUINZENA — o ciclo de trabalho da agência —
+  // e a tela passa a se chamar "Quinzenas" em tudo que o colaborador lê.
+  { href: '/demands', label: 'Quinzenas', icon: ClipboardList, section: 'dia', modulo: 'demandas' },
   // Mídia paga (Meta/Google Ads) — módulo 'meta_ads' já existia e já gateava
   // 15 rotas sem item de navegação próprio (vivia só na aba Mídia da ficha do
   // cliente). Ganha página própria em 08/10/2026 (desigualos-4a) — "Mídias",
-  // nunca "Campanhas", porque esse nome já é a tela acima.
+  // nunca "Quinzenas"/"Campanhas", porque esse nome já é a tela acima.
   { href: '/midias', label: 'Mídias', icon: Megaphone, section: 'dia', modulo: 'meta_ads' },
   // Pipeline comercial (demo "dia real de operação", 07/10/2026): lead →
   // proposta → onboarding → ativo/pausado, quadro Kanban em /pipeline.

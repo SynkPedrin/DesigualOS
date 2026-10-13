@@ -476,13 +476,13 @@ function CartaoDetalheModal({
   onApagar: () => void;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'Visão geral' | 'Demandas' | 'Tarefas' | 'Arquivos' | 'Anexos'>('Visão geral');
+  const [tab, setTab] = useState<'Visão geral' | 'Quinzenas' | 'Tarefas' | 'Arquivos' | 'Anexos'>('Visão geral');
   const [editando, setEditando] = useState(false);
   const [nome, setNome] = useState(card.name);
   const [responsavel, setResponsavel] = useState(card.responsavel ?? '');
   const [valor, setValor] = useState(card.valor ?? '');
   const [nota, setNota] = useState(card.nota);
-  const tabs = card.clientId ? (['Visão geral', 'Demandas', 'Tarefas', 'Arquivos', 'Anexos'] as const) : (['Visão geral', 'Anexos'] as const);
+  const tabs = card.clientId ? (['Visão geral', 'Quinzenas', 'Tarefas', 'Arquivos', 'Anexos'] as const) : (['Visão geral', 'Anexos'] as const);
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-carbono/80 p-4" onClick={onClose}>
@@ -572,7 +572,7 @@ function CartaoDetalheModal({
               </div>
             </div>
           )}
-          {tab === 'Demandas' && card.clientId && <ClientDemandsPanel clientId={card.clientId} />}
+          {tab === 'Quinzenas' && card.clientId && <ClientDemandsPanel clientId={card.clientId} />}
           {tab === 'Tarefas' && card.clientId && <ClientTasksPanel clientId={card.clientId} clickupUrl={null} />}
           {tab === 'Arquivos' && card.clientId && <ClientStudioGallery clientId={card.clientId} />}
           {tab === 'Anexos' && (

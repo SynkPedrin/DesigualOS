@@ -91,7 +91,7 @@ export function chipsDeStatus(statusDaCarteira: readonly string[]): Array<{ key:
 
 type StatusChip = string;
 
-const CENTER_TABS = ['Visão geral', 'Demandas', 'Tarefas', 'Calendário', 'Arquivos', 'Equipe', 'Memória', 'Mais'] as const;
+const CENTER_TABS = ['Visão geral', 'Quinzenas', 'Tarefas', 'Calendário', 'Arquivos', 'Equipe', 'Memória', 'Mais'] as const;
 type CenterTab = (typeof CENTER_TABS)[number];
 
 function ClientsPageContent() {
@@ -158,7 +158,7 @@ function ClientsPageContent() {
       <PageHeader
         eyebrow="Contas"
         title="Clientes"
-        description="Gerencie seus clientes, conversas, demandas e performance."
+        description="Gerencie seus clientes, conversas, quinzenas e performance."
         actions={
           <button
             type="button"
@@ -356,7 +356,7 @@ function ClientCenterPanel({ client, tab, onTab }: { client: ClientSummary; tab:
           <div className="space-y-6">
             <div className="grid max-w-2xl grid-cols-3 gap-3">
               <div className="rounded-lg border border-grafite-elevado bg-carbono p-4">
-                <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Demandas ativas</p>
+                <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Quinzenas ativas</p>
                 <p className="mt-1 font-display text-2xl text-branco-cru">{ativasCount}</p>
               </div>
               <div className="rounded-lg border border-grafite-elevado bg-carbono p-4">
@@ -413,7 +413,7 @@ function ClientCenterPanel({ client, tab, onTab }: { client: ClientSummary; tab:
           </div>
         )}
 
-        {tab === 'Demandas' && <ClientDemandsPanel clientId={client.id} />}
+        {tab === 'Quinzenas' && <ClientDemandsPanel clientId={client.id} />}
         {tab === 'Tarefas' && <ClientTasksPanel clientId={client.id} clickupUrl={client.clickupUrl} />}
         {tab === 'Calendário' && <ClienteCalendarioTab clientId={client.id} />}
         {tab === 'Arquivos' && <ClientStudioGallery clientId={client.id} />}
@@ -465,12 +465,12 @@ function ClientSidePanel({ client }: { client: ClientSummary }) {
     <div className="flex flex-col gap-4 overflow-y-auto rounded-lg border border-grafite-elevado p-4">
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <h3 className="flex items-center gap-1.5 font-heading text-sm font-semibold text-branco-cru"><ClipboardList size={14} /> Demandas em andamento</h3>
+          <h3 className="flex items-center gap-1.5 font-heading text-sm font-semibold text-branco-cru"><ClipboardList size={14} /> Quinzenas em andamento</h3>
         </div>
         {demandsPending ? (
           <Skeleton className="h-16 w-full" />
         ) : emAndamento.length === 0 ? (
-          <p className="text-sm text-nevoa">Nenhuma demanda em andamento.</p>
+          <p className="text-sm text-nevoa">Nenhuma quinzena em andamento.</p>
         ) : (
           <ul className="space-y-1.5">
             {emAndamento.map((d) => (

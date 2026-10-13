@@ -11,7 +11,7 @@ import { ClientTasksPanel } from '@/components/clients/client-tasks-panel';
 import { ClientStudioGallery } from '@/components/clients/client-studio-gallery';
 import { cn } from '@/lib/utils';
 
-const TABS = ['Visão geral', 'Demandas', 'Tarefas', 'Arquivos'] as const;
+const TABS = ['Visão geral', 'Quinzenas', 'Tarefas', 'Arquivos'] as const;
 type Tab = (typeof TABS)[number];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -113,7 +113,7 @@ export function ThreadContextPanel({ threadId }: { threadId: string | null }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {tab === 'Visão geral' && (clientId ? <ClientOverviewPanel clientId={clientId} /> : <SemCliente />)}
-        {tab === 'Demandas' && (clientId ? <ClientDemandsPanel clientId={clientId} conversationThreadId={thread.id} /> : <SemCliente />)}
+        {tab === 'Quinzenas' && (clientId ? <ClientDemandsPanel clientId={clientId} conversationThreadId={thread.id} /> : <SemCliente />)}
         {tab === 'Tarefas' && (clientId ? <ClientTasksPanel clientId={clientId} clickupUrl={workspace?.client.clickupUrl ?? null} /> : <SemCliente />)}
         {tab === 'Arquivos' && (clientId ? <ClientStudioGallery clientId={clientId} /> : <SemCliente />)}
       </div>

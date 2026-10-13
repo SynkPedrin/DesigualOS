@@ -119,7 +119,7 @@ export function ControleDaAgencia() {
         <div>
           <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-nevoa">Clientes em atenção</p>
           {atencao.length === 0 ? (
-            <SemNadaAinda titulo="Nada pedindo atenção agora" explicacao="Nenhum cliente com demanda atrasada ou aprovação pendente." />
+            <SemNadaAinda titulo="Nada pedindo atenção agora" explicacao="Nenhum cliente com quinzena atrasada ou aprovação pendente." />
           ) : (
             <ul className="divide-y divide-grafite-elevado/60 rounded-lg border border-grafite-elevado bg-grafite">
               {atencao.map((c) => (
@@ -145,7 +145,7 @@ export function ControleDaAgencia() {
         <div>
           <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-nevoa">Operação por colaborador</p>
           {operacao.length === 0 ? (
-            <SemNadaAinda titulo="Ninguém com carga agora" explicacao="Nenhum colaborador com demanda ou aprovação em aberto." />
+            <SemNadaAinda titulo="Ninguém com carga agora" explicacao="Nenhum colaborador com quinzena ou aprovação em aberto." />
           ) : (
             <div className="overflow-hidden rounded-lg border border-grafite-elevado bg-grafite">
               <table className="w-full text-sm">

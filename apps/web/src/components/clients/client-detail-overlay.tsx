@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
  * lugar onde quem vai produzir descobre a regra ANTES do retrabalho, em vez de
  * depois.
  */
-const BASE_TABS = ['ClickUp', 'Visão Geral', 'Equipe', 'Demandas', 'Memória', 'Conversas', 'Studio', 'Mídia'] as const;
+const BASE_TABS = ['ClickUp', 'Visão Geral', 'Equipe', 'Quinzenas', 'Memória', 'Conversas', 'Studio', 'Mídia'] as const;
 /** "Acesso" só pra master - mesma regra da tela antiga, não afrouxa nada. */
 const MASTER_TABS = [...BASE_TABS, 'Acesso'] as const;
 type Tab = (typeof MASTER_TABS)[number];
@@ -123,7 +123,7 @@ export function ClientDetailOverlay({ client, onClose }: { client: ClientSummary
 
           {tab === 'Equipe' && <ClientTeamPanel clientId={client.id} />}
 
-          {tab === 'Demandas' && <ClientDemandsPanel clientId={client.id} />}
+          {tab === 'Quinzenas' && <ClientDemandsPanel clientId={client.id} />}
 
           {tab === 'Memória' && <ClientMemoryPanel clientId={client.id} />}
 

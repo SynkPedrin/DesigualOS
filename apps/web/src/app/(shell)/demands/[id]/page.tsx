@@ -61,7 +61,7 @@ export default function DemandDetailPage({ params }: { params: Promise<{ id: str
   if (isPending) {
     return (
       <div className="mx-auto max-w-[800px]">
-        <PageHeader eyebrow="Demanda" title="Carregando…" />
+        <PageHeader eyebrow="Quinzena" title="Carregando…" />
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full" />
@@ -78,7 +78,7 @@ export default function DemandDetailPage({ params }: { params: Promise<{ id: str
         <BackLink />
         <EmptyState
           icon={FileText}
-          title={/not found/i.test(msg) ? 'Esta demanda não existe ou não é sua' : 'Não conseguimos carregar esta demanda'}
+          title={/not found/i.test(msg) ? 'Esta quinzena não existe ou não é sua' : 'Não conseguimos carregar esta quinzena'}
           {...(/not found/i.test(msg) ? {} : { description: 'A consulta falhou, tente de novo.' })}
         />
         {!/not found/i.test(msg) && (
@@ -142,7 +142,7 @@ function BackLink() {
   return (
     <Link href="/demands" className="mb-4 inline-flex items-center gap-1.5 text-[13px] text-nevoa transition-colors hover:text-branco-cru">
       <ArrowLeft size={13} />
-      Campanhas
+      Quinzenas
     </Link>
   );
 }
@@ -162,7 +162,7 @@ function iconeDoArquivo(kind: DemandFileKind) {
 }
 
 /**
- * ARQUIVOS da campanha — briefing, documentos, imagens, compactados, à vista
+ * ARQUIVOS da quinzena — briefing, documentos, imagens, compactados, à vista
  * de todo mundo (acesso é sempre da empresa inteira, nunca por dono). Chute
  * de categoria pela extensão é só o default do seletor: quem envia confirma
  * ou troca antes de subir.
@@ -260,9 +260,9 @@ function ArquivosSection({ demandId }: { demandId: string }) {
 }
 
 /**
- * ATIVIDADE da campanha — quem fez o quê e quando, nome e foto incluídos.
+ * ATIVIDADE da quinzena — quem fez o quê e quando, nome e foto incluídos.
  * Mesma tabela da tela de Atividade geral (operational_events), só recortada
- * por esta campanha — nunca um feed calculado separado que pudesse divergir.
+ * por esta quinzena — nunca um feed calculado separado que pudesse divergir.
  */
 function AtividadeSection({ demandId }: { demandId: string }) {
   const { data: eventos, isPending } = useDemandActivity(demandId);
@@ -317,7 +317,7 @@ function BriefSection({ demandId, clientId }: { demandId: string; clientId: stri
   }
 
   if (isError) {
-    return <InlineSectionError message="Não conseguimos carregar o briefing desta demanda." onRetry={() => refetch()} />;
+    return <InlineSectionError message="Não conseguimos carregar o briefing desta quinzena." onRetry={() => refetch()} />;
   }
 
   const brief = briefs?.[0] ?? null;

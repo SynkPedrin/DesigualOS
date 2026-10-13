@@ -71,7 +71,7 @@ export function MeetingBriefPanel({ eventId, onClose }: { eventId: string; onClo
               </ul>
             </Secao>
 
-            <Secao titulo={`Demandas abertas (${brief.demands.open_count})`}>
+            <Secao titulo={`Quinzenas abertas (${brief.demands.open_count})`}>
               {brief.demands.items.length === 0 ? (
                 <p className="text-sm text-nevoa">Nenhuma.</p>
               ) : (

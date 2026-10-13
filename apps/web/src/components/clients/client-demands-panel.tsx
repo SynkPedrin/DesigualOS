@@ -28,7 +28,7 @@ export function ClientDemandsPanel({
 }: {
   clientId: string;
   /** Quando aberto a partir de UMA conversa (Inbox), a demanda criada aqui
-   *  carrega o elo — mesmo requisito do botão "Criar demanda" que esta aba
+   *  carrega o elo — mesmo requisito do botão "Criar quinzena" que esta aba
    *  substitui ali, nunca perdido ao virar aba compartilhada. */
   conversationThreadId?: string | null;
 }) {
@@ -42,7 +42,7 @@ export function ClientDemandsPanel({
   if (isError) {
     return (
       <SemNadaAinda
-        titulo="Não consegui ler as demandas deste cliente"
+        titulo="Não consegui ler as quinzenas deste cliente"
         explicacao="A consulta falhou. É a API, não a conta, se continuar, vale avisar quem cuida do sistema."
       />
     );
@@ -65,7 +65,7 @@ export function ClientDemandsPanel({
           onClick={() => setShowForm(true)}
           className="rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa hover:border-roxo-eletrico/50 hover:text-branco-cru"
         >
-          + Lançar demanda manualmente
+          + Lançar quinzena manualmente
         </button>
       ) : (
         <div className="flex flex-wrap gap-2">
@@ -73,7 +73,7 @@ export function ClientDemandsPanel({
             autoFocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Título da demanda"
+            placeholder="Título da quinzena"
             className="min-w-[240px] flex-1 rounded-md border border-grafite-elevado bg-carbono px-2.5 py-1.5 text-sm text-branco-cru"
           />
           <button
@@ -92,8 +92,8 @@ export function ClientDemandsPanel({
 
       {!demands || demands.length === 0 ? (
         <SemNadaAinda
-          titulo="Nenhuma demanda deste cliente ainda"
-          explicacao="Demandas chegam pelo Inbox (conversa real) ou são lançadas aqui direto, do pedido ao briefing aprovado."
+          titulo="Nenhuma quinzena deste cliente ainda"
+          explicacao="Quinzenas chegam pelo Inbox (conversa real) ou são lançadas aqui direto, do pedido ao briefing aprovado."
         />
       ) : (
         <ul className="space-y-2">

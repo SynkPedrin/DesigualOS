@@ -48,7 +48,7 @@ export default function DemandsPage() {
     <div>
       <PageHeader
         eyebrow="Operação"
-        title="Campanhas"
+        title="Quinzenas"
         description="O que a equipe trabalha para cada cliente, pedido, briefing, arquivos e histórico, tudo num lugar só."
         actions={
           <button
@@ -57,12 +57,12 @@ export default function DemandsPage() {
             className="inline-flex items-center gap-1.5 rounded-md bg-roxo-eletrico px-3.5 py-2 text-[13px] font-medium text-branco-cru transition-opacity hover:opacity-90"
           >
             <Plus size={14} />
-            Nova campanha
+            Nova quinzena
           </button>
         }
       />
 
-      {criando && <NovaCampanhaModal onClose={() => setCriando(false)} />}
+      {criando && <NovaQuinzenaModal onClose={() => setCriando(false)} />}
 
       <div className="mb-4 flex flex-wrap gap-1">
         {FILTERS.map((f) => (
@@ -87,12 +87,12 @@ export default function DemandsPage() {
           ))}
         </div>
       ) : isError ? (
-        <InlineSectionError message="Não conseguimos carregar as campanhas." onRetry={() => refetch()} />
+        <InlineSectionError message="Não conseguimos carregar as quinzenas." onRetry={() => refetch()} />
       ) : !demands || demands.length === 0 ? (
         <EmptyState
           icon={ClipboardList}
-          title="Nenhuma campanha aqui"
-          description="Campanhas chegam pelo Inbox (botão 'Criar demanda' numa conversa), são lançadas pela equipe, ou pelo botão 'Nova campanha' acima."
+          title="Nenhuma quinzena aqui"
+          description="Quinzenas chegam pelo Inbox (botão 'Criar quinzena' numa conversa), são lançadas pela equipe, ou pelo botão 'Nova quinzena' acima."
         />
       ) : (
         <div className="space-y-2">
@@ -126,11 +126,11 @@ export default function DemandsPage() {
 /**
  * NOVA CAMPANHA — fica visível a todo mundo (acesso de /demands já é da
  * empresa inteira, nunca por dono), e vinculada a um cliente é obrigatório:
- * não existe campanha "solta". Quando o cliente já tem ClickUp conectado
+ * não existe quinzena "solta". Quando o cliente já tem ClickUp conectado
  * (`clickupListId`), o backend espelha como tarefa lá sozinho — esta tela não
- * precisa saber disso, só criar a campanha.
+ * precisa saber disso, só criar a quinzena.
  */
-function NovaCampanhaModal({ onClose }: { onClose: () => void }) {
+function NovaQuinzenaModal({ onClose }: { onClose: () => void }) {
   const { data: clients } = useClients();
   const criar = useCreateDemand();
   const [clientId, setClientId] = useState('');
@@ -146,7 +146,7 @@ function NovaCampanhaModal({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-heading text-base font-semibold text-branco-cru">Nova campanha</h2>
+          <h2 className="font-heading text-base font-semibold text-branco-cru">Nova quinzena</h2>
           <button type="button" onClick={onClose} className="text-nevoa hover:text-branco-cru">
             <X size={16} />
           </button>
@@ -170,11 +170,11 @@ function NovaCampanhaModal({ onClose }: { onClose: () => void }) {
           </label>
 
           <label className="block">
-            <span className="block text-[13px] text-nevoa">Nome da campanha</span>
+            <span className="block text-[13px] text-nevoa">Nome da quinzena</span>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Ex: Campanha de Outubro"
+              placeholder="Ex: 1ª quinzena de outubro"
               className="mt-1 w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-[14px] text-branco-cru placeholder:text-nevoa/50 focus:border-roxo-eletrico/60 focus:outline-none"
             />
           </label>
@@ -202,7 +202,7 @@ function NovaCampanhaModal({ onClose }: { onClose: () => void }) {
             }
             className="w-full rounded-md bg-roxo-eletrico px-4 py-2 text-[14px] font-medium text-branco-cru transition-opacity hover:opacity-90 disabled:opacity-40"
           >
-            {criar.isPending ? 'Criando...' : 'Criar campanha'}
+            {criar.isPending ? 'Criando...' : 'Criar quinzena'}
           </button>
         </div>
       </div>

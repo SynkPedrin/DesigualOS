@@ -193,7 +193,7 @@ export default function AgenciaPage() {
         <StatCard
           icon={ClipboardList}
           iconClassName="bg-sucesso/15 text-sucesso"
-          label="Demandas abertas"
+          label="Quinzenas abertas"
           value={control?.kpis.demandas_abertas ?? 0}
           isLoading={controlPending}
           isError={controlError}
@@ -260,7 +260,7 @@ export default function AgenciaPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Surface className="flex flex-col gap-3 p-5">
           <div className="flex items-center justify-between">
-            <h2 className="font-heading text-base font-semibold text-branco-cru">Demandas da Desigual</h2>
+            <h2 className="font-heading text-base font-semibold text-branco-cru">Quinzenas da Desigual</h2>
             <Link href="/demands" className="flex items-center gap-1 font-mono text-[11px] text-nevoa hover:text-branco-cru">
               Ver todas <ArrowRight size={11} />
             </Link>
@@ -268,7 +268,7 @@ export default function AgenciaPage() {
           {demandas.isPending ? (
             <Skeleton className="h-40 w-full" />
           ) : demandasAtivas.length === 0 ? (
-            <p className="py-6 text-center text-sm text-nevoa">Nenhuma demanda ativa agora.</p>
+            <p className="py-6 text-center text-sm text-nevoa">Nenhuma quinzena ativa agora.</p>
           ) : (
             <ul className="divide-y divide-grafite-elevado">
               {demandasAtivas.slice(0, 6).map((d) => (
