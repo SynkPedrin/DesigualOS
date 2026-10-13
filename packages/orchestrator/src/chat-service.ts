@@ -44,8 +44,22 @@ export async function createAndEnqueueExecution(
 ): Promise<ChatResult> {
   const { message, userId, clientId, conversationId, decision, attachments, operationalContext, motionBrief, clienteDoEscopo } = params;
 
+  /**
+   * O BENTO NÃO PRECISA DE NODE para responder (13/10/2026).
+   *
+   * O portão de node existe porque otto/studio respondem EM nodes de GPU e
+   * jarbas/suzy em serviços externos — sem node saudável, enfileirar é
+   * prometer o que não pode cumprir. Mas o Bento nunca respondeu por node:
+   * `callBento` fala com o serviço de Q&A direto do worker, e desde hoje a
+   * via primária é o GPT, também no worker. Medido ao vivo nesta data: com
+   * todos os nodes fora, "o que é esse sistema?" voltava "nenhum node
+   * online" — a pergunta morria num portão de uma infraestrutura que o
+   * caminho dela não usa.
+   *
+   * Para os outros agentes o portão segue exatamente como era.
+   */
   const healthyNode = await findHealthyNodeForAgent(decision.primary_agent);
-  if (!healthyNode) {
+  if (!healthyNode && decision.primary_agent !== 'bento') {
     return {
       executionId: null,
       status: 'unavailable',
