@@ -2448,12 +2448,32 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       result = { ...result, usage: estimateTokenUsage(message, result.answer) };
     }
   } catch (error) {
-    await failExecution(executionDbId, error instanceof Error ? error.message : String(error));
+    const motivoDaFalha = error instanceof Error ? error.message : String(error);
+    await failExecution(executionDbId, motivoDaFalha);
+    await propagarFalhaParaRunDaAutomacao(executionId, motivoDaFalha, logger);
     await publishWsEvent({
       type: 'execution.completed',
       payload: { execution_id: executionId, agent, status: 'failed' },
     });
     await notifyChatCompletion(runningExecution?.userId, agent, conversationId, 'failed', null);
+    /**
+     * A CONVERSA NÃO PODE FICAR MUDA numa falha de infraestrutura.
+     *
+     * Medido em 13/10/2026: a automação horária deste ambiente teve 10+
+     * execuções seguidas falhadas e ZERO mensagem do assistente na conversa —
+     * nem o aviso de que falhou. O caminho SEM exceção já grava
+     * `result.answer ?? failureAnswer`; este caminho, COM exceção, não gravava
+     * nada. Quem abre o chat da automação via o prompt entrar num buraco.
+     *
+     * Só na ÚLTIMA tentativa: o `throw` abaixo faz o BullMQ reprocessar, e
+     * gravar em toda tentativa é exatamente o defeito da resposta duplicada
+     * relatado em 28/09/2026.
+     */
+    if (conversationId && tentativa.feitas + 1 >= tentativa.maximo) {
+      await recordAssistantMessage(conversationId, agent, failureAnswerFor(agent, motivoDaFalha), undefined).catch(
+        () => undefined, // o aviso não pode derrubar o throw que vem a seguir
+      );
+    }
     throw error;
   }
 
@@ -2546,6 +2566,12 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
 
     await recordTokenUsage(executionDbId, result, execution?.organizationId);
     await recordAuditLog(agent, executionId, result);
+    // Agente que devolveu falha SEM lançar também veio de uma automação quando
+    // veio: o run não pode continuar dizendo 'dispatched' (que a métrica conta
+    // como sucesso) enquanto a execução está 'failed'. Mesmo espelho do catch.
+    if (result.status === 'failed') {
+      await propagarFalhaParaRunDaAutomacao(executionId, result.error ?? 'execução falhou', logger);
+    }
     // Ver `vaiReprocessar`: enquanto ainda há retry pela frente, a resposta
     // NÃO é gravada — senão a pessoa lê a mesma coisa uma vez por tentativa.
     if (!vaiReprocessar) {
@@ -3137,6 +3163,36 @@ export async function recordTokenUsage(
     outputTokens: result.usage.output_tokens,
     organizationId: organizationId ?? null,
   });
+}
+
+/**
+ * A AUTOMAÇÃO PRECISA SABER QUE A EXECUÇÃO FALHOU (achado de 13/10/2026).
+ *
+ * run-automation.ts grava o run como 'dispatched' no momento do despacho, e
+ * até aqui essa era a palavra final: a execução falhava DEPOIS, de forma
+ * assíncrona, e nada atualizava o run. Medido na automação real deste
+ * ambiente: 10+ disparos seguidos, toda execução `failed`
+ * (INFERENCE_UPSTREAM_5XX), e o run dizendo 'dispatched' — que é o status que
+ * /automations/metrics conta como SUCESSO. A tela mostrava a automação
+ * saudável enquanto ela falhava de hora em hora, sem aviso nenhum.
+ *
+ * O elo é `executionCode`: o run guarda o execution_id que o próprio despacho
+ * gerou. A atualização é idempotente e só toca runs ainda em 'dispatched' —
+ * run já marcado não muda de estado duas vezes.
+ */
+async function propagarFalhaParaRunDaAutomacao(executionId: string, motivo: string, logger: Logger): Promise<void> {
+  try {
+    await db
+      .update(schema.automationRuns)
+      .set({ status: 'failed', error: motivo, completedAt: new Date() })
+      .where(
+        and(eq(schema.automationRuns.executionCode, executionId), eq(schema.automationRuns.status, 'dispatched')),
+      );
+  } catch (error) {
+    // A verdade primária já está em executions; o run é o espelho. Falhar ao
+    // espelhar não pode derrubar o fluxo que está tratando a falha original.
+    logger.warn({ error, executionId }, 'não consegui marcar o run da automação como failed');
+  }
 }
 
 async function failExecution(executionDbId: string, reason: string): Promise<void> {
