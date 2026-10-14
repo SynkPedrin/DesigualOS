@@ -392,8 +392,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   const clienteDoTurno = await resolveClientTurnContext({
     message: data.message,
     executionClientId: clientId,
+    organizationId,
   }).catch(() => null);
-  const totalClientes = await contarClientes().catch(() => 0);
+  const totalClientes = await contarClientes(organizationId).catch(() => 0);
   const blocoCliente = clienteDoTurno ? formatClientBlock(clienteDoTurno, totalClientes) : "";
 
   // CAMPANHA DO TURNO. A ordem importa: resolver a campanha ANTES de criar é o
@@ -417,6 +418,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     clienteDoTurnoFinal = await resolveClientTurnContext({
       message: data.message,
       executionClientId: campanhaDoTurno.campanha.clientId,
+      organizationId,
     }).catch(() => clienteDoTurno);
   }
 
@@ -512,7 +514,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
 
   // PESSOAS CITADAS, com tipo de relação e evidência. Sem isto, "aparece numa
   // task" virava "responde pela conta" — o bug da Esther.
-  const pessoasDoTurno = await resolvePersonTurnContext(data.message).catch(() => null);
+  const pessoasDoTurno = await resolvePersonTurnContext(data.message, organizationId).catch(() => null);
   const blocoPessoas = pessoasDoTurno ? formatPersonBlock(pessoasDoTurno) : '';
 
   // RECALL TEMPORAL. "o que conversamos ontem?" passa a ser respondível com o
@@ -559,6 +561,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
     clientId: clienteDoTurnoFinal?.clientId ?? clientId,
     campaignId: campanhaDoTurno?.campanha?.id ?? null,
     environment: ambiente,
+    organizationId,
     logger,
   }).catch(() => ({ bloco: '', chamadas: [] }));
 
@@ -579,6 +582,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   let episodiosDoTurno: Awaited<ReturnType<typeof recallEpisodes>> = [];
   if (janela) {
     const episodios = await recallEpisodes({
+      organizationId,
       userId,
       clientId: clienteDoTurno?.clientId ?? clientId,
       desde: janela.desde,
@@ -636,6 +640,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
 
   const termosDoTurno = termosDeConsulta(data.message);
   const episodiosFactuais = await recallFactualEpisodes({
+    organizationId,
     clientId: clienteDoTurno?.clientId ?? clientId,
     termos: termosDoTurno,
     environment: ambiente,

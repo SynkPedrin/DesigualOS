@@ -1,6 +1,7 @@
 import type { AuthenticatedUser } from '../auth/middleware';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { decidirEscopo, organizacaoProvedora } from '@desigual-os/auth';
 
 /**
  * Colaboração entre clientes exige membership na organização do recurso.
@@ -173,4 +174,25 @@ export function canActOnStudioEntity(
 /** Documento Canva: apenas o proprietário ou um master pode removê-lo. */
 export function canDeleteCanvasDocument(user: AuthenticatedUser, ownerId: string | null): boolean {
   return user.roles.includes('master') || (ownerId !== null && ownerId === user.id);
+}
+
+/**
+ * O cliente pode entrar num turno de chat desta pessoa?
+ *
+ * Achado no ambiente isolado do Bento 3.1 (14/10/2026): o `POST /chat` não
+ * checava acesso ao cliente em nenhum dos três caminhos — `client_id` do
+ * payload, cliente do projeto e cliente DETECTADO NO TEXTO. A colaboradora da
+ * empresa A escreveu "Como está a Beta Imóveis?" (cliente da empresa B), a
+ * conversa nasceu NA EMPRESA B (`organizacaoDaEscrita` segue o cliente) e o
+ * Bento recebeu a carga de trabalho e as atrasadas da outra empresa.
+ *
+ * Membro da empresa do cliente pode. Conta de plataforma da provedora também,
+ * pela mesma regra de `decidirEscopo` que as rotas REST usam ("o provedor
+ * enxerga todo mundo") — sem isto, a equipe da casa perderia o chat sobre os
+ * clientes das empresas que ela atende.
+ */
+export async function podeUsarClienteNoChat(user: AuthenticatedUser, clientId: string): Promise<boolean> {
+  if (await hasClientAccess(user, clientId)) return true;
+  const organizacoes = await organizationIdsForUser(user.id);
+  return decidirEscopo(organizacoes, user.roles, organizacaoProvedora()).ehProvider;
 }

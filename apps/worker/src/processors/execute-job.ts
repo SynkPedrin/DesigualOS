@@ -555,6 +555,29 @@ function apurarEstado(organizationId: string | null, cfg: NonNullable<ReturnType
   }).catch(() => null);
 }
 
+/**
+ * O QUE O GPT DO BENTO RECEBE EM TODO TURNO DE LEITURA, nos dois caminhos.
+ *
+ * Quem pergunta + equipe + boas-vindas (blocoDePessoaEEquipe) e o estado da
+ * operação da empresa. Até 14/10/2026 isto só existia dentro do loop; no
+ * caminho direto (AGENT_LOOP_BENTO_V2 desligado, que é também o caminho de
+ * rollback) a via GPT recebia a pergunta crua, sem persona e sem dado
+ * nenhum — medido no ambiente isolado do Bento 3.1: "quais são minhas
+ * tarefas atrasadas?" chegava ao modelo com 35 caracteres. Uma leitura por
+ * turno, mesmo se o loop chamar o agente de novo.
+ */
+export function contextoFixoDaLeitura(userId: string | null, organizationId: string | null): {
+  pessoaEEquipe: () => Promise<string | null>;
+  estadoDaOperacao: () => Promise<string | null>;
+} {
+  let pessoa: Promise<string | null> | null = null;
+  let estado: Promise<string | null> | null = null;
+  return {
+    pessoaEEquipe: () => (pessoa ??= userId ? blocoDePessoaEEquipe(userId).catch(() => null) : Promise.resolve(null)),
+    estadoDaOperacao: () => (estado ??= estadoDaOperacaoDaOrganizacao(organizationId)),
+  };
+}
+
 function failedAgentResponse(agent: AgentName, error: string): ExecuteResponse {
   return {
     execution_id: '',
@@ -2079,27 +2102,11 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // understand→context→plan→act→observe→evaluate→replan, com checkpoint
       // no Postgres e outcome gravado por execução.
       let camadaDaLeitura: CamadaDeLeitura | null = null;
-      // Quem pergunta + equipe + boas-vindas: só para o GPT (ver
-      // blocoDePessoaEEquipe). Uma leitura por turno, mesmo se o loop
-      // replanejar e chamar o agente de novo.
-      let pessoaEEquipe: Promise<string | null> | null = null;
-      // O ESTADO DA OPERAÇÃO em todo turno do GPT (14/10/2026). Existia para
-      // isto (bento-panorama.ts, "o estado da operação tem que estar na mão
-      // dele SEMPRE"), mas só entrava nos atalhos de pergunta operacional e
-      // de ata — no loop, que é o caminho de produção, o Bento respondia "como
-      // está a Elite?" sem saber quantas tarefas da agência estão atrasadas.
-      // Cacheado por empresa (3 min): custa no máximo uma leitura do ClickUp
-      // por empresa nesse intervalo, nunca uma por turno.
-      let estadoDaOperacao: Promise<string | null> | null = null;
-      const carregarEstadoDaOperacao = () => {
-        estadoDaOperacao ??= estadoDaOperacaoDaOrganizacao(runningExecution?.organizationId ?? null);
-        return estadoDaOperacao;
-      };
-      const carregarPessoaEEquipe = () => {
-        const userIdDoTurno = runningExecution?.userId ?? null;
-        pessoaEEquipe ??= userIdDoTurno ? blocoDePessoaEEquipe(userIdDoTurno).catch(() => null) : Promise.resolve(null);
-        return pessoaEEquipe;
-      };
+      // Quem pergunta + equipe + estado da operação: os mesmos blocos que o
+      // caminho direto entrega (ver contextoFixoDaLeitura). O estado é
+      // cacheado por empresa (3 min, bento-panorama): no máximo uma leitura
+      // do ClickUp por empresa nesse intervalo, nunca uma por turno.
+      const fixoDaLeitura = contextoFixoDaLeitura(runningExecution?.userId ?? null, runningExecution?.organizationId ?? null);
       result = await dispatchWithAgentLoop({
         data,
         userId: runningExecution?.userId ?? null,
@@ -2136,8 +2143,8 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
                 montarPromptDeLeitura(
                   msg,
                   limitarContexto([
-                    (await carregarPessoaEEquipe()) ?? undefined,
-                    (await carregarEstadoDaOperacao()) ?? undefined,
+                    (await fixoDaLeitura.pessoaEEquipe()) ?? undefined,
+                    (await fixoDaLeitura.estadoDaOperacao()) ?? undefined,
                     contexto,
                   ]),
                 ),
@@ -2204,7 +2211,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // de produção), e o que fica dentro é promovido pro system prompt.
       const partesDeContexto: string[] = [];
       let sufixoDeCliente = "";
-      if (aceitaContextoNaMensagem(agent) && conversationId) {
+      // O diálogo recente desta conversa: vai na mensagem dos nodes que leem
+      // contexto ali, e no prompt de leitura do Bento por GPT (mais abaixo).
+      const dialogoRecente = async (): Promise<string> => {
+        if (!conversationId) return '';
         const turnos = (await db
           .select({ role: schema.messages.role, agent: schema.messages.agent, content: schema.messages.content })
           .from(schema.messages)
@@ -2220,6 +2230,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             .map((m) => ({ role: m.role as TurnoDeDialogo['role'], agent: m.agent, content: m.content })),
           agent,
         );
+        return dialogo ?? '';
+      };
+      if (aceitaContextoNaMensagem(agent)) {
+        const dialogo = await dialogoRecente();
         if (dialogo) partesDeContexto.push(dialogo);
       }
 
@@ -2291,6 +2305,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         const clienteDoTurno = await resolveClientTurnContext({
           message,
           executionClientId: runningExecution?.clientId ?? null,
+          organizationId: runningExecution?.organizationId ?? null,
         }).catch(() => null);
         if (clienteDoTurno) {
           if (agent === 'jarbas' || agent === 'suzy') {
@@ -2318,7 +2333,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
               sufixoDeCliente = ` (cliente: ${nome})`;
             }
           } else {
-            const totalClientes = await contarClientes().catch(() => 0);
+            const totalClientes = await contarClientes(runningExecution?.organizationId ?? null).catch(() => 0);
             const blocoCliente = formatClientBlock(clienteDoTurno, totalClientes);
             if (blocoCliente) partesDeContexto.push(blocoCliente);
 
@@ -2405,9 +2420,45 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
        * receber "servidor de inferência sem capacidade" no lugar da resposta,
        * que foi o defeito medido ao vivo hoje.
        */
+      /**
+       * O PROMPT DE LEITURA DO BENTO NO CAMINHO DIRETO (Bento 3.1, 14/10/2026).
+       *
+       * Antes, as duas chamadas ao GPT deste caminho mandavam
+       * `mensagemComDialogo` — que para o Bento é a pergunta crua, porque ele
+       * não está entre os nodes que leem contexto na mensagem. Sem persona,
+       * sem quem pergunta, sem tarefas, sem cliente. Agora vai o mesmo
+       * `montarPromptDeLeitura` do loop, com os blocos fixos compartilhados
+       * (contextoFixoDaLeitura), o bloco operacional que a API apurou, o
+       * cliente do turno (dossiê + o que a equipe ensinou com "anota") e o
+       * diálogo recente. O que o loop tem e isto não tem: memória semântica e
+       * episódios, que dependem do ContextPack do dispatch agêntico.
+       */
+      let promptDeLeitura: Promise<string> | null = null;
+      const promptDeLeituraDireta = (): Promise<string> =>
+        (promptDeLeitura ??= (async () => {
+          const fixo = contextoFixoDaLeitura(runningExecution?.userId ?? null, runningExecution?.organizationId ?? null);
+          const organizacao = runningExecution?.organizationId ?? null;
+          const [pessoa, estado, cliente, totalClientes, dialogo] = await Promise.all([
+            fixo.pessoaEEquipe(),
+            fixo.estadoDaOperacao(),
+            resolveClientTurnContext({ message, executionClientId: runningExecution?.clientId ?? null, organizationId: organizacao }).catch(() => null),
+            contarClientes(organizacao).catch(() => 0),
+            dialogoRecente().catch(() => ''),
+          ]);
+          return montarPromptDeLeitura(
+            message,
+            limitarContexto([
+              pessoa ?? undefined,
+              estado ?? undefined,
+              operationalContext,
+              cliente ? formatClientBlock(cliente, totalClientes) : undefined,
+              dialogo || undefined,
+            ]),
+          );
+        })());
       const viaPrimaria =
         agent === 'bento' && bentoOpenAiReadEnabled()
-          ? await responderLeituraComOpenAI(mensagemComDialogo, logger)
+          ? await responderLeituraComOpenAI(await promptDeLeituraDireta(), logger)
           : null;
       if (agent === 'jarbas' && jarbasLocalLigado()) {
         // O Jarbas responde do servidor, com os números reais da conta do
@@ -2503,7 +2554,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
        * falhou E a GPU falhou, esta é a segunda e última tentativa do GPT.
        */
       if (agent === 'bento' && (result.status !== 'completed' || !result.answer)) {
-        const viaGpt = await responderLeituraComOpenAI(mensagemComDialogo, logger);
+        const viaGpt = await responderLeituraComOpenAI(await promptDeLeituraDireta(), logger);
         if (viaGpt?.answer) {
           logger.warn({ executionId }, '[bento] GPU sem resposta; turno respondido via OpenAI');
           result = marcarCamadaDaCascata({ ...viaGpt, execution_id: executionId }, 'openai_leitura_fallback_gpu');

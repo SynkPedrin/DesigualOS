@@ -640,7 +640,7 @@ describe('2b. regressão F-12: dossiê do resolveClientTurnContext isola environ
   it('cliente de produção: o dossiê de QA fica de fora', async () => {
     fake.store.clients.push({ id: 'client-x', name: 'Cliente X', environment: 'production' });
     semeiaDossies('client-x');
-    const ctx = await resolveClientTurnContext({ message: 'x', executionClientId: 'client-x' });
+    const ctx = await resolveClientTurnContext({ message: 'x', executionClientId: 'client-x', organizationId: null });
     expect(ctx.profile).toContain('DOSSIÊ REAL');
     expect(ctx.profile).not.toContain('HOMOLOGAÇÃO');
   });
@@ -648,7 +648,7 @@ describe('2b. regressão F-12: dossiê do resolveClientTurnContext isola environ
   it('cliente de QA: o dossiê de produção fica de fora', async () => {
     fake.store.clients.push({ id: 'client-qa', name: 'Cliente QA', environment: 'qa' });
     semeiaDossies('client-qa');
-    const ctx = await resolveClientTurnContext({ message: 'x', executionClientId: 'client-qa' });
+    const ctx = await resolveClientTurnContext({ message: 'x', executionClientId: 'client-qa', organizationId: null });
     expect(ctx.profile).toContain('HOMOLOGAÇÃO');
     expect(ctx.profile).not.toContain('DOSSIÊ REAL');
   });
@@ -860,7 +860,7 @@ describe('5. regressão F-21: ensino confirmado no fast path volta na conversa n
     const recall = await recallMemories({ clientId: 'cliente-teste-7', kinds: ['client.profile'], environment: 'production' });
     expect(recall.some((m) => m.subject === 'cliente:cliente-teste-7:aprendizado:decisor' && m.content.includes('Marina'))).toBe(true);
     // (b) o caminho real de client-context.ts: resolveClientTurnContext + comporPerfil.
-    const ctx = await resolveClientTurnContext({ message: 'prepara o post de sexta', executionClientId: 'cliente-teste-7' });
+    const ctx = await resolveClientTurnContext({ message: 'prepara o post de sexta', executionClientId: 'cliente-teste-7', organizationId: null });
     expect(ctx.clientId).toBe('cliente-teste-7');
     expect(ctx.profile).toContain('Marina');
     expect(ctx.profile).toContain('REGISTRO APRENDIDO');

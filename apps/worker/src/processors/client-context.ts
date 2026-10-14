@@ -1,5 +1,5 @@
 import { db, schema } from '@desigual-os/database';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { resolveClientsFromText } from '@desigual-os/context-engine';
 
 /**
@@ -175,6 +175,12 @@ function indiceDaFonte(f: FonteDePerfil): number {
 export async function resolveClientTurnContext(params: {
   message: string;
   executionClientId?: string | null;
+  /**
+   * A empresa da execução. Obrigatório de propósito: cliente citado no texto
+   * só vira cliente do turno se for DESTA empresa (ver recortarPelaEmpresa).
+   * `null` = execução sem empresa, e então nenhum nome do texto é aceito.
+   */
+  organizationId: string | null;
 }): Promise<ClientTurnContext> {
   const vazio: ClientTurnContext = {
     clientId: null,
@@ -185,7 +191,10 @@ export async function resolveClientTurnContext(params: {
     ambiguous: [],
   };
 
-  const doTexto = await resolveClientsFromText(params.message).catch(() => null);
+  const doTexto = await recortarPelaEmpresa(
+    await resolveClientsFromText(params.message).catch(() => null),
+    params.organizationId,
+  );
   const ambiguous = (doTexto?.ambiguous ?? []).map((a) => (typeof a === 'string' ? a : (a as { name?: string }).name ?? '')).filter(Boolean);
 
   let clientId = params.executionClientId ?? null;
@@ -205,13 +214,19 @@ export async function resolveClientTurnContext(params: {
 
   if (clientId) {
     const [c] = await db
-      .select({ id: schema.clients.id, name: schema.clients.name, environment: schema.clients.environment })
+      .select({ id: schema.clients.id, name: schema.clients.name, environment: schema.clients.environment, organizationId: schema.clients.organizationId })
       .from(schema.clients)
       .where(eq(schema.clients.id, clientId))
       .catch(() => []);
     clientName = c?.name ?? null;
     ambienteResolvido = c?.environment === 'qa' ? 'qa' : 'production';
-    if (!c) clientId = null;
+    // Segunda trava, para o cliente que não veio do texto (o da execução, ou
+    // o que a campanha carrega): de outra empresa, não entra no turno.
+    const deOutraEmpresa = params.organizationId !== null && c?.organizationId !== params.organizationId;
+    if (!c || deOutraEmpresa) {
+      clientId = null;
+      clientName = null;
+    }
   }
 
   let profile: string | null = null;
@@ -267,6 +282,43 @@ export async function resolveClientTurnContext(params: {
     brandKit,
     ambiguous,
     unresolvedMentions: [],
+  };
+}
+
+/**
+ * FRONTEIRA DE EMPRESA na resolução por nome (Bento 3.1, 14/10/2026).
+ *
+ * `resolveClientsFromText` casa o nome contra a carteira de TODAS as empresas.
+ * Medido no ambiente isolado: a colaboradora da empresa A escreveu "Me fala da
+ * Beta Imóveis" (cliente da empresa B) e o turno recebeu "CLIENTE DO TURNO:
+ * Beta Imóveis (confirmado na carteira da agência)" seguido do dossiê da outra
+ * empresa — verba e decisor. A API já recusava o cliente; o worker resolvia de
+ * novo, sozinho, a partir do texto.
+ *
+ * Fica só o que é da empresa da execução, nos acertos e nos candidatos de
+ * desambiguação (listar o nome de um cliente alheio também é vazamento).
+ */
+async function recortarPelaEmpresa(
+  resolucao: Awaited<ReturnType<typeof resolveClientsFromText>> | null,
+  organizationId: string | null,
+): Promise<Awaited<ReturnType<typeof resolveClientsFromText>> | null> {
+  if (!resolucao) return null;
+  const ids = [...resolucao.matches.map((m) => m.id), ...resolucao.ambiguous.flatMap((a) => a.candidates.map((c) => c.id))];
+  if (ids.length === 0) return resolucao;
+  const daEmpresa = new Set<string>();
+  if (organizationId) {
+    const linhas = await db
+      .select({ id: schema.clients.id })
+      .from(schema.clients)
+      .where(and(inArray(schema.clients.id, ids), eq(schema.clients.organizationId, organizationId)));
+    for (const l of linhas) daEmpresa.add(l.id);
+  }
+  return {
+    ...resolucao,
+    matches: resolucao.matches.filter((m) => daEmpresa.has(m.id)),
+    ambiguous: resolucao.ambiguous
+      .map((a) => ({ ...a, candidates: a.candidates.filter((c) => daEmpresa.has(c.id)) }))
+      .filter((a) => a.candidates.length > 1),
   };
 }
 
@@ -351,7 +403,14 @@ export function formatClientBlock(ctx: ClientTurnContext, totalClientes: number)
 }
 
 /** Quantos clientes a agência tem — entra no bloco pra o agente saber o tamanho da carteira. */
-export async function contarClientes(): Promise<number> {
-  const rows = await db.select({ id: schema.clients.id }).from(schema.clients).catch(() => []);
+export async function contarClientes(organizationId: string | null): Promise<number> {
+  // Da empresa da execução, não da base inteira: "a agência tem N clientes"
+  // somava as carteiras de todas as empresas (Bento 3.1, 14/10/2026).
+  if (!organizationId) return 0;
+  const rows = await db
+    .select({ id: schema.clients.id })
+    .from(schema.clients)
+    .where(and(eq(schema.clients.organizationId, organizationId), isNull(schema.clients.deletedAt)))
+    .catch(() => []);
   return rows.length;
 }

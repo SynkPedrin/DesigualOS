@@ -22,6 +22,7 @@ import {
   type AgentName,
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { canReadConversationInOrg, podeUsarClienteNoChat } from '../lib/access';
 import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
 import { formatOperationalContextForPrompt, perguntaSobreTarefas, resolveOperationalTurn, type OperationalTurn } from '../lib/operational-context';
 import {
@@ -250,6 +251,13 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         if (!effectiveClientId) effectiveClientId = project.clientId;
       }
 
+      // Cliente escolhido (seletor ou projeto) de uma empresa que não é a
+      // desta pessoa: 404, como em POST /demands. Ver podeUsarClienteNoChat.
+      if (effectiveClientId && !(await podeUsarClienteNoChat(user, effectiveClientId))) {
+        reply.code(404);
+        return { error: `Client '${effectiveClientId}' not found` };
+      }
+
       // Conversation Context (seção 6.4): continua uma conversa existente ou
       // abre uma nova. User -> Conversation -> Execution (seção 6.3).
       let conversationId = body.conversation_id ?? null;
@@ -272,6 +280,12 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
           reply.code(403);
           return { error: 'This conversation is private' };
         }
+        // Conversa pública de OUTRA empresa: a regra de leitura que GET
+        // /conversations já usa vale também para escrever nela.
+        if (!(await canReadConversationInOrg(user, existing))) {
+          reply.code(403);
+          return { error: 'This conversation belongs to another organization' };
+        }
         // Uma conversa já pertence a um único cliente/projeto; um client_id ou
         // project_id divergente no payload não pode sobrescrever isso (evita
         // que o contexto de outro cliente vaze pra dentro desta conversa).
@@ -291,7 +305,8 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         // menção incidental em texto) e nunca troca o cliente da conversa no meio do caminho.
         if (!effectiveClientId) {
           const detectado = await resolveClientFromText(body.message);
-          if (detectado) effectiveClientId = detectado.id;
+          // Nome citado de cliente de outra empresa não vira cliente do turno.
+          if (detectado && (await podeUsarClienteNoChat(user, detectado.id))) effectiveClientId = detectado.id;
         }
         // Projeto "casa" do cliente (ver resolveDefaultProjectForClient): sem isto, uma conversa
         // com clientId mas sem projectId nunca aparece na pasta do cliente na barra lateral —
@@ -328,7 +343,8 @@ export async function registerChatRoutes(app: FastifyInstance): Promise<void> {
         // sobrescreve uma escolha explícita.
         if (!effectiveClientId) {
           const detectado = await resolveClientFromText(body.message);
-          if (detectado) effectiveClientId = detectado.id;
+          // Nome citado de cliente de outra empresa não vira cliente do turno.
+          if (detectado && (await podeUsarClienteNoChat(user, detectado.id))) effectiveClientId = detectado.id;
         }
         // Mesma resolução de projeto "casa" do cliente do outro ramo (conversa existente) —
         // aqui cobre tanto o client_id explícito quanto o detectado agora por texto.

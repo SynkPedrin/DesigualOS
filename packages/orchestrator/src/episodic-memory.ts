@@ -188,7 +188,24 @@ export interface EpisodioRecuperado {
  * Recupera episódios por JANELA DE TEMPO e escopo. É o que sustenta "o que
  * conversamos ontem": não devolve a conversa inteira, devolve o que aconteceu.
  */
+/**
+ * FRONTEIRA DE EMPRESA no recall de episódio (Bento 3.1, 14/10/2026).
+ *
+ * O episódio já é gravado com `organization_id`; a leitura é que ignorava a
+ * coluna. Medido no ambiente isolado: o gestor da empresa A disse "anota que a
+ * Alfa Cosméticos prefere briefings objetivos" e, na pergunta seguinte da
+ * colaboradora da empresa B, o bloco REGISTRO APRENDIDO NA CONVERSA trouxe a
+ * frase — o recall factual casa por termo e, sem cliente no turno, varria a
+ * base inteira. `null` = turno sem empresa: nenhum episódio (fecha, não abre).
+ * `undefined` só existe para os scripts de diagnóstico antigos.
+ */
+function daEmpresa(organizationId: string | null | undefined) {
+  if (organizationId === undefined) return null;
+  return organizationId === null ? sql`false` : eq(schema.agentEpisodes.organizationId, organizationId);
+}
+
 export async function recallEpisodes(params: {
+  organizationId?: string | null;
   userId?: string | null;
   clientId?: string | null;
   desde: Date;
@@ -202,6 +219,8 @@ export async function recallEpisodes(params: {
     eq(schema.agentEpisodes.environment, params.environment ?? 'production'),
   ];
   if (params.ate) condicoes.push(lte(schema.agentEpisodes.occurredAt, params.ate));
+  const fronteira = daEmpresa(params.organizationId);
+  if (fronteira) condicoes.push(fronteira);
   if (params.userId) condicoes.push(eq(schema.agentEpisodes.userId, params.userId));
   // Cliente pedido: episódio daquele cliente OU sem cliente (contexto geral do
   // usuário). Nunca de OUTRO cliente — isso seria vazamento entre contas.
@@ -364,6 +383,7 @@ export function termosDeConsulta(mensagem: string): string[] {
  * filtrando duro, que é onde vazamento de verdade doeria.
  */
 export async function recallFactualEpisodes(params: {
+  organizationId?: string | null;
   clientId?: string | null;
   termos: string[];
   environment?: string;
@@ -375,6 +395,8 @@ export async function recallFactualEpisodes(params: {
     eq(schema.agentEpisodes.environment, params.environment ?? 'production'),
     sql`${schema.agentEpisodes.eventType} in ${TIPOS_DE_FATO_EXPLICITO}`,
   ];
+  const fronteira = daEmpresa(params.organizationId);
+  if (fronteira) condicoes.push(fronteira);
   if (params.clientId) {
     condicoes.push(
       or(eq(schema.agentEpisodes.clientId, params.clientId), isNull(schema.agentEpisodes.clientId))!,
