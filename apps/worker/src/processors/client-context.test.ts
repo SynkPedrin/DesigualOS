@@ -246,3 +246,31 @@ describe('soft gap vs hard block', () => {
     expect(formatClientBlock(ctx as never, 50)).toMatch(/Ao terminar a entrega, PEÇA o que faltou/);
   });
 });
+
+describe('comporPerfil com a idade do registro', () => {
+  const agora = new Date('2026-10-14T12:00:00Z');
+
+  it('o cabeçalho diz quando a fonte foi atualizada, pela data mais recente dela', () => {
+    const p = comporPerfil(
+      [
+        { fonte: 'dossie', content: 'Contrato anual.', atualizadoEm: new Date('2026-09-01T12:00:00Z') },
+        { fonte: 'aprendizado', content: 'Decisor: Marina.', atualizadoEm: new Date('2026-10-01T12:00:00Z') },
+        { fonte: 'aprendizado', content: 'Praça: Birigui.', atualizadoEm: new Date('2026-10-10T12:00:00Z') },
+      ],
+      9000,
+      agora,
+    )!;
+    expect(p).toContain('REGISTRO OPERACIONAL (contrato, servicos, historico, lacunas) — atualizado em 01/09/2026]');
+    expect(p).toContain('— atualizado em 10/10/2026]');
+    expect(p).not.toContain('pode estar desatualizado');
+  });
+
+  it('passados 90 dias, avisa que pode estar desatualizado', () => {
+    const p = comporPerfil([{ fonte: 'brain', content: 'Tom de voz leve.', atualizadoEm: new Date('2026-05-01T12:00:00Z') }], 9000, agora)!;
+    expect(p).toMatch(/atualizado em 01\/05\/2026, há \d+ dias: pode estar desatualizado/);
+  });
+
+  it('sem data, o cabeçalho fica como sempre foi', () => {
+    expect(comporPerfil([{ fonte: 'brain', content: 'X' }], 9000, agora)).toBe('[REGISTRO CRIATIVO (posicionamento, publico, tom de voz)]\nX');
+  });
+});

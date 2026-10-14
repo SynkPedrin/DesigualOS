@@ -106,8 +106,9 @@ export function fonteDoPerfil(subject: unknown): FonteDePerfil {
  * (criativo antes de operacional) nao faz a segunda chegar vazia.
  */
 export function comporPerfil(
-  fontes: Array<{ fonte: FonteDePerfil; content: string }>,
+  fontes: Array<{ fonte: FonteDePerfil; content: string; atualizadoEm?: Date | null }>,
   orcamento = PERFIL_MAX_CHARS,
+  agora: Date = new Date(),
 ): string | null {
   const uteis = fontes.filter((f) => f.content.trim().length > 0);
   if (uteis.length === 0) return null;
@@ -116,10 +117,13 @@ export function comporPerfil(
   // aspecto), e trata-los como fontes separadas daria a cada fato um cabecalho
   // proprio e faria o piso por fonte ser cobrado N vezes, espremendo o dossie.
   const porFonte = new Map<FonteDePerfil, string[]>();
+  const dataDaFonte = new Map<FonteDePerfil, Date>();
   for (const f of uteis) {
     const atual = porFonte.get(f.fonte) ?? [];
     atual.push(f.content.trim());
     porFonte.set(f.fonte, atual);
+    const visto = dataDaFonte.get(f.fonte);
+    if (f.atualizadoEm && (!visto || f.atualizadoEm > visto)) dataDaFonte.set(f.fonte, f.atualizadoEm);
   }
 
   const ordenadas = [...porFonte.entries()].sort((a, b) => indiceDaFonte(a[0]) - indiceDaFonte(b[0]));
@@ -131,11 +135,32 @@ export function comporPerfil(
     const teto = Math.max(0, restante - MIN_CHARS_POR_FONTE * aindaPorEscrever);
     const texto = partes.join('\n').slice(0, teto);
     if (texto.length === 0) return;
-    blocos.push(`[${ROTULO_DA_FONTE[fonte]}]\n${texto}`);
+    blocos.push(`[${ROTULO_DA_FONTE[fonte]}${idadeDaFonte(dataDaFonte.get(fonte), agora)}]\n${texto}`);
     restante -= texto.length;
   });
 
   return blocos.length > 0 ? blocos.join('\n\n') : null;
+}
+
+/**
+ * A IDADE DO REGISTRO NO CABEÇALHO (14/10/2026).
+ *
+ * O dossiê chegava ao modelo sem data: uma ficha importada há meses era lida
+ * como estado atual, e o manual do Bento manda justamente o contrário ("não
+ * trate um registro antigo como estado atual"). Com a data no cabeçalho ele
+ * consegue dizer "no último registro, de agosto...". Passado o limite, o
+ * cabeçalho avisa — quem decide se o dado ainda vale é a pessoa, mas ela
+ * precisa saber a idade dele.
+ */
+const DIAS_PARA_AVISO_DE_IDADE = 90;
+
+function idadeDaFonte(data: Date | undefined, agora: Date): string {
+  if (!data) return '';
+  const quando = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(data);
+  const dias = Math.floor((agora.getTime() - data.getTime()) / 86_400_000);
+  return dias > DIAS_PARA_AVISO_DE_IDADE
+    ? ` — atualizado em ${quando}, há ${dias} dias: pode estar desatualizado, confirme antes de tratar como atual`
+    : ` — atualizado em ${quando}`;
 }
 
 function indiceDaFonte(f: FonteDePerfil): number {
@@ -197,7 +222,7 @@ export async function resolveClientTurnContext(params: {
     // (F-12, auditoria de 26/09/2026: sem este filtro, dossiê de homologação
     // entrava no contexto de produção.)
     const rows = await db
-      .select({ content: schema.memories.content, metadata: schema.memories.metadata })
+      .select({ content: schema.memories.content, metadata: schema.memories.metadata, updatedAt: schema.memories.updatedAt })
       .from(schema.memories)
       .where(
         and(
@@ -212,6 +237,7 @@ export async function resolveClientTurnContext(params: {
       rows.map((r) => ({
         fonte: fonteDoPerfil((r.metadata as { subject?: unknown } | null)?.subject),
         content: r.content ?? '',
+        atualizadoEm: r.updatedAt ?? null,
       })),
     );
   }
