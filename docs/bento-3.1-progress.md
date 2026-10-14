@@ -203,3 +203,38 @@ fail-closed para linha sem empresa. Em produção, conferir que é zero:
 e `select count(*) from agent_episodes where organization_id is null;` —
 cliente sem empresa deixa de ser reconhecido por nome; episódio sem
 empresa deixa de ser recuperado.
+
+## FASE 2 — P0 Proatividade — CONCLUÍDO no isolado (14/10/2026)
+
+Commit `ce7ea9a`. Fluxo: varredura 15/15 min por empresa
+(`apps/worker/src/scheduler/bento-varredura.ts`) → risco por tarefa
+determinístico (`avaliarRiscosDaTarefa`/`sinaisDeRiscoPorTarefa` em
+`proactivity.ts`) + agregados existentes → `emitSignal` (empresa na chave,
+cooldown 24h por tarefa) → `resolverSinaisAusentes` → destinatário
+(responsável por e-mail/id do ClickUp; sem dono → owner/admin da empresa) →
+uma notificação `bento_alerta` por pessoa por varredura, `dedupe_key` com
+índice único. Briefing 8h (`bento-briefing.ts`) com tarefas reais.
+
+Flags (ausentes = nada roda): `BENTO_PROACTIVE_MONITORING=off|shadow|on`,
+`BENTO_PROACTIVE_NOTIFICATIONS=true`, `BENTO_PROACTIVE_ORGS=<uuid,...>`.
+
+Migração `0071_shocking_owl.sql` (aditiva, nullable): validada no banco
+isolado — aplica, índice único barra duplicata, NULL continua livre,
+rollback (`drop index notifications_user_dedupe_key_uq; alter table
+notifications drop column dedupe_key, drop column organization_id;` + apagar
+a linha do journal) e reaplicação OK. **Não aplicada em produção.**
+
+Prova: `scripts/isolado/proatividade.mts` 31/31. Unit: proactivity 20,
+varredura 14, briefing 4. Golden continua 9/9.
+
+Decisões de desenho registradas:
+- Piso de ruído: prioridade baixa atrasada há 1 dia (pontuação 20 < 25) não
+  avisa; passa a avisar com 3 dias. Proposital (exemplo da missão).
+- "Sem dono" por tarefa só com prazo em até 3 dias (hoje, amanhã, depois);
+  sem prazo, o agregado `task.sem_responsavel` (≥5) cobre.
+- Empresa sem owner/admin: sinal sem dono fica sem destinatário e é contado
+  em `sinaisSemDestinatario` (empresa B das fixtures é esse caso).
+- Troca de chave em produção: sinais antigos (chave sem empresa) não casam
+  com os novos; como nada entregava sinal até aqui, o efeito é no máximo um
+  sinal registrado de novo, não um aviso a mais.
+- "Diretor" não existe como papel no cadastro; owner recebe a visão da gestão.
