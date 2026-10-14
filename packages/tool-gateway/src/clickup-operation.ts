@@ -95,6 +95,13 @@ export interface OperationTask {
   createdAt: number | null;
   updatedAt: number | null;
   assignees: string[];
+  /**
+   * Identidade dos responsáveis, que `assignees` (nome de exibição) não dá.
+   * É o que liga a pessoa do ClickUp à pessoa do OS para o aviso proativo
+   * chegar a quem executa (Bento 3.1). Nome muda; id e e-mail não.
+   */
+  assigneeIds?: number[];
+  assigneeEmails?: string[];
   tags: string[];
   /** Id da tarefa-mãe. `null` = está na raiz da lista. Ver nota no schema. */
   parentId: string | null;
@@ -169,6 +176,8 @@ function normalizeTask(raw: z.infer<typeof teamTaskSchema>): OperationTask {
     createdAt: toNumberOrNull(raw.date_created),
     updatedAt: toNumberOrNull(raw.date_updated),
     assignees: (raw.assignees ?? []).map((a) => a.username || a.email || '').filter(Boolean),
+    assigneeIds: (raw.assignees ?? []).map((a) => a.id).filter((id): id is number => typeof id === 'number'),
+    assigneeEmails: (raw.assignees ?? []).map((a) => a.email?.trim().toLowerCase() ?? '').filter(Boolean),
     tags: (raw.tags ?? []).map((t) => t.name),
     parentId: raw.parent ?? null,
     topLevelParentId: raw.top_level_parent ?? null,

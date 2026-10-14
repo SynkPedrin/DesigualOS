@@ -498,6 +498,13 @@
       "when": 1791916370015,
       "tag": "0070_silent_arachne",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1791980683731,
+      "tag": "0071_shocking_owl",
+      "breakpoints": true
     }
   ]
 }

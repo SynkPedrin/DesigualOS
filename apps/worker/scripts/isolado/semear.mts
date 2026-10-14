@@ -87,13 +87,13 @@ const tarefa = (
 export const TAREFAS = [
   tarefa('qaalfa01', 'Alfa - Carrossel de lançamento', 'list-qa-alfa', { due: agora - 2 * DIA, prio: 2, quem: [101] }),
   tarefa('qaalfa02', 'Alfa - Legenda do Reels', 'list-qa-alfa', { due: agora + 1 * DIA, prio: 1, quem: [101] }),
-  tarefa('qaalfa03', 'Alfa - Briefing sem dono', 'list-qa-alfa', { due: agora + 3 * DIA, prio: 3, quem: [] }),
+  tarefa('qaalfa03', 'Alfa - Briefing sem dono', 'list-qa-alfa', { due: agora + 2 * DIA, prio: 3, quem: [] }),
   tarefa('qaalfa04', 'Alfa - Relatório mensal', 'list-qa-alfa', { due: agora - 1 * DIA, prio: 4, quem: [102] }),
   tarefa('qaalfa05', 'Alfa - Peça concluída', 'list-qa-alfa', { due: agora - 5 * DIA, prio: 2, quem: [101], status: 'concluído', tipo: 'closed' }),
   tarefa('qagama01', 'Gama - Vídeo institucional', 'list-qa-gama', { due: agora + 10 * DIA, prio: 3, quem: [102] }),
   tarefa('qabeta01', 'Beta - Carrossel de lançamento', 'list-qa-beta', { due: agora - 2 * DIA, prio: 2, quem: [201] }),
   tarefa('qabeta02', 'Beta - Legenda do Reels', 'list-qa-beta', { due: agora + 1 * DIA, prio: 1, quem: [201] }),
-  tarefa('qabeta03', 'Beta - Briefing sem dono', 'list-qa-beta', { due: agora + 3 * DIA, prio: 3, quem: [] }),
+  tarefa('qabeta03', 'Beta - Briefing sem dono', 'list-qa-beta', { due: agora + 2 * DIA, prio: 3, quem: [] }),
 ];
 
 async function main(): Promise<void> {

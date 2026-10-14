@@ -39,15 +39,23 @@ export async function prepararReunioesDeCliente(logger: Logger, agora = new Date
       if (brief.approvals.pending_count > 0) pendencias.push(`${brief.approvals.pending_count} aprovação(ões) pendente(s)`);
       const body = pendencias.length > 0 ? pendencias.join(' · ') : 'Sem pendências abertas no momento.';
 
-      await db.insert(schema.notifications).values(
-        destinatarios.map((userId) => ({
-          userId,
-          type: TIPO_DE_AVISO,
-          title: `Reunião com ${brief.client.name} em instantes`,
-          body,
-          link: `/calendar?evento=${brief.event.id}`,
-        })),
-      );
+      // A chave fecha a corrida que o filtro de "já avisados" não fecha: duas
+      // rodadas simultâneas (ou um retry) liam a mesma lista e inseriam as
+      // duas. Com o índice único (user_id, dedupe_key), a segunda é no-op.
+      await db
+        .insert(schema.notifications)
+        .values(
+          destinatarios.map((userId) => ({
+            userId,
+            organizationId: candidato.organizationId,
+            type: TIPO_DE_AVISO,
+            title: `Reunião com ${brief.client.name} em instantes`,
+            body,
+            link: `/calendar?evento=${brief.event.id}`,
+            dedupeKey: `${TIPO_DE_AVISO}:${brief.event.id}`,
+          })),
+        )
+        .onConflictDoNothing();
       notificacoes += destinatarios.length;
     } catch (error) {
       logger.error({ error, eventId: candidato.id }, 'Falha ao preparar Meeting Brief de uma reunião — seguindo pras próximas');

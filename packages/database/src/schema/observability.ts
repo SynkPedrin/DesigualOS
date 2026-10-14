@@ -1,5 +1,5 @@
-import { desc } from 'drizzle-orm';
-import { index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { desc, sql } from 'drizzle-orm';
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { idColumn } from './_shared';
 import { agentNameEnum, nodeStatusEnum } from './enums';
 import { clients } from './clients';
@@ -70,9 +70,25 @@ export const notifications = pgTable(
     link: text('link'),
     readAt: timestamp('read_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Empresa de onde o aviso veio (Bento 3.1, 14/10/2026). Nullable: as
+     * notificações antigas e os produtores que ainda não informam continuam
+     * valendo. O aviso proativo do Bento sempre preenche.
+     */
+    organizationId: uuid('organization_id'),
+    /**
+     * Identidade do aviso PARA ESTA PESSOA. Com o índice único parcial abaixo,
+     * reentregar o mesmo aviso (retry de job, duas varreduras ao mesmo tempo,
+     * worker reiniciado no meio) vira no-op em vez de duplicata. Null =
+     * produtor que não deduplica, como antes.
+     */
+    dedupeKey: text('dedupe_key'),
   },
   (table) => ({
     userIdx: index('notifications_user_id_idx').on(table.userId),
+    userDedupeIdx: uniqueIndex('notifications_user_dedupe_key_uq')
+      .on(table.userId, table.dedupeKey)
+      .where(sql`${table.dedupeKey} is not null`),
   }),
 );
 

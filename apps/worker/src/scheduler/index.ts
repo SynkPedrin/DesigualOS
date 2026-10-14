@@ -11,6 +11,8 @@ import { expireStaleExecutions } from './execution-timeout.js';
 import { avisarDeConexoesMcp } from './aviso-de-conexao-mcp.js';
 import { syncAllGoogleCalendars } from './google-calendar-sync.js';
 import { syncAllMicrosoftCalendars } from './microsoft-calendar-sync.js';
+import { varrerOperacao } from './bento-varredura.js';
+import { briefingOperacional } from './bento-briefing.js';
 import { prepararReunioesDeCliente } from './meeting-prep.js';
 import { reconciliarAutomacoes } from './reconciliar-automacoes.js';
 
@@ -39,6 +41,7 @@ const JOBS_REPETIVEIS = [
   'microsoft-calendar-sync',
   'meeting-prep',
   'reconciliar-automacoes',
+  'bento-varredura',
 ] as const;
 
 /**
@@ -132,6 +135,12 @@ export function setupDailyJobs(): Worker {
     // menor que o intervalo de qualquer automação real e bem maior que o tempo
     // de um reinício de Redis.
     queue.add('reconciliar-automacoes', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'reconciliar-automacoes' }),
+    // VARREDURA PROATIVA DO BENTO de 15 em 15 min (Bento 3.1). Armada sempre,
+    // mas não faz nada com BENTO_PROACTIVE_MONITORING ausente/off — ligar e
+    // desligar é só a flag, sem redeploy de agenda. 15 min: prazo que vence
+    // hoje ainda tem tempo de ser salvo, e a leitura é uma consulta paginada
+    // por empresa, sem modelo de linguagem.
+    queue.add('bento-varredura', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'bento-varredura' }),
   ])
     /**
      * A lista é escrita à mão e já ficou para trás: ela anunciava cinco jobs
@@ -165,6 +174,9 @@ export function setupDailyJobs(): Worker {
         await runEndOfDayChecklist(logger);
       } else if (job.name === 'morning-briefing') {
         await runMorningBriefing(logger);
+        // As tarefas do dia, por pessoa (Bento 3.1). Atrás das flags da
+        // proatividade; falhar aqui não derruba o briefing antigo, que já rodou.
+        await briefingOperacional(logger).catch((error: unknown) => logger.error({ error }, '[bento-briefing] falhou'));
       } else if (job.name === 'operational-events') {
         await processPendingEvents(logger);
       } else if (job.name === 'integration-health') {
@@ -187,6 +199,8 @@ export function setupDailyJobs(): Worker {
         await prepararReunioesDeCliente(logger);
       } else if (job.name === 'reconciliar-automacoes') {
         await reconciliarAutomacoes();
+      } else if (job.name === 'bento-varredura') {
+        await varrerOperacao(logger);
       }
     },
     { connection: getRedisConnection() },
