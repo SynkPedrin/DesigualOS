@@ -1,5 +1,6 @@
 export * from './briefing-engine';
 export * from './build-context';
+export { blocoDePessoaEEquipe, pessoaEEquipeEmTexto, type QuemPergunta } from './equipe-da-agencia';
 export * from './build-operational-context';
 export * from './build-change-context';
 export * from './natureza-do-cliente';

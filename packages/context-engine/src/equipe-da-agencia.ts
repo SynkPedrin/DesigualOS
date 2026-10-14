@@ -127,3 +127,70 @@ export async function ehPrimeiraMensagemDoUsuario(userId: string): Promise<boole
     .limit(2);
   return rows.length === 1;
 }
+
+/**
+ * QUEM PERGUNTA + EQUIPE + PRIMEIRA MENSAGEM, num bloco só, para o Bento.
+ *
+ * Medido no código em 13/10/2026: o bloco geral de contexto (onde a equipe e
+ * as boas-vindas entraram em 8ea3d00) NUNCA chega ao Bento. A API o retém de
+ * propósito (apps/api/src/chat/routes.ts), porque o serviço da GPU usava a
+ * mensagem inteira como consulta vetorial e o bloco puxava documento errado.
+ * O Bento só recebia o bloco do ClickUp, e só em pergunta reconhecida como
+ * operacional. Em "o que é esse sistema?" ou "quem é a pessoa nova?" ele não
+ * sabia quem estava do outro lado nem quem trabalha na casa.
+ *
+ * Este bloco vai só para o GPT, que não faz busca vetorial com a mensagem —
+ * a proteção da GPU continua de pé. A boas-vindas vem primeiro porque dá o
+ * tom da resposta inteira.
+ */
+export interface QuemPergunta {
+  nome: string;
+  funcao: string | null;
+  emailClickUp: string | null;
+}
+
+export function pessoaEEquipeEmTexto(params: {
+  quemPergunta: QuemPergunta | null;
+  primeiraMensagem: boolean;
+  equipe: string | null;
+}): string | null {
+  const linhas: string[] = [];
+  const nome = params.quemPergunta?.nome;
+  if (params.primeiraMensagem && nome) {
+    linhas.push(
+      `Esta é a PRIMEIRA mensagem que ${nome} manda no sistema. Abra a resposta com boas-vindas curtas e calorosas pelo nome, diga em UMA frase o que você faz (acompanha a operação, os clientes, as tarefas e a memória da agência) e só então responda ao que foi perguntado. Não faça tour nem lista de funcionalidades.`,
+    );
+  }
+  if (params.quemPergunta) {
+    const q = params.quemPergunta;
+    const detalhes = [q.funcao ? `função: ${q.funcao}` : null, q.emailClickUp ? `e-mail no ClickUp: ${q.emailClickUp}` : null]
+      .filter(Boolean)
+      .join('; ');
+    linhas.push(
+      `QUEM ESTÁ PERGUNTANDO: ${q.nome}${detalhes ? ` (${detalhes})` : ''}. "Eu", "meu" e "minhas" na pergunta se referem a esta pessoa.`,
+    );
+  }
+  if (params.equipe) linhas.push(params.equipe);
+  return linhas.length > 0 ? linhas.join('\n\n') : null;
+}
+
+export async function blocoDePessoaEEquipe(userId: string): Promise<string | null> {
+  const [pessoa, equipe, primeiraMensagem] = await Promise.all([
+    db
+      .select({ nome: schema.users.name, funcao: schema.users.jobTitle, email: schema.users.email, clickupEmail: schema.users.clickupEmail })
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .limit(1)
+      .then((r) => r[0] ?? null)
+      .catch(() => null),
+    buscarEquipeVisivel(userId).catch(() => [] as MembroDaEquipe[]),
+    ehPrimeiraMensagemDoUsuario(userId).catch(() => false),
+  ]);
+  return pessoaEEquipeEmTexto({
+    quemPergunta: pessoa
+      ? { nome: pessoa.nome, funcao: pessoa.funcao, emailClickUp: pessoa.clickupEmail ?? pessoa.email }
+      : null,
+    primeiraMensagem,
+    equipe: equipeEmTexto(equipe),
+  });
+}

@@ -72,7 +72,7 @@ import { deveExportarParaNotion, exportarParaNotion, tituloParaNotion } from './
 import { estadoDaOperacaoEmTexto, montarPanorama, panoramaEmResposta, pedePanorama, tasksDoEstadoEmCache } from './bento-panorama';
 import { blocoDeFrentes } from './bento-padrao-de-task';
 import { blocoRelacional, explicacaoParaPessoa } from './bento-arvore';
-import { escopoOperacional } from '@desigual-os/context-engine';
+import { blocoDePessoaEEquipe, escopoOperacional } from '@desigual-os/context-engine';
 import { ehPerguntaOperacional, montarAtaDeReuniao, pedeAtaDeReuniao, responderOperacional } from './bento-resposta-operacional';
 import { documentosEmTexto, lerDocumentos } from './bento-documentos';
 import { confirmacaoDeAprendizado, detectarRegraDeBriefing, registrarRegra } from './bento-aprendizado';
@@ -2049,6 +2049,15 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // understand→context→plan→act→observe→evaluate→replan, com checkpoint
       // no Postgres e outcome gravado por execução.
       let camadaDaLeitura: CamadaDeLeitura | null = null;
+      // Quem pergunta + equipe + boas-vindas: só para o GPT (ver
+      // blocoDePessoaEEquipe). Uma leitura por turno, mesmo se o loop
+      // replanejar e chamar o agente de novo.
+      let pessoaEEquipe: Promise<string | null> | null = null;
+      const carregarPessoaEEquipe = () => {
+        const userIdDoTurno = runningExecution?.userId ?? null;
+        pessoaEEquipe ??= userIdDoTurno ? blocoDePessoaEEquipe(userIdDoTurno).catch(() => null) : Promise.resolve(null);
+        return pessoaEEquipe;
+      };
       result = await dispatchWithAgentLoop({
         data,
         userId: runningExecution?.userId ?? null,
@@ -2080,7 +2089,11 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
           // podia ficar só no caminho direto.
           const leitura = await lerComGptPrimeiro({
             gptPrimario: bentoOpenAiReadEnabled(),
-            perguntarAoGpt: () => responderLeituraComOpenAI(montarPromptDeLeitura(msg, contexto), logger),
+            perguntarAoGpt: async () =>
+              responderLeituraComOpenAI(
+                montarPromptDeLeitura(msg, limitarContexto([(await carregarPessoaEEquipe()) ?? undefined, contexto])),
+                logger,
+              ),
             perguntarAGpu,
           });
           camadaDaLeitura = leitura.camada;

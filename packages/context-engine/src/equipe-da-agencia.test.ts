@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { equipeEmTexto, type MembroDaEquipe } from './equipe-da-agencia';
+import { equipeEmTexto, pessoaEEquipeEmTexto, type MembroDaEquipe } from './equipe-da-agencia';
 
 /**
  * O que estes testes protegem é a pergunta mais simples de responder errado:
@@ -59,5 +59,26 @@ describe('equipeEmTexto', () => {
   it('o bloco proíbe adivinhar quem não está na lista', () => {
     const texto = equipeEmTexto([membro()], HOJE)!;
     expect(texto).toContain('não existe para você');
+  });
+});
+
+describe('pessoaEEquipeEmTexto', () => {
+  const pedro = { nome: 'Pedro Gabriel', funcao: 'Gestão', emailClickUp: 'pedro@institutoalmada.org' };
+
+  it('diz quem pergunta e amarra "eu/minhas" a essa pessoa', () => {
+    const t = pessoaEEquipeEmTexto({ quemPergunta: pedro, primeiraMensagem: false, equipe: null })!;
+    expect(t).toContain('QUEM ESTÁ PERGUNTANDO: Pedro Gabriel (função: Gestão; e-mail no ClickUp: pedro@institutoalmada.org)');
+    expect(t).toContain('"Eu", "meu" e "minhas"');
+    expect(t).not.toContain('PRIMEIRA mensagem');
+  });
+
+  it('primeira mensagem: a boas-vindas vem antes de tudo, com o nome', () => {
+    const t = pessoaEEquipeEmTexto({ quemPergunta: pedro, primeiraMensagem: true, equipe: 'A EQUIPE...' })!;
+    expect(t.startsWith('Esta é a PRIMEIRA mensagem que Pedro Gabriel')).toBe(true);
+    expect(t.indexOf('QUEM ESTÁ PERGUNTANDO')).toBeLessThan(t.indexOf('A EQUIPE...'));
+  });
+
+  it('sem nada para dizer, devolve null em vez de bloco vazio', () => {
+    expect(pessoaEEquipeEmTexto({ quemPergunta: null, primeiraMensagem: true, equipe: null })).toBeNull();
   });
 });
