@@ -3,6 +3,16 @@ import { createClickUpTaskProvider } from './clickup-task-provider-adapter';
 import type { TaskProvider } from './task-provider';
 import { ConnectorConfigError, loadConnectorRows, type ConnectorRow } from './organization-connector-store';
 
+/**
+ * Conector ligado. O schema diz 'ativa', mas produção tem linha gravada como
+ * 'active' (14/10/2026): o ClickUp da empresa era recusado com "está active.
+ * Reative-o" e TODO colaborador via "Falha ao carregar" em Tarefas.
+ */
+export function conectorAtivo(status: string | null | undefined): boolean {
+  return ['ativa', 'active'].includes((status ?? '').trim().toLowerCase());
+}
+
+
 export { ConnectorConfigError, __setConnectorConfigLoaderForTest, type ConnectorRow, type ConnectorConfigLoader } from './organization-connector-store';
 
 /**
@@ -44,7 +54,7 @@ const clickupCredentialsSchema = z.object({
 const PROVIDERS_SUPORTADOS = new Set(['clickup']);
 
 function buildProviderFromConfig(row: ConnectorRow, organizationId: string): TaskProvider {
-  if (row.status !== 'ativa') {
+  if (!conectorAtivo(row.status)) {
     throw new ConnectorConfigError(
       `O conector ${row.provider} desta empresa está ${row.status}. Reative-o nas configurações da empresa.`,
       organizationId,
@@ -97,7 +107,7 @@ export async function resolveTaskProvider(
 ): Promise<TaskProvider> {
   if (organizationId) {
     const rows = await loadConnectorRows(organizationId);
-    const ativo = rows.find((r) => r.status === 'ativa') ?? rows[0];
+    const ativo = rows.find((r) => conectorAtivo(r.status)) ?? rows[0];
     if (ativo) return buildProviderFromConfig(ativo, organizationId);
   }
   return providerDoFallbackDeEnv(env);
@@ -129,7 +139,7 @@ export async function resolveClickUpCredentials(
   const rows = await loadConnectorRows(organizationId);
   const clickup = rows.find((r) => r.provider === 'clickup');
   if (!clickup) return null;
-  if (clickup.status !== 'ativa') {
+  if (!conectorAtivo(clickup.status)) {
     throw new ConnectorConfigError(
       `O conector clickup desta empresa está ${clickup.status}. Reative-o nas configurações da empresa.`,
       organizationId,

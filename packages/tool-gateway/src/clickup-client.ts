@@ -1016,3 +1016,27 @@ export async function registrarTempo(
     );
   }
 }
+
+/**
+ * A pessoa do OS no ClickUp quando ninguém preencheu o e-mail do ClickUp
+ * (14/10/2026). A equipe entra no OS com @institutoalmada.org e usa o ClickUp
+ * com @segundocerebro.pro: comparar o e-mail inteiro nunca casava, e a tela de
+ * Tarefas ficava toda em "Falha ao carregar" para cada colaborador novo.
+ *
+ * Casa pela parte antes do @ ou pelo nome completo, e SÓ quando há exatamente
+ * um candidato — dois "ana" no time é motivo para não chutar ninguém.
+ */
+export function casarMembroDoClickUp(
+  pessoa: { email: string; nome?: string | null },
+  membros: readonly ClickUpMember[],
+): ClickUpMember | null {
+  const dobrar = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const exato = membros.filter((m) => m.email.toLowerCase() === pessoa.email.toLowerCase());
+  if (exato.length === 1) return exato[0]!;
+  const local = dobrar(pessoa.email.split('@')[0] ?? '');
+  const porLocal = local.length >= 3 ? membros.filter((m) => dobrar(m.email.split('@')[0] ?? '') === local) : [];
+  if (porLocal.length === 1) return porLocal[0]!;
+  const nome = dobrar(pessoa.nome ?? '');
+  const porNome = nome.length >= 3 ? membros.filter((m) => dobrar(m.username) === nome) : [];
+  return porNome.length === 1 ? porNome[0]! : null;
+}

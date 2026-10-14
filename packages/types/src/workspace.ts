@@ -97,7 +97,31 @@ export const WORKSPACE_TEMPLATE_IDS = Object.keys(WORKSPACE_TEMPLATES) as Worksp
  *
  * Master sempre vê tudo (equivalente ao template "administrador").
  */
-const MODULOS_PADRAO_COLABORADOR: readonly WorkspaceModule[] = ['hoje', 'clientes', 'inbox', 'demandas', 'tarefas', 'aprovacoes', 'integracoes', 'calendario', 'bento'];
+/*
+ * 14/10/2026, liberação para a operação: mídia, relatórios, Studio e Operação
+ * ENTRAM no padrão, a pedido do Pedro ("eles precisam ter acesso às
+ * integrações e funcionalidades corretas"). A Alicia (tráfego) abria
+ * Integrações e Mídias e recebia "o módulo 'meta_ads' não está habilitado no
+ * seu workspace"; a tela inicial chamava o painel da Operação e ficava em
+ * vermelho para todo colaborador. Quem tem workspace configurado à mão segue
+ * com o que tem; Automações continua só nos templates de gestão.
+ */
+const MODULOS_PADRAO_COLABORADOR: readonly WorkspaceModule[] = [
+  'hoje',
+  'clientes',
+  'inbox',
+  'demandas',
+  'tarefas',
+  'aprovacoes',
+  'operacao',
+  'integracoes',
+  'calendario',
+  'studio',
+  'bento',
+  'meta_ads',
+  'google_ads',
+  'relatorios',
+];
 
 export function modulosPadrao(ehMaster: boolean): readonly WorkspaceModule[] {
   return ehMaster ? WORKSPACE_TEMPLATES.administrador.modules : MODULOS_PADRAO_COLABORADOR;

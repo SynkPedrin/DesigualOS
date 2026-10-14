@@ -10,6 +10,7 @@ import { contextoCompletoDe } from '../organizations/contexto';
 import { uploadUserFile } from '../lib/storage';
 import { sendResetPasswordEmail } from '../lib/email';
 import { urlPublicaDoAppCom } from '../lib/url-do-app';
+import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 
 const logger = createLogger({ service: 'auth-recovery' });
 const forgotPasswordSchema = z.object({ email: z.string().email() });
@@ -135,6 +136,9 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       reply.code(401);
       return { error: 'Not authenticated' };
     }
+    // Primeiro acesso já liga a pessoa ao ClickUp, em segundo plano (Tarefas,
+    // "minhas tarefas" do Bento e avisos proativos dependem disso).
+    void garantirEmailDoClickUp(user.id).catch(() => null);
 
     /**
      * UMA ida ao banco para tudo que é de empresa, e não quatro.

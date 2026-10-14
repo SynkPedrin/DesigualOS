@@ -3,6 +3,7 @@ import type { CommunicationProvider } from './communication-provider';
 import { evolutionHealth, evolutionSendText, type EvolutionConfig } from './evolution-client';
 import { wapiHealth, wapiSendAudio, wapiSendDocument, wapiSendImage, wapiSendText, type WApiConfig } from './wapi-client';
 import { ConnectorConfigError, loadConnectorRows } from './organization-connector-store';
+import { conectorAtivo } from './task-provider-resolver.js';
 
 /**
  * communication-provider-resolver.ts — mesmo papel de `task-provider-resolver.ts`,
@@ -102,7 +103,7 @@ export async function resolveCommunicationProvider(
   const rows = await loadConnectorRows(organizationId);
   const whatsapp = rows.find((r) => r.provider === 'whatsapp');
   if (!whatsapp) return null;
-  if (whatsapp.status !== 'ativa') {
+  if (!conectorAtivo(whatsapp.status)) {
     throw new ConnectorConfigError(
       `O conector whatsapp desta empresa está ${whatsapp.status}. Reative-o nas configurações da empresa.`,
       organizationId,

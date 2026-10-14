@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { ConnectorConfigError, resolveCommunicationProvider } from '@desigual-os/tool-gateway';
 import { recordOperationalEvent } from '@desigual-os/orchestrator';
@@ -286,7 +286,7 @@ export async function connectorForWhatsappInstance(instance: string): Promise<{ 
   const linhas = await db
     .select({ organizationId: schema.organizationConnectors.organizationId, credentials: schema.organizationConnectors.credentials })
     .from(schema.organizationConnectors)
-    .where(and(eq(schema.organizationConnectors.provider, 'whatsapp'), eq(schema.organizationConnectors.status, 'ativa')));
+    .where(and(eq(schema.organizationConnectors.provider, 'whatsapp'), inArray(schema.organizationConnectors.status, ['ativa', 'active'])));
 
   for (const linha of linhas) {
     const creds = linha.credentials as { instance?: string; apiKey?: string } | null;

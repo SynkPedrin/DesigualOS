@@ -16,6 +16,7 @@ import { requireAuth } from '../auth/middleware';
 import type { AuthenticatedUser } from '../auth/middleware';
 import { auditarAcao } from '../lib/auditoria';
 import { podeConfigurar } from '../organizations/ficha';
+import { hasOrganizationAccess } from '../lib/access';
 
 /**
  * connectors/routes.ts — a plataforma de tarefas DE CADA empresa (white label).
@@ -260,7 +261,15 @@ export async function registerConnectorRoutes(app: FastifyInstance): Promise<voi
    * "a instância está de pé?" com lógica própria por vendor.
    */
   app.get('/organizations/:id/connectors/whatsapp/health', { preHandler: requireAuth }, async (request, reply) => {
-    const acesso = await portaria(request, reply);
+    // LER o estado da conexão é de qualquer membro da empresa; a portaria é
+    // de quem MUDA a configuração. Com ela aqui, a tela de Integrações de todo
+    // colaborador ficava com o WhatsApp em erro (403, 14/10/2026).
+    const orgDaRota = String((request.params as { id?: unknown }).id ?? '');
+    const usuario = request.authUser;
+    const membro = usuario
+      ? usuario.roles.includes('master') || (await hasOrganizationAccess(usuario, orgDaRota).catch(() => false))
+      : false;
+    const acesso = membro ? { orgId: orgDaRota } : await portaria(request, reply);
     if ('erro' in acesso) {
       reply.code(acesso.erro.status);
       return acesso.erro.body;

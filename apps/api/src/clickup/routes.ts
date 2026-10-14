@@ -40,6 +40,7 @@ import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotenc
 import { extrairContextoDoHistoryItem } from './webhook-actor';
 import { extrairMudancas, frasearEventoDeTarefa, mudancaDeStatus } from './webhook-mudancas';
 import { respondAsBento } from '../lib/bento-mention';
+import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 import { detectMentionedAgent, respondAsAgent, respondAsOtto } from '../lib/agent-mention';
 import { esquecerTarefasDaLista } from './cache-de-lista';
 import { sincronizarCartaoDaTarefa } from '../pipeline/sincronizar-webhook';
@@ -1042,6 +1043,8 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
    * quando a pessoa não bate em workspace NENHUM.
    */
   app.get('/clickup/tasks/me', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
+    // Vincula sozinho quando dá para saber quem é (garantirEmailDoClickUp).
+    await garantirEmailDoClickUp(request.authUser?.id ?? '').catch(() => null);
     const [user] = await db.select().from(schema.users).where(eq(schema.users.id, request.authUser?.id ?? ''));
     if (!user?.clickupEmail) {
       reply.code(409);
