@@ -54,3 +54,5 @@ export {
   type RecordUsageParams,
   type SpendBreakdownRow,
 } from './ledger.js';
+
+export { comContextoDeUso, contextoDeUsoAtual, novoContextoDeUso, type ContextoDeUso, type UsoAcumulado } from './contexto-de-uso.js';

@@ -1,7 +1,9 @@
 import OpenAI from 'openai';
 import type { FastifyBaseLogger } from 'fastify';
 import { resolveOpenAICredential } from './credential.js';
-import { MAX_TOOL_STEPS, type OpenAIModelId, type UsageTokens } from './models.js';
+import { MAX_TOOL_STEPS, computeOpenAICost, type OpenAIModelId, type UsageTokens } from './models.js';
+import { recordOpenAIUsage } from './ledger.js';
+import { contextoDeUsoAtual } from './contexto-de-uso.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -146,14 +148,49 @@ export async function callResponses(
     };
   };
 
+  let resultado: ResponsesResult;
   try {
-    return await attempt();
+    resultado = await attempt();
   } catch (error) {
     const retryable = isRetryableError(error);
     logger.warn({ error: error instanceof Error ? error.message : String(error), retryable }, 'OpenAI Responses call failed');
     if (!retryable) throw error;
-    return attempt();
+    resultado = await attempt();
   }
+  registrarUso(resultado, logger);
+  return resultado;
+}
+
+/**
+ * Toda chamada bem-sucedida vai para o ledger, atribuída ao contexto do job
+ * (contexto-de-uso.ts). Em segundo plano e sem lançar: medir custo nunca pode
+ * ser motivo de a resposta não sair.
+ */
+function registrarUso(r: ResponsesResult, logger: FastifyBaseLogger): void {
+  // Só dentro de um contexto aberto por código de produção (o worker, por
+  // job). Fora dele — teste unitário com cliente falso, script — não grava:
+  // o .env local aponta para o banco real, e teste não pode escrever lá.
+  const ctx = contextoDeUsoAtual();
+  if (!ctx) return;
+  const custo = computeOpenAICost(r.model, r.usage);
+  {
+    ctx.acumulado.chamadas += 1;
+    ctx.acumulado.inputTokens += r.usage.inputTokens;
+    ctx.acumulado.cachedInputTokens += r.usage.cachedInputTokens;
+    ctx.acumulado.outputTokens += r.usage.outputTokens;
+    ctx.acumulado.custoUsd += custo;
+  }
+  void recordOpenAIUsage({
+    organizationId: ctx.organizationId ?? null,
+    userId: ctx.userId ?? null,
+    agent: ctx.agent ?? null,
+    conversationId: ctx.conversationId ?? null,
+    model: r.model,
+    usage: r.usage,
+    requestType: 'responses',
+    toolSteps: r.toolCalls.length + r.mcpCalls.length,
+    metadata: ctx.executionId ? { execution_id: ctx.executionId } : {},
+  }).catch((error: unknown) => logger.warn({ error: error instanceof Error ? error.message : String(error) }, 'ai_usage_ledger: registro falhou'));
 }
 
 function isRetryableError(error: unknown): boolean {

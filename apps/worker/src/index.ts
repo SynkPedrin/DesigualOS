@@ -82,6 +82,19 @@ automationsWorker.on('failed', (job, error) => {
 // Jarbas e os demais seguem em 5.
 const AGENT_QUEUE_CONCURRENCY: Partial<Record<AgentName, number>> = { otto: 1 };
 
+/**
+ * Concorrência do Bento por processo, ajustável (Bento 3.1, P3, 14/10/2026).
+ * Medido no ambiente isolado com GPT simulado na latência da amostra real: com
+ * 5, a vazão satura em ~60 turnos/min por processo e, com 50 pessoas ao mesmo
+ * tempo, a espera na fila chega a p50 37 s. O turno é quase todo espera de
+ * rede (GPT), não CPU. Padrão continua 5: subir é decisão de quem opera, que
+ * precisa olhar junto o limite de taxa da conta OpenAI e o pool do Postgres.
+ */
+const concorrenciaDoBento = Number(process.env.BENTO_QUEUE_CONCURRENCY ?? '');
+if (Number.isInteger(concorrenciaDoBento) && concorrenciaDoBento > 0 && concorrenciaDoBento <= 50) {
+  AGENT_QUEUE_CONCURRENCY.bento = concorrenciaDoBento;
+}
+
 const workers = AGENT_NAMES.map((agent) => {
   const worker = new Worker<AgentJobData>(
     queueNameForAgent(agent),

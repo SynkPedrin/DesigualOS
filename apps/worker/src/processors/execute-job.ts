@@ -54,6 +54,9 @@ import type { Logger } from '@desigual-os/logging';
 import { completeTextSafely } from '@desigual-os/router';
 import {
   callResponses,
+  comContextoDeUso,
+  contextoDeUsoAtual,
+  novoContextoDeUso,
   currentBudgetTier,
   isOpenAICredentialConfigured,
   OPENAI_MODELS,
@@ -554,6 +557,26 @@ function apurarEstado(organizationId: string | null, cfg: NonNullable<ReturnType
     const r = await queryOperationTasks(cfg, { listIds: listas });
     return { tasks: r.tasks, truncated: r.truncated };
   }).catch(() => null);
+}
+
+/**
+ * ONDE O TEMPO DO TURNO DE LEITURA VAI (Bento 3.1, P3, 14/10/2026).
+ *
+ * `executions` já guarda criação/início/fim (espera na fila e total) e os
+ * tokens. Faltava separar, dentro do turno, montagem de contexto de modelo:
+ * sem isso, "o Bento ficou lento" não diz se foi o ClickUp, o banco ou o
+ * provedor. Vai em `metadata.bento_tempos`, a mesma tubulação da camada da
+ * cascata, até execution_steps.output.metadata — sem tabela nova.
+ */
+export interface TemposDaLeitura {
+  contexto_ms: number;
+  modelo_ms: number;
+  tentativas_gpt: number;
+}
+
+export function anexarTempos(resultado: ExecuteResponse, tempos: TemposDaLeitura | null): ExecuteResponse {
+  if (!tempos) return resultado;
+  return { ...resultado, metadata: { ...resultado.metadata, bento_tempos: tempos } };
 }
 
 /**
@@ -1371,7 +1394,13 @@ export async function processAgentJob(job: Job<AgentJobData>, logger: Logger): P
     // vale um retry (e então a resposta não é gravada ainda) ou se já é a
     // última (e aí a pessoa precisa receber a resposta). Ver o fim de
     // processSingleAgentJob.
-    await processSingleAgentJob(job.data, logger, { feitas: job.attemptsMade ?? 0, maximo: job.opts?.attempts ?? 1 });
+    // Toda chamada ao GPT deste job fica atribuída a ele no ai_usage_ledger
+    // (contexto-de-uso.ts, Bento 3.1). Empresa e pessoa entram assim que a
+    // execução é lida, no começo de processSingleAgentJob.
+    const uso = novoContextoDeUso({ agent: job.data.agent, conversationId: job.data.conversationId ?? null, executionId: job.data.executionId });
+    await comContextoDeUso(uso, () =>
+      processSingleAgentJob(job.data, logger, { feitas: job.attemptsMade ?? 0, maximo: job.opts?.attempts ?? 1 }),
+    );
   }
 }
 
@@ -1395,6 +1424,11 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // credencial do conector de tarefas (white label) sem query extra.
       organizationId: schema.executions.organizationId,
     });
+  const usoDoJob = contextoDeUsoAtual();
+  if (usoDoJob) {
+    usoDoJob.organizationId = runningExecution?.organizationId ?? null;
+    usoDoJob.userId = runningExecution?.userId ?? null;
+  }
   await publishWsEvent({
     type: 'execution.progress',
     payload: { execution_id: executionId, agent, status: 'running' },
@@ -2124,6 +2158,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // caminho direto entrega (ver contextoFixoDaLeitura). O estado é
       // cacheado por empresa (3 min, bento-panorama): no máximo uma leitura
       // do ClickUp por empresa nesse intervalo, nunca uma por turno.
+      let temposDaLeitura: TemposDaLeitura | null = null;
       const fixoDaLeitura = contextoFixoDaLeitura(
         runningExecution?.userId ?? null,
         runningExecution?.organizationId ?? null,
@@ -2160,19 +2195,26 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
           // podia ficar só no caminho direto.
           const leitura = await lerComGptPrimeiro({
             gptPrimario: bentoOpenAiReadEnabled(),
-            perguntarAoGpt: async () =>
-              responderLeituraComOpenAI(
-                montarPromptDeLeitura(
-                  msg,
-                  limitarContexto([
-                    (await fixoDaLeitura.pessoaEEquipe()) ?? undefined,
-                    (await fixoDaLeitura.estadoDaOperacao()) ?? undefined,
-                    contexto,
-                    (await fixoDaLeitura.multifonte()) ?? undefined,
-                  ]),
-                ),
-                logger,
-              ),
+            perguntarAoGpt: async () => {
+              const t0 = Date.now();
+              const prompt = montarPromptDeLeitura(
+                msg,
+                limitarContexto([
+                  (await fixoDaLeitura.pessoaEEquipe()) ?? undefined,
+                  (await fixoDaLeitura.estadoDaOperacao()) ?? undefined,
+                  contexto,
+                  (await fixoDaLeitura.multifonte()) ?? undefined,
+                ]),
+              );
+              const t1 = Date.now();
+              const resposta = await responderLeituraComOpenAI(prompt, logger);
+              temposDaLeitura = {
+                contexto_ms: (temposDaLeitura?.contexto_ms ?? 0) + (t1 - t0),
+                modelo_ms: (temposDaLeitura?.modelo_ms ?? 0) + (Date.now() - t1),
+                tentativas_gpt: (temposDaLeitura?.tentativas_gpt ?? 0) + 1,
+              };
+              return resposta;
+            },
             perguntarAGpu,
           });
           camadaDaLeitura = leitura.camada;
@@ -2198,6 +2240,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
           ? `${camadaDaLeitura}_via_loop`
           : 'externo_bento_qa_via_loop',
       );
+      result = anexarTempos(result, temposDaLeitura);
     } else {
       /**
        * CAMINHO DIRETO (loop desligado) — o diálogo recente precisa ir mesmo
@@ -2481,10 +2524,20 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             ]),
           );
         })());
-      const viaPrimaria =
-        agent === 'bento' && bentoOpenAiReadEnabled()
-          ? await responderLeituraComOpenAI(await promptDeLeituraDireta(), logger)
-          : null;
+      let temposDiretos: TemposDaLeitura | null = null;
+      const lerPorGpt = async () => {
+        const t0 = Date.now();
+        const prompt = await promptDeLeituraDireta();
+        const t1 = Date.now();
+        const resposta = await responderLeituraComOpenAI(prompt, logger);
+        temposDiretos = {
+          contexto_ms: (temposDiretos?.contexto_ms ?? 0) + (t1 - t0),
+          modelo_ms: (temposDiretos?.modelo_ms ?? 0) + (Date.now() - t1),
+          tentativas_gpt: (temposDiretos?.tentativas_gpt ?? 0) + 1,
+        };
+        return resposta;
+      };
+      const viaPrimaria = agent === 'bento' && bentoOpenAiReadEnabled() ? await lerPorGpt() : null;
       if (agent === 'jarbas' && jarbasLocalLigado()) {
         // O Jarbas responde do servidor, com os números reais da conta do
         // cliente (ver jarbas-local.ts). Pergunta crua: o diálogo e o sufixo
@@ -2579,12 +2632,13 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
        * falhou E a GPU falhou, esta é a segunda e última tentativa do GPT.
        */
       if (agent === 'bento' && (result.status !== 'completed' || !result.answer)) {
-        const viaGpt = await responderLeituraComOpenAI(await promptDeLeituraDireta(), logger);
+        const viaGpt = await lerPorGpt();
         if (viaGpt?.answer) {
           logger.warn({ executionId }, '[bento] GPU sem resposta; turno respondido via OpenAI');
           result = marcarCamadaDaCascata({ ...viaGpt, execution_id: executionId }, 'openai_leitura_fallback_gpu');
         }
       }
+      if (agent === 'bento') result = anexarTempos(result, temposDiretos);
     }
     // Regra de ouro de craft: bot nunca usa travessão. Aplicado na borda,
     // porque os prompts dos agentes vivem nas máquinas deles. Os marcadores
@@ -2708,6 +2762,14 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
     }
     // Ver estimateTokenUsage acima: sem isso, Bento/Jarbas/Suzy nunca geravam
     // linha de custo nenhuma (usage sempre {0,0} vindo deles).
+    // Uso MEDIDO antes de estimado: se houve chamada ao GPT neste job, o
+    // acumulado real (prompt inteiro + resposta) vale mais que a estimativa,
+    // que só via a pergunta e a resposta — por isso produção registrava "9
+    // tokens de entrada" em turnos de ~4 mil.
+    const medido = usoDoJob?.acumulado;
+    if (result.usage.input_tokens === 0 && result.usage.output_tokens === 0 && medido && medido.chamadas > 0) {
+      result = { ...result, usage: { input_tokens: medido.inputTokens, output_tokens: medido.outputTokens } };
+    }
     if (result.usage.input_tokens === 0 && result.usage.output_tokens === 0 && result.answer) {
       usageEstimated = true;
       result = { ...result, usage: estimateTokenUsage(message, result.answer) };
