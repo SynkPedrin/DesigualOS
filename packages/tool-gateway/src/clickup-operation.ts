@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import type { ClickUpConfig } from './clickup-client';
 
-const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
+// CLICKUP_API_BASE_URL existe só para o teste de carga (Bento 3.1, 14/10/2026)
+// apontar para um simulador local: carga em cima do ClickUp real esbarra no
+// limite de 100 req/min e mexe em dado de verdade. Ausente, nada muda.
+const CLICKUP_API_BASE = process.env.CLICKUP_API_BASE_URL || 'https://api.clickup.com/api/v2';
 
 /**
  * clickup-operation.ts — consulta de tarefas no escopo da OPERAÇÃO INTEIRA, não de

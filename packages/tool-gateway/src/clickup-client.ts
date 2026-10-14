@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { assertListInScope, assertTaskInScope } from './write-scope.js';
 
-const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
+// CLICKUP_API_BASE_URL existe só para o teste de carga (Bento 3.1, 14/10/2026)
+// apontar para um simulador local: carga em cima do ClickUp real esbarra no
+// limite de 100 req/min e mexe em dado de verdade. Ausente, nada muda.
+const CLICKUP_API_BASE = process.env.CLICKUP_API_BASE_URL || 'https://api.clickup.com/api/v2';
 
 // Timeout de rede (achado da auditoria de production readiness, 2026-09):
 // fetch sem signal pendura pra sempre se o ClickUp travar, segurando junto a
