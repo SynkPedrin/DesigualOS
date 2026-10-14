@@ -238,3 +238,55 @@ Decisões de desenho registradas:
   com os novos; como nada entregava sinal até aqui, o efeito é no máximo um
   sinal registrado de novo, não um aviso a mais.
 - "Diretor" não existe como papel no cadastro; owner recebe a visão da gestão.
+
+## FASE 3 — P1 Colaboradores — CONCLUÍDO no isolado (14/10/2026)
+
+Commit `473b064` (+ flag em `7e7c933`). `collaborator-fact.ts` grava em
+`memories` (kind `collaborator.profile`, presa à pessoa e à empresa) com
+procedência: CONFIRMED_PREFERENCE (a pessoa sobre si), FACT
+(responsabilidade dita pela gestão owner/admin), INFERENCE (colega sobre
+outro, ou autodeclaração de responsabilidade; assunto `...:por:<quem>`, nunca
+substitui o da pessoa). `blocoDePessoaEEquipe` (os dois caminhos) mostra
+"como cada um trabalha" rotulado e, sem preferência registrada de quem
+pergunta, permite UMA pergunta curta no fim, se o pedido depender disso.
+
+Achado e fechado no caminho: **vazamento de ESCRITA** — `resolveClientByName`
+(dono da preferência e do fato de cliente citado por nome) varria todas as
+empresas; a empresa B gravava no dossiê de cliente da empresa A. Agora só
+dentro da empresa da execução (teste negativo em bento-memory-trace).
+
+Não feito, declarado: o briefing de TASK criada pelo core/guard não lê ainda a
+preferência do responsável (mexeria no núcleo de escrita); a preferência entra
+nas respostas por GPT e em pedidos de composição.
+
+Flag: `BENTO_COLLABORATOR_CONTEXT` (padrão off) liga captura + exibição juntas.
+
+## FASE 4 — P2 Multifonte — CONCLUÍDO no isolado (14/10/2026)
+
+Commit `7e7c933`. `contexto-multifonte.ts`: aprovações, demandas, agenda
+(com estado de conexão), Inbox (aguardando resposta >24h) e contas de mídia
+do cliente da execução, filtrado pela empresa. Vai no prompt do GPT e na
+resposta do panorama determinístico (com "possível relação" como hipótese).
+Flag: `BENTO_MULTISOURCE_CONTEXT` (padrão off).
+
+### Fontes REAIS em produção (contagem, transação READ ONLY, 14/10 ~12h40)
+
+| Fonte | Estado |
+|---|---|
+| ClickUp | webhook ok, último evento 12:09; 52/58 clientes com lista; 1 conector de empresa ativo |
+| Calendário | 1 conta Microsoft sincronizando (12:30), **0 eventos** |
+| Aprovações / Demandas / Inbox | **0 registros** |
+| Meta | 1 cliente com conta vinculada; Google Ads: 0 |
+| Notion | 1 conexão de usuário; sem tabela de conteúdo |
+| Checagens de deploy | clientes sem empresa: **0**; episódios sem empresa: **0** |
+| proactive_signals | 1 linha (dismissed) |
+
+Conclusão: hoje o multifonte acrescenta pouco além de ClickUp + dossiê, e diz
+isso. Não foi ativado nenhum provedor nem tocada credencial.
+
+### Golden — matriz completa após P2
+
+| | flags off (rollback) | flags on |
+|---|---|---|
+| loop | 12/12 | 16/16 |
+| direto | 12/12 | 16/16 |
