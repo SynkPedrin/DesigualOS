@@ -26,6 +26,7 @@ import { ChatAmbient } from './chat-ambient';
 import { Skeleton } from '@/components/ui/skeleton';
 import { realtimeClient, type MessageDeltaPayload } from '@/lib/realtime/ws-client';
 import { useSendChatMessage } from '@/hooks/use-send-chat-message';
+import { ApiRequestError } from '@/lib/api/client';
 import { useExecution } from '@/hooks/use-executions';
 import { useClients } from '@/hooks/use-clients';
 import { useConversationMessages, useConversations } from '@/hooks/use-conversations';
@@ -480,10 +481,16 @@ export function ChatThread() {
       // POST /chat já gravou a pergunta no banco antes de responder: refetch
       // imediato substitui a mensagem otimista do usuário pela persistida.
       queryClient.invalidateQueries({ queryKey: ['conversations', result.conversationId, 'messages'] });
-    } catch {
+    } catch (error) {
       // Sem execution id pra pollar, nada tiraria o placeholder do estado
       // "queued" - falha honesta no balão.
-      setPending((current) => (current ? { ...current, status: 'failed' } : current));
+      //
+      // 503 = o agente escolhido está fora do ar, e a API diz qual e o que
+      // fazer (orchestrator, mensagemDeAgenteFora). Sem isto o balão caía no
+      // "tente reformular a pergunta", mandando a pessoa mexer na pergunta
+      // quando o problema é o sistema (14/10/2026, véspera do lançamento).
+      const motivo = error instanceof ApiRequestError && error.status === 503 ? error.message : '';
+      setPending((current) => (current ? { ...current, status: 'failed', answer: motivo || current.answer } : current));
     }
   }
 

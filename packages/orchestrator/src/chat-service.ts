@@ -3,7 +3,7 @@ import { db, schema } from '@desigual-os/database';
 import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import type { RouterDecision } from '@desigual-os/router';
-import type { QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
+import type { AgentName, QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
 import { estimateCost } from '@desigual-os/token-engine';
 import { findHealthyNodeForAgent } from './discovery';
 import { generateExecutionId } from './execution-id';
@@ -64,7 +64,7 @@ export async function createAndEnqueueExecution(
       executionId: null,
       status: 'unavailable',
       agent: decision.primary_agent,
-      error: `Agente '${decision.primary_agent}' está indisponível no momento (nenhum node online).`,
+      error: mensagemDeAgenteFora(decision.primary_agent),
     };
   }
 
@@ -214,4 +214,33 @@ export async function touchConversation(conversationId: string | null): Promise<
   } catch (error) {
     logger.warn({ error, conversationId }, 'Falha ao atualizar updated_at da conversa');
   }
+}
+
+/**
+ * O QUE A PESSOA LÊ QUANDO O AGENTE ESTÁ FORA (14/10/2026, véspera do
+ * lançamento para a operação).
+ *
+ * Era "Agente 'jarbas' está indisponível no momento (nenhum node online)":
+ * certo para quem mantém o sistema, inútil para quem opera. Com só o Bento no
+ * ar, qualquer pergunta de tráfego ou de criação que o roteador mande ao
+ * especialista cai aqui, então a frase precisa dizer o que fazer agora.
+ *
+ * Não redireciona para o Bento de propósito: ele não tem os dados de mídia do
+ * Jarbas, e para criação a regra da casa é avisar em vez de entregar peça pior.
+ */
+const ESPECIALIDADE: Record<AgentName, string> = {
+  bento: 'operação',
+  jarbas: 'tráfego pago',
+  suzy: 'atendimento e social selling',
+  otto: 'direção criativa',
+  studio: 'imagem e vídeo',
+};
+
+export function mensagemDeAgenteFora(agent: AgentName): string {
+  const nome = agent.charAt(0).toUpperCase() + agent.slice(1);
+  const dica =
+    agent === 'jarbas'
+      ? ' Os números de mídia estão na tela Mídias, e a operação você pode perguntar ao Bento.'
+      : ' Para tarefas, clientes e operação, pergunte ao Bento.';
+  return `O ${nome} (${ESPECIALIDADE[agent]}) está fora do ar no momento.${dica}`;
 }
