@@ -145,7 +145,7 @@ export async function equipeDaEmpresa(organizationId: string): Promise<MembroDaE
     .from(schema.organizationMembers)
     .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
     .where(and(eq(schema.organizationMembers.organizationId, organizationId), eq(schema.users.active, true), isNull(schema.users.deletedAt)));
-  return linhas.map((l) => ({ userId: l.userId, nome: l.nome, gestor: l.role === 'owner' || l.role === 'admin' }));
+  return linhas.map((l) => ({ userId: l.userId, nome: l.nome, gestor: ['owner', 'admin', 'manager'].includes((l.role ?? '').trim().toLowerCase()) }));
 }
 
 const CONFIANCA: Record<ClasseDoFato, number> = { CONFIRMED_PREFERENCE: 0.95, FACT: 0.9, INFERENCE: 0.5 };

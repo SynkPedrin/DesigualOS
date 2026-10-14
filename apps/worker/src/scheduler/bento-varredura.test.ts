@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   avisoLiberado,
+  ehPapelDeGestao,
   destinatariosDaTarefa,
   janelaDeRisco,
   lerConfigDaProatividade,
@@ -98,5 +99,15 @@ describe('montarAviso', () => {
   it('não despeja lista sem fim', () => {
     const muitos = Array.from({ length: 12 }, (_, i) => item({ signalId: `s${i}`, titulo: `T${i}` }));
     expect(montarAviso(muitos).body).toContain('e mais 4.');
+  });
+});
+
+describe('ehPapelDeGestao', () => {
+  it('reconhece o MANAGER em maiúsculas que produção usa', () => {
+    expect(ehPapelDeGestao('MANAGER')).toBe(true);
+    expect(ehPapelDeGestao('owner')).toBe(true);
+    expect(ehPapelDeGestao('Admin')).toBe(true);
+    expect(ehPapelDeGestao('collaborator')).toBe(false);
+    expect(ehPapelDeGestao(null)).toBe(false);
   });
 });

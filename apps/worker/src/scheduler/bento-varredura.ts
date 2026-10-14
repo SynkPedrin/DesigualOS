@@ -107,6 +107,16 @@ export function janelaDeRisco(agora: Date, fuso = FUSO): JanelaDeRisco {
 
 // ------------------------------------------------------------------ pessoas
 
+/**
+ * Papel de gestão na empresa. Texto livre em organization_members.role, e
+ * produção usa "MANAGER" em maiúsculas (medido na primeira varredura real,
+ * 14/10/2026): comparar só 'owner'/'admin' deixou o gestor sem a visão da
+ * equipe e mandou tudo para a conta de QA.
+ */
+export function ehPapelDeGestao(role: string | null | undefined): boolean {
+  return ['owner', 'admin', 'manager'].includes((role ?? '').trim().toLowerCase());
+}
+
 export interface PessoasDaEmpresa {
   porEmail: Map<string, string>;
   porClickupId: Map<number, string>;
@@ -133,7 +143,7 @@ export async function pessoasDaEmpresa(organizationId: string): Promise<PessoasD
     const id = Number(l.externalId);
     if (Number.isFinite(id) && membrosIds.has(l.desigualId)) porClickupId.set(id, l.desigualId);
   }
-  const gestores = membros.filter((m) => m.role === 'owner' || m.role === 'admin').map((m) => m.userId);
+  const gestores = membros.filter((m) => ehPapelDeGestao(m.role)).map((m) => m.userId);
   return { porEmail, porClickupId, gestores };
 }
 

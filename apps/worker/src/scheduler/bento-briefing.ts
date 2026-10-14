@@ -21,7 +21,7 @@ import { db, schema } from '@desigual-os/database';
 import { escopoOperacional } from '@desigual-os/context-engine';
 import { queryOperationTasks, resolveClickUpCredentials } from '@desigual-os/tool-gateway';
 import type { Logger } from '@desigual-os/logging';
-import { avisoLiberado, janelaDeRisco, lerConfigDaProatividade, type ConfigDaProatividade } from './bento-varredura.js';
+import { avisoLiberado, ehPapelDeGestao, janelaDeRisco, lerConfigDaProatividade, type ConfigDaProatividade } from './bento-varredura.js';
 
 export interface TarefaDoBriefing {
   id: string;
@@ -167,7 +167,7 @@ export async function briefingOperacional(logger: Logger, deps: DepsDoBriefing =
       const enviar = avisoLiberado(config, organizationId);
       for (const m of membros) {
         const b = montarBriefing(
-          { userId: m.userId, nome: m.nome, email: m.email?.trim().toLowerCase() ?? null, gestor: m.role === 'owner' || m.role === 'admin' },
+          { userId: m.userId, nome: m.nome, email: m.email?.trim().toLowerCase() ?? null, gestor: ehPapelDeGestao(m.role) },
           tarefas,
           clientePorLista,
           agora,
