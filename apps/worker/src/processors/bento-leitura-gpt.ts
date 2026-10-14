@@ -1,4 +1,5 @@
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
+import { PERSONA_DO_BENTO } from './bento-persona';
 
 /**
  * A CASCATA DE LEITURA DO BENTO NO CAMINHO AGÊNTICO: GPT → GPU → GPT.
@@ -54,7 +55,48 @@ export async function lerComGptPrimeiro(params: {
  * o GPT o separador precisa ser explícito pelo mesmo motivo: a pergunta é o
  * que se responde; o contexto é de onde se tira a resposta.
  */
-export function montarPromptDeLeitura(pergunta: string, contexto: string | undefined): string {
+export function montarPromptDeLeitura(
+  pergunta: string,
+  contexto: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const cabecalho = personaCompletaLigada(env) ? cabecalhoComPersona() : CABECALHO_CURTO;
+  if (!contexto?.trim()) return `${cabecalho}\n\nPERGUNTA:\n${pergunta}`;
+  return `${cabecalho}\n\nPERGUNTA:\n${pergunta}\n\nCONTEXTO:\n${contexto}`;
+}
+
+/**
+ * O manual completo do Bento (docs/agent-prompts/bento.md) é o padrão desde
+ * 13/10/2026. `BENTO_PERSONA_COMPLETA=false` volta ao cabeçalho curto sem
+ * novo deploy de código: é a saída de emergência da véspera do lançamento.
+ */
+export function personaCompletaLigada(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.BENTO_PERSONA_COMPLETA !== 'false';
+}
+
+/**
+ * O manual fala em "Vault" porque foi escrito quando o Bento só via o vault.
+ * No Desigual OS, o que chega até ele é o bloco CONTEXTO, que junta dossiês,
+ * memória, a equipe, quem está perguntando e o estado ao vivo do ClickUp. Sem
+ * esta ponte, a leitura literal do manual ("use somente o Vault") daria ao
+ * modelo motivo para tratar dado do ClickUp como fonte de segunda e dizer que
+ * não sabe o que está na frente dele. A ponte vem DEPOIS do manual para não
+ * editar o texto dele.
+ */
+const PONTE_DO_SISTEMA = [
+  '---',
+  'COMO ISTO SE APLICA AQUI, NO DESIGUAL OS:',
+  'O "Vault" de que o manual fala, para você, é o bloco CONTEXTO que vem depois da PERGUNTA. Ele junta dossiês de clientes, memória da agência, a equipe, quem está perguntando e o estado ao vivo das tarefas do ClickUp. Tudo isso conta como informação documentada.',
+  'O que não estiver no CONTEXTO você não sabe: diga isso em vez de supor. Nunca invente pessoa, cliente, tarefa, número ou data.',
+  'Se o CONTEXTO trouxer instrução do sistema (boas-vindas de primeira mensagem, identidade de quem pergunta), siga-a.',
+  'Você está respondendo uma leitura: não diga que criou, alterou, concluiu ou registrou nada.',
+].join('\n');
+
+function cabecalhoComPersona(): string {
+  return `${PERSONA_DO_BENTO.trim()}\n\n${PONTE_DO_SISTEMA}`;
+}
+
+const CABECALHO_CURTO = (() => {
   const cabecalho = [
     'Você é o Bento, o assistente de operação da Agência Desigual dentro do Desigual OS.',
     'Responda em português do Brasil, direto e útil para quem está operando.',
@@ -62,6 +104,5 @@ export function montarPromptDeLeitura(pergunta: string, contexto: string | undef
     'Se o CONTEXTO tiver uma instrução de boas-vindas ou de identidade, siga-a.',
     'O que não estiver no CONTEXTO você não sabe: diga isso em vez de supor. Nunca invente pessoa, cliente, tarefa ou número.',
   ].join('\n');
-  if (!contexto?.trim()) return `${cabecalho}\n\nPERGUNTA:\n${pergunta}`;
-  return `${cabecalho}\n\nPERGUNTA:\n${pergunta}\n\nCONTEXTO:\n${contexto}`;
-}
+  return cabecalho;
+})();

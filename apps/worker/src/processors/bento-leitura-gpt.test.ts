@@ -90,3 +90,27 @@ describe('montarPromptDeLeitura', () => {
     expect(montarPromptDeLeitura('oi', undefined)).not.toContain('CONTEXTO:\n');
   });
 });
+
+describe('persona do Bento', () => {
+  it('o módulo do worker é cópia exata de docs/agent-prompts/bento.md', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { PERSONA_DO_BENTO } = await import('./bento-persona');
+    const md = readFileSync(new URL('../../../../docs/agent-prompts/bento.md', import.meta.url), 'utf8');
+    expect(PERSONA_DO_BENTO).toBe(md);
+  });
+
+  it('por padrão o prompt leva o manual completo e a ponte para o CONTEXTO', () => {
+    const p = montarPromptDeLeitura('quem é você?', 'EQUIPE: Pedro', {});
+    expect(p).toContain('Você é o Bento, a inteligência institucional da Agência Desigual.');
+    expect(p).toContain('O "Vault" de que o manual fala, para você, é o bloco CONTEXTO');
+    // O manual vem antes da pergunta, a pergunta antes do contexto.
+    expect(p.indexOf('## 15. Regra final')).toBeLessThan(p.indexOf('PERGUNTA:'));
+    expect(p.indexOf('PERGUNTA:')).toBeLessThan(p.indexOf('CONTEXTO:\nEQUIPE: Pedro'));
+  });
+
+  it('BENTO_PERSONA_COMPLETA=false volta ao cabeçalho curto', () => {
+    const p = montarPromptDeLeitura('oi', undefined, { BENTO_PERSONA_COMPLETA: 'false' });
+    expect(p).not.toContain('inteligência institucional');
+    expect(p).toContain('Você é o Bento, o assistente de operação');
+  });
+});
