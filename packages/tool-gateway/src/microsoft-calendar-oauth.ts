@@ -63,9 +63,13 @@ export function buildMicrosoftCalendarAuthorizeUrl(config: MicrosoftCalendarOAut
   url.searchParams.set('response_mode', 'query');
   url.searchParams.set('scope', SCOPES.join(' '));
   url.searchParams.set('state', state);
-  // offline_access já pede refresh token; prompt=consent garante que ele volte
-  // mesmo numa reconexão (o usuário pode já ter consentido antes sem offline_access).
-  url.searchParams.set('prompt', 'consent');
+  // NUNCA prompt=consent (14/10/2026): ele obriga o consentimento DO USUÁRIO a
+  // cada conexão, e organização que não deixa usuário consentir (o caso do
+  // institutoalmada.org; app multilocatário sem editor verificado) mandava
+  // todo colaborador para "solicitar aprovação do administrador" mesmo com o
+  // consentimento do administrador já concedido. offline_access sozinho já
+  // devolve o refresh token; select_account só deixa a pessoa escolher a conta.
+  url.searchParams.set('prompt', 'select_account');
   return url.toString();
 }
 
