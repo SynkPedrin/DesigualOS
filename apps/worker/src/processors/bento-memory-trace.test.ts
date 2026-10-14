@@ -826,6 +826,9 @@ describe('5. regressão F-21: ensino confirmado no fast path volta na conversa n
       clientId,
       clientName: null,
       userId: 'tammy',
+      // A empresa da execução: desde o Bento 3.1 o dono do fato por NOME só
+      // é resolvido dentro dela.
+      organizationId: 'org-1',
       agent: 'bento',
       conversationId: 'conv-origem',
       executionId,
@@ -833,8 +836,18 @@ describe('5. regressão F-21: ensino confirmado no fast path volta na conversa n
     });
   }
 
+  it('Bento 3.1: cliente de OUTRA empresa citado pelo nome não recebe o fato', async () => {
+    // Mesmo ensino, mas o "Cliente Teste 7" é da org-2 e a execução é da org-1.
+    // Antes, a resolução por nome varria todas as empresas e gravava no dossiê
+    // alheio.
+    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production', organizationId: 'org-2' });
+    const registro = await turnoDeEnsino(MARINA, null, 'exec-marina-outra-empresa');
+    expect(registro?.fatosCliente ?? 0).toBe(0);
+    expect(fake.store.memories.filter((m) => m.kind === 'client.profile')).toHaveLength(0);
+  });
+
   it('caso Marina: episódio (auditoria) E memória (client.profile) gravados, e a leitura da conversa nova devolve o fato', async () => {
-    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production' });
+    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production', organizationId: 'org-1' });
 
     // O turno do ensino: o fast path detecta, grava e confirma.
     const registro = await turnoDeEnsino(MARINA, null, 'exec-marina-1');
@@ -877,7 +890,7 @@ describe('5. regressão F-21: ensino confirmado no fast path volta na conversa n
     expect(fake.store.memories).toHaveLength(0);
 
     // Com cliente na execução, o fato sem nome citado vai pro cliente do turno.
-    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production' });
+    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production', organizationId: 'org-1' });
     // Frase com corpo: abaixo de 25 chars de fato o rememberFact descarta por
     // relevância (piso do pipeline, memory-engine.ts), independente deste fix.
     const comDono = await turnoDeEnsino('Anota que quem aprova as peças é a Marina.', 'cliente-teste-7', 'exec-geral-2');
@@ -901,7 +914,7 @@ describe('5. regressão F-21: ensino confirmado no fast path volta na conversa n
   });
 
   it('nem episódio nem memória em duplicata: repetir o MESMO ensino não grava de novo', async () => {
-    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production' });
+    fake.store.clients.push({ id: 'cliente-teste-7', name: 'Cliente Teste 7', environment: 'production', organizationId: 'org-1' });
 
     const primeiro = await turnoDeEnsino(MARINA, null, 'exec-marina-1');
     expect(primeiro).not.toBeNull();

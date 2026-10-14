@@ -1441,6 +1441,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             clientId: runningExecution?.clientId ?? null,
             clientName: null,
             userId: runningExecution?.userId ?? null,
+            organizationId: runningExecution?.organizationId ?? null,
             agent,
             conversationId: conversationId ?? null,
             executionId,

@@ -82,3 +82,22 @@ describe('pessoaEEquipeEmTexto', () => {
     expect(pessoaEEquipeEmTexto({ quemPergunta: null, primeiraMensagem: true, equipe: null })).toBeNull();
   });
 });
+
+import { fatosDaEquipeEmTexto } from './equipe-da-agencia';
+
+describe('fatosDaEquipeEmTexto (Bento 3.1)', () => {
+  const quando = new Date('2026-10-14T15:00:00.000Z');
+  it('as preferências de quem pergunta vêm separadas e rotuladas', () => {
+    const t = fatosDaEquipeEmTexto([{ userId: 'u-ana', conteudo: 'Ana — briefing com objetivo e CTA', classe: 'CONFIRMED_PREFERENCE', informadoPor: 'Ana', atualizadoEm: quando }], 'u-ana')!;
+    expect(t).toContain('COMO QUEM PERGUNTA PREFERE TRABALHAR');
+    expect(t).toContain('[confirmado pela própria pessoa, 14/10/2026]');
+  });
+  it('o que um colega contou aparece como NÃO confirmado, com quem disse', () => {
+    const t = fatosDaEquipeEmTexto([{ userId: 'u-bruno', conteudo: 'Bruno — briefing em áudio', classe: 'INFERENCE', informadoPor: 'Ana', atualizadoEm: quando }], 'u-ana')!;
+    expect(t).toContain('[NÃO confirmado; informado por Ana, 14/10/2026]');
+    expect(t).toContain('nunca como regra da agência');
+  });
+  it('sem nada registrado de quem pergunta: a instrução de perguntar UMA vez, só se precisar', () => {
+    expect(fatosDaEquipeEmTexto([], 'u-ana')).toContain('faça UMA pergunta curta');
+  });
+});

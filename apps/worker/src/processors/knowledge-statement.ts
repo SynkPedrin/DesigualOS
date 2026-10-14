@@ -2,6 +2,7 @@ import { extractEpisodeCandidates, recordEpisodes, type CandidatoAEpisodio } fro
 import type { Logger } from '@desigual-os/logging';
 import { resolveEnvironment } from './environment.js';
 import { captureClientFacts } from './client-fact.js';
+import { captureCollaboratorFact, respostaDoRegistro } from './collaborator-fact.js';
 
 /**
  * knowledge-statement.ts — quando o turno ENSINA em vez de perguntar.
@@ -112,13 +113,23 @@ export async function registrarConhecimentoDoTurno(params: {
   clientId: string | null;
   clientName: string | null;
   userId: string | null;
+  /** Empresa da execução: fato de colaborador só grava dentro dela. */
+  organizationId?: string | null;
   agent: string;
   conversationId: string | null;
   executionId: string;
   logger: Logger;
 }): Promise<RegistroDeConhecimento | null> {
   const detectado = detectKnowledgeStatement(params.message, params.clientName);
-  if (!detectado) return null;
+  if (!detectado) {
+    // O que se ensina sobre PESSOAS da equipe (Bento 3.1): "quando eu receber
+    // um briefing de Reels, preciso de..." não tem a forma de decisão/regra
+    // que o detector acima procura, e era descartado.
+    const doColaborador = await registrarFatoDeColaborador(params);
+    return doColaborador
+      ? { answer: respostaDoRegistro(doColaborador.fato, params.userId ?? ''), tipos: ['collaborator'], gravados: 1, fatosCliente: 0 }
+      : null;
+  }
 
   // O userId entra na resolução pelo mesmo motivo do dispatch (30/09/2026):
   // conta de QA sem cliente selecionado cai em 'production' sem ele.
@@ -140,6 +151,13 @@ export async function registrarConhecimentoDoTurno(params: {
   // Nada gravado: NÃO confirme. Deixa o turno seguir pelo caminho normal em vez
   // de afirmar um registro que não existe.
   if (gravados === 0) {
+    // O episódio pode já existir (a mesma frase, ensinada antes): o fato de
+    // colaborador tem identidade própria e ainda pode valer — e reconfirmar
+    // é um registro de verdade, não uma promessa.
+    const doColaborador = await registrarFatoDeColaborador(params);
+    if (doColaborador) {
+      return { answer: respostaDoRegistro(doColaborador.fato, params.userId ?? ''), tipos: ['collaborator'], gravados: 1, fatosCliente: 0 };
+    }
     params.logger.warn({ executionId: params.executionId }, '[registro] nada gravado; devolvendo ao fluxo normal');
     return null;
   }
@@ -149,12 +167,32 @@ export async function registrarConhecimentoDoTurno(params: {
   // loga e segue — o episódio continua gravado e o "Registrado" já vale.
   const fatos = await captureClientFacts(
     params.message,
-    { clientId: params.clientId, userId: params.userId, executionId: params.executionId, environment },
+    { clientId: params.clientId, userId: params.userId, organizationId: params.organizationId ?? null, executionId: params.executionId, environment },
     params.logger,
   ).catch((erro: unknown) => {
     params.logger.warn({ erro, executionId: params.executionId }, '[registro] falha ao capturar fato de cliente; episódio gravado, turno segue');
     return [];
   });
 
-  return { ...detectado, gravados, fatosCliente: fatos.length };
+  const doColaborador = await registrarFatoDeColaborador(params);
+  const answer = doColaborador
+    ? `${detectado.answer}\n\n${respostaDoRegistro(doColaborador.fato, params.userId ?? '')}`
+    : detectado.answer;
+  return { ...detectado, answer, gravados, fatosCliente: fatos.length };
+}
+
+async function registrarFatoDeColaborador(params: {
+  message: string;
+  clientId: string | null;
+  userId: string | null;
+  organizationId?: string | null;
+  executionId: string;
+  logger: Logger;
+}) {
+  const environment = await resolveEnvironment(params.clientId, params.userId).catch(() => 'production' as const);
+  return captureCollaboratorFact(
+    params.message,
+    { userId: params.userId, organizationId: params.organizationId ?? null, executionId: params.executionId, environment },
+    params.logger,
+  );
 }

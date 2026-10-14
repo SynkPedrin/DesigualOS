@@ -351,7 +351,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // durável ("para o Cliente X, prefira headlines curtas"). A captura é
   // determinística e roda antes da recuperação, pra a regra ensinada AGORA
   // já valer neste mesmo turno.
-  await capturePreferences(data.message, { userId, clientId, executionId: data.executionId, environment: ambiente }, logger).catch(
+  await capturePreferences(data.message, { userId, clientId, organizationId, executionId: data.executionId, environment: ambiente }, logger).catch(
     (error: unknown) => {
       logger.warn({ error }, '[memoria] falha ao capturar preferência');
       return [];
@@ -363,7 +363,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   // Marina"). Roda antes de resolveClientTurnContext de propósito: o fato
   // gravado aqui entra no dossiê deste mesmo turno, então quem acabou de
   // ensinar vê o agente já usando o dado, em vez de só no turno seguinte.
-  await captureClientFacts(data.message, { clientId, userId, executionId: data.executionId, environment: ambiente }, logger).catch(
+  await captureClientFacts(data.message, { clientId, userId, organizationId, executionId: data.executionId, environment: ambiente }, logger).catch(
     (error: unknown) => {
       logger.warn({ error }, '[memoria] falha ao capturar fato de cliente');
       return [];

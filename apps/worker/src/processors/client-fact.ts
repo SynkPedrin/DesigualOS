@@ -41,7 +41,7 @@ export interface StoredClientFact {
  */
 export async function captureClientFacts(
   message: string,
-  ctx: { clientId: string | null; userId: string | null; executionId: string; environment?: string },
+  ctx: { clientId: string | null; userId: string | null; organizationId: string | null; executionId: string; environment?: string },
   logger: Logger,
 ): Promise<StoredClientFact[]> {
   const extraidos = extractClientFacts(message);
@@ -49,7 +49,7 @@ export async function captureClientFacts(
 
   const gravados: StoredClientFact[] = [];
   for (const fato of extraidos) {
-    const clientId = await resolverDono(fato, ctx.clientId);
+    const clientId = await resolverDono(fato, ctx.clientId, ctx.organizationId);
     if (!clientId) {
       logger.info(
         { clientName: fato.clientName, aspect: fato.aspect },
@@ -84,7 +84,7 @@ export async function captureClientFacts(
  * brain da Colormaq" enquanto o seletor do chat está na Cosentino está falando
  * da Colormaq, e gravar na Cosentino contaminaria a ficha errada.
  */
-async function resolverDono(fato: ExtractedClientFact, clienteDaExecucao: string | null): Promise<string | null> {
+async function resolverDono(fato: ExtractedClientFact, clienteDaExecucao: string | null, organizationId: string | null): Promise<string | null> {
   const candidatos = fato.clientNameCandidates?.length ? fato.clientNameCandidates : fato.clientName ? [fato.clientName] : [];
   if (candidatos.length > 0) {
     /**
@@ -94,7 +94,7 @@ async function resolverDono(fato: ExtractedClientFact, clienteDaExecucao: string
      * carteira sabe qual das duas existe.
      */
     for (const nome of candidatos) {
-      const resolvido = await resolveClientByName(nome).catch(() => null);
+      const resolvido = await resolveClientByName(nome, organizationId).catch(() => null);
       if (resolvido?.id) return resolvido.id;
     }
     // Nenhum candidato resolveu: NÃO cai de volta no cliente da execução, que

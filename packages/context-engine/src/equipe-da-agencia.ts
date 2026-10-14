@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { decidirEscopo, organizacaoProvedora } from '@desigual-os/auth';
 
@@ -18,6 +18,7 @@ import { decidirEscopo, organizacaoProvedora } from '@desigual-os/auth';
  * listar os usuários de todos os tenants seria vazamento, não visão.
  */
 export interface MembroDaEquipe {
+  userId?: string;
   nome: string;
   /** O que a pessoa FAZ na operação (Tráfego, Atendimento...). `users.job_title`. */
   funcao: string | null;
@@ -30,6 +31,20 @@ export interface MembroDaEquipe {
 }
 
 const JANELA_NOVO_DIAS = 30;
+
+/** As empresas cuja equipe esta pessoa enxerga (a mesma decisão de buscarEquipeVisivel). */
+export async function organizacoesVisiveis(userId: string): Promise<string[]> {
+  const [vinculos, papeisRows] = await Promise.all([
+    db.select({ organizationId: schema.organizationMembers.organizationId }).from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, userId)),
+    db
+      .select({ roleName: schema.roles.name })
+      .from(schema.userRoles)
+      .innerJoin(schema.roles, eq(schema.userRoles.roleId, schema.roles.id))
+      .where(eq(schema.userRoles.userId, userId)),
+  ]);
+  const escopo = decidirEscopo([...new Set(vinculos.map((v) => v.organizationId))], papeisRows.map((r) => r.roleName), organizacaoProvedora());
+  return escopo.ehProvider ? [organizacaoProvedora()!] : escopo.organizationIds;
+}
 
 export async function buscarEquipeVisivel(userId: string): Promise<MembroDaEquipe[]> {
   // Os papéis da pessoa (para a decisão provider) e os vínculos dela saem em
@@ -64,6 +79,7 @@ export async function buscarEquipeVisivel(userId: string): Promise<MembroDaEquip
 
   const linhas = await db
     .select({
+      userId: schema.users.id,
       nome: schema.users.name,
       funcao: schema.users.jobTitle,
       papel: schema.organizationMembers.role,
@@ -143,6 +159,101 @@ export async function ehPrimeiraMensagemDoUsuario(userId: string): Promise<boole
  * a proteção da GPU continua de pé. A boas-vindas vem primeiro porque dá o
  * tom da resposta inteira.
  */
+// ---------------------------------------------------------------------------
+// COMO CADA PESSOA TRABALHA (Bento 3.1, P1, 14/10/2026)
+//
+// O cadastro diz quem é a pessoa; isto diz como ela trabalha — o que a própria
+// pessoa confirmou, o que a gestão registrou e o que um colega contou, cada um
+// com o rótulo do que é (ver collaborator-fact.ts no worker, que grava). A
+// procedência vai no texto porque é o modelo que precisa distinguir
+// preferência confirmada de inferência na hora de responder.
+// ---------------------------------------------------------------------------
+
+export interface FatoDeColaboradorLido {
+  userId: string;
+  conteudo: string;
+  classe: string;
+  informadoPor: string | null;
+  atualizadoEm: Date | null;
+}
+
+export async function fatosDosColaboradores(userIds: string[], organizationIds: string[]): Promise<FatoDeColaboradorLido[]> {
+  if (userIds.length === 0 || organizationIds.length === 0) return [];
+  const linhas = await db
+    .select({
+      userId: schema.memories.userId,
+      conteudo: schema.memories.content,
+      metadata: schema.memories.metadata,
+      atualizadoEm: schema.memories.updatedAt,
+    })
+    .from(schema.memories)
+    .where(
+      and(
+        eq(schema.memories.kind, 'collaborator.profile'),
+        eq(schema.memories.status, 'active'),
+        inArray(schema.memories.userId, userIds),
+        // Fronteira de empresa: o que se sabe de alguém numa empresa não vaza
+        // para outra em que a mesma pessoa também esteja.
+        inArray(schema.memories.organizationId, organizationIds),
+      ),
+    )
+    .orderBy(desc(schema.memories.updatedAt))
+    .limit(60)
+    .catch(() => []);
+  return linhas.flatMap((l) => {
+      if (!l.userId) return [];
+      const m = (l.metadata ?? {}) as { classe?: unknown; informado_por_nome?: unknown };
+      return [{
+        userId: l.userId,
+        conteudo: l.conteudo,
+        classe: typeof m.classe === 'string' ? m.classe : 'INFERENCE',
+        informadoPor: typeof m.informado_por_nome === 'string' ? m.informado_por_nome : null,
+        atualizadoEm: l.atualizadoEm ?? null,
+      }];
+    });
+}
+
+const ROTULO_DA_CLASSE: Record<string, string> = {
+  CONFIRMED_PREFERENCE: 'confirmado pela própria pessoa',
+  FACT: 'registrado pela gestão',
+  INFERENCE: 'NÃO confirmado',
+};
+
+/** Puro. `null` = nada registrado sobre ninguém e nada a sugerir. */
+export function fatosDaEquipeEmTexto(fatos: readonly FatoDeColaboradorLido[], quemPerguntaId: string | null): string | null {
+  const fmt = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' });
+  const linha = (f: FatoDeColaboradorLido) => {
+    const quando = f.atualizadoEm ? `, ${fmt.format(f.atualizadoEm)}` : '';
+    const porQuem = f.classe === 'INFERENCE' && f.informadoPor ? `; informado por ${f.informadoPor}` : '';
+    return `- ${f.conteudo} [${ROTULO_DA_CLASSE[f.classe] ?? 'NÃO confirmado'}${porQuem}${quando}]`;
+  };
+  const meus = fatos.filter((f) => f.userId === quemPerguntaId);
+  const dosOutros = fatos.filter((f) => f.userId !== quemPerguntaId);
+  const blocos: string[] = [];
+  if (meus.length > 0) {
+    blocos.push(
+      [
+        'COMO QUEM PERGUNTA PREFERE TRABALHAR (registrado; use ao preparar trabalho para esta pessoa):',
+        ...meus.map(linha),
+      ].join('\n'),
+    );
+  } else if (quemPerguntaId) {
+    blocos.push(
+      'Não há preferência de trabalho registrada para quem pergunta. Se o pedido depender disso (formato de briefing, como quer receber uma demanda), responda primeiro e, no fim, faça UMA pergunta curta e sugira "anota que eu prefiro...". Não pergunte se o pedido não depende disso.',
+    );
+  }
+  if (dosOutros.length > 0) {
+    blocos.push(
+      [
+        'COMO A EQUIPE TRABALHA (cada linha diz de onde veio):',
+        ...dosOutros.map(linha),
+        'Preferência de uma pessoa vale para o trabalho DELA, nunca como regra da agência. "NÃO confirmado" é pista, não fato: diga que foi informado por alguém.',
+      ].join('\n'),
+    );
+  }
+  return blocos.length > 0 ? blocos.join('\n\n') : null;
+}
+
 export interface QuemPergunta {
   nome: string;
   funcao: string | null;
@@ -153,6 +264,7 @@ export function pessoaEEquipeEmTexto(params: {
   quemPergunta: QuemPergunta | null;
   primeiraMensagem: boolean;
   equipe: string | null;
+  comoTrabalham?: string | null;
 }): string | null {
   const linhas: string[] = [];
   const nome = params.quemPergunta?.nome;
@@ -171,6 +283,7 @@ export function pessoaEEquipeEmTexto(params: {
     );
   }
   if (params.equipe) linhas.push(params.equipe);
+  if (params.comoTrabalham) linhas.push(params.comoTrabalham);
   return linhas.length > 0 ? linhas.join('\n\n') : null;
 }
 
@@ -186,11 +299,15 @@ export async function blocoDePessoaEEquipe(userId: string): Promise<string | nul
     buscarEquipeVisivel(userId).catch(() => [] as MembroDaEquipe[]),
     ehPrimeiraMensagemDoUsuario(userId).catch(() => false),
   ]);
+  const orgIds = await organizacoesVisiveis(userId).catch(() => [] as string[]);
+  const ids = [...new Set([userId, ...equipe.map((m) => m.userId).filter((id): id is string => Boolean(id))])];
+  const fatos = await fatosDosColaboradores(ids, orgIds).catch(() => [] as FatoDeColaboradorLido[]);
   return pessoaEEquipeEmTexto({
     quemPergunta: pessoa
       ? { nome: pessoa.nome, funcao: pessoa.funcao, emailClickUp: pessoa.clickupEmail ?? pessoa.email }
       : null,
     primeiraMensagem,
     equipe: equipeEmTexto(equipe),
+    comoTrabalham: fatosDaEquipeEmTexto(fatos, userId),
   });
 }

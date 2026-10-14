@@ -161,6 +161,51 @@ await cenario('G9 Carla (org B) vê só a própria operação', async (checa) =>
   checa('nada da organização A', !/Alfa|Gama|Ana QA|Bruno QA/.test(ctx));
 });
 
+// ------------------------------------------------------------------ 10-14 — colaboradores (P1)
+const memoria = (cond) => psql(`select coalesce(string_agg(metadata->>'subject' || '|' || (metadata->>'classe'), ',' order by created_at), '') from memories where kind='collaborator.profile' and ${cond}`);
+psql(`update memories set status='superseded' where kind='collaborator.profile' and status='active'`);
+
+await cenario('G10 preferência própria grava, volta para a pessoa, e a equipe vê rotulada', async (checa) => {
+  const r = await turno('ana', 'Bento, quando eu receber um briefing de Reels, preciso do objetivo, público, referências e CTA.');
+  checa('execução concluída', r.status === 'completed', r.status);
+  checa('resposta confirma o registro como preferência dela', /Anotado como preferência sua/.test(respostaDe(r)), respostaDe(r).slice(0, 160));
+  checa('gravada como CONFIRMED_PREFERENCE da Ana', memoria(`status='active' and user_id='0a000000-0000-4000-8000-0000000000a1'`).includes('colaborador:0a000000-0000-4000-8000-0000000000a1:briefing|CONFIRMED_PREFERENCE'));
+  const r2 = await turno('ana', 'Monta pra mim a lista do que falta no briefing do Reels da Alfa Cosméticos');
+  checa('volta no contexto da Ana como preferência dela', /COMO QUEM PERGUNTA PREFERE TRABALHAR[\s\S]*objetivo, público, referências e CTA/.test(contextoDe(r2)));
+  const r3 = await turno('bruno', 'Como a Ana prefere receber briefing?');
+  checa('o gestor vê, rotulada como confirmada pela própria pessoa', /objetivo, público, referências e CTA \[confirmado pela própria pessoa/.test(contextoDe(r3)));
+});
+
+await cenario('G11 gestão registra responsabilidade (FACT)', async (checa) => {
+  const r = await turno('bruno', 'Anota que a Ana é responsável pelos carrosséis da Alfa Cosméticos');
+  checa('execução concluída', r.status === 'completed', r.status);
+  checa('FACT no perfil oficial da Ana', memoria(`status='active'`).includes('colaborador:0a000000-0000-4000-8000-0000000000a1:responsabilidade|FACT'));
+});
+
+await cenario('G12 colega falando de outro não reescreve o perfil', async (checa) => {
+  await turno('bruno', 'Anota que eu prefiro receber briefing em tópicos curtos');
+  await turno('ana', 'Anota que o Bruno prefere briefing em áudio');
+  const ativas = memoria(`status='active' and user_id='0a000000-0000-4000-8000-0000000000b2'`);
+  checa('a preferência do próprio Bruno continua de pé', ativas.includes('colaborador:0a000000-0000-4000-8000-0000000000b2:briefing|CONFIRMED_PREFERENCE'), ativas);
+  checa('o que a Ana disse fica à parte, como INFERENCE', ativas.includes('colaborador:0a000000-0000-4000-8000-0000000000b2:briefing:por:0a000000-0000-4000-8000-0000000000a1|INFERENCE'), ativas);
+  const r = await turno('ana', 'Como o Bruno prefere receber briefing?');
+  checa('no contexto, a versão da Ana aparece como NÃO confirmada', /briefing em áudio \[NÃO confirmado; informado por Ana QA/.test(contextoDe(r)));
+});
+
+await cenario('G13 outra empresa não grava no cliente da A', async (checa) => {
+  const antes = psql(`select count(*) from memories where client_id='0a000000-0000-4000-8000-00000000c0a1' and status='active'`);
+  await turno('carla', 'Anota que a Alfa Cosméticos prefere briefings longos e detalhados.');
+  const depois = psql(`select count(*) from memories where client_id='0a000000-0000-4000-8000-00000000c0a1' and status='active'`);
+  checa('nenhuma memória nova no cliente da empresa A', antes === depois, `${antes} → ${depois}`);
+});
+
+await cenario('G14 pessoa de outra empresa não é alvo', async (checa) => {
+  await turno('carla', 'Anota que a Ana prefere receber tudo por áudio');
+  checa('nada gravado sobre a Ana vindo da Carla', !memoria(`user_id='0a000000-0000-4000-8000-0000000000a1'`).includes(':por:0b000000'));
+  const r = await turno('carla', 'Como a Ana prefere receber briefing?');
+  checa('a Carla não vê o perfil de quem é da empresa A', !/objetivo, público, referências e CTA/.test(leituraDe(r)));
+});
+
 const passou = resultados.filter((r) => r.ok).length;
 console.log(`\n[${rotulo}] ${passou}/${resultados.length} cenários passaram`);
 if (process.env.GOLDEN_SAIDA) {

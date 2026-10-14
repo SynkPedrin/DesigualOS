@@ -32,15 +32,24 @@ function dobra(texto: string): string {
   return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
-export async function resolveClientByName(nome: string): Promise<{ id: string; name: string } | null> {
+/**
+ * Cliente pelo nome, DENTRO da empresa da execução (Bento 3.1, 14/10/2026).
+ * Sem o recorte, quem estava na empresa B e escrevia "anota que a Alfa
+ * Cosméticos prefere X" gravava no dossiê de um cliente da empresa A — era
+ * por aqui que preferência e fato de cliente escolhiam o dono. Sem empresa,
+ * não resolve ninguém (fecha, não abre).
+ */
+export async function resolveClientByName(nome: string, organizationId: string | null): Promise<{ id: string; name: string } | null> {
   const alvo = nome.trim();
-  if (alvo.length < 2) return null;
+  if (alvo.length < 2 || !organizationId) return null;
+  const daEmpresa = eq(schema.clients.organizationId, organizationId);
   const rows = await db
     .select({ id: schema.clients.id, name: schema.clients.name })
     .from(schema.clients)
     .where(
       and(
         isNull(schema.clients.deletedAt),
+        daEmpresa,
         // lower() puro: `unaccent` é extensão e NÃO está instalada neste banco —
         // a consulta estourava e o catch devolvia vazio, fazendo toda resolução
         // de cliente falhar em silêncio. Acento é dobrado no lado do Node abaixo.
@@ -59,6 +68,7 @@ export async function resolveClientByName(nome: string): Promise<{ id: string; n
     .where(
       and(
         isNull(schema.clients.deletedAt),
+        daEmpresa,
         sql`lower(${schema.clients.name}) like lower(${`%${alvo}%`})`,
       ),
     )
@@ -69,7 +79,7 @@ export async function resolveClientByName(nome: string): Promise<{ id: string; n
   const todos = await db
     .select({ id: schema.clients.id, name: schema.clients.name })
     .from(schema.clients)
-    .where(isNull(schema.clients.deletedAt))
+    .where(and(isNull(schema.clients.deletedAt), daEmpresa))
     .catch(() => [] as Array<{ id: string; name: string }>);
   const alvoDobrado = dobra(alvo);
   const exatos = todos.filter((c) => dobra(c.name) === alvoDobrado);
@@ -92,7 +102,7 @@ export interface StoredPreference {
  */
 export async function capturePreferences(
   message: string,
-  ctx: { userId: string | null; clientId: string | null; executionId: string; environment?: string },
+  ctx: { userId: string | null; clientId: string | null; organizationId: string | null; executionId: string; environment?: string },
   logger: Logger,
 ): Promise<StoredPreference[]> {
   const extraidas = extractPreferences(message);
@@ -102,7 +112,7 @@ export async function capturePreferences(
   for (const pref of extraidas) {
     let clientId = ctx.clientId;
     if (pref.scope === 'client' && pref.clientName) {
-      const cliente = await resolveClientByName(pref.clientName);
+      const cliente = await resolveClientByName(pref.clientName, ctx.organizationId);
       if (!cliente) {
         // Cliente não resolvido: NÃO grava num escopo chutado. Preferência sem
         // dono certo contaminaria outro cliente.
