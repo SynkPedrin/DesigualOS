@@ -15,3 +15,13 @@ describe('mensagemDeAgenteFora', () => {
     expect(mensagemDeAgenteFora('otto')).toBe('O Otto (direção criativa) está fora do ar no momento. Para tarefas, clientes e operação, pergunte ao Bento.');
   });
 });
+
+describe('agenteRespondeNoWorker', () => {
+  it('Bento sempre; Jarbas por padrão, e volta ao portão com JARBAS_LOCAL_ENABLED=false; os outros nunca', async () => {
+    const { agenteRespondeNoWorker } = await import('./chat-service');
+    expect(agenteRespondeNoWorker('bento', {})).toBe(true);
+    expect(agenteRespondeNoWorker('jarbas', {})).toBe(true);
+    expect(agenteRespondeNoWorker('jarbas', { JARBAS_LOCAL_ENABLED: 'false' })).toBe(false);
+    for (const agente of ['suzy', 'otto', 'studio'] as const) expect(agenteRespondeNoWorker(agente, {})).toBe(false);
+  });
+});

@@ -63,6 +63,7 @@ import {
 } from '@desigual-os/openai-provider';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
 import { lerComGptPrimeiro, montarPromptDeLeitura, type CamadaDeLeitura } from './bento-leitura-gpt';
+import { jarbasLocalLigado, responderJarbasLocal } from './jarbas-local';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation, getClickUpConfigOrNull, ehQaBot } from './bento-action-guard';
@@ -524,6 +525,34 @@ async function responderLeituraComOpenAI(mensagem: string, logger: Logger): Prom
     tool_calls: [],
     usage: { input_tokens: 0, output_tokens: 0 },
   };
+}
+
+/**
+ * O estado da operação da empresa, do cache de 3 minutos de bento-panorama.
+ * Sem ClickUp configurado, ou se a consulta falhar, devolve null: contexto
+ * ambiente é bônus, nunca motivo para derrubar a resposta.
+ */
+const ESPERA_DO_ESTADO_MS = 8_000;
+
+async function estadoDaOperacaoDaOrganizacao(organizationId: string | null): Promise<string | null> {
+  const cfg = getClickUpConfigOrNull();
+  if (!cfg) return null;
+  // Teto de espera: com o cache vencido, a primeira pergunta pagaria a
+  // varredura inteira do ClickUp. Passado o teto o turno segue sem o bloco, e
+  // a varredura termina por trás e enche o cache para a pergunta seguinte.
+  const teto = new Promise<null>((resolve) => setTimeout(() => resolve(null), ESPERA_DO_ESTADO_MS).unref());
+  return Promise.race([teto, apurarEstado(organizationId, cfg)]);
+}
+
+function apurarEstado(organizationId: string | null, cfg: NonNullable<ReturnType<typeof getClickUpConfigOrNull>>): Promise<string | null> {
+  return estadoDaOperacaoEmTexto(organizationId, async () => {
+    const listas = (await listasDeClickUpDaOrganizacao(organizationId))
+      .map((c) => c.id)
+      .filter((id): id is string => Boolean(id));
+    if (listas.length === 0) return { tasks: [], truncated: false };
+    const r = await queryOperationTasks(cfg, { listIds: listas });
+    return { tasks: r.tasks, truncated: r.truncated };
+  }).catch(() => null);
 }
 
 function failedAgentResponse(agent: AgentName, error: string): ExecuteResponse {
@@ -2034,6 +2063,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
   let comparacaoJaFeita = false;
   // Capturados no caminho direto; usados na busca do período anterior.
   let nomeClienteDoTurno = '';
+  let jarbasRespondeuLocal = false;
   let refsParaComparacao: string[] = [];
   if (guardedResult) {
     // Core novo e guard legado já se marcaram acima (marcarCamadaDaCascata
@@ -2053,6 +2083,18 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // blocoDePessoaEEquipe). Uma leitura por turno, mesmo se o loop
       // replanejar e chamar o agente de novo.
       let pessoaEEquipe: Promise<string | null> | null = null;
+      // O ESTADO DA OPERAÇÃO em todo turno do GPT (14/10/2026). Existia para
+      // isto (bento-panorama.ts, "o estado da operação tem que estar na mão
+      // dele SEMPRE"), mas só entrava nos atalhos de pergunta operacional e
+      // de ata — no loop, que é o caminho de produção, o Bento respondia "como
+      // está a Elite?" sem saber quantas tarefas da agência estão atrasadas.
+      // Cacheado por empresa (3 min): custa no máximo uma leitura do ClickUp
+      // por empresa nesse intervalo, nunca uma por turno.
+      let estadoDaOperacao: Promise<string | null> | null = null;
+      const carregarEstadoDaOperacao = () => {
+        estadoDaOperacao ??= estadoDaOperacaoDaOrganizacao(runningExecution?.organizationId ?? null);
+        return estadoDaOperacao;
+      };
       const carregarPessoaEEquipe = () => {
         const userIdDoTurno = runningExecution?.userId ?? null;
         pessoaEEquipe ??= userIdDoTurno ? blocoDePessoaEEquipe(userIdDoTurno).catch(() => null) : Promise.resolve(null);
@@ -2091,7 +2133,14 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             gptPrimario: bentoOpenAiReadEnabled(),
             perguntarAoGpt: async () =>
               responderLeituraComOpenAI(
-                montarPromptDeLeitura(msg, limitarContexto([(await carregarPessoaEEquipe()) ?? undefined, contexto])),
+                montarPromptDeLeitura(
+                  msg,
+                  limitarContexto([
+                    (await carregarPessoaEEquipe()) ?? undefined,
+                    (await carregarEstadoDaOperacao()) ?? undefined,
+                    contexto,
+                  ]),
+                ),
                 logger,
               ),
             perguntarAGpu,
@@ -2360,7 +2409,25 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         agent === 'bento' && bentoOpenAiReadEnabled()
           ? await responderLeituraComOpenAI(mensagemComDialogo, logger)
           : null;
-      if (viaPrimaria?.answer) {
+      if (agent === 'jarbas' && jarbasLocalLigado()) {
+        // O Jarbas responde do servidor, com os números reais da conta do
+        // cliente (ver jarbas-local.ts). Pergunta crua: o diálogo e o sufixo
+        // de cliente existiam para o classificador do serviço antigo.
+        result = marcarCamadaDaCascata(
+          {
+            ...(await responderJarbasLocal({
+              pergunta: message,
+              clientId: runningExecution?.clientId ?? null,
+              clienteDoEscopo: data.clienteDoEscopo ?? (nomeClienteDoTurno || null),
+              organizationId: runningExecution?.organizationId ?? null,
+              logger,
+            })),
+            execution_id: executionId,
+          },
+          'jarbas_local',
+        );
+        jarbasRespondeuLocal = true;
+      } else if (viaPrimaria?.answer) {
         result = marcarCamadaDaCascata({ ...viaPrimaria, execution_id: executionId }, 'openai_leitura_primaria');
       } else {
         result = await callNode(
@@ -2493,7 +2560,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
      * inteiro aceitaria o eco da pergunta como prova); e o delta é aritmética
      * sobre os dois blocos, nunca conta do modelo.
      */
-    if (agent === 'jarbas' && result.answer && comparacaoPedida && !comparacaoJaFeita) {
+    if (agent === 'jarbas' && !jarbasRespondeuLocal && result.answer && comparacaoPedida && !comparacaoJaFeita) {
       const { atual, anterior } = comparacaoPedida;
       const cliente = nomeClienteDoTurno || clienteDoBloco(result.answer) || '';
       const perguntaB = `como foi ${cliente || 'a conta'} de ${paraFormatoBR(anterior.start)} a ${paraFormatoBR(anterior.end)}?`;
@@ -2538,7 +2605,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         );
       }
     }
-    if (agent === 'jarbas' && result.answer && comparacaoPedida && !comparacaoJaFeita) {
+    if (agent === 'jarbas' && !jarbasRespondeuLocal && result.answer && comparacaoPedida && !comparacaoJaFeita) {
       if (comparacaoNaoRealizada(result.answer, comparacaoPedida.anterior)) {
         logger.warn(
           { executionId, anterior: comparacaoPedida.anterior },
@@ -2550,7 +2617,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         };
       }
     }
-    if (agent === 'jarbas' && result.answer) {
+    // As três travas acima e esta leem o formato de texto do serviço externo
+    // (cabeçalho com range, rótulos de métrica). O Jarbas local já compara dois
+    // períodos reais e declara o range, então elas não se aplicam a ele.
+    if (agent === 'jarbas' && !jarbasRespondeuLocal && result.answer) {
       const verificacao = checkDateRangeMatch(message, result.answer);
       if (!verificacao.ok) {
         logger.warn(

@@ -59,7 +59,7 @@ export async function createAndEnqueueExecution(
    * Para os outros agentes o portão segue exatamente como era.
    */
   const healthyNode = await findHealthyNodeForAgent(decision.primary_agent);
-  if (!healthyNode && decision.primary_agent !== 'bento') {
+  if (!healthyNode && !agenteRespondeNoWorker(decision.primary_agent)) {
     return {
       executionId: null,
       status: 'unavailable',
@@ -214,6 +214,21 @@ export async function touchConversation(conversationId: string | null): Promise<
   } catch (error) {
     logger.warn({ error, conversationId }, 'Falha ao atualizar updated_at da conversa');
   }
+}
+
+/**
+ * QUEM RESPONDE DE DENTRO DO WORKER, sem node: o portão de node não vale
+ * para eles.
+ *
+ * - Bento: desde 13/10/2026 (leitura por GPT no worker).
+ * - Jarbas: desde 14/10/2026, quando `JARBAS_LOCAL_ENABLED` não é 'false'
+ *   (apps/worker/src/processors/jarbas-local.ts). Com a flag em 'false' ele
+ *   volta a depender do serviço do Mac Mini, e do portão.
+ */
+export function agenteRespondeNoWorker(agent: AgentName, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (agent === 'bento') return true;
+  if (agent === 'jarbas') return env.JARBAS_LOCAL_ENABLED !== 'false';
+  return false;
 }
 
 /**
