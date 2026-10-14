@@ -39,7 +39,7 @@ beforeEach(() => {
   delete process.env.RESEND_FROM_EMAIL;
 
   mockGenerateLink.mockResolvedValue({
-    data: { user: { id: 'supa-1' }, properties: { action_link: 'https://supabase/link-magico' } },
+    data: { user: { id: 'supa-1' }, properties: { action_link: 'https://supabase/link-magico', hashed_token: 'hash-123' } },
     error: null,
   });
   mockInviteUserByEmail.mockResolvedValue({ data: { user: { id: 'supa-2' } }, error: null });
@@ -58,7 +58,9 @@ describe('enviarConviteDeOrganizacao', () => {
 
     const r = await enviarConviteDeOrganizacao({ email: 'pessoa@cliente.com', papel: 'admin', nomeDaEmpresa: 'Empresa Alfa' });
 
-    expect(r).toEqual({ emailEnviado: true, motivo: null, link: 'https://supabase/link-magico', supabaseUserId: 'supa-1' });
+    expect(r).toEqual({ emailEnviado: true, motivo: null, link: expect.stringContaining('/convite?email=pessoa%40cliente.com&token_hash=hash-123&type=invite'), supabaseUserId: 'supa-1' });
+    // O action_link (de uso único, gasto por robô de e-mail) NUNCA vai no e-mail.
+    expect(r.link).not.toContain('supabase/link-magico');
     expect(mockGenerateLink).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'invite',
@@ -88,7 +90,7 @@ describe('enviarConviteDeOrganizacao', () => {
 
     expect(r.emailEnviado).toBe(false);
     expect(r.motivo).toContain('não saiu');
-    expect(r.link).toBe('https://supabase/link-magico');
+    expect(r.link).toContain('token_hash=hash-123');
     expect(r.supabaseUserId).toBe('supa-1');
   });
 
