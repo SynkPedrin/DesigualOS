@@ -74,6 +74,11 @@ empilha. Sem `--aplicar` é simulação. Editou um BRAIN.md, um dossiê ou uma
 nota do vault? Rode o importador correspondente, ou o agente continua com a
 versão velha.
 
+Para não depender de lembrar: `scripts/sincronizar-fichas.sh` roda os três,
+e `infra/launchd/com.desigualos.fichas.plist` o agenda todo dia às 06:30 na
+máquina onde o vault mora (instruções no próprio plist). O Bento vê a data de
+cada ficha no cabeçalho do registro e é avisado quando ela passa de 90 dias.
+
 ### Ensinar o agente durante o trabalho
 
 As fontes importadas (brain, dossiê, vault) congelam entre importações, e toda

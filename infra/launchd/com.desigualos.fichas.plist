@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Fichas de cliente em dia, todo dia às 06:30 (14/10/2026).
+
+  Roda scripts/sincronizar-fichas.sh: brain criativo, dossiê operacional e
+  notas do vault vão para a memória do Bento. Instale NA MÁQUINA ONDE O VAULT
+  MORA — o vault nunca sai dela; só o registro curado vai para o banco.
+
+  ANTES DE INSTALAR, troque os dois caminhos marcados abaixo:
+    - o caminho do repositório DesigualOS nesta máquina;
+    - DESIGUAL_VAULT: a pasta brain-desigual (a que tem 02-clientes dentro).
+
+  INSTALAR:
+    cp infra/launchd/com.desigualos.fichas.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.desigualos.fichas.plist
+  RODAR AGORA, para conferir:
+    launchctl kickstart gui/$(id -u)/com.desigualos.fichas
+    tail -50 /tmp/desigualos-fichas.log
+  PARAR:
+    launchctl bootout gui/$(id -u)/com.desigualos.fichas
+
+  Se a máquina estiver dormindo às 06:30, o launchd roda quando ela acordar.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.desigualos.fichas</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <!-- TROQUE: caminho do repositório nesta máquina -->
+    <string>/Users/pedro/DesigualOS/scripts/sincronizar-fichas.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- TROQUE: a pasta brain-desigual, a que tem 02-clientes dentro -->
+    <key>DESIGUAL_VAULT</key>
+    <string>/CAMINHO/DO/brain-desigual</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>6</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/desigualos-fichas.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/desigualos-fichas.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
