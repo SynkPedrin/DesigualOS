@@ -1,6 +1,6 @@
 import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { sendInviteEmail } from './email';
-import { urlPublicaDoAppCom } from './url-do-app';
+import { linkDeConviteSeguro, urlPublicaDoAppCom } from './url-do-app';
 
 /**
  * convite.ts — o ENVIO do convite de empresa, compartilhado entre as rotas de
@@ -58,16 +58,25 @@ export async function enviarConviteDeOrganizacao(params: {
   const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
 
   if (hasResend) {
-    const { data, error } = await admin.auth.admin.generateLink({
+    let { data, error } = await admin.auth.admin.generateLink({
       type: 'invite',
       email: params.email,
       options: { data: metadata, redirectTo },
     });
+    // Reconvidar quem já tem conta (ex.: reenviar depois de um link gasto) é o
+    // caso normal: o Supabase recusa `invite` para e-mail registrado, então o
+    // link vira de definição de senha — o mesmo tratamento do /admin/invite.
+    let tipo: 'invite' | 'recovery' = 'invite';
+    if (/already been registered|already exists/i.test(error?.message ?? '')) {
+      tipo = 'recovery';
+      ({ data, error } = await admin.auth.admin.generateLink({ type: 'recovery', email: params.email, options: { redirectTo } }));
+    }
     if (error || !data.user) {
       return { emailEnviado: false, motivo: error?.message ?? 'Falha ao gerar o link de convite no Supabase.', link: null, supabaseUserId: null };
     }
 
-    const link = data.properties.action_link;
+    // Nunca o action_link: ver linkDeConviteSeguro.
+    const link = linkDeConviteSeguro(params.email, data.properties.hashed_token, tipo);
     try {
       await sendInviteEmail({
         to: params.email,

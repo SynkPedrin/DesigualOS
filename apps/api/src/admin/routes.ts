@@ -9,7 +9,7 @@ import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
 import { requireTenant, userBelongsToTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import { conferirEntrega, entregaFalhou, sendInviteEmail } from '../lib/email';
-import { urlPublicaDoAppCom } from '../lib/url-do-app';
+import { linkDeConviteSeguro, urlPublicaDoAppCom } from '../lib/url-do-app';
 
 /**
  * Garante que o ALVO de uma mutação pertence à empresa em que o CHAMADOR está
@@ -210,7 +210,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           to: body.email,
           name: body.name ?? null,
           role: body.role,
-          inviteLink: data.properties!.action_link,
+          inviteLink: linkDeConviteSeguro(body.email, data.properties!.hashed_token, jaTinhaConta ? 'recovery' : 'invite'),
         });
         /**
          * 200 do provedor não é entrega. Se o endereço já voltou alguma vez,

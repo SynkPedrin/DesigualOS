@@ -97,3 +97,21 @@ export function urlPublicaDoApp(): string {
 export function urlPublicaDoAppCom(caminho: string): string {
   return `${urlPublicaDoApp()}${caminho.startsWith('/') ? caminho : `/${caminho}`}`;
 }
+
+/**
+ * O LINK DE CONVITE QUE NÃO SE GASTA SOZINHO (14/10/2026).
+ *
+ * O `action_link` do Supabase é de uso único e GASTA o token no primeiro GET.
+ * Verificador de segurança de e-mail (Outlook Safe Links, Google) e prévia de
+ * link do WhatsApp abrem o link antes da pessoa; o clique dela chegava sem
+ * token e a tela dizia "Link inválido" — foi o que aconteceu com os convites
+ * da equipe no dia da liberação para a operação.
+ *
+ * Este link aponta para a NOSSA página com o `hashed_token`; abrir não gasta
+ * nada. O token só é usado quando a pessoa clica em "Aceitar convite" (a
+ * página chama `verifyOtp`), coisa que robô de e-mail não faz.
+ */
+export function linkDeConviteSeguro(email: string, hashedToken: string, tipo: 'invite' | 'recovery'): string {
+  const q = new URLSearchParams({ email, token_hash: hashedToken, type: tipo });
+  return urlPublicaDoAppCom(`/convite?${q.toString()}`);
+}

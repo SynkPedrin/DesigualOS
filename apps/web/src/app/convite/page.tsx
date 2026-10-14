@@ -26,8 +26,14 @@ import { apiFetch } from '@/lib/api/client';
 function ConviteForm() {
   const searchParams = useSearchParams();
   const emailDoConvite = searchParams.get('email')?.toLowerCase() ?? null;
+  // Link novo (14/10/2026): o token vem na query e SÓ é gasto no clique em
+  // "Aceitar convite". Robô de e-mail e prévia de WhatsApp abrem o link sem
+  // clicar em nada, então não gastam mais o convite antes da pessoa.
+  const tokenHash = searchParams.get('token_hash');
+  const tipoDoToken = searchParams.get('type') === 'recovery' ? 'recovery' : 'invite';
 
-  const [status, setStatus] = useState<'checking' | 'ready' | 'invalid' | 'conta-errada'>('checking');
+  const [status, setStatus] = useState<'checking' | 'aceitar' | 'ready' | 'invalid' | 'conta-errada'>('checking');
+  const [aceitando, setAceitando] = useState(false);
   const [emailDaSessao, setEmailDaSessao] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -37,6 +43,10 @@ function ConviteForm() {
 
   useEffect(() => {
     async function hydrateFromInviteLink() {
+      if (tokenHash) {
+        setStatus('aceitar');
+        return;
+      }
       const hash = window.location.hash;
       if (hash.includes('access_token=')) {
         const params = new URLSearchParams(hash.replace(/^#/, ''));
@@ -87,7 +97,27 @@ function ConviteForm() {
     // Nenhum onAuthStateChange marcando 'ready' aqui: ele disparava com a
     // sessão ANTIGA (de quem já estava logado) e destravava o formulário na
     // conta errada — era a segunda metade do incidente.
-  }, [emailDoConvite]);
+  }, [emailDoConvite, tokenHash]);
+
+  async function aceitarConvite() {
+    if (!tokenHash) return;
+    setAceitando(true);
+    setError(null);
+    // Sessão de outra pessoa no mesmo navegador (quem convidou) sai antes: o
+    // token cria a sessão do CONVIDADO, e as duas não podem se misturar.
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
+    const { data, error: verifyError } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: tipoDoToken });
+    setAceitando(false);
+    // Tira o token da barra de endereço: ele já foi usado.
+    window.history.replaceState(null, '', `${window.location.pathname}${emailDoConvite ? `?email=${encodeURIComponent(emailDoConvite)}` : ''}`);
+    if (verifyError || !data.session) {
+      setStatus('invalid');
+      return;
+    }
+    const emailLogado = data.session.user.email?.toLowerCase() ?? null;
+    setEmailDaSessao(emailLogado);
+    setStatus(emailDoConvite && emailLogado !== emailDoConvite ? 'conta-errada' : 'ready');
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -130,6 +160,28 @@ function ConviteForm() {
     return (
       <AuthLayout>
         <p className="text-sm text-nevoa">Confirmando seu convite...</p>
+      </AuthLayout>
+    );
+  }
+
+  if (status === 'aceitar') {
+    return (
+      <AuthLayout>
+        <h1 className="mb-2 font-display text-2xl font-black uppercase tracking-tight text-branco-cru">
+          Seu convite chegou
+        </h1>
+        <p className="mb-6 text-sm text-nevoa">
+          {emailDoConvite ? `Convite para ${emailDoConvite}. ` : ''}Clique para aceitar e, em seguida, crie sua senha.
+        </p>
+        {error ? <p className="mb-4 text-sm text-red-400">{error}</p> : null}
+        <button
+          type="button"
+          onClick={() => void aceitarConvite()}
+          disabled={aceitando}
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-roxo-eletrico py-2.5 text-sm font-semibold text-branco-cru transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          {aceitando ? 'Confirmando...' : 'Aceitar convite'}
+        </button>
       </AuthLayout>
     );
   }
