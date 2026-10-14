@@ -134,11 +134,21 @@ export interface MetaBusiness {
 export async function getMetaBusinesses(token: string): Promise<MetaBusiness[]> {
   const url = new URL(`${GRAPH_BASE}/me/businesses`);
   url.searchParams.set('fields', 'id,name');
+  url.searchParams.set('limit', '200');
   url.searchParams.set('access_token', token);
 
-  const response = await fetchMeta(url);
-  await assertOk(response, 'Meta businesses lookup failed');
-  return businessesSchema.parse(await response.json()).data;
+  // Paginado pelo mesmo motivo das contas de anúncio: a Graph API devolve 25
+  // por página, e quem tem acesso a muitas BMs de clientes perdia o resto.
+  const todas: MetaBusiness[] = [];
+  let proxima: string | null = url.toString();
+  for (let pagina = 0; proxima && pagina < 20; pagina += 1) {
+    const response = await fetchMeta(new URL(proxima));
+    await assertOk(response, 'Meta businesses lookup failed');
+    const corpo = (await response.json()) as { paging?: { next?: string } };
+    todas.push(...businessesSchema.parse(corpo).data);
+    proxima = corpo.paging?.next ?? null;
+  }
+  return todas;
 }
 
 const adAccountsSchema = z.object({
@@ -179,20 +189,33 @@ function toAdAccount(raw: z.infer<typeof adAccountsSchema>['data'][number]): Met
 
 /**
  * Ad Accounts visíveis a este token. Sem `businessId`: todas (via /me/adaccounts,
- * o que o usuário vê no Ads Manager dele). Com `businessId`: só as donas
- * daquele Business Manager — é o que a tela de "conectar cliente" usa depois
- * que a pessoa escolhe a BM, pra não misturar ad accounts de BMs diferentes
- * na hora de vincular ao cliente.
+ * o que o usuário vê no Ads Manager dele). Com `businessId`: as daquela BM —
+ * as que ela POSSUI e as de CLIENTES compartilhadas com ela.
+ *
+ * Só `owned_ad_accounts` deixava de fora exatamente o caso da agência
+ * (14/10/2026): a BM da Desigual acessa as contas dos clientes como
+ * `client_ad_accounts` (o cliente é dono, a agência é parceira), e a tela de
+ * vincular cliente na aba Mídias vinha vazia. E sem paginação a Graph API
+ * devolve só 25 por página: agência com mais clientes perdia o resto.
  */
 export async function getMetaAdAccounts(token: string, businessId?: string): Promise<MetaAdAccount[]> {
-  const path = businessId ? `${businessId}/owned_ad_accounts` : 'me/adaccounts';
-  const url = new URL(`${GRAPH_BASE}/${path}`);
-  url.searchParams.set('fields', 'id,name,account_id,account_status,currency,business{id,name}');
-  url.searchParams.set('access_token', token);
-
-  const response = await fetchMeta(url);
-  await assertOk(response, 'Meta ad accounts lookup failed');
-  return adAccountsSchema.parse(await response.json()).data.map(toAdAccount);
+  const caminhos = businessId ? [`${businessId}/owned_ad_accounts`, `${businessId}/client_ad_accounts`] : ['me/adaccounts'];
+  const porId = new Map<string, MetaAdAccount>();
+  for (const path of caminhos) {
+    const url = new URL(`${GRAPH_BASE}/${path}`);
+    url.searchParams.set('fields', 'id,name,account_id,account_status,currency,business{id,name}');
+    url.searchParams.set('limit', '200');
+    url.searchParams.set('access_token', token);
+    let proxima: string | null = url.toString();
+    for (let pagina = 0; proxima && pagina < 20; pagina += 1) {
+      const response = await fetchMeta(new URL(proxima));
+      await assertOk(response, 'Meta ad accounts lookup failed');
+      const corpo = (await response.json()) as { paging?: { next?: string } };
+      for (const conta of adAccountsSchema.parse(corpo).data.map(toAdAccount)) porId.set(conta.id, conta);
+      proxima = corpo.paging?.next ?? null;
+    }
+  }
+  return [...porId.values()];
 }
 
 const insightsSchema = z.object({
