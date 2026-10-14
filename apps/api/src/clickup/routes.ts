@@ -44,6 +44,7 @@ import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 import { detectMentionedAgent, respondAsAgent, respondAsOtto } from '../lib/agent-mention';
 import { esquecerTarefasDaLista } from './cache-de-lista';
 import { sincronizarCartaoDaTarefa } from '../pipeline/sincronizar-webhook';
+import { organizacaoProvedora } from '@desigual-os/auth';
 
 const logger = createLogger({ service: 'clickup-webhook' });
 
@@ -232,7 +233,14 @@ async function resolverCredenciaisPorOrganizacao(
     // `error` preenchido = conector existe e está quebrado -> nunca cai no
     // compartilhado (mesma regra de resolveClickUpCredentials). `error` nulo
     // = organização ainda não configurou conector próprio -> chave da casa.
-    if (resolucao.error) {
+    //
+    // EXCEÇÃO: a empresa PROVEDORA (a própria agência). A chave da casa É a
+    // dela; um conector gravado pela metade não pode deixar a agência inteira
+    // sem tarefas. Medido em 14/10/2026: o conector da "Desigual OS" estava
+    // sem apiKey/teamId e todo colaborador via Tarefas em "Falha ao carregar",
+    // enquanto a varredura do worker lia as mesmas 1.255 tarefas pela chave
+    // da casa. Empresa-cliente (white label) continua sem fallback.
+    if (resolucao.error && organizationId !== organizacaoProvedora()) {
       organizacoesSemCredencial.add(organizationId);
       continue;
     }
