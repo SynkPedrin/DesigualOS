@@ -290,3 +290,26 @@ isso. Não foi ativado nenhum provedor nem tocada credencial.
 |---|---|---|
 | loop | 12/12 | 16/16 |
 | direto | 12/12 | 16/16 |
+
+## DEPLOY EM PRODUÇÃO (14/10/2026) — autorizado pelo Pedro
+
+- Migração 0071 aplicada às 13:27 UTC (do Mac, mesmo código; conferido:
+  colunas e índice existem). Deploy de API e worker rodado pelo Pedro no
+  Mac via SSH (o modo automático desta sessão bloqueia push e deploy).
+- `144266c` às 13:29 UTC com as quatro flags ligadas no `.env` da VPS
+  (backup `.env.bak-<data>`): BENTO_PROACTIVE_MONITORING=on,
+  BENTO_PROACTIVE_NOTIFICATIONS=true, BENTO_COLLABORATOR_CONTEXT=true,
+  BENTO_MULTISOURCE_CONTEXT=true.
+- 1ª varredura real (13:30): 1.255 tarefas, 188 sinais, 0 falhas, 163 s;
+  aviso para 2 pessoas — o OS de produção tem SÓ 2 usuários (super, qa-bot).
+- Bug achado nela: papel "MANAGER" (maiúsculo) não era gestão. Corrigido
+  em `11ba815`, no ar às 13:52 (`/health` conferido).
+- Varredura das 14:00: 187 suprimidos (cooldown), 1 resolvido, 0 reenvio,
+  0 falhas, 59 s.
+
+Pendências reais para a operação receber os avisos: contas no OS para a
+equipe, com `clickup_email` preenchido, na empresa `default` (b534f65c…).
+O briefing das 8h roda às 08:00 UTC (05:00 em São Paulo): comportamento
+anterior, não alterado.
+
+Não testado ainda: E2E no navegador, soak, GPT fora do ar sob carga.
