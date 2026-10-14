@@ -21,7 +21,9 @@ export async function syncAllMicrosoftCalendars(logger: Logger): Promise<void> {
       if (resultado.upserted > 0 || resultado.cancelled > 0) logger.info({ accountId, upserted: resultado.upserted, cancelled: resultado.cancelled }, 'Microsoft Calendar sincronizado');
     } catch (error) {
       falha += 1;
-      logger.error({ accountId, error }, 'Falha ao sincronizar Microsoft Calendar de uma conta — seguindo pras próximas');
+      // `error` como objeto saía {} no log (Error não serializa assim): sem a
+      // mensagem, "o calendário parou" não tinha causa visível (14/10/2026).
+      logger.error({ accountId, motivo: error instanceof Error ? error.message : String(error) }, 'Falha ao sincronizar Microsoft Calendar de uma conta — seguindo pras próximas');
     }
   }
   logger.info({ total: contas.length, sucesso, falha }, 'Sync periódica do Microsoft Calendar concluída');

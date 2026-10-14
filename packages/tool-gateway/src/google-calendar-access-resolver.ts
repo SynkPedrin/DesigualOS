@@ -41,7 +41,19 @@ async function renovar(connectionId: string, refreshTokenEncrypted: string): Pro
   try {
     const accessToken = await refreshGoogleCalendarAccessToken(config, refreshToken);
     return { accessToken, connectionId };
-  } catch {
+  } catch (erro) {
+    // Token REVOGADO/EXPIRADO de vez (invalid_grant): marcar a conexão como
+    // expirada faz a tela pedir "Conectar" de novo. Antes ela seguia
+    // "connected" e a agenda parava em silêncio (14/10/2026, depois do aceite
+    // de administrador da Microsoft). Falha passageira (rede, 5xx) não mexe.
+    const motivo = erro instanceof Error ? erro.message : String(erro);
+    if (/invalid_grant|interaction_required|consent_required|AADSTS(50173|700082|700084|65001|50076|50079)/i.test(motivo)) {
+      await db
+        .update(schema.integrationConnections)
+        .set({ status: 'expired', updatedAt: new Date() })
+        .where(eq(schema.integrationConnections.id, connectionId))
+        .catch(() => undefined);
+    }
     return null;
   }
 }

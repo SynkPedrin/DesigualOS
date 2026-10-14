@@ -97,7 +97,13 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
       const inScope = execution.clientId
         ? scope.allowedClientIds.includes(execution.clientId)
         : scope.teammateUserIds.includes(execution.userId);
-      if (!inScope) {
+      // Os PASSOS trazem a resposta do agente, e a execução não carrega de
+      // qual conversa veio: um colega lia a conversa PRIVADA do outro só por
+      // ter o id (medido em produção, 14/10/2026). Conversa de colega se lê
+      // por GET /conversations/:id/messages, que respeita a visibilidade; aqui
+      // só fica aberto o que não é conversa de ninguém (automação).
+      const semConversa = execution.intent === 'automation_trigger';
+      if (!inScope || !semConversa) {
         reply.code(404);
         return { error: `Execution '${request.params.id}' not found` };
       }
