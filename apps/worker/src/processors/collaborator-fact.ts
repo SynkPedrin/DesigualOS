@@ -30,6 +30,11 @@ import type { Logger } from '@desigual-os/logging';
 
 export const KIND_COLABORADOR = 'collaborator.profile';
 
+/** Padrão desligado: gravar e mostrar o perfil de colaborador são ligados juntos. */
+export function contextoDeColaboradorLigado(env: NodeJS.ProcessEnv = process.env): boolean {
+  return ['true', '1', 'on'].includes((env.BENTO_COLLABORATOR_CONTEXT ?? '').trim().toLowerCase());
+}
+
 export type ClasseDoFato = 'CONFIRMED_PREFERENCE' | 'FACT' | 'INFERENCE';
 export type AspectoDoColaborador = 'briefing' | 'responsabilidade' | 'revisao' | 'fluxo' | 'preferencia';
 
@@ -156,7 +161,7 @@ export async function captureCollaboratorFact(
   ctx: { userId: string | null; organizationId: string | null; executionId: string; environment?: string },
   logger: Logger,
 ): Promise<FatoGravado | null> {
-  if (!ctx.userId || !ctx.organizationId) return null;
+  if (!ctx.userId || !ctx.organizationId || !contextoDeColaboradorLigado()) return null;
   try {
     const equipe = await equipeDaEmpresa(ctx.organizationId);
     const falante = equipe.find((m) => m.userId === ctx.userId);

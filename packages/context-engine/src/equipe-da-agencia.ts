@@ -299,15 +299,18 @@ export async function blocoDePessoaEEquipe(userId: string): Promise<string | nul
     buscarEquipeVisivel(userId).catch(() => [] as MembroDaEquipe[]),
     ehPrimeiraMensagemDoUsuario(userId).catch(() => false),
   ]);
-  const orgIds = await organizacoesVisiveis(userId).catch(() => [] as string[]);
+  // BENTO_COLLABORATOR_CONTEXT (padrão desligado): o mesmo flag que liga a
+  // captura no worker (collaborator-fact.ts). Desligado, o bloco é o de antes.
+  const ligado = ['true', '1', 'on'].includes((process.env.BENTO_COLLABORATOR_CONTEXT ?? '').trim().toLowerCase());
+  const orgIds = ligado ? await organizacoesVisiveis(userId).catch(() => [] as string[]) : [];
   const ids = [...new Set([userId, ...equipe.map((m) => m.userId).filter((id): id is string => Boolean(id))])];
-  const fatos = await fatosDosColaboradores(ids, orgIds).catch(() => [] as FatoDeColaboradorLido[]);
+  const fatos = ligado ? await fatosDosColaboradores(ids, orgIds).catch(() => [] as FatoDeColaboradorLido[]) : [];
   return pessoaEEquipeEmTexto({
     quemPergunta: pessoa
       ? { nome: pessoa.nome, funcao: pessoa.funcao, emailClickUp: pessoa.clickupEmail ?? pessoa.email }
       : null,
     primeiraMensagem,
     equipe: equipeEmTexto(equipe),
-    comoTrabalham: fatosDaEquipeEmTexto(fatos, userId),
+    comoTrabalham: ligado ? fatosDaEquipeEmTexto(fatos, userId) : null,
   });
 }

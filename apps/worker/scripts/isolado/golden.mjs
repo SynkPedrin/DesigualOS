@@ -161,11 +161,25 @@ await cenario('G9 Carla (org B) vê só a própria operação', async (checa) =>
   checa('nada da organização A', !/Alfa|Gama|Ana QA|Bruno QA/.test(ctx));
 });
 
+// As capacidades novas rodam conforme as flags do worker isolado (subir.sh com
+// ISOLADO_<FLAG>=true). Desligadas, os cenários provam o ROLLBACK: nada novo
+// é gravado nem aparece no contexto.
+const ligada = (flag) => ['true', '1', 'on'].includes((process.env[`ISOLADO_${flag}`] ?? '').toLowerCase());
+const P1 = ligada('BENTO_COLLABORATOR_CONTEXT');
+const P2 = ligada('BENTO_MULTISOURCE_CONTEXT');
+
 // ------------------------------------------------------------------ 10-14 — colaboradores (P1)
 const memoria = (cond) => psql(`select coalesce(string_agg(metadata->>'subject' || '|' || (metadata->>'classe'), ',' order by created_at), '') from memories where kind='collaborator.profile' and ${cond}`);
 psql(`update memories set status='superseded' where kind='collaborator.profile' and status='active'`);
 
-await cenario('G10 preferência própria grava, volta para a pessoa, e a equipe vê rotulada', async (checa) => {
+if (!P1) await cenario('G10-off flag de colaborador desligada: nada grava, nada aparece (rollback)', async (checa) => {
+  const r = await turno('ana', 'Bento, quando eu receber um briefing de Reels, preciso do objetivo, público, referências e CTA.');
+  checa('execução concluída', r.status === 'completed', r.status);
+  checa('nenhum perfil de colaborador ativo', memoria(`status='active'`) === '');
+  const r2 = await turno('ana', 'Como a equipe prefere receber briefing?');
+  checa('o bloco "como trabalham" não entra', !/COMO (QUEM PERGUNTA PREFERE|A EQUIPE) TRABALHA|Não há preferência de trabalho registrada/.test(contextoDe(r2)));
+});
+if (P1) await cenario('G10 preferência própria grava, volta para a pessoa, e a equipe vê rotulada', async (checa) => {
   const r = await turno('ana', 'Bento, quando eu receber um briefing de Reels, preciso do objetivo, público, referências e CTA.');
   checa('execução concluída', r.status === 'completed', r.status);
   checa('resposta confirma o registro como preferência dela', /Anotado como preferência sua/.test(respostaDe(r)), respostaDe(r).slice(0, 160));
@@ -176,13 +190,13 @@ await cenario('G10 preferência própria grava, volta para a pessoa, e a equipe 
   checa('o gestor vê, rotulada como confirmada pela própria pessoa', /objetivo, público, referências e CTA \[confirmado pela própria pessoa/.test(contextoDe(r3)));
 });
 
-await cenario('G11 gestão registra responsabilidade (FACT)', async (checa) => {
+if (P1) await cenario('G11 gestão registra responsabilidade (FACT)', async (checa) => {
   const r = await turno('bruno', 'Anota que a Ana é responsável pelos carrosséis da Alfa Cosméticos');
   checa('execução concluída', r.status === 'completed', r.status);
   checa('FACT no perfil oficial da Ana', memoria(`status='active'`).includes('colaborador:0a000000-0000-4000-8000-0000000000a1:responsabilidade|FACT'));
 });
 
-await cenario('G12 colega falando de outro não reescreve o perfil', async (checa) => {
+if (P1) await cenario('G12 colega falando de outro não reescreve o perfil', async (checa) => {
   await turno('bruno', 'Anota que eu prefiro receber briefing em tópicos curtos');
   await turno('ana', 'Anota que o Bruno prefere briefing em áudio');
   const ativas = memoria(`status='active' and user_id='0a000000-0000-4000-8000-0000000000b2'`);
@@ -199,11 +213,47 @@ await cenario('G13 outra empresa não grava no cliente da A', async (checa) => {
   checa('nenhuma memória nova no cliente da empresa A', antes === depois, `${antes} → ${depois}`);
 });
 
-await cenario('G14 pessoa de outra empresa não é alvo', async (checa) => {
+if (P1) await cenario('G14 pessoa de outra empresa não é alvo', async (checa) => {
   await turno('carla', 'Anota que a Ana prefere receber tudo por áudio');
   checa('nada gravado sobre a Ana vindo da Carla', !memoria(`user_id='0a000000-0000-4000-8000-0000000000a1'`).includes(':por:0b000000'));
   const r = await turno('carla', 'Como a Ana prefere receber briefing?');
   checa('a Carla não vê o perfil de quem é da empresa A', !/objetivo, público, referências e CTA/.test(leituraDe(r)));
+});
+
+// ------------------------------------------------------------------ 15-16 — multifonte (P2)
+if (P2) await cenario('G15 "como está o cliente" junta as fontes do OS, com fonte e data', async (checa) => {
+  // Pergunta de status cai no panorama determinístico: as fontes vão NA RESPOSTA.
+  const r = await turno('ana', 'Como está a operação da Alfa Cosméticos?');
+  const resp = respostaDe(r);
+  checa('execução concluída', r.status === 'completed', r.status);
+  checa('aprovação pendente há mais de 48h', /Aprovações \(Desigual OS\): 1 pendente\(s\) \(creative\).*há mais de 48h/.test(resp));
+  checa('demanda aberta com prazo vencido', /Demandas \(Desigual OS, atualizado .*\): 1 aberta\(s\), 1 com prazo vencido: Alfa - Campanha de Natal \(em produção/.test(resp));
+  checa('próxima reunião, com a data da sincronização', /Agenda \(sincronizada .*\): Reunião de alinhamento Alfa em/.test(resp));
+  checa('Inbox: conversa sem resposta há mais de 24h', /Inbox .*1 conversa\(s\) aberta\(s\), 1 com a última mensagem do cliente sem resposta/.test(resp));
+  checa('mídia: conta existe, números são do Jarbas', /Mídia: conta vinculada em Meta \(1\)/.test(resp));
+  checa('relação entre fontes dita como hipótese', /Possível relação \(hipótese/.test(resp));
+  checa('os números do ClickUp continuam em cima', /Tarefas abertas: \d/.test(resp));
+  // Pergunta aberta vai ao GPT: as fontes vão NO PROMPT, com a regra de hipótese.
+  const r2 = await turno('ana', 'Me fala da Alfa Cosméticos');
+  const ctx = contextoDe(r2);
+  checa('no GPT, o bloco de outras fontes entra no prompt', /OUTRAS FONTES DO DESIGUAL OS SOBRE ALFA COSMÉTICOS/.test(ctx));
+  checa('no GPT, junto com o ClickUp ao vivo', /DADOS AO VIVO DO CLICKUP/.test(ctx));
+  checa('no GPT, relação só como hipótese', /POSSÍVEL relação/.test(ctx));
+});
+if (P2) await cenario('G16 multifonte respeita a empresa e diz o que não há', async (checa) => {
+  const r = await turno('carla', 'Como está a operação da Beta Imóveis?');
+  const tudo = `${respostaDe(r)}\n${leituraDe(r)}`;
+  checa('a Carla vê a demanda do Beta', /Beta - Lançamento do condomínio/.test(tudo));
+  checa('nada das fontes do Alfa', !/Campanha de Natal|Reunião de alinhamento Alfa|Contato Alfa/.test(tudo));
+  checa('agenda não conectada é dita, não omitida', /Agenda: nenhuma agenda da empresa conectada/.test(tudo));
+  checa('ausência dita como ausência de registro', /Aprovações \(Desigual OS\): nenhuma pendente registrada/.test(tudo));
+});
+if (!P2) await cenario('G15-off flag multifonte desligada: o bloco não entra (rollback)', async (checa) => {
+  const r = await turno('ana', 'Como está a operação da Alfa Cosméticos?');
+  checa('execução concluída', r.status === 'completed', r.status);
+  checa('sem outras fontes na resposta', !/Outras fontes do OS/.test(respostaDe(r)));
+  const r2 = await turno('ana', 'Me fala da Alfa Cosméticos');
+  checa('sem o bloco de outras fontes no prompt', !/OUTRAS FONTES DO DESIGUAL OS/.test(contextoDe(r2)));
 });
 
 const passou = resultados.filter((r) => r.ok).length;

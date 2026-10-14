@@ -134,6 +134,46 @@ async function main(): Promise<void> {
         organization_id = excluded.organization_id, deleted_at = null`);
   }
 
+  // FONTES DO OS (P2): o Alfa tem uma de cada — aprovação parada há 3 dias,
+  // demanda vencida, reunião em 2 dias, conversa do Inbox sem resposta há 30h,
+  // conta Meta e agenda conectada. O Beta tem só uma demanda: o teste confere
+  // que nada do Alfa aparece para a empresa B.
+  const ANA_ID = PESSOAS[0].id;
+  const BRUNO_ID = PESSOAS[1].id;
+  const CARLA_ID = PESSOAS[2].id;
+  const [ALFA, , BETA] = CLIENTES;
+  await db.execute(sql`delete from thread_messages where organization_id in (${ORG_A}::uuid, ${ORG_B}::uuid)`);
+  await db.execute(sql`delete from conversation_threads where organization_id in (${ORG_A}::uuid, ${ORG_B}::uuid)`);
+  await db.execute(sql`delete from contacts where organization_id in (${ORG_A}::uuid, ${ORG_B}::uuid)`);
+  await db.execute(sql`delete from approval_requests where organization_id in (${ORG_A}::uuid, ${ORG_B}::uuid)`);
+  await db.execute(sql`delete from demands where organization_id in (${ORG_A}::uuid, ${ORG_B}::uuid)`);
+  await db.execute(sql`delete from calendar_events where organization_id in (${ORG_A}::uuid, ${ORG_B}::uuid)`);
+  await db.execute(sql`delete from member_calendar_accounts where organization_id in (${ORG_A}::uuid, ${ORG_B}::uuid)`);
+  await db.execute(sql`delete from client_meta_accounts where client_id in (${ALFA.id}::uuid, ${BETA.id}::uuid)`);
+
+  await db.execute(sql`
+    insert into approval_requests (organization_id, client_id, resource_type, resource_id, requested_by, status, created_at)
+    values (${ORG_A}::uuid, ${ALFA.id}::uuid, 'creative', 'peca-alfa-1', ${BRUNO_ID}::uuid, 'pending', now() - interval '3 days')`);
+  await db.execute(sql`
+    insert into demands (organization_id, client_id, created_by, owner_id, title, source, status, priority, due_date, updated_at)
+    values (${ORG_A}::uuid, ${ALFA.id}::uuid, ${BRUNO_ID}::uuid, ${ANA_ID}::uuid, 'Alfa - Campanha de Natal', 'manual', 'in_production', 'high', now() - interval '1 day', now() - interval '2 hours'),
+           (${ORG_B}::uuid, ${BETA.id}::uuid, ${CARLA_ID}::uuid, ${CARLA_ID}::uuid, 'Beta - Lançamento do condomínio', 'manual', 'briefing', 'normal', now() + interval '5 days', now() - interval '1 hour')`);
+  await db.execute(sql`
+    insert into calendar_events (organization_id, client_id, title, start_at, end_at, status, created_by)
+    values (${ORG_A}::uuid, ${ALFA.id}::uuid, 'Reunião de alinhamento Alfa', now() + interval '2 days', now() + interval '2 days 1 hour', 'confirmed', ${BRUNO_ID}::uuid)`);
+  await db.execute(sql`
+    insert into member_calendar_accounts (user_id, external_calendar_id, organization_id, last_synced_at)
+    values (${BRUNO_ID}::uuid, 'agenda-qa-bruno', ${ORG_A}::uuid, now() - interval '10 minutes')`);
+  const [contato] = (await db.execute(sql`
+    insert into contacts (organization_id, client_id, name) values (${ORG_A}::uuid, ${ALFA.id}::uuid, 'Contato Alfa') returning id`)) as unknown as Array<{ id: string }>;
+  const [conversa] = (await db.execute(sql`
+    insert into conversation_threads (organization_id, client_id, contact_id, channel, status, last_message_at)
+    values (${ORG_A}::uuid, ${ALFA.id}::uuid, ${contato!.id}::uuid, 'whatsapp', 'open', now() - interval '30 hours') returning id`)) as unknown as Array<{ id: string }>;
+  await db.execute(sql`
+    insert into thread_messages (thread_id, organization_id, channel, direction, content, created_at)
+    values (${conversa!.id}::uuid, ${ORG_A}::uuid, 'whatsapp', 'inbound', 'Oi, conseguem me mandar a peça hoje?', now() - interval '30 hours')`);
+  await db.execute(sql`insert into client_meta_accounts (client_id, account_id, is_primary) values (${ALFA.id}::uuid, 'act_qa_alfa', true)`);
+
   // Isca do teste de fronteira (golden G7): dossiê do cliente da empresa B,
   // ambiente production (o que o worker lê para cliente que não é 'qa').
   // Se este texto aparecer num turno da empresa A, houve vazamento.

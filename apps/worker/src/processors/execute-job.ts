@@ -65,6 +65,7 @@ import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispa
 import { lerComGptPrimeiro, montarPromptDeLeitura, type CamadaDeLeitura } from './bento-leitura-gpt';
 import { jarbasLocalLigado, responderJarbasLocal } from './jarbas-local';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
+import { blocoMultifonte, multifonteParaPanorama } from './contexto-multifonte.js';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
 import { tryBentoActionGuard, detectExternalWritePotential, looksLikeMutationOnResource, hasPendingDeleteConfirmation, getClickUpConfigOrNull, ehQaBot } from './bento-action-guard';
 import { bentoOpenAiCoreEnabled, runBentoOpenAiCore } from './bento-openai-core';
@@ -566,15 +567,23 @@ function apurarEstado(organizationId: string | null, cfg: NonNullable<ReturnType
  * tarefas atrasadas?" chegava ao modelo com 35 caracteres. Uma leitura por
  * turno, mesmo se o loop chamar o agente de novo.
  */
-export function contextoFixoDaLeitura(userId: string | null, organizationId: string | null): {
+export function contextoFixoDaLeitura(
+  userId: string | null,
+  organizationId: string | null,
+  clientId: string | null = null,
+): {
   pessoaEEquipe: () => Promise<string | null>;
   estadoDaOperacao: () => Promise<string | null>;
+  /** Aprovações, demandas, agenda, Inbox e mídia do cliente (P2, atrás de flag). */
+  multifonte: () => Promise<string | null>;
 } {
   let pessoa: Promise<string | null> | null = null;
   let estado: Promise<string | null> | null = null;
+  let outras: Promise<string | null> | null = null;
   return {
     pessoaEEquipe: () => (pessoa ??= userId ? blocoDePessoaEEquipe(userId).catch(() => null) : Promise.resolve(null)),
     estadoDaOperacao: () => (estado ??= estadoDaOperacaoDaOrganizacao(organizationId)),
+    multifonte: () => (outras ??= blocoMultifonte(clientId, organizationId)),
   };
 }
 
@@ -1827,11 +1836,19 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             { tasks: panorama.metricas.total, atrasadas: panorama.metricas.atrasadas, leitura: panorama.leitura !== null, cliente: citado },
             '[bento-panorama] panorama montado',
           );
+          // As outras fontes do OS sobre o cliente citado (Bento 3.1, P2,
+          // atrás de BENTO_MULTISOURCE_CONTEXT). Só quando o recorte é UM
+          // cliente e ele é o da execução — que a API só aceita com acesso.
+          const outrasFontes =
+            citado && clienteDaExecucao && clienteDaExecucao.name === citado
+              ? await multifonteParaPanorama(runningExecution?.clientId ?? null, runningExecution?.organizationId ?? null, panorama.metricas.atrasadas)
+              : null;
+          const corpo = outrasFontes ? `${panoramaEmResposta(panorama)}\n\n${outrasFontes}` : panoramaEmResposta(panorama);
           guardedResult = {
             execution_id: executionId, agent, status: 'completed',
             // A causa vem PRIMEIRO: quem pergunta o que está em risco quer
             // saber o porquê, e os números ficam embaixo como lastro.
-            answer: explicacao ? `${explicacao}\n\n---\n\n${panoramaEmResposta(panorama)}` : panoramaEmResposta(panorama),
+            answer: explicacao ? `${explicacao}\n\n---\n\n${corpo}` : corpo,
             sources: ['CLICKUP_OPERATION'], tool_calls: [],
             usage: { input_tokens: 0, output_tokens: 0 },
             metadata: { guard: 'bento-panorama', tasks: panorama.metricas.total, cliente: citado },
@@ -2107,7 +2124,11 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       // caminho direto entrega (ver contextoFixoDaLeitura). O estado é
       // cacheado por empresa (3 min, bento-panorama): no máximo uma leitura
       // do ClickUp por empresa nesse intervalo, nunca uma por turno.
-      const fixoDaLeitura = contextoFixoDaLeitura(runningExecution?.userId ?? null, runningExecution?.organizationId ?? null);
+      const fixoDaLeitura = contextoFixoDaLeitura(
+        runningExecution?.userId ?? null,
+        runningExecution?.organizationId ?? null,
+        runningExecution?.clientId ?? null,
+      );
       result = await dispatchWithAgentLoop({
         data,
         userId: runningExecution?.userId ?? null,
@@ -2147,6 +2168,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
                     (await fixoDaLeitura.pessoaEEquipe()) ?? undefined,
                     (await fixoDaLeitura.estadoDaOperacao()) ?? undefined,
                     contexto,
+                    (await fixoDaLeitura.multifonte()) ?? undefined,
                   ]),
                 ),
                 logger,
@@ -2437,14 +2459,15 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       let promptDeLeitura: Promise<string> | null = null;
       const promptDeLeituraDireta = (): Promise<string> =>
         (promptDeLeitura ??= (async () => {
-          const fixo = contextoFixoDaLeitura(runningExecution?.userId ?? null, runningExecution?.organizationId ?? null);
           const organizacao = runningExecution?.organizationId ?? null;
-          const [pessoa, estado, cliente, totalClientes, dialogo] = await Promise.all([
+          const fixo = contextoFixoDaLeitura(runningExecution?.userId ?? null, organizacao, runningExecution?.clientId ?? null);
+          const [pessoa, estado, cliente, totalClientes, dialogo, outrasFontes] = await Promise.all([
             fixo.pessoaEEquipe(),
             fixo.estadoDaOperacao(),
             resolveClientTurnContext({ message, executionClientId: runningExecution?.clientId ?? null, organizationId: organizacao }).catch(() => null),
             contarClientes(organizacao).catch(() => 0),
             dialogoRecente().catch(() => ''),
+            fixo.multifonte(),
           ]);
           return montarPromptDeLeitura(
             message,
@@ -2453,6 +2476,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
               estado ?? undefined,
               operationalContext,
               cliente ? formatClientBlock(cliente, totalClientes) : undefined,
+              outrasFontes ?? undefined,
               dialogo || undefined,
             ]),
           );
