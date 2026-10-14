@@ -2086,6 +2086,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
           camadaDaLeitura = leitura.camada;
           if (leitura.camada === 'openai_leitura_fallback_gpu') {
             logger.warn({ executionId }, '[bento] GPU sem resposta; turno respondido via OpenAI');
+          } else {
+            // Sem esta linha, o turno bem-sucedido não dizia quem respondeu: em
+            // 13/10/2026 foi preciso deduzir "GPT" pela ausência de log da GPU.
+            logger.info({ executionId, camada: leitura.camada }, '[bento] leitura respondida');
           }
           return { ...leitura.resposta, execution_id: executionId };
         },
