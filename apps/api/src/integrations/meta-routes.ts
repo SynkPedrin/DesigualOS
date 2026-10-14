@@ -160,7 +160,19 @@ export async function registerMetaIntegrationRoutes(app: FastifyInstance): Promi
     }
 
     try {
-      return { ad_accounts: await getMetaAdAccounts(access.token, request.query.business_id) };
+      // Mesmo motivo do Google Ads: a tela lê snake_case (MetaAdAccountWire).
+      const contas = await getMetaAdAccounts(access.token, request.query.business_id);
+      return {
+        ad_accounts: contas.map((a) => ({
+          id: a.id,
+          account_id: a.accountId,
+          name: a.name,
+          status: a.status,
+          currency: a.currency,
+          business_id: a.businessId,
+          business_name: a.businessName,
+        })),
+      };
     } catch (err) {
       logger.error({ error: err }, 'Falha ao listar Ad Accounts do Meta');
       reply.code(502);

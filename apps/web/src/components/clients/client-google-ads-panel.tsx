@@ -143,7 +143,9 @@ function LinkAccountPicker({ clientId }: { clientId: string }) {
             const account = options.find((a) => a.customer_id === selectedCustomerId);
             link.mutate({
               customer_id: selectedCustomerId,
-              login_customer_id: loginCustomerId || undefined,
+              // Conta de cliente que veio de dentro de uma MCC: a MCC vira o
+              // login-customer-id das consultas, ou o Google nega o acesso.
+              login_customer_id: loginCustomerId || account?.manager_customer_id || undefined,
               label: account?.descriptive_name ?? undefined,
               is_primary: true,
             });

@@ -132,7 +132,18 @@ export async function registerGoogleAdsIntegrationRoutes(app: FastifyInstance): 
     }
 
     try {
-      return { accounts: await getGoogleAdsAccounts(config, access.accessToken, request.query.login_customer_id) };
+      // O contrato da tela é snake_case (GoogleAdsAccountWire); devolver o
+      // objeto cru (camelCase) deixava o seletor de contas sem nome e sem id.
+      const contas = await getGoogleAdsAccounts(config, access.accessToken, request.query.login_customer_id);
+      return {
+        accounts: contas.map((a) => ({
+          customer_id: a.customerId,
+          descriptive_name: a.descriptiveName,
+          currency_code: a.currencyCode,
+          status: a.status,
+          manager_customer_id: a.managerCustomerId,
+        })),
+      };
     } catch (err) {
       logger.error({ error: err }, 'Falha ao listar contas do Google Ads');
       reply.code(502);

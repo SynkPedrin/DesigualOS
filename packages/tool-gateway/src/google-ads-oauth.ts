@@ -31,7 +31,10 @@ import { z } from 'zod';
  * por isso resolveGoogleAdsAccess (google-ads-access.ts) SEMPRE renova via
  * refresh_token em vez de tentar reaproveitar um token em cache.
  */
-const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION ?? 'v19';
+// v19 foi desligada pelo Google: toda chamada voltava 404 (medido 14/10/2026,
+// com a conexão real da equipe; v22 a v25 no ar). v25 testada ponta a ponta:
+// contas, campanhas e métricas, direto e através de MCC.
+const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION ?? 'v25';
 const GOOGLE_ADS_API_BASE = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
 const GOOGLE_OAUTH_AUTHORIZE_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -214,10 +217,19 @@ export async function getGoogleAdsAccounts(config: GoogleAdsOAuthConfig, accessT
 
   const customerIds = await listAccessibleCustomers(config, accessToken);
   const accounts: GoogleAdsAccount[] = [];
+  const gerenciadoras: string[] = [];
   for (const customerId of customerIds) {
     try {
-      const rows = await runGaqlQuery(config, accessToken, customerId, 'SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.status FROM customer LIMIT 1');
+      const rows = await runGaqlQuery(config, accessToken, customerId, 'SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.status, customer.manager FROM customer LIMIT 1');
       const customer = rows[0]?.customer as Record<string, unknown> | undefined;
+      // MCC não tem métrica ("REQUESTED_METRICS_FOR_MANAGER"): vinculada a um
+      // cliente, deixava o Jarbas e a aba Mídias sem número nenhum. Ela sai da
+      // lista e as contas DENTRO dela entram (abaixo), cada uma com a MCC
+      // anotada para virar o login-customer-id da consulta.
+      if (customer?.manager === true) {
+        gerenciadoras.push(customerId);
+        continue;
+      }
       accounts.push({
         customerId,
         descriptiveName: (customer?.descriptiveName as string) ?? null,
@@ -228,6 +240,17 @@ export async function getGoogleAdsAccounts(config: GoogleAdsOAuthConfig, accessT
     } catch {
       // Conta que o token lista mas não consegue detalhar (ex: manager sem acesso de leitura
       // a si mesmo em certas hierarquias) é pulada - uma conta problemática não derruba a lista inteira.
+    }
+  }
+  // As contas de clientes que a agência acessa pela MCC — sem a pessoa
+  // precisar saber o número da MCC. Conta que já veio direta não repete.
+  const diretas = new Set(accounts.map((a) => a.customerId));
+  for (const mcc of gerenciadoras) {
+    const filhas = await getGoogleAdsAccounts({ ...config, loginCustomerId: mcc }, accessToken, mcc).catch(() => [] as GoogleAdsAccount[]);
+    for (const f of filhas) {
+      if (diretas.has(f.customerId)) continue;
+      diretas.add(f.customerId);
+      accounts.push(f);
     }
   }
   return accounts;
