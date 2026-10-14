@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { CalendarDays, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { ClaudeMark, Secao, StatusLabel, type Estado } from '@/components/control/primitives';
 import { PageHeader } from '@/components/ui/page-header';
 import { cn } from '@/lib/utils';
@@ -14,7 +14,6 @@ import { useWhatsappHealth } from '@/hooks/use-organization-connectors';
 import { useMetaIntegration } from '@/hooks/use-meta-integration';
 import { useGoogleAdsIntegration } from '@/hooks/use-google-ads-integration';
 import { useMicrosoftCalendarIntegration } from '@/hooks/use-microsoft-calendar';
-import { useGoogleCalendarIntegration } from '@/hooks/use-google-calendar';
 import { MetaConnect, GoogleAdsConnect } from '@/components/settings/conexao-oauth-card';
 /**
  * O painel COMPLETO, o mesmo que a página /calendar usa: conectar, escolher a
@@ -25,7 +24,6 @@ import { MetaConnect, GoogleAdsConnect } from '@/components/settings/conexao-oau
  * `integration_connections` tem a linha, `member_calendar_accounts` está
  * vazia.
  */
-import { GoogleCalendarConnect } from '@/components/calendar/google-calendar-connect';
 /**
  * Microsoft vinha do cartão só-de-OAuth, e isso tinha consequência medida: em
  * 08/10/2026 o banco tinha a linha em `integration_connections` (OAuth feito)
@@ -61,7 +59,6 @@ export default function IntegrationsPage() {
   const { data: googleAds, isPending: googleAdsPendente } = useGoogleAdsIntegration();
   const { data: microsoftCal, isPending: microsoftCalPendente } = useMicrosoftCalendarIntegration();
 
-  const { data: googleCal, isPending: googleCalPendente } = useGoogleCalendarIntegration();
   /**
    * O conjunto, a partir dos MESMOS estados que alimentam cada cartão — nunca
    * uma segunda contagem que possa divergir do que a tela mostra logo abaixo.
@@ -74,7 +71,6 @@ export default function IntegrationsPage() {
     meta,
     googleAds,
     microsoftCal,
-    googleCal,
     { connected: whatsapp?.connected === true, configured: whatsapp !== undefined },
     /**
      * O CLAUDE ENTRA NA CONTA, e não entrava.
@@ -195,26 +191,8 @@ export default function IntegrationsPage() {
           texto: microsoftCalPendente ? 'Consultando' : microsoftCal?.connected ? 'Conectado' : 'Desconectado',
           painel: <MicrosoftCalendarConnect />,
         },
-        {
-          /**
-           * Google Calendar estava FALTANDO aqui (achado em 08/10/2026,
-           * clicando a tela no navegador): a API tem as cinco rotas, as três
-           * variáveis estão preenchidas e o status responde `configured: true`
-           * — e não havia cartão. Quem usa Google em vez de Outlook não tinha
-           * como conectar a agenda, sem nenhum sinal de que faltava algo.
-           *
-           * Ícone em vez de PNG de propósito: não há logo do Google Calendar em
-           * public/logos, e reaproveitar o do Google Ads seria mostrar a marca
-           * errada. Ícone neutro diz a verdade.
-           */
-          nome: 'Google Calendar',
-          categoria: 'Agenda',
-          bannerClassName: 'bg-branco-cru',
-          logo: <CalendarDays size={28} className="text-carbono" />,
-          estado: googleCalPendente ? 'desconhecido' : googleCal?.connected ? 'ok' : 'atencao',
-          texto: googleCalPendente ? 'Consultando' : googleCal?.connected ? 'Conectado' : 'Desconectado',
-          painel: <GoogleCalendarConnect />,
-        },
+        // Google Calendar saiu desta lista em 14/10/2026: a agência usa só
+        // Outlook (Pedro: "é sempre Microsoft, não existe Google Calendar").
       ],
     },
   ];

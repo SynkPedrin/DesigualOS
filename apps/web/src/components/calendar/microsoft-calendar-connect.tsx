@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Link2, RefreshCw } from 'lucide-react';
+import { useMe } from '@/hooks/use-me';
 import {
   useConnectMicrosoftCalendar,
   useLinkMicrosoftCalendarAccount,
@@ -21,6 +22,7 @@ export function MicrosoftCalendarConnect() {
   const integration = useMicrosoftCalendarIntegration();
   const connect = useConnectMicrosoftCalendar();
   const contas = useMicrosoftCalendarAccounts();
+  const { data: me } = useMe();
   const agendasMicrosoft = useMicrosoftCalendarList(integration.data?.connected === true && (contas.data?.length ?? 0) === 0);
   const vincular = useLinkMicrosoftCalendarAccount();
   const sincronizar = useSyncMicrosoftCalendarAccount();
@@ -34,7 +36,13 @@ export function MicrosoftCalendarConnect() {
     return (
       <div className="mb-3 flex items-center justify-between rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-xs">
         <span className="text-nevoa">
-          Outlook: <span className="text-branco-cru">{contaVinculada.external_calendar_id}</span>
+          {/*
+            * O NOME DE QUEM CONECTOU, não o id da agenda (14/10/2026, pedido do
+            * Pedro). O id do Outlook é uma cadeia de 150 caracteres que não diz
+            * nada a ninguém; e a conta listada aqui é sempre a de quem está
+            * logado (a API filtra por usuário), então o nome certo é o dele.
+            */}
+          Outlook: <span className="text-branco-cru">{me?.name?.trim() || 'sua agenda'}</span>
           {contaVinculada.last_synced_at && ` · sincronizado ${new Date(contaVinculada.last_synced_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`}
         </span>
         <button

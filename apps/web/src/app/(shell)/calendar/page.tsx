@@ -13,7 +13,6 @@ import { WeekView } from '@/components/calendar/week-view';
 import { ResourceTimelineView } from '@/components/calendar/resource-timeline-view';
 import { ResourcePicker } from '@/components/calendar/resource-picker';
 import { CreateEventModal } from '@/components/calendar/create-event-modal';
-import { GoogleCalendarConnect } from '@/components/calendar/google-calendar-connect';
 import { MicrosoftCalendarConnect } from '@/components/calendar/microsoft-calendar-connect';
 import { MeetingBriefPanel } from '@/components/calendar/meeting-brief-panel';
 import type { CalendarEventWire } from '@/lib/api/contracts';
@@ -121,11 +120,11 @@ function CalendarPageContent() {
         )}
       </div>
 
-      {/* Outlook primeiro: é o calendário que a operação usa de verdade
-       * (07/10/2026, pedido explícito do usuário). Google Calendar continua
-       * disponível — não foi removido, só deixou de ser o provider principal. */}
+      {/* SÓ OUTLOOK (14/10/2026, Pedro: "é sempre Microsoft, não existe
+       * Google Calendar"). O banner do Google convidava toda pessoa a conectar
+       * uma agenda que a agência não usa. As rotas da API continuam; só a tela
+       * deixou de oferecer. */}
       {visao === 'pessoal' && <MicrosoftCalendarConnect />}
-      {visao === 'pessoal' && <GoogleCalendarConnect />}
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
