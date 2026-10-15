@@ -125,6 +125,23 @@ export function garantirEstagiosGerais(stages: readonly PipelineStage[], opcoes:
   return opcoes.soCategorias ? saida.sort((a, b) => PESO[a.categoria!] - PESO[b.categoria!]) : saida;
 }
 
+/**
+ * TAREFA-ARTEFATO DE TESTE (15/10/2026, Pedro: "tira tudo de QA, que é coisa
+ * de testes internos"). A lista "Agência Desigual" é trabalho interno REAL
+ * (operação da casa), mas os gates de QA dos agentes despejam nela tarefas
+ * que ninguém vai executar: "QA Gate Bento 1790...", "Cliente Teste 7 PEDIDO:",
+ * "E2E Claude - pode apagar", "plug2". Padrão apertado e explícito — nome de
+ * trabalho de verdade nunca começa assim; se um dia começar, o teste quebra
+ * antes de a tarefa sumir do quadro.
+ */
+const TAREFA_DE_TESTE_RE = /^(qa[ -]?gate\b|cliente teste\b|clinica teste\b|e2e[ -]|plug\d*$)/i;
+
+export function ehTarefaDeTeste(nome: string | null): boolean {
+  const n = (nome ?? '').trim();
+  if (!n) return false;
+  return TAREFA_DE_TESTE_RE.test(n) || /\bpode apagar\b/i.test(n);
+}
+
 export function estagioDaCategoria(stages: readonly PipelineStage[], categoria: CategoriaGeral): PipelineStage | null {
   return stages.find((s) => s.categoria === categoria) ?? null;
 }

@@ -10,7 +10,7 @@ import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import { ehFechado, estagioPeloStatus, estagiosDasTarefas, juntarFluxos, statusInvalidosParaALista, type EstagioDoClickUp } from './estagios';
 import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
-import { CATEGORIAS_GERAIS, categoriaDoCliente, categoriaDoStatus, estagioDaCategoria, estagiosIguais, garantirEstagiosGerais, rotuloDaCategoria, statusDaListaParaCategoria } from './quadro-geral';
+import { CATEGORIAS_GERAIS, categoriaDoCliente, categoriaDoStatus, ehTarefaDeTeste, estagioDaCategoria, estagiosIguais, garantirEstagiosGerais, rotuloDaCategoria, statusDaListaParaCategoria } from './quadro-geral';
 
 /**
  * QUEM PODE ESCREVER NUM QUADRO — a escada inteira, sem banco e sem Fastify.
@@ -238,7 +238,7 @@ async function tarefasDaPessoa(
    * Tarefa sem lista ou em lista de cliente de QA/outra empresa não é trabalho
    * da operação — não entra no quadro e o cartão velho dela sai no sync.
    */
-  return { tarefas: pagina.tasks.filter((t) => t.listId && porLista.has(t.listId)), cortada: pagina.truncated };
+  return { tarefas: pagina.tasks.filter((t) => t.listId && porLista.has(t.listId) && !ehTarefaDeTeste(t.name)), cortada: pagina.truncated };
 }
 
 /** O que o cartão espelha da tarefa do ClickUp, além da coluna. */
@@ -326,7 +326,9 @@ async function tarefasDaAgencia(
   if (porLista.size === 0) return { tarefas: [], cortada: false };
   const pagina = await queryOperationTasks(credenciais, { listIds: [...porLista.keys()], includeClosed: false, subtasks: false });
   return {
-    tarefas: pagina.tasks.filter((t) => t.listId && porLista.has(t.listId)).map((t) => ({ ...t, clientId: porLista.get(t.listId!)!.id })),
+    tarefas: pagina.tasks
+      .filter((t) => t.listId && porLista.has(t.listId) && !ehTarefaDeTeste(t.name))
+      .map((t) => ({ ...t, clientId: porLista.get(t.listId!)!.id })),
     cortada: pagina.truncated,
   };
 }

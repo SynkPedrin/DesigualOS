@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PipelineStage } from '@desigual-os/types';
 import {
+  ehTarefaDeTeste,
   categoriaDoCliente,
   categoriaDoStatus,
   estagioDaCategoria,
@@ -110,5 +111,19 @@ describe('statusDaListaParaCategoria', () => {
 
   it('lista sem status daquela categoria: null, e o cartão não se move', () => {
     expect(statusDaListaParaCategoria([{ status: 'to do', type: 'open' }, { status: 'complete', type: 'closed' }], 'em_aprovacao')).toBeNull();
+  });
+});
+
+describe('ehTarefaDeTeste', () => {
+  it('marca os artefatos que os gates de QA despejam na lista interna', () => {
+    for (const nome of ['QA Gate Bento 1790342246004', 'Cliente Teste 7 PEDIDO: Bento, crie uma task', 'Clinica Teste Fase 7', 'E2E Claude - pode apagar', 'plug', 'plug2']) {
+      expect(ehTarefaDeTeste(nome)).toBe(true);
+    }
+  });
+
+  it('nunca marca trabalho de verdade', () => {
+    for (const nome of ['Cosentino_Site Cosentino Urbano', '[INFRA] Habilitar SSH no servidor', 'DC_Colab JD', '70 ANOS | Peças institucionais (out/2026)', 'Plugin de pagamento do checkout']) {
+      expect(ehTarefaDeTeste(nome)).toBe(false);
+    }
   });
 });

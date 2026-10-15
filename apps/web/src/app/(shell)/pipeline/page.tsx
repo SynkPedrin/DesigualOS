@@ -1113,6 +1113,7 @@ function PipelineBoardUI() {
           eyebrow="Operação"
           title="Pipelines"
           description="Cliente, tarefas do ClickUp ou carga da equipe, cada quadro do seu jeito."
+          compact
           actions={
             <div className="flex items-center gap-2">
               <button
@@ -1198,7 +1199,7 @@ function PipelineBoardUI() {
           primeiro — são o chão comum; depois os seus. Sem o selo, um quadro
           compartilhado e um pessoal são indistinguíveis, e a pessoa reorganiza
           o da empresa inteira achando que mexe no dela. */}
-      <div className="mt-4 flex shrink-0 flex-wrap items-center gap-1 border-b border-grafite-elevado pb-2">
+      <div className="mt-2 flex shrink-0 flex-wrap items-center gap-1 border-b border-grafite-elevado pb-2">
         {[...boards]
           .sort((a, b) => Number(escopoPorQuadro.get(b.id) === 'agencia') - Number(escopoPorQuadro.get(a.id) === 'agencia'))
           .map((b) => {
@@ -1208,7 +1209,7 @@ function PipelineBoardUI() {
                 key={b.id}
                 type="button"
                 onClick={() => setBoardId(b.id)}
-                className={cn('flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors', boardId === b.id ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:bg-grafite-elevado')}
+                className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-medium transition-colors', boardId === b.id ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:bg-grafite-elevado')}
               >
                 <span
                   className={cn(
@@ -1234,7 +1235,7 @@ function PipelineBoardUI() {
         número errado, porque é exatamente o que alguém usa pra decidir. Então
         ficaram quatro, todos derivados dos cartões reais.
       */}
-      <div className="mt-4 grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 lg:grid-cols-4">
         {[
           {
             icone: <SquareKanban size={15} />,
@@ -1265,14 +1266,14 @@ function PipelineBoardUI() {
             alerta: semResponsavel > 0,
           },
         ].map((kpi) => (
-          <div key={kpi.rotulo} className="rounded-lg border border-grafite-elevado bg-grafite/60 px-4 py-3 transition-colors hover:border-roxo-eletrico/40">
+          <div key={kpi.rotulo} className="rounded-lg border border-grafite-elevado bg-grafite/60 px-3 py-2 transition-colors hover:border-roxo-eletrico/40">
             <div className="flex items-center gap-2">
               {/* O ícone herda o tom do número: destaque, alerta ou neutro. Um
                   ícone colorido ao lado de um número neutro vira decoração que
                   sugere estado onde não há. */}
               <span
                 className={cn(
-                  'flex size-7 shrink-0 items-center justify-center rounded-lg',
+                  'flex size-6 shrink-0 items-center justify-center rounded-md',
                   kpi.destaque
                     ? 'bg-sinal/15 text-sinal'
                     : kpi.alerta
@@ -1284,16 +1285,16 @@ function PipelineBoardUI() {
               </span>
               <p className="truncate font-mono text-[10px] uppercase tracking-wider text-nevoa">{kpi.rotulo}</p>
             </div>
-            <p className={cn('mt-1 font-heading text-2xl font-semibold tabular-nums', kpi.destaque ? 'text-sinal' : kpi.alerta ? 'text-aviso' : 'text-branco-cru')}>
+            <p className={cn('mt-0.5 font-heading text-lg font-semibold tabular-nums', kpi.destaque ? 'text-sinal' : kpi.alerta ? 'text-aviso' : 'text-branco-cru')}>
               {kpi.valor}
             </p>
-            <p className="mt-0.5 text-[11px] text-nevoa">{kpi.detalhe}</p>
+            <p className="text-[10px] text-nevoa">{kpi.detalhe}</p>
           </div>
         ))}
       </div>
 
       {/* Busca e filtro agem sobre o que APARECE, nunca sobre os números acima. */}
-      <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
+      <div className="mt-2 flex shrink-0 flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
           <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-nevoa" />
           <input
@@ -1324,7 +1325,7 @@ function PipelineBoardUI() {
         )}
       </div>
 
-      <div className="mt-4 flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2">
+      <div className="mt-3 flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
         {board.stages.map((stage) => {
           const cartoesDoEstagio = cartoesVisiveis.filter((c) => c.stageId === stage.id);
           const limite = limitePorColuna[stage.id] ?? CARTOES_POR_COLUNA;
@@ -1343,13 +1344,13 @@ function PipelineBoardUI() {
                 setArrastando(null);
                 setColunaSobre(null);
               }}
-              className={cn('flex w-[86vw] shrink-0 flex-col overflow-hidden rounded-xl border bg-carbono/40 transition-colors sm:w-[24rem] 2xl:w-[26rem]', colunaSobre === stage.id ? 'border-roxo-eletrico/60 bg-roxo-eletrico/5' : 'border-grafite-elevado')}
+              className={cn('flex w-[82vw] shrink-0 flex-col overflow-hidden rounded-xl border bg-carbono/40 transition-colors sm:w-72 xl:w-80', colunaSobre === stage.id ? 'border-roxo-eletrico/60 bg-roxo-eletrico/5' : 'border-grafite-elevado')}
             >
-              <div className={cn('h-2 shrink-0', cor.bar)} />
-              <div className="flex shrink-0 items-center justify-between border-b border-grafite-elevado px-5 py-4">
+              <div className={cn('h-1.5 shrink-0', cor.bar)} />
+              <div className="flex shrink-0 items-center justify-between border-b border-grafite-elevado px-3.5 py-2.5">
                 <div className="flex items-center gap-2">
                   <span className={cn('size-2.5 rounded-full', cor.dot)} />
-                  <h2 className="font-heading text-lg font-semibold text-branco-cru">{stage.label}</h2>
+                  <h2 className="font-heading text-sm font-semibold text-branco-cru">{stage.label}</h2>
                 </div>
                 <div className="flex items-center gap-2">
                   {/* A soma aparece ao lado da contagem, como no mockup — e some
@@ -1365,9 +1366,9 @@ function PipelineBoardUI() {
                 </div>
               </div>
 
-              <div className="flex-1 space-y-3.5 overflow-y-auto p-4">
+              <div className="flex-1 space-y-2.5 overflow-y-auto p-2.5">
                 {cartoesDoEstagio.length === 0 ? (
-                  <p className="py-6 text-center text-sm text-nevoa">Nenhum cartão aqui.</p>
+                  <p className="py-4 text-center text-xs text-nevoa">Nenhum cartão aqui.</p>
                 ) : (
                   desenhados.map((card) => {
                     const anexos = card.anexos.length;
@@ -1382,30 +1383,30 @@ function PipelineBoardUI() {
                         onDragStart={(e) => { e.dataTransfer.setData('text/plain', card.id); e.dataTransfer.effectAllowed = 'move'; setArrastando(card.id); }}
                         onDragEnd={() => setArrastando(null)}
                         onClick={() => setCartaoAberto(card.id)}
-                        className={cn('cursor-grab rounded-xl border border-grafite-elevado bg-grafite p-4 shadow-sm transition-all hover:border-roxo-eletrico/40 hover:shadow-md active:cursor-grabbing', arrastando === card.id && 'opacity-40')}
+                        className={cn('cursor-grab rounded-lg border border-grafite-elevado bg-grafite p-3 shadow-sm transition-all hover:border-roxo-eletrico/40 hover:shadow-md active:cursor-grabbing', arrastando === card.id && 'opacity-40')}
                       >
                         {/* Nome ORIGINAL da tarefa, completo (quebra em 2 linhas em vez de cortar). */}
-                        <p className="line-clamp-2 text-[15px] font-semibold leading-snug text-branco-cru">{card.name}</p>
+                        <p className="line-clamp-2 text-sm font-semibold leading-snug text-branco-cru">{card.name}</p>
 
                         {/* De quem é o trabalho: cliente com a marca dele. */}
                         {ehTarefa && nomeCliente && (
-                          <div className="mt-2.5 flex items-center gap-2">
+                          <div className="mt-2 flex items-center gap-2">
                             <EntityAvatar name={nomeCliente} kind="client" size="sm" />
                             <span className="truncate text-xs font-medium text-nevoa">{nomeCliente}</span>
                           </div>
                         )}
                         {!ehTarefa && (
-                          <div className="mt-2.5 flex items-center gap-3">
+                          <div className="mt-2 flex items-center gap-3">
                             <EntityAvatar name={card.name} kind={card.clientId ? 'client' : 'person'} size="md" />
                             {card.valor && <p className="font-mono text-sm text-sinal">{card.valor}</p>}
                           </div>
                         )}
 
-                        {card.nota && <p className="mt-2.5 line-clamp-2 text-sm text-nevoa">{card.nota}</p>}
+                        {card.nota && <p className="mt-2 line-clamp-2 text-xs text-nevoa">{card.nota}</p>}
 
                         {/* Sinais do ClickUp: prioridade e vencimento. */}
                         {(bandeira || prazo) && (
-                          <div className="mt-3 flex items-center gap-3 text-xs">
+                          <div className="mt-2 flex items-center gap-3 text-[11px]">
                             {bandeira && (
                               <span className={cn('flex items-center gap-1 font-medium', bandeira.classe)} title={`Prioridade ${bandeira.rotulo}`}>
                                 <Flag size={12} /> {bandeira.rotulo}
@@ -1419,7 +1420,7 @@ function PipelineBoardUI() {
                           </div>
                         )}
 
-                        <div className="mt-3 flex items-center justify-between gap-2 border-t border-grafite-elevado/60 pt-2.5">
+                        <div className="mt-2 flex items-center justify-between gap-2 border-t border-grafite-elevado/60 pt-2">
                           {/* Responsável com a FOTO de verdade (ClickUp); iniciais quando não há. */}
                           <span className="flex min-w-0 items-center gap-1.5" title={card.responsavel}>
                             <EntityAvatar name={card.responsavel} photoUrl={card.responsavelAvatar ?? null} kind="person" size="sm" />
@@ -1459,7 +1460,7 @@ function PipelineBoardUI() {
                     setEstagioInicial(stage.id);
                     setCriandoCartao(true);
                   }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-grafite-elevado py-2 text-[13px] text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-grafite-elevado py-1.5 text-xs text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
                 >
                   <Plus size={14} /> Adicionar cartão
                 </button>
