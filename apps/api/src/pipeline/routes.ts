@@ -3,12 +3,12 @@ import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { PIPELINE_STAGE_COLORS, PIPELINE_TIPOS } from '@desigual-os/types';
-import { credenciaisClickUpDaEmpresa, findMemberByEmail, listStatusesForList, queryOperationTasks, updateTask, type ClickUpConfig, type OperationTask } from '@desigual-os/tool-gateway';
+import { credenciaisClickUpDaEmpresa, findMemberByEmail, listStatusDetailsForList, queryOperationTasks, updateTask, type ClickUpConfig, type OperationTask } from '@desigual-os/tool-gateway';
 import { separarCarteira } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
-import { estagioPeloStatus, estagiosDasTarefas, statusInvalidosParaALista } from './estagios';
+import { ehFechado, estagioPeloStatus, estagiosDasTarefas, juntarFluxos, statusInvalidosParaALista, type EstagioDoClickUp } from './estagios';
 import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 
 /**
@@ -201,8 +201,8 @@ function wireQuadro(
  * na leitura da lista), os status vêm das tarefas que estão nela. Só falha
  * quando nem a lista nem as tarefas respondem.
  */
-async function estagiosDaLista(credenciais: ClickUpConfig, listId: string): Promise<string[]> {
-  const daLista = await listStatusesForList(credenciais, listId).catch(() => [] as string[]);
+async function estagiosDaLista(credenciais: ClickUpConfig, listId: string): Promise<EstagioDoClickUp[]> {
+  const daLista = await listStatusDetailsForList(credenciais, listId).catch(() => [] as EstagioDoClickUp[]);
   if (daLista.length > 0) return daLista;
   const pagina = await queryOperationTasks(credenciais, { listIds: [listId], includeClosed: true, subtasks: true });
   return estagiosDasTarefas(pagina.tasks);
@@ -222,6 +222,31 @@ async function tarefasDaPessoa(credenciais: ClickUpConfig, userId: string): Prom
   if (!membro) return null;
   const pagina = await queryOperationTasks(credenciais, { assigneeIds: [membro.id], includeClosed: true, subtasks: true });
   return pagina.tasks;
+}
+
+/**
+ * Colunas do quadro "atribuídas a mim": o FLUXO das listas em que as tarefas
+ * da pessoa estão (ver `juntarFluxos`), não só os status que elas têm hoje.
+ * Lista mais frequente primeiro, porque é a ordem dela que a pessoa
+ * reconhece. Teto de listas lidas pra não estourar o rate limit do ClickUp
+ * com quem tem tarefa espalhada pela agência inteira.
+ */
+const MAX_LISTAS_DO_FLUXO = 15;
+async function estagiosDasMinhasTarefas(credenciais: ClickUpConfig, tarefas: readonly OperationTask[]): Promise<EstagioDoClickUp[]> {
+  const frequencia = new Map<string, number>();
+  for (const t of tarefas) if (t.listId) frequencia.set(t.listId, (frequencia.get(t.listId) ?? 0) + 1);
+  const listas = [...frequencia.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_LISTAS_DO_FLUXO).map(([id]) => id);
+  const fluxos: EstagioDoClickUp[][] = [];
+  for (let i = 0; i < listas.length; i += 5) {
+    const lote = await Promise.all(listas.slice(i, i + 5).map((id) => listStatusDetailsForList(credenciais, id).catch(() => [] as EstagioDoClickUp[])));
+    fluxos.push(...lote);
+  }
+  return juntarFluxos([...fluxos, estagiosDasTarefas(tarefas)]);
+}
+
+/** `fechados` vêm desmarcados na tela: tarefa encerrada não é trabalho em andamento. */
+function paraATela(estagios: EstagioDoClickUp[]) {
+  return { status: estagios.map((e) => e.status), fechados: estagios.filter(ehFechado).map((e) => e.status) };
 }
 
 const SEM_VINCULO_CLICKUP = 'Não achei você entre os membros do ClickUp da empresa. Confira se o seu e-mail do ClickUp está vinculado no seu perfil.';
@@ -301,8 +326,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     }
 
     try {
-      const status = await estagiosDaLista(resolucao.credentials, cliente.clickupListId);
-      return { status };
+      return paraATela(await estagiosDaLista(resolucao.credentials, cliente.clickupListId));
     } catch (erro) {
       reply.code(502);
       return { error: 'O ClickUp recusou devolver os status desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -329,7 +353,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
         reply.code(409);
         return { error: SEM_VINCULO_CLICKUP };
       }
-      return { status: estagiosDasTarefas(tarefas), tarefas: tarefas.length };
+      return { ...paraATela(await estagiosDasMinhasTarefas(resolucao.credentials, tarefas)), tarefas: tarefas.length };
     } catch (erro) {
       reply.code(502);
       return { error: 'O ClickUp recusou listar as suas tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -389,7 +413,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
           reply.code(409);
           return { error: SEM_VINCULO_CLICKUP };
         }
-        statusReais = estagiosDasTarefas(tarefas);
+        statusReais = (await estagiosDasMinhasTarefas(resolucao.credentials, tarefas)).map((e) => e.status);
       } catch (erro) {
         reply.code(502);
         return { error: 'O ClickUp recusou listar as suas tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -419,7 +443,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       }
       let statusReais: string[];
       try {
-        statusReais = await estagiosDaLista(resolucao.credentials, cliente.clickupListId);
+        statusReais = (await estagiosDaLista(resolucao.credentials, cliente.clickupListId)).map((e) => e.status);
       } catch (erro) {
         reply.code(502);
         return { error: 'O ClickUp recusou devolver os status desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -738,7 +762,9 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       if (jaTemCartao.has(task.id)) continue;
       const estagio = estagioPeloStatus(quadro.stages, task.status);
       if (!estagio) {
-        semColuna++;
+        // Encerrada sem coluna é escolha da pessoa (os encerrados vêm
+        // desmarcados), não tarefa perdida — não entra no aviso de "ficou de fora".
+        if (task.statusType !== 'closed') semColuna++;
         continue;
       }
       paraCriar.push({ boardId: quadro.id, stageId: estagio.id, name: task.name, clickupTaskId: task.id });

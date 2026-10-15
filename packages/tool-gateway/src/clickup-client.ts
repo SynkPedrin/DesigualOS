@@ -401,14 +401,21 @@ export async function updateTask(config: ClickUpConfig, taskId: string, params: 
  * existente pra descobrir a lista.
  */
 export async function listStatusesForList(config: ClickUpConfig, listId: string): Promise<string[]> {
+  return (await listStatusDetailsForList(config, listId)).map((entry) => entry.status);
+}
+
+/** Mesmo que `listStatusesForList`, com o tipo (`open`, `custom`, `done`, `closed`) de cada status. */
+export async function listStatusDetailsForList(config: ClickUpConfig, listId: string): Promise<Array<{ status: string; type: string | null }>> {
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/list/${listId}`, {
     headers: { Authorization: config.apiKey },
   });
   if (!response.ok) {
     throw new Error(`ClickUp list fetch failed (${response.status})`);
   }
-  const body = (await response.json()) as { statuses?: { status: string }[] };
-  return (body.statuses ?? []).map((entry) => entry.status);
+  const body = (await response.json()) as { statuses?: { status: string; type?: string; orderindex?: number }[] };
+  return [...(body.statuses ?? [])]
+    .sort((a, b) => (a.orderindex ?? 0) - (b.orderindex ?? 0))
+    .map((entry) => ({ status: entry.status, type: entry.type ?? null }));
 }
 
 /** Status válidos da lista da task (workflow custom por lista no ClickUp). */

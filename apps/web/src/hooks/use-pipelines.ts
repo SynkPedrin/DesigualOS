@@ -50,7 +50,7 @@ export function useStatusClickUpDoCliente(clientId: string | null) {
   return useQuery({
     queryKey: ['pipelines', 'status-clickup', clientId],
     queryFn: () =>
-      apiFetch<{ status: string[] }>(
+      apiFetch<{ status: string[]; fechados?: string[] }>(
         clientId === MINHAS_TAREFAS ? '/pipelines/minhas/status-clickup' : `/pipelines/clientes/${clientId}/status-clickup`,
       ),
     enabled: clientId !== null,

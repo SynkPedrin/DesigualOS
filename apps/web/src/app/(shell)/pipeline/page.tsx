@@ -123,8 +123,11 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
   // Ao chegar a lista real, todos entram marcados por padrão — igual o
   // comportamento de antes com os 4 status inventados. A pessoa desmarca o
   // que não quiser virar coluna, não o contrário.
+  // Os encerrados vêm desmarcados: tarefa fechada não é trabalho em andamento,
+  // e marcada ela enchia o quadro de centenas de cartões velhos.
   useEffect(() => {
-    if (statusReais.length > 0) setStatusSelecionados(new Set(statusReais));
+    const fechados = new Set(statusData?.fechados ?? []);
+    if (statusReais.length > 0) setStatusSelecionados(new Set(statusReais.filter((s) => !fechados.has(s))));
   }, [statusData]);
 
   function alternarStatus(status: string) {
@@ -278,6 +281,7 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
                         <label key={s} className="flex items-center gap-2 text-sm text-branco-cru">
                           <input type="checkbox" checked={statusSelecionados.has(s)} onChange={() => alternarStatus(s)} className="accent-roxo-eletrico" />
                           {s}
+                          {statusData?.fechados?.includes(s) && <span className="text-[11px] text-nevoa">encerrado</span>}
                         </label>
                       ))}
                     </div>

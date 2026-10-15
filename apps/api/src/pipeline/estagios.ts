@@ -45,25 +45,52 @@ export function estagioPeloStatus(stages: readonly PipelineStage[], status: stri
   return stages.find((s) => s.clickupStatus?.trim().toLowerCase() === alvo) ?? null;
 }
 
+export interface EstagioDoClickUp {
+  status: string;
+  /** Tipo do ClickUp: `open`, `custom`, `done` ou `closed`. */
+  type: string | null;
+}
+
+const PESO_DO_TIPO: Record<string, number> = { open: 0, custom: 1, done: 2, closed: 3 };
+
+/** Status que o quadro deixa desmarcado por padrão: o que já foi encerrado não é trabalho em andamento. */
+export function ehFechado(estagio: EstagioDoClickUp): boolean {
+  return estagio.type === 'closed';
+}
+
+/**
+ * JUNTA OS FLUXOS DE VÁRIAS LISTAS num conjunto só de colunas (15/10/2026).
+ *
+ * O quadro "atribuídas a mim" junta tarefas de listas diferentes. Tirar as
+ * colunas só dos status que as tarefas TÊM hoje dava um quadro de duas
+ * colunas (a Jamile tinha tudo em "aberto" ou "pronto") e escondia o fluxo
+ * real — "aguardando aprovação", "alteração", "reprovado" — para onde ela
+ * precisa mover os cartões. Então as colunas são o fluxo das listas, e os
+ * status das tarefas entram só como complemento.
+ *
+ * Ordem: aberto, os do meio, feito, fechado; dentro de cada grupo, a ordem da
+ * primeira lista em que o status aparece (quem chama manda a lista mais
+ * frequente primeiro). Sem repetir, sem diferenciar maiúscula.
+ */
+export function juntarFluxos(fluxos: ReadonlyArray<ReadonlyArray<EstagioDoClickUp>>): EstagioDoClickUp[] {
+  const vistos = new Map<string, EstagioDoClickUp & { peso: number; ordem: number }>();
+  for (const fluxo of fluxos) {
+    for (const estagio of fluxo) {
+      const status = estagio.status.trim();
+      if (!status) continue;
+      const chave = status.toLowerCase();
+      if (vistos.has(chave)) continue;
+      vistos.set(chave, { status, type: estagio.type, peso: PESO_DO_TIPO[estagio.type ?? ''] ?? 1, ordem: vistos.size });
+    }
+  }
+  return [...vistos.values()].sort((a, b) => a.peso - b.peso || a.ordem - b.ordem).map(({ status, type }) => ({ status, type }));
+}
+
 /**
  * ESTÁGIOS TIRADOS DAS PRÓPRIAS TAREFAS (14/10/2026, pedido da operação: "se
- * não tiver o status, puxe o estágio e configure a pipeline sozinha").
- *
- * Quando a lista não devolve status (ClickUp herda o workflow da pasta ou do
- * espaço e às vezes responde vazio) ou quando o quadro é "atribuídas a mim"
- * (tarefas de várias listas, sem uma lista dona), os status reais são os que
- * as tarefas carregam. Ordem: aberto primeiro, os do meio na ordem em que
- * apareceram, fechado por último — a mesma leitura da esquerda pra direita
- * que um quadro do ClickUp tem.
+ * não tiver o status, puxe o estágio e configure a pipeline sozinha"). Usado
+ * quando a lista não devolve o próprio fluxo.
  */
-export function estagiosDasTarefas(tasks: ReadonlyArray<{ status: string | null; statusType?: string | null }>): string[] {
-  const peso = (tipo: string | null | undefined) => (tipo === 'open' ? 0 : tipo === 'closed' || tipo === 'done' ? 2 : 1);
-  const vistos = new Map<string, { status: string; peso: number; ordem: number }>();
-  for (const task of tasks) {
-    const status = task.status?.trim();
-    if (!status) continue;
-    const chave = status.toLowerCase();
-    if (!vistos.has(chave)) vistos.set(chave, { status, peso: peso(task.statusType), ordem: vistos.size });
-  }
-  return [...vistos.values()].sort((a, b) => a.peso - b.peso || a.ordem - b.ordem).map((v) => v.status);
+export function estagiosDasTarefas(tasks: ReadonlyArray<{ status: string | null; statusType?: string | null }>): EstagioDoClickUp[] {
+  return juntarFluxos([tasks.filter((t) => t.status).map((t) => ({ status: t.status!, type: t.statusType ?? null }))]);
 }
