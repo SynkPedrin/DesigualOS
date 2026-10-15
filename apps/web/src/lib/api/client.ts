@@ -80,7 +80,15 @@ export async function apiFetch<T>(path: string, init?: RequestInit, options?: Ap
   const headers = new Headers(init?.headers);
   // FormData bodies (file uploads) need the browser to set Content-Type itself
   // (multipart boundary included); setting it manually breaks the upload.
-  if (!(init?.body instanceof FormData)) {
+  //
+  // E SEM CORPO, SEM Content-Type (15/10/2026). Toda chamada levava
+  // `application/json`, inclusive POST sem corpo — e o Fastify recusa isso com
+  // 400 ("Body cannot be empty when content-type is set to 'application/json'")
+  // antes de qualquer rota rodar. Medido em produção: Sincronizar clientes,
+  // Sincronizar tarefas, Rodar automação agora, Sincronizar Outlook, aprovar
+  // ação de agente, reenviar convite e outros ~13 botões falhavam assim, em
+  // 1 ms, para todo mundo.
+  if (init?.body != null && !(init.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
   if (token) {
