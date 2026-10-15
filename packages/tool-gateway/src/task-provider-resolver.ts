@@ -198,3 +198,30 @@ export async function resolveClickUpCredentialsForOrganizations(
   );
   return new Map(resolvidas.map((r) => [r.organizationId, r]));
 }
+
+/**
+ * A credencial do ClickUp de UMA empresa, com a reserva da casa (14/10/2026).
+ *
+ * O conector de ClickUp da "Desigual OS" (a provedora) está gravado sem
+ * apiKey/teamId. Quem chamava resolveClickUpCredentialsForOrganizations e
+ * parava no erro deixava a agência inteira sem tarefas e sem pipeline ("Não
+ * consegui buscar os status deste cliente no ClickUp"), enquanto a chave da
+ * casa (CLICKUP_API_KEY/TEAM_ID) — que é da própria agência — funcionava.
+ *
+ * Regra, a mesma de /clickup/tasks: sem conector -> chave da casa; conector
+ * quebrado -> chave da casa SÓ para a provedora (empresa-cliente com conector
+ * próprio quebrado nunca lê o ClickUp da agência).
+ */
+export async function credenciaisClickUpDaEmpresa(
+  organizationId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ credentials: ClickUpCredentials | null; error: string | null }> {
+  const r = (await resolveClickUpCredentialsForOrganizations([organizationId])).get(organizationId);
+  if (r?.credentials) return { credentials: r.credentials, error: null };
+  const provedora = env.PROVIDER_ORGANIZATION_ID?.trim() || null;
+  const podeUsarCasa = !r?.error || organizationId === provedora;
+  const apiKey = env.CLICKUP_API_KEY;
+  const teamId = env.CLICKUP_TEAM_ID;
+  if (podeUsarCasa && apiKey && teamId) return { credentials: { apiKey, teamId }, error: null };
+  return { credentials: null, error: r?.error ?? 'Empresa sem ClickUp conectado.' };
+}

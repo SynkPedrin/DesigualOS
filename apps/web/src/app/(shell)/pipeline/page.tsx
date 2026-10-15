@@ -17,6 +17,7 @@ import {
   useMoverCartao,
   useSincronizarClientes,
   useSincronizarTarefas,
+  MINHAS_TAREFAS,
   useStatusClickUpDoCliente,
   enviarAnexo,
 } from '@/hooks/use-pipelines';
@@ -115,7 +116,8 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
 
   /** Clientes com ClickUp de verdade conectado — sem lista, não tem status pra buscar. */
   const clientesComClickUp = (clientesData ?? []).filter((c) => c.clickupListId);
-  const { data: statusData, isPending: carregandoStatus, isError: erroStatus } = useStatusClickUpDoCliente(tipo === 'tarefas' ? clienteEscolhido : null);
+  const { data: statusData, isPending: carregandoStatus, isError: erroStatus, error: motivoDoErro } = useStatusClickUpDoCliente(tipo === 'tarefas' ? clienteEscolhido : null);
+  const minhas = clienteEscolhido === MINHAS_TAREFAS;
   const statusReais = statusData?.status ?? [];
 
   // Ao chegar a lista real, todos entram marcados por padrão — igual o
@@ -155,7 +157,8 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
         { id: 'concluido', label: 'Concluído', color: 'sinal' },
       ];
     }
-    onCreate({ nome: nome.trim(), tipo, escopo, stages, ...(tipo === 'tarefas' ? { client_id: clienteEscolhido } : {}) });
+    // "Atribuídas a mim" não tem cliente e é sempre pessoal (a API recusa o contrário).
+    onCreate({ nome: nome.trim(), tipo, escopo: minhas ? 'pessoal' : escopo, stages, ...(tipo === 'tarefas' && !minhas ? { client_id: clienteEscolhido } : {}) });
     onClose();
   }
 
@@ -238,7 +241,7 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
 
           {tipo === 'tarefas' && (
             <div>
-              <label className="mb-1 block text-xs text-nevoa">De qual cliente — os status são da lista dele no ClickUp</label>
+              <label className="mb-1 block text-xs text-nevoa">Quais tarefas</label>
               <select
                 value={clienteEscolhido ?? ''}
                 onChange={(e) => {
@@ -249,24 +252,26 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
                 }}
                 className="w-full rounded-md border border-grafite-elevado bg-carbono px-2.5 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
               >
-                <option value="">Selecione um cliente</option>
+                <option value="">Selecione</option>
+                <option value={MINHAS_TAREFAS}>Atribuídas a mim (todos os clientes)</option>
                 {clientesComClickUp.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
+              {minhas && <p className="mt-1 text-[11px] text-nevoa">Quadro pessoal: só você vê, com as tarefas em que você é responsável no ClickUp.</p>}
               {clientesComClickUp.length === 0 && (
                 <p className="mt-1 text-[11px] text-aviso">Nenhum cliente com lista do ClickUp vinculada ainda.</p>
               )}
 
               {clienteEscolhido && (
                 <div className="mt-3">
-                  <label className="mb-1 block text-xs text-nevoa">Estágios, só os status que existem nesta lista</label>
+                  <label className="mb-1 block text-xs text-nevoa">Estágios, puxados do ClickUp</label>
                   {carregandoStatus ? (
                     <p className="text-sm text-nevoa">Buscando os status reais no ClickUp...</p>
                   ) : erroStatus ? (
-                    <p className="text-sm text-erro">Não consegui buscar os status deste cliente no ClickUp.</p>
+                    <p className="text-sm text-erro">{motivoDoErro instanceof Error && motivoDoErro.message ? motivoDoErro.message : 'Não consegui buscar os status no ClickUp.'}</p>
                   ) : statusReais.length === 0 ? (
-                    <p className="text-sm text-nevoa">Esta lista não tem status configurado.</p>
+                    <p className="text-sm text-nevoa">{minhas ? 'Nenhuma tarefa atribuída a você no ClickUp ainda.' : 'Esta lista não tem status nem tarefas com status ainda.'}</p>
                   ) : (
                     <div className="space-y-1.5 rounded-md border border-grafite-elevado bg-carbono p-2.5">
                       {statusReais.map((s) => (
@@ -685,6 +690,23 @@ function PipelineBoardUI() {
   const moverCartaoMut = useMoverCartao();
   const sincronizarClientes = useSincronizarClientes();
   const sincronizarTarefas = useSincronizarTarefas();
+
+  /**
+   * Quadro novo já nasce preenchido (14/10/2026): de clientes, com a carteira;
+   * de tarefas, com as tarefas do ClickUp. Antes nascia vazio e a pessoa
+   * achava que "não sincroniza" até descobrir o botão.
+   */
+  function criarEPreencher(entrada: NovaPipelineEntrada) {
+    criarPipeline.mutate(entrada, {
+      onSuccess: (novo) => {
+        setBoardId(novo.id);
+        const aoFalhar = (erro: unknown) => toast(erro instanceof Error ? erro.message : 'Quadro criado, mas não consegui preencher.', 'error');
+        if (novo.tipo === 'cliente') sincronizarClientes.mutate(novo.id, { onError: aoFalhar });
+        if (novo.tipo === 'tarefas') sincronizarTarefas.mutate(novo.id, { onError: aoFalhar });
+      },
+      onError: (erro) => toast(erro instanceof Error ? erro.message : 'Não consegui criar o quadro.', 'error'),
+    });
+  }
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
   const [busca, setBusca] = useState('');
   const [responsavelFiltro, setResponsavelFiltro] = useState('');
@@ -828,9 +850,7 @@ function PipelineBoardUI() {
         </div>
         {criandoPipeline && (
           <NovaPipelineModal
-            onCreate={(entrada) =>
-              criarPipeline.mutate(entrada, { onSuccess: (novo) => setBoardId(novo.id) })
-            }
+            onCreate={criarEPreencher}
             onClose={() => setCriandoPipeline(false)}
           />
         )}
@@ -1198,7 +1218,7 @@ function PipelineBoardUI() {
       )}
       {criandoPipeline && (
         <NovaPipelineModal
-          onCreate={(entrada) => criarPipeline.mutate(entrada, { onSuccess: (novo) => setBoardId(novo.id) })}
+          onCreate={criarEPreencher}
           onClose={() => setCriandoPipeline(false)}
         />
       )}

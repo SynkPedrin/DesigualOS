@@ -43,10 +43,16 @@ export function useCriarPipeline() {
  * (confirmado pela operação). Usado na tela de criar quadro de tarefas, pra
  * não oferecer status inventado como coluna.
  */
+/** Valor do seletor de cliente que significa "as tarefas atribuídas a mim". */
+export const MINHAS_TAREFAS = '__minhas__';
+
 export function useStatusClickUpDoCliente(clientId: string | null) {
   return useQuery({
     queryKey: ['pipelines', 'status-clickup', clientId],
-    queryFn: () => apiFetch<{ status: string[] }>(`/pipelines/clientes/${clientId}/status-clickup`),
+    queryFn: () =>
+      apiFetch<{ status: string[] }>(
+        clientId === MINHAS_TAREFAS ? '/pipelines/minhas/status-clickup' : `/pipelines/clientes/${clientId}/status-clickup`,
+      ),
     enabled: clientId !== null,
   });
 }

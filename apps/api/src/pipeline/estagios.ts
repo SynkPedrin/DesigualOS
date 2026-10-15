@@ -44,3 +44,26 @@ export function estagioPeloStatus(stages: readonly PipelineStage[], status: stri
   const alvo = status.trim().toLowerCase();
   return stages.find((s) => s.clickupStatus?.trim().toLowerCase() === alvo) ?? null;
 }
+
+/**
+ * ESTÁGIOS TIRADOS DAS PRÓPRIAS TAREFAS (14/10/2026, pedido da operação: "se
+ * não tiver o status, puxe o estágio e configure a pipeline sozinha").
+ *
+ * Quando a lista não devolve status (ClickUp herda o workflow da pasta ou do
+ * espaço e às vezes responde vazio) ou quando o quadro é "atribuídas a mim"
+ * (tarefas de várias listas, sem uma lista dona), os status reais são os que
+ * as tarefas carregam. Ordem: aberto primeiro, os do meio na ordem em que
+ * apareceram, fechado por último — a mesma leitura da esquerda pra direita
+ * que um quadro do ClickUp tem.
+ */
+export function estagiosDasTarefas(tasks: ReadonlyArray<{ status: string | null; statusType?: string | null }>): string[] {
+  const peso = (tipo: string | null | undefined) => (tipo === 'open' ? 0 : tipo === 'closed' || tipo === 'done' ? 2 : 1);
+  const vistos = new Map<string, { status: string; peso: number; ordem: number }>();
+  for (const task of tasks) {
+    const status = task.status?.trim();
+    if (!status) continue;
+    const chave = status.toLowerCase();
+    if (!vistos.has(chave)) vistos.set(chave, { status, peso: peso(task.statusType), ordem: vistos.size });
+  }
+  return [...vistos.values()].sort((a, b) => a.peso - b.peso || a.ordem - b.ordem).map((v) => v.status);
+}

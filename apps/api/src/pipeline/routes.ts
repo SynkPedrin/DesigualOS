@@ -3,12 +3,13 @@ import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { PIPELINE_STAGE_COLORS, PIPELINE_TIPOS } from '@desigual-os/types';
-import { listStatusesForList, queryOperationTasks, resolveClickUpCredentialsForOrganizations, updateTask } from '@desigual-os/tool-gateway';
+import { credenciaisClickUpDaEmpresa, findMemberByEmail, listStatusesForList, queryOperationTasks, updateTask, type ClickUpConfig, type OperationTask } from '@desigual-os/tool-gateway';
 import { separarCarteira } from '@desigual-os/context-engine';
 import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
-import { estagioPeloStatus, statusInvalidosParaALista } from './estagios';
+import { estagioPeloStatus, estagiosDasTarefas, statusInvalidosParaALista } from './estagios';
+import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 
 /**
  * QUEM PODE ESCREVER NUM QUADRO — a escada inteira, sem banco e sem Fastify.
@@ -194,6 +195,37 @@ function wireQuadro(
   };
 }
 
+/**
+ * STATUS REAIS DE UMA LISTA, com a saída de emergência que a operação pediu
+ * (14/10/2026): se o ClickUp não devolver o workflow da lista (vazio, ou erro
+ * na leitura da lista), os status vêm das tarefas que estão nela. Só falha
+ * quando nem a lista nem as tarefas respondem.
+ */
+async function estagiosDaLista(credenciais: ClickUpConfig, listId: string): Promise<string[]> {
+  const daLista = await listStatusesForList(credenciais, listId).catch(() => [] as string[]);
+  if (daLista.length > 0) return daLista;
+  const pagina = await queryOperationTasks(credenciais, { listIds: [listId], includeClosed: true, subtasks: true });
+  return estagiosDasTarefas(pagina.tasks);
+}
+
+/**
+ * TAREFAS ATRIBUÍDAS A ESTA PESSOA no ClickUp da empresa. O id do membro é
+ * por workspace, então é procurado pelo e-mail do ClickUp da pessoa (que
+ * `garantirEmailDoClickUp` vincula sozinho quando dá pra saber quem é).
+ * `null` quando a pessoa não é membro do workspace — quem chama diz isso,
+ * nunca devolve "zero tarefas" como se fosse verdade.
+ */
+async function tarefasDaPessoa(credenciais: ClickUpConfig, userId: string): Promise<OperationTask[] | null> {
+  const email = await garantirEmailDoClickUp(userId).catch(() => null);
+  if (!email) return null;
+  const membro = await findMemberByEmail(credenciais, email);
+  if (!membro) return null;
+  const pagina = await queryOperationTasks(credenciais, { assigneeIds: [membro.id], includeClosed: true, subtasks: true });
+  return pagina.tasks;
+}
+
+const SEM_VINCULO_CLICKUP = 'Não achei você entre os membros do ClickUp da empresa. Confira se o seu e-mail do ClickUp está vinculado no seu perfil.';
+
 export async function registerPipelineRoutes(app: FastifyInstance): Promise<void> {
   /**
    * O QUE EU VEJO: os quadros da minha empresa que são da AGÊNCIA, mais os
@@ -262,19 +294,45 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       return { error: 'Este cliente não tem lista do ClickUp vinculada.' };
     }
 
-    const credenciais = await resolveClickUpCredentialsForOrganizations([organizationId]);
-    const resolucao = credenciais.get(organizationId);
+    const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
     if (!resolucao?.credentials) {
       reply.code(502);
       return { error: 'Não consegui falar com o ClickUp.', detalhe: resolucao?.error ?? 'Empresa sem ClickUp conectado.' };
     }
 
     try {
-      const status = await listStatusesForList(resolucao.credentials, cliente.clickupListId);
+      const status = await estagiosDaLista(resolucao.credentials, cliente.clickupListId);
       return { status };
     } catch (erro) {
       reply.code(502);
       return { error: 'O ClickUp recusou devolver os status desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) };
+    }
+  });
+
+  /**
+   * STATUS DAS TAREFAS ATRIBUÍDAS A MIM — o quadro "minhas tarefas" junta
+   * tarefas de listas diferentes, então as colunas são os status que essas
+   * tarefas carregam de verdade.
+   */
+  app.get('/pipelines/minhas/status-clickup', { preHandler: [requireAuth] }, async (request, reply) => {
+    await requireTenant(request, reply);
+    if (reply.sent) return;
+    const organizationId = request.tenantContext!.organizationId;
+    const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
+    if (!resolucao.credentials) {
+      reply.code(502);
+      return { error: 'Não consegui falar com o ClickUp.', detalhe: resolucao.error ?? 'Empresa sem ClickUp conectado.' };
+    }
+    try {
+      const tarefas = await tarefasDaPessoa(resolucao.credentials, request.authUser!.id);
+      if (!tarefas) {
+        reply.code(409);
+        return { error: SEM_VINCULO_CLICKUP };
+      }
+      return { status: estagiosDasTarefas(tarefas), tarefas: tarefas.length };
+    } catch (erro) {
+      reply.code(502);
+      return { error: 'O ClickUp recusou listar as suas tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
     }
   });
 
@@ -308,11 +366,40 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
      * que chegar pelo webhook. Confere aqui, não só no zod: a mensagem certa
      * ("esse cliente não tem ClickUp conectado") é mais útil que um 400 genérico.
      */
-    if (body.tipo === 'tarefas') {
-      if (!body.client_id) {
+    if (body.tipo === 'tarefas' && !body.client_id) {
+      /**
+       * "ATRIBUÍDAS A MIM" (14/10/2026): quadro de tarefas sem cliente é o
+       * das tarefas da própria pessoa, e por isso só existe pessoal — um
+       * quadro da agência com as tarefas de quem o criou não faz sentido pra
+       * mais ninguém.
+       */
+      if (body.escopo !== 'pessoal') {
         reply.code(400);
-        return { error: 'Quadro de tarefas precisa de um cliente — os status são da lista dele no ClickUp.' };
+        return { error: 'Quadro da agência precisa de um cliente. "Atribuídas a mim" é sempre um quadro pessoal.' };
       }
+      const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
+      if (!resolucao.credentials) {
+        reply.code(502);
+        return { error: 'Não consegui falar com o ClickUp para conferir os seus status.', detalhe: resolucao.error ?? 'Empresa sem ClickUp conectado.' };
+      }
+      let statusReais: string[];
+      try {
+        const tarefas = await tarefasDaPessoa(resolucao.credentials, user.id);
+        if (!tarefas) {
+          reply.code(409);
+          return { error: SEM_VINCULO_CLICKUP };
+        }
+        statusReais = estagiosDasTarefas(tarefas);
+      } catch (erro) {
+        reply.code(502);
+        return { error: 'O ClickUp recusou listar as suas tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
+      }
+      const invalidos = statusInvalidosParaALista(body.stages, statusReais);
+      if (invalidos.length > 0) {
+        reply.code(400);
+        return { error: `Os status "${invalidos.join('", "')}" não aparecem em nenhuma tarefa sua.`, detalhe: `Status reais: ${statusReais.join(', ')}` };
+      }
+    } else if (body.tipo === 'tarefas' && body.client_id) {
       const [cliente] = await db
         .select({ id: schema.clients.id, clickupListId: schema.clients.clickupListId })
         .from(schema.clients)
@@ -325,15 +412,14 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
         reply.code(400);
         return { error: 'Este cliente não tem lista do ClickUp vinculada — não dá pra saber os status reais dele.' };
       }
-      const credenciais = await resolveClickUpCredentialsForOrganizations([organizationId]);
-      const resolucao = credenciais.get(organizationId);
+      const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
       if (!resolucao?.credentials) {
         reply.code(502);
         return { error: 'Não consegui falar com o ClickUp para conferir os status desta lista.', detalhe: resolucao?.error ?? 'Empresa sem ClickUp conectado.' };
       }
       let statusReais: string[];
       try {
-        statusReais = await listStatusesForList(resolucao.credentials, cliente.clickupListId);
+        statusReais = await estagiosDaLista(resolucao.credentials, cliente.clickupListId);
       } catch (erro) {
         reply.code(502);
         return { error: 'O ClickUp recusou devolver os status desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -523,7 +609,9 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       .where(
         and(
           eq(schema.clients.organizationId, organizationId),
-          eq(schema.clients.status, 'active'),
+          // 'pontual' é cliente de verdade (21 em produção, 14/10/2026) —
+          // ficava de fora e o quadro parecia não sincronizar.
+          inArray(schema.clients.status, ['active', 'pontual']),
           // QA nunca entra num quadro operacional — mesma regra do resto do
           // produto (client-context.ts, listasDeClickUpDaOrganizacao...).
           eq(schema.clients.environment, 'production'),
@@ -592,35 +680,51 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       reply.code(400);
       return { error: 'Sincronizar tarefas só existe em quadro do tipo "tarefas".' };
     }
-    if (!quadro.clientId) {
+    /**
+     * Sem cliente e com dono: é o quadro "atribuídas a mim" — as tarefas são
+     * as do DONO do quadro, nunca de quem clicou (só o dono enxerga quadro
+     * pessoal, mas a regra fica explícita). Sem cliente e sem dono é um
+     * quadro da agência antigo, de antes de o cliente ser obrigatório.
+     */
+    if (!quadro.clientId && !quadro.ownerId) {
       reply.code(400);
-      return { error: 'Este quadro de tarefas não está vinculado a um cliente.' };
+      return { error: 'Este quadro da agência não está vinculado a um cliente. Crie um quadro novo escolhendo o cliente.' };
     }
 
     const organizationId = request.tenantContext!.organizationId;
-    const [cliente] = await db
-      .select({ id: schema.clients.id, clickupListId: schema.clients.clickupListId })
-      .from(schema.clients)
-      .where(and(eq(schema.clients.id, quadro.clientId), isNull(schema.clients.deletedAt)));
-    if (!cliente?.clickupListId) {
-      reply.code(400);
-      return { error: 'O cliente deste quadro não tem lista do ClickUp vinculada.' };
+    let listId: string | null = null;
+    if (quadro.clientId) {
+      const [cliente] = await db
+        .select({ id: schema.clients.id, clickupListId: schema.clients.clickupListId })
+        .from(schema.clients)
+        .where(and(eq(schema.clients.id, quadro.clientId), isNull(schema.clients.deletedAt)));
+      if (!cliente?.clickupListId) {
+        reply.code(400);
+        return { error: 'O cliente deste quadro não tem lista do ClickUp vinculada.' };
+      }
+      listId = cliente.clickupListId;
     }
 
-    const credenciais = await resolveClickUpCredentialsForOrganizations([organizationId]);
-    const resolucao = credenciais.get(organizationId);
+    const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
     if (!resolucao?.credentials) {
       reply.code(502);
       return { error: 'Não consegui falar com o ClickUp para buscar as tarefas.', detalhe: resolucao?.error ?? 'Empresa sem ClickUp conectado.' };
     }
 
-    const pagina = await queryOperationTasks(resolucao.credentials, { listIds: [cliente.clickupListId], includeClosed: true, subtasks: true }).catch(
-      (erro: unknown) => {
-        reply.code(502).send({ error: 'O ClickUp recusou listar as tarefas desta lista.', detalhe: erro instanceof Error ? erro.message : String(erro) });
-        return null;
-      },
-    );
-    if (!pagina) return;
+    let tarefas: OperationTask[] | null;
+    try {
+      tarefas = listId
+        ? (await queryOperationTasks(resolucao.credentials, { listIds: [listId], includeClosed: true, subtasks: true })).tasks
+        : await tarefasDaPessoa(resolucao.credentials, quadro.ownerId!);
+    } catch (erro) {
+      reply.code(502);
+      return { error: 'O ClickUp recusou listar as tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
+    }
+    if (!tarefas) {
+      reply.code(409);
+      return { error: SEM_VINCULO_CLICKUP };
+    }
+    const pagina = { tasks: tarefas };
 
     const existentes = await db
       .select({ clickupTaskId: schema.pipelineCards.clickupTaskId })
@@ -692,8 +796,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
           .where(and(eq(schema.pipelineCards.id, request.params.cardId), eq(schema.pipelineCards.boardId, quadro.id)));
 
         if (cartaoAtual?.clickupTaskId) {
-          const credenciais = await resolveClickUpCredentialsForOrganizations([quadro.organizationId]);
-          const resolucao = credenciais.get(quadro.organizationId);
+          const resolucao = await credenciaisClickUpDaEmpresa(quadro.organizationId);
           if (!resolucao?.credentials) {
             reply.code(502);
             return {
