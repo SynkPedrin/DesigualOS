@@ -1214,7 +1214,15 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
             };
           }
           try {
-            await updateTask(resolucao.credentials, cartaoAtual.clickupTaskId, { status: estagioNovo.clickupStatus });
+            /**
+             * VÁLVULA DE HUMANO AUTENTICADO (ver write-scope.ts): arrastar o
+             * cartão é uma pessoa logada, com permissão de escrita no quadro —
+             * a cerca de lista de QA (CLICKUP_WRITE_SCOPE_LIST_ID, da época do
+             * gate do Bento) não pode barrar o quadro, senão "mover muda o
+             * status" vira mentira em produção. Agentes e automações continuam
+             * cercados: só quem passa por requireAuth + quadroParaEscrita chega aqui.
+             */
+            await updateTask({ ...resolucao.credentials, writeScope: { authorizedForProduction: true } }, cartaoAtual.clickupTaskId, { status: estagioNovo.clickupStatus });
           } catch (erro) {
             reply.code(502);
             return {
@@ -1261,7 +1269,8 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
             return { error: `A lista desta tarefa no ClickUp não tem nenhum status de "${rotuloDaCategoria(estagioNovo.categoria)}". O cartão continua onde estava.` };
           }
           try {
-            await updateTask(resolucao.credentials, cartaoAtual.clickupTaskId, { status });
+            // Mesma válvula do quadro com cliente, comentada ali em cima.
+            await updateTask({ ...resolucao.credentials, writeScope: { authorizedForProduction: true } }, cartaoAtual.clickupTaskId, { status });
           } catch (erro) {
             reply.code(502);
             return { error: `O ClickUp recusou mudar o status para "${status}".`, detalhe: `${erro instanceof Error ? erro.message : String(erro)} O cartão continua onde estava.` };
