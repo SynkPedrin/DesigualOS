@@ -505,6 +505,13 @@
       "when": 1791980683731,
       "tag": "0071_shocking_owl",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1792075103432,
+      "tag": "0072_massive_sentinel",
+      "breakpoints": true
     }
   ]
 }

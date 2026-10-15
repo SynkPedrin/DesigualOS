@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, CircleUserRound, FileText, Layers, Paperclip, Plus, Settings2, SquareKanban, Trash2, Upload, Wallet, X, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, CalendarClock, CircleUserRound, FileText, Flag, Layers, Paperclip, Plus, Settings2, SquareKanban, Trash2, Upload, Wallet, X, Search } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
@@ -319,6 +319,25 @@ const CATEGORIAS_GERAIS: ReadonlyArray<{ categoria: NonNullable<PipelineStage['c
 
 /** Cartões desenhados por coluna antes do "Mostrar mais": o quadro geral passa de mil tarefas. */
 const CARTOES_POR_COLUNA = 50;
+
+/** Prazo curto em pt-BR ("17 de out."). Vermelho no atraso, âmbar hoje/amanhã. */
+function prazoDoCartao(prazo: string | null | undefined, concluido: boolean): { texto: string; classe: string } | null {
+  if (!prazo) return null;
+  const data = new Date(prazo);
+  if (Number.isNaN(data.getTime())) return null;
+  const texto = data.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  if (concluido) return { texto, classe: 'text-nevoa' };
+  const agora = new Date();
+  const fimDeAmanha = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 2);
+  if (data.getTime() < agora.getTime()) return { texto: `${texto} (atrasado)`, classe: 'text-perigo' };
+  if (data.getTime() < fimDeAmanha.getTime()) return { texto, classe: 'text-aviso' };
+  return { texto, classe: 'text-nevoa' };
+}
+
+const PRIORIDADE_BANDEIRA: Record<string, { rotulo: string; classe: string }> = {
+  urgent: { rotulo: 'Urgente', classe: 'text-perigo' },
+  high: { rotulo: 'Alta', classe: 'text-aviso' },
+};
 
 /**
  * CONFIGURAR QUALQUER QUADRO (15/10/2026, pedido do Pedro: "eu posso
@@ -678,6 +697,20 @@ function CartaoDetalheModal({
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {tab === 'Visão geral' && !editando && (
             <div className="space-y-3 text-sm">
+              {(card.prazo || card.prioridade) && (
+                <div className="flex flex-wrap items-center gap-4 text-xs text-nevoa">
+                  {card.prazo && (
+                    <span className="flex items-center gap-1">
+                      <CalendarClock size={13} /> Vence em {new Date(card.prazo).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+                    </span>
+                  )}
+                  {card.prioridade && card.prioridade !== 'normal' && (
+                    <span className={cn('flex items-center gap-1', PRIORIDADE_BANDEIRA[card.prioridade]?.classe ?? 'text-nevoa')}>
+                      <Flag size={13} /> Prioridade {PRIORIDADE_BANDEIRA[card.prioridade]?.rotulo ?? card.prioridade}
+                    </span>
+                  )}
+                </div>
+              )}
               {card.valor && <p className="text-sinal">{card.valor}</p>}
               <p className="whitespace-pre-wrap text-branco-cru">{card.nota || <span className="text-nevoa">Sem nota.</span>}</p>
               {card.clientId && (
@@ -836,6 +869,9 @@ function daApi(boards: PipelineBoardWire[]): { boards: PipelineBoard[]; cards: P
         clientId: c.client_id,
         ...(c.clickup_task_id ? { taskId: c.clickup_task_id } : {}),
         responsavel: c.responsavel ?? 'Sem responsável',
+        responsavelAvatar: c.responsavel_avatar ?? null,
+        prazo: c.prazo ?? null,
+        prioridade: c.prioridade ?? null,
         valor: c.valor,
         nota: c.nota,
         anexos: c.anexos,
@@ -1307,13 +1343,13 @@ function PipelineBoardUI() {
                 setArrastando(null);
                 setColunaSobre(null);
               }}
-              className={cn('flex w-96 shrink-0 flex-col overflow-hidden rounded-lg border bg-carbono/40 transition-colors', colunaSobre === stage.id ? 'border-roxo-eletrico/60 bg-roxo-eletrico/5' : 'border-grafite-elevado')}
+              className={cn('flex w-[86vw] shrink-0 flex-col overflow-hidden rounded-xl border bg-carbono/40 transition-colors sm:w-[24rem] 2xl:w-[26rem]', colunaSobre === stage.id ? 'border-roxo-eletrico/60 bg-roxo-eletrico/5' : 'border-grafite-elevado')}
             >
-              <div className={cn('h-1.5 shrink-0', cor.bar)} />
-              <div className="flex shrink-0 items-center justify-between border-b border-grafite-elevado px-4 py-3.5">
+              <div className={cn('h-2 shrink-0', cor.bar)} />
+              <div className="flex shrink-0 items-center justify-between border-b border-grafite-elevado px-5 py-4">
                 <div className="flex items-center gap-2">
                   <span className={cn('size-2.5 rounded-full', cor.dot)} />
-                  <h2 className="font-heading text-base font-semibold text-branco-cru">{stage.label}</h2>
+                  <h2 className="font-heading text-lg font-semibold text-branco-cru">{stage.label}</h2>
                 </div>
                 <div className="flex items-center gap-2">
                   {/* A soma aparece ao lado da contagem, como no mockup — e some
@@ -1329,12 +1365,16 @@ function PipelineBoardUI() {
                 </div>
               </div>
 
-              <div className="flex-1 space-y-3 overflow-y-auto p-3">
+              <div className="flex-1 space-y-3.5 overflow-y-auto p-4">
                 {cartoesDoEstagio.length === 0 ? (
                   <p className="py-6 text-center text-sm text-nevoa">Nenhum cartão aqui.</p>
                 ) : (
                   desenhados.map((card) => {
                     const anexos = card.anexos.length;
+                    const ehTarefa = board.tipo === 'tarefas';
+                    const nomeCliente = card.clientId ? nomeDoCliente.get(card.clientId) : undefined;
+                    const prazo = prazoDoCartao(card.prazo, stage.categoria === 'concluido');
+                    const bandeira = card.prioridade ? PRIORIDADE_BANDEIRA[card.prioridade] : undefined;
                     return (
                       <div
                         key={card.id}
@@ -1342,26 +1382,49 @@ function PipelineBoardUI() {
                         onDragStart={(e) => { e.dataTransfer.setData('text/plain', card.id); e.dataTransfer.effectAllowed = 'move'; setArrastando(card.id); }}
                         onDragEnd={() => setArrastando(null)}
                         onClick={() => setCartaoAberto(card.id)}
-                        className={cn('cursor-grab rounded-lg border border-grafite-elevado bg-grafite p-4 shadow-sm transition-opacity hover:border-roxo-eletrico/40 active:cursor-grabbing', arrastando === card.id && 'opacity-40')}
+                        className={cn('cursor-grab rounded-xl border border-grafite-elevado bg-grafite p-4 shadow-sm transition-all hover:border-roxo-eletrico/40 hover:shadow-md active:cursor-grabbing', arrastando === card.id && 'opacity-40')}
                       >
-                        <div className="flex items-start gap-3">
-                          {/* Cartão de TAREFA com cliente: o avatar é do cliente, não da tarefa. */}
-                          <EntityAvatar
-                            name={board.tipo === 'tarefas' && card.clientId ? (nomeDoCliente.get(card.clientId) ?? card.name) : card.name}
-                            kind={card.clientId ? 'client' : 'person'}
-                            size="md"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-base font-semibold text-branco-cru">{card.name}</p>
-                            {board.tipo === 'tarefas' && card.clientId && nomeDoCliente.get(card.clientId) && (
-                              <p className="truncate text-xs text-nevoa">{nomeDoCliente.get(card.clientId)}</p>
-                            )}
+                        {/* Nome ORIGINAL da tarefa, completo (quebra em 2 linhas em vez de cortar). */}
+                        <p className="line-clamp-2 text-[15px] font-semibold leading-snug text-branco-cru">{card.name}</p>
+
+                        {/* De quem é o trabalho: cliente com a marca dele. */}
+                        {ehTarefa && nomeCliente && (
+                          <div className="mt-2.5 flex items-center gap-2">
+                            <EntityAvatar name={nomeCliente} kind="client" size="sm" />
+                            <span className="truncate text-xs font-medium text-nevoa">{nomeCliente}</span>
+                          </div>
+                        )}
+                        {!ehTarefa && (
+                          <div className="mt-2.5 flex items-center gap-3">
+                            <EntityAvatar name={card.name} kind={card.clientId ? 'client' : 'person'} size="md" />
                             {card.valor && <p className="font-mono text-sm text-sinal">{card.valor}</p>}
                           </div>
-                        </div>
-                        <p className="mt-2.5 line-clamp-2 text-sm text-nevoa">{card.nota}</p>
+                        )}
+
+                        {card.nota && <p className="mt-2.5 line-clamp-2 text-sm text-nevoa">{card.nota}</p>}
+
+                        {/* Sinais do ClickUp: prioridade e vencimento. */}
+                        {(bandeira || prazo) && (
+                          <div className="mt-3 flex items-center gap-3 text-xs">
+                            {bandeira && (
+                              <span className={cn('flex items-center gap-1 font-medium', bandeira.classe)} title={`Prioridade ${bandeira.rotulo}`}>
+                                <Flag size={12} /> {bandeira.rotulo}
+                              </span>
+                            )}
+                            {prazo && (
+                              <span className={cn('flex items-center gap-1', prazo.classe)} title="Vencimento no ClickUp">
+                                <CalendarClock size={12} /> {prazo.texto}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         <div className="mt-3 flex items-center justify-between gap-2 border-t border-grafite-elevado/60 pt-2.5">
-                          <span className="truncate text-xs text-nevoa">{card.responsavel}</span>
+                          {/* Responsável com a FOTO de verdade (ClickUp); iniciais quando não há. */}
+                          <span className="flex min-w-0 items-center gap-1.5" title={card.responsavel}>
+                            <EntityAvatar name={card.responsavel} photoUrl={card.responsavelAvatar ?? null} kind="person" size="sm" />
+                            <span className="truncate text-xs text-nevoa">{card.responsavel}</span>
+                          </span>
                           <span className="flex shrink-0 items-center gap-2 text-xs text-nevoa">
                             {anexos > 0 && <span className="flex items-center gap-0.5"><Paperclip size={12} /> {anexos}</span>}
                             {formatRelativeTime(card.atualizadoEm)}

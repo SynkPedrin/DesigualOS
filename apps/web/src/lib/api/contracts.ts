@@ -2865,6 +2865,12 @@ export interface PipelineCardWire {
   client_id: string | null;
   clickup_task_id: string | null;
   responsavel: string | null;
+  /** Foto do responsável (ClickUp profilePicture). */
+  responsavel_avatar?: string | null;
+  /** Vencimento da tarefa no ClickUp (ISO). */
+  prazo?: string | null;
+  /** 'urgent' | 'high' | 'normal' | 'low' do ClickUp. */
+  prioridade?: string | null;
   valor: string | null;
   nota: string;
   anexos: { id: string; nome: string; url: string; tipo: string }[];

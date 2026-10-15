@@ -49,7 +49,16 @@ const teamTaskSchema = z.object({
   priority: z.object({ priority: z.string().nullish(), color: z.string().nullish() }).nullish(),
   url: z.string().nullish(),
   assignees: z
-    .array(z.object({ id: z.number().nullish(), username: z.string().nullish(), email: z.string().nullish() }))
+    .array(
+      z.object({
+        id: z.number().nullish(),
+        username: z.string().nullish(),
+        email: z.string().nullish(),
+        // Foto de perfil do responsável — o quadro mostra a pessoa de verdade,
+        // não iniciais coloridas (pedido do Pedro, 15/10/2026).
+        profilePicture: z.string().nullish(),
+      }),
+    )
     .nullish(),
   tags: z.array(z.object({ name: z.string() })).nullish(),
   /**
@@ -102,6 +111,8 @@ export interface OperationTask {
    */
   assigneeIds?: number[];
   assigneeEmails?: string[];
+  /** Foto de perfil de cada responsável, na mesma ordem de `assignees`. */
+  assigneeAvatars?: (string | null)[];
   tags: string[];
   /** Id da tarefa-mãe. `null` = está na raiz da lista. Ver nota no schema. */
   parentId: string | null;
@@ -178,6 +189,7 @@ function normalizeTask(raw: z.infer<typeof teamTaskSchema>): OperationTask {
     assignees: (raw.assignees ?? []).map((a) => a.username || a.email || '').filter(Boolean),
     assigneeIds: (raw.assignees ?? []).map((a) => a.id).filter((id): id is number => typeof id === 'number'),
     assigneeEmails: (raw.assignees ?? []).map((a) => a.email?.trim().toLowerCase() ?? '').filter(Boolean),
+    assigneeAvatars: (raw.assignees ?? []).map((a) => a.profilePicture ?? null),
     tags: (raw.tags ?? []).map((t) => t.name),
     parentId: raw.parent ?? null,
     topLevelParentId: raw.top_level_parent ?? null,

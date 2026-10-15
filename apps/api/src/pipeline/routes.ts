@@ -188,6 +188,9 @@ function wireQuadro(
         client_id: c.clientId,
         clickup_task_id: c.clickupTaskId,
         responsavel: c.responsavel,
+        responsavel_avatar: c.responsavelAvatar,
+        prazo: c.prazo ? c.prazo.toISOString() : null,
+        prioridade: c.prioridade,
         valor: c.valor,
         nota: c.nota,
         anexos: c.anexos,
@@ -217,13 +220,49 @@ async function estagiosDaLista(credenciais: ClickUpConfig, listId: string): Prom
  * `null` quando a pessoa não é membro do workspace — quem chama diz isso,
  * nunca devolve "zero tarefas" como se fosse verdade.
  */
-async function tarefasDaPessoa(credenciais: ClickUpConfig, userId: string): Promise<OperationTask[] | null> {
+async function tarefasDaPessoa(
+  credenciais: ClickUpConfig,
+  userId: string,
+  porLista: Map<string, { id: string }>,
+): Promise<{ tarefas: OperationTask[]; cortada: boolean } | null> {
   const email = await garantirEmailDoClickUp(userId).catch(() => null);
   if (!email) return null;
   const membro = await findMemberByEmail(credenciais, email);
   if (!membro) return null;
   const pagina = await queryOperationTasks(credenciais, { assigneeIds: [membro.id], includeClosed: true, subtasks: true });
-  return pagina.tasks;
+  /**
+   * SÓ LISTAS DE CLIENTES DE PRODUÇÃO (15/10/2026, pedido do Pedro: "tira
+   * tudo de QA, que é coisa de testes internos — quero um sistema de
+   * produção real"). A busca por responsável varre o workspace INTEIRO, e o
+   * quadro pessoal enchia de "QA Gate Bento", "Cliente Teste 7", "[ENXAME]".
+   * Tarefa sem lista ou em lista de cliente de QA/outra empresa não é trabalho
+   * da operação — não entra no quadro e o cartão velho dela sai no sync.
+   */
+  return { tarefas: pagina.tasks.filter((t) => t.listId && porLista.has(t.listId)), cortada: pagina.truncated };
+}
+
+/** O que o cartão espelha da tarefa do ClickUp, além da coluna. */
+function camposDaTarefa(t: OperationTask): { name: string; responsavel: string | null; responsavelAvatar: string | null; prazo: Date | null; prioridade: string | null } {
+  return {
+    name: t.name,
+    responsavel: t.assignees[0] ?? null,
+    responsavelAvatar: t.assigneeAvatars?.[0] ?? null,
+    prazo: t.dueDate ? new Date(t.dueDate) : null,
+    prioridade: t.priority,
+  };
+}
+
+/** Só grava quando algo mudou de verdade — senão toda sincronização reescreveria
+ * `updated_at` de todos os cartões e o "há X min" da tela deixaria de significar algo. */
+function camposMudaram(cartao: { name: string; responsavel: string | null; responsavelAvatar: string | null; prazo: Date | null; prioridade: string | null }, novo: ReturnType<typeof camposDaTarefa>): boolean {
+  const prazoAtual = cartao.prazo?.getTime() ?? null;
+  return (
+    cartao.name !== novo.name ||
+    cartao.responsavel !== novo.responsavel ||
+    cartao.responsavelAvatar !== novo.responsavelAvatar ||
+    cartao.prioridade !== novo.prioridade ||
+    prazoAtual !== (novo.prazo?.getTime() ?? null)
+  );
 }
 
 /**
@@ -315,9 +354,9 @@ async function statusReaisDoQuadro(
       if (!cliente?.clickupListId) return { erro: 'O cliente deste quadro não tem lista do ClickUp vinculada.', codigo: 400 };
       return { status: (await estagiosDaLista(resolucao.credentials, cliente.clickupListId)).map((e) => e.status) };
     }
-    const tarefas = await tarefasDaPessoa(resolucao.credentials, quadro.ownerId!);
-    if (!tarefas) return { erro: SEM_VINCULO_CLICKUP, codigo: 409 };
-    return { status: (await estagiosDasMinhasTarefas(resolucao.credentials, tarefas)).map((e) => e.status) };
+    const resultado = await tarefasDaPessoa(resolucao.credentials, quadro.ownerId!, await listasDosClientes(organizationId));
+    if (!resultado) return { erro: SEM_VINCULO_CLICKUP, codigo: 409 };
+    return { status: (await estagiosDasMinhasTarefas(resolucao.credentials, resultado.tarefas)).map((e) => e.status) };
   } catch (erro) {
     return { erro: `O ClickUp recusou devolver os status: ${erro instanceof Error ? erro.message : String(erro)}`, codigo: 502 };
   }
@@ -420,12 +459,12 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       return { error: 'Não consegui falar com o ClickUp.', detalhe: resolucao.error ?? 'Empresa sem ClickUp conectado.' };
     }
     try {
-      const tarefas = await tarefasDaPessoa(resolucao.credentials, request.authUser!.id);
-      if (!tarefas) {
+      const resultado = await tarefasDaPessoa(resolucao.credentials, request.authUser!.id, await listasDosClientes(organizationId));
+      if (!resultado) {
         reply.code(409);
         return { error: SEM_VINCULO_CLICKUP };
       }
-      return { ...paraATela(await estagiosDasMinhasTarefas(resolucao.credentials, tarefas)), tarefas: tarefas.length };
+      return { ...paraATela(await estagiosDasMinhasTarefas(resolucao.credentials, resultado.tarefas)), tarefas: resultado.tarefas.length };
     } catch (erro) {
       reply.code(502);
       return { error: 'O ClickUp recusou listar as suas tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -480,12 +519,12 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       }
       let statusReais: string[];
       try {
-        const tarefas = await tarefasDaPessoa(resolucao.credentials, user.id);
-        if (!tarefas) {
+        const resultadoTarefas = await tarefasDaPessoa(resolucao.credentials, user.id, await listasDosClientes(organizationId));
+        if (!resultadoTarefas) {
           reply.code(409);
           return { error: SEM_VINCULO_CLICKUP };
         }
-        statusReais = (await estagiosDasMinhasTarefas(resolucao.credentials, tarefas)).map((e) => e.status);
+        statusReais = (await estagiosDasMinhasTarefas(resolucao.credentials, resultadoTarefas.tarefas)).map((e) => e.status);
       } catch (erro) {
         reply.code(502);
         return { error: 'O ClickUp recusou listar as suas tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -800,10 +839,11 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     if (resolucao?.credentials) {
       try {
         const daAgencia = quadro.ownerId ? null : await tarefasDaAgencia(resolucao.credentials, porLista);
-        const tarefas = quadro.ownerId ? await tarefasDaPessoa(resolucao.credentials, quadro.ownerId) : daAgencia!.tarefas;
+        const daPessoa = quadro.ownerId ? await tarefasDaPessoa(resolucao.credentials, quadro.ownerId, porLista) : null;
+        const tarefas: OperationTask[] | null = quadro.ownerId ? (daPessoa?.tarefas ?? null) : daAgencia!.tarefas;
         if (tarefas === null) {
           avisoClickUp = SEM_VINCULO_CLICKUP;
-        } else if (daAgencia?.cortada) {
+        } else if (daAgencia?.cortada || daPessoa?.cortada) {
           // Consulta cortada: cliente cujas tarefas não vieram pareceria "em
           // dia". Melhor não reorganizar do que reorganizar errado.
           avisoClickUp = 'O ClickUp devolveu só parte das tarefas; não reorganizei para não pôr cliente na coluna errada.';
@@ -954,23 +994,30 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       const concluido = estagioDaCategoria(stages, 'concluido')!;
 
       const existentes = await db
-        .select({ id: schema.pipelineCards.id, stageId: schema.pipelineCards.stageId, clickupTaskId: schema.pipelineCards.clickupTaskId })
+        .select()
         .from(schema.pipelineCards)
         .where(and(eq(schema.pipelineCards.boardId, quadro.id), isNull(schema.pipelineCards.deletedAt)));
       const porTarefa = new Map(existentes.filter((c) => c.clickupTaskId).map((c) => [c.clickupTaskId!, c]));
       const abertas = new Set(tarefas.map((t) => t.id));
 
-      const paraCriar: Array<{ boardId: string; stageId: string; name: string; clickupTaskId: string; clientId: string; responsavel: string | null }> = [];
+      const paraCriar: Array<Record<string, unknown> & { boardId: string; stageId: string; clickupTaskId: string; clientId: string; name: string }> = [];
       const mover = new Map<string, string[]>();
       const moverPara = (stageId: string, cardId: string) => mover.set(stageId, [...(mover.get(stageId) ?? []), cardId]);
+      let atualizados = 0;
       for (const t of tarefas) {
         const destino = estagioDaCategoria(stages, categoriaDoStatus(t.status, t.statusType))!;
         const cartao = porTarefa.get(t.id);
         if (cartao) {
-          if (cartao.stageId !== destino.id) moverPara(destino.id, cartao.id);
+          const espelho = camposDaTarefa(t);
+          const mudouColuna = cartao.stageId !== destino.id;
+          if (mudouColuna) moverPara(destino.id, cartao.id);
+          if (!mudouColuna && camposMudaram(cartao, espelho)) {
+            await db.update(schema.pipelineCards).set(espelho).where(eq(schema.pipelineCards.id, cartao.id));
+            atualizados++;
+          }
           continue;
         }
-        paraCriar.push({ boardId: quadro.id, stageId: destino.id, name: t.name, clickupTaskId: t.id, clientId: t.clientId, responsavel: t.assignees[0] ?? null });
+        paraCriar.push({ boardId: quadro.id, stageId: destino.id, clickupTaskId: t.id, clientId: t.clientId, ...camposDaTarefa(t) });
       }
       // Tarefa que saiu das abertas foi encerrada (ou apagada) no ClickUp: o
       // cartão vai para Concluído em vez de ficar parado numa coluna mentindo.
@@ -994,9 +1041,9 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
         action: 'pipeline.board.tasks_synced',
         resourceType: 'pipeline_board',
         resourceId: quadro.id,
-        metadata: { criados: criados.length, movidos, geral: true },
+        metadata: { criados: criados.length, movidos, atualizados, geral: true },
       });
-      return { criados: criados.length, movidos, sem_coluna: 0, cards: wireQuadro({ ...quadro, stages }, criados).cards };
+      return { criados: criados.length, movidos, atualizados, sem_coluna: 0, cards: wireQuadro({ ...quadro, stages }, criados).cards };
     }
 
     const organizationId = request.tenantContext!.organizationId;
@@ -1020,10 +1067,15 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     }
 
     let tarefas: OperationTask[] | null;
+    let cortada = false;
     try {
-      tarefas = listId
-        ? (await queryOperationTasks(resolucao.credentials, { listIds: [listId], includeClosed: true, subtasks: true })).tasks
-        : await tarefasDaPessoa(resolucao.credentials, quadro.ownerId!);
+      if (listId) {
+        tarefas = (await queryOperationTasks(resolucao.credentials, { listIds: [listId], includeClosed: true, subtasks: true })).tasks;
+      } else {
+        const pessoal = await tarefasDaPessoa(resolucao.credentials, quadro.ownerId!, await listasDosClientes(organizationId));
+        tarefas = pessoal?.tarefas ?? null;
+        cortada = pessoal?.cortada ?? false;
+      }
     } catch (erro) {
       reply.code(502);
       return { error: 'O ClickUp recusou listar as tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
@@ -1035,24 +1087,42 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     const pagina = { tasks: tarefas };
 
     const existentes = await db
-      .select({ id: schema.pipelineCards.id, stageId: schema.pipelineCards.stageId, clickupTaskId: schema.pipelineCards.clickupTaskId })
+      .select()
       .from(schema.pipelineCards)
       .where(and(eq(schema.pipelineCards.boardId, quadro.id), isNull(schema.pipelineCards.deletedAt)));
     const cartaoDaTarefa = new Map(existentes.filter((c) => c.clickupTaskId).map((c) => [c.clickupTaskId!, c]));
 
-    const paraCriar: Array<{ boardId: string; stageId: string; name: string; clickupTaskId: string }> = [];
+    const paraCriar: Array<{
+      boardId: string;
+      stageId: string;
+      clickupTaskId: string;
+      name: string;
+      responsavel: string | null;
+      responsavelAvatar: string | null;
+      prazo: Date | null;
+      prioridade: string | null;
+    }> = [];
     let semColuna = 0;
     let movidos = 0;
+    let atualizados = 0;
+    const vistas = new Set<string>();
     for (const task of pagina.tasks) {
+      vistas.add(task.id);
       const jaTem = cartaoDaTarefa.get(task.id);
       if (jaTem) {
         // Sincronizar também REORGANIZA (15/10/2026): antes só criava cartão
         // novo, e a tarefa que mudou de status no ClickUp continuava na coluna
         // antiga para sempre.
         const destino = estagioPeloStatus(quadro.stages, task.status);
-        if (destino && destino.id !== jaTem.stageId) {
-          await db.update(schema.pipelineCards).set({ stageId: destino.id }).where(eq(schema.pipelineCards.id, jaTem.id));
-          movidos++;
+        const espelho = camposDaTarefa(task);
+        const mudouColuna = destino && destino.id !== jaTem.stageId;
+        if (mudouColuna || camposMudaram(jaTem, espelho)) {
+          await db
+            .update(schema.pipelineCards)
+            .set({ ...(mudouColuna ? { stageId: destino.id } : {}), ...espelho })
+            .where(eq(schema.pipelineCards.id, jaTem.id));
+          if (mudouColuna) movidos++;
+          else atualizados++;
         }
         continue;
       }
@@ -1063,7 +1133,24 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
         if (task.statusType !== 'closed') semColuna++;
         continue;
       }
-      paraCriar.push({ boardId: quadro.id, stageId: estagio.id, name: task.name, clickupTaskId: task.id });
+      paraCriar.push({ boardId: quadro.id, stageId: estagio.id, clickupTaskId: task.id, ...camposDaTarefa(task) });
+    }
+
+    /**
+     * LIMPEZA (15/10/2026): cartão cuja tarefa NÃO veio mais na busca saiu do
+     * escopo do quadro — apagada no ClickUp, movida pra outra lista ou, no
+     * quadro pessoal, de lista de QA/teste (o filtro de produção de
+     * tarefasDaPessoa). Sem isto o "to do" do Pedro ficava cheio de
+     * "QA Gate Bento" pra sempre. Só com a busca COMPLETA: cortada, "não
+     * veio" não quer dizer "saiu".
+     */
+    let removidos = 0;
+    if (!cortada) {
+      const sairam = existentes.filter((c) => c.clickupTaskId && !vistas.has(c.clickupTaskId)).map((c) => c.id);
+      if (sairam.length > 0) {
+        await db.update(schema.pipelineCards).set({ deletedAt: new Date() }).where(inArray(schema.pipelineCards.id, sairam));
+        removidos = sairam.length;
+      }
     }
 
     const criados = paraCriar.length > 0 ? await db.insert(schema.pipelineCards).values(paraCriar).returning() : [];
@@ -1073,10 +1160,10 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       action: 'pipeline.board.tasks_synced',
       resourceType: 'pipeline_board',
       resourceId: quadro.id,
-      metadata: { criados: criados.length, sem_coluna: semColuna, movidos },
+      metadata: { criados: criados.length, sem_coluna: semColuna, movidos, atualizados, removidos },
     });
 
-    return { criados: criados.length, sem_coluna: semColuna, movidos, cards: wireQuadro(quadro, criados).cards };
+    return { criados: criados.length, sem_coluna: semColuna, movidos, atualizados, removidos, cards: wireQuadro(quadro, criados).cards };
   });
 
   app.patch<{ Params: { id: string; cardId: string } }>(

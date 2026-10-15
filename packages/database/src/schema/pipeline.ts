@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import type { PipelineAnexo, PipelineStage, PipelineTipo } from '@desigual-os/types';
 import { idColumn, softDeleteColumn, timestampColumns } from './_shared';
 import { organizations } from './organizations';
@@ -89,6 +89,12 @@ export const pipelineCards = pgTable(
      */
     clickupTaskId: text('clickup_task_id'),
     responsavel: text('responsavel'),
+    /** Foto do responsável (ClickUp profilePicture). Iniciais quando null. */
+    responsavelAvatar: text('responsavel_avatar'),
+    /** Vencimento da tarefa no ClickUp. O cartão mostra e marca o atraso. */
+    prazo: timestamp('prazo', { withTimezone: true }),
+    /** Prioridade do ClickUp ('urgent', 'high', 'normal', 'low'). */
+    prioridade: text('prioridade'),
     valor: text('valor'),
     nota: text('nota').notNull().default(''),
     /**

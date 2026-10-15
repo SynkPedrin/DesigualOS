@@ -54,6 +54,12 @@ export interface PipelineCard {
    *  de estágio escrever o status em `mockAgencyTasks`, não só no cartão. */
   taskId?: string;
   responsavel: string;
+  /** Foto do responsável (ClickUp). Iniciais quando null. */
+  responsavelAvatar?: string | null;
+  /** Vencimento ISO da tarefa no ClickUp. */
+  prazo?: string | null;
+  /** Prioridade do ClickUp ('urgent' | 'high' | 'normal' | 'low'). */
+  prioridade?: string | null;
   valor: string | null;
   nota: string;
   /** Anexos já hospedados (POST /uploads). Nunca `blob:` local — ver o hook. */
