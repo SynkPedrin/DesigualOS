@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowDown, ArrowUp, CircleUserRound, FileText, Layers, Paperclip, Plus, Settings2, SquareKanban, Trash2, Upload, Wallet, X, Search } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -309,6 +309,17 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
   );
 }
 
+/** As categorias gerais (espelho de apps/api/src/pipeline/quadro-geral.ts). */
+const CATEGORIAS_GERAIS: ReadonlyArray<{ categoria: NonNullable<PipelineStage['categoria']>; label: string; color: PipelineStageColor }> = [
+  { categoria: 'a_fazer', label: 'A fazer', color: 'info' },
+  { categoria: 'em_andamento', label: 'Em andamento', color: 'roxo-eletrico' },
+  { categoria: 'em_aprovacao', label: 'Em aprovação', color: 'aviso' },
+  { categoria: 'concluido', label: 'Concluído', color: 'sinal' },
+];
+
+/** Cartões desenhados por coluna antes do "Mostrar mais": o quadro geral passa de mil tarefas. */
+const CARTOES_POR_COLUNA = 50;
+
 /**
  * CONFIGURAR QUALQUER QUADRO (15/10/2026, pedido do Pedro: "eu posso
  * configurar, criar, editar, excluir, cor e tal").
@@ -334,8 +345,12 @@ function ConfigurarPipelineModal({
   const [nome, setNome] = useState(board.nome);
   const [rascunho, setRascunho] = useState<PipelineStage[]>(board.stages);
   const deTarefas = board.tipo === 'tarefas';
+  // Quadro de tarefas da agência (sem cliente): colunas são categorias gerais.
+  const geral = deTarefas && !board.clientId && board.escopo === 'agencia';
+  const categoriasFaltando = CATEGORIAS_GERAIS.filter((c) => !rascunho.some((s) => s.categoria === c.categoria));
+  const [categoriaEscolhida, setCategoriaEscolhida] = useState('');
   // De onde vêm os status reais: a lista do cliente, ou "atribuídas a mim".
-  const fonteDosStatus = !deTarefas ? null : board.clientId ? board.clientId : board.escopo === 'pessoal' ? MINHAS_TAREFAS : null;
+  const fonteDosStatus = !deTarefas || geral ? null : board.clientId ? board.clientId : board.escopo === 'pessoal' ? MINHAS_TAREFAS : null;
   const statusReais = useStatusClickUpDoCliente(fonteDosStatus);
   const jaUsados = new Set(rascunho.map((s) => s.clickupStatus?.toLowerCase()).filter(Boolean));
   const disponiveis = (statusReais.data?.status ?? []).filter((st) => !jaUsados.has(st.toLowerCase()));
@@ -363,6 +378,13 @@ function ConfigurarPipelineModal({
     return PIPELINE_STAGE_COLORS[rascunho.length % PIPELINE_STAGE_COLORS.length]!;
   }
   function adicionar() {
+    if (geral) {
+      const c = CATEGORIAS_GERAIS.find((x) => x.categoria === categoriaEscolhida);
+      if (!c) return;
+      setRascunho((atual) => [...atual, { id: crypto.randomUUID(), label: c.label, color: c.color, categoria: c.categoria }]);
+      setCategoriaEscolhida('');
+      return;
+    }
     if (deTarefas) {
       if (!statusEscolhido) return;
       setRascunho((atual) => [...atual, { id: crypto.randomUUID(), label: statusEscolhido, color: proximaCor(), clickupStatus: statusEscolhido }]);
@@ -408,6 +430,11 @@ function ConfigurarPipelineModal({
                 {stage.clickupStatus && (
                   <p className="mt-1 truncate font-mono text-[10px] text-nevoa">status no ClickUp: {stage.clickupStatus}</p>
                 )}
+                {stage.categoria && (
+                  <p className="mt-1 truncate font-mono text-[10px] text-nevoa">
+                    organiza automaticamente: {CATEGORIAS_GERAIS.find((c) => c.categoria === stage.categoria)?.label}
+                  </p>
+                )}
               </div>
               <div className="flex shrink-0 gap-1">
                 {PIPELINE_STAGE_COLORS.map((color) => (
@@ -435,7 +462,28 @@ function ConfigurarPipelineModal({
         </div>
 
         <div className="mt-3">
-          {!deTarefas ? (
+          {geral ? (
+            categoriasFaltando.length === 0 ? (
+              <p className="text-xs text-nevoa">As quatro categorias gerais já têm coluna. Cada tarefa vai para a categoria do status dela no ClickUp.</p>
+            ) : (
+              <div className="flex items-center gap-2">
+                <select
+                  value={categoriaEscolhida}
+                  onChange={(e) => setCategoriaEscolhida(e.target.value)}
+                  aria-label="Categoria geral da nova coluna"
+                  className="min-w-0 flex-1 rounded-md border border-grafite-elevado bg-carbono px-2.5 py-1.5 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+                >
+                  <option value="">Escolha uma categoria geral...</option>
+                  {categoriasFaltando.map((c) => (
+                    <option key={c.categoria} value={c.categoria}>{c.label}</option>
+                  ))}
+                </select>
+                <button type="button" disabled={!categoriaEscolhida} onClick={adicionar} className="flex shrink-0 items-center gap-1.5 text-sm text-roxo-eletrico hover:text-branco-cru disabled:opacity-40">
+                  <Plus size={14} /> Adicionar
+                </button>
+              </div>
+            )
+          ) : !deTarefas ? (
             <button type="button" onClick={adicionar} className="flex items-center gap-1.5 text-sm text-roxo-eletrico hover:text-branco-cru">
               <Plus size={14} /> Adicionar estágio
             </button>
@@ -826,6 +874,9 @@ function PipelineBoardUI() {
     });
   }
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
+  const { data: clientesDaEmpresa } = useClients();
+  const nomeDoCliente = useMemo(() => new Map((clientesDaEmpresa ?? []).map((c) => [c.id, c.name] as const)), [clientesDaEmpresa]);
+  const [limitePorColuna, setLimitePorColuna] = useState<Record<string, number>>({});
   const [busca, setBusca] = useState('');
   const [responsavelFiltro, setResponsavelFiltro] = useState('');
 
@@ -875,9 +926,26 @@ function PipelineBoardUI() {
     return cartoesDoBoard.filter((c) => {
       if (responsavelFiltro && c.responsavel !== responsavelFiltro) return false;
       if (!termo) return true;
-      return [c.name, c.responsavel, c.valor, c.nota].some((campo) => campo?.toLowerCase().includes(termo));
+      return [c.name, c.responsavel, c.valor, c.nota, c.clientId ? nomeDoCliente.get(c.clientId) : null].some((campo) => campo?.toLowerCase().includes(termo));
     });
-  }, [cartoesDoBoard, busca, responsavelFiltro]);
+  }, [cartoesDoBoard, busca, responsavelFiltro, nomeDoCliente]);
+
+  /**
+   * ABRIU, ORGANIZOU (15/10/2026). Quadro de clientes e de tarefas sincroniza
+   * sozinho na primeira vez que é aberto nesta visita à tela: as tarefas
+   * mudam no ClickUp o tempo todo, e um quadro que só se organiza quando
+   * alguém lembra do botão mostra a operação de ontem. Uma vez por quadro por
+   * visita, em silêncio; o botão continua para quem quiser forçar.
+   */
+  const sincronizadosNestaVisita = useRef(new Set<string>());
+  useEffect(() => {
+    if (!board || sincronizadosNestaVisita.current.has(board.id)) return;
+    if (board.tipo !== 'cliente' && board.tipo !== 'tarefas') return;
+    sincronizadosNestaVisita.current.add(board.id);
+    if (board.tipo === 'cliente') sincronizarClientes.mutate(board.id);
+    else sincronizarTarefas.mutate(board.id);
+    // Deliberado: uma vez por quadro por visita (o Set no ref é a trava), não a cada identidade nova das mutações.
+  }, [board?.id]);
 
   const resumo = useMemo(() => resumoDoQuadro(board?.stages ?? [], cartoesDoBoard), [board, cartoesDoBoard]);
   const maiorColuna = useMemo(
@@ -1044,14 +1112,11 @@ function PipelineBoardUI() {
                   onClick={() => {
                     sincronizarClientes.mutate(board.id, {
                       onSuccess: (resultado) => {
-                        toast(
-                          resultado.criados > 0
-                            ? resultado.criados === 1
-                              ? '1 cliente entrou no quadro.'
-                              : `${resultado.criados} clientes entraram no quadro.`
-                            : 'Já estava tudo sincronizado — nenhum cliente novo.',
-                          'success',
-                        );
+                        const partes: string[] = [];
+                        if (resultado.criados > 0) partes.push(resultado.criados === 1 ? '1 cliente entrou no quadro' : `${resultado.criados} clientes entraram no quadro`);
+                        if ((resultado.movidos ?? 0) > 0) partes.push(resultado.movidos === 1 ? '1 cliente mudou de coluna' : `${resultado.movidos} clientes mudaram de coluna`);
+                        if (resultado.aviso) partes.push(`não reorganizei: ${resultado.aviso}`);
+                        toast(partes.length > 0 ? `${partes.join('; ')}.` : 'Já estava tudo organizado pelos status.', resultado.aviso ? 'error' : 'success');
                       },
                       onError: (erro) => toast(erro instanceof Error ? erro.message : 'Não consegui sincronizar os clientes.', 'error'),
                     });
@@ -1070,6 +1135,7 @@ function PipelineBoardUI() {
                       onSuccess: (resultado) => {
                         const partes: string[] = [];
                         if (resultado.criados > 0) partes.push(resultado.criados === 1 ? '1 tarefa entrou no quadro' : `${resultado.criados} tarefas entraram no quadro`);
+                        if ((resultado.movidos ?? 0) > 0) partes.push(resultado.movidos === 1 ? '1 tarefa mudou de coluna' : `${resultado.movidos} tarefas mudaram de coluna`);
                         if (resultado.sem_coluna > 0) partes.push(`${resultado.sem_coluna} ficaram de fora (status sem coluna neste quadro)`);
                         toast(partes.length > 0 ? `${partes.join('; ')}.` : 'Já estava tudo sincronizado — nenhuma tarefa nova.', 'success');
                       },
@@ -1225,6 +1291,8 @@ function PipelineBoardUI() {
       <div className="mt-4 flex min-h-0 flex-1 gap-4 overflow-x-auto pb-2">
         {board.stages.map((stage) => {
           const cartoesDoEstagio = cartoesVisiveis.filter((c) => c.stageId === stage.id);
+          const limite = limitePorColuna[stage.id] ?? CARTOES_POR_COLUNA;
+          const desenhados = cartoesDoEstagio.slice(0, limite);
           const daColuna = resumo.estagios.find((e) => e.id === stage.id);
           const cor = STAGE_COLOR_CLASSES[stage.color];
           return (
@@ -1265,7 +1333,7 @@ function PipelineBoardUI() {
                 {cartoesDoEstagio.length === 0 ? (
                   <p className="py-6 text-center text-sm text-nevoa">Nenhum cartão aqui.</p>
                 ) : (
-                  cartoesDoEstagio.map((card) => {
+                  desenhados.map((card) => {
                     const anexos = card.anexos.length;
                     return (
                       <div
@@ -1277,9 +1345,17 @@ function PipelineBoardUI() {
                         className={cn('cursor-grab rounded-lg border border-grafite-elevado bg-grafite p-4 shadow-sm transition-opacity hover:border-roxo-eletrico/40 active:cursor-grabbing', arrastando === card.id && 'opacity-40')}
                       >
                         <div className="flex items-start gap-3">
-                          <EntityAvatar name={card.name} kind={card.clientId ? 'client' : 'person'} size="md" />
+                          {/* Cartão de TAREFA com cliente: o avatar é do cliente, não da tarefa. */}
+                          <EntityAvatar
+                            name={board.tipo === 'tarefas' && card.clientId ? (nomeDoCliente.get(card.clientId) ?? card.name) : card.name}
+                            kind={card.clientId ? 'client' : 'person'}
+                            size="md"
+                          />
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-base font-semibold text-branco-cru">{card.name}</p>
+                            {board.tipo === 'tarefas' && card.clientId && nomeDoCliente.get(card.clientId) && (
+                              <p className="truncate text-xs text-nevoa">{nomeDoCliente.get(card.clientId)}</p>
+                            )}
                             {card.valor && <p className="font-mono text-sm text-sinal">{card.valor}</p>}
                           </div>
                         </div>
@@ -1294,6 +1370,15 @@ function PipelineBoardUI() {
                       </div>
                     );
                   })
+                )}
+                {cartoesDoEstagio.length > desenhados.length && (
+                  <button
+                    type="button"
+                    onClick={() => setLimitePorColuna((atual) => ({ ...atual, [stage.id]: limite + CARTOES_POR_COLUNA }))}
+                    className="w-full rounded-lg border border-grafite-elevado py-2 text-[13px] text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
+                  >
+                    Mostrar mais ({cartoesDoEstagio.length - desenhados.length} restantes)
+                  </button>
                 )}
 
                 {/*

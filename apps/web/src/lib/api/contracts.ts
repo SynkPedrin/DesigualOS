@@ -2852,6 +2852,9 @@ export interface PipelineStageWire {
   label: string;
   color: string;
   clickupStatus?: string | undefined;
+  /** Categoria geral (a_fazer/em_andamento/em_aprovacao/concluido) — só nos
+   * quadros que juntam a agência inteira; ver apps/api/src/pipeline/quadro-geral.ts. */
+  categoria?: 'a_fazer' | 'em_andamento' | 'em_aprovacao' | 'concluido' | undefined;
 }
 
 export interface PipelineCardWire {

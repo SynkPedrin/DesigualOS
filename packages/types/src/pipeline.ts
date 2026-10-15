@@ -37,6 +37,15 @@ export interface PipelineStage {
   /** `| undefined` explícito: o tsconfig usa `exactOptionalPropertyTypes`, e sem
    *  isso o objeto que sai do zod (`string | undefined`) não casa com o tipo. */
   clickupStatus?: string | undefined;
+  /**
+   * Categoria GERAL (15/10/2026): usada nos quadros que juntam a agência
+   * inteira, onde cada lista do ClickUp tem um fluxo próprio. Num quadro de
+   * tarefas da agência, mover para esta coluna escreve na tarefa o status da
+   * lista dela que cai nesta categoria; num quadro de clientes, é a coluna
+   * para onde a sincronização leva o cliente pelo estado das tarefas dele.
+   * Ver apps/api/src/pipeline/quadro-geral.ts.
+   */
+  categoria?: 'a_fazer' | 'em_andamento' | 'em_aprovacao' | 'concluido' | undefined;
 }
 
 /** Quem pode ver e mexer num quadro. */

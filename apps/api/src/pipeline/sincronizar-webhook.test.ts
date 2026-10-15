@@ -11,12 +11,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const PIPELINE_BOARDS = { id: 'pb.id' };
 const PIPELINE_CARDS = { id: 'pc.id' };
+const CLIENTS = { id: 'c.id' };
+let clientes: Array<{ id: string; organizationId: string; environment: string }> = [];
 
 interface Quadro {
   id: string;
   tipo: string;
   clientId: string;
-  stages: Array<{ id: string; label: string; color: string; clickupStatus?: string }>;
+  stages: Array<{ id: string; label: string; color: string; clickupStatus?: string; categoria?: string }>;
+  organizationId?: string;
   deletedAt: Date | null;
 }
 
@@ -60,8 +63,14 @@ vi.mock('@desigual-os/database', () => ({
       from: (table: unknown) => ({
         where: (cond: unknown) => {
           const params = coletarParams(cond);
+          if (table === CLIENTS) {
+            return Promise.resolve(clientes.filter((c) => params.includes(c.id)));
+          }
           if (table === PIPELINE_BOARDS) {
-            return Promise.resolve(quadros.filter((q) => !q.deletedAt && params.includes(q.clientId)));
+            // Quadro geral (sem cliente) é buscado pela empresa; os demais, pelo cliente.
+            return Promise.resolve(
+              quadros.filter((q) => !q.deletedAt && (q.clientId ? params.includes(q.clientId) : params.includes((q as { organizationId?: string }).organizationId ?? ''))),
+            );
           }
           if (table === PIPELINE_CARDS) {
             return Promise.resolve(cartoes.filter((c) => !c.deletedAt && params.includes(c.boardId) && params.includes(c.clickupTaskId ?? '')));
@@ -102,7 +111,7 @@ vi.mock('@desigual-os/database', () => ({
       }),
     }),
   },
-  schema: { pipelineBoards: PIPELINE_BOARDS, pipelineCards: PIPELINE_CARDS },
+  schema: { pipelineBoards: PIPELINE_BOARDS, pipelineCards: PIPELINE_CARDS, clients: CLIENTS },
 }));
 
 const QUADRO: Quadro = {
@@ -120,6 +129,7 @@ describe('sincronizarCartaoDaTarefa', () => {
   beforeEach(() => {
     quadros = [{ ...QUADRO, stages: [...QUADRO.stages] }];
     cartoes = [];
+    clientes = [];
     proximoId = 0;
     inserts.length = 0;
     updates.length = 0;
@@ -183,5 +193,37 @@ describe('sincronizarCartaoDaTarefa', () => {
     await expect(
       sincronizarCartaoDaTarefa({ evento: 'taskDeleted', clientId: 'cliente-1', taskId: 'task-fantasma', taskName: null, statusAtual: null }),
     ).resolves.toBeUndefined();
+  });
+
+  /**
+   * O quadro geral da agência (15/10/2026): sem cliente e sem dono, colunas
+   * por categoria. A tarefa do cliente entra nele pela categoria do status.
+   */
+  it('taskCreated também entra no quadro geral da agência, na categoria do status', async () => {
+    clientes = [{ id: 'cliente-1', organizationId: 'org-1', environment: 'production' }];
+    quadros.push({
+      id: 'board-geral',
+      tipo: 'tarefas',
+      clientId: '',
+      organizationId: 'org-1',
+      stages: [
+        { id: 'g-fazer', label: 'A fazer', color: 'info', categoria: 'a_fazer' },
+        { id: 'g-aprov', label: 'Em aprovação', color: 'aviso', categoria: 'em_aprovacao' },
+      ],
+      deletedAt: null,
+    } as Quadro);
+    const { sincronizarCartaoDaTarefa } = await import('./sincronizar-webhook.js');
+    await sincronizarCartaoDaTarefa({ evento: 'taskCreated', clientId: 'cliente-1', taskId: 'task-9', taskName: 'Reels', statusAtual: 'aguardando aprovação' });
+
+    expect(cartoes.find((c) => c.boardId === 'board-geral')?.stageId).toBe('g-aprov');
+  });
+
+  it('cliente de QA nunca entra no quadro geral', async () => {
+    clientes = [{ id: 'cliente-1', organizationId: 'org-1', environment: 'qa' }];
+    quadros.push({ id: 'board-geral', tipo: 'tarefas', clientId: '', organizationId: 'org-1', stages: [{ id: 'g-fazer', label: 'A fazer', color: 'info', categoria: 'a_fazer' }], deletedAt: null } as Quadro);
+    const { sincronizarCartaoDaTarefa } = await import('./sincronizar-webhook.js');
+    await sincronizarCartaoDaTarefa({ evento: 'taskCreated', clientId: 'cliente-1', taskId: 'task-9', taskName: 'Reels', statusAtual: 'aberto' });
+
+    expect(cartoes.find((c) => c.boardId === 'board-geral')).toBeUndefined();
   });
 });

@@ -1,6 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { estagioPeloStatus } from './estagios';
+import { categoriaDoStatus, estagioDaCategoria } from './quadro-geral';
 
 /**
  * sincronizar-webhook.ts — o lado "ClickUp manda, o quadro de tarefas obedece"
@@ -31,6 +32,10 @@ export async function sincronizarCartaoDaTarefa(params: {
   taskName: string | null;
   statusAtual: string | null;
 }): Promise<void> {
+  // O quadro geral é complemento: falha nele não pode impedir que os quadros
+  // do próprio cliente acompanhem a tarefa.
+  await sincronizarNoQuadroGeral(params).catch(() => undefined);
+
   const quadros = await db
     .select()
     .from(schema.pipelineBoards)
@@ -69,6 +74,63 @@ export async function sincronizarCartaoDaTarefa(params: {
     await db
       .insert(schema.pipelineCards)
       .values({ boardId: quadro.id, stageId: estagio.id, name: params.taskName ?? 'Tarefa sem nome', clickupTaskId: params.taskId })
+      .onConflictDoNothing();
+  }
+}
+
+/**
+ * O QUADRO GERAL DA AGÊNCIA também acompanha o webhook (15/10/2026): sem isto
+ * ele só mudava ao clicar em Sincronizar. É o quadro de tarefas sem cliente e
+ * sem dono da empresa do cliente; a coluna sai da categoria do status — só o
+ * nome, que é o que o webhook traz (ver quadro-geral.ts).
+ */
+async function sincronizarNoQuadroGeral(params: {
+  evento: 'taskCreated' | 'taskUpdated' | 'taskDeleted';
+  clientId: string;
+  taskId: string;
+  taskName: string | null;
+  statusAtual: string | null;
+}): Promise<void> {
+  const [cliente] = await db
+    .select({ organizationId: schema.clients.organizationId, environment: schema.clients.environment })
+    .from(schema.clients)
+    .where(eq(schema.clients.id, params.clientId));
+  if (!cliente?.organizationId || cliente.environment !== 'production') return;
+
+  const gerais = await db
+    .select()
+    .from(schema.pipelineBoards)
+    .where(
+      and(
+        eq(schema.pipelineBoards.organizationId, cliente.organizationId),
+        eq(schema.pipelineBoards.tipo, 'tarefas'),
+        isNull(schema.pipelineBoards.clientId),
+        isNull(schema.pipelineBoards.ownerId),
+        isNull(schema.pipelineBoards.deletedAt),
+      ),
+    );
+
+  for (const quadro of gerais) {
+    // Só quadro já convertido em categorias (a primeira sincronização faz isso).
+    const estagio = estagioDaCategoria(quadro.stages, categoriaDoStatus(params.statusAtual, null));
+    if (!estagio) continue;
+    const [cartao] = await db
+      .select({ id: schema.pipelineCards.id, stageId: schema.pipelineCards.stageId })
+      .from(schema.pipelineCards)
+      .where(and(eq(schema.pipelineCards.boardId, quadro.id), eq(schema.pipelineCards.clickupTaskId, params.taskId), isNull(schema.pipelineCards.deletedAt)));
+
+    if (params.evento === 'taskDeleted') {
+      if (cartao) await db.update(schema.pipelineCards).set({ deletedAt: new Date() }).where(eq(schema.pipelineCards.id, cartao.id));
+      continue;
+    }
+    if (cartao) {
+      if (estagio.id !== cartao.stageId) await db.update(schema.pipelineCards).set({ stageId: estagio.id }).where(eq(schema.pipelineCards.id, cartao.id));
+      continue;
+    }
+    if (params.evento !== 'taskCreated') continue;
+    await db
+      .insert(schema.pipelineCards)
+      .values({ boardId: quadro.id, stageId: estagio.id, name: params.taskName ?? 'Tarefa sem nome', clickupTaskId: params.taskId, clientId: params.clientId })
       .onConflictDoNothing();
   }
 }

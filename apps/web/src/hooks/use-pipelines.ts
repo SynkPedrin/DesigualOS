@@ -66,7 +66,7 @@ export function useSincronizarTarefas() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (boardId: string) =>
-      apiFetch<{ criados: number; sem_coluna: number; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-tarefas`, { method: 'POST' }),
+      apiFetch<{ criados: number; sem_coluna: number; movidos?: number; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-tarefas`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
   });
 }
@@ -187,7 +187,7 @@ export function useSincronizarClientes() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (boardId: string) =>
-      apiFetch<{ criados: number; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-clientes`, { method: 'POST' }),
+      apiFetch<{ criados: number; movidos?: number; organizado?: boolean; aviso?: string | null; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-clientes`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
   });
 }

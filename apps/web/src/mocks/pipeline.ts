@@ -28,6 +28,9 @@ export interface PipelineStage {
   /** Só pra tipo='tarefas': o status real do ClickUp que este estágio representa.
    *  Mudar um cartão de estágio muda ESTE campo na tarefa — nunca um nome livre. */
   clickupStatus?: string;
+  /** Categoria geral (quadros que juntam a agência inteira) — espelho de
+   *  apps/api/src/pipeline/quadro-geral.ts. */
+  categoria?: 'a_fazer' | 'em_andamento' | 'em_aprovacao' | 'concluido';
 }
 
 export interface PipelineBoard {

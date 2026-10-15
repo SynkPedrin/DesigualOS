@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { PIPELINE_STAGE_COLORS, PIPELINE_TIPOS } from '@desigual-os/types';
@@ -10,6 +10,7 @@ import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import { ehFechado, estagioPeloStatus, estagiosDasTarefas, juntarFluxos, statusInvalidosParaALista, type EstagioDoClickUp } from './estagios';
 import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
+import { CATEGORIAS_GERAIS, categoriaDoCliente, categoriaDoStatus, estagioDaCategoria, estagiosIguais, garantirEstagiosGerais, rotuloDaCategoria, statusDaListaParaCategoria } from './quadro-geral';
 
 /**
  * QUEM PODE ESCREVER NUM QUADRO — a escada inteira, sem banco e sem Fastify.
@@ -88,6 +89,7 @@ const estagioSchema = z.object({
   label: z.string().min(1),
   color: z.enum(PIPELINE_STAGE_COLORS),
   clickupStatus: z.string().min(1).optional(),
+  categoria: z.enum(CATEGORIAS_GERAIS).optional(),
 });
 
 const criarQuadroSchema = z.object({
@@ -250,6 +252,45 @@ function paraATela(estagios: EstagioDoClickUp[]) {
 }
 
 const SEM_VINCULO_CLICKUP = 'Não achei você entre os membros do ClickUp da empresa. Confira se o seu e-mail do ClickUp está vinculado no seu perfil.';
+
+/** Quadro de tarefas da AGÊNCIA: sem cliente e sem dono — mostra a operação inteira por categoria geral. */
+function ehQuadroGeralDeTarefas(quadro: { tipo: string; clientId: string | null; ownerId: string | null }): boolean {
+  return quadro.tipo === 'tarefas' && !quadro.clientId && !quadro.ownerId;
+}
+
+/** Clientes de produção da empresa que têm lista no ClickUp, e de qual lista é cada um. */
+async function listasDosClientes(organizationId: string): Promise<Map<string, { id: string; name: string }>> {
+  const linhas = await db
+    .select({ id: schema.clients.id, name: schema.clients.name, clickupListId: schema.clients.clickupListId })
+    .from(schema.clients)
+    .where(
+      and(
+        eq(schema.clients.organizationId, organizationId),
+        inArray(schema.clients.status, ['active', 'pontual']),
+        eq(schema.clients.environment, 'production'),
+        isNull(schema.clients.deletedAt),
+        isNotNull(schema.clients.clickupListId),
+      ),
+    );
+  return new Map(linhas.map((c) => [c.clickupListId!, { id: c.id, name: c.name }]));
+}
+
+/**
+ * Tarefas ABERTAS de todas as listas de cliente da empresa, cada uma com o
+ * cliente dela. Sem as encerradas e sem subtarefa: são milhares, e o quadro
+ * geral é sobre o que está em curso (1.239 abertas em 15/10/2026).
+ */
+async function tarefasDaAgencia(
+  credenciais: ClickUpConfig,
+  porLista: Map<string, { id: string }>,
+): Promise<{ tarefas: Array<OperationTask & { clientId: string }>; cortada: boolean }> {
+  if (porLista.size === 0) return { tarefas: [], cortada: false };
+  const pagina = await queryOperationTasks(credenciais, { listIds: [...porLista.keys()], includeClosed: false, subtasks: false });
+  return {
+    tarefas: pagina.tasks.filter((t) => t.listId && porLista.has(t.listId)).map((t) => ({ ...t, clientId: porLista.get(t.listId!)!.id })),
+    cortada: pagina.truncated,
+  };
+}
 
 /**
  * Os status reais de onde um quadro de tarefas tira as colunas: a lista do
@@ -540,6 +581,32 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     return quadro!;
   }
 
+  /**
+   * SINCRONIZAR É ESPELHAR, NÃO ALTERAR (15/10/2026). Quadro da agência só o
+   * administrador edita — nome, colunas, cartões. Sincronizar não mexe em nada
+   * que alguém escreveu: traz o ClickUp e põe cada coisa na coluna do status
+   * dela. Então qualquer pessoa da empresa que VÊ o quadro pode sincronizar, e
+   * o quadro da agência fica organizado para todo mundo, não só quando um
+   * administrador abre. Quadro pessoal de outra pessoa continua 404.
+   */
+  async function quadroParaSincronizar(request: Parameters<typeof requireTenant>[0], reply: Parameters<typeof requireTenant>[1], boardId: string) {
+    const user = request.authUser!;
+    const organizationId = request.tenantContext!.organizationId;
+    const [quadro] = await db
+      .select()
+      .from(schema.pipelineBoards)
+      .where(and(eq(schema.pipelineBoards.id, boardId), isNull(schema.pipelineBoards.deletedAt)));
+    const decisao = decidirAcessoAoQuadro(
+      quadro ? { organizationId: quadro.organizationId, ownerId: quadro.ownerId } : null,
+      { userId: user.id, roles: user.roles ?? [], organizationId },
+    );
+    if (decisao === 'nao-encontrado') {
+      reply.code(404).send({ error: 'Quadro não encontrado.' });
+      return null;
+    }
+    return quadro!;
+  }
+
   app.patch<{ Params: { id: string } }>('/pipelines/:id', { preHandler: [requireAuth] }, async (request, reply) => {
     await requireTenant(request, reply);
     if (reply.sent) return;
@@ -557,7 +624,13 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
      * status existir de verdade na lista, senão nenhuma tarefa cai nela e
      * arrastar para ela falha no ClickUp. Mesma regra do POST.
      */
-    if (body.stages !== undefined && quadro.tipo === 'tarefas') {
+    if (body.stages !== undefined && ehQuadroGeralDeTarefas(quadro)) {
+      const semCategoria = body.stages.filter((s) => !s.categoria).map((s) => s.label);
+      if (semCategoria.length > 0) {
+        reply.code(400);
+        return { error: `No quadro geral da agência toda coluna é uma categoria geral. Sem categoria: "${semCategoria.join('", "')}".` };
+      }
+    } else if (body.stages !== undefined && quadro.tipo === 'tarefas') {
       const semStatus = body.stages.filter((s) => !s.clickupStatus).map((s) => s.label);
       if (semStatus.length > 0) {
         reply.code(400);
@@ -677,7 +750,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/pipelines/:id/sincronizar-clientes', { preHandler: [requireAuth] }, async (request, reply) => {
     await requireTenant(request, reply);
     if (reply.sent) return;
-    const quadro = await quadroParaEscrita(request, reply, request.params.id);
+    const quadro = await quadroParaSincronizar(request, reply, request.params.id);
     if (!quadro) return;
 
     if (quadro.tipo !== 'cliente') {
@@ -707,42 +780,119 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       );
     const { carteira } = separarCarteira(todos);
 
+    /**
+     * ORGANIZAR PELOS STATUS (15/10/2026, pedido do Pedro: "se a pipeline for
+     * de cliente, organiza os clientes; se for de agência, de forma geral; se
+     * for do colaborador, apenas o que estiver atribuído a ele").
+     *
+     * Cada cliente vai para a coluna do estado geral das tarefas dele
+     * (categoriaDoCliente): da agência inteira no quadro da agência, só as
+     * atribuídas ao dono no quadro pessoal — e no pessoal entram só os
+     * clientes em que ele tem tarefa. Sem ClickUp, o quadro da agência ainda
+     * recebe os clientes (sem organizar); o pessoal não tem como saber quais
+     * são dele, e diz isso.
+     */
+    const porLista = await listasDosClientes(organizationId);
+    const tarefasPorCliente = new Map<string, OperationTask[]>();
+    let organizar = false;
+    let avisoClickUp: string | null = null;
+    const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
+    if (resolucao?.credentials) {
+      try {
+        const daAgencia = quadro.ownerId ? null : await tarefasDaAgencia(resolucao.credentials, porLista);
+        const tarefas = quadro.ownerId ? await tarefasDaPessoa(resolucao.credentials, quadro.ownerId) : daAgencia!.tarefas;
+        if (tarefas === null) {
+          avisoClickUp = SEM_VINCULO_CLICKUP;
+        } else if (daAgencia?.cortada) {
+          // Consulta cortada: cliente cujas tarefas não vieram pareceria "em
+          // dia". Melhor não reorganizar do que reorganizar errado.
+          avisoClickUp = 'O ClickUp devolveu só parte das tarefas; não reorganizei para não pôr cliente na coluna errada.';
+        } else {
+          for (const t of tarefas) {
+            const cliente = t.listId ? porLista.get(t.listId) : undefined;
+            if (!cliente) continue;
+            const lista = tarefasPorCliente.get(cliente.id) ?? [];
+            lista.push(t);
+            tarefasPorCliente.set(cliente.id, lista);
+          }
+          organizar = true;
+        }
+      } catch (erro) {
+        avisoClickUp = `O ClickUp não respondeu: ${erro instanceof Error ? erro.message : String(erro)}`;
+      }
+    } else {
+      avisoClickUp = resolucao?.error ?? 'Empresa sem ClickUp conectado.';
+    }
+    if (quadro.ownerId && !organizar) {
+      reply.code(502);
+      return { error: 'Não consegui ver quais clientes têm tarefa atribuída a você, então não sei quais pôr no seu quadro.', detalhe: avisoClickUp };
+    }
+    const daPessoa = quadro.ownerId ? carteira.filter((c) => tarefasPorCliente.has(c.id)) : carteira;
+
+    let stages = quadro.stages;
+    if (organizar) {
+      const comCategorias = garantirEstagiosGerais(quadro.stages);
+      if (!estagiosIguais(comCategorias, quadro.stages)) {
+        await db.update(schema.pipelineBoards).set({ stages: comCategorias }).where(eq(schema.pipelineBoards.id, quadro.id));
+        stages = comCategorias;
+      }
+    }
+    const colunaDoCliente = (clientId: string) =>
+      organizar ? estagioDaCategoria(stages, categoriaDoCliente(tarefasPorCliente.get(clientId) ?? [])) : null;
+
     const existentes = await db
-      .select({ clientId: schema.pipelineCards.clientId })
+      .select({ id: schema.pipelineCards.id, clientId: schema.pipelineCards.clientId, stageId: schema.pipelineCards.stageId })
       .from(schema.pipelineCards)
       .where(and(eq(schema.pipelineCards.boardId, quadro.id), isNull(schema.pipelineCards.deletedAt)));
     const jaRepresentados = new Set(existentes.map((c) => c.clientId).filter((id): id is string => id !== null));
 
-    const faltando = clientesSemCartao(carteira, jaRepresentados);
-    if (faltando.length === 0) {
-      return { criados: 0, cards: [] };
-    }
+    const faltando = clientesSemCartao(daPessoa, jaRepresentados);
+    const primeiraColuna = stages[0]!.id;
+    const criados =
+      faltando.length > 0
+        ? await db
+            .insert(schema.pipelineCards)
+            .values(
+              faltando.map((c) => ({
+                boardId: quadro.id,
+                stageId: colunaDoCliente(c.id)?.id ?? primeiraColuna,
+                name: c.name,
+                clientId: c.id,
+                responsavel: null,
+                valor: null,
+                nota: '',
+              })),
+            )
+            .returning()
+        : [];
 
-    const primeiraColuna = quadro.stages[0]!.id;
-    const criados = await db
-      .insert(schema.pipelineCards)
-      .values(
-        faltando.map((c) => ({
-          boardId: quadro.id,
-          stageId: primeiraColuna,
-          name: c.name,
-          clientId: c.id,
-          responsavel: null,
-          valor: null,
-          nota: '',
-        })),
-      )
-      .returning();
+    // Reorganiza quem já estava: só cartão que está numa coluna geral (ou numa
+    // coluna que sumiu). Cliente que a pessoa pôs numa coluna própria, como
+    // "Proposta", fica onde ela pôs.
+    let movidos = 0;
+    if (organizar) {
+      const daCategoria = new Set(stages.filter((st) => st.categoria).map((st) => st.id));
+      const existentesIds = new Set(stages.map((st) => st.id));
+      for (const cartao of existentes) {
+        if (!cartao.clientId) continue;
+        if (existentesIds.has(cartao.stageId) && !daCategoria.has(cartao.stageId)) continue;
+        const destino = colunaDoCliente(cartao.clientId);
+        if (destino && destino.id !== cartao.stageId) {
+          await db.update(schema.pipelineCards).set({ stageId: destino.id }).where(eq(schema.pipelineCards.id, cartao.id));
+          movidos++;
+        }
+      }
+    }
 
     await auditarAcao(request, {
       organizationId,
       action: 'pipeline.board.clients_synced',
       resourceType: 'pipeline_board',
       resourceId: quadro.id,
-      metadata: { criados: criados.length },
+      metadata: { criados: criados.length, movidos, organizado: organizar },
     });
 
-    return { criados: criados.length, cards: wireQuadro(quadro, criados).cards };
+    return { criados: criados.length, movidos, organizado: organizar, aviso: organizar ? null : avisoClickUp, cards: wireQuadro({ ...quadro, stages }, criados).cards };
   });
 
   /**
@@ -760,7 +910,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/pipelines/:id/sincronizar-tarefas', { preHandler: [requireAuth] }, async (request, reply) => {
     await requireTenant(request, reply);
     if (reply.sent) return;
-    const quadro = await quadroParaEscrita(request, reply, request.params.id);
+    const quadro = await quadroParaSincronizar(request, reply, request.params.id);
     if (!quadro) return;
 
     if (quadro.tipo !== 'tarefas') {
@@ -773,9 +923,80 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
      * pessoal, mas a regra fica explícita). Sem cliente e sem dono é um
      * quadro da agência antigo, de antes de o cliente ser obrigatório.
      */
-    if (!quadro.clientId && !quadro.ownerId) {
-      reply.code(400);
-      return { error: 'Este quadro da agência não está vinculado a um cliente. Crie um quadro novo escolhendo o cliente.' };
+    /**
+     * SEM CLIENTE E SEM DONO: o quadro geral da agência (15/10/2026). Antes
+     * respondia 400 ("não está vinculado a um cliente"); agora junta as
+     * tarefas abertas de todos os clientes, cada uma na categoria geral do
+     * status dela, porque cada lista tem um fluxo próprio.
+     */
+    if (ehQuadroGeralDeTarefas(quadro)) {
+      const organizationId = request.tenantContext!.organizationId;
+      const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
+      if (!resolucao?.credentials) {
+        reply.code(502);
+        return { error: 'Não consegui falar com o ClickUp para buscar as tarefas.', detalhe: resolucao?.error ?? 'Empresa sem ClickUp conectado.' };
+      }
+      let tarefas: Array<OperationTask & { clientId: string }>;
+      let cortada = false;
+      try {
+        ({ tarefas, cortada } = await tarefasDaAgencia(resolucao.credentials, await listasDosClientes(organizationId)));
+      } catch (erro) {
+        reply.code(502);
+        return { error: 'O ClickUp recusou listar as tarefas.', detalhe: erro instanceof Error ? erro.message : String(erro) };
+      }
+
+      // As colunas viram as quatro categorias; coluna antiga com nome de status
+      // ("Para fazer", "Revisão"...) vira a categoria equivalente, mantendo id.
+      const stages = garantirEstagiosGerais(quadro.stages, { soCategorias: true });
+      if (!estagiosIguais(stages, quadro.stages)) {
+        await db.update(schema.pipelineBoards).set({ stages }).where(eq(schema.pipelineBoards.id, quadro.id));
+      }
+      const concluido = estagioDaCategoria(stages, 'concluido')!;
+
+      const existentes = await db
+        .select({ id: schema.pipelineCards.id, stageId: schema.pipelineCards.stageId, clickupTaskId: schema.pipelineCards.clickupTaskId })
+        .from(schema.pipelineCards)
+        .where(and(eq(schema.pipelineCards.boardId, quadro.id), isNull(schema.pipelineCards.deletedAt)));
+      const porTarefa = new Map(existentes.filter((c) => c.clickupTaskId).map((c) => [c.clickupTaskId!, c]));
+      const abertas = new Set(tarefas.map((t) => t.id));
+
+      const paraCriar: Array<{ boardId: string; stageId: string; name: string; clickupTaskId: string; clientId: string; responsavel: string | null }> = [];
+      const mover = new Map<string, string[]>();
+      const moverPara = (stageId: string, cardId: string) => mover.set(stageId, [...(mover.get(stageId) ?? []), cardId]);
+      for (const t of tarefas) {
+        const destino = estagioDaCategoria(stages, categoriaDoStatus(t.status, t.statusType))!;
+        const cartao = porTarefa.get(t.id);
+        if (cartao) {
+          if (cartao.stageId !== destino.id) moverPara(destino.id, cartao.id);
+          continue;
+        }
+        paraCriar.push({ boardId: quadro.id, stageId: destino.id, name: t.name, clickupTaskId: t.id, clientId: t.clientId, responsavel: t.assignees[0] ?? null });
+      }
+      // Tarefa que saiu das abertas foi encerrada (ou apagada) no ClickUp: o
+      // cartão vai para Concluído em vez de ficar parado numa coluna mentindo.
+      // Só com a consulta COMPLETA: cortada, "não veio" não quer dizer "encerrou".
+      if (!cortada) {
+        for (const c of existentes) {
+          if (c.clickupTaskId && !abertas.has(c.clickupTaskId) && c.stageId !== concluido.id) moverPara(concluido.id, c.id);
+        }
+      }
+      for (const [stageId, ids] of mover) {
+        await db.update(schema.pipelineCards).set({ stageId }).where(inArray(schema.pipelineCards.id, ids));
+      }
+      const criados: Array<typeof schema.pipelineCards.$inferSelect> = [];
+      for (let i = 0; i < paraCriar.length; i += 500) {
+        criados.push(...(await db.insert(schema.pipelineCards).values(paraCriar.slice(i, i + 500)).onConflictDoNothing().returning()));
+      }
+      const movidos = [...mover.values()].reduce((n, ids) => n + ids.length, 0);
+
+      await auditarAcao(request, {
+        organizationId,
+        action: 'pipeline.board.tasks_synced',
+        resourceType: 'pipeline_board',
+        resourceId: quadro.id,
+        metadata: { criados: criados.length, movidos, geral: true },
+      });
+      return { criados: criados.length, movidos, sem_coluna: 0, cards: wireQuadro({ ...quadro, stages }, criados).cards };
     }
 
     const organizationId = request.tenantContext!.organizationId;
@@ -814,15 +1035,27 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     const pagina = { tasks: tarefas };
 
     const existentes = await db
-      .select({ clickupTaskId: schema.pipelineCards.clickupTaskId })
+      .select({ id: schema.pipelineCards.id, stageId: schema.pipelineCards.stageId, clickupTaskId: schema.pipelineCards.clickupTaskId })
       .from(schema.pipelineCards)
       .where(and(eq(schema.pipelineCards.boardId, quadro.id), isNull(schema.pipelineCards.deletedAt)));
-    const jaTemCartao = new Set(existentes.map((c) => c.clickupTaskId).filter((id): id is string => id !== null));
+    const cartaoDaTarefa = new Map(existentes.filter((c) => c.clickupTaskId).map((c) => [c.clickupTaskId!, c]));
 
     const paraCriar: Array<{ boardId: string; stageId: string; name: string; clickupTaskId: string }> = [];
     let semColuna = 0;
+    let movidos = 0;
     for (const task of pagina.tasks) {
-      if (jaTemCartao.has(task.id)) continue;
+      const jaTem = cartaoDaTarefa.get(task.id);
+      if (jaTem) {
+        // Sincronizar também REORGANIZA (15/10/2026): antes só criava cartão
+        // novo, e a tarefa que mudou de status no ClickUp continuava na coluna
+        // antiga para sempre.
+        const destino = estagioPeloStatus(quadro.stages, task.status);
+        if (destino && destino.id !== jaTem.stageId) {
+          await db.update(schema.pipelineCards).set({ stageId: destino.id }).where(eq(schema.pipelineCards.id, jaTem.id));
+          movidos++;
+        }
+        continue;
+      }
       const estagio = estagioPeloStatus(quadro.stages, task.status);
       if (!estagio) {
         // Encerrada sem coluna é escolha da pessoa (os encerrados vêm
@@ -840,10 +1073,10 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       action: 'pipeline.board.tasks_synced',
       resourceType: 'pipeline_board',
       resourceId: quadro.id,
-      metadata: { criados: criados.length, sem_coluna: semColuna },
+      metadata: { criados: criados.length, sem_coluna: semColuna, movidos },
     });
 
-    return { criados: criados.length, sem_coluna: semColuna, cards: wireQuadro(quadro, criados).cards };
+    return { criados: criados.length, sem_coluna: semColuna, movidos, cards: wireQuadro(quadro, criados).cards };
   });
 
   app.patch<{ Params: { id: string; cardId: string } }>(
@@ -901,6 +1134,50 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
               error: `O ClickUp recusou mudar o status para "${estagioNovo.clickupStatus}".`,
               detalhe: `${erro instanceof Error ? erro.message : String(erro)} O cartão continua onde estava.`,
             };
+          }
+        }
+      }
+
+      /**
+       * QUADRO GERAL DA AGÊNCIA: a coluna é uma CATEGORIA, não um status. O
+       * status escrito é o primeiro da lista desta tarefa que cai na
+       * categoria de destino. Lista sem status dessa categoria: recusa, e o
+       * cartão fica onde está — mesma regra de cima, o ClickUp vem primeiro.
+       */
+      if (quadro.tipo === 'tarefas' && estagioNovo?.categoria && !estagioNovo.clickupStatus) {
+        const [cartaoAtual] = await db
+          .select({ clickupTaskId: schema.pipelineCards.clickupTaskId, clientId: schema.pipelineCards.clientId })
+          .from(schema.pipelineCards)
+          .where(and(eq(schema.pipelineCards.id, request.params.cardId), eq(schema.pipelineCards.boardId, quadro.id)));
+        if (cartaoAtual?.clickupTaskId) {
+          const [cliente] = cartaoAtual.clientId
+            ? await db.select({ clickupListId: schema.clients.clickupListId }).from(schema.clients).where(eq(schema.clients.id, cartaoAtual.clientId))
+            : [];
+          if (!cliente?.clickupListId) {
+            reply.code(400);
+            return { error: 'Não sei de qual lista do ClickUp é esta tarefa, então não consigo mudar o status dela. O cartão continua onde estava.' };
+          }
+          const resolucao = await credenciaisClickUpDaEmpresa(quadro.organizationId);
+          if (!resolucao?.credentials) {
+            reply.code(502);
+            return { error: 'Não consegui falar com o ClickUp para mudar o status desta tarefa.', detalhe: 'O cartão não foi movido.' };
+          }
+          let status: string | null;
+          try {
+            status = statusDaListaParaCategoria(await estagiosDaLista(resolucao.credentials, cliente.clickupListId), estagioNovo.categoria);
+          } catch (erro) {
+            reply.code(502);
+            return { error: 'O ClickUp recusou devolver os status desta lista.', detalhe: `${erro instanceof Error ? erro.message : String(erro)} O cartão continua onde estava.` };
+          }
+          if (!status) {
+            reply.code(400);
+            return { error: `A lista desta tarefa no ClickUp não tem nenhum status de "${rotuloDaCategoria(estagioNovo.categoria)}". O cartão continua onde estava.` };
+          }
+          try {
+            await updateTask(resolucao.credentials, cartaoAtual.clickupTaskId, { status });
+          } catch (erro) {
+            reply.code(502);
+            return { error: `O ClickUp recusou mudar o status para "${status}".`, detalhe: `${erro instanceof Error ? erro.message : String(erro)} O cartão continua onde estava.` };
           }
         }
       }
