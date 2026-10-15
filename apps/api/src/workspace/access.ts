@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { loadUserAccess } from '@desigual-os/auth';
-import { isWorkspaceModule, modulosPadrao, type WorkspaceModule } from '@desigual-os/types';
+import { MODULOS_DE_TODOS, isWorkspaceModule, modulosPadrao, type WorkspaceModule } from '@desigual-os/types';
 
 export interface ResolvedWorkspace {
   templateId: string | null;
@@ -33,5 +33,7 @@ export async function resolveEnabledModules(userId: string): Promise<ResolvedWor
   // não pode sobreviver como permissão fantasma só porque uma linha antiga
   // ainda cita o nome dele.
   const modulos = (linha.modules ?? []).filter(isWorkspaceModule);
-  return { templateId: linha.templateId, modules: new Set(modulos), configured: true };
+  // Somados ao gravado: ver MODULOS_DE_TODOS. Sem isto, liberar um módulo
+  // para todos exigiria reescrever a linha de cada pessoa já configurada.
+  return { templateId: linha.templateId, modules: new Set([...modulos, ...MODULOS_DE_TODOS]), configured: true };
 }

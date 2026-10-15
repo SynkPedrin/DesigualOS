@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useMemberWorkspace, useSaveMemberWorkspace, useWorkspaceTemplates } from '@/hooks/use-member-workspace';
 import { ApiRequestError } from '@/lib/api/client';
+import { ehModuloDeTodos } from '@desigual-os/types';
 
 /** Rótulo em português pra cada módulo — vocabulário técnico (WORKSPACE_MODULES) fica em @desigual-os/types. */
 const ROTULO_DO_MODULO: Record<string, string> = {
@@ -108,12 +109,28 @@ export function WorkspaceEditorModal({ userId, name, onClose }: { userId: string
             <div>
               <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-nevoa">Módulos</label>
               <div className="grid grid-cols-2 gap-1.5">
-                {(templates.data?.modules ?? []).map((modulo) => (
-                  <label key={modulo} className="flex items-center gap-2 rounded-md border border-grafite-elevado px-2.5 py-1.5 text-[13px] text-branco-cru">
-                    <input type="checkbox" checked={modules.has(modulo)} onChange={() => alternarModulo(modulo)} className="accent-roxo-eletrico" />
-                    {ROTULO_DO_MODULO[modulo] ?? modulo}
-                  </label>
-                ))}
+                {(templates.data?.modules ?? []).map((modulo) => {
+                  // Módulo de todos (ver MODULOS_DE_TODOS): marcado e travado.
+                  // Um interruptor que não desliga nada seria controle de mentira.
+                  const deTodos = ehModuloDeTodos(modulo);
+                  return (
+                    <label
+                      key={modulo}
+                      title={deTodos ? 'Liberado para todos os colaboradores' : undefined}
+                      className="flex items-center gap-2 rounded-md border border-grafite-elevado px-2.5 py-1.5 text-[13px] text-branco-cru"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={deTodos || modules.has(modulo)}
+                        disabled={deTodos}
+                        onChange={() => alternarModulo(modulo)}
+                        className="accent-roxo-eletrico"
+                      />
+                      {ROTULO_DO_MODULO[modulo] ?? modulo}
+                      {deTodos && <span className="ml-auto font-mono text-[10px] text-nevoa">todos</span>}
+                    </label>
+                  );
+                })}
               </div>
             </div>
 

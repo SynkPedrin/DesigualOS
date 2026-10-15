@@ -124,5 +124,23 @@ const MODULOS_PADRAO_COLABORADOR: readonly WorkspaceModule[] = [
 ];
 
 export function modulosPadrao(ehMaster: boolean): readonly WorkspaceModule[] {
-  return ehMaster ? WORKSPACE_TEMPLATES.administrador.modules : MODULOS_PADRAO_COLABORADOR;
+  return ehMaster ? WORKSPACE_TEMPLATES.administrador.modules : [...MODULOS_PADRAO_COLABORADOR, ...MODULOS_DE_TODOS];
+}
+
+/**
+ * MÓDULOS DE TODO COLABORADOR, independentemente do cargo gravado
+ * (14/10/2026, pedido do Pedro: "preciso que automações esteja disponível
+ * para todos os colaboradores").
+ *
+ * Não basta pôr no padrão: quem já escolheu cargo tem a lista de módulos
+ * GRAVADA em workspace_configs, e o padrão só vale para quem nunca foi
+ * configurado. Esta lista é somada ao que estiver gravado na única leitura de
+ * módulos (apps/api/src/workspace/access.ts), então vale para quem já existe e
+ * para quem chegar, sem migração de dado. No editor de cargo o item aparece
+ * travado, para a tela não oferecer um interruptor que não desliga nada.
+ */
+export const MODULOS_DE_TODOS: readonly WorkspaceModule[] = ['automations'];
+
+export function ehModuloDeTodos(modulo: string): boolean {
+  return (MODULOS_DE_TODOS as readonly string[]).includes(modulo);
 }
