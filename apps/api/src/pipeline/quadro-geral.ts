@@ -109,11 +109,13 @@ export function garantirEstagiosGerais(stages: readonly PipelineStage[], opcoes:
     const categoria = s.categoria && !usadas.has(s.categoria) ? s.categoria : categoriaPeloRotulo(s.clickupStatus ?? s.label);
     if (categoria && !usadas.has(categoria)) {
       usadas.add(categoria);
-      const { clickupStatus: _clickupStatus, ...resto } = s;
-      saida.push({ ...(opcoes.soCategorias ? resto : s), categoria });
+      // soCategorias: o clickupStatus legado sai da coluna — ela passa a ser
+      // só a categoria (é o que o arrastar traduz para status no ClickUp).
+      const base = opcoes.soCategorias ? { id: s.id, label: s.label, color: s.color } : s;
+      saida.push({ ...base, categoria });
     } else if (!opcoes.soCategorias) {
-      const { categoria: _categoria, ...semCategoria } = s;
-      saida.push(semCategoria);
+      // Coluna livre (ex.: "Proposta") fica como está, sem categoria.
+      saida.push({ id: s.id, label: s.label, color: s.color, ...(s.clickupStatus !== undefined ? { clickupStatus: s.clickupStatus } : {}) });
     }
   }
   for (const categoria of CATEGORIAS_GERAIS) {
