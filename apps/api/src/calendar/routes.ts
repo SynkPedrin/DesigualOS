@@ -419,7 +419,18 @@ export async function registerCalendarRoutes(app: FastifyInstance): Promise<void
         .returning();
 
       await auditarAcao(request, { action: 'calendar.microsoft_account_linked', metadata: { external_calendar_id: externalCalendarId } });
-      return reply.code(201).send({ id: criado!.id, external_calendar_id: criado!.externalCalendarId });
+
+      /**
+       * Sincroniza NA HORA (15/10/2026): antes a agenda só enchia no próximo
+       * ciclo do worker (até 15 min), e a Jamile conectou, viu a agenda vazia
+       * e concluiu que não tinha funcionado. Falhar aqui não desfaz o vínculo
+       * — o ciclo do worker tenta de novo.
+       */
+      const sincronizacao = await syncMemberMicrosoftCalendar(criado!.id).catch((erro: unknown) => {
+        request.log.warn({ accountId: criado!.id, motivo: erro instanceof Error ? erro.message : String(erro) }, 'Sincronização imediata do Microsoft Calendar falhou');
+        return null;
+      });
+      return reply.code(201).send({ id: criado!.id, external_calendar_id: criado!.externalCalendarId, events_upserted: sincronizacao?.upserted ?? null });
     },
   );
 
