@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, CircleUserRound, FileText, Layers, Paperclip, Plus, Settings2, SquareKanban, Upload, Wallet, X, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, CircleUserRound, FileText, Layers, Paperclip, Plus, Settings2, SquareKanban, Trash2, Upload, Wallet, X, Search } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
@@ -309,8 +309,37 @@ function NovaPipelineModal({ onCreate, onClose }: { onCreate: (entrada: NovaPipe
   );
 }
 
-function ConfigurarPipelineModal({ board, onSave, onClose }: { board: PipelineBoard; onSave: (stages: PipelineStage[]) => void; onClose: () => void }) {
+/**
+ * CONFIGURAR QUALQUER QUADRO (15/10/2026, pedido do Pedro: "eu posso
+ * configurar, criar, editar, excluir, cor e tal").
+ *
+ * Antes só reordenava e recoloria, e o botão nem aparecia em quadro de
+ * tarefas. Agora: nome do quadro, e cada estágio pode ser criado, renomeado,
+ * recolorido, reordenado e excluído.
+ *
+ * Quadro de TAREFAS tem uma regra a mais: cada coluna é um status do ClickUp.
+ * O rótulo é livre (é só da tela); coluna nova só pode ser um status que
+ * existe na lista e ainda não tem coluna — oferecido numa lista, nunca
+ * digitado. A API confere de novo ao salvar.
+ */
+function ConfigurarPipelineModal({
+  board,
+  onSave,
+  onClose,
+}: {
+  board: PipelineBoard;
+  onSave: (mudanca: { nome: string; stages: PipelineStage[] }) => void;
+  onClose: () => void;
+}) {
+  const [nome, setNome] = useState(board.nome);
   const [rascunho, setRascunho] = useState<PipelineStage[]>(board.stages);
+  const deTarefas = board.tipo === 'tarefas';
+  // De onde vêm os status reais: a lista do cliente, ou "atribuídas a mim".
+  const fonteDosStatus = !deTarefas ? null : board.clientId ? board.clientId : board.escopo === 'pessoal' ? MINHAS_TAREFAS : null;
+  const statusReais = useStatusClickUpDoCliente(fonteDosStatus);
+  const jaUsados = new Set(rascunho.map((s) => s.clickupStatus?.toLowerCase()).filter(Boolean));
+  const disponiveis = (statusReais.data?.status ?? []).filter((st) => !jaUsados.has(st.toLowerCase()));
+  const [statusEscolhido, setStatusEscolhido] = useState('');
 
   function mover(index: number, direcao: -1 | 1) {
     setRascunho((atual) => {
@@ -327,30 +356,59 @@ function ConfigurarPipelineModal({ board, onSave, onClose }: { board: PipelineBo
   function recolorir(id: string, color: PipelineStageColor) {
     setRascunho((atual) => atual.map((s) => (s.id === id ? { ...s, color } : s)));
   }
+  function excluir(id: string) {
+    setRascunho((atual) => (atual.length <= 1 ? atual : atual.filter((s) => s.id !== id)));
+  }
+  function proximaCor(): PipelineStageColor {
+    return PIPELINE_STAGE_COLORS[rascunho.length % PIPELINE_STAGE_COLORS.length]!;
+  }
+  function adicionar() {
+    if (deTarefas) {
+      if (!statusEscolhido) return;
+      setRascunho((atual) => [...atual, { id: crypto.randomUUID(), label: statusEscolhido, color: proximaCor(), clickupStatus: statusEscolhido }]);
+      setStatusEscolhido('');
+      return;
+    }
+    setRascunho((atual) => [...atual, { id: crypto.randomUUID(), label: 'Novo estágio', color: proximaCor() }]);
+  }
+
+  const excluidos = board.stages.filter((s) => !rascunho.some((r) => r.id === s.id));
+  const invalido = nome.trim().length === 0 || rascunho.some((s) => s.label.trim().length === 0);
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-carbono/80 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-lg border border-grafite-elevado bg-grafite p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-grafite-elevado bg-grafite p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-heading text-base font-semibold text-branco-cru">Configurar "{board.nome}"</h2>
+          <h2 className="font-heading text-base font-semibold text-branco-cru">Configurar quadro</h2>
           <button type="button" onClick={onClose} className="text-nevoa hover:text-branco-cru"><X size={18} /></button>
         </div>
-        <p className="mb-4 text-xs text-nevoa">Nome, ordem e cor de cada estágio.</p>
 
+        <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-nevoa">Nome do quadro</label>
+        <input
+          value={nome}
+          onChange={(e) => setNome(e.target.value)}
+          className="mb-4 w-full rounded-md border border-grafite-elevado bg-carbono px-2.5 py-1.5 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+        />
+
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-nevoa">Estágios</p>
         <div className="space-y-2">
           {rascunho.map((stage, index) => (
             <div key={stage.id} className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-carbono p-2.5">
               <div className="flex shrink-0 flex-col">
-                <button type="button" disabled={index === 0} onClick={() => mover(index, -1)} className="text-nevoa hover:text-branco-cru disabled:opacity-20"><ArrowUp size={14} /></button>
-                <button type="button" disabled={index === rascunho.length - 1} onClick={() => mover(index, 1)} className="text-nevoa hover:text-branco-cru disabled:opacity-20"><ArrowDown size={14} /></button>
+                <button type="button" aria-label="Subir" disabled={index === 0} onClick={() => mover(index, -1)} className="text-nevoa hover:text-branco-cru disabled:opacity-20"><ArrowUp size={14} /></button>
+                <button type="button" aria-label="Descer" disabled={index === rascunho.length - 1} onClick={() => mover(index, 1)} className="text-nevoa hover:text-branco-cru disabled:opacity-20"><ArrowDown size={14} /></button>
               </div>
-              <input
-                value={stage.label}
-                onChange={(e) => renomear(stage.id, e.target.value)}
-                disabled={Boolean(stage.clickupStatus)}
-                title={stage.clickupStatus ? 'Nome vem do status do ClickUp, não dá pra editar aqui' : undefined}
-                className="min-w-0 flex-1 rounded-md border border-grafite-elevado bg-grafite px-2.5 py-1.5 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none disabled:opacity-60"
-              />
+              <div className="min-w-0 flex-1">
+                <input
+                  value={stage.label}
+                  onChange={(e) => renomear(stage.id, e.target.value)}
+                  aria-label="Nome do estágio"
+                  className="w-full rounded-md border border-grafite-elevado bg-grafite px-2.5 py-1.5 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+                />
+                {stage.clickupStatus && (
+                  <p className="mt-1 truncate font-mono text-[10px] text-nevoa">status no ClickUp: {stage.clickupStatus}</p>
+                )}
+              </div>
               <div className="flex shrink-0 gap-1">
                 {PIPELINE_STAGE_COLORS.map((color) => (
                   <button
@@ -362,13 +420,67 @@ function ConfigurarPipelineModal({ board, onSave, onClose }: { board: PipelineBo
                   />
                 ))}
               </div>
+              <button
+                type="button"
+                aria-label={`Excluir ${stage.label}`}
+                title={rascunho.length <= 1 ? 'O quadro precisa de pelo menos um estágio' : 'Excluir estágio'}
+                disabled={rascunho.length <= 1}
+                onClick={() => excluir(stage.id)}
+                className="shrink-0 text-nevoa transition-colors hover:text-erro disabled:opacity-20"
+              >
+                <Trash2 size={15} />
+              </button>
             </div>
           ))}
         </div>
 
+        <div className="mt-3">
+          {!deTarefas ? (
+            <button type="button" onClick={adicionar} className="flex items-center gap-1.5 text-sm text-roxo-eletrico hover:text-branco-cru">
+              <Plus size={14} /> Adicionar estágio
+            </button>
+          ) : fonteDosStatus === null ? (
+            <p className="text-xs text-nevoa">Este quadro não está ligado a um cliente, então não há status do ClickUp para acrescentar. Para ter outras colunas, crie um quadro novo escolhendo o cliente.</p>
+          ) : statusReais.isPending ? (
+            <p className="text-xs text-nevoa">Buscando os status do ClickUp...</p>
+          ) : statusReais.isError ? (
+            <p className="text-xs text-erro">{statusReais.error instanceof Error ? statusReais.error.message : 'Não consegui buscar os status do ClickUp.'}</p>
+          ) : disponiveis.length === 0 ? (
+            <p className="text-xs text-nevoa">Todos os status desta lista do ClickUp já têm coluna.</p>
+          ) : (
+            <div className="flex items-center gap-2">
+              <select
+                value={statusEscolhido}
+                onChange={(e) => setStatusEscolhido(e.target.value)}
+                aria-label="Status do ClickUp para a nova coluna"
+                className="min-w-0 flex-1 rounded-md border border-grafite-elevado bg-carbono px-2.5 py-1.5 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+              >
+                <option value="">Escolha um status do ClickUp...</option>
+                {disponiveis.map((st) => (
+                  <option key={st} value={st}>{st}</option>
+                ))}
+              </select>
+              <button type="button" disabled={!statusEscolhido} onClick={adicionar} className="flex shrink-0 items-center gap-1.5 text-sm text-roxo-eletrico hover:text-branco-cru disabled:opacity-40">
+                <Plus size={14} /> Adicionar
+              </button>
+            </div>
+          )}
+        </div>
+
+        {excluidos.length > 0 && (
+          <p className="mt-3 text-xs text-aviso">
+            Os cartões de {excluidos.map((s) => `"${s.label}"`).join(', ')} vão para o primeiro estágio ao salvar.
+          </p>
+        )}
+
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-md px-3 py-2 text-sm text-nevoa hover:text-branco-cru">Cancelar</button>
-          <button type="button" onClick={() => { onSave(rascunho); onClose(); }} className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-branco-cru transition-all hover:opacity-90 hover:shadow-glow">
+          <button
+            type="button"
+            disabled={invalido}
+            onClick={() => { onSave({ nome: nome.trim(), stages: rascunho.map((s) => ({ ...s, label: s.label.trim() })) }); onClose(); }}
+            className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-branco-cru transition-all hover:opacity-90 hover:shadow-glow disabled:opacity-40"
+          >
             Salvar
           </button>
         </div>
@@ -664,6 +776,8 @@ function daApi(boards: PipelineBoardWire[]): { boards: PipelineBoard[]; cards: P
       nome: b.nome,
       tipo: b.tipo,
       stages: b.stages as PipelineStage[],
+      clientId: b.client_id,
+      escopo: b.escopo,
     })),
     cards: boards.flatMap((b) =>
       b.cards.map((c) => ({
@@ -920,11 +1034,9 @@ function PipelineBoardUI() {
               >
                 Apagar quadro
               </button>
-              {board.tipo !== 'tarefas' && (
-                <button type="button" onClick={() => setConfigurando(true)} className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50">
-                  <Settings2 size={15} /> Configurar
-                </button>
-              )}
+              <button type="button" onClick={() => setConfigurando(true)} className="flex items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3.5 py-2 text-sm font-medium text-branco-cru transition-colors hover:border-roxo-eletrico/50">
+                <Settings2 size={15} /> Configurar
+              </button>
               {board.tipo === 'cliente' && (
                 <button
                   type="button"
@@ -1229,7 +1341,15 @@ function PipelineBoardUI() {
       {configurando && (
         <ConfigurarPipelineModal
           board={board}
-          onSave={(stages) => atualizarPipeline.mutate({ boardId: board.id, stages })}
+          onSave={({ nome, stages }) =>
+            atualizarPipeline.mutate(
+              { boardId: board.id, stages, ...(nome !== board.nome ? { nome } : {}) },
+              {
+                onSuccess: () => toast('Quadro atualizado.', 'success'),
+                onError: (erro) => toast(erro instanceof Error ? erro.message : 'Não consegui salvar o quadro.', 'error'),
+              },
+            )
+          }
           onClose={() => setConfigurando(false)}
         />
       )}

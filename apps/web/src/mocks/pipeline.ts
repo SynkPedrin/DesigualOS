@@ -35,6 +35,10 @@ export interface PipelineBoard {
   nome: string;
   tipo: PipelineTipo;
   stages: PipelineStage[];
+  /** Só em tipo='tarefas': o cliente cuja lista do ClickUp dá as colunas. */
+  clientId?: string | null;
+  /** 'pessoal' sem cliente, em tipo='tarefas', é o quadro "atribuídas a mim". */
+  escopo?: 'agencia' | 'pessoal';
 }
 
 export interface PipelineCard {

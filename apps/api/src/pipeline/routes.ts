@@ -251,6 +251,37 @@ function paraATela(estagios: EstagioDoClickUp[]) {
 
 const SEM_VINCULO_CLICKUP = 'Não achei você entre os membros do ClickUp da empresa. Confira se o seu e-mail do ClickUp está vinculado no seu perfil.';
 
+/**
+ * Os status reais de onde um quadro de tarefas tira as colunas: a lista do
+ * cliente, ou as tarefas do dono no quadro "atribuídas a mim". Quadro antigo
+ * da agência, sem cliente e sem dono, não tem de onde tirar.
+ */
+async function statusReaisDoQuadro(
+  quadro: { clientId: string | null; ownerId: string | null },
+  organizationId: string,
+): Promise<{ status: string[] } | { erro: string; codigo: number }> {
+  if (!quadro.clientId && !quadro.ownerId) {
+    return { erro: 'Este quadro da agência não está vinculado a um cliente, então não há status do ClickUp para acrescentar. Crie um quadro novo escolhendo o cliente.', codigo: 400 };
+  }
+  const resolucao = await credenciaisClickUpDaEmpresa(organizationId);
+  if (!resolucao?.credentials) return { erro: 'Não consegui falar com o ClickUp para conferir os status.', codigo: 502 };
+  try {
+    if (quadro.clientId) {
+      const [cliente] = await db
+        .select({ clickupListId: schema.clients.clickupListId })
+        .from(schema.clients)
+        .where(and(eq(schema.clients.id, quadro.clientId), isNull(schema.clients.deletedAt)));
+      if (!cliente?.clickupListId) return { erro: 'O cliente deste quadro não tem lista do ClickUp vinculada.', codigo: 400 };
+      return { status: (await estagiosDaLista(resolucao.credentials, cliente.clickupListId)).map((e) => e.status) };
+    }
+    const tarefas = await tarefasDaPessoa(resolucao.credentials, quadro.ownerId!);
+    if (!tarefas) return { erro: SEM_VINCULO_CLICKUP, codigo: 409 };
+    return { status: (await estagiosDasMinhasTarefas(resolucao.credentials, tarefas)).map((e) => e.status) };
+  } catch (erro) {
+    return { erro: `O ClickUp recusou devolver os status: ${erro instanceof Error ? erro.message : String(erro)}`, codigo: 502 };
+  }
+}
+
 export async function registerPipelineRoutes(app: FastifyInstance): Promise<void> {
   /**
    * O QUE EU VEJO: os quadros da minha empresa que são da AGÊNCIA, mais os
@@ -515,6 +546,38 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
     const quadro = await quadroParaEscrita(request, reply, request.params.id);
     if (!quadro) return;
     const body = atualizarQuadroSchema.parse(request.body);
+
+    /**
+     * ESTÁGIOS DE QUADRO DE TAREFAS (15/10/2026, pedido do Pedro: criar,
+     * editar, excluir e colorir estágios em qualquer quadro).
+     *
+     * Renomear, recolorir, reordenar e excluir não tocam o ClickUp: o rótulo é
+     * da tela, o vínculo é o `clickupStatus`, que fica como estava. O que
+     * precisa de conferência é coluna com status NOVO — ela só serve se o
+     * status existir de verdade na lista, senão nenhuma tarefa cai nela e
+     * arrastar para ela falha no ClickUp. Mesma regra do POST.
+     */
+    if (body.stages !== undefined && quadro.tipo === 'tarefas') {
+      const semStatus = body.stages.filter((s) => !s.clickupStatus).map((s) => s.label);
+      if (semStatus.length > 0) {
+        reply.code(400);
+        return { error: `Num quadro de tarefas toda coluna é um status do ClickUp. Sem status: "${semStatus.join('", "')}".` };
+      }
+      const jaTinha = new Set((quadro.stages as Array<{ clickupStatus?: string }>).map((s) => s.clickupStatus?.toLowerCase()).filter(Boolean));
+      const novos = body.stages.filter((s) => !jaTinha.has(s.clickupStatus!.toLowerCase()));
+      if (novos.length > 0) {
+        const reais = await statusReaisDoQuadro(quadro, request.tenantContext!.organizationId);
+        if ('erro' in reais) {
+          reply.code(reais.codigo);
+          return { error: reais.erro };
+        }
+        const invalidos = statusInvalidosParaALista(novos, reais.status);
+        if (invalidos.length > 0) {
+          reply.code(400);
+          return { error: `Os status "${invalidos.join('", "')}" não existem no ClickUp deste quadro.`, detalhe: `Status reais: ${reais.status.join(', ')}` };
+        }
+      }
+    }
 
     const [atualizado] = await db
       .update(schema.pipelineBoards)
