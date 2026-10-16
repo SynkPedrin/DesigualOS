@@ -512,6 +512,13 @@
       "when": 1792075103432,
       "tag": "0072_massive_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792153858723,
+      "tag": "0073_bento_whatsapp_channel",
+      "breakpoints": true
     }
   ]
 }

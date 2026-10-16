@@ -36,3 +36,4 @@ export * from './demands';
 export * from './pipeline';
 export * from './briefs';
 export * from './approvals';
+export * from './bento-whatsapp';

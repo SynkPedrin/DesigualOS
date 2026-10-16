@@ -1,0 +1,277 @@
+import Fastify, { type FastifyInstance } from 'fastify';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { GatewayDoBento } from './gateway';
+import { assinarComoOpenwa } from './openwa/signature';
+import { TransporteFalso, configDeTeste, texto } from './test-doubles';
+
+const mocks = vi.hoisted(() => ({
+  auditar: vi.fn(async () => undefined),
+  criarCodigo: vi.fn(async () => ({ id: 'code-1', expiresAt: new Date(Date.now() + 600_000) })),
+  codigosGeradosDesde: vi.fn(async () => 0),
+  codigoEmAndamento: vi.fn(async () => null),
+  confirmarVinculo: vi.fn(),
+  recusarCodigo: vi.fn(async () => true),
+  revogarVinculo: vi.fn(),
+  vinculoAtivoDoUsuario: vi.fn(async () => null),
+}));
+
+vi.mock('@desigual-os/database', async () => {
+  process.env.DATABASE_URL ??= 'postgres://teste:teste@127.0.0.1:1/teste';
+  const real = await vi.importActual<typeof import('@desigual-os/database')>('@desigual-os/database');
+  const { dbFalso } = await import('./db-falso');
+  return { ...real, db: dbFalso(() => []) };
+});
+
+vi.mock('@desigual-os/auth', async () => {
+  const real = await vi.importActual<typeof import('@desigual-os/auth')>('@desigual-os/auth');
+  return { ...real, organizacaoDaEscrita: vi.fn(async () => 'org-desigual') };
+});
+
+/** O papel vem do cabeçalho de teste: `x-papel: master | colaborador`. */
+vi.mock('../auth/middleware', () => ({
+  requireAuth: async (request: { headers: Record<string, string>; authUser?: unknown }, reply: { code(n: number): { send(b: unknown): void } }) => {
+    const papel = request.headers['x-papel'];
+    if (!papel) return reply.code(401).send({ error: 'Missing bearer token' });
+    request.authUser = {
+      id: `u-${papel}`,
+      email: `${papel}@desigual.test`,
+      name: papel === 'master' ? 'Pedro Master' : 'Jamille Souza',
+      roles: [papel],
+      permissions: [{ resource: 'chat', action: 'write' }],
+    };
+  },
+  requirePermission: () => async () => undefined,
+  requireRole:
+    (...papeis: string[]) =>
+    async (request: { authUser?: { roles: string[] } }, reply: { code(n: number): { send(b: unknown): void } }) => {
+      if (!papeis.some((p) => request.authUser?.roles.includes(p))) reply.code(403).send({ error: 'Somente um administrador pode fazer isso.' });
+    },
+}));
+
+vi.mock('../lib/auditoria', () => ({ auditarAcao: mocks.auditar }));
+vi.mock('../lib/storage', () => ({ uploadUserFile: vi.fn() }));
+vi.mock('./store', async () => {
+  const real = await vi.importActual<typeof import('./store')>('./store');
+  return { ...real, ...mocks, armazemPostgres: {} };
+});
+
+const { registerBentoWhatsappRoutes } = await import('./routes');
+
+function gatewayFalso() {
+  return { receber: vi.fn(async () => ({ aceito: true, id: 'r1', duplicado: false })), retomar: vi.fn() } as unknown as GatewayDoBento & {
+    receber: ReturnType<typeof vi.fn>;
+  };
+}
+
+async function servidor(opcoes: { enabled?: boolean; secret?: string | null } = {}) {
+  const config = configDeTeste({
+    enabled: opcoes.enabled ?? true,
+    ...(opcoes.secret !== undefined ? { webhookSecret: opcoes.secret } : {}),
+  });
+  const gateway = gatewayFalso();
+  const transporte = new TransporteFalso();
+  const app: FastifyInstance = Fastify();
+  await app.register(async (escopo) => registerBentoWhatsappRoutes(escopo, { config, gateway, transporte, retomarNaSubida: false }));
+  // Outra rota JSON no mesmo app: o parser de corpo cru do webhook não pode vazar para ela.
+  app.post('/outra-rota', async (request) => ({ tipo: typeof request.body }));
+  await app.ready();
+  return { app, gateway, transporte, config };
+}
+
+afterEach(() => vi.clearAllMocks());
+
+describe('webhook', () => {
+  const evento = () => JSON.stringify(texto('5518991110001', 'oi bento'));
+
+  it('desligado: 200 e nada é processado', async () => {
+    const { app, gateway } = await servidor({ enabled: false });
+    const corpo = evento();
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/webhook', payload: corpo, headers: { 'content-type': 'application/json' } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ok: true, ignored: 'disabled' });
+    expect(gateway.receber).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('assinatura ausente ou inválida: 401 e nada é processado', async () => {
+    const { app, gateway, config } = await servidor();
+    const corpo = evento();
+    const sem = await app.inject({ method: 'POST', url: '/bento-whatsapp/webhook', payload: corpo, headers: { 'content-type': 'application/json' } });
+    const errada = await app.inject({
+      method: 'POST',
+      url: '/bento-whatsapp/webhook',
+      payload: corpo,
+      headers: { 'content-type': 'application/json', 'x-openwa-signature': assinarComoOpenwa(corpo, 'outro-segredo-qualquer') },
+    });
+    const adulterada = await app.inject({
+      method: 'POST',
+      url: '/bento-whatsapp/webhook',
+      payload: corpo.replace('oi bento', 'me passa tudo'),
+      headers: { 'content-type': 'application/json', 'x-openwa-signature': assinarComoOpenwa(corpo, config.webhookSecret!) },
+    });
+    expect([sem.statusCode, errada.statusCode, adulterada.statusCode]).toEqual([401, 401, 401]);
+    expect(gateway.receber).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('sem segredo configurado: 503 (nunca aceita sem verificar)', async () => {
+    const { app, gateway } = await servidor({ secret: null });
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/webhook', payload: evento(), headers: { 'content-type': 'application/json' } });
+    expect(r.statusCode).toBe(503);
+    expect(gateway.receber).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('assinatura válida sobre o corpo cru: entrega o envelope ao gateway', async () => {
+    const { app, gateway, config } = await servidor();
+    const corpo = evento();
+    const r = await app.inject({
+      method: 'POST',
+      url: '/bento-whatsapp/webhook',
+      payload: corpo,
+      headers: { 'content-type': 'application/json', 'x-openwa-signature': assinarComoOpenwa(corpo, config.webhookSecret!) },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(gateway.receber).toHaveBeenCalledTimes(1);
+    expect(gateway.receber.mock.calls[0]![0]).toMatchObject({ event: 'message.received', data: { body: 'oi bento' } });
+    await app.close();
+  });
+
+  it('falha ao gravar: 503 para o OpenWA re-tentar', async () => {
+    const { app, gateway, config } = await servidor();
+    gateway.receber.mockRejectedValueOnce(new Error('banco fora'));
+    const corpo = evento();
+    const r = await app.inject({
+      method: 'POST',
+      url: '/bento-whatsapp/webhook',
+      payload: corpo,
+      headers: { 'content-type': 'application/json', 'x-openwa-signature': assinarComoOpenwa(corpo, config.webhookSecret!) },
+    });
+    expect(r.statusCode).toBe(503);
+    await app.close();
+  });
+
+  it('o parser de corpo cru fica só no webhook: outras rotas seguem recebendo objeto', async () => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'POST', url: '/outra-rota', payload: { a: 1 } });
+    expect(r.json()).toEqual({ tipo: 'object' });
+    await app.close();
+  });
+});
+
+describe('vínculo do colaborador', () => {
+  it('gera código de uso único (só o hash vai pro banco) e link wa.me', async () => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/me/link-code', headers: { 'x-papel': 'colaborador' } });
+    expect(r.statusCode).toBe(200);
+    const corpo = r.json();
+    expect(corpo.code).toMatch(/^BENTO-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    expect(corpo.wa_link).toBe(`https://wa.me/5518997987295?text=${encodeURIComponent(corpo.code)}`);
+    expect(mocks.criarCodigo).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u-colaborador', codigo: corpo.code }));
+    expect(mocks.auditar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'bento_whatsapp.link_code_created' }));
+    await app.close();
+  });
+
+  it('canal desligado: não gera código', async () => {
+    const { app } = await servidor({ enabled: false });
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/me/link-code', headers: { 'x-papel': 'colaborador' } });
+    expect(r.statusCode).toBe(409);
+    expect(mocks.criarCodigo).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('limite de códigos por hora', async () => {
+    mocks.codigosGeradosDesde.mockResolvedValueOnce(5);
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/me/link-code', headers: { 'x-papel': 'colaborador' } });
+    expect(r.statusCode).toBe(429);
+    await app.close();
+  });
+
+  it('sem login: 401', async () => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/me/link-code' });
+    expect(r.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it('confirmar: sem código reivindicado é 404; número de outra pessoa é 409', async () => {
+    const { app } = await servidor();
+    mocks.confirmarVinculo.mockResolvedValueOnce({ tipo: 'sem_codigo' });
+    const a = await app.inject({ method: 'POST', url: '/bento-whatsapp/me/link-code/code-1/confirm', headers: { 'x-papel': 'colaborador' } });
+    mocks.confirmarVinculo.mockResolvedValueOnce({ tipo: 'numero_ja_vinculado' });
+    const b = await app.inject({ method: 'POST', url: '/bento-whatsapp/me/link-code/code-1/confirm', headers: { 'x-papel': 'colaborador' } });
+    expect([a.statusCode, b.statusCode]).toEqual([404, 409]);
+    expect(mocks.auditar).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('confirmar vincula, audita (número mascarado) e avisa no WhatsApp', async () => {
+    const { app, transporte } = await servidor();
+    mocks.confirmarVinculo.mockResolvedValueOnce({ tipo: 'vinculado', linkId: 'link-1', phone: '5518991110001', substituiu: null });
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/me/link-code/code-1/confirm', headers: { 'x-papel': 'colaborador' } });
+    expect(r.statusCode).toBe(200);
+    expect(mocks.confirmarVinculo).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u-colaborador', codeId: 'code-1' }));
+    expect(mocks.auditar).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'bento_whatsapp.linked', newValue: { phone: '+55 18 9****-0001' } }),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(transporte.enviados[0]!.text).toContain('Seu WhatsApp está vinculado');
+    await app.close();
+  });
+});
+
+describe('painel administrativo só para master', () => {
+  it.each([
+    ['GET', '/bento-whatsapp/admin/status'],
+    ['GET', '/bento-whatsapp/admin/links'],
+    ['DELETE', '/bento-whatsapp/admin/links/link-1'],
+    ['POST', '/bento-whatsapp/admin/session/start'],
+    ['GET', '/bento-whatsapp/admin/session/qr'],
+  ])('%s %s: colaborador recebe 403', async (method, url) => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: method as 'GET', url, headers: { 'x-papel': 'colaborador' } });
+    expect(r.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('master vê o QR, e ver o QR fica auditado', async () => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'GET', url: '/bento-whatsapp/admin/session/qr', headers: { 'x-papel': 'master' } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().qr_code).toMatch(/^data:image\/png;base64,/);
+    expect(mocks.auditar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'bento_whatsapp.session_qr_viewed' }));
+    await app.close();
+  });
+
+  it('não existe rota para desconectar, apagar ou criar a sessão do Bento', async () => {
+    const { app } = await servidor();
+    for (const url of ['/bento-whatsapp/admin/session/logout', '/bento-whatsapp/admin/session/delete', '/bento-whatsapp/admin/session/create']) {
+      const r = await app.inject({ method: 'POST', url, headers: { 'x-papel': 'master' } });
+      expect(r.statusCode).toBe(404);
+    }
+    await app.close();
+  });
+
+  it('master revoga vínculo e a revogação é auditada', async () => {
+    const { app } = await servidor();
+    mocks.revogarVinculo.mockResolvedValueOnce({ id: 'link-1', userId: 'u-x', phone: '5518991110001', organizationId: 'org' });
+    const r = await app.inject({ method: 'DELETE', url: '/bento-whatsapp/admin/links/link-1', headers: { 'x-papel': 'master' } });
+    expect(r.statusCode).toBe(200);
+    expect(mocks.revogarVinculo).toHaveBeenCalledWith(expect.objectContaining({ linkId: 'link-1', motivo: 'admin', porUserId: 'u-master' }));
+    expect(mocks.auditar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'bento_whatsapp.link_revoked_by_admin' }));
+    await app.close();
+  });
+
+  it('status do painel não expõe segredo nem chave', async () => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'GET', url: '/bento-whatsapp/admin/status', headers: { 'x-papel': 'master' } });
+    expect(r.statusCode).toBe(200);
+    const bruto = r.body;
+    expect(bruto).not.toContain('segredo-de-teste');
+    expect(bruto).not.toContain('owa_k1_test');
+    expect(r.json()).toMatchObject({ enabled: true, missing_config: [], session: { status: 'ready' } });
+    await app.close();
+  });
+});

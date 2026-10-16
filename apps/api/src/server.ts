@@ -16,6 +16,7 @@ import { startAgentProbe } from './health/probe-scheduler';
 import { startWorkerWatchdog } from './health/worker-watchdog';
 import { registerAuthRoutes } from './auth/routes';
 import { registerChatRoutes } from './chat/routes';
+import { registerBentoWhatsappRoutes } from './bento-whatsapp/routes';
 import { registerExecutionRoutes } from './executions/routes';
 import { registerMemoryRoutes } from './memories/routes';
 import { registerMcpStatusRoutes } from './mcp-status/routes';
@@ -252,6 +253,7 @@ async function start(): Promise<void> {
   await app.register(registerReadyRoutes);
   await app.register(registerAuthRoutes);
   await app.register(registerChatRoutes);
+  await app.register(registerBentoWhatsappRoutes);
   await app.register(registerExecutionRoutes);
   await app.register(registerMemoryRoutes);
   await app.register(registerMcpStatusRoutes);
