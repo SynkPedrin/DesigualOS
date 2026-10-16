@@ -55,6 +55,7 @@ export interface BrainDoBento {
 
 const ESTADOS_FINAIS = new Set(['completed', 'failed', 'timeout', 'cancelled']);
 const INTERVALO_MS = 1_500;
+const FOLGA_APOS_TERMINAL_MS = 20_000;
 
 const esperar = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -105,10 +106,13 @@ async function aguardarResposta(despacho: Despacho & { desde: Date }, prazoMs: n
       };
     }
     if (estado && ESTADOS_FINAIS.has(estado)) {
-      // A mensagem do assistente é gravada perto do fim do job; dá uma folga
-      // curta para ela aparecer antes de declarar que não veio.
+      // 'failed' NÃO é necessariamente o fim: o worker marca 'failed' em toda
+      // tentativa (failExecution), e o BullMQ re-tenta o Bento uma vez — a
+      // nova tentativa volta o status para 'running'. A folga cobre o backoff
+      // (2s) e a retomada; na última tentativa o worker grava a mensagem de
+      // falha na conversa, e é ela que vai para o WhatsApp.
       finalizouEm ??= Date.now();
-      if (Date.now() - finalizouEm > 6_000) {
+      if (Date.now() - finalizouEm > FOLGA_APOS_TERMINAL_MS) {
         return {
           tipo: 'falhou',
           motivo: `execução terminou em '${estado}' sem resposta gravada`,
@@ -117,6 +121,7 @@ async function aguardarResposta(despacho: Despacho & { desde: Date }, prazoMs: n
         };
       }
     }
+    if (estado && !ESTADOS_FINAIS.has(estado)) finalizouEm = null;
     await esperar(INTERVALO_MS);
   }
   return { tipo: 'demorou', conversationId: despacho.conversationId, executionId: despacho.executionId };

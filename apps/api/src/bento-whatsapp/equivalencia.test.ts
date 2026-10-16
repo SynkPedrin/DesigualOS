@@ -244,9 +244,30 @@ describe('adaptador do Brain: estados que não são resposta', () => {
     vi.useFakeTimers();
     try {
       const pendente = brainPeloChat(console as never).perguntar({ user, conversationId: null, mensagem: 'cria tarefa' }, { prazoMs: 60_000 });
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(30_000);
       const r = await pendente;
       expect(r.tipo).toBe('falhou');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("'failed' de tentativa intermediária não encerra: a re-tentativa que responde é entregue", async () => {
+    programarTurno('conv-4');
+    estado.respostas.set('executions', [{ status: 'failed' }]);
+    estado.respostas.set('messages', []);
+    vi.useFakeTimers();
+    try {
+      const pendente = brainPeloChat(console as never).perguntar({ user, conversationId: null, mensagem: 'oi' }, { prazoMs: 120_000 });
+      await vi.advanceTimersByTimeAsync(6_000);
+      // BullMQ re-tentou: volta a 'running' e depois conclui com resposta.
+      estado.respostas.set('executions', [{ status: 'running' }]);
+      await vi.advanceTimersByTimeAsync(20_000);
+      estado.respostas.set('executions', [{ status: 'completed' }]);
+      estado.respostas.set('messages', [{ content: 'resposta da segunda tentativa' }]);
+      await vi.advanceTimersByTimeAsync(3_000);
+      const r = await pendente;
+      expect(r).toMatchObject({ tipo: 'resposta', texto: 'resposta da segunda tentativa' });
     } finally {
       vi.useRealTimers();
     }

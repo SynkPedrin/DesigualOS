@@ -40,6 +40,7 @@ import { findTeamMember, mockClientAssignments } from './client-assignments';
 import { dicebearAvatarUrl } from './avatar';
 import { mockCalendarEventParticipants, mockCalendarEvents } from './calendar';
 import { modulosPadrao } from '@desigual-os/types';
+import { bentoWhatsappHandlers } from './bento-whatsapp';
 
 /** Chunked to avoid blowing the call stack on `String.fromCharCode(...bytes)` for large files
  * (avatar/attachment uploads allow up to 25MB). */
@@ -128,6 +129,7 @@ const mockAutomationRuns = new Map<string, Array<{ id: string; status: string; e
 ]);
 
 export const handlers = [
+  ...bentoWhatsappHandlers,
   http.get('/health/infrastructure', () => {
     return HttpResponse.json(mockInfrastructureHealthWire);
   }),

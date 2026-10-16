@@ -153,6 +153,8 @@ beforeEach(() => {
     if (rota.startsWith('/consent')) return { consentimentos: [] };
     if (rota.startsWith('/mcp')) return { servers: [], pessoas_conectadas: 0 };
     if (rota.startsWith('/motion/providers')) return { providers: [] };
+    // Bento no WhatsApp: canal ligado, número desta pessoa ainda não vinculado.
+    if (rota.startsWith('/bento-whatsapp/me')) return { enabled: true, bot_phone: '+55 18 99798-7295', link: null, pending_code: null };
     // Conectores da empresa (WhatsApp) — lista vazia é o estado "não vinculado".
     if (rota.includes('/whatsapp')) return { status: 'nao_vinculado', configured: false, connected: false };
     if (rota.includes('/connectors')) return { connectors: [] };
@@ -170,7 +172,7 @@ describe('vitrine de Integrações', () => {
     const nomes = cartoes(await montar()).map(nomeDoCartao);
 
     expect(nomes).toEqual(
-      expect.arrayContaining(['ClickUp', 'Notion', 'WhatsApp', 'Meta Ads', 'Google Ads', 'Microsoft Calendar']),
+      expect.arrayContaining(['ClickUp', 'Notion', 'WhatsApp', 'Meta Ads', 'Google Ads', 'Microsoft Calendar', 'Bento no WhatsApp']),
     );
   });
 

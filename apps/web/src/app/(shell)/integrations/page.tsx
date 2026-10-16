@@ -38,6 +38,8 @@ import { ClickUpIntegrationSection } from '@/components/settings/clickup-integra
 import { NotionIntegrationSection } from '@/components/settings/notion-integration-card';
 import { MotionProvidersSection } from '@/components/settings/motion-providers-card';
 import { WhatsAppConnectCard } from '@/components/settings/whatsapp-connect-card';
+import { BentoWhatsappSection } from '@/components/settings/bento-whatsapp-card';
+import { useBentoWhatsappMe } from '@/hooks/use-bento-whatsapp';
 import { InteligenciaConectada } from '@/components/control/inteligencia-conectada';
 import { saudeDasIntegracoes } from '@/lib/saude-das-integracoes';
 
@@ -58,6 +60,7 @@ export default function IntegrationsPage() {
   const { data: meta, isPending: metaPendente } = useMetaIntegration();
   const { data: googleAds, isPending: googleAdsPendente } = useGoogleAdsIntegration();
   const { data: microsoftCal, isPending: microsoftCalPendente } = useMicrosoftCalendarIntegration();
+  const { data: bentoWhatsapp, isPending: bentoWhatsappPendente } = useBentoWhatsappMe();
 
   /**
    * O conjunto, a partir dos MESMOS estados que alimentam cada cartão — nunca
@@ -85,6 +88,11 @@ export default function IntegrationsPage() {
      * MCP é parte do produto, não variável de ambiente que alguém esqueceu.
      */
     mcpPendente ? undefined : { connected: (mcp?.pessoas_conectadas ?? 0) > 0, configured: true },
+    // Bento no WhatsApp: "conectado" é ESTA pessoa ter o número vinculado;
+    // canal desligado no servidor conta como não configurado.
+    bentoWhatsappPendente
+      ? undefined
+      : { connected: Boolean(bentoWhatsapp?.link), configured: bentoWhatsapp?.enabled === true },
   ]);
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState<CartaoProps | null>(null);
@@ -114,6 +122,29 @@ export default function IntegrationsPage() {
               ? `${mcp!.pessoas_conectadas} pessoa(s) conectada(s)`
               : 'Ninguém conectado',
           painel: <MotionProvidersSection />,
+        },
+        {
+          // O mesmo Bento do chat, por outro canal: o cartão é sobre o AGENTE,
+          // por isso mora em Inteligência e não junto do WhatsApp do Inbox.
+          nome: 'Bento no WhatsApp',
+          categoria: 'Inteligência',
+          bannerClassName: 'bg-agent-bento',
+          logo: <Image src="/agents/bento.png" alt="" width={44} height={44} className="rounded-full" />,
+          estado: bentoWhatsappPendente
+            ? 'desconhecido'
+            : !bentoWhatsapp?.enabled
+              ? 'atencao'
+              : bentoWhatsapp.link
+                ? 'ok'
+                : 'atencao',
+          texto: bentoWhatsappPendente
+            ? 'Consultando'
+            : !bentoWhatsapp?.enabled
+              ? 'Canal desligado'
+              : bentoWhatsapp.link
+                ? 'Seu número está vinculado'
+                : 'Seu número não está vinculado',
+          painel: <BentoWhatsappSection />,
         },
       ],
     },
