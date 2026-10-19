@@ -8,6 +8,7 @@ import {
   useBentoWhatsappAdminStatus,
   useBentoWhatsappLinks,
   useBentoWhatsappMe,
+  useCodigoDeConexaoBentoWhatsapp,
   useConfirmarVinculoBentoWhatsapp,
   useDesvincularBentoWhatsapp,
   useGerarCodigoBentoWhatsapp,
@@ -279,6 +280,29 @@ function PainelMaster() {
   }, [aguardandoQr, qr, qr.isError, qr.isSuccess]);
   // Sessão já conectada: some o QR da tela.
   const sessaoPronta = status.data?.session?.status === 'ready';
+  const codigo = useCodigoDeConexaoBentoWhatsapp();
+
+  /**
+   * O QR do WhatsApp vale ~20 s e o OpenWA gera outro a cada 20 s (medido em
+   * produção, 19/10/2026). Mostrar UM QR e deixar parado fazia a pessoa
+   * escanear um QR já morto ("não foi possível conectar") sem como pedir
+   * outro. Enquanto o QR está na tela e a sessão espera conexão, renova de
+   * 12 em 12 s, por no máximo 5 min.
+   */
+  const qrNaTela = Boolean(qr.data) && status.data?.session?.status === 'qr_ready';
+  const renovacoes = useRef(0);
+  useEffect(() => {
+    if (!qrNaTela) {
+      renovacoes.current = 0;
+      return;
+    }
+    const t = setInterval(() => {
+      renovacoes.current += 1;
+      if (renovacoes.current > 25) return;
+      if (!qr.isPending) qr.mutate();
+    }, 12_000);
+    return () => clearInterval(t);
+  }, [qrNaTela, qr]);
   const provisionar = useProvisionarSessaoBentoWhatsapp();
   const ligar = useLigarCanalBentoWhatsapp();
 
@@ -419,8 +443,36 @@ function PainelMaster() {
             <p className="text-[11px] text-erro">{erroLegivel(qr.error, 'QR indisponível agora.')} Clique em Mostrar QR para tentar de novo.</p>
           )}
           {qr.data && !sessaoPronta && (
-            <img src={qr.data.qr_code} alt="QR para conectar o WhatsApp do Bento" className="size-52 rounded-md bg-white p-2" />
+            <div className="space-y-1.5">
+              <img src={qr.data.qr_code} alt="QR para conectar o WhatsApp do Bento" className="size-52 rounded-md bg-white p-2" />
+              <p className="text-[11px] text-nevoa">
+                O QR renova sozinho a cada poucos segundos: escaneie o que está na tela. No celular do Bento: WhatsApp
+                Business &gt; Aparelhos conectados &gt; Conectar um aparelho.
+              </p>
+            </div>
           )}
+          <div className="space-y-1.5 border-t border-grafite-elevado pt-2">
+            <p className="text-[11px] text-nevoa">Sem conseguir escanear? Conecte por código, sem QR:</p>
+            <button
+              type="button"
+              onClick={() => codigo.mutate()}
+              disabled={codigo.isPending}
+              className="rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru hover:bg-grafite-elevado disabled:opacity-50"
+            >
+              {codigo.isPending ? 'Gerando…' : 'Conectar por código'}
+            </button>
+            {codigo.isError && <p className="text-[11px] text-erro">{erroLegivel(codigo.error, 'Não foi possível gerar o código.')}</p>}
+            {codigo.data && !sessaoPronta && (
+              <div className="space-y-1">
+                <p className="font-mono text-xl tracking-[0.3em] text-branco-cru">{codigo.data.pairing_code}</p>
+                <p className="text-[11px] leading-relaxed text-nevoa">
+                  No celular do {codigo.data.phone}: WhatsApp Business &gt; Aparelhos conectados &gt; Conectar um aparelho &gt;{' '}
+                  <span className="text-branco-cru">Conectar com número de telefone</span> e digite este código. Ele expira em
+                  poucos minutos.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

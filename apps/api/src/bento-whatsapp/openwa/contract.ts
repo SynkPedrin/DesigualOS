@@ -114,4 +114,6 @@ export interface BentoWhatsappTransport {
   getSession(): Promise<OpenwaSession>;
   startSession(): Promise<OpenwaSession>;
   getQr(): Promise<{ qrCode: string; status: string }>;
+  /** Código de 8 caracteres para conectar digitando no celular (alternativa ao QR). */
+  requestPairingCode(phoneNumber: string): Promise<{ pairingCode: string; status: string }>;
 }

@@ -98,6 +98,8 @@ export const bentoWhatsappHandlers = [
 
   http.post('/bento-whatsapp/admin/session/start', () => HttpResponse.json({ status: 'initializing' })),
 
+  http.post('/bento-whatsapp/admin/session/pairing-code', () => HttpResponse.json({ pairing_code: 'ABCD1234', phone: '+55 18 99798-7295' })),
+
   http.get('/bento-whatsapp/admin/session/qr', () =>
     HttpResponse.json({ error: 'Modo mock: nenhum OpenWA real para gerar QR.' }, { status: 409 }),
   ),

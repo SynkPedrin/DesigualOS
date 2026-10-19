@@ -39,6 +39,7 @@ import { carregarUsuarioDoCanal } from './usuario';
 const logger = createLogger({ service: 'bento-whatsapp' });
 
 const MAX_CODIGOS_POR_HORA = 5;
+const ultimaAuditoriaDoQr = new Map<string, number>();
 
 export interface OpcoesDasRotas {
   /** Testes: configuração, transporte e gateway fixos (sem resolver no banco). */
@@ -536,6 +537,39 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
     }
   });
 
+  /**
+   * Conectar digitando um código de 8 caracteres no celular do Bento, sem
+   * QR. O número vem SEMPRE da configuração do Bento, nunca do pedido: este
+   * endpoint não consegue religar outro número. (Ver o aviso do OpenWA: pedir
+   * código para um número que já tem sessão vinculada pode derrubá-la — por
+   * isso só vale para a sessão do Bento enquanto ela espera conexão.)
+   */
+  app.post('/bento-whatsapp/admin/session/pairing-code', soMaster, async (request, reply) => {
+    const { config, transporte } = await canal();
+    if (!transporte || !config.botPhone) {
+      reply.code(409);
+      return { error: 'OpenWA não configurado', missing_config: pendenciasDeConfiguracao(config) };
+    }
+    try {
+      const sessao = await transporte.getSession();
+      if (sessao.status !== 'qr_ready') {
+        reply.code(409);
+        return {
+          error:
+            sessao.status === 'ready'
+              ? 'O Bento já está conectado.'
+              : 'A sessão ainda não está pronta para conectar. Aguarde alguns segundos ou clique em Iniciar sessão.',
+        };
+      }
+      const resultado = await transporte.requestPairingCode(config.botPhone);
+      await auditarAcao(request, { action: 'bento_whatsapp.session_pairing_code_requested', metadata: { status: resultado.status } });
+      return { pairing_code: resultado.pairingCode, phone: telefoneLegivel(config.botPhone) };
+    } catch (error) {
+      reply.code(error instanceof OpenwaError && error.status && error.status < 500 ? 409 : 502);
+      return { error: error instanceof Error ? error.message : 'Não foi possível gerar o código' };
+    }
+  });
+
   app.get('/bento-whatsapp/admin/session/qr', soMaster, async (request, reply) => {
     const { config, transporte } = await canal();
     if (!transporte) {
@@ -544,8 +578,15 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
     }
     try {
       const qr = await transporte.getQr();
-      // Ver o QR é poder conectar o número do Bento: fica no rastro.
-      await auditarAcao(request, { action: 'bento_whatsapp.session_qr_viewed', metadata: { status: qr.status } });
+      // Ver o QR é poder conectar o número do Bento: fica no rastro. A tela
+      // renova o QR a cada ~12 s (o do WhatsApp vale 20 s), então registra no
+      // máximo uma vez a cada 5 min por pessoa — senão a auditoria vira ruído.
+      const agoraMs = Date.now();
+      const ultimo = ultimaAuditoriaDoQr.get(request.authUser!.id) ?? 0;
+      if (agoraMs - ultimo > 5 * 60_000) {
+        ultimaAuditoriaDoQr.set(request.authUser!.id, agoraMs);
+        await auditarAcao(request, { action: 'bento_whatsapp.session_qr_viewed', metadata: { status: qr.status } });
+      }
       return { qr_code: qr.qrCode, status: qr.status };
     } catch (error) {
       reply.code(error instanceof OpenwaError && error.status && error.status < 500 ? 409 : 502);

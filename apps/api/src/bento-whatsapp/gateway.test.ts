@@ -245,7 +245,8 @@ describe('turno no Brain', () => {
   });
 
   it('mensagens seguidas da mesma pessoa viram um turno só', async () => {
-    const { gateway, armazem, brain, transporte } = montar();
+    // Janela larga de propósito: com 5 ms o teste dependia de a máquina estar livre.
+    const { gateway, armazem, brain, transporte } = montar({ config: configDeTeste({ coalesceWindowMs: 400 }) });
     armazem.vincular('u-jamille', JAMILLE);
     await gateway.receber(texto(JAMILLE, 'Bento'));
     await gateway.receber(texto(JAMILLE, 'quais tarefas'));

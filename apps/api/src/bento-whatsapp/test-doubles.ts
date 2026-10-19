@@ -259,6 +259,11 @@ export class TransporteFalso implements BentoWhatsappTransport {
   async startSession() {
     return { id: SESSAO, name: 'bento', status: 'initializing' };
   }
+  pedidosDeCodigo: string[] = [];
+  async requestPairingCode(phoneNumber: string) {
+    this.pedidosDeCodigo.push(phoneNumber);
+    return { pairingCode: 'ABCD1234', status: 'qr_ready' };
+  }
   async getQr() {
     return { qrCode: 'data:image/png;base64,AAAA', status: 'qr_ready' };
   }

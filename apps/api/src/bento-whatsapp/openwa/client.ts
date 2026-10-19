@@ -152,6 +152,11 @@ export class OpenwaClient implements BentoWhatsappTransport {
     return (await resposta.json()) as OpenwaSession;
   }
 
+  async requestPairingCode(phoneNumber: string): Promise<{ pairingCode: string; status: string }> {
+    const resposta = await this.chamar('POST', this.sessao('/pairing-code'), { phoneNumber: phoneNumber.replace(/\D/g, '') });
+    return (await resposta.json()) as { pairingCode: string; status: string };
+  }
+
   async getQr(): Promise<{ qrCode: string; status: string }> {
     const resposta = await this.chamar('GET', this.sessao('/qr'));
     return (await resposta.json()) as { qrCode: string; status: string };

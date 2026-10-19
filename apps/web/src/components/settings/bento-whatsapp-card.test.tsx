@@ -193,4 +193,42 @@ describe('Bento no WhatsApp — vínculo', () => {
     expect(tela.querySelector('img[alt^="QR"]')).not.toBeNull();
     expect(tela.textContent).not.toContain('o QR aparece em alguns segundos');
   }, 15_000);
+
+  it('QR na tela é renovado sozinho; e há o código de 8 caracteres como saída sem QR', async () => {
+    papel.master = true;
+    let qrs = 0;
+    apiFetchMock.mockImplementation(async (rota: string, init?: RequestInit) => {
+      if (rota === '/bento-whatsapp/me') return { enabled: true, bot_phone: null, link: null, pending_code: null };
+      if (rota === '/bento-whatsapp/admin/links') return { links: [] };
+      if (rota === '/bento-whatsapp/admin/session/qr') {
+        qrs += 1;
+        return { qr_code: `data:image/png;base64,QR${qrs}`, status: 'qr_ready' };
+      }
+      if (rota === '/bento-whatsapp/admin/session/pairing-code' && init?.method === 'POST')
+        return { pairing_code: 'ABCD1234', phone: '+55 18 99798-7295' };
+      if (rota === '/bento-whatsapp/admin/status')
+        return {
+          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO',
+          missing_config: [], bot_phone: null, transcription: 'none', documents: false, allowed_groups: 0,
+          session: { status: 'qr_ready' }, gateway: { ready: true }, brain: { last_reply_at: null },
+          last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } }, recent_failures: [], linked_users: 0,
+        };
+      throw new Error(`rota inesperada ${rota}`);
+    });
+    const tela = await montar();
+    await act(async () => botao(tela, 'Mostrar QR').click());
+    await assentar();
+    expect(tela.querySelector('img[alt^="QR"]')?.getAttribute('src')).toBe('data:image/png;base64,QR1');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 12_400));
+    });
+    await assentar();
+    expect(qrs).toBeGreaterThanOrEqual(2);
+    expect(tela.querySelector('img[alt^="QR"]')?.getAttribute('src')).not.toBe('data:image/png;base64,QR1');
+
+    await act(async () => botao(tela, 'Conectar por código').click());
+    await assentar();
+    expect(tela.textContent).toContain('ABCD1234');
+    expect(tela.textContent).toContain('Conectar com número de telefone');
+  }, 20_000);
 });

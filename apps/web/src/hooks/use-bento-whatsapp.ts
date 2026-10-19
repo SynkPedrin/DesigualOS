@@ -173,3 +173,11 @@ export function useLigarCanalBentoWhatsapp() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [...CHAVE] }),
   });
 }
+
+/** Código de 8 caracteres para digitar no celular do Bento (alternativa ao QR). */
+export function useCodigoDeConexaoBentoWhatsapp() {
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ pairing_code: string; phone: string }>('/bento-whatsapp/admin/session/pairing-code', { method: 'POST' }),
+  });
+}

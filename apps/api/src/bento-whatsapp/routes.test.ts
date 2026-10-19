@@ -322,3 +322,51 @@ describe('conectar o número do Bento pelo painel', () => {
     await app.close();
   });
 });
+
+describe('conectar por código (sem QR)', () => {
+  it('colaborador não pede o código', async () => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/session/pairing-code', headers: { 'x-papel': 'colaborador' } });
+    expect(r.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('master recebe o código, e ele é pedido SÓ para o número do Bento (nunca um número do pedido)', async () => {
+    const { app, transporte } = await servidor();
+    transporte.getSession = async () => ({ id: 's', name: 'bento', status: 'qr_ready', phone: '' });
+    const r = await app.inject({
+      method: 'POST',
+      url: '/bento-whatsapp/admin/session/pairing-code',
+      headers: { 'x-papel': 'master' },
+      payload: { phoneNumber: '5511999999999' },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ pairing_code: 'ABCD1234', phone: '+55 18 99798-7295' });
+    expect(transporte.pedidosDeCodigo).toEqual(['5518997987295']);
+    expect(mocks.auditar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'bento_whatsapp.session_pairing_code_requested' }));
+    await app.close();
+  });
+
+  it('sessão que não espera conexão não gera código (não arrisca derrubar sessão ativa)', async () => {
+    const { app, transporte } = await servidor();
+    transporte.getSession = async () => ({ id: 's', name: 'bento', status: 'ready', phone: '5518997987295' });
+    const pronta = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/session/pairing-code', headers: { 'x-papel': 'master' } });
+    expect(pronta.statusCode).toBe(409);
+    expect(pronta.json().error).toMatch(/já está conectado/);
+    transporte.getSession = async () => ({ id: 's', name: 'bento', status: 'disconnected', phone: '' });
+    const parada = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/session/pairing-code', headers: { 'x-papel': 'master' } });
+    expect(parada.statusCode).toBe(409);
+    expect(transporte.pedidosDeCodigo).toEqual([]);
+    await app.close();
+  });
+
+  it('ver o QR várias vezes seguidas audita só uma vez (a tela renova a cada ~12 s)', async () => {
+    const { app } = await servidor();
+    for (let i = 0; i < 4; i += 1) {
+      await app.inject({ method: 'GET', url: '/bento-whatsapp/admin/session/qr', headers: { 'x-papel': 'master' } });
+    }
+    const vistas = (mocks.auditar.mock.calls as unknown as Array<[unknown, { action: string }]>).filter((c) => c[1]?.action === 'bento_whatsapp.session_qr_viewed');
+    expect(vistas.length).toBeLessThanOrEqual(1);
+    await app.close();
+  });
+});
