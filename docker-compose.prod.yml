@@ -153,7 +153,10 @@ services:
     tmpfs:
       - /tmp
     ports:
-      - "127.0.0.1:2785:2785"
+      # Padrão: só a própria VPS. Com a API em outro servidor (EUA, ao lado do
+      # banco — ver docs/deploy/servidor-eua.md), OPENWA_BIND recebe o IP do
+      # Tailscale desta VPS: a API alcança pela rede privada, nunca pela internet.
+      - "${OPENWA_BIND:-127.0.0.1}:2785:2785"
     environment:
       NODE_ENV: production
       NODE_ID: desigual-os-vps-openwa
