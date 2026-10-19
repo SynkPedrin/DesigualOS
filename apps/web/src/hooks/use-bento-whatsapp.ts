@@ -31,6 +31,12 @@ export interface BentoWhatsappCodeWire {
 
 export interface BentoWhatsappAdminStatusWire {
   enabled: boolean;
+  /** 'painel' (provisionada aqui), 'env' (variáveis do servidor) ou 'nenhuma' (falta conectar). */
+  source: 'painel' | 'env' | 'nenhuma';
+  can_provision: boolean;
+  kill_switch: boolean;
+  webhook_url: string | null;
+  agent_hint: 'AUTO' | 'BENTO';
   missing_config: string[];
   bot_phone: string | null;
   transcription: 'none' | 'openai';
@@ -144,5 +150,23 @@ export function useIniciarSessaoBentoWhatsapp() {
 export function useQrBentoWhatsapp() {
   return useMutation({
     mutationFn: () => apiFetch<{ qr_code: string; status: string }>('/bento-whatsapp/admin/session/qr'),
+  });
+}
+
+/** Cria (ou retoma) a sessão do número do Bento no OpenWA. Idempotente. */
+export function useProvisionarSessaoBentoWhatsapp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<{ status: string; created: boolean }>('/bento-whatsapp/admin/session/provision', { method: 'POST' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...CHAVE] }),
+  });
+}
+
+export function useLigarCanalBentoWhatsapp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiFetch<{ enabled: boolean }>('/bento-whatsapp/admin/channel', { method: 'POST', body: JSON.stringify({ enabled }) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...CHAVE] }),
   });
 }

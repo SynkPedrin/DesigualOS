@@ -326,6 +326,56 @@ describe('turno no Brain', () => {
   });
 });
 
+describe('capacidade igual à do chat', () => {
+  it('o turno usa o roteamento configurado (AUTO por padrão)', async () => {
+    const { gateway, armazem, brain } = montar();
+    armazem.vincular('u-jamille', JAMILLE);
+    await gateway.receber(texto(JAMILLE, 'como estão as campanhas da Cosentino?'));
+    await gateway.ocioso();
+    expect(brain.pedidos[0]!.agente).toBe('AUTO');
+  });
+
+  it('resposta de outro agente chega identificada; do Bento chega sem rótulo', async () => {
+    const { gateway, armazem, brain, transporte } = montar();
+    armazem.vincular('u-jamille', JAMILLE);
+    brain.roteiro = (p) => ({
+      tipo: 'resposta',
+      texto: 'CPL caiu 12% na semana.',
+      conversationId: 'c',
+      executionId: 'E',
+      agente: p.mensagem.includes('campanha') ? 'jarbas' : 'bento',
+    });
+    await gateway.receber(texto(JAMILLE, 'como está a campanha?'));
+    await gateway.ocioso();
+    await gateway.receber(texto(JAMILLE, 'e as tarefas?'));
+    await gateway.ocioso();
+    expect(transporte.textos()).toEqual(['*Jarbas:*\n\nCPL caiu 12% na semana.', 'CPL caiu 12% na semana.']);
+  });
+
+  it('imagem vira anexo do turno, como o upload do chat web', async () => {
+    const { gateway, armazem, brain, transporte } = montar({
+      config: configDeTeste({ documentsEnabled: true }),
+      guardarAnexo: async ({ filename, mimetype }) => ({ url: `https://storage.test/${filename}`, filename, contentType: mimetype }),
+    });
+    armazem.vincular('u-jamille', JAMILLE);
+    transporte.midias.set('img2', Buffer.from('jpeg'));
+    await gateway.receber(envelope({ id: 'img2', chatId: `${JAMILLE}@c.us`, type: 'image', body: 'anexa isso na tarefa do post', media: { mimetype: 'image/jpeg', omitted: true } }));
+    await gateway.ocioso();
+    expect(brain.pedidos[0]!.mensagem).toBe('anexa isso na tarefa do post');
+    expect(brain.pedidos[0]!.anexos?.[0]).toMatchObject({ contentType: 'image/jpeg' });
+  });
+
+  it('atualizar a configuração vale sem recriar o gateway', async () => {
+    const { gateway, armazem, brain, transporte } = montar();
+    armazem.vincular('u-jamille', JAMILLE);
+    gateway.atualizarConfig(configDeTeste({ agentHint: 'BENTO' }));
+    await gateway.receber(texto(JAMILLE, 'oi'));
+    await gateway.ocioso();
+    expect(brain.pedidos[0]!.agente).toBe('BENTO');
+    expect(transporte.enviados).toHaveLength(1);
+  });
+});
+
 describe('atalhos', () => {
   it('/ajuda responde no canal, sem gastar o Brain', async () => {
     const { gateway, armazem, brain, transporte } = montar();

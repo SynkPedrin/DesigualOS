@@ -8,9 +8,18 @@ import { requireAuth, requirePermission, requireRole } from '../auth/middleware'
 import { auditarAcao } from '../lib/auditoria';
 import { uploadUserFile } from '../lib/storage';
 import { brainPeloChat } from './brain';
-import { bentoWhatsappConfig, pendenciasDeConfiguracao, type BentoWhatsappConfig } from './config';
+import { pendenciasDeConfiguracao, type BentoWhatsappConfig } from './config';
+import {
+  definirCanalAtivo,
+  lembrarNumeroDoBento,
+  provisionarSessaoDoBento,
+  resolverConfiguracao,
+  urlDoWebhookDoBento,
+  type OrigemDaConfiguracao,
+} from './provisioning';
 import { GatewayDoBento } from './gateway';
 import { gerarCodigoDeVinculo, telefoneLegivel, telefoneMascarado } from './identity';
+import { OpenwaGatewayError } from '@desigual-os/tool-gateway';
 import { OpenwaClient, OpenwaError } from './openwa/client';
 import { OPENWA_SIGNATURE_HEADER, openwaWebhookEnvelopeSchema, type BentoWhatsappTransport } from './openwa/contract';
 import { assinaturaOpenwaValida } from './openwa/signature';
@@ -32,11 +41,19 @@ const logger = createLogger({ service: 'bento-whatsapp' });
 const MAX_CODIGOS_POR_HORA = 5;
 
 export interface OpcoesDasRotas {
+  /** Testes: configuração, transporte e gateway fixos (sem resolver no banco). */
   config?: BentoWhatsappConfig;
   transporte?: BentoWhatsappTransport;
   gateway?: GatewayDoBento;
   /** false nos testes: não roda a retomada de pendências na subida. */
   retomarNaSubida?: boolean;
+}
+
+interface Canal {
+  config: BentoWhatsappConfig;
+  transporte: BentoWhatsappTransport | null;
+  gateway: GatewayDoBento | null;
+  origem: OrigemDaConfiguracao | 'teste';
 }
 
 function transporteDaConfig(config: BentoWhatsappConfig): BentoWhatsappTransport | null {
@@ -50,50 +67,84 @@ function percentil(valores: number[], p: number): number | null {
   return ordenados[Math.min(ordenados.length - 1, Math.floor((p / 100) * ordenados.length))]!;
 }
 
+function novoGateway(config: BentoWhatsappConfig, transporte: BentoWhatsappTransport): GatewayDoBento {
+  return new GatewayDoBento({
+    config,
+    transporte,
+    armazem: armazemPostgres,
+    brain: brainPeloChat(logger),
+    carregarUsuario: carregarUsuarioDoCanal,
+    transcritor: config.transcriptionProvider === 'openai' ? transcritorOpenAI() : null,
+    guardarAnexo: async ({ userId, filename, mimetype, bytes }) => {
+      const enviado = await uploadUserFile(`bento-whatsapp/${userId}/${randomUUID()}/${filename}`, bytes, mimetype);
+      return { url: enviado.url, filename, contentType: mimetype };
+    },
+    log: logger,
+  });
+}
+
 /**
  * Rotas do Bento no WhatsApp.
  *
- *   POST /bento-whatsapp/webhook            público, assinado (OpenWA → Bento)
- *   GET  /bento-whatsapp/me                 meu vínculo / código em andamento
- *   POST /bento-whatsapp/me/link-code       gerar código de vínculo
+ *   POST /bento-whatsapp/webhook                  público, assinado (OpenWA → Bento)
+ *   GET  /bento-whatsapp/me                       meu vínculo / código em andamento
+ *   POST /bento-whatsapp/me/link-code             gerar código de vínculo
  *   POST /bento-whatsapp/me/link-code/:id/confirm | /reject
- *   DELETE /bento-whatsapp/me/link          desvincular meu número
- *   GET  /bento-whatsapp/admin/status       painel (master)
- *   GET  /bento-whatsapp/admin/links        colaboradores vinculados (master)
- *   DELETE /bento-whatsapp/admin/links/:id  revogar (master)
+ *   DELETE /bento-whatsapp/me/link                desvincular meu número
+ *   GET  /bento-whatsapp/admin/status             painel (master)
+ *   POST /bento-whatsapp/admin/session/provision  criar/retomar a sessão do número do Bento (master)
+ *   POST /bento-whatsapp/admin/channel            ligar/desligar o canal (master)
  *   POST /bento-whatsapp/admin/session/start | GET /admin/session/qr (master)
+ *   GET  /bento-whatsapp/admin/links | DELETE /admin/links/:id (master)
  *
- * Não há rota de logout, exclusão ou criação de sessão: desconectar o número
- * do Bento ou abrir uma segunda sessão para ele é ato de quem tem o celular,
- * feito no próprio OpenWA — não um botão aqui.
+ * Não há rota de logout nem de exclusão de sessão: desconectar o número do
+ * Bento é ato de quem tem o celular, não um botão aqui. O provisionamento só
+ * cria a sessão DO BENTO, e nunca uma segunda: é idempotente.
  */
 export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: OpcoesDasRotas = {}): Promise<void> {
-  const config = opcoes.config ?? bentoWhatsappConfig();
-  const transporte = opcoes.transporte ?? transporteDaConfig(config);
-  const gateway =
-    opcoes.gateway ??
-    (transporte
-      ? new GatewayDoBento({
-          config,
-          transporte,
-          armazem: armazemPostgres,
-          brain: brainPeloChat(logger),
-          carregarUsuario: carregarUsuarioDoCanal,
-          transcritor: config.transcriptionProvider === 'openai' ? transcritorOpenAI() : null,
-          guardarAnexo: async ({ userId, filename, mimetype, bytes }) => {
-            const enviado = await uploadUserFile(`bento-whatsapp/${userId}/${randomUUID()}/${filename}`, bytes, mimetype);
-            return { url: enviado.url, filename, contentType: mimetype };
-          },
-          log: logger,
-        })
-      : null);
+  const fixo = Boolean(opcoes.config);
+  let atual: { impressao: string; transporte: BentoWhatsappTransport; gateway: GatewayDoBento } | null = null;
+  let retomou = false;
 
-  if (config.enabled && gateway && opcoes.retomarNaSubida !== false) {
+  /**
+   * O canal que vale agora. A configuração é relida a cada uso (cache curto
+   * em provisioning.ts): conectar ou desligar pelo painel vale sem reiniciar.
+   * O gateway só é trocado quando a SESSÃO muda — a fila em memória dele não
+   * se perde por uma mudança de opção.
+   */
+  async function canal(): Promise<Canal> {
+    if (fixo) {
+      const config = opcoes.config!;
+      const transporte = opcoes.transporte ?? transporteDaConfig(config);
+      return { config, transporte, gateway: opcoes.gateway ?? null, origem: 'teste' };
+    }
+    const { config, origem } = await resolverConfiguracao();
+    const transporte = transporteDaConfig(config);
+    if (!transporte) return { config, transporte: null, gateway: null, origem };
+    const impressao = `${config.openwaBaseUrl}|${config.sessionId}|${config.openwaApiKey}`;
+    if (!atual || atual.impressao !== impressao) {
+      atual = { impressao, transporte, gateway: novoGateway(config, transporte) };
+      retomou = false;
+    } else {
+      atual.gateway.atualizarConfig(config);
+    }
+    if (config.enabled && !retomou && opcoes.retomarNaSubida !== false) {
+      retomou = true;
+      const gateway = atual.gateway;
+      setImmediate(() => {
+        gateway
+          .retomar()
+          .then((r) => logger.info(r, '[bento-whatsapp] retomada de pendências'))
+          .catch((error: unknown) => logger.error({ error }, '[bento-whatsapp] retomada falhou'));
+      });
+    }
+    return { config, transporte: atual.transporte, gateway: atual.gateway, origem };
+  }
+
+  // Na subida: resolve uma vez para retomar o que ficou pendurado.
+  if (!fixo && opcoes.retomarNaSubida !== false) {
     setImmediate(() => {
-      gateway
-        .retomar()
-        .then((r) => logger.info(r, '[bento-whatsapp] retomada na subida'))
-        .catch((error: unknown) => logger.error({ error }, '[bento-whatsapp] retomada na subida falhou'));
+      canal().catch((error: unknown) => logger.warn({ error }, '[bento-whatsapp] configuração indisponível na subida'));
     });
   }
 
@@ -112,6 +163,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
       '/bento-whatsapp/webhook',
       { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } },
       async (request, reply) => {
+        const { config, gateway } = await canal();
         // Desligado: 200 e nada mais. Não grava, não processa, não responde no
         // WhatsApp. 200 para o OpenWA não ficar re-tentando à toa.
         if (!config.enabled) return { ok: true, ignored: 'disabled' };
@@ -154,6 +206,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
   /* ---------------------------------------------------------------- */
 
   app.get('/bento-whatsapp/me', { preHandler: [requireAuth] }, async (request) => {
+    const { config } = await canal();
     const user = request.authUser!;
     const agora = new Date();
     const [vinculo, codigo] = await Promise.all([vinculoAtivoDoUsuario(user.id), codigoEmAndamento(user.id, agora)]);
@@ -181,6 +234,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
+      const { config } = await canal();
       if (!config.enabled) {
         reply.code(409);
         return { error: 'O Bento no WhatsApp ainda não está ativo.' };
@@ -216,6 +270,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
     '/bento-whatsapp/me/link-code/:id/confirm',
     { preHandler: [requireAuth, requirePermission('chat', 'write')] },
     async (request, reply) => {
+      const { transporte } = await canal();
       const user = request.authUser!;
       const agora = new Date();
       const organizationId = await organizacaoDaEscrita({ userId: user.id, clientId: null });
@@ -290,6 +345,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
   const soMaster = { preHandler: [requireAuth, requireRole('master')] };
 
   app.get('/bento-whatsapp/admin/status', soMaster, async () => {
+    const { config, gateway, transporte, origem } = await canal();
     const agora = new Date();
     const desde = new Date(agora.getTime() - 24 * 60 * 60_000);
     const t = schema.bentoWhatsappInbound;
@@ -298,6 +354,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
     if (transporte) {
       try {
         const s = await transporte.getSession();
+        if (s.status === 'ready' && origem === 'painel') await lembrarNumeroDoBento(s.phone).catch(() => undefined);
         sessao = {
           status: s.status,
           phone: s.phone ? telefoneLegivel(s.phone) : null,
@@ -344,8 +401,15 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
     const valores = latencias.map((l) => l.latencyMs!).filter((v) => Number.isFinite(v));
     return {
       enabled: config.enabled,
-      missing_config: pendenciasDeConfiguracao(config),
+      // De onde vem a configuração: 'painel' (provisionada aqui), 'env'
+      // (variáveis do servidor) ou 'nenhuma' (falta conectar o número).
+      source: origem,
+      missing_config: origem === 'nenhuma' ? [] : pendenciasDeConfiguracao(config),
+      can_provision: Boolean(process.env.OPENWA_ADMIN_API_KEY?.trim() && process.env.OPENWA_BASE_URL?.trim() && urlDoWebhookDoBento()),
+      kill_switch: process.env.BENTO_WHATSAPP_ENABLED === 'false',
+      webhook_url: urlDoWebhookDoBento(),
       bot_phone: config.botPhone ? telefoneLegivel(config.botPhone) : null,
+      agent_hint: config.agentHint,
       transcription: config.transcriptionProvider,
       documents: config.documentsEnabled,
       allowed_groups: config.allowedGroups.length,
@@ -415,7 +479,49 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
     return { ok: true };
   });
 
+  app.post('/bento-whatsapp/admin/session/provision', soMaster, async (request, reply) => {
+    if (fixo) {
+      reply.code(409);
+      return { error: 'Provisionamento indisponível nesta configuração.' };
+    }
+    try {
+      const organizationId = await organizacaoDaEscrita({ userId: request.authUser!.id, clientId: null });
+      if (!organizationId) {
+        reply.code(409);
+        return { error: 'Sua conta não está em nenhuma empresa; não há onde guardar a sessão do Bento.' };
+      }
+      const resultado = await provisionarSessaoDoBento({ organizationId });
+      await auditarAcao(request, {
+        action: resultado.criada ? 'bento_whatsapp.session_provisioned' : 'bento_whatsapp.session_resumed',
+        organizationId,
+        resourceType: 'bento_whatsapp_session',
+        resourceId: resultado.sessionId,
+        newValue: { status: resultado.status },
+      });
+      atual = null;
+      await canal();
+      return { status: resultado.status, created: resultado.criada };
+    } catch (error) {
+      request.log.error({ error: error instanceof Error ? error.message : String(error) }, '[bento-whatsapp] provisionamento falhou');
+      const status = error instanceof OpenwaGatewayError ? error.status : null;
+      reply.code(status === 401 || status === 403 ? 502 : status && status < 500 ? 409 : 502);
+      return { error: error instanceof Error ? error.message : 'Falha ao conectar a sessão do Bento no OpenWA' };
+    }
+  });
+
+  app.post<{ Body: { enabled?: unknown } }>('/bento-whatsapp/admin/channel', soMaster, async (request, reply) => {
+    const ativo = request.body?.enabled === true;
+    const ok = await definirCanalAtivo(ativo);
+    if (!ok) {
+      reply.code(409);
+      return { error: 'Conecte o número do Bento antes de ligar o canal.' };
+    }
+    await auditarAcao(request, { action: ativo ? 'bento_whatsapp.channel_enabled' : 'bento_whatsapp.channel_disabled' });
+    return { enabled: ativo };
+  });
+
   app.post('/bento-whatsapp/admin/session/start', soMaster, async (request, reply) => {
+    const { config, transporte } = await canal();
     if (!transporte) {
       reply.code(409);
       return { error: 'OpenWA não configurado', missing_config: pendenciasDeConfiguracao(config) };
@@ -431,6 +537,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
   });
 
   app.get('/bento-whatsapp/admin/session/qr', soMaster, async (request, reply) => {
+    const { config, transporte } = await canal();
     if (!transporte) {
       reply.code(409);
       return { error: 'OpenWA não configurado', missing_config: pendenciasDeConfiguracao(config) };

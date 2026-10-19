@@ -48,6 +48,16 @@ vi.mock('../auth/middleware', () => ({
     },
 }));
 
+vi.mock('./provisioning', async () => {
+  const real = await vi.importActual<typeof import('./provisioning')>('./provisioning');
+  return {
+    ...real,
+    provisionarSessaoDoBento: vi.fn(async () => ({ criada: true, status: 'initializing', sessionId: 'sess-1' })),
+    definirCanalAtivo: vi.fn(async (ativo: boolean) => ativo !== undefined && provisionamento.temLinha),
+  };
+});
+const provisionamento = vi.hoisted(() => ({ temLinha: true }));
+
 vi.mock('../lib/auditoria', () => ({ auditarAcao: mocks.auditar }));
 vi.mock('../lib/storage', () => ({ uploadUserFile: vi.fn() }));
 vi.mock('./store', async () => {
@@ -272,6 +282,43 @@ describe('painel administrativo só para master', () => {
     expect(bruto).not.toContain('segredo-de-teste');
     expect(bruto).not.toContain('owa_k1_test');
     expect(r.json()).toMatchObject({ enabled: true, missing_config: [], session: { status: 'ready' } });
+    await app.close();
+  });
+});
+
+describe('conectar o número do Bento pelo painel', () => {
+  it('colaborador não provisiona nem liga o canal', async () => {
+    const { app } = await servidor();
+    const a = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/session/provision', headers: { 'x-papel': 'colaborador' } });
+    const b = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/channel', headers: { 'x-papel': 'colaborador' }, payload: { enabled: true } });
+    expect([a.statusCode, b.statusCode]).toEqual([403, 403]);
+    await app.close();
+  });
+
+  it('em configuração fixa (testes) o provisionamento recusa', async () => {
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/session/provision', headers: { 'x-papel': 'master' } });
+    expect(r.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('master liga e desliga o canal, e o rastro registra', async () => {
+    const { app } = await servidor();
+    const liga = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/channel', headers: { 'x-papel': 'master' }, payload: { enabled: true } });
+    expect(liga.json()).toEqual({ enabled: true });
+    expect(mocks.auditar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'bento_whatsapp.channel_enabled' }));
+    const desliga = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/channel', headers: { 'x-papel': 'master' }, payload: { enabled: false } });
+    expect(desliga.json()).toEqual({ enabled: false });
+    await app.close();
+  });
+
+  it('ligar sem número conectado explica o que falta', async () => {
+    provisionamento.temLinha = false;
+    const { app } = await servidor();
+    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/channel', headers: { 'x-papel': 'master' }, payload: { enabled: true } });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/Conecte o número/);
+    provisionamento.temLinha = true;
     await app.close();
   });
 });

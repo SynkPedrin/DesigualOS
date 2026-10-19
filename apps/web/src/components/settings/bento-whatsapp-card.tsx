@@ -12,6 +12,8 @@ import {
   useDesvincularBentoWhatsapp,
   useGerarCodigoBentoWhatsapp,
   useIniciarSessaoBentoWhatsapp,
+  useLigarCanalBentoWhatsapp,
+  useProvisionarSessaoBentoWhatsapp,
   useQrBentoWhatsapp,
   useRecusarCodigoBentoWhatsapp,
   useRevogarVinculoBentoWhatsapp,
@@ -243,6 +245,8 @@ function PainelMaster() {
   const revogar = useRevogarVinculoBentoWhatsapp();
   const iniciar = useIniciarSessaoBentoWhatsapp();
   const qr = useQrBentoWhatsapp();
+  const provisionar = useProvisionarSessaoBentoWhatsapp();
+  const ligar = useLigarCanalBentoWhatsapp();
 
   if (status.isPending) return <Skeleton className="h-40 w-full" />;
   if (status.isError || !status.data) return <p className="text-xs text-erro">Não consegui consultar o painel do canal.</p>;
@@ -259,6 +263,59 @@ function PainelMaster() {
         <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${rotulo.classe}`}>Sessão: {rotulo.texto}</span>
         {s.session.phone && <span className="text-[11px] text-nevoa">{s.session.phone}</span>}
       </div>
+
+      {s.source === 'nenhuma' && (
+        <div className="space-y-2 rounded-md border border-grafite-elevado p-3">
+          <p className="text-xs leading-relaxed text-nevoa">
+            O número do Bento ainda não está conectado. Ao conectar, o sistema cria a sessão dele no OpenWA, com chave e
+            webhook próprios. Depois é só escanear o QR com o celular do Bento
+            {s.bot_phone ? ` (${s.bot_phone})` : ''}.
+          </p>
+          {!s.can_provision && (
+            <p className="text-[11px] leading-relaxed text-aviso">
+              O servidor ainda não tem OPENWA_ADMIN_API_KEY, OPENWA_BASE_URL e OPENWA_WEBHOOK_URL (ou API_PUBLIC_URL).
+              Sem eles não há como criar a sessão.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => provisionar.mutate()}
+            disabled={provisionar.isPending || !s.can_provision}
+            className="flex items-center gap-1.5 rounded-md bg-roxo-eletrico px-3 py-1.5 text-xs font-medium text-branco-cru hover:opacity-90 disabled:opacity-50"
+          >
+            <Smartphone size={13} /> {provisionar.isPending ? 'Conectando…' : 'Conectar número do Bento'}
+          </button>
+          {provisionar.isError && <p className="text-[11px] text-erro">{erroLegivel(provisionar.error, 'Falha ao conectar.')}</p>}
+        </div>
+      )}
+
+      {s.source !== 'nenhuma' && (
+        <div className="flex flex-wrap items-center gap-3">
+          {s.kill_switch ? (
+            <p className="text-[11px] text-aviso">Canal desligado no servidor (BENTO_WHATSAPP_ENABLED=false).</p>
+          ) : s.source === 'painel' ? (
+            <button
+              type="button"
+              onClick={() => ligar.mutate(!s.enabled)}
+              disabled={ligar.isPending}
+              className="rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru hover:bg-grafite-elevado disabled:opacity-50"
+            >
+              {s.enabled ? 'Desligar o canal' : 'Ligar o canal'}
+            </button>
+          ) : null}
+          {s.session.status !== 'not_configured' && (
+            <button
+              type="button"
+              onClick={() => provisionar.mutate()}
+              disabled={provisionar.isPending || !s.can_provision}
+              className="flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-nevoa hover:text-branco-cru disabled:opacity-50"
+              title="Re-registra o webhook e reinicia a sessão se estiver parada"
+            >
+              <RefreshCw size={13} /> Reconectar
+            </button>
+          )}
+        </div>
+      )}
 
       {s.missing_config.length > 0 && (
         <p className="text-[11px] leading-relaxed text-aviso">

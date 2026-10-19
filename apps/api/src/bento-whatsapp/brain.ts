@@ -9,10 +9,10 @@ import { submitChatTurn, type LogDoTurno } from '../chat/turn-service';
  * O turno do WhatsApp entra por `submitChatTurn`, a mesma função que serve o
  * `POST /chat` da web: mesma resolução de cliente e de conversa, mesmo
  * contexto operacional com o recorte de carteira DESTE usuário, mesmo
- * despacho para a fila do Bento no worker, mesma persona, mesmos modelos,
- * mesmas ações com a mesma política de confirmação. O agente é fixado em
- * Bento (`agent_hint: 'BENTO'`), igual a escolher o Bento no seletor da web:
- * o número é dele.
+ * despacho para a fila no worker, mesma persona, mesmos modelos, mesmas
+ * ações com a mesma política de confirmação. O roteamento também é o da web
+ * (`agent_hint: 'AUTO'`): pergunta de mídia paga vai pro Jarbas, criativa
+ * pro Otto — o número é do Bento, a capacidade é a do sistema inteiro.
  *
  * A resposta é lida de `messages`, que é onde o worker grava o que a web
  * mostra. Não há texto produzido aqui.
@@ -29,10 +29,15 @@ export interface PedidoAoBrain {
   conversationId: string | null;
   mensagem: string;
   anexos?: AnexoDoTurno[];
+  /**
+   * 'AUTO' = o roteamento do chat web (Bento, Jarbas, Otto ou Suzy conforme a
+   * pergunta); 'BENTO' = fixa o Bento. Padrão: AUTO, igual à web.
+   */
+  agente?: 'AUTO' | 'BENTO';
 }
 
 export type RespostaDoBrain =
-  | { tipo: 'resposta'; texto: string; conversationId: string; executionId: string | null }
+  | { tipo: 'resposta'; texto: string; conversationId: string; executionId: string | null; agente?: string | null }
   | { tipo: 'falhou'; motivo: string; conversationId: string | null; executionId: string | null }
   | { tipo: 'demorou'; conversationId: string; executionId: string | null }
   | { tipo: 'indisponivel'; motivo: string }
@@ -59,9 +64,9 @@ const FOLGA_APOS_TERMINAL_MS = 20_000;
 
 const esperar = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function respostasDepoisDe(conversationId: string, desde: Date): Promise<string[]> {
+async function respostasDepoisDe(conversationId: string, desde: Date): Promise<Array<{ content: string; agent: string | null }>> {
   const linhas = await db
-    .select({ content: schema.messages.content })
+    .select({ content: schema.messages.content, agent: schema.messages.agent })
     .from(schema.messages)
     .where(
       and(
@@ -71,7 +76,9 @@ async function respostasDepoisDe(conversationId: string, desde: Date): Promise<s
       ),
     )
     .orderBy(asc(schema.messages.createdAt));
-  return linhas.map((linha) => linha.content).filter((texto) => texto.trim().length > 0);
+  return linhas
+    .map((linha) => ({ content: linha.content, agent: linha.agent ?? null }))
+    .filter((linha) => typeof linha.content === 'string' && linha.content.trim().length > 0);
 }
 
 async function estadoDaExecucao(executionId: string): Promise<string | null> {
@@ -100,9 +107,10 @@ async function aguardarResposta(despacho: Despacho & { desde: Date }, prazoMs: n
     if (respostas.length && (!despacho.executionId || (estado && ESTADOS_FINAIS.has(estado)))) {
       return {
         tipo: 'resposta',
-        texto: respostas.join('\n\n'),
+        texto: respostas.map((r) => r.content).join('\n\n'),
         conversationId: despacho.conversationId,
         executionId: despacho.executionId,
+        agente: respostas.at(-1)?.agent ?? null,
       };
     }
     if (estado && ESTADOS_FINAIS.has(estado)) {
@@ -153,7 +161,7 @@ export function brainPeloChat(log: LogDoTurno): BrainDoBento {
           {
             message: pedido.mensagem,
             conversation_id: pedido.conversationId,
-            agent_hint: 'BENTO',
+            agent_hint: pedido.agente ?? 'AUTO',
             ...(pedido.anexos?.length ? { attachments: pedido.anexos } : {}),
           },
           reply,

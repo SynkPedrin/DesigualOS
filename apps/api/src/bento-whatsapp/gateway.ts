@@ -41,6 +41,10 @@ const JANELA_DE_CONFIRMACAO_MS = 10 * 60_000;
 /** Reinício: o que ficou pendurado há mais que isto não é retomado. */
 const JANELA_DE_RETOMADA_MS = UM_DIA;
 
+const NOMES_DOS_AGENTES: Record<string, string> = { bento: 'Bento', jarbas: 'Jarbas', otto: 'Otto', suzy: 'Suzy', studio: 'Studio' };
+
+const MAX_IMAGEM_BYTES = 10 * 1024 * 1024;
+
 const DOCUMENTOS_LIDOS = new Set([
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -108,6 +112,11 @@ export class GatewayDoBento {
   constructor(private readonly deps: DependenciasDoGateway) {
     this.agora = deps.agora ?? (() => new Date());
     this.esperar = deps.esperar ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /** Opções novas (ligar/desligar, número, grupos) sem perder a fila em memória. */
+  atualizarConfig(config: BentoWhatsappConfig): void {
+    this.deps.config = config;
   }
 
   /* ---------------------------------------------------------------- */
@@ -453,9 +462,31 @@ export class GatewayDoBento {
         return { texto: texto || `Arquivo enviado pelo WhatsApp: ${filename}`, anexos: [anexo] };
       }
 
-      case 'image':
-        await this.responder(ids, mensagem, TEXTOS.imagemNaoSuportada, 'image_unsupported');
-        return null;
+      case 'image': {
+        // Mesmo tratamento do upload do chat web: a imagem vira anexo do
+        // turno. Quem lê imagem é o agente que o roteamento escolher; o canal
+        // não finge que viu.
+        if (!config.documentsEnabled || !this.deps.guardarAnexo) {
+          await this.responder(ids, mensagem, TEXTOS.imagemNaoSuportada, 'image_disabled');
+          return null;
+        }
+        const mimetype = (mensagem.midia?.mimetype ?? 'image/jpeg').split(';')[0]!.trim().toLowerCase();
+        if (!mimetype.startsWith('image/') || mimetype === 'image/svg+xml') {
+          await this.responder(ids, mensagem, TEXTOS.imagemNaoSuportada, 'image_type_unsupported');
+          return null;
+        }
+        let bytes: Buffer;
+        try {
+          bytes = await this.obterMidia(mensagem, MAX_IMAGEM_BYTES);
+        } catch {
+          await this.responder(ids, mensagem, TEXTOS.imagemNaoSuportada, 'image_download_failed');
+          return null;
+        }
+        const extensao = mimetype.split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'jpg';
+        const filename = (mensagem.midia?.filename ?? `imagem-whatsapp.${extensao}`).replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+        const anexo = await this.deps.guardarAnexo({ userId: user.id, filename, mimetype, bytes });
+        return { texto: texto || `Imagem enviada pelo WhatsApp: ${filename}`, anexos: [anexo] };
+      }
 
       default:
         await this.responder(ids, mensagem, TEXTOS.midiaNaoSuportada, 'media_unsupported');
@@ -504,7 +535,7 @@ export class GatewayDoBento {
     try {
       const perguntar = (conversa: string | null) =>
         brain.perguntar(
-          { user, conversationId: conversa, mensagem: texto, anexos },
+          { user, conversationId: conversa, mensagem: texto, anexos, agente: config.agentHint },
           {
             prazoMs: config.replyTimeoutMs,
             aoDespachar: async (despacho) => {
@@ -535,8 +566,13 @@ export class GatewayDoBento {
 
     const latencyMs = this.agora().getTime() - inicio.getTime();
     switch (resposta.tipo) {
-      case 'resposta':
-        return this.responder(ids, mensagem, resposta.texto, null, 'replied', latencyMs, true);
+      case 'resposta': {
+        // Quem respondeu não foi o Bento (o roteamento é o da web): diz quem
+        // foi, como a web mostra o avatar do agente no balão.
+        const outro = resposta.agente && resposta.agente !== 'bento' ? NOMES_DOS_AGENTES[resposta.agente] ?? resposta.agente : null;
+        const texto = outro ? `*${outro}:*\n\n${resposta.texto}` : resposta.texto;
+        return this.responder(ids, mensagem, texto, null, 'replied', latencyMs, true);
+      }
       case 'falhou':
         this.deps.log.warn({ ids, motivo: resposta.motivo }, '[bento-whatsapp] Brain terminou sem resposta');
         await this.marcar(ids, { error: resposta.motivo.slice(0, 500) });

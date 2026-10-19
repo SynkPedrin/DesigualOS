@@ -111,7 +111,8 @@ describe('Bento no WhatsApp — vínculo', () => {
       if (rota === '/bento-whatsapp/me') return { enabled: true, bot_phone: null, link: null, pending_code: null };
       if (rota === '/bento-whatsapp/admin/status')
         return {
-          enabled: true, missing_config: [], bot_phone: null, transcription: 'none', documents: false, allowed_groups: 0,
+          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO',
+          missing_config: [], bot_phone: null, transcription: 'none', documents: false, allowed_groups: 0,
           session: { status: 'qr_ready' }, gateway: { ready: true }, brain: { last_reply_at: null },
           last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } }, recent_failures: [], linked_users: 0,
         };
@@ -129,5 +130,33 @@ describe('Bento no WhatsApp — vínculo', () => {
     expect(master.textContent).toContain('Aguardando QR');
     // QR não é buscado sozinho: só no botão (ver o QR é auditado).
     expect(apiFetchMock).not.toHaveBeenCalledWith('/bento-whatsapp/admin/session/qr');
+  });
+
+  it('número ainda não conectado: o master conecta pelo painel, sem variável de servidor', async () => {
+    papel.master = true;
+    let provisionou = false;
+    apiFetchMock.mockImplementation(async (rota: string, init?: RequestInit) => {
+      if (rota === '/bento-whatsapp/me') return { enabled: false, bot_phone: '+55 18 99798-7295', link: null, pending_code: null };
+      if (rota === '/bento-whatsapp/admin/links') return { links: [] };
+      if (rota === '/bento-whatsapp/admin/session/provision' && init?.method === 'POST') {
+        provisionou = true;
+        return { status: 'qr_ready', created: true };
+      }
+      if (rota === '/bento-whatsapp/admin/status')
+        return {
+          enabled: false, source: provisionou ? 'painel' : 'nenhuma', can_provision: true, kill_switch: false, webhook_url: null,
+          agent_hint: 'AUTO', missing_config: [], bot_phone: '+55 18 99798-7295', transcription: 'none', documents: false,
+          allowed_groups: 0, session: { status: provisionou ? 'qr_ready' : 'not_configured' }, gateway: { ready: false },
+          brain: { last_reply_at: null }, last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } },
+          recent_failures: [], linked_users: 0,
+        };
+      throw new Error(`rota inesperada ${rota}`);
+    });
+    const tela = await montar();
+    expect(tela.textContent).toContain('ainda não está conectado');
+    await act(async () => botao(tela, 'Conectar número do Bento').click());
+    await assentar();
+    expect(provisionou).toBe(true);
+    expect(tela.textContent).toContain('Aguardando QR');
   });
 });

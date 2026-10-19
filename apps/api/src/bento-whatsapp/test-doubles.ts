@@ -27,6 +27,7 @@ export function configDeTeste(extra: Partial<BentoWhatsappConfig> = {}): BentoWh
     allowedGroups: [],
     transcriptionProvider: 'none',
     documentsEnabled: false,
+    agentHint: 'AUTO',
     replyTimeoutMs: 1_000,
     progressNoticeMs: 60_000,
     coalesceWindowMs: 5,

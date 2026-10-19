@@ -121,7 +121,7 @@ describe('web e WhatsApp entram no MESMO turno', () => {
       method: 'POST',
       url: '/chat',
       headers: { authorization: 'Bearer token-da-jamille' },
-      payload: { message: pergunta, agent_hint: 'BENTO', conversation_id: '11111111-1111-4111-8111-111111111111' },
+      payload: { message: pergunta, conversation_id: '11111111-1111-4111-8111-111111111111' },
     });
     expect(web.statusCode).toBe(202);
     await app.close();
@@ -146,8 +146,9 @@ describe('web e WhatsApp entram no MESMO turno', () => {
     // vínculo são o MESMO objeto, campo a campo — inclusive papéis e permissões.
     expect(doWhatsapp!.user).toEqual(daWeb!.user);
     expect(doWhatsapp!.body.message).toBe(daWeb!.body.message);
-    expect(doWhatsapp!.body.agent_hint).toBe('BENTO');
-    expect(daWeb!.body.agent_hint).toBe('BENTO');
+    // Mesmo roteamento: AUTO nos dois (o padrão do chat web).
+    expect(daWeb!.body.agent_hint).toBe('AUTO');
+    expect(doWhatsapp!.body.agent_hint).toBe(daWeb!.body.agent_hint);
     expect(doWhatsapp!.body.conversation_id).toBe(daWeb!.body.conversation_id);
 
     // A resposta entregue é a mensagem que o worker gravou na conversa.
@@ -156,6 +157,7 @@ describe('web e WhatsApp entram no MESMO turno', () => {
       texto: 'Você tem 2 tarefas atrasadas: ...',
       conversationId: 'conv-1',
       executionId: 'EXE-2026-000001',
+      agente: null,
     });
   });
 
@@ -273,11 +275,14 @@ describe('adaptador do Brain: estados que não são resposta', () => {
     }
   });
 
-  it('o turno do WhatsApp sempre fixa o Bento como agente', async () => {
+  it('roteamento: AUTO por padrão (igual à web), BENTO quando o canal fixa o Bento', async () => {
     programarTurno('conv-3');
     estado.respostas.set('executions', [{ status: 'completed' }]);
-    estado.respostas.set('messages', [{ content: 'ok' }]);
-    await brainPeloChat(console as never).perguntar({ user, conversationId: null, mensagem: 'Otto, faz uma legenda' }, { prazoMs: 5_000 });
-    expect(estado.chamadas[0]!.body.agent_hint).toBe('BENTO');
+    estado.respostas.set('messages', [{ content: 'legenda pronta', agent: 'otto' }]);
+    const r = await brainPeloChat(console as never).perguntar({ user, conversationId: null, mensagem: 'Otto, faz uma legenda' }, { prazoMs: 5_000 });
+    expect(estado.chamadas[0]!.body.agent_hint).toBe('AUTO');
+    expect(r).toMatchObject({ tipo: 'resposta', agente: 'otto' });
+    await brainPeloChat(console as never).perguntar({ user, conversationId: null, mensagem: 'oi', agente: 'BENTO' }, { prazoMs: 5_000 });
+    expect(estado.chamadas[1]!.body.agent_hint).toBe('BENTO');
   });
 });

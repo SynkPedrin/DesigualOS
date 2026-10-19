@@ -27,10 +27,16 @@ export interface BentoWhatsappConfig {
   botExtraIds: string[];
   /** Grupos autorizados (`...@g.us`). Vazio = Bento só conversa no privado. */
   allowedGroups: string[];
-  /** Provedor de transcrição: 'none' (padrão) ou 'openai'. Ver transcription.ts. */
+  /** Provedor de transcrição: 'openai' quando há credencial (padrão) ou 'none'. Ver transcription.ts. */
   transcriptionProvider: 'none' | 'openai';
-  /** Documentos recebidos viram anexo do turno (o Bento lê pdf/docx/pptx/txt/md/csv). */
+  /** Imagem e documento recebidos viram anexo do turno, como o upload do chat web. */
   documentsEnabled: boolean;
+  /**
+   * 'AUTO' (padrão): o mesmo roteamento do chat web — a pergunta de mídia paga
+   * vai pro Jarbas, a criativa pro Otto, a operacional pro Bento. 'BENTO'
+   * fixa o Bento em todo turno.
+   */
+  agentHint: 'AUTO' | 'BENTO';
   /** Teto de espera pela resposta do Brain antes de avisar que demorou. */
   replyTimeoutMs: number;
   /** Depois disso sem resposta, manda UMA mensagem de andamento. */
@@ -64,6 +70,9 @@ function vazioViraNull(valor: string | undefined): string | null {
   return limpo ? limpo : null;
 }
 
+/** O número corporativo do Bento (conta WhatsApp Business dedicada). */
+export const NUMERO_DO_BENTO = '5518997987295';
+
 export function bentoWhatsappConfig(env: NodeJS.ProcessEnv = process.env): BentoWhatsappConfig {
   return {
     enabled: env.BENTO_WHATSAPP_ENABLED === 'true',
@@ -71,11 +80,15 @@ export function bentoWhatsappConfig(env: NodeJS.ProcessEnv = process.env): Bento
     openwaApiKey: vazioViraNull(env.BENTO_WHATSAPP_OPENWA_API_KEY),
     sessionId: vazioViraNull(env.BENTO_WHATSAPP_SESSION_ID),
     webhookSecret: vazioViraNull(env.BENTO_WHATSAPP_WEBHOOK_SECRET),
-    botPhone: vazioViraNull(env.BENTO_WHATSAPP_BOT_PHONE)?.replace(/\D/g, '') ?? null,
+    botPhone: vazioViraNull(env.BENTO_WHATSAPP_BOT_PHONE)?.replace(/\D/g, '') ?? NUMERO_DO_BENTO,
     botExtraIds: lista(env.BENTO_WHATSAPP_BOT_EXTRA_IDS),
     allowedGroups: lista(env.BENTO_WHATSAPP_ALLOWED_GROUPS),
-    transcriptionProvider: env.BENTO_WHATSAPP_TRANSCRIPTION === 'openai' ? 'openai' : 'none',
-    documentsEnabled: env.BENTO_WHATSAPP_DOCUMENTS_ENABLED === 'true',
+    // Capacidade total por padrão (pedido do Pedro, 19/10/2026: "igual ao chat
+    // que puxa tudo"). Cada recurso desliga com a variável em 'none'/'false'.
+    transcriptionProvider:
+      env.BENTO_WHATSAPP_TRANSCRIPTION === 'none' || !env.OPENAI_API_KEY?.trim() ? 'none' : 'openai',
+    documentsEnabled: env.BENTO_WHATSAPP_DOCUMENTS_ENABLED !== 'false',
+    agentHint: env.BENTO_WHATSAPP_AGENT_HINT === 'BENTO' ? 'BENTO' : 'AUTO',
     replyTimeoutMs: numero(env.BENTO_WHATSAPP_REPLY_TIMEOUT_MS, 170_000),
     progressNoticeMs: numero(env.BENTO_WHATSAPP_PROGRESS_NOTICE_MS, 15_000),
     coalesceWindowMs: numero(env.BENTO_WHATSAPP_COALESCE_MS, 2_500),
