@@ -37,6 +37,14 @@ export interface BentoWhatsappConfig {
    * fixa o Bento em todo turno.
    */
   agentHint: 'AUTO' | 'BENTO';
+  /**
+   * MODO TESTE ABERTO (19/10/2026, pedido do Pedro): enquanto `ate` não passou,
+   * número NÃO vinculado também é atendido — com a identidade (e o acesso) de
+   * `userId`, quem ligou o modo. Sempre com prazo, nunca permanente.
+   */
+  modoAberto: { userId: string; ate: Date } | null;
+  /** Depois de conectar, o aparelho entrega histórico em rajada: ninguém é respondido nesse período. */
+  aquecimentoMs: number;
   /** Teto de espera pela resposta do Brain antes de avisar que demorou. */
   replyTimeoutMs: number;
   /** Depois disso sem resposta, manda UMA mensagem de andamento. */
@@ -89,6 +97,8 @@ export function bentoWhatsappConfig(env: NodeJS.ProcessEnv = process.env): Bento
       env.BENTO_WHATSAPP_TRANSCRIPTION === 'none' || !env.OPENAI_API_KEY?.trim() ? 'none' : 'openai',
     documentsEnabled: env.BENTO_WHATSAPP_DOCUMENTS_ENABLED !== 'false',
     agentHint: env.BENTO_WHATSAPP_AGENT_HINT === 'BENTO' ? 'BENTO' : 'AUTO',
+    modoAberto: null,
+    aquecimentoMs: numero(env.BENTO_WHATSAPP_WARMUP_MS, 120_000),
     replyTimeoutMs: numero(env.BENTO_WHATSAPP_REPLY_TIMEOUT_MS, 170_000),
     progressNoticeMs: numero(env.BENTO_WHATSAPP_PROGRESS_NOTICE_MS, 15_000),
     coalesceWindowMs: numero(env.BENTO_WHATSAPP_COALESCE_MS, 2_500),

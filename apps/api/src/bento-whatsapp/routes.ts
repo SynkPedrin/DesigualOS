@@ -10,7 +10,9 @@ import { uploadUserFile } from '../lib/storage';
 import { brainPeloChat } from './brain';
 import { pendenciasDeConfiguracao, type BentoWhatsappConfig } from './config';
 import {
+  MODO_ABERTO_PADRAO_MINUTOS,
   definirCanalAtivo,
+  definirModoAberto,
   lembrarNumeroDoBento,
   provisionarSessaoDoBento,
   resolverConfiguracao,
@@ -411,6 +413,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
       webhook_url: urlDoWebhookDoBento(),
       bot_phone: config.botPhone ? telefoneLegivel(config.botPhone) : null,
       agent_hint: config.agentHint,
+      open_mode: config.modoAberto ? { until: config.modoAberto.ate.toISOString() } : null,
       transcription: config.transcriptionProvider,
       documents: config.documentsEnabled,
       allowed_groups: config.allowedGroups.length,
@@ -519,6 +522,32 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
     }
     await auditarAcao(request, { action: ativo ? 'bento_whatsapp.channel_enabled' : 'bento_whatsapp.channel_disabled' });
     return { enabled: ativo };
+  });
+
+  /**
+   * MODO TESTE ABERTO. Liga por um prazo (padrão 60 min, máximo 240): número
+   * que não está vinculado também é atendido, com a identidade e o acesso de
+   * QUEM LIGOU. Só consulta (ação de escrita é recusada), sempre com prazo,
+   * auditado, e desliga no mesmo painel.
+   */
+  app.post<{ Body: { enabled?: unknown; minutes?: unknown } }>('/bento-whatsapp/admin/open-mode', soMaster, async (request, reply) => {
+    if (fixo) {
+      reply.code(409);
+      return { error: 'Indisponível nesta configuração.' };
+    }
+    const ligar = request.body?.enabled === true;
+    const minutos = typeof request.body?.minutes === 'number' ? request.body.minutes : MODO_ABERTO_PADRAO_MINUTOS;
+    const ate = await definirModoAberto({ userId: request.authUser!.id, minutos: ligar ? minutos : null });
+    if (ate === 'sem_canal') {
+      reply.code(409);
+      return { error: 'Conecte o número do Bento antes de liberar o teste.' };
+    }
+    await auditarAcao(request, {
+      action: ligar ? 'bento_whatsapp.open_mode_enabled' : 'bento_whatsapp.open_mode_disabled',
+      metadata: ate ? { until: ate.toISOString() } : {},
+    });
+    await canal();
+    return { enabled: ligar, until: ate ? ate.toISOString() : null };
   });
 
   app.post('/bento-whatsapp/admin/session/start', soMaster, async (request, reply) => {

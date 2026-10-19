@@ -37,6 +37,8 @@ export interface BentoWhatsappAdminStatusWire {
   kill_switch: boolean;
   webhook_url: string | null;
   agent_hint: 'AUTO' | 'BENTO';
+  /** Modo teste aberto vigente (até quando), ou null. */
+  open_mode: { until: string } | null;
   missing_config: string[];
   bot_phone: string | null;
   transcription: 'none' | 'openai';
@@ -179,5 +181,18 @@ export function useCodigoDeConexaoBentoWhatsapp() {
   return useMutation({
     mutationFn: () =>
       apiFetch<{ pairing_code: string; phone: string }>('/bento-whatsapp/admin/session/pairing-code', { method: 'POST' }),
+  });
+}
+
+/** Liga (com prazo) ou desliga o modo teste aberto. */
+export function useModoAbertoBentoWhatsapp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { enabled: boolean; minutes?: number }) =>
+      apiFetch<{ enabled: boolean; until: string | null }>('/bento-whatsapp/admin/open-mode', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...CHAVE, 'admin'] }),
   });
 }

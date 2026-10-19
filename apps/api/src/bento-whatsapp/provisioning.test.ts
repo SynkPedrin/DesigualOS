@@ -215,3 +215,32 @@ describe('provisionamento', () => {
     expect(gw.createSession).not.toHaveBeenCalled();
   });
 });
+
+describe('modo teste aberto: prazo', () => {
+  const comModoAberto = (ate: Date) =>
+    linhaDoPainel({ credentials: { ...linhaDoPainel().credentials, modoAberto: { userId: 'u-pedro', ate: ate.toISOString() } } });
+
+  it('vigente aparece na configuração; vencido some sozinho', async () => {
+    estado.conectores = [comModoAberto(new Date(Date.now() + 10 * 60_000))];
+    const vigente = await prov.resolverConfiguracao({} as NodeJS.ProcessEnv);
+    expect(vigente.config.modoAberto?.userId).toBe('u-pedro');
+    prov.esquecerConfiguracaoEmCache();
+    estado.conectores = [comModoAberto(new Date(Date.now() - 1_000))];
+    const vencido = await prov.resolverConfiguracao({} as NodeJS.ProcessEnv);
+    expect(vencido.config.modoAberto).toBeNull();
+  });
+
+  it('nunca passa de 240 min, nunca de 1 min para baixo, e desligar devolve null', async () => {
+    estado.conectores = [linhaDoPainel()];
+    const longo = (await prov.definirModoAberto({ userId: 'u-pedro', minutos: 99_999 })) as Date;
+    expect(longo.getTime() - Date.now()).toBeLessThanOrEqual(240 * 60_000 + 1_000);
+    const curto = (await prov.definirModoAberto({ userId: 'u-pedro', minutos: -5 })) as Date;
+    expect(curto.getTime() - Date.now()).toBeGreaterThan(0);
+    expect(await prov.definirModoAberto({ userId: 'u-pedro', minutos: null })).toBeNull();
+  });
+
+  it('sem canal conectado não liga', async () => {
+    estado.conectores = [];
+    expect(await prov.definirModoAberto({ userId: 'u-pedro', minutos: 30 })).toBe('sem_canal');
+  });
+});

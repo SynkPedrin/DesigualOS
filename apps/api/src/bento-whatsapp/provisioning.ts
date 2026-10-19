@@ -45,6 +45,8 @@ export interface CredenciaisDoBento {
   webhookId: string | null;
   webhookUrl: string | null;
   botPhone: string | null;
+  /** Modo teste aberto: ver BentoWhatsappConfig.modoAberto. `ate` em ISO. */
+  modoAberto?: { userId: string; ate: string } | null;
 }
 
 export interface LinhaDoBento {
@@ -108,6 +110,12 @@ export function urlDoWebhookDoBento(env: NodeJS.ProcessEnv = process.env): strin
   return publica ? `${publica}/bento-whatsapp/webhook` : null;
 }
 
+function modoAbertoVigente(valor: CredenciaisDoBento['modoAberto']): { userId: string; ate: Date } | null {
+  if (!valor?.userId || !valor.ate) return null;
+  const ate = new Date(valor.ate);
+  return Number.isFinite(ate.getTime()) && ate.getTime() > Date.now() ? { userId: valor.userId, ate } : null;
+}
+
 let cache: { valor: ConfiguracaoResolvida; ate: number } | null = null;
 const VALIDADE_DO_CACHE_MS = 10_000;
 
@@ -153,6 +161,7 @@ export async function resolverConfiguracao(env: NodeJS.ProcessEnv = process.env)
           sessionId: linha.credenciais.sessionId,
           webhookSecret: segredo,
           botPhone: linha.credenciais.botPhone ?? base.botPhone,
+          modoAberto: modoAbertoVigente(linha.credenciais.modoAberto),
         },
         origem: 'painel',
         linha,
@@ -285,4 +294,24 @@ export async function lembrarNumeroDoBento(telefone: string | null | undefined):
   const linha = await linhaDoBento().catch(() => null);
   if (!linha || linha.credenciais.botPhone === digitos) return;
   await salvarCredenciais(linha.id, { ...linha.credenciais, botPhone: digitos });
+}
+
+/** Teto do modo teste aberto: nunca fica ligado para sempre. */
+export const MODO_ABERTO_MAX_MINUTOS = 240;
+export const MODO_ABERTO_PADRAO_MINUTOS = 60;
+
+/**
+ * Liga (com prazo) ou desliga o modo teste aberto. Só vale para a sessão
+ * provisionada pelo painel. Devolve a data de expiração, ou null se desligou.
+ */
+export async function definirModoAberto(input: { userId: string; minutos: number | null }): Promise<Date | null | 'sem_canal'> {
+  const linha = await linhaDoBento();
+  if (!linha) return 'sem_canal';
+  const minutos = input.minutos === null ? null : Math.min(Math.max(Math.round(input.minutos), 1), MODO_ABERTO_MAX_MINUTOS);
+  const ate = minutos === null ? null : new Date(Date.now() + minutos * 60_000);
+  await salvarCredenciais(linha.id, {
+    ...linha.credenciais,
+    modoAberto: ate ? { userId: input.userId, ate: ate.toISOString() } : null,
+  });
+  return ate;
 }

@@ -14,6 +14,7 @@ import {
   useGerarCodigoBentoWhatsapp,
   useIniciarSessaoBentoWhatsapp,
   useLigarCanalBentoWhatsapp,
+  useModoAbertoBentoWhatsapp,
   useProvisionarSessaoBentoWhatsapp,
   useQrBentoWhatsapp,
   useRecusarCodigoBentoWhatsapp,
@@ -305,6 +306,7 @@ function PainelMaster() {
   }, [qrNaTela, qr]);
   const provisionar = useProvisionarSessaoBentoWhatsapp();
   const ligar = useLigarCanalBentoWhatsapp();
+  const modoAberto = useModoAbertoBentoWhatsapp();
 
   if (status.isPending) return <Skeleton className="h-40 w-full" />;
   if (status.isError || !status.data) return <p className="text-xs text-erro">Não consegui consultar o painel do canal.</p>;
@@ -372,6 +374,52 @@ function PainelMaster() {
               <RefreshCw size={13} /> Reconectar
             </button>
           )}
+        </div>
+      )}
+
+      {s.source !== 'nenhuma' && (
+        <div className="space-y-2 rounded-md border border-grafite-elevado p-3">
+          <p className="text-xs font-medium text-branco-cru">Modo teste aberto</p>
+          {s.open_mode ? (
+            <>
+              <p className="text-[11px] leading-relaxed text-aviso">
+                LIGADO até {new Date(s.open_mode.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                {' ('}
+                <Contagem ate={s.open_mode.until} />
+                {'). '}Qualquer número que escrever ao Bento é atendido com o SEU acesso (consulta; ele recusa criar, mudar ou
+                apagar). Encerre assim que terminar o teste.
+              </p>
+              <button
+                type="button"
+                onClick={() => modoAberto.mutate({ enabled: false })}
+                disabled={modoAberto.isPending}
+                className="rounded-md border border-erro/40 px-3 py-1.5 text-xs text-erro hover:bg-erro/10 disabled:opacity-50"
+              >
+                Encerrar teste agora
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] leading-relaxed text-nevoa">
+                Hoje o Bento só responde quem está vinculado; os outros números ficam em silêncio. Para testar com qualquer
+                número, libere por 1 hora: quem escrever é atendido com o seu acesso (só consulta), e o modo desliga sozinho.
+                Dados da agência ficam visíveis a quem escrever, então use só para teste.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Liberar o Bento para QUALQUER número por 1 hora? Quem escrever verá dados da agência (só consulta).'))
+                    modoAberto.mutate({ enabled: true, minutes: 60 });
+                }}
+                disabled={modoAberto.isPending || !s.enabled}
+                className="rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru hover:bg-grafite-elevado disabled:opacity-50"
+              >
+                {modoAberto.isPending ? 'Liberando…' : 'Liberar teste por 1 hora'}
+              </button>
+              {!s.enabled && <p className="text-[11px] text-nevoa">Ligue o canal antes de liberar o teste.</p>}
+            </>
+          )}
+          {modoAberto.isError && <p className="text-[11px] text-erro">{erroLegivel(modoAberto.error, 'Não foi possível alterar o modo teste.')}</p>}
         </div>
       )}
 

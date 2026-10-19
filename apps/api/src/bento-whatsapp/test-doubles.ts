@@ -28,6 +28,8 @@ export function configDeTeste(extra: Partial<BentoWhatsappConfig> = {}): BentoWh
     transcriptionProvider: 'none',
     documentsEnabled: false,
     agentHint: 'AUTO',
+    modoAberto: null,
+    aquecimentoMs: 120_000,
     replyTimeoutMs: 1_000,
     progressNoticeMs: 60_000,
     coalesceWindowMs: 5,

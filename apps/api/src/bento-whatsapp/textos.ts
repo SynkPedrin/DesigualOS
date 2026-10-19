@@ -77,6 +77,9 @@ export const TEXTOS = {
 
   documentoGrande: 'Esse arquivo é grande demais para eu ler por aqui (limite de 10 MB).',
 
+  modoTesteSoConsulta:
+    'Neste número de teste eu só consulto informações. Para criar, mudar ou apagar algo, fale comigo pelo número vinculado ao seu usuário.',
+
   grupoAindaNao:
     'Em grupo eu ainda não respondo com dados da operação — me chama no privado que eu te ajudo por lá.',
 

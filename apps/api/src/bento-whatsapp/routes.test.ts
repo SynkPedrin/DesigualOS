@@ -54,6 +54,9 @@ vi.mock('./provisioning', async () => {
     ...real,
     provisionarSessaoDoBento: vi.fn(async () => ({ criada: true, status: 'initializing', sessionId: 'sess-1' })),
     definirCanalAtivo: vi.fn(async (ativo: boolean) => ativo !== undefined && provisionamento.temLinha),
+    definirModoAberto: vi.fn(async (i: { minutos: number | null }) =>
+      !provisionamento.temLinha ? 'sem_canal' : i.minutos === null ? null : new Date(Date.now() + i.minutos * 60_000),
+    ),
   };
 });
 const provisionamento = vi.hoisted(() => ({ temLinha: true }));
@@ -367,6 +370,16 @@ describe('conectar por código (sem QR)', () => {
     }
     const vistas = (mocks.auditar.mock.calls as unknown as Array<[unknown, { action: string }]>).filter((c) => c[1]?.action === 'bento_whatsapp.session_qr_viewed');
     expect(vistas.length).toBeLessThanOrEqual(1);
+    await app.close();
+  });
+});
+
+describe('modo teste aberto (rota)', () => {
+  it('em configuração fixa (testes) a rota recusa; colaborador não liga', async () => {
+    const { app } = await servidor();
+    const colab = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/open-mode', headers: { 'x-papel': 'colaborador' }, payload: { enabled: true } });
+    const master = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/open-mode', headers: { 'x-papel': 'master' }, payload: { enabled: true } });
+    expect([colab.statusCode, master.statusCode]).toEqual([403, 409]);
     await app.close();
   });
 });

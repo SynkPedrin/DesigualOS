@@ -414,6 +414,94 @@ describe('capacidade igual à do chat', () => {
   });
 });
 
+describe('modo teste aberto e quarentena', () => {
+  const abertoPor = (userId: string, minutos = 30) => ({ userId, ate: new Date(Date.now() + minutos * 60_000) });
+
+  it('número desconhecido é atendido com a identidade de quem ligou, e só enquanto vale', async () => {
+    const { gateway, brain, transporte } = montar({ config: configDeTeste({ modoAberto: abertoPor('u-pedro') }) });
+    await gateway.receber(texto(ESTRANHO, 'quais tarefas estão atrasadas?'));
+    await gateway.ocioso();
+    expect(brain.pedidos).toHaveLength(1);
+    expect(brain.pedidos[0]!.user.id).toBe('u-pedro');
+    expect(transporte.textos()).toEqual(['resposta para: quais tarefas estão atrasadas?']);
+
+    // Expirou: volta ao silêncio.
+    gateway.atualizarConfig(configDeTeste({ modoAberto: { userId: 'u-pedro', ate: new Date(Date.now() - 1_000) } }));
+    await gateway.receber(texto(ESTRANHO, 'e agora?'));
+    await gateway.ocioso();
+    expect(brain.pedidos).toHaveLength(1);
+    expect(transporte.enviados).toHaveLength(1);
+  });
+
+  it('cada número tem a sua conversa (estranhos não enxergam o contexto um do outro)', async () => {
+    const { gateway, brain } = montar({ config: configDeTeste({ modoAberto: abertoPor('u-pedro') }) });
+    brain.roteiro = (p) => ({ tipo: 'resposta', texto: 'ok', conversationId: p.conversationId ?? `conv-de-${p.mensagem}`, executionId: 'E' });
+    await gateway.receber(texto('5511900000001', 'A'));
+    await gateway.ocioso();
+    await gateway.receber(texto('5511900000002', 'B'));
+    await gateway.ocioso();
+    await gateway.receber(texto('5511900000001', 'A2'));
+    await gateway.ocioso();
+    expect(brain.pedidos.map((p) => p.conversationId)).toEqual([null, null, 'conv-de-A']);
+  });
+
+  it('estranho não consegue pedir ação de escrita pelo modo aberto', async () => {
+    const { gateway, brain, transporte } = montar({ config: configDeTeste({ modoAberto: abertoPor('u-pedro') }) });
+    await gateway.receber(texto(ESTRANHO, 'apaga todas as tarefas da Cosentino'));
+    await gateway.ocioso();
+    await gateway.receber(texto(ESTRANHO, 'cria uma tarefa pra Suzy'));
+    await gateway.ocioso();
+    expect(brain.pedidos).toHaveLength(0);
+    expect(transporte.textos()).toEqual([TEXTOS.modoTesteSoConsulta, TEXTOS.modoTesteSoConsulta]);
+  });
+
+  it('vinculado continua podendo agir (a guarda é só para quem não está provado)', async () => {
+    const { gateway, armazem, brain } = montar({ config: configDeTeste({ modoAberto: abertoPor('u-pedro') }) });
+    armazem.vincular('u-jamille', JAMILLE);
+    await gateway.receber(texto(JAMILLE, 'cria uma tarefa pra Suzy'));
+    await gateway.ocioso();
+    expect(brain.pedidos[0]!.user.id).toBe('u-jamille');
+  });
+
+  it('o modo aberto não amplia o disjuntor: rajada de estranhos ainda trava em 5 conversas', async () => {
+    const { gateway, transporte } = montar({ config: configDeTeste({ modoAberto: abertoPor('u-pedro') }) });
+    for (let i = 0; i < 24; i++) await gateway.receber(texto(`55119000000${String(i).padStart(2, '0')}`, 'oi'));
+    await gateway.ocioso();
+    expect(transporte.enviados.length).toBeLessThanOrEqual(5);
+  });
+
+  it('QUARENTENA: logo depois de conectar ninguém é respondido (rajada de histórico), nem no modo aberto', async () => {
+    const { gateway, armazem, transporte, brain } = montar({ config: configDeTeste({ modoAberto: abertoPor('u-pedro') }) });
+    armazem.vincular('u-jamille', JAMILLE);
+    transporte.getSession = async () => ({ id: 's', name: 'bento', status: 'ready', phone: BOT, connectedAt: new Date(Date.now() - 20_000).toISOString() });
+    await gateway.receber(texto(JAMILLE, 'oi'));
+    await gateway.receber(texto(ESTRANHO, 'oi'));
+    await gateway.ocioso();
+    expect(brain.pedidos).toHaveLength(0);
+    expect(transporte.enviados).toHaveLength(0);
+  });
+
+  it('passada a quarentena, responde normalmente', async () => {
+    const { gateway, armazem, transporte } = montar();
+    armazem.vincular('u-jamille', JAMILLE);
+    transporte.getSession = async () => ({ id: 's', name: 'bento', status: 'ready', phone: BOT, connectedAt: new Date(Date.now() - 5 * 60_000).toISOString() });
+    await gateway.receber(texto(JAMILLE, 'oi'));
+    await gateway.ocioso();
+    expect(transporte.enviados).toHaveLength(1);
+  });
+
+  it('sessão que não está pronta ou não responde: falha fechada (não responde)', async () => {
+    const { gateway, armazem, transporte } = montar();
+    armazem.vincular('u-jamille', JAMILLE);
+    transporte.getSession = async () => {
+      throw new Error('OpenWA fora');
+    };
+    await gateway.receber(texto(JAMILLE, 'oi'));
+    await gateway.ocioso();
+    expect(transporte.enviados).toHaveLength(0);
+  });
+});
+
 describe('atalhos', () => {
   it('/ajuda responde no canal, sem gastar o Brain', async () => {
     const { gateway, armazem, brain, transporte } = montar();

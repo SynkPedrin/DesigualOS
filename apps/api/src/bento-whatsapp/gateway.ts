@@ -40,6 +40,8 @@ const MAX_IDADE_DA_MENSAGEM_MS = 3 * 60_000;
 /** Disjuntor de saída: mais que isto de conversas DIFERENTES em 1 min trava todo envio. */
 const MAX_CONVERSAS_NOVAS_POR_MINUTO = 5;
 const TRAVA_DE_SAIDA_MS = 15 * 60_000;
+/** Prefixo do vínculo "virtual" do modo aberto (não existe no banco). */
+const PREFIXO_VIRTUAL = 'aberto:';
 const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 const MAX_DOCUMENTO_BYTES = 10 * 1024 * 1024;
 const JANELA_DE_CONFIRMACAO_MS = 10 * 60_000;
@@ -117,6 +119,49 @@ export class GatewayDoBento {
   constructor(private readonly deps: DependenciasDoGateway) {
     this.agora = deps.agora ?? (() => new Date());
     this.esperar = deps.esperar ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /** Conversa de cada número no modo aberto (em memória: é teste, não histórico). */
+  private readonly conversasAbertas = new Map<string, string>();
+  private aquecidaAte = 0;
+  private naoAquecidaAte = 0;
+
+  private async salvarConversa(vinculo: Vinculo, conversationId: string | null): Promise<void> {
+    if (vinculo.id.startsWith(PREFIXO_VIRTUAL)) {
+      if (conversationId) this.conversasAbertas.set(vinculo.phone, conversationId);
+      else this.conversasAbertas.delete(vinculo.phone);
+      return;
+    }
+    await this.deps.armazem.definirConversa(vinculo.id, conversationId);
+  }
+
+  /**
+   * A sessão só responde depois de `aquecimentoMs` desde a conexão (hora
+   * informada pelo próprio OpenWA). Sessão que não está 'ready' ou que não
+   * conseguimos consultar: não responde (falha fechada). `connectedAt`
+   * ausente conta como aquecida — o resto das travas continua valendo.
+   */
+  private async sessaoAquecida(): Promise<boolean> {
+    const agora = this.agora().getTime();
+    if (agora < this.aquecidaAte) return true;
+    if (agora < this.naoAquecidaAte) return false;
+    try {
+      const sessao = await this.deps.transporte.getSession();
+      if (sessao.status !== 'ready') {
+        this.naoAquecidaAte = agora + 5_000;
+        return false;
+      }
+      const conectada = sessao.connectedAt ? Date.parse(sessao.connectedAt) : NaN;
+      if (Number.isFinite(conectada) && agora - conectada < this.deps.config.aquecimentoMs) {
+        this.naoAquecidaAte = agora + 10_000;
+        return false;
+      }
+      this.aquecidaAte = agora + 30_000;
+      return true;
+    } catch {
+      this.naoAquecidaAte = agora + 5_000;
+      return false;
+    }
   }
 
   /** Opções novas (ligar/desligar, número, grupos) sem perder a fila em memória. */
@@ -292,12 +337,32 @@ export class GatewayDoBento {
     if (!telefone) return this.ignorar(ids, 'sender_unresolved');
     if (config.botPhone && telefone === config.botPhone) return this.ignorar(ids, 'own_number');
 
-    const vinculo = await armazem.vinculoAtivoPorTelefone(telefone);
+    // Quarentena depois de conectar: o aparelho entrega histórico em rajada
+    // (incidente de 19/10/2026) e nada disso é pedido de ninguém.
+    if (!(await this.sessaoAquecida())) return this.ignorar(ids, 'sessao_aquecendo');
+
+    let vinculo = await armazem.vinculoAtivoPorTelefone(telefone);
     if (!vinculo) {
       if (mensagem.isGroup) return this.ignorar(ids, 'group_participant_unlinked');
-      return this.atenderNaoVinculado(ids, mensagem, texto, telefone);
+      const aberto = config.modoAberto && config.modoAberto.ate.getTime() > this.agora().getTime() ? config.modoAberto : null;
+      // Código de vínculo continua valendo mesmo com o modo aberto ligado.
+      if (!aberto || extrairCodigoDeVinculo(texto)) return this.atenderNaoVinculado(ids, mensagem, texto, telefone);
+      vinculo = {
+        id: `${PREFIXO_VIRTUAL}${telefone}`,
+        userId: aberto.userId,
+        organizationId: null,
+        phone: telefone,
+        chatId: mensagem.chatId,
+        conversationId: this.conversasAbertas.get(telefone) ?? null,
+        lastInboundAt: null,
+      };
     }
-    await this.marcar(ids, { linkId: vinculo.id, userId: vinculo.userId, organizationId: vinculo.organizationId });
+    const virtual = vinculo.id.startsWith(PREFIXO_VIRTUAL);
+    await this.marcar(ids, {
+      ...(virtual ? {} : { linkId: vinculo.id }),
+      userId: vinculo.userId,
+      organizationId: vinculo.organizationId,
+    });
 
     if (mensagem.isGroup) {
       // Preparado até aqui (grupo autorizado + menção + participante
@@ -316,13 +381,12 @@ export class GatewayDoBento {
     if (usuario.tipo === 'sem_permissao') return this.responder(ids, mensagem, TEXTOS.semPermissao, 'no_chat_permission');
 
     const ultimaAtividade = vinculo.lastInboundAt;
-    await armazem.tocarVinculo(vinculo.id, this.agora());
+    if (!virtual) await armazem.tocarVinculo(vinculo.id, this.agora());
 
     // Áudio esperando "sim": a resposta da pessoa decide o destino dele.
-    const pendente = await armazem.aguardandoConfirmacao(
-      vinculo.id,
-      new Date(this.agora().getTime() - JANELA_DE_CONFIRMACAO_MS),
-    );
+    const pendente = virtual
+      ? null
+      : await armazem.aguardandoConfirmacao(vinculo.id, new Date(this.agora().getTime() - JANELA_DE_CONFIRMACAO_MS));
     let textoDoTurno: string | null = null;
     if (pendente) {
       if (pendente.text && mensagem.tipo === 'text' && /^\s*(sim|s|confirmo|isso|pode|ok|pode seguir)\b/i.test(texto)) {
@@ -343,6 +407,13 @@ export class GatewayDoBento {
       if (!conteudo) return;
       textoDoTurno = conteudo.texto;
       anexos = conteudo.anexos;
+    }
+
+    // Modo teste aberto: o remetente NÃO está provado, então nada de ação de
+    // escrita (criar, mudar, apagar). Heurística de texto — melhor esforço, não
+    // garantia; por isso o modo tem prazo e é desligável no painel.
+    if (virtual && pareceAcaoDeEscrita(textoDoTurno)) {
+      return this.responder(ids, mensagem, TEXTOS.modoTesteSoConsulta, 'open_mode_write_blocked');
     }
 
     // 6. Limite de uso por pessoa (o custo de cada turno é do Brain inteiro).
@@ -411,7 +482,7 @@ export class GatewayDoBento {
           return null;
         }
         if (atalho?.tipo === 'nova_conversa') {
-          await armazem.definirConversa(vinculo.id, null);
+          await this.salvarConversa(vinculo, null);
           await this.responder(ids, mensagem, TEXTOS.novaConversa, 'new_conversation');
           return null;
         }
@@ -445,7 +516,7 @@ export class GatewayDoBento {
         await this.marcar(ids, { text: transcricao.texto });
         // Pedido de ação vindo de áudio: confirma o TEXTO antes. "Apaga" que
         // era "acha" não vira tarefa apagada.
-        if (pareceAcaoDeEscrita(transcricao.texto)) {
+        if (!vinculo.id.startsWith(PREFIXO_VIRTUAL) && pareceAcaoDeEscrita(transcricao.texto)) {
           await this.responder(ids, mensagem, TEXTOS.audioConfirmar(transcricao.texto), 'audio_needs_confirmation', 'awaiting_confirmation');
           return null;
         }
@@ -562,7 +633,7 @@ export class GatewayDoBento {
                 executionId: despacho.executionId,
               });
               if (despacho.conversationId !== vinculo.conversationId) {
-                await armazem.definirConversa(vinculo.id, despacho.conversationId);
+                await this.salvarConversa(vinculo, despacho.conversationId);
               }
             },
           },
@@ -572,7 +643,7 @@ export class GatewayDoBento {
       // de falhar. Só quando havia conversa — sem ela o erro é outro.
       if (resposta.tipo === 'conversa_invalida' && conversationId) {
         this.deps.log.warn({ ids, motivo: resposta.motivo }, '[bento-whatsapp] conversa do vínculo inválida; abrindo outra');
-        await armazem.definirConversa(vinculo.id, null);
+        await this.salvarConversa(vinculo, null);
         resposta = await perguntar(null);
       }
     } finally {

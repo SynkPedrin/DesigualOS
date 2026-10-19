@@ -111,7 +111,7 @@ describe('Bento no WhatsApp — vínculo', () => {
       if (rota === '/bento-whatsapp/me') return { enabled: true, bot_phone: null, link: null, pending_code: null };
       if (rota === '/bento-whatsapp/admin/status')
         return {
-          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO',
+          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO', open_mode: null,
           missing_config: [], bot_phone: null, transcription: 'none', documents: false, allowed_groups: 0,
           session: { status: 'qr_ready' }, gateway: { ready: true }, brain: { last_reply_at: null },
           last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } }, recent_failures: [], linked_users: 0,
@@ -145,7 +145,7 @@ describe('Bento no WhatsApp — vínculo', () => {
       if (rota === '/bento-whatsapp/admin/status')
         return {
           enabled: false, source: provisionou ? 'painel' : 'nenhuma', can_provision: true, kill_switch: false, webhook_url: null,
-          agent_hint: 'AUTO', missing_config: [], bot_phone: '+55 18 99798-7295', transcription: 'none', documents: false,
+          agent_hint: 'AUTO', open_mode: null, missing_config: [], bot_phone: '+55 18 99798-7295', transcription: 'none', documents: false,
           allowed_groups: 0, session: { status: provisionou ? 'qr_ready' : 'not_configured' }, gateway: { ready: false },
           brain: { last_reply_at: null }, last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } },
           recent_failures: [], linked_users: 0,
@@ -173,7 +173,7 @@ describe('Bento no WhatsApp — vínculo', () => {
       }
       if (rota === '/bento-whatsapp/admin/status')
         return {
-          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO',
+          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO', open_mode: null,
           missing_config: [], bot_phone: null, transcription: 'none', documents: false, allowed_groups: 0,
           session: { status: 'initializing' }, gateway: { ready: true }, brain: { last_reply_at: null },
           last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } }, recent_failures: [], linked_users: 0,
@@ -208,7 +208,7 @@ describe('Bento no WhatsApp — vínculo', () => {
         return { pairing_code: 'ABCD1234', phone: '+55 18 99798-7295' };
       if (rota === '/bento-whatsapp/admin/status')
         return {
-          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO',
+          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO', open_mode: null,
           missing_config: [], bot_phone: null, transcription: 'none', documents: false, allowed_groups: 0,
           session: { status: 'qr_ready' }, gateway: { ready: true }, brain: { last_reply_at: null },
           last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } }, recent_failures: [], linked_users: 0,
@@ -231,4 +231,48 @@ describe('Bento no WhatsApp — vínculo', () => {
     expect(tela.textContent).toContain('ABCD1234');
     expect(tela.textContent).toContain('Conectar com número de telefone');
   }, 20_000);
+
+  it('modo teste aberto: pede confirmação, liga por 1 hora e mostra como encerrar', async () => {
+    papel.master = true;
+    let ate: string | null = null;
+    const pedidos: unknown[] = [];
+    apiFetchMock.mockImplementation(async (rota: string, init?: RequestInit) => {
+      if (rota === '/bento-whatsapp/me') return { enabled: true, bot_phone: null, link: null, pending_code: null };
+      if (rota === '/bento-whatsapp/admin/links') return { links: [] };
+      if (rota === '/bento-whatsapp/admin/open-mode') {
+        const corpo = JSON.parse(String(init?.body));
+        pedidos.push(corpo);
+        ate = corpo.enabled ? new Date(Date.now() + 3_600_000).toISOString() : null;
+        return { enabled: corpo.enabled, until: ate };
+      }
+      if (rota === '/bento-whatsapp/admin/status')
+        return {
+          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO',
+          open_mode: ate ? { until: ate } : null, missing_config: [], bot_phone: null, transcription: 'none', documents: false,
+          allowed_groups: 0, session: { status: 'ready' }, gateway: { ready: true }, brain: { last_reply_at: null },
+          last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } }, recent_failures: [], linked_users: 0,
+        };
+      throw new Error(`rota inesperada ${rota}`);
+    });
+    const tela = await montar();
+    expect(tela.textContent).toContain('só responde quem está vinculado');
+
+    // Recusou na confirmação: nada é enviado.
+    const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await act(async () => botao(tela, 'Liberar teste por 1 hora').click());
+    await assentar();
+    expect(pedidos).toHaveLength(0);
+
+    confirmar.mockReturnValue(true);
+    await act(async () => botao(tela, 'Liberar teste por 1 hora').click());
+    await assentar();
+    expect(pedidos).toEqual([{ enabled: true, minutes: 60 }]);
+    expect(tela.textContent).toContain('LIGADO até');
+    expect(tela.textContent).toContain('recusa criar, mudar ou');
+
+    await act(async () => botao(tela, 'Encerrar teste agora').click());
+    await assentar();
+    expect(pedidos[1]).toEqual({ enabled: false });
+    confirmar.mockRestore();
+  });
 });

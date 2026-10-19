@@ -65,6 +65,7 @@ export const bentoWhatsappHandlers = [
       kill_switch: false,
       webhook_url: 'https://api.citavel.ai/bento-whatsapp/webhook',
       agent_hint: 'AUTO',
+      open_mode: null,
       missing_config: [],
       bot_phone: '+55 18 99798-7295',
       transcription: 'openai',
@@ -93,6 +94,8 @@ export const bentoWhatsappHandlers = [
   }),
 
   http.post('/bento-whatsapp/admin/session/provision', () => HttpResponse.json({ status: 'qr_ready', created: true })),
+
+  http.post('/bento-whatsapp/admin/open-mode', () => HttpResponse.json({ enabled: true, until: new Date(Date.now() + 3_600_000).toISOString() })),
 
   http.post('/bento-whatsapp/admin/channel', () => HttpResponse.json({ enabled: true })),
 
