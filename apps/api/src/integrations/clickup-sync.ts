@@ -28,8 +28,16 @@ export function slugify(name: string): string {
  *
  * Idempotente por clients.clickup_list_id: reimportar atualiza nome/status
  * em vez de duplicar.
+ *
+ * `organizationId` é obrigatório desde 08/10/2026: sem ele, o INSERT gravava
+ * `organization_id = NULL`, e a tela de Clientes (que filtra por
+ * `organization_id = tenantContext.organizationId`) nunca mostrava quem
+ * acabou de ser importado — "SQL NULL = qualquer coisa" nunca é verdadeiro.
+ * As linhas antigas, já com NULL no banco, são adotadas de volta aqui mesmo:
+ * toda linha com `clickup_list_id` e `organization_id` nulo encontrada numa
+ * reimportação é corrigida no lugar, sem precisar de uma migração separada.
  */
-export async function syncClickUpClients(access: ClickUpAccess): Promise<ClickUpSyncResult> {
+export async function syncClickUpClients(access: ClickUpAccess, organizationId: string): Promise<ClickUpSyncResult> {
   const clientLists = await getClientLists(access.token, access.teamId);
   let created = 0;
   let updated = 0;
@@ -37,10 +45,10 @@ export async function syncClickUpClients(access: ClickUpAccess): Promise<ClickUp
   for (const entry of clientLists) {
     const [existing] = await db.select().from(schema.clients).where(eq(schema.clients.clickupListId, entry.listId));
     if (existing) {
-      if (existing.name !== entry.name || existing.status !== entry.status) {
+      if (existing.name !== entry.name || existing.status !== entry.status || existing.organizationId === null) {
         await db
           .update(schema.clients)
-          .set({ name: entry.name, status: entry.status, updatedAt: new Date() })
+          .set({ name: entry.name, status: entry.status, organizationId: existing.organizationId ?? organizationId, updatedAt: new Date() })
           .where(eq(schema.clients.id, existing.id));
         updated += 1;
       }
@@ -63,7 +71,7 @@ export async function syncClickUpClients(access: ClickUpAccess): Promise<ClickUp
     if (sameSlug && !sameSlug.clickupListId) {
       await db
         .update(schema.clients)
-        .set({ clickupListId: entry.listId, status: entry.status, updatedAt: new Date() })
+        .set({ clickupListId: entry.listId, status: entry.status, organizationId: sameSlug.organizationId ?? organizationId, updatedAt: new Date() })
         .where(eq(schema.clients.id, sameSlug.id));
       updated += 1;
       continue;
@@ -72,7 +80,7 @@ export async function syncClickUpClients(access: ClickUpAccess): Promise<ClickUp
     // Slug tomado por outra lista: desambigua com o id da lista, que é único
     // e estável (em vez de um contador, que mudaria de posição entre syncs).
     const slug = sameSlug ? `${baseSlug}-${entry.listId}`.slice(0, 60) : baseSlug;
-    await db.insert(schema.clients).values({ name: entry.name, slug, status: entry.status, clickupListId: entry.listId });
+    await db.insert(schema.clients).values({ name: entry.name, slug, status: entry.status, clickupListId: entry.listId, organizationId });
     created += 1;
   }
 

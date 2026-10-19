@@ -1,5 +1,6 @@
 import { db, schema } from '@desigual-os/database';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import { organizacaoProvedora } from '@desigual-os/auth';
 import { casarEntidades, dobrar } from '@desigual-os/context-engine';
 
 /**
@@ -83,7 +84,19 @@ export function candidatosAPessoa(mensagem: string): string[] {
   return [...new Set(saida)];
 }
 
-export async function resolvePersonTurnContext(mensagem: string): Promise<PersonTurnContext> {
+/**
+ * FRONTEIRA DE EMPRESA (Bento 3.1, 14/10/2026). `people` não tem empresa: é o
+ * registro derivado do ClickUp da casa (a provedora). As relações apontam para
+ * clientes de qualquer empresa, com o NOME do cliente. Sem recorte, alguém da
+ * empresa B perguntando por uma pessoa recebia os clientes da empresa A em que
+ * ela trabalha.
+ *
+ * Regra: relação só com cliente da empresa do turno; pessoa só entra se o turno
+ * é da provedora (o registro é dela) ou se ela tem relação com cliente da
+ * empresa do turno. Turno sem empresa não resolve ninguém.
+ */
+export async function resolvePersonTurnContext(mensagem: string, organizationId: string | null): Promise<PersonTurnContext> {
+  if (!organizationId) return { encontradas: [], naoEncontradas: [] };
   if (!CITA_PESSOA.test(mensagem)) return { encontradas: [], naoEncontradas: [] };
 
   const candidatos = candidatosAPessoa(mensagem);
@@ -141,8 +154,20 @@ export async function resolvePersonTurnContext(mensagem: string): Promise<Person
       })
       .from(schema.personClientRelations)
       .innerJoin(schema.clients, eq(schema.clients.id, schema.personClientRelations.clientId))
-      .where(inArray(schema.personClientRelations.personId, encontradas.map((p) => p.id)))
+      .where(
+        and(
+          inArray(schema.personClientRelations.personId, encontradas.map((p) => p.id)),
+          eq(schema.clients.organizationId, organizationId),
+        ),
+      )
       .catch(() => []);
+
+    if (organizationId !== organizacaoProvedora()) {
+      const comRelacaoAqui = new Set(relacoes.map((r) => r.personId));
+      for (let i = encontradas.length - 1; i >= 0; i -= 1) {
+        if (!comRelacaoAqui.has(encontradas[i]!.id)) encontradas.splice(i, 1);
+      }
+    }
 
     for (const p of encontradas) {
       p.relacoes = relacoes

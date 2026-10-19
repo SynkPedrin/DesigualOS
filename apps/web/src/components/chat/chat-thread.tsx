@@ -26,6 +26,7 @@ import { ChatAmbient } from './chat-ambient';
 import { Skeleton } from '@/components/ui/skeleton';
 import { realtimeClient, type MessageDeltaPayload } from '@/lib/realtime/ws-client';
 import { useSendChatMessage } from '@/hooks/use-send-chat-message';
+import { ApiRequestError } from '@/lib/api/client';
 import { useExecution } from '@/hooks/use-executions';
 import { useClients } from '@/hooks/use-clients';
 import { useConversationMessages, useConversations } from '@/hooks/use-conversations';
@@ -36,7 +37,7 @@ import { useSendMessage } from '@/hooks/use-messages';
 import { useMe } from '@/hooks/use-me';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { AGENT_SELECTIONS, type AgentSelection, type ChatAttachmentWire } from '@/lib/api/contracts';
+import { AGENT_SELECTIONS, type AgentSelection, type ChatAttachmentWire, type AgentToolCallWire } from '@/lib/api/contracts';
 
 let localMessageSeq = 0;
 function nextLocalId() {
@@ -69,6 +70,8 @@ interface PendingExchange {
   status: ExecutionStatus;
   answer: string;
   sources: string[];
+  /** Bento 3.0, Fase 3: o que o agente de fato executou neste turno. */
+  toolCalls: AgentToolCallWire[];
   clientName: string | null;
   /** Anexos enviados junto com a pergunta (já hospedados via POST /uploads), até 10. */
   attachments: ChatAttachmentWire[];
@@ -229,12 +232,13 @@ export function ChatThread() {
       const step = execution.steps.at(-1);
       const nextAnswer = step?.answer ?? '';
       const nextSources = step?.sources ?? [];
+      const nextToolCalls = step?.toolCalls ?? [];
       // Guarda de repintura: sem ela, uma execução que fica em 'failed' dispararia setPending a
       // cada render (o objeto novo muda a identidade e realimenta o efeito).
       if (pending.status === execution.status && pending.answer === nextAnswer) return;
       setPending((current) =>
         current
-          ? { ...current, status: execution.status, answer: nextAnswer, sources: nextSources }
+          ? { ...current, status: execution.status, answer: nextAnswer, sources: nextSources, toolCalls: nextToolCalls }
           : current,
       );
       if (pending.conversationId) {
@@ -337,12 +341,20 @@ export function ChatThread() {
     agent: message.agent ?? undefined,
     content: message.content,
     status: message.role === 'assistant' ? 'completed' : undefined,
-    sources: [],
+    // Bento 3.0, Fase 3: antes do backend gravar isto em metadata, não havia
+    // nada pra ler aqui, e recarregar a conversa sempre zerava a fonte citada.
+    sources: message.sources,
+    toolCalls: message.toolCalls,
     attachments: message.attachments.map((attachment) => ({
       url: attachment.url,
       type: attachment.contentType,
       filename: attachment.filename,
     })),
+    // O player do motion vem da metadata da mensagem persistida, então ele
+    // reaparece ao recarregar a página — e não só no turno em que nasceu.
+    motion: message.motion,
+    motionBriefRequest: message.motionBriefRequest,
+    conversationId: activeConversationId,
     createdAt: message.createdAt,
   }));
 
@@ -390,6 +402,7 @@ export function ChatThread() {
         content: pending.answer,
         status: pending.status,
         sources: pending.sources,
+        toolCalls: pending.toolCalls,
         clientName: pending.clientName,
         liveSteps: pending.liveSteps,
         createdAt: new Date(pending.sentAt).toISOString(),
@@ -437,6 +450,7 @@ export function ChatThread() {
       status: 'queued',
       answer: '',
       sources: [],
+      toolCalls: [],
       clientName,
       attachments: options?.attachments ?? [],
       sentAt,
@@ -467,10 +481,16 @@ export function ChatThread() {
       // POST /chat já gravou a pergunta no banco antes de responder: refetch
       // imediato substitui a mensagem otimista do usuário pela persistida.
       queryClient.invalidateQueries({ queryKey: ['conversations', result.conversationId, 'messages'] });
-    } catch {
+    } catch (error) {
       // Sem execution id pra pollar, nada tiraria o placeholder do estado
       // "queued" - falha honesta no balão.
-      setPending((current) => (current ? { ...current, status: 'failed' } : current));
+      //
+      // 503 = o agente escolhido está fora do ar, e a API diz qual e o que
+      // fazer (orchestrator, mensagemDeAgenteFora). Sem isto o balão caía no
+      // "tente reformular a pergunta", mandando a pessoa mexer na pergunta
+      // quando o problema é o sistema (14/10/2026, véspera do lançamento).
+      const motivo = error instanceof ApiRequestError && error.status === 503 ? error.message : '';
+      setPending((current) => (current ? { ...current, status: 'failed', answer: motivo || current.answer } : current));
     }
   }
 

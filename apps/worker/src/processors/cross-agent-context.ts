@@ -69,7 +69,7 @@ async function snapshotOperacional(campaignId: string): Promise<string[]> {
  * Snapshot CRIATIVO de um cliente: o que o Otto saberia. Sai de feedback
  * registrado e de episódios de decisão — nunca de invenção.
  */
-async function snapshotCriativo(clientId: string, environment: string): Promise<string[]> {
+async function snapshotCriativo(clientId: string, environment: string, organizationId: string | null): Promise<string[]> {
   const linhas: string[] = [];
 
   const feedbacks = await db
@@ -92,6 +92,8 @@ async function snapshotCriativo(clientId: string, environment: string): Promise<
   }
 
   const episodios = await recallEpisodes({
+    // Episódio sem cliente é da empresa inteira — só da empresa do turno.
+    organizationId,
     clientId,
     desde: new Date(Date.now() - 30 * 86_400_000),
     limit: 6,
@@ -120,9 +122,10 @@ export async function resolveCrossAgentContext(params: {
   clientId: string | null;
   campaignId: string | null;
   environment: string;
+  organizationId: string | null;
   logger: Logger;
 }): Promise<ContextoCruzado> {
-  const { agent, message, executionId, clientId, campaignId, environment, logger } = params;
+  const { agent, message, executionId, clientId, campaignId, environment, organizationId, logger } = params;
 
   // Otto precisando de operação -> pede ao domínio do Bento.
   if (agent === 'otto' && campaignId && PEDE_OPERACIONAL.test(message)) {
@@ -166,7 +169,7 @@ export async function resolveCrossAgentContext(params: {
     }).catch(() => ({ ok: false, hop: 0 }) as const);
     if (!r.ok) return VAZIO;
 
-    const linhas = await snapshotCriativo(clientId, environment).catch(() => []);
+    const linhas = await snapshotCriativo(clientId, environment, organizationId).catch(() => []);
     if (linhas.length === 0) return VAZIO;
     logger.info({ executionId, hop: r.hop }, '[a2a] bento -> otto: contexto criativo');
     return {

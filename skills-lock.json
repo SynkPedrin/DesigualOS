@@ -145,6 +145,12 @@
       "skillPath": "skills/token-optimization/SKILL.md",
       "computedHash": "4fe095dfe40542aec10f1df5ad961ae3c56b68e2c36624b6df8f2f6adb14b0c9"
     },
+    "typesafe-ai": {
+      "source": "typesafe-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/typesafe-ai/SKILL.md",
+      "computedHash": "9cd84c5e535dec8dec59917c110f9c00b4a61faadb86b432ec7e41051170af12"
+    },
     "ui-ux-pro-max": {
       "source": "nextlevelbuilder/ui-ux-pro-max-skill",
       "sourceType": "github",

@@ -9,13 +9,21 @@ import {
   type UpdateUserNameResponseWire,
 } from '@/lib/api/contracts';
 
-export function useAdminUsers() {
+/**
+ * `enabled` existe porque a Equipe (/people) é uma tela só para DOIS públicos:
+ * quem administra vê papel, status e convite; quem não administra vê o
+ * diretório. Chamar /admin/users para o segundo grupo só produziria um 403 no
+ * console e um erro de query sem nada que o usuário possa fazer — a tela dele
+ * nunca dependeu desses dados.
+ */
+export function useAdminUsers(enabled = true) {
   return useQuery({
     queryKey: ['admin', 'users'],
     queryFn: async () => {
       const wire = await apiFetch<{ users: AdminUserWire[] }>('/admin/users');
       return wire.users.map(mapAdminUser);
     },
+    enabled,
   });
 }
 

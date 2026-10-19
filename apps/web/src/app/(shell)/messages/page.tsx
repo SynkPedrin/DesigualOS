@@ -83,11 +83,11 @@ function MessagesPageContent() {
   }
 
   const thread = useMemo(
-    () => threadsData?.threads.find((t) => t.user.id === selectedUserId),
+    () => threadsData?.threads?.find((t) => t.user.id === selectedUserId),
     [threadsData, selectedUserId],
   );
   const collaborator = useMemo(
-    () => collaboratorsData?.collaborators.find((c) => c.userId === selectedUserId),
+    () => collaboratorsData?.collaborators?.find((c) => c.userId === selectedUserId),
     [collaboratorsData, selectedUserId],
   );
 

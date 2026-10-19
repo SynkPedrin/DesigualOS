@@ -100,7 +100,7 @@ function completeMockJob(job: StudioJobDetailWire) {
     type: job.type,
     prompt: job.prompt,
     model: 'stub-svg-v1',
-    created_by: 'Instituto Almada',
+    created_by: 'Pedro Gabriel',
     node_id: 'NODE_STUDIO_MOCK',
     quality_preset: job.quality_preset ?? ('standard' as StudioQualityPreset),
     style: job.style ?? ('padrao' as StudioStyle),
@@ -165,7 +165,10 @@ function minutesAgo(minutes: number) {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
-const SEED_CLIENTS = ['client-clinica-x', 'client-instituto-almada', 'client-grupo-vertice', 'client-loja-boreal'];
+/** Clientes da demo "dia real de operação" (07/10/2026) — eram ids antigos
+ *  que não existem mais na carteira, e por isso todo cliente novo aparecia
+ *  com "Nenhum material gerado ainda" mesmo tendo asset seed de sobra. */
+const SEED_CLIENTS = ['client-cosentino', 'client-g4-educacao', 'client-clinica-bela', 'client-autovisual'];
 const SEED_PROMPTS: Record<StudioJobType, string[]> = {
   image: [
     'Banner estático para promoção de fim de semana',
@@ -221,7 +224,7 @@ function buildSeedAssets(): StudioAssetWire[] {
             storage_url: placeholderSvgDataUrl(`${prompt.slice(0, 28)} (${slide + 1}/${slidesTotal})`, color),
             prompt,
             model: 'stub-svg-v1',
-            created_by: 'Instituto Almada',
+            created_by: 'Pedro Gabriel',
             node_id: 'NODE_STUDIO_MOCK',
             job_id: jobId,
             slide_index: slide,
@@ -243,7 +246,7 @@ function buildSeedAssets(): StudioAssetWire[] {
             storage_url: placeholderSvgDataUrl(prompt.slice(0, 32), color),
             prompt,
             model: 'stub-svg-v1',
-            created_by: 'Instituto Almada',
+            created_by: 'Pedro Gabriel',
             node_id: 'NODE_STUDIO_MOCK',
             job_id: jobId,
             quality_preset: quality,

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { and, count, desc, eq, ilike, inArray, notInArray, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, inArray, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { generateStudioJobId, getStudioJobQueue, recordLearning, enqueueThumbnail, removeQueuedStudioJob, publishWsEvent } from '@desigual-os/orchestrator';
@@ -16,6 +16,7 @@ import {
   STUDIO_STYLES,
 } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { recorteViaClienteOuPessoa } from '../lib/escopo-de-organizacao';
 import { hasClientAccess, canActOnStudioEntity } from '../lib/access';
 import { claimIdempotency, fulfillIdempotency, idempotencyKey, releaseIdempotency } from '../lib/idempotency';
 import { deleteStudioAssetFile, uploadUserFile } from '../lib/storage';
@@ -413,7 +414,8 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
         return { error: 'Not authenticated' };
       }
 
-      const isMaster = request.authUser.roles.includes('master');
+      const usuario = request.authUser;
+      const isMaster = usuario.roles.includes('master');
       if (!isMaster && !request.query.client_id) {
         reply.code(400);
         return { error: 'client_id is required for non-master users' };
@@ -433,7 +435,21 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       const parsedOffset = Number.parseInt(request.query.offset ?? '', 10);
       const offset = Number.isFinite(parsedOffset) ? Math.max(parsedOffset, 0) : 0;
 
-      const conditions = [];
+      /**
+       * A GALERIA É DA MINHA EMPRESA.
+       *
+       * Sem isto ela lista as peças de todos os clientes do banco. Com uma
+       * organização é o acervo da casa; com duas, é o criativo do concorrente —
+       * e peça criativa entrega posicionamento, oferta e campanha antes de
+       * qualquer relatório.
+       *
+       * `studio_assets` não tem `organization_id` (ficou de fora da 0045 por
+       * não ser conteúdo do Brain), então a fronteira vem do vínculo que
+       * existe: a empresa dona do cliente, ou a de quem criou.
+       */
+      const conditions: Array<SQL | undefined> = [
+        recorteViaClienteOuPessoa(usuario, schema.studioAssets.clientId, schema.studioAssets.userId),
+      ];
       if (request.query.client_id) conditions.push(eq(schema.studioAssets.clientId, request.query.client_id));
       if (typeFilter) conditions.push(eq(schema.studioAssets.type, typeFilter));
       const search = request.query.q?.trim();

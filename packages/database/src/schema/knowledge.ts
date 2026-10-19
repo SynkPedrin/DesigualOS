@@ -3,6 +3,7 @@ import { idColumn, timestampColumns } from './_shared';
 import { agents } from './agents-infra';
 import { clients } from './clients';
 import { users } from './identity';
+import { organizations } from './organizations';
 
 /**
  * Uma fonte de conhecimento de um agente (ex: o Obsidian vault local dele,
@@ -79,6 +80,16 @@ export const memories = pgTable(
   'memories',
   {
     ...idColumn,
+    /**
+     * FRONTEIRA DE TENANT DIRETA (30/09/2026). Antes desta coluna, isolar
+     * memória de uma organização dependia de lembrar de seguir client_id ->
+     * clients.organization_id (ou não seguir nada, quando client_id é nulo).
+     * Convenção que depende de quem escreve a consulta lembrar já vazou
+     * duas vezes no mesmo dia (USER_PRIVATE em /memories e em search_memory).
+     * Nullable de propósito: linha que não resolve por client_id nem por
+     * user_id fica nula e visível, nunca carimbada por dedução.
+     */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
     clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -128,6 +139,39 @@ export const memories = pgTable(
     statusIdx: index('memories_status_idx').on(table.status),
     dedupeIdx: uniqueIndex('memories_dedupe_key_idx').on(table.dedupeKey),
     sourceIdx: index('memories_source_idx').on(table.sourceType, table.sourceId),
+    organizationIdx: index('memories_organization_id_idx').on(table.organizationId),
+  }),
+);
+
+/**
+ * Vetor semântico de UMA memória operacional (1:1 com `memories`). Tabela
+ * separada da `embeddings` de propósito: aquela tem FK obrigatória para
+ * `knowledge_chunks` (pipeline de documentos), esta é do pipeline de memória.
+ *
+ * jsonb + cosseno em JS no recall (packages/orchestrator/src/memory-embeddings.ts),
+ * não pgvector: o recall sempre filtra por environment + escopo + status antes
+ * de rankear, então o universo de candidatos é de dezenas, não de milhares.
+ * O critério para migrar a pgvector está documentado no header daquele módulo.
+ *
+ * A AUSÊNCIA da linha é o estado "pendente de embedding" (falha da API na
+ * escrita, ou memória anterior à feature) — o backfill cobre.
+ */
+export const memoryEmbeddings = pgTable(
+  'memory_embeddings',
+  {
+    ...idColumn,
+    memoryId: uuid('memory_id')
+      .notNull()
+      .references(() => memories.id, { onDelete: 'cascade' }),
+    /** Modelo que gerou o vetor (ex: 'text-embedding-3-small'). Vetores de modelos diferentes não são comparáveis. */
+    model: text('model').notNull(),
+    vector: jsonb('vector').$type<number[]>().notNull(),
+    /** sha256 do content no momento da geração: content mudou => vetor velho detectável. */
+    contentHash: text('content_hash'),
+    ...timestampColumns,
+  },
+  (table) => ({
+    memoryIdx: uniqueIndex('memory_embeddings_memory_id_idx').on(table.memoryId),
   }),
 );
 
@@ -167,9 +211,38 @@ export const operationalEvents = pgTable(
     processedAt: timestamp('processed_at', { withTimezone: true }),
     processingError: text('processing_error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * ── EVENTO DE NEGÓCIO (migração 0044) ─────────────────────────────────
+     *
+     * Até 29/09/2026 esta tabela tinha 633 linhas e DOIS tipos — `task.created`
+     * e `task.updated` — os dois vindos do webhook do ClickUp, com `actor` nulo
+     * em 100% delas. Nenhum evento jamais foi registrado por uma pessoa nem por
+     * um agente, porque não havia como: faltavam a organização, o funcionário e
+     * um resumo legível.
+     *
+     * Estas colunas são o que permite ao Claude de cada funcionário registrar o
+     * que aconteceu enquanto trabalha — e é isso que transforma o chat
+     * individual em memória da empresa. Todas nulas: o webhook continua
+     * gravando exatamente como antes.
+     */
+    organizationId: uuid('organization_id'),
+    /** `organization_members.id`: QUEM da equipe, não só qual login. */
+    employeeId: uuid('employee_id'),
+    userId: uuid('user_id'),
+    projectId: uuid('project_id'),
+    /** Id da task na ferramenta (texto: o ClickUp usa id alfanumérico). */
+    taskId: text('task_id'),
+    /** Uma frase legível. É o que um humano lê no resumo do dia. */
+    summary: text('summary'),
+    /** 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL' — governa o que entra num resumo curto. */
+    importance: text('importance').default('LOW'),
+    /** 'PRIVATE' | 'TEAM' | 'CLIENT_SCOPED' — quem pode ver este acontecimento. */
+    visibility: text('visibility').default('TEAM'),
   },
   (table) => ({
     dedupeIdx: uniqueIndex('operational_events_source_external_idx').on(table.source, table.externalId),
+    orgOccurredIdx: index('operational_events_org_occurred_idx').on(table.organizationId, table.occurredAt),
+    userIdx: index('operational_events_user_idx').on(table.userId),
     clientIdx: index('operational_events_client_idx').on(table.clientId),
     unprocessedIdx: index('operational_events_processed_idx').on(table.processedAt),
     typeIdx: index('operational_events_type_idx').on(table.type),
@@ -186,6 +259,8 @@ export const proactiveSignals = pgTable(
   'proactive_signals',
   {
     ...idColumn,
+    /** Fronteira de tenant direta — mesmo motivo de memories.organizationId acima. */
+    organizationId: uuid('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     /** Regra que gerou (ex: 'task.due_tomorrow_not_started'). */
     rule: text('rule').notNull(),
     /** Agente dono do sinal (quem fala com o humano sobre isso). */
@@ -214,5 +289,6 @@ export const proactiveSignals = pgTable(
     dedupeIdx: uniqueIndex('proactive_signals_dedupe_idx').on(table.dedupeKey),
     statusIdx: index('proactive_signals_status_idx').on(table.status),
     clientIdx: index('proactive_signals_client_idx').on(table.clientId),
+    organizationIdx: index('proactive_signals_organization_id_idx').on(table.organizationId),
   }),
 );

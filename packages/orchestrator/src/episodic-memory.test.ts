@@ -45,6 +45,51 @@ describe('extractEpisodeCandidates', () => {
   });
 });
 
+/**
+ * F-20 (auditoria de 26/09/2026): só 4 de 10 decisões naturais viravam
+ * episódio porque as FORMAS exigiam dialeto exato. As formas novas cobrem o
+ * jeito que a operação de fato fecha decisão e declara regra — sempre com o
+ * filtro de relevância (2 termos de conteúdo além do marcador).
+ */
+describe('extractEpisodeCandidates — formas naturais (F-20)', () => {
+  it.each([
+    'Vamos fazer assim então: legenda curta em todos os posts.',
+    'Então tá decidido, fica essa versão final mesmo.',
+    'Pode seguir com essa linha criativa mesmo.',
+    'Bora com o segundo conceito mesmo, sem mais rodadas de ajuste.',
+  ])('decisão natural vira episódio: %s', (frase) => {
+    const [e] = extractEpisodeCandidates(frase);
+    expect(e).toBeDefined();
+    expect(e!.eventType).toBe('decision');
+    // Confiança viaja com o candidato: o peso da forma é o que o recall usa.
+    expect(e!.importance).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'A partir de agora, legenda sem emoji em tudo da Cosentino.',
+    'Esse cliente não usa emoji nos posts, anota.',
+    'Quando for campanha da 3Net, sempre legenda curta.',
+    'Não usar mais banco de imagem óbvio nos posts.',
+    'A Marina prefere revisão em dupla nas peças.',
+  ])('regra/preferência natural vira episódio: %s', (frase) => {
+    const [e] = extractEpisodeCandidates(frase);
+    expect(e).toBeDefined();
+    expect(e!.eventType).toBe('preference');
+  });
+
+  it.each([
+    'ok',
+    'beleza',
+    'tá certo',
+    'Tá decidido.',
+    'Tá decidido então.',
+    'Pode seguir.',
+    'Beleza, pode seguir.',
+  ])('confirmação casual NÃO vira memória: %s', (frase) => {
+    expect(extractEpisodeCandidates(frase)).toEqual([]);
+  });
+});
+
 describe('janelaDoTexto', () => {
   const agora = new Date('2026-09-16T15:00:00Z');
 
@@ -185,5 +230,27 @@ describe('formatFactualEpisodeBlock', () => {
 
   it('declara que corrige a ficha curada — é mais novo que ela', () => {
     expect(formatFactualEpisodeBlock([ep('2026-09-17T01:00:00Z', 'x')])).toMatch(/corrige/i);
+  });
+
+  it('núcleo curto reescrito supersede: "o responsável mudou" × "o responsável é a Maria" (F-21)', () => {
+    const b = formatFactualEpisodeBlock([
+      ep('2026-09-17T10:00:00Z', 'O responsável é a Maria.'),
+      ep('2026-09-16T10:00:00Z', 'O responsável mudou.'),
+    ]);
+    const linhas = b.split('\n').filter((l) => l.startsWith('- '));
+    expect(linhas[0]).toMatch(/^- ATUAL/);
+    expect(linhas[1]).toMatch(/^- SUBSTITUÍDO/);
+  });
+
+  it('supersessão é escopada: fato de OUTRO cliente com termos iguais não é aposentado (F-21)', () => {
+    const outroCliente = { ...ep('2026-09-16T10:00:00Z', 'O responsável mudou.'), clientId: 'c2' };
+    const b = formatFactualEpisodeBlock([ep('2026-09-17T10:00:00Z', 'O responsável é a Maria.'), outroCliente]);
+    expect(b.split('\n').filter((l) => l.startsWith('- ')).join('\n')).not.toMatch(/SUBSTITUÍDO/);
+  });
+
+  it('supersessão é escopada por tipo: preference não aposenta decision (F-21)', () => {
+    const preferencia = { ...ep('2026-09-16T10:00:00Z', 'O responsável mudou.'), eventType: 'preference' };
+    const b = formatFactualEpisodeBlock([ep('2026-09-17T10:00:00Z', 'O responsável é a Maria.'), preferencia]);
+    expect(b.split('\n').filter((l) => l.startsWith('- ')).join('\n')).not.toMatch(/SUBSTITUÍDO/);
   });
 });

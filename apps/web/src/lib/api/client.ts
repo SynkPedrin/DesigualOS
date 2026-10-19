@@ -14,6 +14,10 @@ export class ApiRequestError extends Error {
     message: string,
     public readonly status: number,
     public readonly details?: Array<{ path: string; message: string }>,
+    /** O corpo JSON inteiro do erro, quando a rota manda mais que `{error, details}`
+     *  (ex.: `{conflicts, suggested_slots}` do 409 de Calendar, §19). Opcional — a
+     *  maioria dos chamadores só usa `.message`. */
+    public readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiRequestError';
@@ -38,6 +42,27 @@ export function setAccessTokenAsyncProvider(provider: () => Promise<string | nul
   accessTokenAsyncProvider = provider;
 }
 
+/**
+ * CONTA DESATIVADA NÃO É "INFRAESTRUTURA FORA DO AR".
+ *
+ * `requireAuth` responde 403 "User account is deactivated" pra qualquer rota,
+ * e cada tela tinha a própria frase genérica pra erro de query ("não consegui
+ * carregar a saúde da infraestrutura", "não consegui carregar X") — nenhuma
+ * delas sabia que a causa era a CONTA de quem perguntou, não o que a tela
+ * mostra. Resultado medido (08/10/2026): a pessoa lia "infraestrutura" e
+ * procurava o problema lá, quando o problema era a própria sessão.
+ *
+ * Um único lugar sabe disso — aqui, onde toda resposta HTTP já passa — e
+ * avisa quem se inscrever (AuthProvider) pra mostrar UM aviso claro em vez
+ * de deixar cada tela inventar a própria explicação errada em paralelo.
+ */
+const MENSAGEM_DE_CONTA_DESATIVADA = 'User account is deactivated';
+let aoDesativarConta: (() => void) | null = null;
+
+export function setOnAccountDeactivated(callback: () => void) {
+  aoDesativarConta = callback;
+}
+
 /** Timeout default de toda chamada. Uploads de anexos passam um teto maior
  * via `timeoutMs` (arquivo grande em conexão lenta estouraria 30s fácil). */
 export const API_FETCH_DEFAULT_TIMEOUT_MS = 30_000;
@@ -55,7 +80,15 @@ export async function apiFetch<T>(path: string, init?: RequestInit, options?: Ap
   const headers = new Headers(init?.headers);
   // FormData bodies (file uploads) need the browser to set Content-Type itself
   // (multipart boundary included); setting it manually breaks the upload.
-  if (!(init?.body instanceof FormData)) {
+  //
+  // E SEM CORPO, SEM Content-Type (15/10/2026). Toda chamada levava
+  // `application/json`, inclusive POST sem corpo — e o Fastify recusa isso com
+  // 400 ("Body cannot be empty when content-type is set to 'application/json'")
+  // antes de qualquer rota rodar. Medido em produção: Sincronizar clientes,
+  // Sincronizar tarefas, Rodar automação agora, Sincronizar Outlook, aprovar
+  // ação de agente, reenviar convite e outros ~13 botões falhavam assim, em
+  // 1 ms, para todo mundo.
+  if (init?.body != null && !(init.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
   if (token) {
@@ -80,7 +113,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit, options?: Ap
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as ApiError | null;
-      throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details);
+      if (response.status === 403 && body?.error === MENSAGEM_DE_CONTA_DESATIVADA) {
+        aoDesativarConta?.();
+      }
+      throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details, body ?? undefined);
     }
 
     if (response.status === 204) {
@@ -99,4 +135,17 @@ export async function apiFetch<T>(path: string, init?: RequestInit, options?: Ap
     clearTimeout(timeout);
     callerSignal?.removeEventListener('abort', abortFromCaller);
   }
+}
+
+export async function apiBlob(path: string, init?: RequestInit): Promise<Blob> {
+  let token = accessTokenProvider?.() ?? null;
+  if (!token && accessTokenAsyncProvider) token = await accessTokenAsyncProvider().catch(() => null);
+  const headers = new Headers(init?.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as ApiError | null;
+    throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details, body ?? undefined);
+  }
+  return response.blob();
 }

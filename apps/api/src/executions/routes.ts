@@ -33,15 +33,33 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
             and(isNull(schema.executions.clientId), inArray(schema.executions.userId, scope.teammateUserIds)),
           );
 
+    /**
+     * QUEM PEDIU vem junto desde 29/09/2026.
+     *
+     * A execução sempre soube de quem era (`user_id` é NOT NULL na tabela), e a
+     * listagem não devolvia. Sem isso, "Atividade", "Auditoria", "Uso" e
+     * "Pessoas" do Control Plane não têm como existir — atividade sem autor é
+     * log, não auditoria.
+     *
+     * Vem por LEFT JOIN e não por consulta por linha: 50 execuções davam 50
+     * idas ao banco, que é exatamente o N+1 que custou 22s do turno em
+     * listAuthorizedClients (ver access.ts). Uma vez por dia é suficiente pra
+     * aprender.
+     */
     const rows = await db
-      .select()
+      .select({
+        execucao: schema.executions,
+        userName: schema.users.name,
+        userEmail: schema.users.email,
+      })
       .from(schema.executions)
+      .leftJoin(schema.users, eq(schema.users.id, schema.executions.userId))
       .where(and(clientFilter, tenantScopeCondition))
       .orderBy(desc(schema.executions.createdAt))
       .limit(50);
 
     return {
-      executions: rows.map((row) => ({
+      executions: rows.map(({ execucao: row, userName, userEmail }) => ({
         execution_id: row.executionId,
         client_id: row.clientId,
         agent: row.agent,
@@ -52,6 +70,11 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
         completed_at: row.completedAt?.toISOString() ?? null,
         tokens_input: row.tokensInput,
         tokens_output: row.tokensOutput,
+        user_id: row.userId,
+        // O nome quando existe; o e-mail como segunda opção. `null` significa
+        // usuário apagado — e some da tela como "—", nunca como outra pessoa.
+        user_name: userName ?? userEmail ?? null,
+        created_at: row.createdAt?.toISOString() ?? null,
       })),
     };
   });
@@ -74,7 +97,13 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
       const inScope = execution.clientId
         ? scope.allowedClientIds.includes(execution.clientId)
         : scope.teammateUserIds.includes(execution.userId);
-      if (!inScope) {
+      // Os PASSOS trazem a resposta do agente, e a execução não carrega de
+      // qual conversa veio: um colega lia a conversa PRIVADA do outro só por
+      // ter o id (medido em produção, 14/10/2026). Conversa de colega se lê
+      // por GET /conversations/:id/messages, que respeita a visibilidade; aqui
+      // só fica aberto o que não é conversa de ninguém (automação).
+      const semConversa = execution.intent === 'automation_trigger';
+      if (!inScope || !semConversa) {
         reply.code(404);
         return { error: `Execution '${request.params.id}' not found` };
       }

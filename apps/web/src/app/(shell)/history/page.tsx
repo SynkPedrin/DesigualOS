@@ -47,7 +47,7 @@ export default function HistoryPage() {
     <div>
       <PageHeader
         eyebrow="Execuções"
-        title="Histórico"
+        title="Histórico do Bento"
         description="Todas as conversas e tarefas processadas pelos agentes, com o resultado final de cada uma."
       />
 

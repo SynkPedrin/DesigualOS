@@ -8,7 +8,13 @@ import { z } from 'zod';
  * ser path absoluto de uma máquina específica (regra de ouro de portabilidade).
  */
 const ottoConfigSchema = z.object({
-  OTTO_LLM_PROVIDER: z.enum(['ollama']).default('ollama'),
+  // Seção 25/26 da missão de release OpenAI + ClickUp MCP: OpenAI é o
+  // provider PRIMARY user-facing do Otto; Ollama vira rollback explícito
+  // (OTTO_LLM_PROVIDER=ollama), nunca fallback automático em runtime — uma
+  // falha da OpenAI não pode virar silenciosamente uma resposta pior sem
+  // avisar (mesma régua do Motion Engine: "Otto avisa em vez de entregar
+  // peça pior").
+  OTTO_LLM_PROVIDER: z.enum(['openai', 'ollama']).default('openai'),
   OTTO_OLLAMA_URL: z.string().url().default('http://localhost:11434'),
   OTTO_MODEL: z.string().min(1).default('mistral'),
   OTTO_BRAIN_PATH: z.string().min(1).default('./Brain-Marketing'),
@@ -18,7 +24,7 @@ const ottoConfigSchema = z.object({
 });
 
 export interface OttoConfig {
-  provider: 'ollama';
+  provider: 'openai' | 'ollama';
   ollamaUrl: string;
   model: string;
   /** Caminho absoluto do vault, resolvido a partir do cwd do processo. */

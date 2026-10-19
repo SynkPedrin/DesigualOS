@@ -1,6 +1,7 @@
 import { boolean, index, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, timestampColumns } from './_shared';
 import { clients } from './clients';
+import { integrationConnections } from './integrations';
 
 /**
  * client_meta_accounts — mapeamento real clientId (Desigual OS) -> Meta Ads
@@ -21,6 +22,16 @@ import { clients } from './clients';
  * parcial exigiria um índice condicional específico de Postgres; a
  * verificação vive na camada de aplicação (resolveMetaAccountId), que é
  * onde o caso ambíguo já precisa virar BLOCKED_NEEDS_DATA de qualquer jeito.
+ *
+ * `businessId` e `connectionId` chegaram no OAuth real de conexão por
+ * cliente (prompt "FINAL PRODUCT REFINEMENT" §36, 06/10/2026): o prompt
+ * pede para gravar explicitamente clientId + connectionId + externalBusinessId
+ * + externalAdAccountId — a PROVENIÊNCIA do mapeamento, não só o resultado.
+ * `connectionId` aponta pra qual conexão OAuth (integration_connections,
+ * provider='meta') foi usada pra confirmar que esta conta existia e era
+ * acessível no momento do vínculo; null quando a linha veio do import
+ * antigo (clientData.js) ou de uma conexão já desconectada - a mesma
+ * política de `onDelete: 'set null'` do histórico de ClickUp.
  */
 export const clientMetaAccounts = pgTable(
   'client_meta_accounts',
@@ -28,6 +39,9 @@ export const clientMetaAccounts = pgTable(
     ...idColumn,
     clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
     accountId: text('account_id').notNull(),
+    /** Business Manager dono da conta (Graph API `business.id`) — null nos registros antigos, sem OAuth. */
+    businessId: text('business_id'),
+    connectionId: uuid('connection_id').references(() => integrationConnections.id, { onDelete: 'set null' }),
     isPrimary: boolean('is_primary').notNull().default(false),
     label: text('label'),
     ...timestampColumns,

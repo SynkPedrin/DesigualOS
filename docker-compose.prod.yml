@@ -9,7 +9,13 @@
 #   cada um em nodes/*/README.md.
 #
 # Uso:
-#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#   RELEASE_SHA=$(git rev-parse HEAD) \
+#     docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# O RELEASE_SHA na frente não é enfeite: .git está no .dockerignore, então
+# dentro da imagem não há repositório pra consultar e /health responderia
+# "unknown" em release_sha — ou seja, ninguém conseguiria dizer QUAL commit
+# está no ar. Esquecer o prefixo não quebra o build, só volta ao "unknown".
 #
 # Pré-requisito: um .env de produção na raiz do repo, preenchido a partir de
 # .env.example (ver docs/runbook.md para a sequência completa de deploy).
@@ -23,6 +29,15 @@ services:
     # .env). Sem isso, qualquer processo que alcance a porta do Redis dentro
     # da VPS conseguiria ler/escrever a fila de jobs e o pub/sub do WebSocket.
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD precisa estar definida no .env de produção}"]
+    # A senha também precisa existir DENTRO do container, não só na linha de
+    # comando: o healthcheck abaixo roda `redis-cli -a "$$REDIS_PASSWORD"`, e
+    # `$$` é escape do compose justamente pra variável ser lida em runtime, lá
+    # dentro. Sem este bloco ela chegava vazia, o AUTH falhava com WRONGPASS e
+    # o Redis ficava eternamente `unhealthy` — o que derrubava api e worker
+    # junto, via `depends_on: condition: service_healthy`, com o Redis na
+    # verdade funcionando perfeitamente (07/10/2026, primeiro deploy na VPS).
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD precisa estar definida no .env de produção}
     volumes:
       - redis_data:/data
     # Sem "ports:" de propósito: o Redis não precisa ser alcançável de fora
@@ -42,6 +57,8 @@ services:
       context: .
       dockerfile: Dockerfile.prod
       target: api
+      args:
+        RELEASE_SHA: "${RELEASE_SHA:-}"
     container_name: desigual-os-api
     restart: unless-stopped
     # Todo o resto das variáveis (SUPABASE_*, ANTHROPIC_API_KEY, NODE_SECRET,
@@ -51,6 +68,8 @@ services:
       - .env
     environment:
       NODE_ENV: production
+    volumes:
+      - whatsapp_media:/data/whatsapp-media
     depends_on:
       redis:
         condition: service_healthy
@@ -73,12 +92,16 @@ services:
       context: .
       dockerfile: Dockerfile.prod
       target: worker
+      args:
+        RELEASE_SHA: "${RELEASE_SHA:-}"
     container_name: desigual-os-worker
     restart: unless-stopped
     env_file:
       - .env
     environment:
       NODE_ENV: production
+    volumes:
+      - whatsapp_media:/data/whatsapp-media
     depends_on:
       redis:
         condition: service_healthy
@@ -95,5 +118,61 @@ services:
       retries: 5
       start_period: 15s
 
+  openwa:
+    image: ghcr.io/rmyndharis/openwa:0.25.0
+    container_name: desigual-os-openwa
+    restart: unless-stopped
+    stop_grace_period: 75s
+    mem_limit: ${OPENWA_MEM_LIMIT:-2g}
+    pids_limit: ${OPENWA_PIDS_LIMIT:-2048}
+    security_opt:
+      - 'no-new-privileges:true'
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "127.0.0.1:2785:2785"
+    environment:
+      NODE_ENV: production
+      NODE_ID: desigual-os-vps-openwa
+      API_MASTER_KEY: ${OPENWA_ADMIN_API_KEY:?OPENWA_ADMIN_API_KEY precisa estar definida}
+      API_KEY_PEPPER: ${OPENWA_API_KEY_PEPPER:?OPENWA_API_KEY_PEPPER precisa estar definida}
+      AUTO_START_SESSIONS: "true"
+      ENGINE_TYPE: whatsapp-web.js
+      WWEBJS_ONBOARDING_CONTINUE_LABELS: Continuar,Continue
+      STATUS_SEED_ON_READY: "false"
+      SERVE_DASHBOARD: "false"
+      UPDATE_CHECK_ENABLED: "false"
+      DATABASE_SYNCHRONIZE: "false"
+      MEDIA_DOWNLOAD_MAX_BYTES: "26214400"
+      MEDIA_CONVERSION_ENABLED: "true"
+      CHAT_MEDIA_ARCHIVE_ENABLED: "true"
+      MESSAGE_INLINE_MEDIA: archive
+      CHAT_MEDIA_ARCHIVE_MAX_BYTES: "26214400"
+      BODY_SIZE_LIMIT: 40mb
+      INFLIGHT_BODY_BUDGET_BYTES: "104857600"
+      WEBHOOK_MEDIA_INLINE_MAX_BYTES: "0"
+      WEBHOOK_FAILURE_PAYLOAD_RETENTION_HOURS: "24"
+      SSRF_ALLOWED_HOSTS: api,localhost,127.0.0.1
+    volumes:
+      - openwa_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2785/api/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
 volumes:
   redis_data:
+  whatsapp_media:
+  openwa_data:

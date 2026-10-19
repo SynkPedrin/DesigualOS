@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { desc } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { requireAuth } from '../auth/middleware';
+import { recorteViaClienteOuPessoa } from '../lib/escopo-de-organizacao';
 
 export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -11,8 +12,15 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
    * Agregação em JS de propósito: a tabela é pequena e a conta (performance,
    * tempo médio) fica mais legível aqui do que num SQL com três subconsultas.
    */
-  app.get('/agents/stats', { preHandler: requireAuth }, async () => {
+  app.get('/agents/stats', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
     const [allAgents, rows] = await Promise.all([
+      // schema.agents é a definição global dos agentes (nome, não execução) —
+      // não carrega dado de tenant, não precisa recorte.
       db.select({ name: schema.agents.name }).from(schema.agents),
       db
         .select({
@@ -21,7 +29,11 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
           startedAt: schema.executions.startedAt,
           completedAt: schema.executions.completedAt,
         })
-        .from(schema.executions),
+        .from(schema.executions)
+        // Vazamento por AGREGAÇÃO (mesma forma achada em get_health/panorama):
+        // sem isto, "performance_percent" e "active_conversations" somavam a
+        // execução de TODAS as empresas, não só da minha.
+        .where(recorteViaClienteOuPessoa(user, schema.executions.clientId, schema.executions.userId)),
     ]);
 
     const stats = new Map<string, { active: number; completed: number; failed: number; responseSeconds: number[] }>();
@@ -64,7 +76,12 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
    * estimados. É o endpoint que responde "os agentes estão melhorando?"
    * (first-attempt success e iterações médias ao longo do tempo).
    */
-  app.get('/agents/kpis', { preHandler: requireAuth }, async () => {
+  app.get('/agents/kpis', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
     const rows = await db
       .select({
         agent: schema.agentOutcomes.agent,
@@ -77,6 +94,10 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
         createdAt: schema.agentOutcomes.createdAt,
       })
       .from(schema.agentOutcomes)
+      // agent_outcomes não tem organization_id (achado ao investigar esta
+      // rota — nem estava na lista das seis tabelas de conteúdo sem
+      // fronteira, medida na 0045). Mesmo recorte por cliente/pessoa.
+      .where(recorteViaClienteOuPessoa(user, schema.agentOutcomes.clientId, schema.agentOutcomes.userId))
       .orderBy(desc(schema.agentOutcomes.createdAt))
       .limit(1000);
 

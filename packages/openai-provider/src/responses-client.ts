@@ -1,0 +1,206 @@
+import OpenAI from 'openai';
+import type { FastifyBaseLogger } from 'fastify';
+import { resolveOpenAICredential } from './credential.js';
+import { MAX_TOOL_STEPS, computeOpenAICost, type OpenAIModelId, type UsageTokens } from './models.js';
+import { recordOpenAIUsage } from './ledger.js';
+import { contextoDeUsoAtual } from './contexto-de-uso.js';
+
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Runtime agêntico via Responses API (seção 4/20 da missão). Fino de
+ * propósito: quem decide tool/policy/write é a camada de política do
+ * chamador (Bento/Otto), este client só fala com a OpenAI e devolve
+ * resultado + uso real de tokens.
+ *
+ * Nenhum teste desta missão chama isto de verdade (regra: zero custo pago
+ * OpenAI). Toda cobertura de teste deve mockar `OpenAI` / injetar um client
+ * fake via `createOpenAIClient` overload de teste, nunca bater na rede.
+ */
+export interface ResponsesFunctionToolDefinition {
+  type: 'function';
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  /** SDK exige explícito (sem default silencioso): `true` força o modelo a obedecer o schema à risca. */
+  strict: boolean;
+}
+
+/**
+ * Tool nativa de MCP remoto da Responses API (seção 12/14/17 da missão): a
+ * OpenAI conecta no servidor MCP, DESCOBRE as tools expostas por ele em
+ * runtime e o modelo escolhe semanticamente qual usar — nada disto é
+ * hardcoded aqui. Formato confirmado no SDK instalado (`openai@4.104.0`,
+ * `Tool.Mcp`): `server_label`/`server_url`/`headers`/`allowed_tools`/
+ * `require_approval`. Ver `buildClickUpMcpTool` em `mcp.ts`.
+ */
+export interface ResponsesMcpToolDefinition {
+  type: 'mcp';
+  server_label: string;
+  server_url: string;
+  headers?: Record<string, string>;
+  allowed_tools?: string[];
+  require_approval?: 'always' | 'never' | Record<string, unknown>;
+}
+
+export type ResponsesToolDefinition = ResponsesFunctionToolDefinition | ResponsesMcpToolDefinition;
+
+/**
+ * Um item de conteúdo estruturado na entrada da Responses API. Texto puro
+ * continua sendo uma string em `input`; isto existe pra quem precisa mandar
+ * IMAGEM junto (visão), como a legenda do Otto que olha a peça gerada
+ * (packages/otto/src/creative/caption-from-image.ts).
+ */
+export type ResponsesInputContent =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string; detail: 'low' | 'high' | 'auto' };
+
+export interface ResponsesRequest {
+  model: OpenAIModelId;
+  /** Prefixo estável (seção 10, prompt caching): instruções, identidade, política de tool, definições de tool. */
+  instructions: string;
+  /** Conteúdo dinâmico, SEMPRE depois do prefixo estável. String para texto puro; lista de partes quando há imagem. */
+  input: string | Array<{ role: 'user'; content: ResponsesInputContent[] }>;
+  tools?: ResponsesToolDefinition[];
+  maxOutputTokens: number;
+  previousResponseId?: string;
+}
+
+export interface ResponsesResult {
+  responseId: string;
+  outputText: string;
+  toolCalls: Array<{ id: string; name: string; arguments: string }>;
+  /**
+   * §1/§3 do "BENTO FINAL RELEASE GATE": chamadas reais de tool MCP feitas
+   * PELA OPENAI durante este turno (server-side — `require_approval:
+   * 'never'` significa que a OpenAI já executou a tool contra
+   * `mcp.clickup.com` e devolveu o resultado aqui, não é uma proposta pro
+   * caller executar). O chamador usa `output`/`error` pra montar o
+   * `WriteEnvelope` e o read-back, e `server_label` pra saber qual server
+   * respondeu (útil quando mais de um MCP estiver plugado no futuro).
+   */
+  mcpCalls: Array<{ id: string; serverLabel: string; name: string; arguments: string; output: string | null; error: string | null }>;
+  usage: UsageTokens;
+  model: OpenAIModelId;
+}
+
+let cachedClient: OpenAI | null = null;
+
+function getClient(): OpenAI {
+  if (cachedClient) return cachedClient;
+  const { apiKey } = resolveOpenAICredential();
+  cachedClient = new OpenAI({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: 0 });
+  return cachedClient;
+}
+
+/** Só para teste: injeta um client fake e evita qualquer chamada de rede real. */
+export function __setOpenAIClientForTest(client: OpenAI | null): void {
+  cachedClient = client;
+}
+
+/**
+ * Uma chamada única à Responses API. Retry: no máximo 1 vez, só para erro
+ * claramente retryable (timeout, 429, 5xx) — seção 35, nunca loop.
+ */
+export async function callResponses(
+  request: ResponsesRequest,
+  logger: FastifyBaseLogger,
+): Promise<ResponsesResult> {
+  const client = getClient();
+  const attempt = async (): Promise<ResponsesResult> => {
+    const response = await client.responses.create({
+      model: request.model,
+      instructions: request.instructions,
+      input: request.input,
+      max_output_tokens: request.maxOutputTokens,
+      ...(request.previousResponseId ? { previous_response_id: request.previousResponseId } : {}),
+      ...(request.tools ? { tools: request.tools } : {}),
+    });
+
+    const toolCalls = (response.output ?? [])
+      .filter((item): item is Extract<typeof item, { type: 'function_call' }> => item.type === 'function_call')
+      .map((item) => ({ id: item.call_id ?? item.id, name: item.name, arguments: item.arguments }));
+
+    const mcpCalls = (response.output ?? [])
+      .filter((item): item is Extract<typeof item, { type: 'mcp_call' }> => item.type === 'mcp_call')
+      .map((item) => ({
+        id: item.id,
+        serverLabel: item.server_label,
+        name: item.name,
+        arguments: item.arguments,
+        output: item.output ?? null,
+        error: item.error ?? null,
+      }));
+
+    const usage: UsageTokens = {
+      inputTokens: response.usage?.input_tokens ?? 0,
+      cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
+    };
+
+    return {
+      responseId: response.id,
+      outputText: response.output_text ?? '',
+      toolCalls,
+      mcpCalls,
+      usage,
+      model: request.model,
+    };
+  };
+
+  let resultado: ResponsesResult;
+  try {
+    resultado = await attempt();
+  } catch (error) {
+    const retryable = isRetryableError(error);
+    logger.warn({ error: error instanceof Error ? error.message : String(error), retryable }, 'OpenAI Responses call failed');
+    if (!retryable) throw error;
+    resultado = await attempt();
+  }
+  registrarUso(resultado, logger);
+  return resultado;
+}
+
+/**
+ * Toda chamada bem-sucedida vai para o ledger, atribuída ao contexto do job
+ * (contexto-de-uso.ts). Em segundo plano e sem lançar: medir custo nunca pode
+ * ser motivo de a resposta não sair.
+ */
+function registrarUso(r: ResponsesResult, logger: FastifyBaseLogger): void {
+  // Só dentro de um contexto aberto por código de produção (o worker, por
+  // job). Fora dele — teste unitário com cliente falso, script — não grava:
+  // o .env local aponta para o banco real, e teste não pode escrever lá.
+  const ctx = contextoDeUsoAtual();
+  if (!ctx) return;
+  const custo = computeOpenAICost(r.model, r.usage);
+  {
+    ctx.acumulado.chamadas += 1;
+    ctx.acumulado.inputTokens += r.usage.inputTokens;
+    ctx.acumulado.cachedInputTokens += r.usage.cachedInputTokens;
+    ctx.acumulado.outputTokens += r.usage.outputTokens;
+    ctx.acumulado.custoUsd += custo;
+  }
+  void recordOpenAIUsage({
+    organizationId: ctx.organizationId ?? null,
+    userId: ctx.userId ?? null,
+    agent: ctx.agent ?? null,
+    conversationId: ctx.conversationId ?? null,
+    model: r.model,
+    usage: r.usage,
+    requestType: 'responses',
+    toolSteps: r.toolCalls.length + r.mcpCalls.length,
+    metadata: ctx.executionId ? { execution_id: ctx.executionId } : {},
+  }).catch((error: unknown) => logger.warn({ error: error instanceof Error ? error.message : String(error) }, 'ai_usage_ledger: registro falhou'));
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof OpenAI.APIError) {
+    return error.status === 429 || (error.status !== undefined && error.status >= 500);
+  }
+  if (error instanceof Error) {
+    return error.name === 'APIConnectionTimeoutError' || error.name === 'APIConnectionError';
+  }
+  return false;
+}
+
+export { MAX_TOOL_STEPS };

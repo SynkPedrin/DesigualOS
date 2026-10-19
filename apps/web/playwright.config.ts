@@ -1,4 +1,54 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+
+// ESM: não há __dirname. O config é carregado como módulo pelo Playwright.
+const AQUI = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * AS CREDENCIAIS DE QA SÃO CARREGADAS AQUI, e o motivo é uma falha de
+ * instrumento, não uma conveniência.
+ *
+ * Medido em 30/09/2026: `playwright test control-plane.spec.ts` rodou e
+ * imprimiu "23 skipped", saindo com código ZERO. A suíte inteira se
+ * auto-desligou porque `QA_USER_EMAIL`/`QA_USER_PASSWORD` só existem em
+ * `.env.local` e nada aqui os lia — e um comando que valida NADA e devolve
+ * sucesso é a pior espécie de teste, porque é indistinguível de um que passou.
+ *
+ * O `test.skip` continua existindo pro CI, onde segredo não é commitado. O que
+ * muda é que na máquina de quem desenvolve as credenciais ESTÃO ali, então o
+ * skip não pode mais acontecer por descuido de ambiente.
+ */
+function carregarEnvLocal(): void {
+  /**
+   * A ORDEM É A PRECEDÊNCIA: shell vence `.env.local`, que vence `.env`.
+   *
+   * `.env` entrou na lista porque a conferência de 30/09/2026 mostrou que
+   * `CLICKUP_API_KEY` mora só lá — e sem ela, os specs que provam escrita real
+   * no ClickUp desligavam sozinhos exatamente como os outros faziam por falta
+   * de QA_USER_*. Consertar uma fonte e deixar a outra fora seria fechar metade
+   * da porta.
+   */
+  for (const caminho of [
+    resolve(AQUI, '.env.local'),
+    resolve(AQUI, '../../.env.local'),
+    resolve(AQUI, '../../.env'),
+  ]) {
+    if (!existsSync(caminho)) continue;
+    for (const linha of readFileSync(caminho, 'utf8').split('\n')) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(linha);
+      if (!m) continue;
+      const [, chave, valorCru] = m;
+      // Variável já definida no shell VENCE o arquivo: é assim que se aponta a
+      // suíte pra outro ambiente sem editar arquivo nenhum.
+      if (process.env[chave!] !== undefined) continue;
+      process.env[chave!] = valorCru!.trim().replace(/^["']|["']$/g, '');
+    }
+  }
+}
+
+carregarEnvLocal();
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 
@@ -21,8 +71,38 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [
+    /**
+     * PROJETO DAS CAPTURAS VISUAIS, separado do resto.
+     *
+     * Tem setup próprio (login + tutorial dispensado, salvos em storageState) e
+     * tema escuro, porque o padrão do Playwright é `prefers-color-scheme:
+     * light` e isso já custou uma rodada inteira de capturas do produto na
+     * aparência errada.
+     *
+     * Fica num projeto à parte de propósito: os specs existentes fazem o
+     * próprio login e NÃO devem herdar sessão nem tutorial dispensado — vários
+     * deles existem justamente pra testar o caminho de quem chega sem nada.
+     */
+    {
+      name: 'visual-setup',
+      testMatch: /visual\.setup\.ts/,
+      use: { ...devices['Desktop Chrome'], colorScheme: 'dark' },
+    },
+    {
+      name: 'visual',
+      testMatch: /\.visual\.spec\.ts/,
+      dependencies: ['visual-setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        colorScheme: 'dark',
+        storageState: 'tests/e2e/.auth/visual.json',
+      },
+    },
     {
       name: 'chromium',
+      // As capturas têm projeto próprio; sem isto elas rodariam duas vezes, e a
+      // segunda sem a sessão preparada.
+      testIgnore: [/visual\.setup\.ts/, /\.visual\.spec\.ts/],
       use: {
         ...devices['Desktop Chrome'],
         // Opt-in explícito (E2E_INSECURE_BROWSER=1) pra rodar a suíte com o

@@ -64,6 +64,35 @@
   --transition-fast: 120ms;
   --transition-normal: 180ms;
   --default-transition-duration: 120ms;
+
+  /*
+   * MARCA — a camada que torna o produto white-label (30/09/2026).
+   *
+   * O problema que ela resolve: os tokens acima nomeiam a COR, não o papel.
+   * `--color-roxo-eletrico` é a identidade da Desigual escrita no nome da
+   * variável. Uma empresa de marca verde teria um token chamado "roxo elétrico"
+   * contendo verde, e 1.502 usos no código lendo `text-roxo-eletrico`.
+   *
+   * Renomear os 1.502 seria rewrite. A seção 41 do briefing pede o contrário:
+   * evolução. Então estes tokens APONTAM para os atuais — a Desigual não muda
+   * de cara, nada quebra, e passa a existir um lugar onde a marca de outra
+   * empresa entra.
+   *
+   * São sobrescritos em tempo de execução, no <html>, a partir da configuração
+   * da empresa (ver brand-provider.tsx). Sobrescrever variável CSS é o que
+   * permite UMA aplicação servir muitas marcas — a seção 68: white-label vem de
+   * configuração, não de build por cliente.
+   *
+   * Código novo usa estes. Código existente migra quando for tocado.
+   */
+  --color-brand-primary: var(--color-roxo-eletrico);
+  --color-brand-secondary: var(--color-ametista);
+  --color-brand-accent: var(--color-sinal);
+  --color-brand-background: var(--color-carbono);
+  --color-brand-surface: var(--color-grafite);
+  --color-brand-surface-raised: var(--color-grafite-elevado);
+  --color-brand-text: var(--color-branco-cru);
+  --color-brand-text-muted: var(--color-nevoa);
 }
 
 /*

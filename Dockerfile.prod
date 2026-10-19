@@ -12,7 +12,7 @@
 # Por isso a imagem final não precisa copiar node_modules, só o dist/ e o
 # package.json do próprio app (para o Node reconhecer "type": "module").
 
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 # Versão fixa, igual ao "packageManager" do package.json raiz: evita a
 # imagem de produção usar um pnpm diferente do que gerou o pnpm-lock.yaml.
 RUN corepack enable && corepack prepare pnpm@9.9.0 --activate
@@ -20,6 +20,13 @@ WORKDIR /app
 
 # --- Build: instala o workspace inteiro e empacota os dois apps ---
 FROM base AS build
+# O SHA do commit entra por build arg porque .git está no .dockerignore: dentro
+# da imagem não há repositório pra consultar. scripts/identidade-de-release.mjs
+# lê RELEASE_SHA do ambiente e o assa no bundle via esbuild define — é o que
+# faz /health provar QUAL commit está no ar em vez de responder "unknown".
+# Sem o arg, degrada pro comportamento antigo ("unknown"), nunca quebra o build.
+ARG RELEASE_SHA
+ENV RELEASE_SHA=${RELEASE_SHA}
 # Contexto de build já filtrado pelo .dockerignore (sem node_modules/dist
 # locais, sem a LP, sem brain/Brain-Marketing/STUDIO-BRAIN).
 COPY . .
@@ -28,7 +35,7 @@ RUN pnpm --filter @desigual-os/api build
 RUN pnpm --filter @desigual-os/worker build
 
 # --- Runtime da API (apps/api) ---
-FROM node:20-alpine AS api
+FROM node:22-alpine AS api
 ENV NODE_ENV=production
 WORKDIR /app
 # package.json só para o Node reconhecer "type": "module" ao rodar o dist/
@@ -45,13 +52,51 @@ EXPOSE 3001
 CMD ["node", "apps/api/dist/server.js"]
 
 # --- Runtime do worker (apps/worker) ---
-FROM node:20-alpine AS worker
+#
+# Debian (slim), não Alpine como a API: o worker RENDERIZA motion, e o
+# @remotion/renderer baixa um Chrome Headless Shell em runtime
+# (`ensureBrowser`) que depende de glibc e de um punhado de libs de sistema.
+# Em musl isso é terreno não suportado pelo Remotion. A VPS é Debian 12, e o
+# compositor nativo correto (`@remotion/compositor-linux-x64-gnu`) é o que o
+# npm resolve aqui. A API continua em Alpine porque nunca renderiza nada.
+FROM node:22-slim AS worker
 ENV NODE_ENV=production
 WORKDIR /app
 # procps traz pgrep, usado só pelo HEALTHCHECK do docker-compose.prod.yml
 # (o worker não expõe HTTP, então a checagem de saúde é "o processo ainda
-# está de pé", não uma sonda real de progresso da fila).
-RUN apk add --no-cache procps
+# está de pé", não uma sonda real de progresso da fila). O resto são as libs
+# que o Chrome do Remotion exige pra abrir sem display.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      procps ca-certificates fonts-liberation \
+      libasound2 libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 \
+      libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 \
+      libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
+      libxkbcommon0 libxrandr2 \
+  && rm -rf /var/lib/apt/lists/*
+
+# Addons NATIVOS, instalados em vez de empacotados: o esbuild não consegue
+# embutir arquivo .node, então apps/worker/build.mjs os marca como `external`
+# e o bundle os importa de node_modules em runtime. Sem este install o worker
+# nem inicia (ERR_MODULE_NOT_FOUND em @remotion/renderer) — e, como
+# OTTO_MOTION_ENABLED=true, não é um caminho opcional.
+# Versões fixas, iguais às que o pnpm-lock.yaml resolveu no workspace: é o
+# que impede a imagem de produção divergir do que foi testado aqui.
+#
+# @napi-rs/canvas entra pelo MESMO motivo, por um caminho diferente: o worker
+# lê PDF em processors/bento-documentos.ts (pdf-parse -> pdfjs-dist), e o
+# pdfjs precisa dele pra ter DOMMatrix/ImageData/Path2D fora do browser. Sem
+# ele o worker nem inicia — morre em "ReferenceError: DOMMatrix is not
+# defined" assim que o módulo é avaliado, num crash loop (07/10/2026).
+# Escolhido em vez do `canvas` clássico de propósito: canvas@2 compila do
+# fonte com node-gyp (precisa de Python e toolchain, e já falhava no build);
+# @napi-rs/canvas é binário pré-compilado, resolvido por plataforma.
+RUN npm install --omit=dev --no-package-lock --no-audit --no-fund \
+      @remotion/renderer@4.0.528 \
+      @remotion/bundler@4.0.528 \
+      sharp@0.33.5 \
+      @napi-rs/canvas@0.1.80 \
+      @react-pdf/renderer@4.9.0
+
 COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 # Mesmo motivo do estágio da API acima (execute-job.ts também usa a copy do

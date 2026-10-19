@@ -95,7 +95,7 @@ export default function AgentsPage() {
                 >
                   <AgentCard
                     agent={agent}
-                    status={health?.nodes.find((n) => n.agent === agent)?.status}
+                    status={health?.nodes?.find((n) => n.agent === agent)?.status}
                     stats={agentStatsOrDefault(stats, agent)}
                     onSelect={() => setSelectedAgent(agent)}
                   />
@@ -106,7 +106,7 @@ export default function AgentsPage() {
 
       <AgentDetailModal
         agent={selectedAgent}
-        node={health?.nodes.find((n) => n.agent === selectedAgent)}
+        node={health?.nodes?.find((n) => n.agent === selectedAgent)}
         onClose={() => setSelectedAgent(null)}
       />
     </div>

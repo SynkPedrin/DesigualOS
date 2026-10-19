@@ -17,7 +17,16 @@ function journalPath(): string {
   return resolve(here, '../../../database/migrations/meta/_journal.json');
 }
 
+/**
+ * Assado pelo esbuild (ver scripts/identidade-de-release.mjs). Na imagem de
+ * produção a pasta `database/` não existe, então o `readFileSync` abaixo
+ * nunca encontrava o journal e o campo virava 'unknown' em silêncio.
+ */
+declare const __SCHEMA_VERSION__: string | undefined;
+
 function resolveSchemaVersion(): string {
+  const assado = typeof __SCHEMA_VERSION__ === 'string' ? __SCHEMA_VERSION__.trim() : '';
+  if (assado && assado !== 'unknown') return assado;
   try {
     const raw = readFileSync(journalPath(), 'utf8');
     const journal = JSON.parse(raw) as { entries?: Array<{ tag?: string }> };

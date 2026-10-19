@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
@@ -16,6 +16,44 @@ let pedidosAbandonados = 0;
 let gateway: Server;
 let gatewayPorta = 0;
 let controle: { telemetria: () => { emExecucao: number; naFila: number } };
+
+/**
+ * ESPERAR O SERVIDOR OUVIR, em vez de dormir 200ms torcendo.
+ *
+ * O preparo deste teste dormia um tempo fixo depois de subir o gateway e
+ * seguia em frente. Em máquina ociosa 200ms sobram; em máquina carregada —
+ * build, navegador e o resto da suíte disputando CPU — não, e o `beforeAll`
+ * inteiro estourava o teto de 10s. Medido duas vezes em 08/10/2026, nas duas
+ * execuções seguidas do portão de release, sempre num teste DIFERENTE: o
+ * sintoma era aleatório porque a causa era contenção, não código.
+ *
+ * Teste que falha por ruído ensina a equipe a ignorar vermelho, e esse é o
+ * dano que sobra depois — o próximo vermelho pode ser de verdade.
+ *
+ * Agora o preparo pergunta ao sistema operacional se a porta aceita conexão,
+ * em vez de supor. Fica mais RÁPIDO na máquina ociosa (segue assim que o
+ * servidor sobe, sem esperar os 200ms) e paciente na carregada. O teto do
+ * hook subiu junto porque o `import()` dinâmico do orchestrator é pesado e
+ * também compete por CPU.
+ */
+async function esperarOuvindo(porta: number, limiteMs = 15_000): Promise<void> {
+  const ate = Date.now() + limiteMs;
+  for (;;) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const socket = connect({ port: porta, host: '127.0.0.1' });
+      const encerrar = (valor: boolean) => {
+        socket.destroy();
+        resolve(valor);
+      };
+      socket.once('connect', () => encerrar(true));
+      socket.once('error', () => encerrar(false));
+      socket.setTimeout(500, () => encerrar(false));
+    });
+    if (ok) return;
+    if (Date.now() > ate) throw new Error(`porta ${porta} não começou a ouvir em ${limiteMs}ms`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
 
 beforeAll(async () => {
   upstream = createServer((req, res) => {
@@ -36,8 +74,9 @@ beforeAll(async () => {
   const { controleDeAdmissaoDaGpu } = await import('@desigual-os/orchestrator');
   controle = controleDeAdmissaoDaGpu();
   gateway = iniciarGpuGateway();
-  await new Promise<void>((r) => setTimeout(r, 200));
-});
+  await esperarOuvindo(gatewayPorta);
+  await esperarOuvindo(upstreamPorta);
+}, 30_000);
 
 afterAll(async () => {
   gateway?.close();

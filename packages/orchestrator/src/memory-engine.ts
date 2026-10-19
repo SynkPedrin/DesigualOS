@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
+import { generateAndStoreMemoryEmbedding } from './memory-embeddings';
 
 const logger = createLogger({ service: 'memory-engine' });
 
@@ -24,9 +26,11 @@ const logger = createLogger({ service: 'memory-engine' });
  *    é DETERMINÍSTICA: quem escreve declara o `subject` (ex: `cliente:3net:responsavel`), e
  *    fato novo no mesmo subject aposenta o anterior. É menos esperto e muito mais
  *    previsível — e não inventa conflito onde não há.
- *  - não gera embedding. Não existe pgvector nem geração de embedding neste repo (a busca
- *    vetorial de verdade vive fora, no bento-qa). A recuperação aqui é por escopo + kind +
- *    subject + ordenação por importância, não por similaridade.
+ *  - não RANKEIA por embedding. A geração do vetor mora aqui (hook fire-and-forget
+ *    abaixo, depois de insert/update — memória grava mesmo se a API falhar), mas a
+ *    recuperação deste módulo continua por escopo + kind + subject + importância.
+ *    A busca por similaridade é outra função, em memory-embeddings.ts
+ *    (`recallMemoriesSemantic`), com o mesmo isolamento de ambiente.
  */
 
 export type MemorySourceType =
@@ -57,6 +61,16 @@ export interface RememberInput {
   clientId?: string | null;
   agentId?: string | null;
   userId?: string | null;
+  /**
+   * Só pra fato que não nasce de cliente nem de pessoa (ex: manual do próprio
+   * produto — mesmo conteúdo pra qualquer tenant que o tiver sincronizado).
+   * `organizacaoDaEscrita` só sabe deduzir empresa a partir de `clientId` ou
+   * `userId`; sem nenhum dos dois ela devolve null, e memória sem empresa é
+   * INVISÍVEL pro recall semântico de propósito (ver nota em
+   * SemanticRecallQuery.organizationId) — então quem grava fato org-wide
+   * precisa dizer explicitamente de qual empresa ele é.
+   */
+  organizationId?: string | null;
   sourceType: MemorySourceType;
   sourceId?: string | null;
   /** 0..1. Default por origem (ver DEFAULT_CONFIDENCE). */
@@ -191,6 +205,12 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
           updatedAt: now,
         })
         .where(eq(schema.memories.id, existing.id));
+      // Reconfirmação SOBRESCREVE o content (acima): o vetor precisa ser
+      // regerado, senão a busca semântica casa o texto velho. Fire-and-forget
+      // — falha da API deixa a memória sem vetor novo e o backfill cobre.
+      void generateAndStoreMemoryEmbedding(existing.id, content).catch((error: unknown) => {
+        logger.warn({ error, memoryId: existing.id }, 'Falha ao regerar embedding de memória reconfirmada');
+      });
       return { status: 'reconfirmed', memoryId: existing.id };
     }
 
@@ -214,9 +234,18 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
       if (anteriores.length > 0) supersededId = anteriores[0]!.id;
     }
 
+    const organizationId =
+      input.organizationId !== undefined
+        ? input.organizationId
+        : await organizacaoDaEscrita({
+            userId: input.userId ?? null,
+            clientId: input.clientId ?? null,
+          });
+
     const [written] = await db
       .insert(schema.memories)
       .values({
+        organizationId,
         kind: input.kind,
         content,
         environment: input.environment ?? 'production',
@@ -236,6 +265,13 @@ export async function rememberFact(input: RememberInput): Promise<RememberOutcom
       .returning({ id: schema.memories.id });
 
     if (!written) return { status: 'skipped', reason: 'insert nao retornou linha' };
+
+    // Vetor DEPOIS do insert, fire-and-forget: memória é efeito colateral e o
+    // embedding é efeito colateral da memória — nem a falha da OpenAI nem a
+    // latência dela podem encostar no turno. Ausência da linha = pendente.
+    void generateAndStoreMemoryEmbedding(written.id, content).catch((error: unknown) => {
+      logger.warn({ error, memoryId: written.id }, 'Falha ao gerar embedding de memória nova');
+    });
 
     if (supersededId) {
       await db
@@ -292,6 +328,17 @@ export interface RecallQuery {
  * pro prompt, que era o problema original de memória velha ganhando de dado novo.
  */
 export async function recallMemories(query: RecallQuery): Promise<RecalledMemory[]> {
+  if (query.environment === undefined) {
+    // O default 'production' protege o lado que mais dói (QA nunca vaza pra
+    // produção), mas esconde o erro inverso: um turno de QA lendo memória
+    // real. Tornar o parâmetro obrigatório quebraria callers fora deste
+    // workstream (agentic-dispatch.ts:325-326, execute-job.ts:1311/1331), que
+    // ainda não propagam o ambiente — fica o log até lá.
+    logger.warn(
+      { clientId: query.clientId ?? null, kinds: query.kinds ?? null },
+      'recallMemories sem environment: usando production; propague o ambiente resolvido do turno',
+    );
+  }
   // `now()` do Postgres em vez de bindar um Date: o driver (postgres.js) não aceita objeto
   // Date como parâmetro dentro de um template sql`` cru nesta posição, e isso estourava em
   // runtime (achado no teste de integração, não em typecheck).

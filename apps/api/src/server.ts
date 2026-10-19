@@ -10,24 +10,54 @@ import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/l
 import { getSchemaVersion } from '@desigual-os/database';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
+import { registerReadyRoutes } from './health/ready-routes';
 import { startHealthCheckRetention, startHealthSweep } from './health/scheduler';
 import { startAgentProbe } from './health/probe-scheduler';
 import { startWorkerWatchdog } from './health/worker-watchdog';
 import { registerAuthRoutes } from './auth/routes';
 import { registerChatRoutes } from './chat/routes';
+import { registerBentoWhatsappRoutes } from './bento-whatsapp/routes';
 import { registerExecutionRoutes } from './executions/routes';
+import { registerMemoryRoutes } from './memories/routes';
+import { registerMcpStatusRoutes } from './mcp-status/routes';
+import { registerEpisodeRoutes } from './episodes/routes';
+import { registerDataQualityRoutes } from './data-quality/routes';
+import { registerPipelineRoutes } from './pipeline/routes';
+import { registerSignalsRoutes } from './signals/routes';
+import { registerActivityRoutes } from './activity/routes';
+import { registerPanoramaRoutes } from './panorama/routes';
+import { registerTodayRoutes } from './today/routes';
+import { registerOrganizationRoutes } from './organizations/routes';
+import { registerOrganizationMemberRoutes } from './organizations/membros';
+import { registerConnectorRoutes } from './connectors/routes';
+import { registerConsentRoutes } from './consent/routes';
 import { registerStudioRoutes } from './studio/routes';
+import { registerMotionRoutes } from './motion/routes';
 import { registerCanvasDocumentRoutes } from './studio/canvas-routes';
 import { registerImageSearchRoutes } from './studio/image-search-routes';
 import { registerFontRoutes } from './studio/font-routes';
 import { registerWsRoutes } from './ws/routes';
 import { registerCostRoutes } from './costs/routes';
 import { registerClientRoutes } from './clients/routes';
+import { registerCommunicationRoutes } from './communications/routes';
+import { registerOpenwaRoutes } from './openwa-integration/routes';
+import { registerDemandRoutes } from './demands/routes';
+import { registerBriefRoutes } from './briefs/routes';
+import { registerApprovalRequestRoutes } from './approvals/routes';
 import { registerConversationRoutes } from './conversations/routes';
 import { registerProjectRoutes } from './projects/routes';
 import { registerAdminRoutes } from './admin/routes';
 import { registerClickUpRoutes } from './clickup/routes';
 import { registerIntegrationRoutes } from './integrations/routes';
+import { registerClickUpMcpOAuthRoutes } from './integrations/clickup-mcp-routes';
+import { registerNotionRoutes } from './integrations/notion-routes';
+import { registerMetaIntegrationRoutes } from './integrations/meta-routes';
+import { registerGoogleAdsIntegrationRoutes } from './integrations/google-ads-routes';
+import { registerAgencyControlCenterRoutes } from './agency-control-center/routes';
+import { registerWorkspaceRoutes } from './workspace/routes';
+import { registerCalendarRoutes } from './calendar/routes';
+import { registerGoogleCalendarIntegrationRoutes } from './integrations/google-calendar-routes';
+import { registerMicrosoftCalendarIntegrationRoutes } from './integrations/microsoft-calendar-routes';
 import { registerNotificationRoutes } from './notifications/routes';
 import { registerMessageRoutes } from './messages/routes';
 import { registerTeamRoutes } from './team/routes';
@@ -37,6 +67,7 @@ import { registerToolCallRoutes } from './tool-calls/routes';
 import { registerAutomationRoutes } from './automations/routes';
 import { registerUploadRoutes } from './uploads/routes';
 import { registerAgentRoutes } from './agents/routes';
+import { origensDoFront } from './lib/url-do-app';
 
 const logger = createLogger({ service: 'orchestrator-api' });
 const isProd = process.env.NODE_ENV === 'production';
@@ -115,7 +146,13 @@ app.setErrorHandler((error, _request, reply) => {
     return;
   }
 
-  logger.error({ error }, 'Unhandled request error');
+  // { error } com um Error de verdade serializa como {} — message e stack não
+  // são enumeráveis. O convite quebrou em produção (13/10/2026) e o log dizia
+  // exatamente "error: {}". Mensagem e stack explicitados, sempre.
+  logger.error(
+    { error, errorMessage: error instanceof Error ? error.message : String(error), errorStack: error instanceof Error ? error.stack : undefined },
+    'Unhandled request error',
+  );
   // error.statusCode só existe quando uma rota lançou de propósito (ex:
   // reply.code(4xx) explícito antes); nesse caso a mensagem já foi escrita
   // pensando em quem chama a API. Qualquer erro sem statusCode é uma falha
@@ -150,7 +187,13 @@ async function start(): Promise<void> {
   // multipart uploads included). Bearer token in Authorization, never cookies - no
   // credentials:true needed.
   await app.register(corsPlugin, {
-    origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+    // Lista separada por vírgula: o front local de dev (localhost:3000) e o
+    // front publicado (Vercel) são os dois legítimos. Valor único continua
+    // valendo como antes — o split de uma string sem vírgula devolve ela mesma.
+    // (24/09/2026: uma edição do .env trocou FRONTEND_URL pra localhost e o
+    // front publicado inteiro ficou preso em "Carregando..." — o preflight
+    // passou a devolver a origem errada e o Chrome bloqueou TUDO.)
+    origin: origensDoFront(),
     allowedHeaders: ['Authorization', 'Content-Type'],
   });
   // Private Network Access (14/09/2026, medido no smoke de produção): quando a
@@ -184,6 +227,22 @@ async function start(): Promise<void> {
     global: true,
     max: 300,
     timeWindow: '1 minute',
+    /**
+     * FORA DE PRODUÇÃO, a máquina local não conta.
+     *
+     * Medido em 01/10/2026: uma rodada da suíte de ponta a ponta produziu 140
+     * respostas 429, e o efeito foi um teste acusando a tela de não mostrar os
+     * números do painel. A tela estava certa — a API é que tinha parado de
+     * responder para aquele IP. Um instrumento que falha por esgotar o próprio
+     * limite acusa o produto por um defeito do ambiente, e é exatamente o tipo
+     * de falso vermelho que ensina a ignorar vermelho.
+     *
+     * EM PRODUÇÃO A LISTA É VAZIA, e isso não é detalhe: lá a API fica atrás de
+     * proxy, e o endereço de origem de TODA requisição é o do proxy. Liberar
+     * loopback em produção desligaria o limite inteiro, para todo mundo, em vez
+     * de liberar uma máquina — o contrário do que o limite existe para fazer.
+     */
+    allowList: isProd ? [] : ['127.0.0.1', '::1'],
   });
   await app.register(websocketPlugin);
   // 25 MB cobre foto de perfil, print de tela, áudio curto e PDF/doc/pptx
@@ -192,21 +251,51 @@ async function start(): Promise<void> {
   await app.register(multipartPlugin, { limits: { fileSize: 25 * 1024 * 1024 } });
   await app.register(registerNodeRoutes);
   await app.register(registerHealthRoutes);
+  await app.register(registerReadyRoutes);
   await app.register(registerAuthRoutes);
   await app.register(registerChatRoutes);
+  await app.register(registerBentoWhatsappRoutes);
   await app.register(registerExecutionRoutes);
+  await app.register(registerMemoryRoutes);
+  await app.register(registerMcpStatusRoutes);
+  await app.register(registerEpisodeRoutes);
+  await app.register(registerDataQualityRoutes);
+  await app.register(registerPipelineRoutes);
+  await app.register(registerSignalsRoutes);
+  await app.register(registerPanoramaRoutes);
+  await app.register(registerTodayRoutes);
+  await app.register(registerActivityRoutes);
+  await app.register(registerOrganizationRoutes);
+  await app.register(registerOrganizationMemberRoutes);
+  await app.register(registerConnectorRoutes);
+  await app.register(registerConsentRoutes);
   await app.register(registerStudioRoutes);
+  await app.register(registerMotionRoutes);
   await app.register(registerCanvasDocumentRoutes);
   await app.register(registerImageSearchRoutes);
   await app.register(registerFontRoutes);
   await app.register(registerWsRoutes);
   await app.register(registerCostRoutes);
   await app.register(registerClientRoutes);
+  await app.register(registerCommunicationRoutes);
+  await app.register(registerOpenwaRoutes);
+  await app.register(registerDemandRoutes);
+  await app.register(registerBriefRoutes);
+  await app.register(registerApprovalRequestRoutes);
   await app.register(registerConversationRoutes);
   await app.register(registerProjectRoutes);
   await app.register(registerAdminRoutes);
   await app.register(registerClickUpRoutes);
   await app.register(registerIntegrationRoutes);
+  await app.register(registerNotionRoutes);
+  await app.register(registerClickUpMcpOAuthRoutes);
+  await app.register(registerMetaIntegrationRoutes);
+  await app.register(registerGoogleAdsIntegrationRoutes);
+  await app.register(registerAgencyControlCenterRoutes);
+  await app.register(registerWorkspaceRoutes);
+  await app.register(registerCalendarRoutes);
+  await app.register(registerGoogleCalendarIntegrationRoutes);
+  await app.register(registerMicrosoftCalendarIntegrationRoutes);
   await app.register(registerNotificationRoutes);
   await app.register(registerMessageRoutes);
   await app.register(registerTeamRoutes);

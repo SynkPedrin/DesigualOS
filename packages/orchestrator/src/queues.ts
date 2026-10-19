@@ -78,6 +78,39 @@ export const AGENT_MAX_ATTEMPTS: Record<AgentName, number> = {
   otto: MAX_ATTEMPTS,
 };
 
+/**
+ * Briefing estruturado do card de motion (POST /chat campo `motion_brief`).
+ *
+ * Espelho declarado do `campaignBriefSchema` de @desigual-os/otto-motion,
+ * copiado aqui de propósito: o otto-motion JÁ depende do orchestrator (pelas
+ * filas), então importar o tipo de lá criaria um ciclo de dependência entre
+ * pacotes. O contrato é validado por zod na borda (apps/api/src/chat/routes.ts)
+ * antes de chegar aqui — este tipo é só o envelope que atravessa a fila.
+ */
+export interface MotionBriefOfferPayload {
+  name?: string | undefined;
+  price?: string | undefined;
+  originalPrice?: string | undefined;
+  installments?: string | undefined;
+  installmentValue?: string | undefined;
+  discount?: string | undefined;
+  condition?: string | undefined;
+}
+
+export interface MotionBriefPayload {
+  campaignName?: string | undefined;
+  objective?: string | undefined;
+  offer?: MotionBriefOfferPayload | undefined;
+  cta?: string | undefined;
+  audience?: string | undefined;
+  platform?: string | undefined;
+  aspectRatio?: string | undefined;
+  duration?: number | undefined;
+  fps?: 24 | 30 | 60 | undefined;
+  tone?: string | undefined;
+  notes?: string | undefined;
+}
+
 export interface AgentJobData {
   executionDbId: string;
   executionId: string;
@@ -92,6 +125,38 @@ export interface AgentJobData {
    * inteira como consulta vetorial e o detector de ClickUp dele intercepta pedindo cliente
    * quando o dado cita vários — ver askBentoComContextoOperacional no bento-qa. */
   operationalContext?: string;
+  /** Briefing do card de motion, quando o turno é um "Gerar Motion" com o card
+   * preenchido. O tryMotionGuard (worker) usa pra chamar createMotion com brief. */
+  motionBrief?: MotionBriefPayload;
+  /**
+   * O cliente que o ESCOPO deste turno resolveu, quando ele é de cliente.
+   *
+   * Existe porque o worker não tinha como saber disso e estava adivinhando pelo
+   * texto da frase. Medido ao vivo em 29/09/2026, mesma conversa:
+   *
+   *   "me fala da Cosentino"     -> resposta da Cosentino, correta
+   *   "e o que tá travado lá?"   -> panorama da AGÊNCIA INTEIRA
+   *
+   * O escopo estava certo nos dois (kind=CLIENT, clients=["Cosentino"], sinal
+   * "herdado:follow-up"); quem errou foi o worker, procurando o nome do cliente
+   * dentro de "e o que tá travado lá?". Ninguém repete o nome do cliente na
+   * segunda frase, então esse é o caso COMUM, não a exceção.
+   *
+   * Ausente quando o turno é global — e é isso que preserva "como tá a operação
+   * hoje?" respondendo pela agência mesmo com um cliente selecionado na tela.
+   */
+  clienteDoEscopo?: string;
+  /**
+   * O intent que o Router decidiu para ESTA mensagem (campaign_creation,
+   * knowledge_query, ...). Até 01/10/2026 ele morria na API: ia pra
+   * `executions.intent` e `router_decisions.intent`, mas não entrava no job,
+   * então o worker não tinha como usá-lo pra decidir o que recuperar (o
+   * retrieval planner do Bento lê daqui). Opcional: jobs enfileirados antes
+   * desta data não têm o campo e o worker trata ausência como "sem sinal".
+   */
+  intent?: string;
+  /** Confiança do Router na decisão (0..1), quando veio junto com o intent. */
+  routingConfidence?: number;
   // Presentes só quando este job é uma etapa de workflow (Fase 10).
   workflowId?: string;
   stepIndex?: number;

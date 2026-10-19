@@ -3,71 +3,34 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { ExternalLink, Link2Off, Loader2, MessageCircle, X } from 'lucide-react';
+import { ArrowRight, MessageCircle, X } from 'lucide-react';
 import { useClientWorkspace } from '@/hooks/use-client-workspace';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { GrantAccessForm } from './grant-access-form';
-import { ClickUpTaskRow } from './clickup-task-row';
 import { ClickUpTaskCommentsPanel } from './clickup-task-comments';
 import { ClientOverviewPanel } from './client-overview-panel';
+import { ClientMemoryPanel } from './client-memory-panel';
 import { ClientStudioGallery } from './client-studio-gallery';
-import { useClientClickUpTasks } from '@/hooks/use-client-clickup-tasks';
-import { ApiRequestError } from '@/lib/api/client';
+import { ClientMetaAdsPanel } from './client-meta-ads-panel';
+import { ClientGoogleAdsPanel } from './client-google-ads-panel';
+import { ClientReportsPanel } from './client-reports-panel';
+import { ClientTeamPanel } from './client-team-panel';
+import { ClientDemandsPanel } from './client-demands-panel';
+import { ClientTasksPanel } from './client-tasks-panel';
 import type { ClientSummary } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
-const BASE_TABS = ['ClickUp', 'Visão Geral', 'Conversas', 'Studio'] as const;
+/**
+ * "Memória" entra ao lado de "Visão Geral" (29/09/2026): a ficha passou a
+ * mostrar o que o sistema APRENDEU sobre a conta, não só o que está aberto
+ * nela. É a promessa de camada de inteligência aplicada a um cliente — e o
+ * lugar onde quem vai produzir descobre a regra ANTES do retrabalho, em vez de
+ * depois.
+ */
+const BASE_TABS = ['ClickUp', 'Visão Geral', 'Equipe', 'Quinzenas', 'Memória', 'Conversas', 'Studio', 'Mídia'] as const;
 /** "Acesso" só pra master - mesma regra da tela antiga, não afrouxa nada. */
 const MASTER_TABS = [...BASE_TABS, 'Acesso'] as const;
 type Tab = (typeof MASTER_TABS)[number];
-
-function TasksPanel({ clientId, clickupUrl }: { clientId: string; clickupUrl: string | null }) {
-  const { data: tasks, isPending, error } = useClientClickUpTasks(clientId);
-
-  if (error instanceof ApiRequestError && error.status === 409) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-        <Link2Off size={22} className="text-nevoa" />
-        <p className="text-sm text-branco-cru">Cliente ainda não vinculado ao ClickUp</p>
-        <p className="max-w-sm text-xs text-nevoa">Rode a importação em Configurações → Integrações.</p>
-      </div>
-    );
-  }
-  if (isPending) {
-    return (
-      <p className="flex items-center gap-2 py-12 text-sm text-nevoa">
-        <Loader2 size={15} className="animate-spin" /> Buscando tarefas no ClickUp…
-      </p>
-    );
-  }
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="font-mono text-[11px] text-nevoa">{tasks?.length ?? 0} tarefa(s) · lido do ClickUp agora</p>
-        {clickupUrl && (
-          <a
-            href={clickupUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
-          >
-            <ExternalLink size={13} /> Abrir no ClickUp
-          </a>
-        )}
-      </div>
-      {!tasks || tasks.length === 0 ? (
-        <p className="py-8 text-center text-sm text-nevoa">Nenhuma tarefa aberta.</p>
-      ) : (
-        <div className="space-y-0.5">
-          {tasks.map((task) => (
-            <ClickUpTaskRow key={task.id} task={task} fallbackUrl={clickupUrl} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * O card clicado "sobe, vira e dá zoom" até virar a ficha inteira do cliente.
@@ -115,6 +78,13 @@ export function ClientDetailOverlay({ client, onClose }: { client: ClientSummary
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-3">
+            <Link
+              href={`/clients/${client.id}`}
+              className="flex items-center gap-1.5 text-sm text-nevoa transition-colors hover:text-branco-cru"
+            >
+              Ver detalhes do cliente
+              <ArrowRight size={14} />
+            </Link>
             {workspace?.projectId && (
               <Link
                 href={`/chat?project=${workspace.projectId}`}
@@ -147,13 +117,27 @@ export function ClientDetailOverlay({ client, onClose }: { client: ClientSummary
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          {tab === 'ClickUp' && <TasksPanel clientId={client.id} clickupUrl={clickupUrl} />}
+          {tab === 'ClickUp' && <ClientTasksPanel clientId={client.id} clickupUrl={clickupUrl} />}
 
           {tab === 'Visão Geral' && <ClientOverviewPanel clientId={client.id} />}
+
+          {tab === 'Equipe' && <ClientTeamPanel clientId={client.id} />}
+
+          {tab === 'Quinzenas' && <ClientDemandsPanel clientId={client.id} />}
+
+          {tab === 'Memória' && <ClientMemoryPanel clientId={client.id} />}
 
           {tab === 'Conversas' && <ClickUpTaskCommentsPanel clientId={client.id} />}
 
           {tab === 'Studio' && <ClientStudioGallery clientId={client.id} />}
+
+          {tab === 'Mídia' && (
+            <div className="space-y-4">
+              <ClientMetaAdsPanel clientId={client.id} />
+              <ClientGoogleAdsPanel clientId={client.id} />
+              <ClientReportsPanel clientId={client.id} />
+            </div>
+          )}
 
           {tab === 'Acesso' && isMaster && <GrantAccessForm clientId={client.id} />}
         </div>

@@ -55,21 +55,21 @@ describe('extractClientFacts', () => {
 
 describe('clientFactSubject', () => {
   it('aspecto nomeado supersede: mesmo subject para o mesmo aspecto', () => {
-    const a = clientFactSubject('c1', { clientName: 'X', aspect: 'decisor', value: 'é o João', source: '' });
-    const b = clientFactSubject('c1', { clientName: 'X', aspect: 'decisor', value: 'na verdade é a Ana', source: '' });
+    const a = clientFactSubject('c1', { aspect: 'decisor', value: 'é o João' });
+    const b = clientFactSubject('c1', { aspect: 'decisor', value: 'na verdade é a Ana' });
     expect(a).toBe(b);
     expect(a).toBe('cliente:c1:aprendizado:decisor');
   });
 
   it('fato geral NÃO apaga outro fato geral', () => {
-    const a = clientFactSubject('c1', { clientName: 'X', aspect: 'geral', value: 'a fábrica fecha em janeiro', source: '' });
-    const b = clientFactSubject('c1', { clientName: 'X', aspect: 'geral', value: 'o galpão novo abre em março', source: '' });
+    const a = clientFactSubject('c1', { aspect: 'geral', value: 'a fábrica fecha em janeiro' });
+    const b = clientFactSubject('c1', { aspect: 'geral', value: 'o galpão novo abre em março' });
     expect(a).not.toBe(b);
   });
 
   it('isola por cliente: o mesmo aspecto em clientes diferentes não colide', () => {
-    const a = clientFactSubject('c1', { clientName: 'X', aspect: 'decisor', value: 'v', source: '' });
-    const b = clientFactSubject('c2', { clientName: 'Y', aspect: 'decisor', value: 'v', source: '' });
+    const a = clientFactSubject('c1', { aspect: 'decisor', value: 'v' });
+    const b = clientFactSubject('c2', { aspect: 'decisor', value: 'v' });
     expect(a).not.toBe(b);
   });
 });

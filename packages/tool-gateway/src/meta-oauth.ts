@@ -1,0 +1,454 @@
+import { z } from 'zod';
+
+/**
+ * meta-oauth.ts — OAuth do Meta for Business (App ID + Secret da BM) pra
+ * conectar Business Manager / Ad Account a um cliente (Part F do prompt de
+ * refinamento "DESIGUAL OS — FINAL PRODUCT REFINEMENT", 06/10/2026).
+ *
+ * Mesma separação que o prompt pede (§38): esta conexão é só "quem está
+ * autorizado a falar com o Meta" (o login/App do colaborador que conectou).
+ * QUAL conta pertence a QUAL cliente é responsabilidade de outra tabela
+ * (client_meta_accounts) e de outra camada (apps/api/src/clients/routes.ts)
+ * — nunca desta.
+ *
+ * Versão da Graph API fixa por env (GRAPH_API_VERSION) com default numa
+ * versão estável; trocar não deveria exigir redeploy de código.
+ */
+const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION ?? 'v21.0';
+const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
+// O dialog de OAuth segue a MESMA versão da Graph API — estava fixo em v21.0
+// enquanto GRAPH_API_VERSION já era env-driven, então trocar a versão por env
+// atualizava as chamadas de API mas deixava o authorize na versão velha.
+const FACEBOOK_DIALOG_BASE = `https://www.facebook.com/${GRAPH_API_VERSION}/dialog/oauth`;
+
+// Timeout de rede — mesmo raciocínio do clickup-oauth.ts: sem signal, uma
+// instabilidade do Graph API pendura a rota inteira que chamou isto.
+const META_FETCH_TIMEOUT_MS = 20_000;
+
+async function fetchMeta(url: string | URL, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(META_FETCH_TIMEOUT_MS) });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`Meta Graph API não respondeu em ${META_FETCH_TIMEOUT_MS / 1000}s (timeout de rede)`);
+    }
+    throw error;
+  }
+}
+
+const graphErrorSchema = z.object({ error: z.object({ message: z.string() }) });
+
+async function assertOk(response: Response, context: string): Promise<void> {
+  if (response.ok) return;
+  const body = await response.text();
+  const parsed = graphErrorSchema.safeParse(JSON.parse(body || '{}'));
+  const message = parsed.success ? parsed.data.error.message : body;
+  throw new Error(`${context} (${response.status}): ${message}`);
+}
+
+export interface MetaOAuthConfig {
+  appId: string;
+  appSecret: string;
+  redirectUri: string;
+}
+
+/**
+ * Escopos mínimos pra ler Business Manager, Ad Accounts e Insights — nada de
+ * `ads_management` (não escrevemos campanha nenhuma, só lemos pra decisão).
+ * Um app de Business normalmente precisa de App Review pra `ads_read` em
+ * contas fora das do próprio desenvolvedor; isso é responsabilidade de quem
+ * administra o App no developers.facebook.com, não deste código.
+ *
+ * `read_insights` SAIU em 08/10/2026: medido direto no dialog OAuth —
+ * "Invalid Scopes: read_insights" derrubava a tela inteira de login ("Este
+ * conteúdo não está disponível no momento"), porque o Facebook recusa o
+ * authorize INTEIRO quando qualquer escopo pedido é inválido pro app, não só
+ * aquele escopo. `read_insights` é permissão de Insights de PÁGINA — este
+ * gateway só lê conta de anúncio/campanha/anúncio via Marketing API, e isso
+ * já é coberto por `ads_read` (ver comentário de `getMetaAds` abaixo).
+ */
+const SCOPES = ['ads_read', 'business_management'] as const;
+
+export function buildMetaAuthorizeUrl(config: MetaOAuthConfig, state: string): string {
+  const url = new URL(FACEBOOK_DIALOG_BASE);
+  url.searchParams.set('client_id', config.appId);
+  url.searchParams.set('redirect_uri', config.redirectUri);
+  url.searchParams.set('state', state);
+  url.searchParams.set('scope', SCOPES.join(','));
+  url.searchParams.set('response_type', 'code');
+  return url.toString();
+}
+
+const tokenResponseSchema = z.object({
+  access_token: z.string().min(1),
+  expires_in: z.number().optional(),
+});
+
+/** Passo 2: troca o `code` por um token de usuário de curta duração (~1-2h). */
+export async function exchangeMetaCode(config: MetaOAuthConfig, code: string): Promise<string> {
+  const url = new URL(`${GRAPH_BASE}/oauth/access_token`);
+  url.searchParams.set('client_id', config.appId);
+  url.searchParams.set('client_secret', config.appSecret);
+  url.searchParams.set('redirect_uri', config.redirectUri);
+  url.searchParams.set('code', code);
+
+  const response = await fetchMeta(url);
+  await assertOk(response, 'Meta token exchange failed');
+  return tokenResponseSchema.parse(await response.json()).access_token;
+}
+
+/**
+ * Passo 3 (obrigatório pra não pedir login de novo em 1-2h): troca o token
+ * curto por um de longa duração (~60 dias). Sem refresh token — quando
+ * expirar, a pessoa reconecta em Integrações, igual ao ClickUp.
+ */
+export async function exchangeForLongLivedToken(config: MetaOAuthConfig, shortLivedToken: string): Promise<string> {
+  const url = new URL(`${GRAPH_BASE}/oauth/access_token`);
+  url.searchParams.set('grant_type', 'fb_exchange_token');
+  url.searchParams.set('client_id', config.appId);
+  url.searchParams.set('client_secret', config.appSecret);
+  url.searchParams.set('fb_exchange_token', shortLivedToken);
+
+  const response = await fetchMeta(url);
+  await assertOk(response, 'Meta long-lived token exchange failed');
+  return tokenResponseSchema.parse(await response.json()).access_token;
+}
+
+/** GET /me — mais barato pra confirmar que o token ainda é aceito. */
+export async function isMetaTokenValid(token: string): Promise<boolean> {
+  try {
+    const response = await fetchMeta(`${GRAPH_BASE}/me?access_token=${encodeURIComponent(token)}`);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+const businessesSchema = z.object({
+  data: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+
+export interface MetaBusiness {
+  id: string;
+  name: string;
+}
+
+/** Business Managers que este usuário administra ou é parceiro. */
+export async function getMetaBusinesses(token: string): Promise<MetaBusiness[]> {
+  const url = new URL(`${GRAPH_BASE}/me/businesses`);
+  url.searchParams.set('fields', 'id,name');
+  url.searchParams.set('limit', '200');
+  url.searchParams.set('access_token', token);
+
+  // Paginado pelo mesmo motivo das contas de anúncio: a Graph API devolve 25
+  // por página, e quem tem acesso a muitas BMs de clientes perdia o resto.
+  const todas: MetaBusiness[] = [];
+  let proxima: string | null = url.toString();
+  for (let pagina = 0; proxima && pagina < 20; pagina += 1) {
+    const response = await fetchMeta(new URL(proxima));
+    await assertOk(response, 'Meta businesses lookup failed');
+    const corpo = (await response.json()) as { paging?: { next?: string } };
+    todas.push(...businessesSchema.parse(corpo).data);
+    proxima = corpo.paging?.next ?? null;
+  }
+  return todas;
+}
+
+const adAccountsSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string().nullish(),
+      account_id: z.string(),
+      account_status: z.number().nullish(),
+      currency: z.string().nullish(),
+      business: z.object({ id: z.string(), name: z.string() }).nullish(),
+    }),
+  ),
+});
+
+export interface MetaAdAccount {
+  /** Vem com o prefixo "act_" — formato que o resto da Graph API (insights, campaigns) exige. */
+  id: string;
+  accountId: string;
+  name: string | null;
+  status: number | null;
+  currency: string | null;
+  businessId: string | null;
+  businessName: string | null;
+}
+
+function toAdAccount(raw: z.infer<typeof adAccountsSchema>['data'][number]): MetaAdAccount {
+  return {
+    id: raw.id,
+    accountId: raw.account_id,
+    name: raw.name ?? null,
+    status: raw.account_status ?? null,
+    currency: raw.currency ?? null,
+    businessId: raw.business?.id ?? null,
+    businessName: raw.business?.name ?? null,
+  };
+}
+
+/**
+ * Ad Accounts visíveis a este token. Sem `businessId`: todas (via /me/adaccounts,
+ * o que o usuário vê no Ads Manager dele). Com `businessId`: as daquela BM —
+ * as que ela POSSUI e as de CLIENTES compartilhadas com ela.
+ *
+ * Só `owned_ad_accounts` deixava de fora exatamente o caso da agência
+ * (14/10/2026): a BM da Desigual acessa as contas dos clientes como
+ * `client_ad_accounts` (o cliente é dono, a agência é parceira), e a tela de
+ * vincular cliente na aba Mídias vinha vazia. E sem paginação a Graph API
+ * devolve só 25 por página: agência com mais clientes perdia o resto.
+ */
+export async function getMetaAdAccounts(token: string, businessId?: string): Promise<MetaAdAccount[]> {
+  const caminhos = businessId ? [`${businessId}/owned_ad_accounts`, `${businessId}/client_ad_accounts`] : ['me/adaccounts'];
+  const porId = new Map<string, MetaAdAccount>();
+  for (const path of caminhos) {
+    const url = new URL(`${GRAPH_BASE}/${path}`);
+    url.searchParams.set('fields', 'id,name,account_id,account_status,currency,business{id,name}');
+    url.searchParams.set('limit', '200');
+    url.searchParams.set('access_token', token);
+    let proxima: string | null = url.toString();
+    for (let pagina = 0; proxima && pagina < 20; pagina += 1) {
+      const response = await fetchMeta(new URL(proxima));
+      await assertOk(response, 'Meta ad accounts lookup failed');
+      const corpo = (await response.json()) as { paging?: { next?: string } };
+      for (const conta of adAccountsSchema.parse(corpo).data.map(toAdAccount)) porId.set(conta.id, conta);
+      proxima = corpo.paging?.next ?? null;
+    }
+  }
+  return [...porId.values()];
+}
+
+const insightsSchema = z.object({
+  data: z.array(
+    z.object({
+      spend: z.string().nullish(),
+      impressions: z.string().nullish(),
+      clicks: z.string().nullish(),
+      ctr: z.string().nullish(),
+      cpc: z.string().nullish(),
+      cpm: z.string().nullish(),
+      frequency: z.string().nullish(),
+      date_start: z.string().nullish(),
+      date_stop: z.string().nullish(),
+      actions: z.array(z.object({ action_type: z.string(), value: z.string() })).optional(),
+    }),
+  ),
+});
+
+export interface MetaAccountInsights {
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  cpc: number | null;
+  cpm: number | null;
+  frequency: number | null;
+  results: number | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+}
+
+const toNumber = (value: string | null | undefined): number | null => (value == null ? null : Number(value));
+
+/**
+ * Janela de data pra Insights/Campaigns: um preset da própria Graph API
+ * ('last_30d', 'this_month'...) OU um range explícito — o Relatório PDF
+ * (§46-51) precisa do range explícito pra buscar o PERÍODO ANTERIOR
+ * equivalente, que nenhum preset nomeado expressa ("os 30 dias antes dos
+ * últimos 30 dias" não é `date_preset` nenhum).
+ */
+export type MetaDateWindow = string | { since: string; until: string };
+
+function applyDateWindow(url: URL, window: MetaDateWindow): void {
+  if (typeof window === 'string') {
+    url.searchParams.set('date_preset', window);
+  } else {
+    url.searchParams.set('time_range', JSON.stringify(window));
+  }
+}
+
+/**
+ * Resumo de performance da conta inteira num período (§39 do prompt:
+ * investimento/resultados/CTR/CPC/CPM/frequência). `datePreset` segue o
+ * vocabulário da própria Graph API ('last_7d', 'last_30d', 'this_month'...)
+ * pra não reinventar cálculo de janela de data que o Meta já resolve.
+ */
+export async function getMetaAccountInsights(token: string, adAccountId: string, datePreset: MetaDateWindow = 'last_30d'): Promise<MetaAccountInsights | null> {
+  const url = new URL(`${GRAPH_BASE}/${adAccountId}/insights`);
+  url.searchParams.set('fields', 'spend,impressions,clicks,ctr,cpc,cpm,frequency,actions,date_start,date_stop');
+  applyDateWindow(url, datePreset);
+  url.searchParams.set('access_token', token);
+
+  const response = await fetchMeta(url);
+  await assertOk(response, 'Meta insights lookup failed');
+  const [row] = insightsSchema.parse(await response.json()).data;
+  if (!row) return null;
+
+  const results = row.actions?.reduce((sum, action) => sum + (Number(action.value) || 0), 0) ?? null;
+
+  return {
+    spend: toNumber(row.spend),
+    impressions: toNumber(row.impressions),
+    clicks: toNumber(row.clicks),
+    ctr: toNumber(row.ctr),
+    cpc: toNumber(row.cpc),
+    cpm: toNumber(row.cpm),
+    frequency: toNumber(row.frequency),
+    results,
+    periodStart: row.date_start ?? null,
+    periodEnd: row.date_stop ?? null,
+  };
+}
+
+const campaignsSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      status: z.string(),
+      insights: z
+        .object({
+          data: z.array(z.object({ spend: z.string().nullish(), clicks: z.string().nullish(), ctr: z.string().nullish() })),
+        })
+        .optional(),
+    }),
+  ),
+});
+
+export interface MetaCampaignSummary {
+  id: string;
+  name: string;
+  status: string;
+  spend: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+/** Tabela de campanhas da conta (§40), cada uma já com o spend do período junto (1 chamada, não N+1). */
+export async function getMetaCampaigns(token: string, adAccountId: string, datePreset: MetaDateWindow = 'last_30d'): Promise<MetaCampaignSummary[]> {
+  const url = new URL(`${GRAPH_BASE}/${adAccountId}/campaigns`);
+  const modificadorDeData =
+    typeof datePreset === 'string' ? `date_preset(${datePreset})` : `time_range(${JSON.stringify(datePreset)})`;
+  url.searchParams.set('fields', `id,name,status,insights.${modificadorDeData}{spend,clicks,ctr}`);
+  url.searchParams.set('access_token', token);
+
+  const response = await fetchMeta(url);
+  await assertOk(response, 'Meta campaigns lookup failed');
+  return campaignsSchema.parse(await response.json()).data.map((campaign) => {
+    const insight = campaign.insights?.data[0];
+    return {
+      id: campaign.id,
+      name: campaign.name,
+      status: campaign.status,
+      spend: toNumber(insight?.spend),
+      clicks: toNumber(insight?.clicks),
+      ctr: toNumber(insight?.ctr),
+    };
+  });
+}
+
+const adsSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      status: z.string(),
+      creative: z
+        .object({
+          id: z.string().nullish(),
+          thumbnail_url: z.string().nullish(),
+          image_url: z.string().nullish(),
+        })
+        .nullish(),
+      insights: z
+        .object({
+          data: z.array(
+            z.object({
+              spend: z.string().nullish(),
+              impressions: z.string().nullish(),
+              clicks: z.string().nullish(),
+              ctr: z.string().nullish(),
+            }),
+          ),
+        })
+        .optional(),
+    }),
+  ),
+});
+
+export interface MetaAdCreative {
+  id: string;
+  name: string;
+  status: string;
+  /** URL da miniatura do criativo. TEMPORÁRIA — ver nota em `getMetaAds`. */
+  thumbnailUrl: string | null;
+  /** Versão grande, quando o criativo é imagem única. Nem todo anúncio tem. */
+  imageUrl: string | null;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+/**
+ * OS ANÚNCIOS DA CONTA, com a imagem do criativo e o número de cada um.
+ *
+ * Até 08/10/2026 o gateway parava no nível de CAMPANHA: dava para dizer quanto
+ * uma campanha gastou, nunca o que a peça era. Quem olha mídia na agência
+ * pergunta as duas coisas, e a segunda é a que o time de criação usa para
+ * decidir o que repetir. O cartão de conexão do produto, aliás, já prometia
+ * "campanhas, criativos e resultados" desde antes de existir qualquer leitura
+ * de criativo — esta função é o que torna aquela frase verdadeira.
+ *
+ * UMA CHAMADA, não N+1: `insights` e `creative` viajam como subcampos do mesmo
+ * pedido, igual `getMetaCampaigns` já fazia com as campanhas.
+ *
+ * ESCOPO: `ads_read`, que já é concedido no authorize — ler anúncio e criativo
+ * não exige `ads_management` (que é escrita, e de propósito não pedimos).
+ *
+ * ⚠️ `thumbnail_url` É EFÊMERA. O Meta assina essas URLs e elas expiram em
+ * horas. Servem para a tela, que carrega ao vivo; para qualquer coisa que
+ * PERSISTA — o PDF do relatório, por exemplo — a imagem tem que ser baixada e
+ * embutida no momento da geração, nunca referenciada por link.
+ */
+export async function getMetaAds(
+  token: string,
+  adAccountId: string,
+  datePreset: MetaDateWindow = 'last_30d',
+  limite = 24,
+): Promise<MetaAdCreative[]> {
+  const url = new URL(`${GRAPH_BASE}/${adAccountId}/ads`);
+  const modificadorDeData =
+    typeof datePreset === 'string' ? `date_preset(${datePreset})` : `time_range(${JSON.stringify(datePreset)})`;
+  url.searchParams.set(
+    'fields',
+    `id,name,status,creative{id,thumbnail_url,image_url},insights.${modificadorDeData}{spend,impressions,clicks,ctr}`,
+  );
+  // Teto explícito: uma conta grande tem centenas de anúncios, e nem a galeria
+  // nem o PDF têm o que fazer com isso. O default do Graph (25) é parecido,
+  // mas depender de default alheio é deixar o tamanho da resposta nas mãos
+  // deles.
+  url.searchParams.set('limit', String(limite));
+  url.searchParams.set('access_token', token);
+
+  const response = await fetchMeta(url);
+  await assertOk(response, 'Meta ads lookup failed');
+
+  return adsSchema.parse(await response.json()).data.map((ad) => {
+    const insight = ad.insights?.data[0];
+    return {
+      id: ad.id,
+      name: ad.name,
+      status: ad.status,
+      thumbnailUrl: ad.creative?.thumbnail_url ?? null,
+      imageUrl: ad.creative?.image_url ?? null,
+      spend: toNumber(insight?.spend),
+      impressions: toNumber(insight?.impressions),
+      clicks: toNumber(insight?.clicks),
+      ctr: toNumber(insight?.ctr),
+    };
+  });
+}

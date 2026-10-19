@@ -1,7 +1,7 @@
 # INDEX — Roteador de clientes
 
 > Lido **primeiro, sempre**. Resolve apelido, variação de grafia, erro de digitação e transcrição de áudio → caminho da pasta.
-> Última atualização: 14/09/2026 · Fonte: `arquivos clientes/CLIENTES/` + `_index.md` da raiz do projeto.
+> Última atualização: 07/10/2026 · Fonte: `arquivos clientes/CLIENTES/` + `_index.md` da raiz do projeto + `MD Clientes/` (briefings novos, 07/10/2026).
 > Cliente novo entra aqui **no mesmo momento** em que o brain é criado.
 
 ---
@@ -37,6 +37,9 @@
 | DCS Diagnóstico por Imagem | dcs, dcs diagnostico, diagnostico por imagem | `brains/dcs/` | Saúde, diagnóstico por imagem | Ativo (sem histórico) |
 | BioFit | biofit, bio fit | `brains/biofit/` | `[FALTA]` | Ativo (só mídia paga) |
 | Bravvo Pizzaria | bravvo, bravo, bravvo pizzaria, bravo pizzaria | `brains/bravvo-pizzaria/` | Alimentação, pizzaria | **Conflito de status — ver nota 1** |
+| Oh My Skin | oms, oh my skin, ohmyskin | `brains/oh-my-skin/` | Clínica de estética e bem-estar | **Conflito de status — ver nota 7** |
+| Cardassi | cardassi, cardasi | `brains/cardassi/` | Assistência familiar e serviços funerários | **Conflito de status — ver nota 7** |
+| Pequito Calçados | pequito, pequito calçados, pequito calcados | `brains/pequito/` | Calçados infantis | **Conflito de status — ver nota 7** |
 
 ## Pontuais, prospects e projetos
 
@@ -52,16 +55,26 @@
 | Golfo Óleo e Gás | golfo, golfo oleo e gas, golfo óleo | `brains/golfo/` | Instrumentação industrial | Em andamento (catálogo) |
 | Hikvision | hikvision, hik vision, hikivision | `brains/hikvision/` | Segurança eletrônica e displays | Em andamento (catálogo) |
 | AAERP | aaerp, ritinha prates, apae ritinha | `brains/aaerp/` | Terceiro setor — projeto acadêmico | Projeto acadêmico |
+| Aeroclube Birigui | aeroclube, aeroclube birigui | `brains/aeroclube-birigui/` | Aviação / clube aéreo | Pontual |
+| Alves Componentes | alves, alves componentes | `brains/alves-componentes/` | `[FALTA]` | Pontual |
+| Clínica Santa Maria | clinica santa maria, santa maria | `brains/clinica-santa-maria/` | Saúde / clínica | Pontual |
+| Colormaq | colormaq | `brains/colormaq/` | `[FALTA]` | Pontual |
+| Consdon | consdon | `brains/consdon/` | `[FALTA]` | Pontual |
+| Dra. Thais Bertelli | thais bertelli, dra thais | `brains/dra-thais-bertelli/` | Saúde (profissional liberal) | Pontual |
+| Equilibrium | equilibrium, equilibrio | `brains/equilibrium/` | `[FALTA]` | Pontual |
+| Lexeer | lexeer | `brains/lexeer/` | `[FALTA]` | Pontual |
+| Missão Guadalupe | missao guadalupe, missão guadalupe | `brains/missao-guadalupe/` | Terceiro setor / religioso (hipótese, `[CONFIRMAR]`) | Pontual |
+| Setcata | setcata | `brains/setcata/` | `[FALTA]` | Pontual |
+| Takata | takata | `brains/takata/` | `[FALTA]` | Pontual |
 
 ## Ex-clientes e inativos (histórico é repertório — não apague)
 
 | Cliente | Pasta | Status |
 |---|---|---|
 | Abitte Urbanismo | `[sem brain]` — ver `arquivos clientes/CLIENTES/_EX_CLIENTES/` | Inativo |
-| AMGR Construtora | `[sem brain]` — idem | Inativo |
-| Cardassi | `[sem brain]` — idem | Inativo |
-| Oh My Skin | `[sem brain]` — idem | Inativo |
-| Pequito Calçados | `[sem brain]` — idem | Inativo |
+| AMGR Construtora | `brains/amgr-construtora/` | Inativo (confirmado no cadastro, `status=inactive`) |
+
+> Cardassi, Oh My Skin e Pequito Calçados SAÍRAM desta tabela em 07/10/2026 — ver nota 7, elas têm brain agora mas o status é um conflito aberto, não teriam como estar nas duas linhas (ativo acima, inativo aqui) ao mesmo tempo.
 
 ---
 
@@ -73,3 +86,6 @@
 4. **Envu**: o ID da conta diverge entre fontes (`4403198612532780` × `440319861253278`). Não use número de conta em peça; se precisar, confirme.
 5. **Nenhum cliente tem o bloco de voz verbal (§5) completo.** Três já têm matéria-prima real e utilizável — **D. Carvalho** (tese, fio condutor e três correções documentadas), **Cosentino** (duas frases-guia literais e vetos por posicionamento) e **Envu** (vocabulário-assinatura técnico e extensão de e-mail aprovada). Os demais estão em `[FALTA]`. Onde faltar, o Otto escreve em voz neutra profissional calibrada pelo segmento e **declara isso** na entrega, conforme `SKILL.md` §3.5.
 6. Nomes "Sinopse" e "Jundiá", que aparecem no material original do pacote Otto v2, **não são clientes desta agência** e por isso não estão no índice.
+7. **Cardassi, Oh My Skin e Pequito Calçados têm o MESMO tipo de conflito do Bravvo/Colpar** (notas 1 e 2): o cadastro comercial (`clients.status`) marca os três como `inactive`, mas o usuário entregou um "Briefing Dourado" (Golden Circle) novo e completo pra cada um em 07/10/2026 — o tipo de documento que normalmente antecede ou acompanha a reativação de uma conta, não o arquivamento dela. Os três ganharam brain cheio (`brains/oh-my-skin/`, `brains/cardassi/`, `brains/pequito/`) porque o conteúdo já existe e não faz sentido jogar fora, mas `[CONFIRMAR: estes três voltaram a ser clientes ativos, ou o briefing foi preparado para uma proposta/reativação que ainda não fechou?]` antes de tratar qualquer um deles como conta corrente — nunca produza peça de mídia paga/social corrente pra eles sem essa confirmação do atendimento.
+8. **12 clientes "pontuais" entraram no índice em 07/10/2026 só com a §1 preenchida** (Aeroclube Birigui, Alves Componentes, Clínica Santa Maria, Colormaq, Consdon, Dra. Thais Bertelli, Equilibrium, Lexeer, Missão Guadalupe, Setcata, Takata, AMGR Construtora) — existiam no cadastro comercial com ClickUp vinculado, mas nenhum documento de briefing foi fornecido ainda. Segmento de vários ficou `[FALTA]` — o nome sozinho não é fonte confiável o bastante pra inferir o que a marca vende.
+9. **Registros do cadastro comercial que NÃO viraram brain, de propósito** (07/10/2026): Agência Desigual, André Almada, Endrigo Almada (pessoas/contas internas da própria agência, não clientes externos), 🔥 CITÁVEL™ — Enterprise e 🔥 Construtora e Imobiliária Cosentino Ltda. — Enterprise (contratos Enterprise do produto CITÁVEL™, já referenciados dentro do `brains/cosentino/`, não precisam de brain de marca próprio), BIO FIT e Colpar Brasil (prováveis duplicatas de cadastro de **Biofit** e **Colpar**, que já têm brain — ver nota 2 para o padrão), John Deere (marca da concessionária que o `brains/d-carvalho/` já cobre, não confirmado como cliente direto e separado), Cliente Teste 7 / teste / Clinica Teste Fase 7 / 🧪 CASE #0 — Endrigo Almada / CITÁVEL™ (×2) (contas de teste/demonstração, nunca clientes reais). Se algum destes for de fato um cliente real e distinto, avise que o nome foi descartado por engano.

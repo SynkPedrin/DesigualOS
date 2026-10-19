@@ -1,5 +1,6 @@
 import { resolveClientsFromText, type ClientMatch } from './resolve-client';
 import { resolveTemporalRange, type TemporalRange } from './resolve-temporal';
+import { ehPessoaComoCliente } from './natureza-do-cliente';
 
 /**
  * resolve-scope.ts — decide se a pergunta é sobre UM cliente, VÁRIOS, ou a OPERAÇÃO
@@ -239,6 +240,84 @@ const OPERATIONAL_MARKERS = [
 ];
 
 /**
+ * ORDEM DE ESCRITA: o turno que MUDA a operação, não o que a lê.
+ *
+ * Medido ao vivo em 28/09/2026, com anexo, no chat real: "cria a task X pra
+ * Matheus Sain (...) prazo pra amanhã" batia em dois marcadores de leitura
+ * ("task" e "amanhã"), o chamador varria as listas dos 52 clientes autorizados
+ * no ClickUp ANTES de enfileirar, e o POST /chat levava 186s. O fetch do
+ * frontend aborta em 120s: a task era criada no ClickUp e a pessoa ficava
+ * olhando "pensando" pra sempre. Efeito colateral sem resposta é o pior modo de
+ * falha que este sistema tem.
+ *
+ * A varredura ali era desperdício puro: quem manda criar/mudar/apagar não está
+ * perguntando o estado da operação, e o worker resolve o alvo da escrita pela
+ * própria memória de recurso do turno. O "prazo pra amanhã" da frase é ATRIBUTO
+ * da task que vai nascer, não janela de consulta.
+ *
+ * Verbo no imperativo, começo de palavra. Conservador de propósito: a supressão
+ * só vale quando NÃO há pergunta nem marcador de panorama/global/agregado na
+ * mensagem — "cria a task e me diz o que mais vence amanhã" continua lendo.
+ */
+const WRITE_ORDER_RE =
+  /(^|[\s,;:.!])(cria|crie|criar|cadastra|cadastre|lanca|lance|lancar|abre|abra|abrir|adiciona|adicione|atribui|atribua|atribuir|delega|delegue|separa|separe|poe|poem|coloca|coloque|move|mova|mover|muda|mude|mudar|altera|altere|alterar|atualiza|atualize|renomeia|renomeie|edita|edite|marca|marque|fecha|feche|fechar|conclui|conclua|concluir|finaliza|finalize|apaga|apague|apagar|deleta|delete|deletar|exclui|exclua|excluir|remove|remova|remover)\b/;
+
+/**
+ * ESCRITA SOBRE O QUE JÁ EXISTE, com alvo AMPLO — e por que ela precisa da
+ * consulta que a ordem de escrita normalmente dispensa.
+ *
+ * `WRITE_ORDER_RE` mistura dois pedidos muito diferentes sob o mesmo nome:
+ *
+ *   criar    "cria uma tarefa de revisão"   não precisa de lista nenhuma: o
+ *                                           alvo ainda não existe.
+ *   agir     "finaliza todas as tarefas     precisa da lista: é impossível
+ *            atribuídas a Pedro Gabriel"    concluir o que não se enxerga.
+ *
+ * Suprimir a consulta nos dois casos deixou o Bento cego exatamente quando ele
+ * mais precisava ver. Relato de 08/10/2026: "BENTO FINALIZE TODAS AS TASKS
+ * ATRIBUIDAS A PEDRO GABRIEL", com nove tarefas atrasadas na tela de
+ * Prioridades, e o agente sem nenhum dado do ClickUp no turno.
+ *
+ * A supressão continua valendo quando o alvo é PRECISO — "conclui a tarefa
+ * 86abc123", "fecha essa daí" — porque aí a lista inteira não acrescenta nada
+ * e a consulta é desperdício. O que quebra a supressão é o alvo amplo: "todas",
+ * "minhas", "as tarefas de fulano", "o que está atrasado".
+ */
+const ESCRITA_SOBRE_EXISTENTE_RE =
+  /(^|[\s,;:.!])(atribui|atribua|atribuir|delega|delegue|move|mova|mover|muda|mude|mudar|altera|altere|alterar|atualiza|atualize|renomeia|renomeie|edita|edite|marca|marque|fecha|feche|fechar|conclui|conclua|concluir|finaliza|finalize|finalizar|reagenda|reagende|prioriza|priorize|arquiva|arquive|apaga|apague|apagar|deleta|delete|deletar|exclui|exclua|excluir|remove|remova|remover)\b/;
+
+/** Alvo amplo: o pedido não aponta UMA coisa, aponta um conjunto a descobrir. */
+const ALVO_AMPLO_RE =
+  /(^|[\s,;:.!])(tod[oa]s?|cada|minhas?|meus?|as tarefas|os cards|as demandas|atribuid[oa]s?|designad[oa]s?|atrasad[oa]s?|pendentes?|aberta?s?|em aberto|do dia|de hoje|da semana)\b/;
+
+/**
+ * Referência PRECISA a um item: id do ClickUp, link, ou dêitico que só faz
+ * sentido contra a seleção do turno anterior. Com qualquer um deles, a lista
+ * ampla não acrescenta — e a supressão da consulta continua certa.
+ */
+const ALVO_PRECISO_RE =
+  /(app\.clickup\.com\/t\/|\b(?=[0-9a-z]{7,12}\b)(?=[a-z]*[0-9])[0-9a-z]{7,12}\b|(^|[\s,;:.!])(essa|esse|esta|este|aquela|aquele|a segunda|a primeira|a terceira|a ultima|o item|item \d+)\b)/;
+
+/*
+ * O id do ClickUp exige DÍGITO, e a primeira versão deste padrão não exigia:
+ * `[0-9a-z]{7,12}` no fim da frase casava com "gabriel", "atrasadas" e
+ * "revisao" — ou seja, "finalize todas as tasks atribuidas a Pedro Gabriel"
+ * era lido como alvo preciso e voltava a suprimir a consulta, que é
+ * exatamente o defeito que este bloco existe pra corrigir. Pego pelos
+ * próprios testes, na primeira execução.
+ */
+
+/**
+ * Interrogação explícita: "?" ou pronome/advérbio de pergunta abrindo trecho.
+ *
+ * "como" fica de fora de propósito: em ordem de escrita ele é comparativo, não
+ * pergunta — "marca essa demanda COMO concluída". As frases em que "como"
+ * pergunta de verdade ("como estamos?", "como que tá") ou já têm "?" ou já são
+ * PANORAMA_MARKERS, e nenhuma delas carrega verbo de escrita.
+ */
+const QUESTION_RE = /\?|(^|[\s,;:.!])(o que|oque|quais|qual|quantas|quantos|quem|quando|onde|por que|porque)\b/;
+
+/**
  * Perguntas agregadas sem cliente nomeado ("quantas tasks...", "o que vence..."). São o
  * caso mais comum de escopo global e o que mais gerava "de qual cliente?".
  */
@@ -333,6 +412,14 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
     /atribuid[ao]s?\s+(?:a|à|ao|pro|pra|para)\s+([a-z][a-z ]{1,29})/,
     // tasks/tarefas do/da/de + nome
     /(?:tasks?|tarefas?|demandas?|entregas?)\s+(?:do|da|de)\s+([a-z][a-z ]{1,24})/,
+    /**
+     * "quais tarefas DEPENDEM DO Endrigo?" — a pergunta de gargalo, e ela não
+     * casava em nada. O padrão acima exige "tarefas DO fulano"; aqui o verbo
+     * entra no meio e a frase escapava inteira. Medida em 29/09/2026: voltava
+     * "não tenho a lista de tarefas que dependem do Endrigo nos dados", com ele
+     * responsável por tarefa real no ClickUp.
+     */
+    /\b(?:depende[mn]?|dependendo|travad[ao]s?|parad[ao]s?|espera(?:ndo)?|aguardando)\s+(?:do|da|de|por|pelo|pela)\s+([a-z][a-z ]{1,24})/,
     // <nome> precisa/tem que (entregar|fazer|produzir)
     /\b([a-z][a-z]+)\s+(?:precisa|tem que|vai)\s+(?:entregar|fazer|produzir|criar)/,
     // o que (a|o) <nome> tem/faz/entrega hoje
@@ -347,6 +434,20 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
     // Coisas, não gente: entram por causa do follow-up nu ("e a campanha?").
     'campanha', 'campanhas', 'peca', 'peça', 'legenda', 'legendas', 'copy', 'briefing', 'proposta',
     'reuniao', 'reunião', 'conta', 'contas', 'verba', 'midia', 'mídia', 'lista', 'listas',
+    /**
+     * ETAPA DE PROCESSO, não gente. Entram com o padrão de dependência
+     * ("depende de X"): a suíte pegou "o que depende de APROVAÇÃO?" virando
+     * pergunta sobre uma pessoa chamada "aprovação". O complemento de "depende
+     * de" é pessoa OU etapa, e a frase não distingue as duas — então a lista
+     * decide, que é o mesmo critério do resto deste conjunto.
+     */
+    'aprovacao', 'aprovação', 'aprovacoes', 'revisao', 'revisão', 'validacao', 'validação',
+    'material', 'materiais', 'arquivo', 'arquivos', 'resposta', 'retorno', 'feedback',
+    'orcamento', 'orçamento', 'contrato', 'pagamento', 'assinatura', 'decisao', 'decisão',
+    'informacao', 'informação', 'dado', 'dados', 'prazo', 'prazos', 'terceiro', 'terceiros',
+    'fornecedor', 'fornecedores', 'grafica', 'gráfica', 'producao', 'produção',
+    // "travado por FALTA de contrato": o complemento é a ausência, não quem.
+    'falta', 'ausencia', 'ausência', 'atraso', 'problema', 'questao', 'questão',
   ]);
   const patterns = opcoes.comSinalOperacional
     ? [...autoSuficientes, ...dependentesDeOperacional]
@@ -377,7 +478,17 @@ function detectPersonMention(flat: string, opcoes: { comSinalOperacional: boolea
   for (const pattern of patterns) {
     const match = flat.match(pattern);
     const name = match?.[1]?.trim().replace(/\s+/g, ' ');
-    if (name && name.length >= 2 && !notPerson.has(name)) {
+    /**
+     * O stoplist vale para a frase INTEIRA e para o PRIMEIRO TOKEN dela.
+     *
+     * Só a frase inteira não bastava: o padrão de dependência captura vários
+     * tokens (`[a-z][a-z ]{1,24}`), então "depende de MATERIAL DO CLIENTE"
+     * escapava — "material" está na lista, "material do cliente" não. Pessoa
+     * de verdade nunca começa por uma palavra desta lista, então checar o
+     * primeiro token é seguro e fecha a família inteira de uma vez.
+     */
+    const primeiroToken = name?.split(' ')[0] ?? '';
+    if (name && name.length >= 2 && !notPerson.has(name) && !notPerson.has(primeiroToken)) {
       const candidatos = candidatosDe(name);
       // `name` é o que a resolução usa como padrão: a leitura SEM a partícula,
       // que é a certa na esmagadora maioria das vezes.
@@ -405,6 +516,64 @@ export interface EstadoDoTurnoAnterior {
    */
   person?: PersonMention | null;
   clients?: ClientMatch[];
+}
+
+
+/**
+ * ── LEITURA NÃO PRECISA DE SENHA (29/09/2026) ─────────────────────────────
+ *
+ * Até aqui, `operational` era uma ALLOWLIST: a consulta ao ClickUp só
+ * acontecia se a frase contivesse uma das palavras de OPERATIONAL_MARKERS,
+ * AGGREGATE_MARKERS, BRIEFING_MARKERS ou PANORAMA_MARKERS. Medido nas 21
+ * perguntas do benchmark de inteligência, 12 chegaram ao modelo com ZERO dado
+ * operacional — não porque o dado não existisse, mas porque a frase não tinha
+ * a palavra certa:
+ *
+ *   "Quais são os maiores riscos operacionais neste momento?"   -> NONE
+ *   "Quem trabalha aqui e qual é a função de cada pessoa?"      -> NONE
+ *   "Quais projetos internos parecem abandonados?"              -> NONE
+ *   "O que está parado há mais tempo?"                          -> NONE
+ *   "Quem está sobrecarregado?"       -> GLOBAL, e operational=FALSE
+ *
+ * A allowlist é a forma errada do problema. Ler não muda nada, não gasta
+ * permissão e não tem como estragar dado — a autorização existe para AÇÃO,
+ * não para raciocínio. Então o portão vira DENYLIST: pergunta substantiva
+ * consulta por padrão, e só não consulta o que provadamente não precisa.
+ *
+ * O que continua fora, e por quê:
+ *   - saudação e agradecimento: não há operação nenhuma na frase;
+ *   - pergunta sobre o próprio agente ("quem é você?"): é meta, não operação;
+ *   - ORDEM DE ESCRITA sem pergunta junto: já era assim antes (WRITE_ORDER_RE),
+ *     e continua — quem manda criar não está pedindo panorama.
+ *
+ * Custo: mais turnos consultam o ClickUp. É deliberado e é o lado certo do
+ * trade-off enquanto a consulta for ao vivo; quando o espelho local existir
+ * (ver a auditoria de inteligência, P0-3), o custo cai para uma query local.
+ */
+const SAUDACAO_OU_REACAO_RE =
+  /^(oi+|ola|opa|e ai|eai|bom dia|boa tarde|boa noite|tudo bem|tudo bom|blz|beleza|obrigad\w*|valeu|vlw|ok|okay|ta bom|tá bom|certo|entendi|perfeito|show|legal|top|bacana|massa|isso|isso ai|sim|nao|não)\b/;
+
+const SOBRE_O_PROPRIO_AGENTE_RE =
+  /\b(quem e voce|quem es voce|o que voce (e|faz|sabe|consegue|pode)|como voce funciona|voce e (um|uma)|qual (e )?seu nome|seu nome e)\b/;
+
+/**
+ * Pedido de ENTENDIMENTO: o verbo pede compreensão, não mudança. Vale como
+ * gatilho de leitura mesmo sem nenhuma palavra do vocabulário operacional.
+ */
+const PEDIDO_DE_ENTENDIMENTO_RE =
+  /\b(entend\w*|resum\w*|analis\w*|analit\w*|explic\w*|compar\w*|descobr\w*|audit\w*|avali\w*|revis\w*|diagnostic\w*|list\w*|mapei\w*|me (fal|diga|dig|mostr|cont|atualiz|inform|explic)\w*|quero saber|preciso saber|gostaria de saber|tudo que voce sabe|o que voce sabe|estado (atual|da|do)|situacao (da|do|atual)|o que mudou|o que aconteceu|o que ta|o que esta|risco|riscos|gargalo|inconsistenc|abandonad|parad[oa]|sobrecarregad)\b/;
+
+/**
+ * A frase pede COMPREENSÃO da operação? Denylist: começa valendo, e só cai
+ * fora do que provadamente não é operação.
+ */
+export function pedeCompreensaoDaOperacao(flat: string): boolean {
+  const t = flat.trim();
+  if (t.length === 0) return false;
+  // Saudação curta é saudação; parágrafo que começa com "ok" é assunto.
+  if (t.length <= 30 && SAUDACAO_OU_REACAO_RE.test(t)) return false;
+  if (SOBRE_O_PROPRIO_AGENTE_RE.test(t)) return false;
+  return QUESTION_RE.test(t) || PEDIDO_DE_ENTENDIMENTO_RE.test(t);
 }
 
 export async function resolveOperationalScope(
@@ -447,14 +616,56 @@ export async function resolveOperationalScope(
   const herdaDoAnterior = Boolean(anterior?.operational) && ehFollowUpEliptico(message);
   if (herdaDoAnterior) signals.push('herdado:follow-up');
 
+  // Ver WRITE_ORDER_RE: ordem de escrita sem pergunta junto não gasta consulta
+  // ao vivo no ClickUp. O panorama/global/agregado ganha da supressão — quem
+  // pede as duas coisas na mesma frase quer as duas.
+  /**
+   * Ver ESCRITA_SOBRE_EXISTENTE_RE: mandar AGIR sobre um conjunto a descobrir
+   * ("finaliza todas as minhas tarefas") não é ordem de criação — é leitura
+   * seguida de escrita, e sem a leitura a escrita não tem alvo.
+   */
+  const agirSobreConjunto =
+    ESCRITA_SOBRE_EXISTENTE_RE.test(flat) && ALVO_AMPLO_RE.test(flat) && !ALVO_PRECISO_RE.test(flat);
+  if (agirSobreConjunto) signals.push('escrita:precisa-da-lista');
+
+  const ordemDeEscrita =
+    WRITE_ORDER_RE.test(flat) &&
+    !QUESTION_RE.test(flat) &&
+    !agirSobreConjunto &&
+    panoramaHits.length === 0 &&
+    globalHits.length === 0 &&
+    aggregateHits.length === 0;
+  if (ordemDeEscrita) signals.push('escrita:sem-consulta');
+
+  // Ver `pedeCompreensaoDaOperacao`: o portão de LEITURA é denylist, não
+  // allowlist. Sem isto, 12 das 21 perguntas do benchmark não disparavam
+  // consulta nenhuma por falta de uma palavra específica.
+  /**
+   * A frase ELÍPTICA continua sem inaugurar escopo, e isto não é exceção à
+   * regra nova: é a regra antiga preservada. "Se eu só conseguir resolver três
+   * coisas, o que eu faço?" é uma pergunta — mas numa conversa CRIATIVA ela
+   * fala do trabalho criativo, não da operação. Quem decide é o turno
+   * anterior; sem anterior operacional, ela não abre consulta sozinha.
+   */
+  const compreensao = pedeCompreensaoDaOperacao(flat) && !(ehFollowUpEliptico(message) && !anterior?.operational);
+  if (compreensao) signals.push('leitura:compreensao');
+
   const operational =
-    operationalHits.length > 0 ||
-    aggregateHits.length > 0 ||
-    briefingHits.length > 0 ||
-    // Pedir o panorama É pedir o estado da operação, mesmo sem dizer "tarefa".
-    panoramaHits.length > 0 ||
-    herdaDoAnterior ||
-    temporal !== null;
+    !ordemDeEscrita &&
+    (operationalHits.length > 0 ||
+      aggregateHits.length > 0 ||
+      briefingHits.length > 0 ||
+      // Pedir o panorama É pedir o estado da operação, mesmo sem dizer "tarefa".
+      panoramaHits.length > 0 ||
+      // Comparar entidades é operacional por definição: "quem está
+      // sobrecarregado?" resolvia GLOBAL e mesmo assim não buscava nada.
+      comparativeHits.length > 0 ||
+      compreensao ||
+      // Mandar agir sobre um conjunto a descobrir É turno operacional: a
+      // escrita depende de uma leitura que ainda não aconteceu.
+      agirSobreConjunto ||
+      herdaDoAnterior ||
+      temporal !== null);
   const comparative = comparativeHits.length > 0;
   const briefing = briefingHits.length > 0;
 
@@ -491,6 +702,40 @@ export async function resolveOperationalScope(
       signals,
     };
   }
+  /**
+   * PESSOA GANHA DE LINHA-DE-CLIENTE-QUE-É-PESSOA (29/09/2026).
+   *
+   * "Endrigo Almada" é uma linha em `clients`, com lista própria no ClickUp
+   * (os projetos pessoais dele). Então "quais tarefas dependem do Endrigo?"
+   * casava na precedência 2 como CLIENTE, consultava a lista pessoal — vazia —
+   * e respondia "não tenho a lista de tarefas que dependem do Endrigo nos
+   * dados", com ele responsável por tarefa real em outros clientes.
+   *
+   * Quem pergunta por uma PESSOA quer o que está na mão dela atravessando a
+   * carteira, não a pasta de projetos pessoais. A regra é estreita de
+   * propósito: só vale quando a linha casada está na lista curta de
+   * pessoas-viraram-cliente E a frase realmente menciona a pessoa. Cliente com
+   * nome de gente que é conta pagante (Dra. Thais Bertelli) não entra.
+   */
+  if (matches.length === 1 && ehPessoaComoCliente(matches[0]!.name)) {
+    const comoPessoa = detectPersonMention(flat, { comSinalOperacional: operational });
+    if (comoPessoa) {
+      signals.push(`pessoa-sobre-cliente:${comoPessoa.name}`);
+      return {
+        kind: 'PERSON',
+        clients: [],
+        ambiguous,
+        temporal,
+        operational: true,
+        comparative,
+        briefing,
+        person: comoPessoa,
+        confidence: 0.8,
+        signals,
+      };
+    }
+  }
+
   if (matches.length === 1) {
     return {
       kind: 'CLIENT',
@@ -624,6 +869,9 @@ export async function resolveOperationalScope(
       temporal !== null ||
       operationalHits.length > 0 ||
       panoramaHits.length > 0 ||
+      // A pergunta sobre a operação sem cliente nomeado é sobre a operação
+      // INTEIRA. Antes caía em NONE e o agente respondia sem dado nenhum.
+      compreensao ||
       (herdaDoAnterior && anterior?.kind === 'GLOBAL'))
   ) {
     return {

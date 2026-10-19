@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"],
+    // O SDK oficial do MCP não é escrito sob `exactOptionalPropertyTypes`:
+    // ele declara `onclose?: () => void` e depois atribui `undefined`, o que
+    // sob a flag vira erro em toda fronteira com o transporte. Desligar a flag
+    // AQUI, e só aqui, é melhor que espalhar cast por cada ponto de contato.
+    //
+    // A lógica de verdade (RBAC, scopes, idempotência, memória) mora em
+    // packages/mcp-domain, que mantém a flag LIGADA — é lá que ela protege.
+    "exactOptionalPropertyTypes": false
+  },
+  "include": ["src"]
+}

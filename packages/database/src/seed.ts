@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createLogger } from '@desigual-os/logging';
 import type { AgentName } from '@desigual-os/types';
 import { requireEnv } from './env';
+import { sslDoDestino } from './ssl';
 import * as schema from './schema/index';
 
 const logger = createLogger({ service: 'database:seed' });
@@ -49,12 +50,22 @@ const AGENT_TOOLS: Array<{
   // o enforcement de verdade.
   { agent: 'jarbas', tool: 'meta_ads', access: 'write', requiresApproval: true },
   { agent: 'jarbas', tool: 'google_ads', access: 'write' },
-  { agent: 'jarbas', tool: 'clickup', access: 'write' },
+  // P1-04 da auditoria forense (25/09/2026): a arquitetura de release
+  // OpenAI+ClickUp MCP concentra escrita operacional no Bento (e handoff
+  // aprovado do Otto); Jarbas não tem write nenhum de ClickUp na sua
+  // própria lógica hoje, então a permissão era uma superfície de risco sem
+  // uso — não corrigido antes por instrução explícita de não mexer em
+  // Jarbas fora de RBAC compartilhado. Isto É a correção de RBAC pedida:
+  // downgrade pra leitura, nenhuma mudança de comportamento (o runtime do
+  // Jarbas já não escrevia).
+  { agent: 'jarbas', tool: 'clickup', access: 'read' },
   { agent: 'jarbas', tool: 'studio', access: 'write' },
 
   { agent: 'suzy', tool: 'instagram', access: 'write', requiresApproval: true },
   { agent: 'suzy', tool: 'whatsapp', access: 'write' },
-  { agent: 'suzy', tool: 'clickup', access: 'write' },
+  // Mesma correção P1-04 acima, mesmo raciocínio: Suzy não escreve ClickUp
+  // no runtime atual.
+  { agent: 'suzy', tool: 'clickup', access: 'read' },
   { agent: 'suzy', tool: 'meta_ads', access: 'none' },
 
   { agent: 'studio', tool: 'gpu', access: 'write' },
@@ -84,11 +95,29 @@ const PERMISSIONS: Array<{ role: 'master' | 'colaborador'; resource: string; act
   { role: 'colaborador', resource: 'studio', action: 'write' },
   { role: 'colaborador', resource: 'knowledge', action: 'read' },
   { role: 'colaborador', resource: 'clickup', action: 'write' },
+  // Inbox (P1-A, 06/10/2026): ler e responder conversa é trabalho de
+  // atendimento/CS do dia a dia, mesmo padrão de `clients`/`clickup` acima.
+  { role: 'colaborador', resource: 'communications', action: 'read' },
+  { role: 'colaborador', resource: 'communications', action: 'write' },
+  // Demand/Brief/Approval (P1-D/E/I, 06/10/2026): o core workflow é
+  // trabalho de equipe, não só de master.
+  { role: 'colaborador', resource: 'demands', action: 'read' },
+  { role: 'colaborador', resource: 'demands', action: 'write' },
+  { role: 'colaborador', resource: 'briefs', action: 'read' },
+  { role: 'colaborador', resource: 'briefs', action: 'write' },
+  { role: 'colaborador', resource: 'approvals', action: 'read' },
+  { role: 'colaborador', resource: 'approvals', action: 'write' },
+  // Calendar (06/10/2026): ver/criar evento é trabalho de qualquer colaborador
+  // (agenda própria, de cliente, de equipe) — a fronteira fina de "só a minha
+  // agenda vs a de outros" é decidida em apps/api/src/calendar/access.ts, não
+  // aqui (RBAC só responde "este papel mexe com calendário", não "com qual").
+  { role: 'colaborador', resource: 'calendar', action: 'read' },
+  { role: 'colaborador', resource: 'calendar', action: 'write' },
 ];
 
 async function main(): Promise<void> {
   const connectionString = requireEnv('DATABASE_URL');
-  const client = postgres(connectionString, { ssl: 'require', prepare: false, max: 1 });
+  const client = postgres(connectionString, { ssl: sslDoDestino(connectionString), prepare: false, max: 1 });
   const db = drizzle(client, { schema });
 
   // onConflictDoNothing().returning() só devolve as linhas que ELE inseriu
@@ -154,6 +183,25 @@ async function main(): Promise<void> {
       .update(schema.agentTools)
       .set({ requiresApproval: true })
       .where(and(eq(schema.agentTools.agentId, agent.id), eq(schema.agentTools.tool, tool)));
+  }
+
+  // Mesmo raciocínio de backfill acima, para P1-04: um banco seedado ANTES
+  // desta correção já tem `access: 'write'` gravado em jarbas/clickup e
+  // suzy/clickup, e onConflictDoNothing não tocaria essas linhas. Downgrade
+  // explícito pra 'read' — nunca 'none', porque consulta/leitura de ClickUp
+  // por esses agentes não é o que a auditoria sinalizou como risco.
+  logger.info('Corrigindo access de jarbas/clickup e suzy/clickup em bancos já seedados (RBAC P1-04)');
+  const clickupWriteDowngrade: Array<{ agent: 'jarbas' | 'suzy'; tool: string }> = [
+    { agent: 'jarbas', tool: 'clickup' },
+    { agent: 'suzy', tool: 'clickup' },
+  ];
+  for (const { agent: agentName, tool } of clickupWriteDowngrade) {
+    const agent = agentsByName.get(agentName);
+    if (!agent) continue;
+    await db
+      .update(schema.agentTools)
+      .set({ access: 'read' })
+      .where(and(eq(schema.agentTools.agentId, agent.id), eq(schema.agentTools.tool, tool), eq(schema.agentTools.access, 'write')));
   }
 
   logger.info('Seed complete');

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, uploadTaskAttachment } from './clickup-client';
+import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, listStatusesForList, resolveMemberByName, uploadTaskAttachment } from './clickup-client';
 
 /**
  * Cobertura do timeout de rede adicionado na auditoria de production
@@ -11,6 +11,37 @@ import { assertSafeAttachmentUrl, createTask, getTask, getTeamMembers, uploadTas
 const CONFIG = { apiKey: 'pk_fake', teamId: 'T1' };
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('resolveMemberByName — rede de segurança contra verbo colado no nome (achado real de QA 25/09/2026)', () => {
+  const membros = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ team: { members: [{ user: { id: 1, username: 'Jamile Galdino', email: 'j@x.com', profilePicture: null } }] } }),
+      })),
+    );
+
+  it('"remove Jamile Galdino" resolve pro membro "Jamile Galdino" (não procura por um membro chamado "remove Jamile Galdino")', async () => {
+    membros();
+    const resolution = await resolveMemberByName(CONFIG, 'remove Jamile Galdino');
+    expect(resolution.status).toBe('resolved');
+    if (resolution.status === 'resolved') expect(resolution.member.username).toBe('Jamile Galdino');
+  });
+
+  it('"tira a Jamile Galdino" também resolve (verbo + preposição)', async () => {
+    membros();
+    const resolution = await resolveMemberByName(CONFIG, 'tira a Jamile Galdino');
+    expect(resolution.status).toBe('resolved');
+  });
+
+  it('nome sem verbo continua resolvendo normalmente (sem falso positivo na stripagem)', async () => {
+    membros();
+    const resolution = await resolveMemberByName(CONFIG, 'Jamile Galdino');
+    expect(resolution.status).toBe('resolved');
+  });
+});
 
 describe('timeout de rede nos fetches do ClickUp', () => {
   it('getTeamMembers sai com AbortSignal de timeout', async () => {
@@ -156,5 +187,106 @@ describe('uploadTaskAttachment recusa SSRF antes de qualquer fetch', () => {
       if (original === undefined) delete process.env.SUPABASE_URL;
       else process.env.SUPABASE_URL = original;
     }
+  });
+});
+
+/**
+ * Relato da Tammy (29/09/2026), no fluxo que mais importa: ela pediu a ata,
+ * desmembrou as demandas e, na hora de subir a task, leu "No ClickUp member
+ * matches Guilherme". No ClickUp ele está como "Gui".
+ *
+ * O elenco aqui é o REAL do workspace, com as duas armadilhas que tornam
+ * casamento aproximado perigoso: existe "Gi" além de "Gui", e existem dois
+ * "Gabriel".
+ */
+describe('apelido cadastrado: a pessoa fala o nome inteiro, o ClickUp tem o apelido', () => {
+  const equipe = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          team: {
+            members: [
+              { user: { id: 10, username: 'Gui', email: 'gui@x.com', profilePicture: null } },
+              { user: { id: 11, username: 'Gi', email: 'gi@x.com', profilePicture: null } },
+              { user: { id: 12, username: 'Gabriel Prado', email: 'gp@x.com', profilePicture: null } },
+              { user: { id: 13, username: 'Gabriel Serafim Sena', email: 'gs@x.com', profilePicture: null } },
+              { user: { id: 14, username: 'Ana Luiza', email: 'al@x.com', profilePicture: null } },
+              { user: { id: 15, username: 'Tammy', email: 't@x.com', profilePicture: null } },
+            ],
+          },
+        }),
+      })),
+    );
+
+  /**
+   * Correção da operação no mesmo dia, e é a parte que importa: ele NÃO deve
+   * atribuir. "Ele não achou o Gui, ele tem que perguntar — não encontrei o
+   * Guilherme, achei o Gui, é ele?"
+   *
+   * Atribuir tarefa por semelhança de nome é o tipo de acerto que ninguém
+   * confere e o tipo de erro que ninguém percebe.
+   */
+  it('o caso da Tammy: "Guilherme" SUGERE o "Gui", e não atribui sozinho', async () => {
+    equipe();
+    const r = await resolveMemberByName(CONFIG, 'Guilherme');
+    expect(r.status).toBe('sugestao');
+    if (r.status === 'sugestao') expect(r.sugerido.username).toBe('Gui');
+  });
+
+  /** "Gi" tem 2 letras e não pode virar chave de casamento de nome nenhum. */
+  it('apelido de 2 letras não casa: "Gilberto" não vira "Gi"', async () => {
+    equipe();
+    expect((await resolveMemberByName(CONFIG, 'Gilberto')).status).toBe('not_found');
+  });
+
+  /** Nome composto não é apelido: senão "Anabela" viraria "Ana Luiza". */
+  it('nome cadastrado com dois tokens não entra na regra', async () => {
+    equipe();
+    expect((await resolveMemberByName(CONFIG, 'Anabela')).status).toBe('not_found');
+  });
+
+  it('o casamento exato continua ganhando do apelido', async () => {
+    equipe();
+    const r = await resolveMemberByName(CONFIG, 'Gui');
+    expect(r.status).toBe('resolved');
+    if (r.status === 'resolved') expect(r.matchedBy).toBe('full');
+  });
+
+  /** Dois Gabriel: pergunta, nunca escolhe. Errar a pessoa é pior que não achar. */
+  it('nome que serve pra duas pessoas continua ambíguo', async () => {
+    equipe();
+    const r = await resolveMemberByName(CONFIG, 'Gabriel');
+    expect(r.status).toBe('ambiguous');
+    if (r.status === 'ambiguous') expect(r.candidates).toHaveLength(2);
+  });
+});
+
+/**
+ * Pipeline `tipo='tarefas'` (13/10/2026): status é POR LISTA, nunca universal
+ * — duas listas de cliente podem ter conjuntos totalmente diferentes
+ * (confirmado pela operação). `listStatusesForList` é o que permite montar o
+ * quadro de um cliente com os status REAIS da lista dele, direto pelo
+ * clickup_list_id, sem precisar de uma task existente.
+ */
+describe('listStatusesForList', () => {
+  it('lê os status reais da lista, na ordem que o ClickUp devolveu', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ statuses: [{ status: 'aberto' }, { status: 'em produção' }, { status: 'fechado' }] }),
+    })));
+    expect(await listStatusesForList(CONFIG, 'lista-1')).toEqual(['aberto', 'em produção', 'fechado']);
+  });
+
+  it('lista sem status nenhum devolve array vazio, não lança', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })));
+    expect(await listStatusesForList(CONFIG, 'lista-1')).toEqual([]);
+  });
+
+  it('ClickUp recusando a lista vira erro explícito, não lista vazia disfarçada de "sem status"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => 'not found' })));
+    await expect(listStatusesForList(CONFIG, 'lista-inexistente')).rejects.toThrow('ClickUp list fetch failed (404)');
   });
 });

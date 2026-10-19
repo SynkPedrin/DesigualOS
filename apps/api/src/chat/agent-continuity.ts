@@ -42,9 +42,27 @@ export function comContinuidadeDeAgente(
   decisao: RouterDecision,
   agenteAnterior: AgentName | null,
 ): RouterDecision {
-  // Sinal explícito (vocativo, @menção, agente escolhido na interface) sempre
-  // vence: é o usuário dizendo com quem quer falar.
-  if (decisao.confidence > 0 || decisao.source === 'manual') return decisao;
+  /**
+   * SINAL EXPLÍCITO VENCE; PALPITE DE CLASSIFICADOR, NÃO.
+   *
+   * Até 13/10/2026 a condição era `decisao.confidence > 0`, e funcionava por
+   * um acidente: a camada paga do roteador nunca teve credencial neste
+   * ambiente, então devolvia `null` e todo turno curto chegava aqui com
+   * confiança 0. Ao ligar o classificador com GPT, ele passou a devolver 0,5
+   * fixo para QUALQUER mensagem — e "Me explica." dentro de um fluxo criativo
+   * voltou a ser respondido pelo Bento, que é exatamente o defeito medido em
+   * 17/09/2026 e descrito no cabeçalho deste arquivo.
+   *
+   * A distinção que faltava: confiança alta NÃO é a mesma coisa que sinal do
+   * usuário. Vocativo e escolha na interface são a pessoa dizendo com quem
+   * quer falar. Regra determinística é vocabulário inequívoco. Classificador é
+   * um modelo opinando sobre duas palavras, e duas palavras fora de contexto
+   * não carregam intenção de trocar de agente.
+   *
+   * Por isso a condição passou a olhar a FONTE, não só o número.
+   */
+  if (decisao.source === 'manual') return decisao;
+  if (decisao.source === 'rule_engine' && decisao.confidence > 0) return decisao;
   if (!agenteAnterior || !AGENTES_COM_CONTINUIDADE.has(agenteAnterior)) return decisao;
   if (decisao.primary_agent === agenteAnterior) return decisao;
 

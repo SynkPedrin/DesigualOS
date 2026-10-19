@@ -73,7 +73,7 @@ export function getProbeTargets(): ProbeTarget[] {
   // não acrescenta porta.
   const otto = host('PROBE_OTTO_HOST', 'http://localhost:4002');
 
-  return [
+  const alvos: ProbeTarget[] = [
     {
       agent: 'bento',
       // Achado real (2026-09-10): estes 5 nodeIds não tinham o sufixo "_01"
@@ -136,6 +136,21 @@ export function getProbeTargets(): ProbeTarget[] {
       services: [{ name: 'otto-node', url: serviceUrl('otto', 'otto-node', `${otto}/health`) }],
     },
   ];
+
+  /**
+   * PROBE_AGENTS filtra quem entra na sonda (13/10/2026, pedido do Pedro:
+   * "quero apenas o bento funcionando"). As quatro máquinas saíram de
+   * operação, mas a sonda RECRIAVA o registro de cada uma a cada rodada —
+   * apagar a linha no banco durava um minuto. Ausente ou vazio, todos são
+   * sondados (comportamento de sempre). Fora da lista, o registro vira órfão
+   * e o faxineiro de agent-sync o remove depois de 10 minutos sem atualização.
+   */
+  const filtro = (process.env.PROBE_AGENTS ?? '')
+    .split(',')
+    .map((a) => a.trim().toLowerCase())
+    .filter(Boolean);
+  if (filtro.length === 0) return alvos;
+  return alvos.filter((alvo) => filtro.includes(alvo.agent));
 }
 
 export interface ServiceResult {

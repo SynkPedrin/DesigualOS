@@ -44,6 +44,19 @@ export type FonteDeContexto =
   | 'campanha'
   | 'pessoas'
   | 'episodios'
+  /**
+   * Event store da operação (o que ACONTECEU, com data), lido quando o
+   * retrieval planner detecta pergunta de mudança/recência. Mesma faixa de
+   * autoridade dos episódios: fato datado com origem, não semelhança.
+   */
+  | 'eventos_recentes'
+  /**
+   * Memória operacional recuperada por SEMELHANÇA (embedding), não por escopo.
+   * Depois de `episodios` na autoridade: episódio é fato datado com origem, a
+   * memória semântica é candidata por afinidade de texto — o próprio bloco
+   * pede confirmação antes de tratar como fato vigente.
+   */
+  | 'memoria_semantica'
   | 'preferencias'
   /** O que a equipe ENSINOU no chat. Ver ORDEM: entra por último de propósito. */
   | 'aprendizado';
@@ -70,13 +83,36 @@ export interface BlocoDeContexto {
   proveniencia?: ProvenienciaDoBloco;
 }
 
-/** Registro de evidência nascido do MESMO bloco que foi ao prompt. */
+/**
+ * Registro de evidência nascido do MESMO bloco que foi ao prompt.
+ *
+ * DUAS PERGUNTAS DIFERENTES moram aqui, e confundi-las deixou o registro vazio
+ * por tempo indeterminado:
+ *
+ *   "isto foi ENTREGUE ao modelo?"     — todo bloco com texto. É o que o
+ *                                        guarda de ausência precisa saber.
+ *   "isto pode ser CITADO como fonte?" — só o que sustenta afirmação. É o que
+ *                                        a proveniência precisa saber.
+ *
+ * Antes, só a segunda existia, e o registro só recebia bloco com
+ * `evidenciavel && proveniencia` — combinação que NENHUM bloco do dispatch
+ * tinha. Resultado medido em 01/10/2026: o guarda recebia lista vazia e
+ * aprovava afirmação de ausência sobre o dossiê que ele mesmo tinha entregado.
+ *
+ * Agora todo bloco com texto entra, e `citavel` responde a segunda pergunta.
+ */
 export interface RegistroDeEvidencia {
   fonte: FonteDeContexto;
   sourceType: string;
   sourceId: string | null;
   clientId: string | null;
   confidence: number;
+  /**
+   * Pode ser citado como fonte na resposta? `false` para diálogo (o agente se
+   * citando) e para memória semântica (candidata por afinidade, não fato
+   * confirmado). Continua sendo evidência de que o modelo VIU aquilo.
+   */
+  citavel: boolean;
   /** O texto COMO FOI ENTREGUE ao modelo, já cortado pelo orçamento. */
   texto: string;
 }
@@ -93,6 +129,10 @@ const ORDEM: FonteDeContexto[] = [
   'campanha',
   'pessoas',
   'episodios',
+  // Colado nos episódios: também é fato datado, mas do event store (o que
+  // aconteceu na operação), não do que foi decidido em conversa.
+  'eventos_recentes',
+  'memoria_semantica',
   'preferencias',
   /**
    * `aprendizado` por ÚLTIMO, e isso não é rebaixamento: é o contrário. As
@@ -114,6 +154,8 @@ const PISO: Record<FonteDeContexto, number> = {
   campanha: 1_500,
   pessoas: 600,
   episodios: 600,
+  eventos_recentes: 600,
+  memoria_semantica: 600,
   preferencias: 400,
   aprendizado: 900,
 };
@@ -181,16 +223,17 @@ export function assembleContext(
     // cortou, o grounding vê exatamente o que o modelo viu — nem mais (o que
     // deixaria passar afirmação sem lastro entregue) nem menos (o que reprovaria
     // afirmação legítima).
-    if (b.evidenciavel && b.proveniencia) {
-      evidencias.push({
-        fonte: b.fonte,
-        sourceType: b.proveniencia.sourceType,
-        sourceId: b.proveniencia.sourceId ?? null,
-        clientId: b.proveniencia.clientId ?? null,
-        confidence: b.proveniencia.confidence ?? 0.9,
-        texto: cortado,
-      });
-    }
+    // TODO bloco entregue entra. `citavel` é que separa o que sustenta
+    // afirmação do que só foi mostrado — ver a nota em RegistroDeEvidencia.
+    evidencias.push({
+      fonte: b.fonte,
+      sourceType: b.proveniencia?.sourceType ?? b.fonte,
+      sourceId: b.proveniencia?.sourceId ?? null,
+      clientId: b.proveniencia?.clientId ?? null,
+      confidence: b.proveniencia?.confidence ?? 0.9,
+      citavel: b.evidenciavel !== false && Boolean(b.proveniencia),
+      texto: cortado,
+    });
   });
 
   const texto = partes.join('\n\n');

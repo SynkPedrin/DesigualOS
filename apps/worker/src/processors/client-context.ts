@@ -1,5 +1,5 @@
 import { db, schema } from '@desigual-os/database';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { resolveClientsFromText } from '@desigual-os/context-engine';
 
 /**
@@ -24,11 +24,27 @@ import { resolveClientsFromText } from '@desigual-os/context-engine';
  * perguntar em vez de inventar.
  */
 
+export interface ClientBrandKit {
+  logoUrl: string | null;
+  colors: string[];
+  fonts: string[];
+  toneOfVoice: string | null;
+}
+
 export interface ClientTurnContext {
   clientId: string | null;
   clientName: string | null;
   /** Dossiê consolidado (kind client.profile), cortado pro orçamento de prompt. */
   profile: string | null;
+  /**
+   * `client_brand_kits` — a MESMA tabela que o Studio já usa pra aplicar
+   * paleta/logo real num job de imagem (ver execute-job.ts). Até 07/10/2026
+   * só o Studio lia isto; o Bento respondia "identidade visual" só com o que
+   * estava em prosa livre no brain (quase sempre `[FALTA]`, porque nenhum
+   * Briefing Dourado trouxe hex de cor). Dado estruturado aqui nunca disputa
+   * com o brain: quando existe, é mais confiável que prosa livre.
+   */
+  brandKit: ClientBrandKit | null;
   /** Nomes citados na mensagem que NÃO existem na carteira. */
   unresolvedMentions: string[];
   /** Mais de um cliente casou: o agente precisa perguntar qual. */
@@ -90,8 +106,9 @@ export function fonteDoPerfil(subject: unknown): FonteDePerfil {
  * (criativo antes de operacional) nao faz a segunda chegar vazia.
  */
 export function comporPerfil(
-  fontes: Array<{ fonte: FonteDePerfil; content: string }>,
+  fontes: Array<{ fonte: FonteDePerfil; content: string; atualizadoEm?: Date | null }>,
   orcamento = PERFIL_MAX_CHARS,
+  agora: Date = new Date(),
 ): string | null {
   const uteis = fontes.filter((f) => f.content.trim().length > 0);
   if (uteis.length === 0) return null;
@@ -100,10 +117,13 @@ export function comporPerfil(
   // aspecto), e trata-los como fontes separadas daria a cada fato um cabecalho
   // proprio e faria o piso por fonte ser cobrado N vezes, espremendo o dossie.
   const porFonte = new Map<FonteDePerfil, string[]>();
+  const dataDaFonte = new Map<FonteDePerfil, Date>();
   for (const f of uteis) {
     const atual = porFonte.get(f.fonte) ?? [];
     atual.push(f.content.trim());
     porFonte.set(f.fonte, atual);
+    const visto = dataDaFonte.get(f.fonte);
+    if (f.atualizadoEm && (!visto || f.atualizadoEm > visto)) dataDaFonte.set(f.fonte, f.atualizadoEm);
   }
 
   const ordenadas = [...porFonte.entries()].sort((a, b) => indiceDaFonte(a[0]) - indiceDaFonte(b[0]));
@@ -115,11 +135,32 @@ export function comporPerfil(
     const teto = Math.max(0, restante - MIN_CHARS_POR_FONTE * aindaPorEscrever);
     const texto = partes.join('\n').slice(0, teto);
     if (texto.length === 0) return;
-    blocos.push(`[${ROTULO_DA_FONTE[fonte]}]\n${texto}`);
+    blocos.push(`[${ROTULO_DA_FONTE[fonte]}${idadeDaFonte(dataDaFonte.get(fonte), agora)}]\n${texto}`);
     restante -= texto.length;
   });
 
   return blocos.length > 0 ? blocos.join('\n\n') : null;
+}
+
+/**
+ * A IDADE DO REGISTRO NO CABEÇALHO (14/10/2026).
+ *
+ * O dossiê chegava ao modelo sem data: uma ficha importada há meses era lida
+ * como estado atual, e o manual do Bento manda justamente o contrário ("não
+ * trate um registro antigo como estado atual"). Com a data no cabeçalho ele
+ * consegue dizer "no último registro, de agosto...". Passado o limite, o
+ * cabeçalho avisa — quem decide se o dado ainda vale é a pessoa, mas ela
+ * precisa saber a idade dele.
+ */
+const DIAS_PARA_AVISO_DE_IDADE = 90;
+
+function idadeDaFonte(data: Date | undefined, agora: Date): string {
+  if (!data) return '';
+  const quando = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(data);
+  const dias = Math.floor((agora.getTime() - data.getTime()) / 86_400_000);
+  return dias > DIAS_PARA_AVISO_DE_IDADE
+    ? ` — atualizado em ${quando}, há ${dias} dias: pode estar desatualizado, confirme antes de tratar como atual`
+    : ` — atualizado em ${quando}`;
 }
 
 function indiceDaFonte(f: FonteDePerfil): number {
@@ -134,20 +175,32 @@ function indiceDaFonte(f: FonteDePerfil): number {
 export async function resolveClientTurnContext(params: {
   message: string;
   executionClientId?: string | null;
+  /**
+   * A empresa da execução. Obrigatório de propósito: cliente citado no texto
+   * só vira cliente do turno se for DESTA empresa (ver recortarPelaEmpresa).
+   * `null` = execução sem empresa, e então nenhum nome do texto é aceito.
+   */
+  organizationId: string | null;
 }): Promise<ClientTurnContext> {
   const vazio: ClientTurnContext = {
     clientId: null,
     clientName: null,
     profile: null,
+    brandKit: null,
     unresolvedMentions: [],
     ambiguous: [],
   };
 
-  const doTexto = await resolveClientsFromText(params.message).catch(() => null);
+  const doTexto = await recortarPelaEmpresa(
+    await resolveClientsFromText(params.message).catch(() => null),
+    params.organizationId,
+  );
   const ambiguous = (doTexto?.ambiguous ?? []).map((a) => (typeof a === 'string' ? a : (a as { name?: string }).name ?? '')).filter(Boolean);
 
   let clientId = params.executionClientId ?? null;
   let clientName: string | null = null;
+  // Ambiente do cliente do turno; preenchido junto com o nome, na mesma query.
+  let ambienteResolvido = 'production';
 
   if (!clientId && doTexto?.matches?.length === 1) {
     clientId = doTexto.matches[0]!.id;
@@ -161,24 +214,37 @@ export async function resolveClientTurnContext(params: {
 
   if (clientId) {
     const [c] = await db
-      .select({ id: schema.clients.id, name: schema.clients.name })
+      .select({ id: schema.clients.id, name: schema.clients.name, environment: schema.clients.environment, organizationId: schema.clients.organizationId })
       .from(schema.clients)
       .where(eq(schema.clients.id, clientId))
       .catch(() => []);
     clientName = c?.name ?? null;
-    if (!c) clientId = null;
+    ambienteResolvido = c?.environment === 'qa' ? 'qa' : 'production';
+    // Segunda trava, para o cliente que não veio do texto (o da execução, ou
+    // o que a campanha carrega): de outra empresa, não entra no turno.
+    const deOutraEmpresa = params.organizationId !== null && c?.organizationId !== params.organizationId;
+    if (!c || deOutraEmpresa) {
+      clientId = null;
+      clientName = null;
+    }
   }
 
   let profile: string | null = null;
   if (clientId) {
+    // O ambiente vem do PRÓPRIO cliente (resolvido na consulta acima, zero
+    // custo extra): turno sobre cliente de QA lê só dossiê de QA. O fallback
+    // 'production' é o lado seguro do isolamento — QA nunca vaza pra produção.
+    // (F-12, auditoria de 26/09/2026: sem este filtro, dossiê de homologação
+    // entrava no contexto de produção.)
     const rows = await db
-      .select({ content: schema.memories.content, metadata: schema.memories.metadata })
+      .select({ content: schema.memories.content, metadata: schema.memories.metadata, updatedAt: schema.memories.updatedAt })
       .from(schema.memories)
       .where(
         and(
           eq(schema.memories.clientId, clientId),
           eq(schema.memories.status, 'active'),
           inArray(schema.memories.kind, ['client.profile']),
+          eq(schema.memories.environment, ambienteResolvido),
         ),
       )
       .catch(() => []);
@@ -186,8 +252,26 @@ export async function resolveClientTurnContext(params: {
       rows.map((r) => ({
         fonte: fonteDoPerfil((r.metadata as { subject?: unknown } | null)?.subject),
         content: r.content ?? '',
+        atualizadoEm: r.updatedAt ?? null,
       })),
     );
+  }
+
+  let brandKit: ClientBrandKit | null = null;
+  if (clientId) {
+    const [kit] = await db
+      .select({ logoUrl: schema.clientBrandKits.logoUrl, colors: schema.clientBrandKits.colors, fonts: schema.clientBrandKits.fonts, toneOfVoice: schema.clientBrandKits.toneOfVoice })
+      .from(schema.clientBrandKits)
+      .where(eq(schema.clientBrandKits.clientId, clientId))
+      .catch(() => []);
+    if (kit) {
+      brandKit = {
+        logoUrl: kit.logoUrl ?? null,
+        colors: Array.isArray(kit.colors) ? (kit.colors as string[]) : [],
+        fonts: Array.isArray(kit.fonts) ? (kit.fonts as string[]) : [],
+        toneOfVoice: kit.toneOfVoice ?? null,
+      };
+    }
   }
 
   return {
@@ -195,8 +279,46 @@ export async function resolveClientTurnContext(params: {
     clientId,
     clientName,
     profile,
+    brandKit,
     ambiguous,
     unresolvedMentions: [],
+  };
+}
+
+/**
+ * FRONTEIRA DE EMPRESA na resolução por nome (Bento 3.1, 14/10/2026).
+ *
+ * `resolveClientsFromText` casa o nome contra a carteira de TODAS as empresas.
+ * Medido no ambiente isolado: a colaboradora da empresa A escreveu "Me fala da
+ * Beta Imóveis" (cliente da empresa B) e o turno recebeu "CLIENTE DO TURNO:
+ * Beta Imóveis (confirmado na carteira da agência)" seguido do dossiê da outra
+ * empresa — verba e decisor. A API já recusava o cliente; o worker resolvia de
+ * novo, sozinho, a partir do texto.
+ *
+ * Fica só o que é da empresa da execução, nos acertos e nos candidatos de
+ * desambiguação (listar o nome de um cliente alheio também é vazamento).
+ */
+async function recortarPelaEmpresa(
+  resolucao: Awaited<ReturnType<typeof resolveClientsFromText>> | null,
+  organizationId: string | null,
+): Promise<Awaited<ReturnType<typeof resolveClientsFromText>> | null> {
+  if (!resolucao) return null;
+  const ids = [...resolucao.matches.map((m) => m.id), ...resolucao.ambiguous.flatMap((a) => a.candidates.map((c) => c.id))];
+  if (ids.length === 0) return resolucao;
+  const daEmpresa = new Set<string>();
+  if (organizationId) {
+    const linhas = await db
+      .select({ id: schema.clients.id })
+      .from(schema.clients)
+      .where(and(inArray(schema.clients.id, ids), eq(schema.clients.organizationId, organizationId)));
+    for (const l of linhas) daEmpresa.add(l.id);
+  }
+  return {
+    ...resolucao,
+    matches: resolucao.matches.filter((m) => daEmpresa.has(m.id)),
+    ambiguous: resolucao.ambiguous
+      .map((a) => ({ ...a, candidates: a.candidates.filter((c) => daEmpresa.has(c.id)) }))
+      .filter((a) => a.candidates.length > 1),
   };
 }
 
@@ -235,6 +357,18 @@ export function formatClientBlock(ctx: ClientTurnContext, totalClientes: number)
       'Trabalhe com o que o pedido trouxer e declare o que falta. NÃO invente ramo, produto ou público.',
     );
   }
+
+  // KIT DE MARCA é dado ESTRUTURADO (client_brand_kits), separado do texto
+  // livre do brain — quando existe, é mais confiável que prosa, porque não
+  // depende de alguém ter escrito "cor principal: #..." dentro do dossiê.
+  if (ctx.brandKit && (ctx.brandKit.logoUrl || ctx.brandKit.colors.length > 0 || ctx.brandKit.fonts.length > 0 || ctx.brandKit.toneOfVoice)) {
+    const kit = ctx.brandKit;
+    linhas.push('', 'KIT DE MARCA (dado estruturado, cadastrado no sistema — não é texto do brain):');
+    if (kit.colors.length > 0) linhas.push(`- Cores: ${kit.colors.join(', ')}`);
+    if (kit.fonts.length > 0) linhas.push(`- Tipografia: ${kit.fonts.join(', ')}`);
+    if (kit.toneOfVoice) linhas.push(`- Tom de voz cadastrado: ${kit.toneOfVoice}`);
+    if (kit.logoUrl) linhas.push(`- Logo: ${kit.logoUrl}`);
+  }
   /**
    * LACUNA NÃO É PAREDE — e a versão anterior desta instrução virou uma.
    *
@@ -269,7 +403,14 @@ export function formatClientBlock(ctx: ClientTurnContext, totalClientes: number)
 }
 
 /** Quantos clientes a agência tem — entra no bloco pra o agente saber o tamanho da carteira. */
-export async function contarClientes(): Promise<number> {
-  const rows = await db.select({ id: schema.clients.id }).from(schema.clients).catch(() => []);
+export async function contarClientes(organizationId: string | null): Promise<number> {
+  // Da empresa da execução, não da base inteira: "a agência tem N clientes"
+  // somava as carteiras de todas as empresas (Bento 3.1, 14/10/2026).
+  if (!organizationId) return 0;
+  const rows = await db
+    .select({ id: schema.clients.id })
+    .from(schema.clients)
+    .where(and(eq(schema.clients.organizationId, organizationId), isNull(schema.clients.deletedAt)))
+    .catch(() => []);
   return rows.length;
 }

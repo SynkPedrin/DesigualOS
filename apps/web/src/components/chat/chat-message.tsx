@@ -5,13 +5,16 @@ import { Copy, FileText, Forward, RotateCcw } from 'lucide-react';
 import { AgentAvatar } from '@/components/ui/agent-avatar';
 import { Chip } from '@/components/ui/chip';
 import { MarkdownLite } from '@/lib/markdown-lite';
+import { AbrirPrevia } from '@/components/ui/previa-de-anexo';
 import { AGENT_META } from '@/lib/agent-meta';
 import { ThinkingSteps } from './thinking-steps';
+import { MotionCard, type ChatMotionRef } from './motion-card';
+import { MotionBriefCard } from './motion-brief-card';
 import { useTypewriter } from '@/hooks/use-typewriter';
 import { formatClockTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { AgentName, ExecutionStatus } from '@desigual-os/types';
-import type { TeamMember } from '@/lib/api/contracts';
+import type { ChatMotionBriefRequestWire, TeamMember, AgentToolCallWire } from '@/lib/api/contracts';
 
 /** Anexo de mensagem persistida (attachment_url/type/filename do backend). */
 export interface ChatUiAttachment {
@@ -27,6 +30,8 @@ export interface ChatUiMessage {
   content: string;
   status?: ExecutionStatus | undefined;
   sources?: string[];
+  /** Bento 3.0, Fase 3: o que o agente de fato executou no ClickUp neste turno. */
+  toolCalls?: AgentToolCallWire[];
   clientName?: string | null;
   /** @deprecated usar `attachments`; mantido pra não quebrar quem só manda um. */
   attachment?: ChatUiAttachment | null | undefined;
@@ -35,34 +40,110 @@ export interface ChatUiMessage {
    * Presentes, o ThinkingSteps mostra o que o backend reportou de verdade
    * em vez das etapas genéricas por intervalo. */
   liveSteps?: string[] | undefined;
+  /** Otto Motion Engine: presente, o balão ganha o player abaixo do texto. */
+  motion?: ChatMotionRef | null | undefined;
+  /** Pedido de briefing do motion: presente, o balão ganha o formulário
+   * (MotionBriefCard). `conversationId` é o fio onde o briefing é enviado. */
+  motionBriefRequest?: ChatMotionBriefRequestWire | null | undefined;
+  conversationId?: string | null | undefined;
   createdAt?: string | undefined;
 }
 
 /** Anexo no balão: imagem vira thumbnail clicável; qualquer outro tipo vira
  * chip com ícone + nome + link (abre numa aba nova). */
+/**
+ * Anexo no balão. Imagem e PDF abrem em PRÉVIA sobre a tela, sem trocar de
+ * aba — quem está no meio de um turno de chat perde o fio ao sair. O resto
+ * continua indo para a aba nova, como sempre foi.
+ */
 function ChatAttachmentView({ attachment }: { attachment: ChatUiAttachment }) {
+  const anexo = {
+    url: attachment.url,
+    filename: attachment.filename ?? null,
+    contentType: attachment.type ?? null,
+  };
+
   if (attachment.type?.startsWith('image/')) {
     return (
-      <a href={attachment.url} target="_blank" rel="noreferrer" className="block">
+      <AbrirPrevia anexo={anexo} className="block">
         <img
           src={attachment.url}
           alt={attachment.filename ?? 'imagem anexada'}
           className="h-auto max-w-[240px] rounded-md border border-white/10 object-cover"
         />
-      </a>
+      </AbrirPrevia>
     );
   }
+
+  const ehPdf = attachment.type === 'application/pdf';
   return (
-    <a
-      href={attachment.url}
-      target="_blank"
-      rel="noreferrer"
+    <AbrirPrevia
+      anexo={anexo}
       className="flex max-w-[240px] items-center gap-2 rounded-md border border-white/10 bg-carbono/40 px-3 py-2 text-xs text-branco-cru/80 transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
     >
       <FileText size={14} className="shrink-0" />
       <span className="truncate">{attachment.filename ?? 'arquivo'}</span>
-    </a>
+      {ehPdf && <span className="ml-auto shrink-0 font-mono text-[9px] uppercase text-nevoa">ver</span>}
+    </AbrirPrevia>
   );
+}
+
+/**
+ * Fonte citada pelo backend vira chip. `CLICKUP_TASK:<id>` tem link real
+ * (permalink oficial do ClickUp); o resto (documento do vault, comentário sem
+ * deep-link estável, marcador plano tipo CLICKUP_OPERATION) mostra só o rótulo,
+ * do jeito que já funcionava antes — nenhuma fonte deixa de aparecer, só as
+ * que podem virar link viram.
+ */
+function fonteParaChip(source: string): { label: string; url?: string } {
+  const [prefixo, ...resto] = source.split(':');
+  const id = resto.join(':');
+  if (prefixo === 'CLICKUP_TASK' && id) {
+    return { label: `Tarefa ClickUp · ${id}`, url: `https://app.clickup.com/t/${id}` };
+  }
+  if (prefixo === 'CLICKUP_COMMENT' && id) {
+    return { label: `Comentário ClickUp · ${id}` };
+  }
+  if (source === 'CLICKUP_OPERATION') {
+    return { label: 'Consulta ao ClickUp' };
+  }
+  if (source === 'MATERIAL_ANEXADO') {
+    return { label: 'Material anexado' };
+  }
+  return { label: source };
+}
+
+/**
+ * Só `clickup.*` é ação de verdade no ClickUp — `guard.*` é checagem interna
+ * (autorização, qualidade de briefing) e confundiria quem só quer saber "o
+ * que o Bento fez", não "o que ele verificou antes de fazer".
+ */
+const NOME_DA_FERRAMENTA: Record<string, string> = {
+  'clickup.create_task': 'Criou a tarefa',
+  'clickup.update_task': 'Atualizou a tarefa',
+  'clickup.delete_task': 'Apagou a tarefa',
+  'clickup.create_comment': 'Comentou na tarefa',
+  'clickup.get_task': 'Conferiu a tarefa',
+  'clickup.get_task_comments': 'Conferiu os comentários',
+  'clickup.add_tag': 'Adicionou tag',
+  'clickup.remove_tag': 'Removeu tag',
+  'clickup.set_custom_field': 'Preencheu campo personalizado',
+  'clickup.create_checklist': 'Criou checklist',
+  'clickup.add_watcher': 'Adicionou observador',
+  'clickup.add_to_list': 'Moveu para outra lista',
+  'clickup.time_entry': 'Registrou tempo',
+  'clickup.add_dependency': 'Ligou dependência',
+  'clickup.upload_attachment': 'Anexou arquivo',
+  'clickup.selection_mutation': 'Alterou a seleção',
+};
+
+function ferramentaVisivel(toolCall: AgentToolCallWire): boolean {
+  return toolCall.tool.startsWith('clickup.');
+}
+
+function rotuloDaFerramenta(toolCall: AgentToolCallWire): string {
+  const nome = NOME_DA_FERRAMENTA[toolCall.tool] ?? toolCall.tool.replace(/^clickup\./, '').replace(/_/g, ' ');
+  return toolCall.ok ? nome : `${nome} — falhou`;
 }
 
 /** Quebra a mensagem do USUÁRIO em blocos (mesma fronteira do MarkdownLite:
@@ -207,10 +288,35 @@ export function ChatMessage({
             >
               <MarkdownLite text={streamedContent} />
 
+              {message.motion ? <MotionCard reference={message.motion} /> : null}
+
+              {message.motionBriefRequest ? (
+                <MotionBriefCard request={message.motionBriefRequest} conversationId={message.conversationId ?? null} />
+              ) : null}
+
               {message.sources && message.sources.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">
-                  {message.sources.map((source) => (
-                    <Chip key={source} label={source} />
+                  {message.sources.map((source) => {
+                    const chip = fonteParaChip(source);
+                    return <Chip key={source} label={chip.label} url={chip.url} />;
+                  })}
+                </div>
+              )}
+
+              {message.toolCalls && message.toolCalls.filter(ferramentaVisivel).length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-grafite-elevado pt-3">
+                  {message.toolCalls.filter(ferramentaVisivel).map((toolCall, indice) => (
+                    <span
+                      key={`${toolCall.tool}-${indice}`}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px]',
+                        toolCall.ok
+                          ? 'border-grafite-elevado bg-carbono text-nevoa'
+                          : 'border-erro/30 bg-erro/10 text-erro',
+                      )}
+                    >
+                      {rotuloDaFerramenta(toolCall)}
+                    </span>
                   ))}
                 </div>
               )}

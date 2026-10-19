@@ -40,7 +40,7 @@ const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise
     }
     await deleteTask(config, taskId);
     const aindaExiste = await getTask(config, taskId).then(() => true).catch(() => false);
-    if (aindaExiste) throw new Error(`Task ${taskId} ainda existe no ClickUp depois do delete — não confirmo sucesso sem read-back.`);
+    if (aindaExiste) throw new Error(`Task ${taskId} ainda existe no ClickUp depois do delete, não confirmo sucesso sem read-back.`);
     return { verified: true, detail: 'read-back confirmou ausência' };
   },
   // BL-01: edição de task aprovada executa de fato o PUT no ClickUp. O
@@ -70,7 +70,7 @@ const TOOL_EXECUTORS: Record<string, (input: Record<string, unknown>) => Promise
     };
     if (Object.keys(expected).length === 0) return { verified: true, detail: 'sem campo read-back-verificável no patch' };
     const relida = await getTask(config, taskId).catch(() => null);
-    if (!relida) throw new Error(`Não consegui reler a task ${taskId} depois do update — não confirmo sucesso sem read-back.`);
+    if (!relida) throw new Error(`Não consegui reler a task ${taskId} depois do update, não confirmo sucesso sem read-back.`);
     const verification = verifyTaskState(relida, expected);
     if (!verification.ok) throw new Error(`Update enviado, mas o read-back não confirma: ${verification.mismatches.join('; ')}`);
     return { verified: true, detail: 'read-back confirmou os campos alterados' };

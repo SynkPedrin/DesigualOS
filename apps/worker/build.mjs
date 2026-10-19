@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { shaDeRelease, versaoDoSchema } from '../../scripts/identidade-de-release.mjs';
 
 /**
  * Mesmo problema e mesma solução do apps/api/build.mjs: `tsc` puro emite
@@ -13,15 +14,40 @@ import { build } from 'esbuild';
 // empacotadas, e ESM preserva import.meta.url pros arquivos que se
 // localizam em disco por conta própria (packages/database/src/env.ts,
 // packages/router/src/marketing-copy.ts).
+/**
+ * Addons NATIVOS do Otto Motion: @remotion/renderer, @remotion/bundler (que
+ * carrega @rspack/binding) e sharp trazem binário `.node`, que o esbuild não
+ * empacota — a build do worker falhava em "No loader is configured for .node
+ * files" desde que o Motion Engine entrou, despercebido porque `dev` roda em
+ * `tsx`. Ao contrário da API, o worker RENDERIZA de verdade, então aqui eles
+ * não podem só sumir: ficam externos e precisam existir em node_modules na
+ * imagem do worker (ver o estágio `worker` em Dockerfile.prod).
+ *
+ * @react-pdf/renderer entra por outro motivo (13/10/2026): o pdfkit dentro
+ * dele resolve as fontes padrão por imports de pacote (`#standard-fonts/*`),
+ * que o Node só consegue resolver de dentro do pacote original. Empacotado,
+ * o require vazava pro bundle e o worker morria em MODULE_NOT_FOUND. Externo,
+ * ele é resolvido do node_modules da imagem, onde o imports dele vale.
+ */
+const NATIVOS_DO_MOTION = ['@remotion/renderer', '@remotion/bundler', 'sharp', '@react-pdf/renderer'];
+
 await build({
   entryPoints: ['src/index.ts'],
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node20',
+  target: 'node22',
   outfile: 'dist/index.js',
+  external: NATIVOS_DO_MOTION,
   sourcemap: true,
   logLevel: 'info',
+  // O SHA vira literal no bundle. Ver scripts/sha-de-release.mjs: o
+  // container de produção não tem .git, então resolver isso em runtime
+  // devolvia 'unknown' e o /health não provava qual commit estava no ar.
+  define: {
+    __RELEASE_SHA__: JSON.stringify(shaDeRelease()),
+    __SCHEMA_VERSION__: JSON.stringify(versaoDoSchema()),
+  },
   banner: {
     js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
   },

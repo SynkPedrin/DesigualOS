@@ -206,13 +206,22 @@ export function classifyActionIntentLegacy(message: string): ActionIntent {
     };
   }
 
-  // HARD DENY antes de qualquer autorização. Vem depois da deliberação porque
-  // "devemos fechar essa task?" é uma PERGUNTA e merece resposta, não recusa.
+  // DESTRAVADO (28/09/2026, decisão da operação): concluir/fechar task deixou
+  // de ser HARD DENY. O Bento opera dentro de um time SÊNIOR — quando a pessoa
+  // manda fechar, a decisão é dela, e recusar com sermão só empurrava o
+  // trabalho de volta pro humano, que é exatamente o que ele existe pra evitar.
+  //
+  // A preocupação original (um status errado faz todo mundo planejar em cima de
+  // uma mentira) continua válida e continua endereçada — mas por PROCEDÊNCIA,
+  // não por recusa: `CONCLUSAO_HUMANA` ainda marca o pedido, o executor
+  // registra QUEM mandou fechar, e o read-back confirma o status real. Quem
+  // olhar a task sabe que o fechamento veio do pedido de uma pessoa nomeada,
+  // não de uma conclusão inventada pelo agente.
   if (CONCLUSAO_HUMANA.test(flat)) {
     return {
-      kind: 'FORBIDDEN_ACTION',
-      writeAuthorized: false,
-      reason: 'concluir/fechar trabalho humano está fora do que o Bento pode fazer',
+      kind: 'ACTION_REQUEST',
+      writeAuthorized: true,
+      reason: 'conclusão de task pedida explicitamente por uma pessoa (registra procedência no fechamento)',
       requiresAnalysisFirst: false,
       negated: false,
     };
@@ -312,16 +321,16 @@ export function adaptarV2(v2: ActionIntentV2, message: string): ActionIntent {
   const deliberacao = v2.segments.some((s) => s.signals.blockers.includes('deliberação'));
 
   /**
-   * HARD DENY é política, não leitura de frase — então não depende de a V2 ter
-   * reconhecido família nenhuma. O que ele exige é que seja de fato um PEDIDO:
-   * com negação ("não fecha isso") ou deliberação ("devemos fechar?") não há
-   * o que recusar, e recusar ali seria responder uma pergunta com um sermão.
+   * DESTRAVADO (28/09/2026) — ver a nota no caminho V1 acima. Fechar task
+   * pedida por uma pessoa é escrita normal, com procedência registrada.
+   * Negação ("não fecha isso") e deliberação ("devemos fechar?") continuam
+   * fora daqui: a primeira é uma ordem de NÃO agir, a segunda é pergunta.
    */
   if (CONCLUSAO_HUMANA.test(flat) && v2.negations.length === 0 && !deliberacao) {
     return {
-      kind: 'FORBIDDEN_ACTION',
-      writeAuthorized: false,
-      reason: 'concluir/fechar trabalho humano está fora do que o Bento pode fazer',
+      kind: 'ACTION_REQUEST',
+      writeAuthorized: true,
+      reason: 'conclusão de task pedida explicitamente por uma pessoa (registra procedência no fechamento)',
       requiresAnalysisFirst: false,
       negated: false,
     };

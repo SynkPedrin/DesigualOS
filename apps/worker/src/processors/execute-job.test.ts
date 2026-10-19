@@ -1,24 +1,105 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '@desigual-os/logging';
+import type { ExecuteResponse } from '@desigual-os/node-protocol';
 
 /**
  * execute-job.ts é o pipeline inteiro de execução (800+ linhas), acoplado a
  * banco, filas BullMQ e rede real pros agentes. Este arquivo NÃO tenta
  * testar processAgentJob/processSingleAgentJob/processWorkflowStep fim a
- * fim (isso exigiria recriar o banco inteiro) - foca nas três funções que
- * são lógica isolável e de maior risco: buildNodeUrl (monta a URL de
- * dispatch), callBento e callAgentesDesigual (Jarbas/Suzy - inclui a
- * barreira de aprovação humana adicionada em 08/09/2026).
+ * fim (isso exigiria recriar o banco inteiro) - foca nas funções que são
+ * lógica isolável e de maior risco: buildNodeUrl (monta a URL de dispatch),
+ * callBento e callAgentesDesigual (Jarbas/Suzy - inclui a barreira de
+ * aprovação humana adicionada em 08/09/2026), e
+ * listasDeClickUpDaOrganizacao (P0.1 slice 2, 05/10/2026 - fecha o
+ * vazamento cross-tenant das quatro chamadas que montam "estado da
+ * operação" pro Bento: ata de reunião, pergunta operacional, estado por
+ * turno e panorama liam `clickupListId` de clientes de QUALQUER empresa,
+ * filtrando só `deletedAt is null`).
  *
- * buildNodeUrl/callBento/callAgentesDesigual não eram exportadas; ganharam
- * `export` (só a palavra-chave, nenhuma mudança de lógica) especificamente
- * pra viabilizar este teste.
+ * buildNodeUrl/callBento/callAgentesDesigual/listasDeClickUpDaOrganizacao
+ * não eram exportadas; ganharam `export` (só a palavra-chave, nenhuma
+ * mudança de lógica) especificamente pra viabilizar este teste.
  */
 
-// db/schema não são tocados por nenhuma das 3 funções testadas aqui, mas
-// precisam existir pra o módulo importar sem estourar (o client real de
+// db/schema: recordTokenUsage (testada abaixo) grava via insert e às vezes
+// lê a execution; as demais funções testadas aqui não tocam o banco, mas o
+// mock precisa existir pra o módulo importar sem estourar (o client real de
 // @desigual-os/database exige DATABASE_URL, que não está setada em teste).
-vi.mock('@desigual-os/database', () => ({ db: {}, schema: {} }));
+const mockInsertValues = vi.fn();
+let mockSelectRows: unknown[] = [];
+let mockSelectRejects: Error | null = null;
+
+/** Clientes em memória, só pro isolamento cross-tenant de
+ *  listasDeClickUpDaOrganizacao (ver describe abaixo) - as demais funções
+ *  testadas aqui nunca tocam `clients`, então começa vazio sem afetá-las. */
+interface MockClientRow {
+  clickupListId: string | null;
+  name: string;
+  organizationId: string | null;
+  deletedAt: Date | null;
+}
+let mockClients: MockClientRow[] = [];
+
+/** Mesmo extrator de valores embutidos numa condição drizzle mockada usado
+ *  em apps/api (organizations/membros.test.ts, admin/routes.test.ts). */
+function coletarParams(no: unknown, achados: string[] = []): string[] {
+  if (typeof no === 'string') {
+    achados.push(no);
+    return achados;
+  }
+  if (Array.isArray(no)) {
+    for (const item of no) coletarParams(item, achados);
+    return achados;
+  }
+  if (no === null || typeof no !== 'object') return achados;
+  if ('value' in no && !Array.isArray((no as { value: unknown }).value)) {
+    coletarParams((no as { value: unknown }).value, achados);
+  }
+  const chunks = (no as { queryChunks?: unknown[] }).queryChunks;
+  if (Array.isArray(chunks)) for (const c of chunks) coletarParams(c, achados);
+  return achados;
+}
+
+vi.mock('@desigual-os/database', () => {
+  const clients = {
+    clickupListId: 'clients.clickup_list_id',
+    name: 'clients.name',
+    organizationId: 'clients.organization_id',
+    deletedAt: 'clients.deleted_at',
+  };
+
+  return {
+    db: {
+      insert: () => ({
+        values: (v: unknown) => {
+          mockInsertValues(v);
+          return Promise.resolve();
+        },
+      }),
+      select: () => ({
+        from: (table: unknown) => ({
+          where: (cond: unknown) => {
+            if (table === clients) {
+              const params = coletarParams(cond);
+              const orgIds = params.filter((p) => mockClients.some((c) => c.organizationId === p));
+              return Promise.resolve(
+                mockClients
+                  .filter((c) => c.deletedAt === null && (orgIds.length === 0 || (c.organizationId !== null && orgIds.includes(c.organizationId))))
+                  .map((c) => ({ id: c.clickupListId, name: c.name })),
+              );
+            }
+            return mockSelectRejects ? Promise.reject(mockSelectRejects) : Promise.resolve(mockSelectRows);
+          },
+        }),
+      }),
+    },
+    schema: {
+      tokenUsage: { executionId: 'token_usage.execution_id' },
+      executions: { id: 'executions.id', organizationId: 'executions.organization_id' },
+      clients,
+    },
+  };
+});
 
 // Mock leve do orchestrator: só os valores que callAgentesDesigual/callBento
 // realmente leem (AGENT_TIMEOUT_MS). O resto vira vi.fn() só pra satisfazer
@@ -317,13 +398,40 @@ describe('callAgentesDesigual (Jarbas/Suzy)', () => {
  * era um HTTP 502 do bento-qa ("o motor de texto não respondeu em 30s").
  */
 describe('failureAnswerFor', () => {
-  it('repassa o motivo real do agente em vez de culpar a pergunta', async () => {
+  /**
+   * O princípio não mudou: nunca culpar a pergunta por defeito de máquina. O
+   * que mudou foi o outro extremo, encontrado na bateria de uso livre de
+   * 29/09/2026 — o motivo cru ia inteiro pra tela, e a pessoa lia "Não consegui
+   * responder agora: Ollama 502". Não dá pra agir sobre isso.
+   */
+  it('traduz falha de infraestrutura em algo que a pessoa possa fazer', async () => {
     const { failureAnswerFor } = await import('./execute-job.js');
 
-    expect(failureAnswerFor('bento', 'HTTP 502')).toBe('Não consegui responder agora: HTTP 502');
-    expect(failureAnswerFor('bento', 'o Bento não respondeu em 100s')).toBe(
-      'Não consegui responder agora: o Bento não respondeu em 100s',
-    );
+    for (const cru of ['HTTP 502', 'Ollama 502', 'ocupado respondendo outra pergunta, tenta em alguns segundos']) {
+      const texto = failureAnswerFor('bento', cru);
+      expect(texto).toContain('congestionado');
+      expect(texto.toLowerCase()).not.toContain('ollama');
+      expect(texto).not.toContain('502');
+    }
+
+    expect(failureAnswerFor('bento', 'o Bento não respondeu em 100s')).toContain('passou do tempo');
+  });
+
+  it('nunca manda reformular a pergunta quando o defeito é da máquina', async () => {
+    const { failureAnswerFor } = await import('./execute-job.js');
+    for (const cru of ['HTTP 503', 'ECONNRESET', 'o Bento não respondeu em 100s']) {
+      expect(failureAnswerFor('bento', cru)).not.toMatch(/reformul|reescrev/i);
+    }
+  });
+
+  /**
+   * Motivo que ninguém classificou vai cru DE PROPÓSITO. Trocar o desconhecido
+   * por "algo deu errado" é como se perde o próximo defeito: some da tela e não
+   * aparece em lugar nenhum.
+   */
+  it('motivo desconhecido continua aparecendo inteiro', async () => {
+    const { failureAnswerFor } = await import('./execute-job.js');
+    expect(failureAnswerFor('bento', 'coluna x não existe')).toBe('Não consegui responder agora: coluna x não existe');
   });
 
   it('agente que falhou sem informar motivo diz exatamente isso, e nomeia quem falhou', async () => {
@@ -374,6 +482,64 @@ describe('parseAgentLoopFlag (AGENT_LOOP_V2 por agente)', () => {
   });
 });
 
+/**
+ * Sequestro medido ao vivo em 24/09/2026: "Crie um motion..." do Otto era
+ * interceptado pelo guard do Bento como escrita no ClickUp e o turno nunca
+ * chegava no motion guard (que vem depois no pipeline por desenho). A correção
+ * é a pré-detecção `isMotionTurnBeforeBentoGuard`, cuja saída é a ÚNICA coisa
+ * entre o turno e o tryBentoActionGuard (`if (... && !motionPre)`). Estes testes
+ * provam o desvio sem montar o job inteiro: o que a função desvia do Bento é
+ * exatamente o que a MESMA chamada `detectMotionIntent` entrega ao tryMotionGuard
+ * como portão de entrada — detectou aqui = o motion guard assume logo abaixo.
+ */
+describe('desvio motion -> guard do Bento (isMotionTurnBeforeBentoGuard)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('pedido de motion com agente otto e flag ligada: NÃO vai pro guard do Bento...', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie um motion para a campanha de setembro.')).toBe(true);
+  }, IMPORT_A_FRIO_MS);
+
+  it('...e a MESMA detecção é o portão do tryMotionGuard — o turno desviado cai nele', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { detectMotionIntent } = await import('@desigual-os/otto-motion');
+    // tryMotionGuard decide assumir o turno por esta chamada idêntica (sem
+    // sessão ativa é o caminho de criação — ver motion-guard.ts). Se a
+    // pré-detecção acendeu, esta acende junto: não existe "desvia do Bento e
+    // cai no limbo".
+    const intent = detectMotionIntent('Crie um motion para a campanha de setembro.', { hasActiveSession: false });
+    expect(intent?.kind).toBe('create');
+  });
+
+  it('pedido normal de task ("crie uma task...") continua indo pro guard do Bento', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie uma task pra revisar o carrossel da Elite')).toBe(false);
+    expect(isMotionTurnBeforeBentoGuard('bento', 'crie uma task de revisão no ClickUp')).toBe(false);
+  });
+
+  it('com a flag desligada o comportamento é o antigo: até pedido de motion vai pro guard do Bento', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'false');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie um motion para a campanha de setembro.')).toBe(false);
+  });
+
+  it('flag ausente (não "true") também é o comportamento antigo', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', '');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('otto', 'Crie um motion de 15s')).toBe(false);
+  });
+
+  it('pedido de motion com OUTRO agente não desvia — a pré-detecção é exclusiva do otto', async () => {
+    vi.stubEnv('OTTO_MOTION_ENABLED', 'true');
+    const { isMotionTurnBeforeBentoGuard } = await import('./execute-job.js');
+    expect(isMotionTurnBeforeBentoGuard('bento', 'Crie um motion para a campanha de setembro.')).toBe(false);
+  });
+});
+
 describe('limitarContexto', () => {
   it('junta as partes que existem e ignora vazio', async () => {
     const { limitarContexto } = await import('./execute-job.js');
@@ -395,4 +561,266 @@ describe('limitarContexto', () => {
     const { limitarContexto } = await import('./execute-job.js');
     expect(limitarContexto(['x'.repeat(80_000)])).toMatch(/CONTEXTO TRUNCADO/);
   }, 30_000);
+});
+
+/**
+ * Bateria de uso livre, 29/09/2026: 16 turnos seguidos numa conversa só, como
+ * uma pessoa usa de verdade. Quatro deles morreram em falha passageira do nó de
+ * perguntas, que atende UMA pergunta por vez — e um deles veio com o serviço
+ * dizendo, com todas as letras, "tenta em alguns segundos". Ninguém tentava.
+ */
+describe('falhaTransitoriaDoBentoQA', () => {
+  it('o que passa se esperar: congestionamento, queda de rede, 5xx', async () => {
+    const { falhaTransitoriaDoBentoQA } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('Ollama 502', 'bento'))).toBe(true);
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('ocupado respondendo outra pergunta', 'bento'))).toBe(true);
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('não consegui falar com o Bento (fetch failed)', 'rede'))).toBe(true);
+    expect(falhaTransitoriaDoBentoQA(new Error('socket hang up'))).toBe(true);
+  });
+
+  it('o que NÃO passa: credencial, resposta sem fonte, e o teto de tempo', async () => {
+    const { falhaTransitoriaDoBentoQA } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('HTTP 401', 'auth'))).toBe(false);
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('respondeu sem fonte resolvível', 'sem-fonte'))).toBe(false);
+    // Já esperou o teto inteiro: repetir dobra a espera de quem olha pra tela.
+    expect(falhaTransitoriaDoBentoQA(new BentoQAError('o Bento não respondeu em 120s', 'timeout'))).toBe(false);
+  });
+
+  it('erro que ninguém previu não vira retentativa às cegas', async () => {
+    const { falhaTransitoriaDoBentoQA } = await import('./execute-job.js');
+    expect(falhaTransitoriaDoBentoQA(new Error('coluna x não existe'))).toBe(false);
+  });
+});
+
+/**
+ * A prova do que a bateria de uso livre expôs: a pergunta que morria em
+ * "Ollama 502" volta a ser respondida sozinha, sem ninguém apertar nada.
+ */
+describe('callBento reespera a falha passageira', () => {
+  const logger = fakeLogger();
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    mockAskBentoQA.mockReset();
+  });
+
+  it('502 na primeira ida, resposta na segunda: a pessoa recebe a resposta', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('BENTO_QA_TOKEN', 'token-teste');
+    const { callBento } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+    mockAskBentoQA
+      .mockRejectedValueOnce(new BentoQAError('Ollama 502', 'bento'))
+      .mockResolvedValueOnce({ text: '411 tarefas abertas.', citations: [{ n: 1, path: 'clickup' }] });
+
+    const promessa = callBento('quantas tarefas?', logger);
+    await vi.advanceTimersByTimeAsync(3_000);
+    const result = await promessa;
+
+    expect(result.status).toBe('completed');
+    expect(result.answer).toBe('411 tarefas abertas.');
+    expect(mockAskBentoQA).toHaveBeenCalledTimes(2);
+  }, IMPORT_A_FRIO_MS);
+
+  it('congestionado nas três idas: desiste, e o que chega na tela é acionável', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('BENTO_QA_TOKEN', 'token-teste');
+    const { callBento, failureAnswerFor } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+    mockAskBentoQA.mockRejectedValue(new BentoQAError('ocupado respondendo outra pergunta', 'bento'));
+
+    const promessa = callBento('quantas tarefas?', logger);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await promessa;
+
+    expect(result.status).toBe('failed');
+    expect(mockAskBentoQA).toHaveBeenCalledTimes(3);
+    expect(failureAnswerFor('bento', result.error)).toContain('congestionado');
+  }, IMPORT_A_FRIO_MS);
+
+  it('credencial recusada NÃO é reesperada: três tentativas dariam três vezes o mesmo não', async () => {
+    vi.stubEnv('BENTO_QA_TOKEN', 'token-teste');
+    const { callBento } = await import('./execute-job.js');
+    const { BentoQAError } = await import('@desigual-os/tool-gateway');
+    mockAskBentoQA.mockRejectedValue(new BentoQAError('HTTP 401', 'auth'));
+
+    const result = await callBento('oi', logger);
+
+    expect(result.status).toBe('failed');
+    expect(mockAskBentoQA).toHaveBeenCalledTimes(1);
+  }, IMPORT_A_FRIO_MS);
+});
+
+describe('recordTokenUsage — empresa dona do custo (migração 0049)', () => {
+  const usage = { input_tokens: 120, output_tokens: 45 };
+  const resultado = { status: 'completed', answer: 'ok', usage } as never;
+
+  beforeEach(() => {
+    mockInsertValues.mockReset();
+    mockSelectRows = [];
+    mockSelectRejects = null;
+  });
+
+  it('grava a organização que o chamador JÁ tinha, sem consulta extra', async () => {
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    await recordTokenUsage('exec-1', resultado, 'org-agencia');
+
+    expect(mockInsertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ executionId: 'exec-1', organizationId: 'org-agencia' }),
+    );
+  });
+
+  it('resolve pela execution quando o chamador não tem o valor', async () => {
+    mockSelectRows = [{ organizationId: 'org-resolvida' }];
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    await recordTokenUsage('exec-1', resultado);
+
+    expect(mockInsertValues).toHaveBeenCalledWith(expect.objectContaining({ organizationId: 'org-resolvida' }));
+  });
+
+  /**
+   * O caso que NÃO PODE derrubar o turno: execution órfã, linha apagada,
+   * banco falhando. Custo é telemetria — a linha nasce sem dono e o turno
+   * segue, nunca o contrário.
+   */
+  it('execution órfã ou banco falhando: grava sem dono e NÃO lança', async () => {
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    mockSelectRows = [];
+    await expect(recordTokenUsage('exec-orfa', resultado)).resolves.toBeUndefined();
+    expect(mockInsertValues).toHaveBeenCalledWith(expect.objectContaining({ organizationId: null }));
+
+    mockInsertValues.mockReset();
+    mockSelectRejects = new Error('connection reset');
+    await expect(recordTokenUsage('exec-orfa', resultado)).resolves.toBeUndefined();
+    expect(mockInsertValues).toHaveBeenCalledWith(expect.objectContaining({ organizationId: null }));
+  });
+
+  it('turno sem tokens não grava nada (como sempre foi)', async () => {
+    const { recordTokenUsage } = await import('./execute-job.js');
+
+    await recordTokenUsage('exec-1', { status: 'completed', answer: null, usage: { input_tokens: 0, output_tokens: 0 } } as never);
+
+    expect(mockInsertValues).not.toHaveBeenCalled();
+  });
+});
+
+describe('listasDeClickUpDaOrganizacao — P0.1 slice 2: isolamento cross-tenant das listas de ClickUp que o Bento usa pra "estado da operação"', () => {
+  const ORG_A = 'org-a-11111111';
+  const ORG_B = 'org-b-22222222';
+
+  beforeEach(() => {
+    mockClients = [
+      { clickupListId: 'LIST_A', name: 'Cliente A', organizationId: ORG_A, deletedAt: null },
+      { clickupListId: 'LIST_B', name: 'Cliente B', organizationId: ORG_B, deletedAt: null },
+    ];
+  });
+
+  it('execução da organização A só recebe a lista do cliente A — nunca a de B', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    const linhas = await listasDeClickUpDaOrganizacao(ORG_A);
+
+    expect(linhas.map((l) => l.id)).toEqual(['LIST_A']);
+    expect(linhas.map((l) => l.id)).not.toContain('LIST_B');
+  });
+
+  it('execução da organização B só recebe a lista do cliente B — nunca a de A', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    const linhas = await listasDeClickUpDaOrganizacao(ORG_B);
+
+    expect(linhas.map((l) => l.id)).toEqual(['LIST_B']);
+    expect(linhas.map((l) => l.id)).not.toContain('LIST_A');
+  });
+
+  it('cliente apagado (soft delete) não entra, mesmo pertencendo à organização certa', async () => {
+    mockClients.push({ clickupListId: 'LIST_A_APAGADO', name: 'Cliente A (apagado)', organizationId: ORG_A, deletedAt: new Date() });
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    const linhas = await listasDeClickUpDaOrganizacao(ORG_A);
+
+    expect(linhas.map((l) => l.id)).not.toContain('LIST_A_APAGADO');
+  });
+
+  /**
+   * FAIL CLOSED: `executions.organization_id` é nullable (migração 0045 -
+   * linha legada sem resolução vira NULL de propósito). Sem organização,
+   * NUNCA pode cair para "todos os clientes" - a única resposta segura é
+   * lista vazia, mesmo com `mockClients` populado com A e B.
+   */
+  it('FAIL CLOSED: organizationId null nunca consulta todos os clientes', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    expect(await listasDeClickUpDaOrganizacao(null)).toEqual([]);
+  });
+
+  it('FAIL CLOSED: organizationId undefined (execution não encontrada no UPDATE...RETURNING) nunca consulta todos os clientes', async () => {
+    const { listasDeClickUpDaOrganizacao } = await import('./execute-job.js');
+
+    expect(await listasDeClickUpDaOrganizacao(undefined)).toEqual([]);
+  });
+});
+
+/**
+ * Bento 3.0, Fase 5: qual camada da cascata (core novo / guard legado /
+ * serviço externo) respondeu cada turno era desconhecido — a própria Fase 0
+ * (investigação forense) não soube medir. `marcarCamadaDaCascata` é o ponto
+ * único de marcação, chamado nos 6 lugares onde `result`/`guardedResult`
+ * nasce (core, guard, atalhos antigos, loop agêntico, caminho direto,
+ * etapa de workflow) — testado aqui como a função pura que é.
+ */
+describe('marcarCamadaDaCascata (Fase 5: qual camada respondeu o turno)', () => {
+  it('marca a camada quando o resultado ainda não tem nenhuma', async () => {
+    const { marcarCamadaDaCascata } = await import('./execute-job.js');
+    const base: ExecuteResponse = { execution_id: 'e1', agent: 'bento', status: 'completed', answer: 'ok', sources: [], tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 } };
+
+    const marcado = marcarCamadaDaCascata(base, 'core_openai');
+
+    expect(marcado.metadata?.bento_cascade_tier).toBe('core_openai');
+  });
+
+  it('NUNCA sobrescreve uma marca já existente — a ordem de chamada não pode decidir por acidente qual camada "venceu"', async () => {
+    const { marcarCamadaDaCascata } = await import('./execute-job.js');
+    const jaMarcado = {
+      execution_id: 'e1',
+      agent: 'bento' as const,
+      status: 'completed' as const,
+      answer: 'ok',
+      sources: [],
+      tool_calls: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      metadata: { bento_cascade_tier: 'core_openai', outraCoisa: 1 },
+    };
+
+    const resultado = marcarCamadaDaCascata(jaMarcado, 'atalho_direto');
+
+    expect(resultado.metadata?.bento_cascade_tier).toBe('core_openai');
+    expect(resultado).toBe(jaMarcado);
+  });
+
+  it('preserva o resto da metadata ao marcar — não é um replace, é um merge', async () => {
+    const { marcarCamadaDaCascata } = await import('./execute-job.js');
+    const base = {
+      execution_id: 'e1',
+      agent: 'bento' as const,
+      status: 'completed' as const,
+      answer: 'ok',
+      sources: [],
+      tool_calls: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      metadata: { guard: 'bento-panorama', tasks: 12 },
+    };
+
+    const marcado = marcarCamadaDaCascata(base, 'atalho_direto');
+
+    expect(marcado.metadata).toEqual({ guard: 'bento-panorama', tasks: 12, bento_cascade_tier: 'atalho_direto' });
+  });
 });

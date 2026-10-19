@@ -5,12 +5,32 @@ import { NODE_STATUSES } from '@desigual-os/types';
 import { syncAgents, getProbeTargets, readWorkerHealth } from '@desigual-os/orchestrator';
 import { getReleaseInfo } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
+import { exigirProvedor } from '../lib/escopo-de-organizacao';
 import { separarRegistrosAposentados } from './retired-nodes';
+import { classificadorDisponivel } from '@desigual-os/router';
 
 export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
   // Gerenciamento de agentes/infra é assunto de master (pedido do usuário:
   // colaborador só vê o dia a dia dele, não saúde de máquina).
-  app.get('/health/infrastructure', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+  app.get('/health/infrastructure', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
+    /**
+     * O WORKER É CONSULTADO EM PARALELO, e isso é a continuação da mesma
+     * correção que o comentário mais abaixo descreve.
+     *
+     * Ali, "um node por vez" virava N consultas sequenciais. Aqui sobrava a
+     * última perna: a saúde do worker (Redis + contagem das seis filas) era
+     * esperada DEPOIS das duas consultas ao Postgres, embora não dependa de
+     * nenhuma delas. Três esperas em fila numa rota pollada a cada 15 segundos
+     * por aba aberta.
+     *
+     * Medido em 01/10/2026: 0,85s sozinha, 2,2s com seis abas, 37,7s de pico
+     * durante a suíte — e, por segurar conexão do pool (`DATABASE_POOL_MAX=3`),
+     * derrubava o painel da home, que não tem relação nenhuma com
+     * infraestrutura. É o MESMO sintoma de 10/09 ("tudo no Studio demora pra
+     * abrir") voltando por outra perna da mesma rota.
+     */
+    const saudeDoWorker = readWorkerHealth();
+
     const rows = await db
       .select({
         nodeId: schema.nodes.nodeId,
@@ -46,12 +66,14 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
     // sintoma reportado como "tudo dentro do Studio demora pra abrir".
     // `selectDistinctOn` busca o health check mais recente de TODOS os
     // nodes numa única consulta, não uma por node.
+    // Só os ATIVOS: o registro aposentado não é renderizado, e buscar a medição
+    // dele era ler linha para jogar fora.
     const latestHealthByNode =
-      rows.length > 0
+      ativos.length > 0
         ? await db
             .selectDistinctOn([schema.healthChecks.nodeId])
             .from(schema.healthChecks)
-            .where(inArray(schema.healthChecks.nodeId, rows.map((row) => row.internalId)))
+            .where(inArray(schema.healthChecks.nodeId, ativos.map((row) => row.internalId)))
             .orderBy(schema.healthChecks.nodeId, desc(schema.healthChecks.createdAt))
         : [];
     const latestByNodeId = new Map(latestHealthByNode.map((check) => [check.nodeId, check]));
@@ -83,7 +105,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
     // dos agentes), e o processo local que executa TODO job do sistema não aparecia. Resultado
     // medido em 10/09/2026: worker morto por 10 minutos, fila empilhando, e o painel estampando
     // "Saúde geral 100% / Todos os sistemas online". Saúde que não cobre o executor não é saúde.
-    const worker = await readWorkerHealth();
+    const worker = await saudeDoWorker;
 
     return {
       // P1-04 (release readiness audit, 22/09/2026): "não é possível
@@ -118,6 +140,20 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
         agent: row.agent,
         last_heartbeat_at: row.lastHeartbeatAt?.toISOString() ?? null,
       })),
+      /**
+       * A CAMADA QUE INTERPRETA LINGUAGEM LIVRE TEM CREDENCIAL?
+       *
+       * Sem `OPENAI_API_KEY` o classificador do roteador devolve `null` em
+       * toda chamada, e todo pedido que não casa com uma das regras
+       * determinísticas vira "não entendi, me diz se é operação, mídia ou
+       * criação". Visto da tela, o assistente está quebrado.
+       *
+       * Até 09/10/2026 esse estado só existia como um `logger.warn` dentro do
+       * pacote do roteador. Saúde que não cobre o que a pessoa usa não é
+       * saúde — é a mesma razão por que o worker entrou nesta resposta em
+       * 10/09.
+       */
+      router_classifier_configured: classificadorDisponivel(),
       // Não existe sistema de backup implementado ainda; nunca inventar um valor aqui.
       last_backup_at: null,
       nodes,
@@ -126,7 +162,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
 
   app.get<{ Params: { node_id: string } }>(
     '/nodes/:node_id',
-    { preHandler: [requireAuth, requirePermission('nodes', 'read')] },
+    { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] },
     async (request, reply) => {
     const [node] = await db
       .select({
@@ -192,7 +228,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
    * autossolucionado. Substitui a espera passiva por heartbeat - que nunca
    * chegava, deixando a tela em "0/2 agentes conectados".
    */
-  app.post('/health/sync', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+  app.post('/health/sync', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
     const report = await syncAgents();
     return {
       ran_at: report.ranAt,
@@ -225,7 +261,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
    * node vira um evento - offline vira erro, volta pro ar vira info, e
    * qualquer estado intermediário vira aviso.
    */
-  app.get('/health/events', { preHandler: [requireAuth, requirePermission('nodes', 'read')] }, async () => {
+  app.get('/health/events', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
     const rows = await db
       .select({
         nodeId: schema.nodes.nodeId,

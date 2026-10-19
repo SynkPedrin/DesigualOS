@@ -1,12 +1,16 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import { invalidateUserAccessCache, requireAuth } from './middleware';
+import { escopoDeOrganizacao } from '../lib/escopo-de-organizacao';
+import { contextoCompletoDe } from '../organizations/contexto';
 import { uploadUserFile } from '../lib/storage';
 import { sendResetPasswordEmail } from '../lib/email';
+import { urlPublicaDoAppCom } from '../lib/url-do-app';
+import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 
 const logger = createLogger({ service: 'auth-recovery' });
 const forgotPasswordSchema = z.object({ email: z.string().email() });
@@ -20,6 +24,9 @@ const updateMeSchema = z.object({
   // Tema da UI: claro, escuro, ou segue o SO ("system"). Persistido pra
   // valer em qualquer aparelho que o usuário logar, não só localStorage.
   theme: z.enum(['light', 'dark', 'system']).optional(),
+  // Função na operação (Tráfego, Atendimento...), pedida no primeiro acesso
+  // pelo convite. null apaga de propósito.
+  job_title: z.string().min(1).max(80).nullable().optional(),
   // Widgets escolhidos pelo colaborador pro dashboard personalizado dele
   // (pedido do usuário). IDs livres (o frontend decide o catálogo); isso
   // só é preferência de exibição, cada widget busca dado de uma rota com
@@ -61,7 +68,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const admin = getSupabaseAdminClient(supabaseUrl, secretKey);
-      const redirectTo = `${process.env.FRONTEND_URL ?? 'http://localhost:3000'}/reset-password`;
+      const redirectTo = urlPublicaDoAppCom('/reset-password');
       const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
 
       try {
@@ -106,8 +113,72 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/me', { preHandler: requireAuth }, async (request) => {
-    return request.authUser;
+  /**
+   * `/me` passa a dizer DE QUAL EMPRESA a pessoa é.
+   *
+   * Até 30/09/2026 devolvia id, e-mail, nome, papéis, permissões, avatar,
+   * idioma, tema e o e-mail do ClickUp — e nenhum campo de organização. O
+   * inventário forense registrou a consequência: a interface não tinha como
+   * saber em que empresa estava. Sem isso, branding por tenant, troca de
+   * empresa e barra lateral por tenant não têm de onde ler.
+   *
+   * É o campo que destrava as seções 20, 22, 59, 61 e 62 do briefing de uma
+   * vez, e por isso vem antes delas.
+   *
+   * `organizacao_ativa` é a atual; `organizacoes` são todas em que a pessoa é
+   * membro — é daqui que sai a lista do seletor de empresa, quando houver mais
+   * de uma. Hoje existe uma só, então a lista tem um item e o seletor não
+   * aparece: a interface mostra escolha quando há escolha.
+   */
+  app.get('/me', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    // Primeiro acesso já liga a pessoa ao ClickUp, em segundo plano (Tarefas,
+    // "minhas tarefas" do Bento e avisos proativos dependem disso).
+    void garantirEmailDoClickUp(user.id).catch(() => null);
+
+    /**
+     * UMA ida ao banco para tudo que é de empresa, e não quatro.
+     *
+     * Medido: cada consulta contra este banco custa ~300ms de rede, qualquer
+     * que seja o tamanho dela. As quatro sequenciais que havia aqui faziam
+     * `/me` levar 1,3s — numa rota que toda navegação chama.
+     */
+    const contexto = await contextoCompletoDe(user);
+    const escopo = contexto.escopo;
+
+    return {
+      ...user,
+      organizacoes: contexto.organizacoes,
+      /**
+       * A EMPRESA EM QUE A PESSOA ESTÁ AGORA.
+       *
+       * Vem de `users.organizacao_ativa_id`, revalidada a cada chamada — não da
+       * URL, e não de um estado de front. Quem é de uma organização só nunca
+       * "entra" em lugar nenhum, e a escada de `organizacaoDeTrabalhoDe`
+       * resolve por ela.
+       *
+       * A revalidação importa: alguém pode ter sido removido da empresa DEPOIS
+       * de entrar nela, e nesse caso o contexto salvo seria uma permissão
+       * vencida guardada no banco.
+       *
+       * É DE PROPÓSITO a MESMA função que o middleware de tenant usa. Enquanto
+       * este campo respondia `organizacoes[0]`, a tela podia dizer uma empresa
+       * e a gravação cair em outra — ordem de linha do banco decidindo o que a
+       * regra já sabia responder.
+       */
+      organizacao_ativa: contexto.deTrabalho,
+      /**
+       * Opera no nível da plataforma. NUNCA derivado só do papel: exige também
+       * pertencer à organização provedora. Ver lib/escopo-de-organizacao.ts —
+       * é o que impede o administrador de um cliente virar administrador da
+       * plataforma por herdar um nome de papel.
+       */
+      eh_provider: escopo.ehProvider,
+    };
   });
 
   // Perfil próprio do colaborador: hoje só nome e o e-mail do ClickUp
@@ -126,6 +197,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.language !== undefined ? { language: body.language } : {}),
         ...(body.theme !== undefined ? { theme: body.theme } : {}),
+        ...(body.job_title !== undefined ? { jobTitle: body.job_title } : {}),
         ...(body.dashboard_widgets !== undefined
           ? { dashboardWidgets: body.dashboard_widgets }
           : {}),
@@ -152,6 +224,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       theme: updated.theme,
       dashboard_widgets: updated.dashboardWidgets,
       avatar_url: updated.avatarUrl,
+      job_title: updated.jobTitle,
     };
   });
 

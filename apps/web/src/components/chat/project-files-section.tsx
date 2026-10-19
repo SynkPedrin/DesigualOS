@@ -5,6 +5,7 @@ import { Download, File, FileText, Loader2, Paperclip, Trash2 } from 'lucide-rea
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDeleteProjectFile, useProjectFiles, useUploadProjectFile } from '@/hooks/use-project-files';
 import type { ProjectFile, ProjectFileKind } from '@/lib/api/contracts';
+import { AbrirPrevia } from '@/components/ui/previa-de-anexo';
 
 const KIND_LABELS: Record<ProjectFileKind, string> = {
   identidade_visual: 'Identidade visual',
@@ -127,12 +128,18 @@ export function ProjectFilesSection({ projectId }: { projectId: string }) {
               className="flex items-center gap-3 rounded-md border border-grafite-elevado bg-grafite/40 px-3 py-2"
             >
               <FileTypeIcon file={file} />
-              <div className="min-w-0 flex-1">
+              {/* O nome vira o gatilho da prévia: imagem e PDF abrem sobre a
+                * tela, sem trocar de aba. O botão de baixar continua ao lado,
+                * para quem quer o arquivo e não a olhada. */}
+              <AbrirPrevia
+                anexo={{ url: file.storageUrl, filename: file.filename, contentType: file.contentType }}
+                className="min-w-0 flex-1"
+              >
                 <p className="truncate text-sm text-branco-cru" title={file.filename}>
                   {file.filename}
                 </p>
                 <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">{KIND_LABELS[file.kind]}</p>
-              </div>
+              </AbrirPrevia>
               <a
                 href={file.storageUrl}
                 target="_blank"

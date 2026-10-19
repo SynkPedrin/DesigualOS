@@ -192,7 +192,7 @@ export function StudioProcessButton({
                 <span className="truncate">
                   {status === 'queued'
                     ? state.queuePosition
-                      ? `Na fila — posição ${state.queuePosition}`
+                      ? `Na fila, posição ${state.queuePosition}`
                       : 'Na fila'
                     : status === 'finalizing'
                       ? 'Finalizando'

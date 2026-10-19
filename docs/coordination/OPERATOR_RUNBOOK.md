@@ -98,7 +98,51 @@ lista antes de rodar.
 
 ## F — Comandos canônicos de deploy
 
-**Não descobertos neste repositório.** Não existe `ecosystem.config.js`, não
+### Web (Vercel) — descoberto e medido em 13/10/2026
+
+O projeto Vercel `desigual-os` tem integração com o GitHub: push em qualquer
+branch gera Preview automático (~2 min de build). O caminho que funciona bem:
+
+```bash
+git push                                    # dispara a Preview do commit
+vercel ls desigual-os                       # espera a Preview ficar Ready
+vercel promote <url-da-preview> --yes       # rebuilda c/ env de produção e promove
+```
+
+Medido: push → Preview Ready em 2min → promote → produção no ar em mais ~2min.
+
+O caminho que NÃO presta: `vercel --prod` por upload do diretório. Fica
+UNKNOWN/Queued por 20+ minutos (duas tentativas travaram assim em 13/10) e,
+pior, mandaria a ÁRVORE DE TRABALHO — com os arquivos não commitados de
+outras sessões. A via git+promote deploya exatamente o commit.
+
+E um achado que vale registrar: deploys anteriores por CLI saíam do diretório
+de trabalho, não do commit — o que estava no ar podia depender de arquivo que
+o repositório não conhecia (foi o caso do `bento-bolha.tsx`).
+
+### API/worker (VPS) — descoberto e medido em 13/10/2026
+
+`api.citavel.ai` resolve para a VPS `191.252.203.180` (hostname `vps37685`).
+O repositório fica em `/opt/desigual-os`, na branch que está em produção,
+e roda com `docker-compose.prod.yml` (containers `desigual-os-api`,
+`desigual-os-worker` e `desigual-os-redis`).
+
+```bash
+ssh -i ~/.ssh/id_ed25519_vps_desigual_os root@191.252.203.180
+cd /opt/desigual-os
+git status --short                 # tem que estar vazio, ou o pull mistura
+git pull --ff-only
+RELEASE_SHA=$(git rev-parse HEAD) docker compose -f docker-compose.prod.yml --env-file .env up -d --build api worker
+```
+
+Medido: o build e a troca dos dois containers levam cerca de 2 minutos, e o
+Redis não é recriado. Para conferir, rode
+`curl https://api.citavel.ai/health`. O `release_sha` tem que ser o HEAD que
+foi enviado, e não basta o 200, que o container antigo também responde.
+Migrations NÃO rodam nesse passo; aplicar antes, à parte.
+
+O texto abaixo é o registro de antes da descoberta, mantido como histórico.
+ Não existe `ecosystem.config.js`, não
 existe `scripts/deploy*`, não existe pipeline de CD (`.github/workflows/ci.yml`
 é só gate de qualidade: install → build → typecheck → lint → test, não
 deploy). O relatório de lançamento anterior (`f973ddc`,

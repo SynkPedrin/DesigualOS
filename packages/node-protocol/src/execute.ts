@@ -72,13 +72,24 @@ export type ExecuteRequest = z.infer<typeof executeRequestSchema>;
 
 export const executeResultStatusSchema = z.enum(['completed', 'failed', 'timeout']);
 
+/** Bento 3.0, Fase 3: uma chamada de ferramenta real, pra chegar no chat em vez de morrer no worker. */
+export const toolCallWireSchema = z.object({
+  tool: z.string(),
+  input_summary: z.string().optional(),
+  ok: z.boolean(),
+  duration_ms: z.number().nonnegative(),
+  error: z.string().optional(),
+});
+
+export type ToolCallWire = z.infer<typeof toolCallWireSchema>;
+
 export const executeResponseSchema = z.object({
   execution_id: z.string(),
   agent: z.enum(AGENT_NAMES),
   status: executeResultStatusSchema,
   answer: z.string().nullable(),
   sources: z.array(z.string()).default([]),
-  tool_calls: z.array(z.unknown()).default([]),
+  tool_calls: z.array(toolCallWireSchema).default([]),
   usage: z.object({
     input_tokens: z.number().nonnegative(),
     output_tokens: z.number().nonnegative(),

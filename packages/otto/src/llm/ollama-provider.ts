@@ -315,7 +315,12 @@ export function createOttoLLMProvider(config: OttoLLMProviderConfig): OttoLLMPro
   };
 }
 
-function tryParse<S extends z.ZodTypeAny>(
+/**
+ * Exportado (era privado) para o provider OpenAI (openai-provider.ts)
+ * reusar a mesma régua de parse+correção — chatJson não pode ter duas
+ * definições divergentes do que conta como "JSON válido pro schema".
+ */
+export function tryParse<S extends z.ZodTypeAny>(
   content: string,
   schema: S,
 ): { ok: true; value: z.output<S>; repaired: boolean } | { ok: false; error: string } {

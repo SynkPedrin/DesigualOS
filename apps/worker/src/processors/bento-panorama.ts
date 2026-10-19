@@ -1,0 +1,506 @@
+import { ehInterno } from '@desigual-os/context-engine';
+/**
+ * bento-panorama.ts — a leitura sênior da operação, não a lista dela.
+ *
+ * Pedido da operação (28/09/2026): um gerenciador, não um executor de task. A
+ * diferença aparece na pergunta "como tá a operação hoje?": hoje o Bento
+ * devolve 50 linhas de tarefa, e ninguém lê 50 linhas. Quem gerencia quer
+ * saber onde está o risco.
+ *
+ * A separação que sustenta este arquivo é a mesma do briefing, e é o que
+ * impede o panorama de virar opinião com cara de dado:
+ *
+ *   NÚMERO é apurado aqui, determinístico, do ClickUp. Quantas atrasadas,
+ *   quantas sem dono, quem tem quanto, qual cliente concentra o quê. Nada
+ *   disso passa por modelo nenhum, e é conferível.
+ *
+ *   LEITURA é raciocínio sobre aqueles números, escrita pelo modelo, e não
+ *   pode afirmar nada que os números não sustentem. Sem métrica, não há
+ *   leitura — o panorama devolve os números secos em vez de inventar enredo.
+ *
+ * O sinal mais valioso daqui não é "11 atrasadas". É "4 peças vencendo sexta,
+ * todas na mesma pessoa" e "19 sem dono há mais de cinco dias" — gargalo e
+ * abandono, que a lista crua esconde justamente por listar tudo igual.
+ */
+
+import type { OperationTask } from '@desigual-os/tool-gateway';
+
+/**
+ * Quem pede PANORAMA, e não uma lista.
+ *
+ * Vocabulário próprio e curto, espelhando o PANORAMA_MARKERS do
+ * context-engine: são frases INTEIRAS, nunca palavras soltas. "status" sozinho
+ * aparece em "muda o status dessa task" — se virasse gatilho, um pedido de
+ * escrita responderia com relatório, que é o pior tipo de erro aqui: parece
+ * que funcionou e nada foi feito.
+ *
+ * "O QUE ESTÁ EM RISCO" entrou depois (29/09/2026), e a falta dela é
+ * instrutiva: o gatilho conhecia "onde está o risco" e não a forma mais natural
+ * de perguntar a mesma coisa. Medido no navegador, com a persona de gerente de
+ * conta — a pergunta ia parar no core, que responde listando tarefa, e a
+ * análise causal (bento-arvore.ts) nunca era usada. Frase inteira, como o resto
+ * da lista: "risco" solto pegaria "essa task é de risco".
+ */
+const PEDE_PANORAMA_RE =
+  /(^|\s)(me atualiz[ae]|me p[õo]e a par|panorama|status geral|vis[ãa]o geral|como (est[aá]|ta|tá|estamos|anda|t[áa]) (a )?(opera[çc][ãa]o|as coisas|tudo|o time)|o que (est[aá]|ta|tá) (pegando|travado|atrasado)|onde (est[aá]|ta|tá) o risco|o que (est[aá]|ta|tá) em risco|qua(l|is) (os |o )?riscos?|resumo da opera[çc][ãa]o)/i;
+
+export function pedePanorama(mensagem: string): boolean {
+  return PEDE_PANORAMA_RE.test(mensagem);
+}
+
+const DIA_MS = 86_400_000;
+
+/** Task parada sem dono há mais de isto já não vai ser puxada por ninguém. */
+const DIAS_ABANDONO = 5;
+
+/** A partir daqui, uma pessoa com prazo na mesma janela é gargalo, não agenda. */
+const CONCENTRACAO_MINIMA = 3;
+
+export interface Sobrecarga {
+  pessoa: string;
+  /** Tasks dessa pessoa vencendo nos próximos 7 dias. */
+  naSemana: number;
+  atrasadas: number;
+  clientes: string[];
+}
+
+export interface RiscoDeCliente {
+  cliente: string;
+  atrasadas: number;
+  semDono: number;
+  vencendoNaSemana: number;
+}
+
+export interface MetricasDaOperacao {
+  total: number;
+  atrasadas: number;
+  semDono: number;
+  /** Sem dono E parada há mais de DIAS_ABANDONO — o modo silencioso de perder trabalho. */
+  abandonadas: number;
+  venceHoje: number;
+  venceNaSemana: number;
+  semPrazo: number;
+  sobrecarga: Sobrecarga[];
+  porCliente: RiscoDeCliente[];
+  /** Concentração: uma pessoa com N+ prazos na mesma semana. */
+  gargalos: Array<{ pessoa: string; cliente: string; quantas: number }>;
+}
+
+function meiaNoite(agora: Date): number {
+  return new Date(agora.getFullYear(), agora.getMonth(), agora.getDate()).getTime();
+}
+
+/**
+ * Apura os números. Determinístico de ponta a ponta: mesma entrada, mesma
+ * saída, e qualquer linha daqui é conferível abrindo o ClickUp.
+ */
+/**
+ * TAREFA ENTREGUE NÃO ESTÁ ATRASADA — e isto custou a credibilidade do número.
+ *
+ * Medido na auditoria de 29/09/2026 contra o workspace real: das 1.222 tarefas,
+ * 811 estão `done`. Contando todas, "atrasadas" dava 812; contando só as
+ * abertas, dá 146 — exatamente o número que o outro caminho do sistema
+ * respondia. Duas respostas diferentes pra mesma pergunta destrói a confiança
+ * mais rápido que resposta nenhuma.
+ *
+ * O ClickUp classifica o status em `open`, `custom` e `done`/`closed`. Só as
+ * duas primeiras são trabalho em aberto.
+ */
+function estaAberta(t: OperationTask): boolean {
+  return t.statusType !== 'done' && t.statusType !== 'closed';
+}
+
+export function apurarMetricas(todas: OperationTask[], agora: Date = new Date()): MetricasDaOperacao {
+  const tasks = todas.filter(estaAberta);
+  const hoje = meiaNoite(agora);
+  const fimDoDia = hoje + DIA_MS;
+  const fimDaSemana = hoje + 7 * DIA_MS;
+
+  const porPessoa = new Map<string, { naSemana: number; atrasadas: number; clientes: Set<string> }>();
+  const porCliente = new Map<string, RiscoDeCliente>();
+  const concentracao = new Map<string, { pessoa: string; cliente: string; quantas: number }>();
+
+  let atrasadas = 0;
+  let semDono = 0;
+  let abandonadas = 0;
+  let venceHoje = 0;
+  let venceNaSemana = 0;
+  let semPrazo = 0;
+
+  for (const t of tasks) {
+    const cliente = t.listName ?? t.folderName ?? 'sem cliente';
+    const registroCliente = porCliente.get(cliente) ?? { cliente, atrasadas: 0, semDono: 0, vencendoNaSemana: 0 };
+
+    const vencida = t.dueDate !== null && t.dueDate < hoje;
+    if (vencida) {
+      atrasadas += 1;
+      registroCliente.atrasadas += 1;
+    }
+    if (t.dueDate === null) semPrazo += 1;
+    if (t.dueDate !== null && t.dueDate >= hoje && t.dueDate < fimDoDia) venceHoje += 1;
+    const naSemana = t.dueDate !== null && t.dueDate >= hoje && t.dueDate < fimDaSemana;
+    if (naSemana) {
+      venceNaSemana += 1;
+      registroCliente.vencendoNaSemana += 1;
+    }
+
+    if (t.assignees.length === 0) {
+      semDono += 1;
+      registroCliente.semDono += 1;
+      // Sem dono E sem toque recente: ninguém vai puxar. É assim que demanda
+      // some estando "no ClickUp".
+      const parada = t.updatedAt !== null && agora.getTime() - t.updatedAt > DIAS_ABANDONO * DIA_MS;
+      if (parada) abandonadas += 1;
+    }
+
+    for (const pessoa of t.assignees) {
+      const p = porPessoa.get(pessoa) ?? { naSemana: 0, atrasadas: 0, clientes: new Set<string>() };
+      if (naSemana) p.naSemana += 1;
+      if (vencida) p.atrasadas += 1;
+      p.clientes.add(cliente);
+      porPessoa.set(pessoa, p);
+
+      if (naSemana) {
+        const chave = `${pessoa}|${cliente}`;
+        const c = concentracao.get(chave) ?? { pessoa, cliente, quantas: 0 };
+        c.quantas += 1;
+        concentracao.set(chave, c);
+      }
+    }
+    porCliente.set(cliente, registroCliente);
+  }
+
+  return {
+    total: tasks.length,
+    atrasadas,
+    semDono,
+    abandonadas,
+    venceHoje,
+    venceNaSemana,
+    semPrazo,
+    sobrecarga: [...porPessoa.entries()]
+      .map(([pessoa, p]) => ({ pessoa, naSemana: p.naSemana, atrasadas: p.atrasadas, clientes: [...p.clientes] }))
+      .filter((p) => p.naSemana > 0 || p.atrasadas > 0)
+      .sort((a, b) => b.naSemana + b.atrasadas - (a.naSemana + a.atrasadas))
+      .slice(0, 8),
+    porCliente: [...porCliente.values()]
+      .filter((c) => c.atrasadas > 0 || c.semDono > 0 || c.vencendoNaSemana > 0)
+      .sort((a, b) => b.atrasadas - a.atrasadas || b.semDono - a.semDono)
+      .slice(0, 10),
+    gargalos: [...concentracao.values()]
+      .filter((c) => c.quantas >= CONCENTRACAO_MINIMA)
+      .sort((a, b) => b.quantas - a.quantas)
+      .slice(0, 5),
+  };
+}
+
+/** Os números, em texto, do jeito que vão pro modelo e pro usuário. */
+export function metricasEmTexto(m: MetricasDaOperacao): string {
+  const linhas = [
+    `Tarefas abertas: ${m.total}`,
+    `Atrasadas: ${m.atrasadas}`,
+    `Sem responsável: ${m.semDono}${m.abandonadas > 0 ? ` (${m.abandonadas} paradas há mais de ${DIAS_ABANDONO} dias)` : ''}`,
+    `Vencem hoje: ${m.venceHoje} · nos próximos 7 dias: ${m.venceNaSemana}`,
+    `Sem prazo definido: ${m.semPrazo}`,
+  ];
+  if (m.gargalos.length > 0) {
+    linhas.push('', 'Concentração na semana (pessoa · cliente · quantas):');
+    for (const g of m.gargalos) linhas.push(`- ${g.pessoa} · ${g.cliente} · ${g.quantas}`);
+  }
+  if (m.sobrecarga.length > 0) {
+    linhas.push('', 'Carga por pessoa (na semana / atrasadas / clientes):');
+    for (const p of m.sobrecarga) linhas.push(`- ${p.pessoa}: ${p.naSemana} / ${p.atrasadas} / ${p.clientes.length}`);
+  }
+  if (m.porCliente.length > 0) {
+    /**
+     * A CASA NÃO É CLIENTE, TAMBÉM AQUI (29/09/2026).
+     *
+     * O bloco de dado ao vivo já separava (build-operational-context.ts), mas o
+     * panorama monta a própria apresentação e continuava imprimindo
+     * "- Agência Desigual: 34 / 17 / 0" no meio da carteira, entre Cosentino e
+     * D. Carvalho. Medido numa resposta real a "como tá a operação hoje?".
+     *
+     * A carteira do gestor não inclui a própria agência. O trabalho dela
+     * continua listado — são 170 tarefas que alguém faz — mas embaixo e
+     * rotulado, para que "meus clientes estão com 34 atrasadas" não seja lido
+     * sobre trabalho que é da casa.
+     */
+    const daCarteira = m.porCliente.filter((c) => !ehInterno(c.cliente));
+    const daCasa = m.porCliente.filter((c) => ehInterno(c.cliente));
+    if (daCarteira.length > 0) {
+      linhas.push('', 'Por cliente (atrasadas / sem dono / vencendo na semana):');
+      for (const c of daCarteira) linhas.push(`- ${c.cliente}: ${c.atrasadas} / ${c.semDono} / ${c.vencendoNaSemana}`);
+    }
+    if (daCasa.length > 0) {
+      linhas.push('', 'Frentes INTERNAS da agência (não são cliente — não some na carteira):');
+      for (const c of daCasa) linhas.push(`- ${c.cliente}: ${c.atrasadas} / ${c.semDono} / ${c.vencendoNaSemana}`);
+    }
+  }
+  return linhas.join('\n');
+}
+
+const BARRA_GERENTE = `Você é o gerente de operação de uma agência de mídia digital, falando com quem decide.
+
+Recebe números já apurados do ClickUp. Sua tarefa é dizer o que eles SIGNIFICAM e o que fazer primeiro, nunca repetir a lista.
+
+Dois blocos, nesta ordem, cada um começando por uma frase curta em negrito:
+
+**O que está em risco**
+Dois a quatro itens. Cada um nomeia o risco concreto e o número que o sustenta: gargalo numa pessoa, cliente descoberto, trabalho parado. Nada de "atenção aos prazos".
+
+**O que eu faria primeiro**
+Duas ou três ações, na ordem, cada uma executável hoje e amarrada a um número acima. Diga a ação, não a intenção: "redistribuir 2 das 4 peças da sexta do Gui" em vez de "equilibrar a carga".
+
+Como escrever:
+- Português do Brasil, do jeito que se fala numa agência. Sem jargão de sistema.
+- NUNCA use # de título markdown. NUNCA use travessão (— ou –). Onde faria uma pausa longa, use vírgula, dois-pontos ou ponto final.
+- Sem adjetivo de relatório ("crítico", "preocupante"): o número já diz.
+- Você NÃO tem informação além dos números abaixo. Não invente nome de cliente, de pessoa, de campanha ou de prazo que não esteja ali.
+- Nenhum número novo. Se citar quantidade, use exatamente a que recebeu.
+- Não recomende falar com alguém que os números não nomeiam.`;
+
+export interface PanoramaParams {
+  tasks: OperationTask[];
+  escritor: (prompt: string, opts?: { maxTokens?: number }) => Promise<string | null>;
+  agora?: Date;
+}
+
+export interface Panorama {
+  metricas: MetricasDaOperacao;
+  /** Os números, sempre. */
+  numeros: string;
+  /** A leitura. Null quando o modelo não respondeu — os números valem sozinhos. */
+  leitura: string | null;
+}
+
+/**
+ * Números que a LEITURA inventou: aparecem no texto do modelo e não em nenhum
+ * lugar dos números apurados.
+ *
+ * Medido no navegador em 29/09/2026, num turno que acertou todo o resto: a
+ * leitura fechou com "Redistribuir 13 das 24 peças atrasadas para Bruna
+ * Baldacini". O 24 é real; o 13 não existe em lugar nenhum. O prompt já proibia
+ * número novo desde sempre — proibir não basta, porque quem escreve a leitura é
+ * um modelo e o custo de um número inventado é a confiança na resposta inteira.
+ *
+ * Fica de fora o que não é contagem de operação: ano de quatro dígitos, data
+ * (25/09), posição de lista ("1." no começo da linha) e percentual. Zero e um
+ * também passam — aparecem em "apenas uma tarefa" sem serem afirmação de
+ * volume.
+ */
+export function numerosInventados(leitura: string, numerosApurados: string): number[] {
+  const semDatas = leitura
+    .replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ')
+    .replace(/\b\d+\s*%/g, ' ')
+    .replace(/^\s*\d+[.)]\s/gm, ' ');
+  const noApurado = new Set((numerosApurados.match(/\d+/g) ?? []).map(Number));
+  const vistos = new Set<number>();
+  for (const bruto of semDatas.match(/\d+/g) ?? []) {
+    const n = Number(bruto);
+    if (n <= 1 || n >= 1900) continue;
+    if (noApurado.has(n)) continue;
+    vistos.add(n);
+  }
+  return [...vistos];
+}
+
+export async function montarPanorama(params: PanoramaParams): Promise<Panorama> {
+  const metricas = apurarMetricas(params.tasks, params.agora ?? new Date());
+  const numeros = metricasEmTexto(metricas);
+
+  // Operação vazia não tem leitura a fazer, e chamar o modelo pra dizer isso
+  // seria gastar pra produzir enrolação.
+  if (metricas.total === 0) return { metricas, numeros, leitura: null };
+
+  const prompt = `${BARRA_GERENTE}\n\nNÚMEROS:\n${numeros}`;
+  let leitura = await params.escritor(prompt, { maxTokens: 900 }).catch(() => null);
+
+  // Uma retentativa quando a leitura inventa número, e desistir dela se a
+  // segunda também inventar: os números sozinhos já são uma resposta honesta, e
+  // leitura com número falso contamina o bloco inteiro que está certo.
+  if (leitura && numerosInventados(leitura, numeros).length > 0) {
+    const inventados = numerosInventados(leitura, numeros);
+    leitura = await params
+      .escritor(
+        `${prompt}\n\nA versão anterior citou números que NÃO estão na lista acima (${inventados.join(', ')}). ` +
+          'Reescreva usando exclusivamente os números dados. Se precisar falar de uma quantidade que não está lá, ' +
+          'descreva sem número ("parte das atrasadas", "a maioria").',
+        { maxTokens: 900 },
+      )
+      .catch(() => null);
+    if (leitura && numerosInventados(leitura, numeros).length > 0) leitura = null;
+  }
+  return { metricas, numeros, leitura: leitura?.trim() || null };
+}
+
+/** A resposta final: números em cima, leitura embaixo. Sem leitura, números bastam. */
+export function panoramaEmResposta(p: Panorama): string {
+  if (p.metricas.total === 0) return 'Nenhuma tarefa aberta nas listas que eu enxergo.';
+  return p.leitura ? `${p.numeros}\n\n${p.leitura}` : p.numeros;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Estado da operação como CONTEXTO DE TODO TURNO                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * O pedido da operação não era um comando: "quero o Bento saber de tudo sobre
+ * todos os clientes e todas as ações do ClickUp, com maestria nas respostas".
+ * Ou seja, o estado da operação tem que estar na mão dele SEMPRE — não só
+ * quando alguém digita "panorama".
+ *
+ * O problema é que isso custa uma varredura das listas de todos os clientes, e
+ * foi exatamente ela que fez o `POST /chat` levar 186s em 28/09/2026 (ver
+ * resolve-scope.ts). Contexto ambiente não pode ser pago por turno.
+ *
+ * Daí o cache: a apuração roda no máximo uma vez a cada TTL e é reusada por
+ * todos os turnos e todas as pessoas. Operação não muda de feição em três
+ * minutos — um número com poucos minutos de idade descreve a realidade tão bem
+ * quanto o de agora, e custa zero.
+ *
+ * Se a consulta falhar, o turno segue SEM o bloco. Contexto ambiente é bônus:
+ * derrubar uma resposta porque o ClickUp piscou seria trocar uma coisa boa por
+ * uma ruim.
+ */
+const TTL_ESTADO_MS = Number(process.env.BENTO_ESTADO_TTL_MS ?? 180_000);
+
+interface EstadoEmCache {
+  em: number;
+  texto: string;
+  tasks: OperationTask[];
+}
+
+/**
+ * UM CACHE POR EMPRESA, NUNCA UM CACHE SÓ (P0.1 slice 2b, 05/10/2026).
+ *
+ * Até aqui era `let cache: EstadoEmCache | null` — uma variável, compartilhada
+ * por TODAS as execuções do processo, de QUALQUER organização. O slice
+ * anterior (2a) corrigiu a CONSULTA pra recortar por `organizationId`; isso
+ * sozinho não bastava, porque a resposta da consulta certa ainda era guardada
+ * numa caixa só. Organização A apura o estado dela, cacheia; Organização B
+ * pergunta 10 segundos depois (dentro do TTL de 180s) e recebia o texto DA
+ * A — vazamento sobrevivendo um nível acima da query, no cache.
+ *
+ * A cardinalidade real da função é só `organizationId`: os três chamadores
+ * (ata de reunião, pergunta operacional, estado-por-turno, em execute-job.ts)
+ * já resolvem a lista de clientes via `listasDeClickUpDaOrganizacao(organizationId)`
+ * sem nenhum outro recorte (nem client, nem usuário) — então o mesmo tenant
+ * sempre produz o mesmo estado nesta função, e a chave não precisa de mais
+ * componente que isso.
+ */
+const cachePorOrganizacao = new Map<string, EstadoEmCache>();
+
+/**
+ * Remove entradas vencidas de OUTRAS organizações antes de ler/escrever. Sem
+ * isto, o Map cresceria um pouco a cada organização nova que já apurou
+ * estado uma vez e nunca mais voltou — pequeno (bound é o número de
+ * empresas, não de chamadas), mas "lazy evict no acesso" é simples e não
+ * deixa lixo se acumular à toa.
+ *
+ * NUNCA evict a própria organização que está sendo processada (`exceto`):
+ * o comportamento pré-existente de `estadoDaOperacaoEmTexto` serve o ÚLTIMO
+ * estado conhecido quando a consulta fresca falha, mesmo que esse estado já
+ * tenha passado do TTL — apagar a entrada aqui, antes de ela servir de
+ * fallback, trocaria "serve o último estado conhecido" por "null", que é
+ * exatamente o regresso que o teste "falha depois de um sucesso..." existe
+ * pra pegar (e pegou, na primeira versão deste arquivo).
+ */
+function evictarExpiradas(agora: number, exceto: string): void {
+  for (const [orgId, entrada] of cachePorOrganizacao) {
+    if (orgId === exceto) continue;
+    if (agora - entrada.em >= TTL_ESTADO_MS) cachePorOrganizacao.delete(orgId);
+  }
+}
+
+/** Só pra teste: zera o cache entre casos. */
+export function __limparCacheDoEstado(): void {
+  cachePorOrganizacao.clear();
+}
+
+/**
+ * As tarefas que sustentam o estado em cache — da MESMA organização, nunca de
+ * outra. Existe pra que quem precisar olhar as tarefas de novo no mesmo turno
+ * — o mapa de frentes do cliente, por exemplo — não pague uma segunda
+ * varredura do ClickUp. Vazio quando o estado ainda não foi apurado neste TTL
+ * (quem chama decide se vale buscar) OU quando `organizationId` não existe —
+ * nunca cai pro cache de outra empresa nem junta tudo numa lista só.
+ */
+export function tasksDoEstadoEmCache(organizationId: string | null | undefined): OperationTask[] {
+  if (!organizationId) return [];
+  return cachePorOrganizacao.get(organizationId)?.tasks ?? [];
+}
+
+/**
+ * A consulta ao ClickUp diz se ela mesma foi truncada (`truncated`). A versão
+ * anterior adivinhava isso pelo TAMANHO — "passou de 500, deve estar cortado" —
+ * e avisava "estes números descrevem uma fatia" numa consulta completa de 1.222
+ * tarefas. Ressalva falsa gasta a credibilidade da resposta inteira.
+ */
+export interface ConsultaDeTasks {
+  tasks: OperationTask[];
+  truncated: boolean;
+}
+
+/**
+ * FAIL CLOSED: sem `organizationId`, a função NUNCA toca
+ * `cachePorOrganizacao` — nem lê (não existe "cache default" pra devolver
+ * estado de outra empresa por engano) nem escreve (não cria uma entrada
+ * órfã que nenhuma organização real reivindica). Ela ainda roda `buscar()` e
+ * devolve o texto fresco — perder o cache não pode significar perder a
+ * apuração pro turno, só perder o REUSO entre turnos.
+ */
+export async function estadoDaOperacaoEmTexto(
+  organizationId: string | null | undefined,
+  buscar: () => Promise<ConsultaDeTasks>,
+  agora: Date = new Date(),
+): Promise<string | null> {
+  const agoraMs = agora.getTime();
+
+  if (!organizationId) {
+    const consultaSemCache = await buscar().catch(() => null);
+    if (!consultaSemCache || consultaSemCache.tasks.length === 0) return null;
+    return textoDoEstado(consultaSemCache, agora);
+  }
+
+  evictarExpiradas(agoraMs, organizationId);
+
+  const emCache = cachePorOrganizacao.get(organizationId);
+  if (emCache && agoraMs - emCache.em < TTL_ESTADO_MS) return emCache.texto;
+
+  const consulta = await buscar().catch(() => null);
+  if (!consulta) return emCache?.texto ?? null;
+  if (consulta.tasks.length === 0) return null;
+
+  const texto = textoDoEstado(consulta, agora);
+  cachePorOrganizacao.set(organizationId, { em: agoraMs, texto, tasks: consulta.tasks });
+  return texto;
+}
+
+/** Construção pura do texto a partir de uma consulta — sem cache, sem
+ *  organização, reaproveitada tanto pelo caminho cacheado quanto pelo
+ *  caminho fail-closed (sem `organizationId`). */
+function textoDoEstado(consulta: ConsultaDeTasks, agora: Date): string {
+  const m = apurarMetricas(consulta.tasks, agora);
+  const truncado = consulta.truncated;
+  return [
+    truncado
+      ? 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp — ATENÇÃO: a consulta foi truncada, então estes números descrevem uma FATIA da operação, não o total):'
+      : 'ESTADO DA OPERAÇÃO AGORA (apurado do ClickUp, só tarefas EM ABERTO; entregues não contam como atrasadas):',
+    metricasEmTexto(m),
+    '',
+    'Use estes números quando a pergunta tocar a operação. NÃO invente número que não esteja aqui,',
+    'e NÃO repita a lista inteira — cite só o que a pergunta pedir.',
+    /**
+     * Medido na bateria de uso livre (29/09/2026). Perguntaram quanto a agência
+     * faturou com um cliente; ele explicou certo que o ClickUp não tem campo de
+     * receita e concluiu: "Logo, R$ 0,00 faturado registrado no sistema."
+     *
+     * Quem bate o olho lê que o cliente faturou zero. Transformar ausência de
+     * dado em número é pior que não responder, porque vira fato citável.
+     */
+    'AUSÊNCIA DE DADO NÃO É ZERO. Se o sistema não guarda aquilo (faturamento, custo, horas, receita, contrato),',
+    'diga que não é um dado que você tem — nunca escreva 0, R$ 0,00 ou "nenhum" para dizer "não sei".',
+    truncado ? 'Se citar um total, diga que é do recorte consultado, não da operação inteira.' : '',
+  ].join('\n');
+}

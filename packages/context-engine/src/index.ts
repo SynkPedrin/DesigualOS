@@ -1,6 +1,9 @@
 export * from './briefing-engine';
 export * from './build-context';
+export { blocoDePessoaEEquipe, pessoaEEquipeEmTexto, type QuemPergunta } from './equipe-da-agencia';
 export * from './build-operational-context';
+export * from './build-change-context';
+export * from './natureza-do-cliente';
 export * from './resolve-client';
 export * from './resolve-scope';
 export * from './resolve-temporal';
@@ -8,3 +11,7 @@ export * from './entity-matching';
 export * from './campaign-derivation';
 export * from './campaign-sync';
 export * from './texto-externo';
+export * from './selection';
+export * from './parse-due-date';
+export * from './leitura';
+export * from './qualidade-de-dado';

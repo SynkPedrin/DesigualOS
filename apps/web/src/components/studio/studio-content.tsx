@@ -219,7 +219,7 @@ export function StudioContent({ boundedHeight = false }: { boundedHeight?: boole
     [queryClient, dismissJob],
   );
 
-  const studioNode = health?.nodes.find((n) => n.agent === 'studio');
+  const studioNode = health?.nodes?.find((n) => n.agent === 'studio');
 
   return (
     <div ref={rootRef} className={cn((boundedHeight || modoEditor) && 'flex h-full min-h-0 flex-1 flex-col')}>

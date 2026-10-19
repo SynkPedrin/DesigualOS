@@ -1,9 +1,10 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { hasPermission, loadUserAccess } from '@desigual-os/auth';
+import { hasPermission, loadUserAccess, organizacaoDaConversa, organizacaoDaEscrita } from '@desigual-os/auth';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import { buildContext, formatContextForPrompt } from '@desigual-os/context-engine';
 import { dispatchChatMessage, touchConversation, type AutomationJobData } from '@desigual-os/orchestrator';
+import { resolveEnvironment } from './environment';
 import type { RouterDecision } from '@desigual-os/router';
 import type { AgentName } from '@desigual-os/types';
 import type { Logger } from '@desigual-os/logging';
@@ -85,6 +86,10 @@ export async function processAutomationJob(
     const [conversation] = await db
       .insert(schema.conversations)
       .values({
+        organizationId: await organizacaoDaEscrita({
+          userId: automation.createdBy,
+          clientId: automation.clientId,
+        }),
         userId: automation.createdBy,
         clientId: automation.clientId,
         title: `Automação: ${automation.name}`,
@@ -102,7 +107,13 @@ export async function processAutomationJob(
   if (conversationId) {
     await db
       .insert(schema.messages)
-      .values({ conversationId, role: 'user', content: automation.prompt });
+      // Herda da conversa, não deduz de novo. Ver organizacaoDaConversa.
+      .values({
+        conversationId,
+        organizationId: await organizacaoDaConversa(conversationId),
+        role: 'user',
+        content: automation.prompt,
+      });
     await touchConversation(conversationId);
   }
 
@@ -115,11 +126,11 @@ export async function processAutomationJob(
     clientId: automation.clientId,
     conversationId,
     agent: automation.agent,
+    // buildContext resolve o ambiente pelo cliente quando omitido; aqui ele já
+    // está resolvido pelo mesmo helper do resto do worker, então viaja explícito.
+    environment: await resolveEnvironment(automation.clientId).catch(() => 'production' as const),
   });
-  const contextBlock = formatContextForPrompt(context);
-  const messageWithContext = contextBlock
-    ? `${automation.prompt}\n\n---\nContexto:\n${contextBlock}`
-    : automation.prompt;
+  const messageWithContext = mensagemDaAutomacao(automation.prompt, automation.agent, formatContextForPrompt(context));
 
   const startedAt = new Date();
   try {
@@ -166,4 +177,27 @@ export async function processAutomationJob(
     logger.error({ automationId, error: message }, 'Automation dispatch threw');
     throw error;
   }
+}
+
+/**
+ * A MENSAGEM DA AUTOMAÇÃO É O PROMPT DELA — a mesma regra do chat
+ * (apps/api/src/chat/message-assembly.ts, `contextoGeralVaiNaMensagem`).
+ *
+ * Medido em produção em 13/10/2026: a única automação ativa, de hora em hora
+ * para o Bento, falhou nos 6 disparos do dia — 5 vezes em `target_unresolved`
+ * ("essa"/"ela" sem referente) e 1 na trava de escrita (verbo de despacho e
+ * de agendamento). A automação colava o bloco de contexto INTEIRO na
+ * mensagem, inclusive o histórico da própria conversa dela, e as travas do
+ * Bento liam esse texto como se fosse o pedido. Cada hora que falhava
+ * deixava no histórico uma resposta pedindo esclarecimento, que contaminava a
+ * hora seguinte. O registro da execução dizia `dispatched`.
+ *
+ * No chat isso foi resolvido em setembro para todos os agentes menos o
+ * Studio; aqui ficou para trás. O conhecimento continua chegando pelo
+ * caminho estruturado do worker (dossiê pelo clientId, ContextPack, bloco de
+ * pessoa e equipe do Bento), não por texto colado.
+ */
+export function mensagemDaAutomacao(prompt: string, agent: AgentName, contextBlock: string): string {
+  if (agent !== 'studio' || !contextBlock) return prompt;
+  return `${prompt}\n\n---\nContexto:\n${contextBlock}`;
 }

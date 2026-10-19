@@ -1,0 +1,52 @@
+{
+  "worker": {
+    "total": 1568,
+    "arquivos": 80,
+    "quando": "2026-10-05"
+  },
+  "api": {
+    "total": 196,
+    "arquivos": 26,
+    "quando": "2026-10-05"
+  },
+  "web": {
+    "total": 261,
+    "arquivos": 25,
+    "quando": "2026-09-30"
+  },
+  "context-engine": {
+    "total": 323,
+    "arquivos": 16,
+    "quando": "2026-09-30"
+  },
+  "router": {
+    "total": 80,
+    "arquivos": 4,
+    "quando": "2026-10-01"
+  },
+  "orchestrator": {
+    "total": 205,
+    "arquivos": 17,
+    "quando": "2026-10-01"
+  },
+  "tool-gateway": {
+    "total": 118,
+    "arquivos": 9,
+    "quando": "2026-10-01"
+  },
+  "bento-core": {
+    "total": 102,
+    "arquivos": 3,
+    "quando": "2026-09-30"
+  },
+  "auth": {
+    "total": 59,
+    "arquivos": 7,
+    "quando": "2026-10-01"
+  },
+  "database": {
+    "total": 21,
+    "arquivos": 4,
+    "quando": "2026-10-05"
+  }
+}

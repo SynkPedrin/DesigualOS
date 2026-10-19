@@ -8,9 +8,43 @@ import { runKnowledgeConsolidation } from './knowledge-consolidation.js';
 import { keepInferenceWarm } from './inference-warmth.js';
 import { expireStaleStudioJobs } from './studio-queue-timeout.js';
 import { expireStaleExecutions } from './execution-timeout.js';
+import { avisarDeConexoesMcp } from './aviso-de-conexao-mcp.js';
+import { syncAllGoogleCalendars } from './google-calendar-sync.js';
+import { syncAllMetaAdAccounts } from './meta-accounts-sync.js';
+import { syncAllMicrosoftCalendars } from './microsoft-calendar-sync.js';
+import { varrerOperacao } from './bento-varredura.js';
+import { briefingOperacional } from './bento-briefing.js';
+import { prepararReunioesDeCliente } from './meeting-prep.js';
+import { reconciliarAutomacoes } from './reconciliar-automacoes.js';
 
 const QUEUE_NAME = 'daily-digest';
 const logger = createLogger({ service: 'worker:scheduler' });
+
+/**
+ * Os nomes dos jobs repetíveis, na ordem em que são registrados abaixo.
+ *
+ * Existe pro log poder dizer a verdade: a mensagem "Scheduler armado" trazia
+ * uma lista escrita à mão que anunciava CINCO jobs enquanto NOVE estavam
+ * armados. Log que enumera precisa enumerar de verdade — é a mesma coisa que
+ * uma tela contar o que coube e chamar de total, só que ninguém olha.
+ */
+const JOBS_REPETIVEIS = [
+  'end-of-day-checklist',
+  'morning-briefing',
+  'operational-events',
+  'integration-health',
+  'knowledge-consolidation',
+  'inference-warmth',
+  'studio-queue-timeout',
+  'execution-timeout',
+  'aviso-conexao-mcp',
+  'google-calendar-sync',
+  'meta-accounts-sync',
+  'microsoft-calendar-sync',
+  'meeting-prep',
+  'reconciliar-automacoes',
+  'bento-varredura',
+] as const;
 
 /**
  * Checklist de fim de dia (18h) e resumo de pendências de manhã (8h),
@@ -73,8 +107,73 @@ export function setupDailyJobs(): Worker {
     // horas, porque worker que morre no meio do job não escreve desfecho
     // nenhum. O chat mostrava "pensando" pra sempre. Ver execution-timeout.ts.
     queue.add('execution-timeout', {}, { repeat: { pattern: '*/2 * * * *' }, jobId: 'execution-timeout' }),
+    // AVISO DE CONEXÃO MCP a cada 2 min. O servidor já registrava
+    // `CONNECTION_CREATED` e ninguém era avisado — o evento morria no banco.
+    // De 2 em 2 minutos porque "alguém plugou o Claude agora" perde o sentido
+    // se chegar no dia seguinte, e o vigia olha 15 min pra trás justamente pra
+    // sobreviver a uma parada curta sem ressuscitar conexão velha.
+    queue.add('aviso-conexao-mcp', {}, { repeat: { pattern: '*/2 * * * *' }, jobId: 'aviso-conexao-mcp' }),
+    // SYNC DO GOOGLE CALENDAR a cada 15 min (§25 do prompt "CALENDAR +
+    // AUTOMATIONS + BENTO V2", 06/10/2026) — mesma cadência da saúde de
+    // integração, cadência que não esgota a cota da Calendar API nem deixa
+    // a agenda ficar velha demais entre uma sync e outra.
+    queue.add('google-calendar-sync', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'google-calendar-sync' }),
+    // SYNC DE CONTAS META ADS uma vez por dia, 04:30 (16/10/2026) — madrugada,
+    // fora do pico, meia hora depois da consolidação de conhecimento (03:00).
+    // Conta nova na BM ou cliente novo no cadastro viram vínculo por nome sem
+    // ninguém lembrar de apertar o botão. Diária e não mais frequente porque
+    // o vínculo é por NOME: não é dado que envelhece em minutos, e cada
+    // rodada varre todas as BMs de todas as conexões.
+    queue.add('meta-accounts-sync', {}, { repeat: { pattern: '30 4 * * *' }, jobId: 'meta-accounts-sync' }),
+    // SYNC DO MICROSOFT/OUTLOOK CALENDAR (07/10/2026) — mesma cadência do
+    // Google, mesma razão: fresco o bastante sem esgotar cota do Graph.
+    queue.add('microsoft-calendar-sync', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'microsoft-calendar-sync' }),
+    // MEETING PREP a cada 5 min (§51-53 do mesmo prompt): aviso de reunião de
+    // cliente chega ~15 min antes dela — de 5 em 5 min porque o próprio
+    // dedup (notificação já existe pra este evento) protege contra repetir,
+    // então a cadência só precisa ser menor que a janela de aviso.
+    queue.add('meeting-prep', {}, { repeat: { pattern: '*/5 * * * *' }, jobId: 'meeting-prep' }),
+    // RECONCILIAR AUTOMAÇÕES de 15 em 15 min. O `enabled` mora no Postgres e o
+    // agendamento mora no Redis, e nada reconciliava os dois: perder o Redis
+    // deixava toda automação "ativa" na tela e morta no agendador, pra sempre,
+    // sem caminho de conserto (o PATCH só registra quando a agenda muda ou
+    // quando a automação sai de desligada). Medido em 09/10/2026 com a "ASDA".
+    //
+    // Cadência de 15 min, e não de minuto em minuto, porque a função lê o banco
+    // e lista os repeatables: é barata, não é de graça. Quinze minutos é bem
+    // menor que o intervalo de qualquer automação real e bem maior que o tempo
+    // de um reinício de Redis.
+    queue.add('reconciliar-automacoes', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'reconciliar-automacoes' }),
+    // VARREDURA PROATIVA DO BENTO de 15 em 15 min (Bento 3.1). Armada sempre,
+    // mas não faz nada com BENTO_PROACTIVE_MONITORING ausente/off — ligar e
+    // desligar é só a flag, sem redeploy de agenda. 15 min: prazo que vence
+    // hoje ainda tem tempo de ser salvo, e a leitura é uma consulta paginada
+    // por empresa, sem modelo de linguagem.
+    queue.add('bento-varredura', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'bento-varredura' }),
   ])
-    .then(() => logger.info('Scheduler armado (checklist 18:00, resumo 08:00, eventos 5min, saude da integracao 15min, consolidacao 03:00)'))
+    /**
+     * A lista é escrita à mão e já ficou para trás: ela anunciava cinco jobs
+     * enquanto nove estavam armados. Log que ENUMERA precisa enumerar de
+     * verdade, senão vira a mesma coisa que uma tela contando o que coube —
+     * então agora ela sai da fila registrada, não da memória de quem editou.
+     */
+    .then(() =>
+      logger.info(
+        { jobs: JOBS_REPETIVEIS },
+        `Scheduler armado (${JOBS_REPETIVEIS.length} jobs repetiveis)`,
+      ),
+    )
+    /**
+     * RECONCILIA JÁ NO BOOT, além de a cada 15 min. O caso que esta função
+     * existe pra consertar é justamente a perda do Redis, e perda de Redis
+     * costuma vir junto com um reinício. Esperar o primeiro tique de 15 min
+     * deixaria as automações mortas por um quarto de hora logo depois do
+     * momento em que mais provavelmente morreram.
+     *
+     * Não derruba o boot se falhar: o worker tem outras doze funções, e ficar
+     * sem reconciliação é pior que ficar sem worker só na teoria.
+     */
+    .then(() => reconciliarAutomacoes())
     .catch((error: unknown) => logger.error({ error }, 'Failed to register daily digest repeatable jobs'));
 
   const worker = new Worker(
@@ -84,6 +183,9 @@ export function setupDailyJobs(): Worker {
         await runEndOfDayChecklist(logger);
       } else if (job.name === 'morning-briefing') {
         await runMorningBriefing(logger);
+        // As tarefas do dia, por pessoa (Bento 3.1). Atrás das flags da
+        // proatividade; falhar aqui não derruba o briefing antigo, que já rodou.
+        await briefingOperacional(logger).catch((error: unknown) => logger.error({ error }, '[bento-briefing] falhou'));
       } else if (job.name === 'operational-events') {
         await processPendingEvents(logger);
       } else if (job.name === 'integration-health') {
@@ -96,6 +198,20 @@ export function setupDailyJobs(): Worker {
         await expireStaleStudioJobs(logger);
       } else if (job.name === 'execution-timeout') {
         await expireStaleExecutions(logger);
+      } else if (job.name === 'aviso-conexao-mcp') {
+        await avisarDeConexoesMcp(logger);
+      } else if (job.name === 'google-calendar-sync') {
+        await syncAllGoogleCalendars(logger);
+      } else if (job.name === 'meta-accounts-sync') {
+        await syncAllMetaAdAccounts(logger);
+      } else if (job.name === 'microsoft-calendar-sync') {
+        await syncAllMicrosoftCalendars(logger);
+      } else if (job.name === 'meeting-prep') {
+        await prepararReunioesDeCliente(logger);
+      } else if (job.name === 'reconciliar-automacoes') {
+        await reconciliarAutomacoes();
+      } else if (job.name === 'bento-varredura') {
+        await varrerOperacao(logger);
       }
     },
     { connection: getRedisConnection() },

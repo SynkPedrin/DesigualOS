@@ -11,3 +11,14 @@ database
 .github
 *.md
 !README.md
+**/node_modules
+.turbo
+**/.turbo
+LP - DESIGUAL OS
+.tools
+nodes
+**/*.tgz
+**/.DS_Store
+brain
+Brain-Marketing
+Claude outputs

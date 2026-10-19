@@ -183,12 +183,15 @@ describe('flag e rollback', () => {
 });
 
 describe('política de escrita preservada', () => {
+  // Ver a nota em bento-action-execution.test.ts: o hard deny de conclusão foi
+  // removido em 28/09/2026; fechar task pedida por uma pessoa é escrita
+  // autorizada, com a procedência registrada na própria task.
   it.each(['marca como concluído', 'conclui essa task', 'finaliza isso', 'fecha a task do Gui', 'dá como pronto'])(
-    '%s -> FORBIDDEN_ACTION',
+    '%s -> ACTION_REQUEST autorizada',
     (m) => {
       const r = classifyActionIntent(m);
-      expect(r.kind).toBe('FORBIDDEN_ACTION');
-      expect(r.writeAuthorized).toBe(false);
+      expect(r.kind).toBe('ACTION_REQUEST');
+      expect(r.writeAuthorized).toBe(true);
     },
   );
 

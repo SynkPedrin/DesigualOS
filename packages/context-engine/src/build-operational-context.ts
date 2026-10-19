@@ -1,6 +1,8 @@
 import type { OperationalScope } from './resolve-scope';
 import { zonedDayStart } from './resolve-temporal';
 import { textoExternoSeguro } from './texto-externo';
+import { APRESENTACAO_HUMANA } from './selection';
+import { ehInterno } from './natureza-do-cliente';
 
 /**
  * build-operational-context.ts — transforma o escopo resolvido em DADO REAL de operação,
@@ -42,11 +44,48 @@ export interface OperationalContextDeps {
      * resolvidos pelo chamador, que é quem tem acesso à API. */
     assigneeIds?: number[];
   }) => Promise<{ tasks: OperationalTaskLike[]; truncated: boolean }>;
+  /**
+   * QUEM ESTÁ PERGUNTANDO — e por que isso precisava entrar no bloco.
+   *
+   * O `principal` já chegava até aqui, mas só como AUTORIZAÇÃO: ele decidia
+   * quais clientes podiam ser lidos e nada mais. O agente recebia a lista de
+   * tarefas sem saber de quem era a voz do outro lado.
+   *
+   * Consequência medida no chat de produção em 08/10/2026: "me lista as
+   * minhas tarefas abertas" devolveu as 414 tarefas da agência inteira. A
+   * resposta estava correta para a pergunta que o agente conseguia enxergar —
+   * ele não tinha como saber o que "minhas" queria dizer.
+   *
+   * O e-mail do ClickUp é o que amarra a pessoa daqui à pessoa de lá: nome de
+   * exibição é apelido e muda, e-mail é identidade.
+   */
+  quemPergunta?: { nome: string | null; emailClickUp: string | null } | undefined;
 }
 
 export interface OperationalContext {
   /** Bloco de texto pronto pro prompt. `null` quando não havia o que buscar. */
   block: string | null;
+  /**
+   * As tasks EXATAMENTE como exibidas no bloco (ordem e recorte do teto por
+   * cliente), com o nome do cliente já resolvido. É o que vira o snapshot de
+   * seleção da conversa (ver selection.ts): sem isto, "a segunda" não tinha
+   * como saber qual task era a segunda.
+   */
+  listedTasks: Array<OperationalTaskLike & { clientName: string | null }>;
+  /**
+   * As tarefas REALMENTE ABERTAS da consulta — o mesmo conjunto que sustenta os
+   * números do bloco, já sem as de `statusType` `done`/`closed`.
+   *
+   * Existe porque quem monta o BRIEFING (apps/api/src/lib/operational-context.ts)
+   * estava lendo a lista crua devolvida pelo ClickUp, que inclui as concluídas:
+   * o bloco dizia "411 tarefa(s) aberta(s) ... 811 já concluídas ficaram FORA" e
+   * o briefing, montado no MESMO turno, dizia "1222 tarefa(s)". Quem vence é o
+   * briefing, então o usuário recebia o volume da operação 3x inflado — medido
+   * ao vivo em 29/09/2026, com o Bento respondendo "sobrecarregado com 1222
+   * tarefas ativas". Expor o conjunto filtrado é o que impede os dois caminhos
+   * de divergirem de novo.
+   */
+  openTasks: OperationalTaskLike[];
   /** Números crus, pra quem quiser responder sem LLM (rota tool-only) ou pra log. */
   summary: {
     total: number;
@@ -59,13 +98,45 @@ export interface OperationalContext {
   /** Erro honesto de ferramenta: quando isso vem preenchido, o agente TEM que dizer que
    * não conseguiu consultar, e nunca responder com número inventado. */
   failure: string | null;
+  /**
+   * POR QUE NÃO VEIO DADO — e as duas razões não podem ser a mesma coisa.
+   *
+   * 'falha'     a ferramenta quebrou: ClickUp fora, credencial inválida, timeout.
+   *             É anormal, é temporário, e o agente TEM que reconhecer em voz alta,
+   *             senão volta a inventar número quando a integração cai.
+   *
+   * 'sem_fonte' não há o que consultar: o cliente não acompanha tarefa no ClickUp.
+   *             É normal, é permanente, e NÃO é um problema de ninguém.
+   *
+   * MEDIDO EM 01/10/2026, e é a razão desta separação existir: perguntei "Quem é o
+   * decisor do Cliente Teste 7?" — um fato institucional que ACABARA de ser gravado
+   * na memória, com embedding. O Bento respondeu "Não foi possível consultar o
+   * ClickUp agora: o cliente citado não tem lista do ClickUp vinculada". A memória
+   * tinha a resposta e nunca foi usada.
+   *
+   * A causa não foi o retrieval: foi esta classificação. "Sem lista" entrava como
+   * `failure`, o formatador transformava qualquer `failure` num bloco "FALHA DE
+   * FERRAMENTA (obrigatório reconhecer)" com a ordem "diga isso de forma curta e
+   * direta", e o modelo obedeceu. A ausência numa fonte virou a resposta da
+   * pergunta — que é a mesma família de defeito que este repositório já cataloga
+   * como "ausência virando valor", agora no sentido inverso: o vazio gritando mais
+   * alto que o fato.
+   */
+  failureKind: 'falha' | 'sem_fonte' | null;
 }
 
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
-function formatDueDate(ms: number | null, timeZone = 'America/Sao_Paulo'): string {
+function formatDueDate(ms: number | null, timeZone = 'America/Sao_Paulo', now?: Date): string {
   if (!ms) return 'sem prazo';
-  return new Intl.DateTimeFormat('pt-BR', { timeZone, day: '2-digit', month: '2-digit' }).format(new Date(ms));
+  // Ano explícito quando o prazo NÃO é deste ano: "12/04" solto, sem âncora de
+  // ano, foi lido pelo agente como "próximas semanas" sobre uma task de abril
+  // (medido em 24/09/2026). Com ano, a data fala por si.
+  const comAno = now ? new Date(ms).getFullYear() !== now.getFullYear() : false;
+  const opcoes: Intl.DateTimeFormatOptions = comAno
+    ? { timeZone, day: '2-digit', month: '2-digit', year: 'numeric' }
+    : { timeZone, day: '2-digit', month: '2-digit' };
+  return new Intl.DateTimeFormat('pt-BR', opcoes).format(new Date(ms));
 }
 
 /**
@@ -78,14 +149,14 @@ export async function buildOperationalContext(
   now: Date = new Date(),
 ): Promise<OperationalContext> {
   if (!scope.operational || scope.kind === 'NONE' || scope.kind === 'AMBIGUOUS') {
-    return { block: null, summary: null, failure: null };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: null, failureKind: null };
   }
 
   let clients: Array<{ id: string; name: string; clickupListId: string | null }>;
   try {
     clients = await deps.listAuthorizedClients();
   } catch (error) {
-    return { block: null, summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})` };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `não consegui carregar a lista de clientes (${(error as Error).message})`, failureKind: 'falha' };
   }
 
   // Escopo de cliente(s): só as listas daqueles clientes. Escopo GLOBAL e
@@ -100,11 +171,16 @@ export async function buildOperationalContext(
   if (listIds.length === 0) {
     return {
       block: null,
+      listedTasks: [],
+      openTasks: [],
       summary: null,
       failure:
         scope.kind === 'GLOBAL'
           ? 'nenhum cliente com lista do ClickUp vinculada'
           : `o cliente citado não tem lista do ClickUp vinculada (${alvo.map((c) => c.name).join(', ') || 'desconhecido'})`,
+      // Não é falha: é a resposta correta para um cliente que não acompanha
+      // tarefa no ClickUp. Ver a nota em `failureKind`.
+      failureKind: 'sem_fonte',
     };
   }
 
@@ -117,8 +193,19 @@ export async function buildOperationalContext(
       ...(scope.kind === 'PERSON' && scope.person?.memberIds?.length ? { assigneeIds: scope.person.memberIds } : {}),
     });
   } catch (error) {
-    return { block: null, summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})` };
+    return { block: null, listedTasks: [], openTasks: [], summary: null, failure: `a consulta ao ClickUp falhou (${(error as Error).message})`, failureKind: 'falha' };
   }
+
+  /**
+   * "ABERTAS" É ABERTAS DE VERDADE (24/09/2026). O ClickUp devolve status do
+   * tipo `done` (ex: "pronto") mesmo com include_closed=false — são tasks
+   * ENCERRADAS na prática, e listá-las como abertas misturou trabalho fechado
+   * no meio de "tasks abertas" numa conversa real. Filtradas aqui, com a
+   * contagem declarada no bloco pra o número bater com o ClickUp.
+   */
+  const encerradas = result.tasks.filter((t) => t.statusType === 'done' || t.statusType === 'closed');
+  const tasksAbertas = result.tasks.filter((t) => t.statusType !== 'done' && t.statusType !== 'closed');
+  result = { ...result, tasks: tasksAbertas };
 
   const nomePorLista = new Map(alvo.filter((c) => c.clickupListId).map((c) => [c.clickupListId!, c.name]));
   // "Atrasada" = venceu num dia ANTERIOR, não "venceu antes deste instante". Bug pego em
@@ -163,13 +250,36 @@ export async function buildOperationalContext(
         `Nenhuma tarefa aberta${janela} em ${onde}.`,
         'Isto é resultado real de consulta, não ausência de acesso: pode afirmar que não há nada.',
       ].join('\n'),
+      listedTasks: [],
+      openTasks: result.tasks,
       summary,
       failure: null,
+      failureKind: null,
     };
   }
 
   const linhas: string[] = [];
+  /**
+   * A identidade vem ANTES dos dados: "minhas tarefas" e "o que eu tenho pra
+   * hoje" só têm resposta se o agente souber quem é "eu". Sem esta linha, a
+   * pergunta pessoal era respondida com a operação inteira.
+   */
+  if (deps.quemPergunta?.nome || deps.quemPergunta?.emailClickUp) {
+    const quem = deps.quemPergunta;
+    linhas.push(
+      `QUEM ESTÁ FALANDO COM VOCÊ: ${quem.nome ?? 'pessoa sem nome cadastrado'}` +
+        (quem.emailClickUp ? ` (no ClickUp: ${quem.emailClickUp})` : ' — sem e-mail do ClickUp vinculado, então "minhas tarefas" você não tem como resolver sozinho: peça o nome.'),
+    );
+    linhas.push('Quando a pessoa disser "minhas", "eu" ou "pra mim", é desta pessoa que ela fala.');
+    linhas.push('');
+  }
+
   linhas.push('DADOS AO VIVO DO CLICKUP (consultados agora, valem mais que qualquer memória sua):');
+  // Âncora temporal explícita: sem a data de hoje no bloco, o agente estimava
+  // "próximas semanas" sobre prazos de meses atrás (medido em 24/09/2026).
+  linhas.push(
+    `Hoje é ${new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(now)}. Compare prazos com ESTA data.`,
+  );
   const janela = scope.temporal ? ` (janela: ${scope.temporal.label.replace('-', ' ')})` : '';
   /**
    * ESCOPO DO NÚMERO, dito antes do número.
@@ -193,13 +303,20 @@ export async function buildOperationalContext(
           ? `ESTES NÚMEROS SÃO SOMENTE DO QUE ESTÁ COM ${scope.person.name.toUpperCase()}, atravessando clientes.`
           : null;
   if (escopoDoNumero) linhas.push(escopoDoNumero);
+  const internosNoRecorte = byClient.filter((c) => ehInterno(c.clientName));
+  const carteiraNoRecorte = byClient.length - internosNoRecorte.length;
   linhas.push(
-    `${result.tasks.length} tarefa(s) aberta(s)${janela} em ${byClient.length} cliente(s), de ${listIds.length} cliente(s) consultado(s).`,
+    internosNoRecorte.length > 0
+      ? `${result.tasks.length} tarefa(s) aberta(s)${janela}: ${carteiraNoRecorte} cliente(s) da carteira mais ${internosNoRecorte.length} frente(s) internas da agência, de ${listIds.length} lista(s) consultada(s).`
+      : `${result.tasks.length} tarefa(s) aberta(s)${janela} em ${byClient.length} cliente(s), de ${listIds.length} cliente(s) consultado(s).`,
   );
   if (overdue > 0) linhas.push(`${overdue} já passou do prazo.`);
   if (unassigned > 0) linhas.push(`${unassigned} sem responsável definido.`);
   if (result.truncated) {
-    linhas.push('ATENÇÃO: a consulta atingiu o teto de páginas — o número acima é um MÍNIMO, não o total. Diga isso se for citar quantidade.');
+    linhas.push('Se for citar quantidade, diga que encontrou PELO MENOS esse número (a consulta corta no limite de páginas). Fale isso em linguagem normal, sem jargão técnico.');
+  }
+  if (encerradas.length > 0) {
+    linhas.push(`(${encerradas.length} task(s) já concluídas/prontas ficaram FORA desta lista de abertas — não as apresente como pendentes.)`);
   }
   /**
    * PRAZO NÃO É DATA DE EVENTO.
@@ -215,6 +332,29 @@ export async function buildOperationalContext(
   linhas.push(
     'PRAZO é data de entrega da TAREFA, nunca data de evento, de veiculação ou de campanha. Se pedirem a data de um evento e ela não estiver escrita em outro lugar, ela NÃO é conhecida: peça ou marque [A CONFIRMAR], não deduza de um prazo.',
   );
+  /**
+   * AUSÊNCIA DE DADO NÃO É ZERO — o defeito mais caro desta lista, porque o
+   * resultado é um fato citável e errado.
+   *
+   * Medido duas vezes em 29/09/2026, nas personas da Tammy no navegador,
+   * perguntando quanto a agência faturou com um cliente:
+   *
+   *   "Logo, R$ 0,00 faturado registrado no sistema."
+   *   "zero. os dados consultados no ClickUp hoje mostram apenas o volume de
+   *    tarefas... não há nenhum campo ou métrica financeira nesse retorno."
+   *
+   * Nas duas o raciocínio estava CERTO e a conclusão inverteu o sinal: a
+   * segunda abre com a palavra "zero" e só depois explica que não existe o
+   * campo. Quem lê rápido entende que o cliente faturou zero.
+   *
+   * Vale para qualquer coisa que a operação não guarda: receita, faturamento,
+   * custo, verba, horas trabalhadas, contrato.
+   */
+  linhas.push(
+    'AUSÊNCIA DE DADO NÃO É ZERO. Isto aqui é operação (tarefa, prazo, responsável, status) e não tem NENHUM dado financeiro: nem faturamento, nem receita, nem custo, nem verba, nem valor de contrato, nem horas. Se perguntarem qualquer um desses, a resposta começa dizendo que não é um dado que você tem. NUNCA responda 0, zero, R$ 0,00 ou "nenhum" para dizer "não sei" — e nunca abra a resposta com um número quando a resposta real é que o dado não existe.',
+  );
+  linhas.push('');
+  linhas.push(...APRESENTACAO_HUMANA);
   linhas.push('');
 
   /**
@@ -230,14 +370,44 @@ export async function buildOperationalContext(
    */
   const TETO_POR_CLIENTE = scope.kind === 'GLOBAL' || scope.kind === 'MULTI_CLIENT' ? 12 : Number.MAX_SAFE_INTEGER;
 
-  for (const { clientName } of byClient) {
+  const listedTasks: Array<OperationalTaskLike & { clientName: string | null }> = [];
+  /**
+   * A CASA NÃO É CLIENTE (29/09/2026).
+   *
+   * Medido numa resposta real: "Agência Desigual: 34 atrasadas" apareceu no
+   * meio da carteira, entre Cosentino e D. Carvalho. São 170 tarefas de
+   * trabalho REAL — operação interna, site, processo — e por isso elas não
+   * saem daqui. Mas somar a casa à carteira faz o gestor ler "meus clientes
+   * estão com 34 atrasadas" sobre trabalho que é dele mesmo.
+   *
+   * Então: rotuladas e no fim, nunca escondidas. Quem pergunta "como está a
+   * carteira?" enxerga a separação; quem pergunta "o que está atrasado?"
+   * continua vendo tudo, porque continua sendo tudo que precisa ser feito.
+   */
+  const ordenadosPorNatureza = [...byClient].sort((a, b) => {
+    const ia = ehInterno(a.clientName) ? 1 : 0;
+    const ib = ehInterno(b.clientName) ? 1 : 0;
+    return ia !== ib ? ia - ib : 0;
+  });
+  const temInterno = ordenadosPorNatureza.some((c) => ehInterno(c.clientName));
+  let jaSeparou = false;
+
+  for (const { clientName } of ordenadosPorNatureza) {
     const tasks = [...porCliente.get(clientName)!].sort((a, b) => {
       const pa = PRIORITY_ORDER[a.priority ?? 'normal'] ?? 2;
       const pb = PRIORITY_ORDER[b.priority ?? 'normal'] ?? 2;
       if (pa !== pb) return pa - pb;
       return (a.dueDate ?? Number.MAX_SAFE_INTEGER) - (b.dueDate ?? Number.MAX_SAFE_INTEGER);
     });
-    linhas.push(`${textoExternoSeguro(clientName, 80) || 'cliente sem nome'} (${tasks.length}):`);
+    if (temInterno && !jaSeparou && ehInterno(clientName)) {
+      jaSeparou = true;
+      linhas.push(
+        'TRABALHO INTERNO DA AGÊNCIA (daqui pra baixo NÃO é cliente: é a própria casa, produto interno ou projeto do dono — não chame de cliente e não some na carteira):',
+      );
+      linhas.push('');
+    }
+    const rotulo = ehInterno(clientName) ? `${clientName} [INTERNO]` : clientName;
+    linhas.push(`${textoExternoSeguro(rotulo, 92) || 'cliente sem nome'} (${tasks.length}):`);
     const mostradas = tasks.slice(0, TETO_POR_CLIENTE);
     if (mostradas.length < tasks.length) {
       linhas.push(`(mostrando as ${mostradas.length} mais urgentes de ${tasks.length} — prioridade e prazo primeiro)`);
@@ -250,7 +420,7 @@ export async function buildOperationalContext(
       const partes = [
         `- ${textoExternoSeguro(t.name) || 'sem nome'}`,
         `status: ${textoExternoSeguro(t.status) || 'sem status'}`,
-        `prazo: ${formatDueDate(t.dueDate)}`,
+        `prazo: ${formatDueDate(t.dueDate, 'America/Sao_Paulo', now)}`,
         t.assignees.length
           ? `resp: ${t.assignees.map((a) => textoExternoSeguro(a, 60)).filter(Boolean).join(', ') || 'ninguém'}`
           : 'resp: ninguém',
@@ -258,9 +428,12 @@ export async function buildOperationalContext(
       if (t.priority) partes.push(`prioridade: ${t.priority}`);
       if (t.dueDate !== null && t.dueDate < inicioDeHoje && !concluida(t)) partes.push('ATRASADA');
       linhas.push(partes.join(' | '));
+      // O snapshot de seleção replica ESTA ordem: é ela que o usuário viu, e é
+      // contra ela que "a segunda" resolve depois.
+      listedTasks.push({ ...t, clientName });
     }
     linhas.push('');
   }
 
-  return { block: linhas.join('\n').trimEnd(), summary, failure: null };
+  return { block: linhas.join('\n').trimEnd(), listedTasks, openTasks: result.tasks, summary, failure: null, failureKind: null };
 }

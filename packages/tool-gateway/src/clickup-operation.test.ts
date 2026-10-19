@@ -164,6 +164,8 @@ describe('groupTasksByClient', () => {
     updatedAt: null,
     assignees: [],
     tags: [],
+    parentId: null,
+    topLevelParentId: null,
     listId: null,
     listName: null,
     folderName: null,

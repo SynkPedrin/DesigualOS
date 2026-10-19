@@ -8,6 +8,7 @@ import {
   checkBrainHealth,
   createCreativePlan,
   createOttoLLMProvider,
+  createOttoOpenAIProvider,
   depthPolicy,
   deriveCreativeDNA,
   loadBrainIndex,
@@ -101,12 +102,21 @@ export interface OttoNodeDeps {
 
 export function createDefaultDeps(config: OttoNodeConfig): OttoNodeDeps {
   const logger = createLogger({ service: 'otto-node' });
-  const llm = createOttoLLMProvider({
-    baseUrl: config.otto.ollamaUrl,
-    model: config.otto.model,
-    timeoutMs: config.otto.llmTimeoutMs,
-    logger,
-  });
+  // Seção 25/26 da missão de release OpenAI + ClickUp MCP: OpenAI é o
+  // provider default (OTTO_LLM_PROVIDER=openai); 'ollama' é o rollback
+  // explícito. Nenhuma troca automática em runtime entre os dois — a
+  // escolha é fixada no boot do node a partir da env, nunca decidida por
+  // uma falha de chamada (ver createOttoOpenAIProvider: sem credencial,
+  // ela lança erro explícito em vez de cair pro Ollama sozinha).
+  const llm =
+    config.otto.provider === 'openai'
+      ? createOttoOpenAIProvider({ logger })
+      : createOttoLLMProvider({
+          baseUrl: config.otto.ollamaUrl,
+          model: config.otto.model,
+          timeoutMs: config.otto.llmTimeoutMs,
+          logger,
+        });
   return {
     llm,
     retrieveKnowledge: (query, options) =>

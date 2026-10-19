@@ -684,7 +684,7 @@ export function JobForm({ onCreated }: { onCreated: (jobId: string) => void }) {
 
       {/* REFERÊNCIAS (anexos + URLs da galeria) */}
       <section>
-        <SectionLabel>Referências (imagem ou PDF, até 10 — também aceita colar com Ctrl/Cmd+V)</SectionLabel>
+        <SectionLabel>Referências (imagem ou PDF, até 10, também aceita colar com Ctrl/Cmd+V)</SectionLabel>
 
         {(attachments.length > 0 || referenceImages.length > 0) && (
           <ul className="mb-2 space-y-1">

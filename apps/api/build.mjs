@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { shaDeRelease, versaoDoSchema } from '../../scripts/identidade-de-release.mjs';
 
 /**
  * `tsc` sozinho (module: ESNext, moduleResolution: Bundler no
@@ -24,15 +25,44 @@ import { build } from 'esbuild';
 // que sem isso vira "Dynamic require of fs is not supported"): define um
 // `require` de verdade via createRequire, capaz de pedir módulo nativo do
 // Node normalmente.
+/**
+ * O comentário acima ("todo o código aqui é JS puro, sem addon nativo")
+ * deixou de valer quando o Otto Motion Engine entrou: o pipeline de motion
+ * usa @remotion/renderer, @remotion/bundler (que carrega @rspack/binding) e
+ * sharp — todos com binário `.node`, que o esbuild não sabe empacotar. A
+ * build da API passou a falhar em "No loader is configured for .node files",
+ * e isso passou despercebido porque `dev` roda em `tsx`, sem bundle.
+ *
+ * A API nunca renderiza: ela só ENFILEIRA (getMotionQueue). Quem renderiza é
+ * o worker. Marcar estes pacotes como externos mantém o bundle da API livre
+ * de binário nativo — e, como `queue.ts` carrega o pipeline por `import()`
+ * tardio na entrada `@desigual-os/otto-motion/pipeline`, a API nem chega a
+ * resolvê-los em runtime. Por isso a imagem da API continua sem node_modules.
+ */
+const NATIVOS_DO_MOTION = [
+  '@desigual-os/otto-motion/pipeline',
+  '@remotion/renderer',
+  '@remotion/bundler',
+  'sharp',
+];
+
 await build({
   entryPoints: ['src/server.ts'],
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node20',
+  target: 'node22',
   outfile: 'dist/server.js',
+  external: NATIVOS_DO_MOTION,
   sourcemap: true,
   logLevel: 'info',
+  // O SHA vira literal no bundle. Ver scripts/sha-de-release.mjs: o
+  // container de produção não tem .git, então resolver isso em runtime
+  // devolvia 'unknown' e o /health não provava qual commit estava no ar.
+  define: {
+    __RELEASE_SHA__: JSON.stringify(shaDeRelease()),
+    __SCHEMA_VERSION__: JSON.stringify(versaoDoSchema()),
+  },
   banner: {
     js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
   },

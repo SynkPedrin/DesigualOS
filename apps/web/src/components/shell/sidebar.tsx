@@ -1,20 +1,22 @@
 'use client';
 
-import { Suspense } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronsLeft, ChevronsRight, LogOut, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, LogOut, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui-store';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
+import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { supabase } from '@/lib/supabase/client';
-import { NAV_ITEMS } from './nav-items';
-import { SidebarChatSections } from './sidebar-chat-sections';
+import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
+import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
+import { saudeEmCor } from '@/lib/saude-em-cor';
 
 function formatBackupTime(iso: string | null) {
   if (!iso) return 'Sem registro';
@@ -43,14 +45,113 @@ export function Sidebar({
   const setStudioModalOpen = useUiStore((state) => state.setStudioModalOpen);
   const { isMaster } = useIsMaster();
   const { data: health, isPending, isError } = useInfrastructureHealth(isMaster);
+
+  /**
+   * Saber se a lista continua abaixo. Medido do DOM, não deduzido da altura da
+   * janela: o que cabe depende de quantos itens o PAPEL da pessoa libera, e
+   * isso muda de usuário pra usuário.
+   */
+  const navRef = useRef<HTMLElement | null>(null);
+  const [temMais, setTemMais] = useState(false);
+  const conferirSeTemMais = useCallback(() => {
+    const el = navRef.current;
+    if (!el) return;
+    setTemMais(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  }, []);
+  useEffect(() => {
+    conferirSeTemMais();
+    const el = navRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    // A lista muda de tamanho sem a janela mudar: seção recolhida, item que
+    // some por permissão, badge que aparece. O observer pega os três.
+    const observador = new ResizeObserver(conferirSeTemMais);
+    observador.observe(el);
+    return () => observador.disconnect();
+  }, [conferirSeTemMais]);
   const { data: me } = useMe();
+  const { data: workspace } = useMyWorkspace();
   const { logoSrc } = useBrandAssets();
-  const visibleNavItems = NAV_ITEMS.filter((item) => !item.masterOnly || isMaster);
+  /**
+   * `eh_provider` vem do /me e NUNCA é derivado só do papel: exige também
+   * pertencer à organização provedora. Ver lib/escopo-de-organizacao.ts na API.
+   * Enquanto o /me não responde, trata como não-provider — esconder um item a
+   * mais por um instante é melhor que piscar uma tela que a pessoa não pode ver.
+   */
+  const ehProvider = me?.eh_provider === true;
+
+  /**
+   * DENTRO DE UMA EMPRESA OU NA CASA?
+   *
+   * Pedro continua sendo Pedro — entrar numa subconta NÃO troca identidade,
+   * troca `organizacao_ativa`. O que muda aqui é só o que faz sentido ver: um
+   * tenant não vende tenants, então "Empresas" some lá dentro.
+   *
+   * A decisão é por IDENTIDADE ESTÁVEL (`organizacao_ativa.eh_provedora`, o id
+   * comparado ao PROVIDER_ORGANIZATION_ID no servidor) — não mais regex no
+   * nome, que quebrava com um tenant chamado "Desigual Advocacia" ou uma
+   * provedora renomeada. Ver nav-visibility.ts.
+   */
+  const dentroDeTenant = estaDentroDeTenant(me);
+
+  /**
+   * A NAVEGAÇÃO COMERCIAL ESCONDE A INFRAESTRUTURA — e não apaga nada.
+   *
+   * Medido em 02/10/2026: eram 30 itens visíveis, entre eles Sinais, Decisões,
+   * Memória, Agentes, Monitoramento e Qualidade do dado. Trinta portas abertas
+   * não é poder de escolha: é alguém sem saber por onde começar.
+   *
+   * `administracao: true` tira o item daqui e mantém a ROTA intacta, no mesmo
+   * endereço, para quem dá suporte. A régua é a do briefing: se entender o item
+   * exige saber o que é MCP, embedding, fila ou episódio de agente, ele não
+   * pertence à navegação de quem usa o produto para trabalhar.
+   *
+   * O filtro mora em nav-visibility.ts desde 05/10/2026 — o ⌘K aplica OS
+   * MESMOS gates, e duas cópias eram duas chances de uma divergir.
+   */
+  const visibleNavItems = itensVisiveisNaNavegacao(NAV_ITEMS, {
+    isMaster,
+    ehProvider,
+    dentroDeTenant,
+    modulosHabilitados: workspace ? new Set(workspace.modules) : null,
+  });
+
+  /**
+   * QUAIS SEÇÕES ESTÃO ABERTAS.
+   *
+   * As técnicas nascem recolhidas (ver `recolhida` em nav-items.ts): somam
+   * vinte e três itens e servem a quem foi caçar uma coisa específica, não a
+   * quem abriu o sistema para trabalhar.
+   *
+   * A exceção que evita um beco: se a pessoa JÁ ESTÁ numa tela de uma seção
+   * recolhida, ela abre. Senão, quem chega em /audit por link vê a barra
+   * inteira sem nenhum sinal de onde está.
+   */
+  const [abertas, setAbertas] = useState<Set<string>>(
+    () =>
+      new Set(
+        NAV_SECTIONS.filter(
+          (s) =>
+            !s.recolhida ||
+            NAV_ITEMS.some((i) => i.section === s.id && i.href !== '/' && pathname.startsWith(i.href)),
+        ).map((s) => s.id),
+      ),
+  );
+
+  function alternarSecao(id: string) {
+    setAbertas((atual) => {
+      const proxima = new Set(atual);
+      if (proxima.has(id)) proxima.delete(id);
+      else proxima.add(id);
+      return proxima;
+    });
+  }
 
   async function handleSignOut() {
     await supabase.auth.signOut();
     onNavigate?.();
-    router.replace('/login');
+    // Navegação dura: o próximo login pode ser OUTRA conta, e o cache desta
+    // não pode sobreviver até lá.
+    window.location.assign('/login');
   }
 
   /** Mesmo rota não reseta o estado local do ChatThread - o nonce em ?new= é o
@@ -73,7 +174,7 @@ export function Sidebar({
         collapsed ? 'w-[76px]' : 'w-64',
       )}
     >
-      <div className="flex items-center justify-between gap-2 px-4 py-6">
+      <div className="flex items-center justify-between gap-2 px-4 py-3">
         {!collapsed && (
           <Image src={logoSrc} alt="desigual OS" width={160} height={53} priority className="h-auto w-[150px]" />
         )}
@@ -98,7 +199,24 @@ export function Sidebar({
         )}
       </div>
 
-      <div className={cn('mx-4 mb-4 rounded-lg bg-grafite px-3 py-3', collapsed && 'mx-2 px-2')}>
+      {/* SELETOR DA AGÊNCIA (mockup, 07/10/2026) — clicar sai da visão do
+       * colaborador (Hoje) e vai pra /agencia, a visão de gestão da agência
+       * inteira (bom dia + calendário + visão geral + demandas + pipeline,
+       * tudo agregado — nunca o Control Plane, que é sobre uso de IA/infra,
+       * pergunta diferente). Troca de EMPRESA de verdade ainda não existe
+       * (Pedro só tem uma); quando existir, é aqui que o dropdown abre a lista. */}
+      {!collapsed && (
+        <Link href="/agencia" className="mx-4 mb-3 flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-grafite">
+          <Image src="/brand/os-mark-icon.png" alt="" width={56} height={56} unoptimized className="size-7 shrink-0 rounded-md" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-branco-cru">Desigual</p>
+            <p className="truncate font-mono text-[10px] uppercase tracking-wider text-nevoa">Agência</p>
+          </div>
+          <ChevronDown size={14} className="shrink-0 text-nevoa" />
+        </Link>
+      )}
+
+      <div className={cn('mx-4 mb-3 rounded-lg bg-grafite px-3 py-2.5', collapsed && 'mx-2 px-2')}>
         <div className="flex items-center gap-3">
           <div className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru">
             {me?.avatarUrl ? (
@@ -111,7 +229,7 @@ export function Sidebar({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-branco-cru">{me?.name ?? 'Carregando...'}</p>
               <p className="truncate font-mono text-xs text-nevoa">
-                {isMaster ? 'Administrador Master' : 'Colaborador'}
+                {isMaster ? 'Administrador Master' : 'Atendimento'}
               </p>
             </div>
           )}
@@ -140,12 +258,83 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav aria-label="Navegação principal" className="flex-1 space-y-1 overflow-y-auto px-3">
-        {visibleNavItems.map((item) => {
-          const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+      {/*
+        * O CORTE DEIXA DE SER SILENCIOSO.
+        *
+        * São dezoito itens; em monitor de 1080 eles cabem, em notebook não. A
+        * lista sempre rolou, mas sem nenhuma marca disso: o último item visível
+        * terminava rente à borda e parecia o fim da lista. Pedro relatou em
+        * 09/10/2026 como tela "cortada", e é exatamente isso que parecia.
+        *
+        * A sombra só aparece quando há mesmo o que ver abaixo, e some ao chegar
+        * no fim. Esconder a dica quando ela não se aplica é o que a torna
+        * confiável quando aplica.
+        */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {temMais && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-carbono to-transparent"
+          />
+        )}
+      <nav
+        ref={navRef}
+        onScroll={conferirSeTemMais}
+        aria-label="Navegação principal"
+        className="flex-1 space-y-0.5 overflow-y-auto px-3"
+      >
+        {NAV_SECTIONS.map((secao) => {
+        const itensDaSecao = visibleNavItems.filter((i) => i.section === secao.id);
+        if (itensDaSecao.length === 0) return null;
+        /*
+          * Com a barra COLAPSADA (só ícones) nada é recolhido: ali já não há
+          * rótulo nem espaço, e esconder metade dos ícones deixaria a pessoa
+          * sem nenhuma pista do que existe.
+          */
+        const aberta = collapsed || abertas.has(secao.id);
+        const podeRecolher = !collapsed && Boolean(secao.recolhida);
+        return (
+        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-3')}>
+          {/*
+            * O rótulo da seção some quando a sidebar está colapsada — ali só
+            * cabe ícone, e um texto truncado em 3 letras não agrupa nada.
+            * Colapsada, a separação fica por conta do espaçamento entre grupos.
+            */}
+          {!collapsed &&
+            (podeRecolher ? (
+              <button
+                type="button"
+                onClick={() => alternarSecao(secao.id)}
+                aria-expanded={aberta}
+                title={secao.ajuda}
+                className="flex w-full items-center gap-1.5 rounded px-3 pb-1.5 pt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60 transition-colors hover:text-branco-cru"
+              >
+                {aberta ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                <span>{secao.label}</span>
+                {/* Quantos itens tem lá dentro: sem isso, uma seção fechada
+                  * não diz se esconde dois itens ou vinte. */}
+                {!aberta && <span className="text-nevoa/40">{itensDaSecao.length}</span>}
+              </button>
+            ) : (
+              <p
+                title={secao.ajuda}
+                className="px-3 pb-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60"
+              >
+                {secao.label}
+              </p>
+            ))}
+          {collapsed && secao.id !== NAV_SECTIONS[0]!.id && (
+            <div aria-hidden className="mx-3 mb-2 border-t border-grafite-elevado" />
+          )}
+          <div className={cn('space-y-1', !aberta && 'hidden')}>
+        {itensDaSecao.map((item) => {
+          // item.href pode carregar querystring (ex.: "/inbox?view=contatos") — pathname
+          // nunca inclui `?`, então o match precisa ignorar essa parte, ou nunca acende.
+          const caminhoDoItem = item.href.split('?')[0]!;
+          const isActive = caminhoDoItem === '/' ? pathname === '/' : pathname.startsWith(caminhoDoItem);
           const Icon = item.icon;
           const itemClassName = cn(
-            'relative flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-colors',
+            'relative flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors',
             isActive ? 'bg-grafite text-branco-cru' : 'text-nevoa hover:bg-grafite/60 hover:text-branco-cru',
           );
           const itemContent = (
@@ -185,19 +374,25 @@ export function Sidebar({
             </Link>
           );
         })}
+          </div>
+        </div>
+        );
+        })}
 
-        {/* Colapsada, a sidebar esconde tudo que não é ícone - as seções somem
-         * junto (mesmo destino do widget de saúde). Suspense: a seção usa
-         * useSearchParams pro destaque do item ativo. */}
-        {!collapsed && (
-          <Suspense fallback={null}>
-            <SidebarChatSections />
-          </Suspense>
-        )}
+        {/* PROJETOS E CONVERSAS RECENTES SAÍRAM DAQUI (pedido do Pedro,
+         * 08/10/2026). Não foram removidos do produto: o `/chat` já tem o rail
+         * próprio dele (ConversationSidebar, dentro do ChatThread), que lista
+         * as mesmas conversas E os mesmos projetos, com arquivar, renomear e
+         * filtro por agente e por cliente — coisas que a versão da barra
+         * lateral não tinha.
+         *
+         * Eram duas listas da mesma coisa, e a de fora era a mais pobre. Uma
+         * lista de conversas pertence ao lugar onde se conversa. */}
       </nav>
+      </div>
 
       {isMaster && (
-        <div className={cn('m-3 rounded-lg border border-grafite-elevado bg-grafite p-3', collapsed && 'hidden')}>
+        <div className={cn('mx-2 mb-2 mt-1.5 rounded-lg border border-grafite-elevado bg-grafite p-2.5', collapsed && 'hidden')}>
           {isPending ? (
             <div className="space-y-2">
               <div className="h-3 w-3/4 animate-pulse rounded bg-grafite-elevado" />
@@ -210,10 +405,28 @@ export function Sidebar({
             // em vez da falta dele.
             <p className="font-mono text-xs text-erro">Não consegui carregar a saúde da infraestrutura.</p>
           ) : (
-            <dl className="space-y-1.5 font-mono text-xs">
+            <dl className="space-y-1 font-mono text-xs">
               <div className="flex items-center justify-between">
                 <dt className="text-nevoa">Saúde geral</dt>
-                <dd className="tabular-nums text-sinal">{health?.overallHealthPercent}%</dd>
+                {/*
+                  * A COR SEGUE O NÚMERO, e antes não seguia.
+                  *
+                  * Era `text-sinal` fixo: 20% e 82% saíam da mesma cor, então a
+                  * cor não dizia nada e o número parecia alarme permanente no
+                  * rodapé de todas as telas. Relatado assim pelo Pedro em
+                  * 09/10/2026: "saúde operacional sempre vermelho fica
+                  * estranho".
+                  *
+                  * A régua não existe pra deixar o número bonito. 20% continua
+                  * 20% e continua vermelho enquanto o worker estiver parado; o
+                  * que muda é que agora verde quer dizer alguma coisa.
+                  */}
+                <dd
+                  className={cn('tabular-nums', saudeEmCor(health?.overallHealthPercent ?? null))}
+                  title={`${health?.overallHealthPercent ?? 0}% dos sistemas respondendo`}
+                >
+                  {health?.overallHealthPercent}%
+                </dd>
               </div>
               <div className="flex items-center gap-1.5">
                 <span
@@ -264,6 +477,27 @@ export function Sidebar({
                   </dd>
                 </div>
               ) : null}
+              {/*
+                * O ASSISTENTE SÓ ENTENDE REGRA DIRETA quando falta credencial.
+                *
+                * Aparece SÓ quando o estado é conhecido e negativo: campo
+                * ausente (API velha) não vira aviso, e configurado não vira
+                * linha. Linha que some quando está tudo bem é o que faz dela
+                * confiável quando aparece.
+                *
+                * Sem isso, a falha chegava à pessoa como "não entendi sua
+                * pergunta" no chat, e ela reescrevia a pergunta sem chance de
+                * acertar, porque a causa está no servidor.
+                */}
+              {health?.routerClassifierConfigured === false && (
+                <div
+                  className="flex items-center justify-between gap-2"
+                  title="Sem ANTHROPIC_API_KEY, o assistente só entende pedidos que casam com as regras diretas e pede esclarecimento para todo o resto."
+                >
+                  <dt className="text-nevoa">Interpretação</dt>
+                  <dd className="truncate text-erro">sem credencial</dd>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <dt className="text-nevoa">Último backup</dt>
                 <dd className="text-branco-cru">{formatBackupTime(health?.lastBackupAt ?? null)}</dd>

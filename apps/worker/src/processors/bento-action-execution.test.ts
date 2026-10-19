@@ -192,17 +192,25 @@ describe('workload_does_not_block_without_policy', () => {
   });
 });
 
-describe('complete/close/resolve são NEGADOS', () => {
+/**
+ * DESTRAVADO em 28/09/2026 por decisão da operação: concluir/fechar task
+ * deixou de ser recusa. O Bento atende um time sênior — quando a pessoa manda
+ * fechar, a decisão é dela, e o sermão só devolvia trabalho manual pro humano.
+ * O risco que o deny cobria (status falso) passou a ser tratado por
+ * procedência: o executor registra QUEM pediu o fechamento e confirma o status
+ * por read-back.
+ */
+describe('complete/close/resolve são EXECUTADOS (com procedência)', () => {
   it.each([
     'marca como concluído',
     'conclui essa task',
     'finaliza isso',
     'fecha a task do Gui',
     'dá como pronto',
-  ])('%s -> FORBIDDEN_ACTION', (m) => {
+  ])('%s -> ACTION_REQUEST autorizada', (m) => {
     const i = classifyActionIntent(m);
-    expect(i.kind).toBe('FORBIDDEN_ACTION');
-    expect(i.writeAuthorized).toBe(false);
+    expect(i.kind).toBe('ACTION_REQUEST');
+    expect(i.writeAuthorized).toBe(true);
   });
 
   it('perguntar se deve fechar continua sendo pergunta, não recusa', () => {

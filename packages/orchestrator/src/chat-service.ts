@@ -1,12 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { organizacaoDaEscrita } from '@desigual-os/auth';
 import { createLogger } from '@desigual-os/logging';
 import type { RouterDecision } from '@desigual-os/router';
-import type { QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
+import type { AgentName, QueuePriority, StudioReferenceAsset } from '@desigual-os/types';
 import { estimateCost } from '@desigual-os/token-engine';
 import { findHealthyNodeForAgent } from './discovery';
 import { generateExecutionId } from './execution-id';
-import { AGENT_MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue } from './queues';
+import { AGENT_MAX_ATTEMPTS, PRIORITY_VALUE, getAgentQueue, type MotionBriefPayload } from './queues';
 import type { ChatResult } from './result';
 
 const COMPLEXITY_TO_PRIORITY: Record<string, QueuePriority> = {
@@ -26,6 +27,10 @@ export interface SingleAgentDispatchParams {
   attachments?: StudioReferenceAsset[];
   /** Ver AgentJobData.operationalContext. */
   operationalContext?: string;
+  /** Ver AgentJobData.motionBrief. */
+  motionBrief?: MotionBriefPayload;
+  /** Ver AgentJobData.clienteDoEscopo. */
+  clienteDoEscopo?: string;
 }
 
 /**
@@ -37,15 +42,29 @@ export interface SingleAgentDispatchParams {
 export async function createAndEnqueueExecution(
   params: SingleAgentDispatchParams,
 ): Promise<ChatResult> {
-  const { message, userId, clientId, conversationId, decision, attachments, operationalContext } = params;
+  const { message, userId, clientId, conversationId, decision, attachments, operationalContext, motionBrief, clienteDoEscopo } = params;
 
+  /**
+   * O BENTO NÃO PRECISA DE NODE para responder (13/10/2026).
+   *
+   * O portão de node existe porque otto/studio respondem EM nodes de GPU e
+   * jarbas/suzy em serviços externos — sem node saudável, enfileirar é
+   * prometer o que não pode cumprir. Mas o Bento nunca respondeu por node:
+   * `callBento` fala com o serviço de Q&A direto do worker, e desde hoje a
+   * via primária é o GPT, também no worker. Medido ao vivo nesta data: com
+   * todos os nodes fora, "o que é esse sistema?" voltava "nenhum node
+   * online" — a pergunta morria num portão de uma infraestrutura que o
+   * caminho dela não usa.
+   *
+   * Para os outros agentes o portão segue exatamente como era.
+   */
   const healthyNode = await findHealthyNodeForAgent(decision.primary_agent);
-  if (!healthyNode) {
+  if (!healthyNode && !agenteRespondeNoWorker(decision.primary_agent)) {
     return {
       executionId: null,
       status: 'unavailable',
       agent: decision.primary_agent,
-      error: `Agente '${decision.primary_agent}' está indisponível no momento (nenhum node online).`,
+      error: mensagemDeAgenteFora(decision.primary_agent),
     };
   }
 
@@ -56,9 +75,12 @@ export async function createAndEnqueueExecution(
   // fallback do custo real quando o modelo não é reportado.
   const { amountUsd: estimatedCost } = estimateCost('unknown', message);
 
+  const organizationId = await organizacaoDaEscrita({ userId, clientId });
+
   const [execution] = await db
     .insert(schema.executions)
     .values({
+      organizationId,
       executionId,
       userId,
       clientId,
@@ -103,6 +125,12 @@ export async function createAndEnqueueExecution(
         contextRefs: decision.context,
         ...(attachments?.length ? { attachments } : {}),
         ...(operationalContext ? { operationalContext } : {}),
+        ...(motionBrief ? { motionBrief } : {}),
+        ...(clienteDoEscopo ? { clienteDoEscopo } : {}),
+        // O intent do Router viaja com o job: é o que o retrieval planner do
+        // worker lê pra decidir as fontes do turno (ver AgentJobData.intent).
+        intent: decision.intent,
+        routingConfidence: decision.confidence,
         conversationId,
       },
       {
@@ -186,4 +214,48 @@ export async function touchConversation(conversationId: string | null): Promise<
   } catch (error) {
     logger.warn({ error, conversationId }, 'Falha ao atualizar updated_at da conversa');
   }
+}
+
+/**
+ * QUEM RESPONDE DE DENTRO DO WORKER, sem node: o portão de node não vale
+ * para eles.
+ *
+ * - Bento: desde 13/10/2026 (leitura por GPT no worker).
+ * - Jarbas: desde 14/10/2026, quando `JARBAS_LOCAL_ENABLED` não é 'false'
+ *   (apps/worker/src/processors/jarbas-local.ts). Com a flag em 'false' ele
+ *   volta a depender do serviço do Mac Mini, e do portão.
+ */
+export function agenteRespondeNoWorker(agent: AgentName, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (agent === 'bento') return true;
+  if (agent === 'jarbas') return env.JARBAS_LOCAL_ENABLED !== 'false';
+  return false;
+}
+
+/**
+ * O QUE A PESSOA LÊ QUANDO O AGENTE ESTÁ FORA (14/10/2026, véspera do
+ * lançamento para a operação).
+ *
+ * Era "Agente 'jarbas' está indisponível no momento (nenhum node online)":
+ * certo para quem mantém o sistema, inútil para quem opera. Com só o Bento no
+ * ar, qualquer pergunta de tráfego ou de criação que o roteador mande ao
+ * especialista cai aqui, então a frase precisa dizer o que fazer agora.
+ *
+ * Não redireciona para o Bento de propósito: ele não tem os dados de mídia do
+ * Jarbas, e para criação a regra da casa é avisar em vez de entregar peça pior.
+ */
+const ESPECIALIDADE: Record<AgentName, string> = {
+  bento: 'operação',
+  jarbas: 'tráfego pago',
+  suzy: 'atendimento e social selling',
+  otto: 'direção criativa',
+  studio: 'imagem e vídeo',
+};
+
+export function mensagemDeAgenteFora(agent: AgentName): string {
+  const nome = agent.charAt(0).toUpperCase() + agent.slice(1);
+  const dica =
+    agent === 'jarbas'
+      ? ' Os números de mídia estão na tela Mídias, e a operação você pode perguntar ao Bento.'
+      : ' Para tarefas, clientes e operação, pergunte ao Bento.';
+  return `O ${nome} (${ESPECIALIDADE[agent]}) está fora do ar no momento.${dica}`;
 }

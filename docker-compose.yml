@@ -24,5 +24,68 @@ services:
       timeout: 3s
       retries: 5
 
+  # Evolution API self-hosted (WhatsApp, 07/10/2026) — uma instância por
+  # empresa dentro deste ÚNICO servidor (ver evolutionInstanceNameFor em
+  # @desigual-os/tool-gateway). Postgres próprio: é o schema de OUTRA
+  # aplicação, nunca compartilha banco com o Desigual OS.
+  #
+  # DORMENTE DE PROPÓSITO (profile "evolution"): o `docker compose up` do
+  # dia a dia (só Redis) nunca aciona nem exige nada daqui — vendor ATIVO
+  # hoje é W-API (packages/tool-gateway/src/wapi-client.ts), que não precisa
+  # de infraestrutura própria. Subir isto é `docker compose --profile
+  # evolution up -d`, só quando alguém realmente for usar o self-host.
+  evolution-postgres:
+    image: postgres:16-alpine
+    container_name: desigual-os-evolution-postgres
+    profiles: ["evolution"]
+    restart: always
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:-evolution}
+      POSTGRES_DB: evolution
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: desigual-os-evolution-api
+    profiles: ["evolution"]
+    restart: always
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+    ports:
+      # Bind em 127.0.0.1: é infraestrutura NOSSA (a chave global vale pra
+      # qualquer empresa cadastrada no servidor) — publicar em 0.0.0.0
+      # exporia a API de administração do WhatsApp pra rede local inteira.
+      - "127.0.0.1:${EVOLUTION_HOST_PORT:-8080}:8080"
+    environment:
+      SERVER_URL: http://localhost:${EVOLUTION_HOST_PORT:-8080}
+      # Sem `:?` de propósito: um valor obrigatório quebraria `docker compose
+      # up -d` do dia a dia (só Redis) mesmo com o profile "evolution" nunca
+      # pedido — a interpolação de variável acontece ANTES do filtro de
+      # profile nesta versão do Compose (confirmado em 07/10/2026). Vazio
+      # aqui só falha a própria evolution-api, isolado, se alguém pedir o
+      # profile sem configurar a chave — nunca a stack inteira.
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_POSTGRES_PASSWORD:-evolution}@evolution-postgres:5432/evolution?schema=evolution_api
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+    volumes:
+      - evolution_instances_data:/evolution/instances
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   redis_data:
+  evolution_postgres_data:
+  evolution_instances_data:

@@ -51,6 +51,17 @@ export interface RouteOptions {
    * timeout, ou passa/falha pelo motivo errado.
    */
   classificadorLocal?: typeof classifyLocally;
+  /**
+   * Injetável pelo mesmo motivo, e a falta dele custou caro: até 13/10/2026 só
+   * o classificador LOCAL podia ser desligado em teste. A camada paga não
+   * precisava de costura porque nunca tinha credencial — devolvia `null` de
+   * graça e instantaneamente.
+   *
+   * Ao ligar o GPT, os testes de continuidade passaram a fazer CHAMADAS REAIS
+   * E PAGAS, visível no tempo: estouraram o limite de 5s por teste. Costura que
+   * só existe para um lado deixa de ser costura quando o outro lado acorda.
+   */
+  classificadorPago?: typeof classifyWithLLM;
 }
 
 export async function route(
@@ -108,7 +119,7 @@ export async function route(
     });
   }
 
-  const classified = await classifyWithLLM(message, logger);
+  const classified = await (opts.classificadorPago ?? classifyWithLLM)(message, logger);
   if (classified) {
     return routerDecisionSchema.parse({
       intent: classified.intent,

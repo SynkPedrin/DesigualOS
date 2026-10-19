@@ -1,0 +1,202 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiFetch, API_FETCH_UPLOAD_TIMEOUT_MS } from '@/lib/api/client';
+import type {
+  UploadFileResponseWire,
+  PipelineBoardWire,
+  PipelineCardWire,
+  PipelineStageWire,
+  PipelinesResponseWire,
+} from '@/lib/api/contracts';
+
+const CHAVE = ['pipelines'] as const;
+
+/**
+ * Os quadros que esta pessoa vê: os da AGÊNCIA mais os DELA. O recorte é
+ * feito no servidor — a tela nunca recebe quadro pessoal de outra pessoa pra
+ * filtrar depois, porque filtro de visibilidade no cliente é filtro que já
+ * entregou o dado.
+ */
+export function usePipelines() {
+  return useQuery({
+    queryKey: CHAVE,
+    queryFn: () => apiFetch<PipelinesResponseWire>('/pipelines'),
+  });
+}
+
+export function useCriarPipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entrada: {
+      nome: string;
+      tipo: PipelineBoardWire['tipo'];
+      escopo: PipelineBoardWire['escopo'];
+      stages: PipelineStageWire[];
+      /** Obrigatório quando `tipo === 'tarefas'` — de qual cliente este quadro é espelho. */
+      client_id?: string | null;
+    }) => apiFetch<PipelineBoardWire>('/pipelines', { method: 'POST', body: JSON.stringify(entrada) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+/**
+ * Status REAIS da lista de um cliente — status é por lista, nunca universal
+ * (confirmado pela operação). Usado na tela de criar quadro de tarefas, pra
+ * não oferecer status inventado como coluna.
+ */
+/** Valor do seletor de cliente que significa "as tarefas atribuídas a mim". */
+export const MINHAS_TAREFAS = '__minhas__';
+
+export function useStatusClickUpDoCliente(clientId: string | null) {
+  return useQuery({
+    queryKey: ['pipelines', 'status-clickup', clientId],
+    queryFn: () =>
+      apiFetch<{ status: string[]; fechados?: string[] }>(
+        clientId === MINHAS_TAREFAS ? '/pipelines/minhas/status-clickup' : `/pipelines/clientes/${clientId}/status-clickup`,
+      ),
+    enabled: clientId !== null,
+  });
+}
+
+/**
+ * Backfill de um quadro de tarefas: tasks que já existiam no ClickUp antes
+ * do quadro nascer não chegam sozinhas (só task NOVA chega pelo webhook) —
+ * este botão puxa o que falta.
+ */
+export function useSincronizarTarefas() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (boardId: string) =>
+      apiFetch<{ criados: number; sem_coluna: number; movidos?: number; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-tarefas`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+export function useAtualizarPipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, ...corpo }: { boardId: string; nome?: string; stages?: PipelineStageWire[]; posicao?: number }) =>
+      apiFetch<PipelineBoardWire>(`/pipelines/${boardId}`, { method: 'PATCH', body: JSON.stringify(corpo) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+export function useApagarPipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (boardId: string) => apiFetch<null>(`/pipelines/${boardId}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+export function useCriarCartao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, ...corpo }: {
+      boardId: string;
+      stage_id: string;
+      name: string;
+      client_id?: string | null;
+      responsavel?: string | null;
+      valor?: string | null;
+      nota?: string;
+    }) => apiFetch<PipelineCardWire>(`/pipelines/${boardId}/cards`, { method: 'POST', body: JSON.stringify(corpo) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+/**
+ * MOVER CARTÃO É OTIMISTA, e precisa ser.
+ *
+ * Arrastar um cartão e ele voltar pra coluna de origem até o servidor
+ * responder é a diferença entre um quadro que parece seu e um que parece de
+ * outra pessoa. A ida e volta até a API é curta, mas não é zero.
+ *
+ * Em caso de erro o estado anterior é restaurado — o cartão volta sozinho pra
+ * onde estava, que é a única coisa honesta a fazer quando o servidor recusou.
+ */
+export function useMoverCartao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, cardId, stage_id }: { boardId: string; cardId: string; stage_id: string }) =>
+      apiFetch<PipelineCardWire>(`/pipelines/${boardId}/cards/${cardId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ stage_id }),
+      }),
+    onMutate: async ({ cardId, stage_id }) => {
+      await qc.cancelQueries({ queryKey: CHAVE });
+      const anterior = qc.getQueryData<PipelinesResponseWire>(CHAVE);
+      qc.setQueryData<PipelinesResponseWire>(CHAVE, (atual) =>
+        atual
+          ? {
+              boards: atual.boards.map((b) => ({
+                ...b,
+                cards: b.cards.map((c) => (c.id === cardId ? { ...c, stage_id } : c)),
+              })),
+            }
+          : atual,
+      );
+      return { anterior };
+    },
+    onError: (_erro, _entrada, contexto) => {
+      if (contexto?.anterior) qc.setQueryData(CHAVE, contexto.anterior);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+/** Editar o cartão: nome, responsável, valor, nota e anexos. */
+export function useAtualizarCartao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, cardId, ...corpo }: {
+      boardId: string;
+      cardId: string;
+      name?: string;
+      responsavel?: string | null;
+      valor?: string | null;
+      nota?: string;
+      anexos?: { id: string; nome: string; url: string; tipo: string }[];
+    }) => apiFetch<PipelineCardWire>(`/pipelines/${boardId}/cards/${cardId}`, { method: 'PATCH', body: JSON.stringify(corpo) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+/**
+ * Envia o arquivo e devolve o endereço dele. O anexo só entra no cartão
+ * DEPOIS disto — guardar um `blob:` local, como a versão anterior fazia, dava
+ * um endereço válido só dentro da aba que o criou: o arquivo sumia no
+ * recarregamento e nunca existiu pra mais ninguém.
+ */
+export async function enviarAnexo(arquivo: File): Promise<{ id: string; nome: string; url: string; tipo: string }> {
+  const form = new FormData();
+  form.append('file', arquivo);
+  const enviado = await apiFetch<UploadFileResponseWire>(
+    '/uploads',
+    { method: 'POST', body: form },
+    { timeoutMs: API_FETCH_UPLOAD_TIMEOUT_MS },
+  );
+  return { id: crypto.randomUUID(), nome: enviado.filename, url: enviado.url, tipo: enviado.contentType };
+}
+
+/**
+ * Um cartão por cliente real da carteira que ainda não está no quadro — só
+ * existe em quadro `tipo='cliente'`. A API decide quem falta; esta tela só
+ * dispara e refaz a leitura.
+ */
+export function useSincronizarClientes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (boardId: string) =>
+      apiFetch<{ criados: number; movidos?: number; organizado?: boolean; aviso?: string | null; cards: PipelineCardWire[] }>(`/pipelines/${boardId}/sincronizar-clientes`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}
+
+export function useApagarCartao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, cardId }: { boardId: string; cardId: string }) =>
+      apiFetch<null>(`/pipelines/${boardId}/cards/${cardId}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CHAVE }),
+  });
+}

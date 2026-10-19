@@ -88,7 +88,7 @@ export default function MonitoringPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {isPending
                 ? Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[260px]" />)
-                : health?.nodes.map((node, i) => (
+                : health?.nodes?.map((node, i) => (
                     <motion.div
                       key={node.nodeId}
                       initial={{ opacity: 0, y: 12 }}

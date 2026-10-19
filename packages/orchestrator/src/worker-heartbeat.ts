@@ -118,12 +118,50 @@ export interface SaudeDoWorker {
  * Lê a saúde do worker. Roda na API (que continua de pé quando o worker morre — é justamente
  * essa assimetria que permite detectar a morte).
  */
+/**
+ * PRAZO PARA O REDIS RESPONDER — porque "sem Redis" não rejeita, ele espera.
+ *
+ * `getRedisConnection()` usa `maxRetriesPerRequest: null`, que o BullMQ EXIGE
+ * (sem isso ele perde job durante reconexão). O efeito colateral é que, com o
+ * Redis fora do ar, o ioredis não rejeita o comando: enfileira e fica tentando
+ * reconectar para sempre. Os `try/catch` abaixo nunca disparam, porque nunca há
+ * rejeição — só espera.
+ *
+ * MEDIDO EM 09/10/2026, com o Redis parado em localhost:6380. A rota
+ * `/health/infrastructure` ficava 30s pendurada, o navegador abortava, a
+ * consulta recomeçava, e o rodapé da barra lateral ficava em esqueleto para
+ * sempre — em laço, a cada 15 segundos, por aba aberta. Pior que a tela: a
+ * rota segura uma conexão do pool do Postgres enquanto espera, e o arquivo de
+ * rotas já registra DUAS vezes esse mesmo sintoma ("tudo no Studio demora pra
+ * abrir") vindo de outras pernas desta rota.
+ *
+ * Dois segundos é folgado para um Redis vivo e curto para um morto. Estourado o
+ * prazo, a leitura vira ausência de dado, que é o que os `catch` já sabiam
+ * tratar: `online: false` e fila sem medição.
+ */
+const PRAZO_DO_REDIS_MS = 2_000;
+
+async function comPrazo<T>(tarefa: Promise<T>, ms: number): Promise<T | null> {
+  let relogio: ReturnType<typeof setTimeout> | undefined;
+  const prazo = new Promise<null>((resolve) => {
+    relogio = setTimeout(() => resolve(null), ms);
+  });
+  try {
+    // A tarefa pode rejeitar DEPOIS de o prazo vencer. Sem este `catch` no
+    // próprio promise, a rejeição chegaria sem ninguém escutando e derrubaria o
+    // processo como unhandled rejection.
+    return await Promise.race([tarefa.catch(() => null), prazo]);
+  } finally {
+    clearTimeout(relogio);
+  }
+}
+
 export async function readWorkerHealth(): Promise<SaudeDoWorker> {
   const redis = getRedisConnection();
 
   let batimento: BatimentoDoWorker | null = null;
   try {
-    const cru = await redis.get(CHAVE_BATIMENTO);
+    const cru = await comPrazo(redis.get(CHAVE_BATIMENTO), PRAZO_DO_REDIS_MS);
     if (cru) batimento = JSON.parse(cru) as BatimentoDoWorker;
   } catch {
     batimento = null;
@@ -139,14 +177,29 @@ export async function readWorkerHealth(): Promise<SaudeDoWorker> {
       ...AGENT_NAMES.map((agente) => ({ nome: queueNameForAgent(agente), queue: getAgentQueue(agente) })),
       { nome: AUTOMATIONS_QUEUE_NAME, queue: getAutomationsQueue() },
     ];
-    for (const alvo of alvos) {
-      const contagem = await alvo.queue.getJobCounts('wait', 'active', 'delayed', 'failed');
-      filas.push({
-        fila: alvo.nome,
-        aguardando: contagem.wait ?? 0,
-        ativos: contagem.active ?? 0,
-        atrasados: contagem.delayed ?? 0,
-        falhos: contagem.failed ?? 0,
+    /**
+     * As sete filas são contadas EM PARALELO e sob um prazo só.
+     *
+     * Em série eram sete idas ao Redis uma depois da outra, e com o Redis fora
+     * do ar bastava a primeira pendurar para nenhuma das outras acontecer. Em
+     * paralelo, o custo com Redis vivo é uma ida só; com Redis morto, o prazo
+     * vence uma vez em vez de sete vezes.
+     */
+    const contagens = await comPrazo(
+      Promise.all(alvos.map((alvo) => alvo.queue.getJobCounts('wait', 'active', 'delayed', 'failed'))),
+      PRAZO_DO_REDIS_MS,
+    );
+    if (contagens) {
+      alvos.forEach((alvo, i) => {
+        const contagem = contagens[i];
+        if (!contagem) return;
+        filas.push({
+          fila: alvo.nome,
+          aguardando: contagem.wait ?? 0,
+          ativos: contagem.active ?? 0,
+          atrasados: contagem.delayed ?? 0,
+          falhos: contagem.failed ?? 0,
+        });
       });
     }
   } catch {

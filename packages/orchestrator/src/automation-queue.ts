@@ -47,3 +47,35 @@ export async function removeAutomationJob(automationId: string, schedule: string
 export async function runAutomationNow(automationId: string): Promise<void> {
   await getAutomationsQueue().add('run', { automationId, manual: true });
 }
+
+/**
+ * QUANDO CADA AUTOMAÇÃO RODA DE NOVO — perguntando a quem de fato vai disparar.
+ *
+ * A tela de Automações precisa mostrar "próxima execução", e havia duas formas
+ * de obter isso: reinterpretar o padrão cron no servidor (ou no navegador), ou
+ * perguntar ao BullMQ. A segunda é a certa, e não por economia de código.
+ *
+ * O `next` do repeatable job é a hora que o agendador REALMENTE agendou. Um
+ * recálculo nosso seria uma segunda opinião sobre o mesmo cron — e as duas
+ * divergem no momento em que alguém edita o schedule, muda o fuso, ou o
+ * repeatable fica órfão no Redis (já aconteceu aqui em 03/09/2026). Nesse
+ * momento a tela mostraria um horário que não vai acontecer, com toda a
+ * confiança de um dado calculado.
+ *
+ * Automação sem repeatable registrado simplesmente não aparece no mapa — e a
+ * ausência é informação: significa que ela está no banco mas não está agendada
+ * em lugar nenhum, que é exatamente o estado que alguém precisa ver.
+ */
+export async function proximasExecucoes(): Promise<Map<string, number>> {
+  const jobs = await getAutomationsQueue().getRepeatableJobs();
+  const porAutomacao = new Map<string, number>();
+  for (const job of jobs) {
+    // `id` é o jobId que registramos = automation.id. `next` vem em epoch ms.
+    if (!job.id || typeof job.next !== 'number') continue;
+    const anterior = porAutomacao.get(job.id);
+    // Se houver mais de um repeatable pro mesmo id (resquício de troca de
+    // schedule), vale o que dispara ANTES: é o que a pessoa vai ver acontecer.
+    if (anterior === undefined || job.next < anterior) porAutomacao.set(job.id, job.next);
+  }
+  return porAutomacao;
+}

@@ -25,7 +25,10 @@ describe('loadConfig', () => {
     }
 
     // OTTO_* embutidos via loadOttoConfig: defaults locais também.
-    expect(config.otto.provider).toBe('ollama');
+    // Default mudou pra 'openai' na missão de release OpenAI + ClickUp MCP
+    // (seção 25/26): Ollama passou de provider default pra rollback
+    // explícito (OTTO_LLM_PROVIDER=ollama).
+    expect(config.otto.provider).toBe('openai');
     expect(config.otto.ollamaUrl).toBe('http://localhost:11434');
     expect(config.otto.model).toBe('mistral');
     expect(config.otto.brainPath).not.toMatch(/100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./);

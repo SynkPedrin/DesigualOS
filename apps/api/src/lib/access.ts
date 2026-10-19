@@ -1,6 +1,7 @@
 import type { AuthenticatedUser } from '../auth/middleware';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { decidirEscopo, organizacaoProvedora } from '@desigual-os/auth';
 
 /**
  * Colaboração entre clientes exige membership na organização do recurso.
@@ -15,6 +16,53 @@ export async function hasClientAccess(user: AuthenticatedUser, clientId: string)
     .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
     .where(and(eq(schema.clients.id, clientId), eq(schema.organizationMembers.userId, user.id), eq(schema.users.active, true), isNull(schema.users.deletedAt), isNull(schema.clients.deletedAt)));
   return Boolean(row);
+}
+
+/**
+ * A MESMA fronteira do `hasClientAccess` acima, resolvida de uma vez só.
+ *
+ * Existe por uma medição, não por elegância. `listAuthorizedClients`
+ * (operational-context.ts) chamava `hasClientAccess` num for de 58 clientes, em
+ * série, e era chamado duas vezes por turno. Medido em 29/09/2026 contra o
+ * banco de produção:
+ *
+ *   select dos 58 clientes ............  2.564ms
+ *   58 x hasClientAccess em série ..... 21.982ms   <- aqui
+ *   as mesmas 58 em paralelo ..........  8.309ms
+ *   resolveOperationalScope ...........    195ms
+ *
+ * O turno inteiro levava 24 a 30s contra um prazo de ack de 25s (ver
+ * PRAZO_ACK_MS em chat/routes.ts), e o sintoma pra quem usava era "não consegui
+ * consultar o ClickUp a tempo neste turno" numa pergunta trivial — com o
+ * ClickUp respondendo normalmente, porque a varredura dele leva 6s e nunca foi
+ * o problema. Era ida e volta ao banco: ~380ms cada, 58 vezes, em fila.
+ *
+ * Paralelizar resolveria pela metade e continuaria sendo 58 queries. Uma só
+ * responde a mesma pergunta, e a fronteira não muda: o critério é idêntico ao
+ * de cima (membership ativo na organização do cliente), só que avaliado em
+ * conjunto. Devolver um Set em vez de boolean é o que deixa o chamador manter
+ * a ordem e o formato que ele já tinha.
+ */
+export async function authorizedClientIds(
+  user: AuthenticatedUser,
+  clientIds: string[],
+): Promise<Set<string>> {
+  if (clientIds.length === 0) return new Set();
+  const rows = await db
+    .select({ clientId: schema.clients.id })
+    .from(schema.clients)
+    .innerJoin(schema.organizationMembers, eq(schema.organizationMembers.organizationId, schema.clients.organizationId))
+    .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
+    .where(
+      and(
+        inArray(schema.clients.id, clientIds),
+        eq(schema.organizationMembers.userId, user.id),
+        eq(schema.users.active, true),
+        isNull(schema.users.deletedAt),
+        isNull(schema.clients.deletedAt),
+      ),
+    );
+  return new Set(rows.map((r) => r.clientId));
 }
 
 /** Organizações de que o usuário é membro ativo. Base de todo escopo de tenant. */
@@ -126,4 +174,25 @@ export function canActOnStudioEntity(
 /** Documento Canva: apenas o proprietário ou um master pode removê-lo. */
 export function canDeleteCanvasDocument(user: AuthenticatedUser, ownerId: string | null): boolean {
   return user.roles.includes('master') || (ownerId !== null && ownerId === user.id);
+}
+
+/**
+ * O cliente pode entrar num turno de chat desta pessoa?
+ *
+ * Achado no ambiente isolado do Bento 3.1 (14/10/2026): o `POST /chat` não
+ * checava acesso ao cliente em nenhum dos três caminhos — `client_id` do
+ * payload, cliente do projeto e cliente DETECTADO NO TEXTO. A colaboradora da
+ * empresa A escreveu "Como está a Beta Imóveis?" (cliente da empresa B), a
+ * conversa nasceu NA EMPRESA B (`organizacaoDaEscrita` segue o cliente) e o
+ * Bento recebeu a carga de trabalho e as atrasadas da outra empresa.
+ *
+ * Membro da empresa do cliente pode. Conta de plataforma da provedora também,
+ * pela mesma regra de `decidirEscopo` que as rotas REST usam ("o provedor
+ * enxerga todo mundo") — sem isto, a equipe da casa perderia o chat sobre os
+ * clientes das empresas que ela atende.
+ */
+export async function podeUsarClienteNoChat(user: AuthenticatedUser, clientId: string): Promise<boolean> {
+  if (await hasClientAccess(user, clientId)) return true;
+  const organizacoes = await organizationIdsForUser(user.id);
+  return decidirEscopo(organizacoes, user.roles, organizacaoProvedora()).ehProvider;
 }

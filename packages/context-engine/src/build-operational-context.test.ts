@@ -143,10 +143,14 @@ describe('buildOperationalContext', () => {
     expect(r.block).toMatch(/valem mais que qualquer memória/i);
   });
 
-  it('resultado truncado avisa que o número é um MÍNIMO (nunca finge total)', async () => {
+  it('resultado truncado avisa que o número é um MÍNIMO (nunca finge total), em instrução de linguagem natural', async () => {
     const d = deps({ queryTasks: vi.fn(async () => ({ tasks: [task()], truncated: true })) });
     const r = await buildOperationalContext(scope(), d, NOW);
-    expect(r.block).toMatch(/MÍNIMO, não o total/);
+    // A regra sobrevive (é piso, não total); o que mudou em 24/09/2026 é a
+    // FORMA: instrução de falar natural, sem jargão de banco ("truncado",
+    // "MÍNIMO") que o agente papagaiava pro usuário.
+    expect(r.block).toMatch(/PELO MENOS/);
+    expect(r.block).not.toMatch(/MÍNIMO, não o total/);
     expect(r.summary?.truncated).toBe(true);
   });
 
@@ -262,5 +266,220 @@ describe('buildOperationalContext: tarefa maliciosa vinda do ClickUp', () => {
 
     expect(r.block).not.toBeNull();
     expect((r.block ?? '').split('\n').filter((l) => l.startsWith('- '))).toHaveLength(1);
+  });
+});
+
+/**
+ * O CONJUNTO QUE O BRIEFING RECEBE (29/09/2026).
+ *
+ * Bug medido ao vivo: o bloco declarava "411 tarefa(s) aberta(s) ... (811 já
+ * concluídas ficaram FORA)" e o briefing, montado no MESMO turno a partir da
+ * MESMA consulta, declarava "1222 tarefa(s)" — porque lia a lista crua do
+ * ClickUp em vez do conjunto filtrado. O briefing é quem vence no prompt, então
+ * o usuário recebeu o volume da operação 3x inflado ("sobrecarregado com 1222
+ * tarefas ativas", num briefing executivo).
+ *
+ * Estes testes travam o invariante pela ÚNICA coisa que importa: os dois
+ * consumidores da consulta têm que enxergar o mesmo conjunto.
+ */
+describe('openTasks — o conjunto que sustenta os números', () => {
+  const abertaA = task({ id: 'aberta-a', statusType: 'open', status: 'aberto' });
+  const abertaB = task({ id: 'aberta-b', statusType: 'custom', status: 'em revisão' });
+  const pronta = task({ id: 'pronta', statusType: 'done', status: 'pronto' });
+  const fechada = task({ id: 'fechada', statusType: 'closed', status: 'complete' });
+
+  function depsCom(tasks: OperationalTaskLike[]): OperationalContextDeps {
+    return {
+      listAuthorizedClients: async () => CLIENTES,
+      queryTasks: async () => ({ tasks, truncated: false }),
+    };
+  }
+
+  it('exclui as concluídas e as fechadas, e bate com o total do summary', async () => {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      depsCom([abertaA, pronta, abertaB, fechada]),
+      NOW,
+    );
+
+    expect(ctx.openTasks.map((t) => t.id)).toEqual(['aberta-a', 'aberta-b']);
+    // O invariante: quem monta o briefing a partir de openTasks chega ao MESMO
+    // número que o bloco anuncia. Sem isto os dois voltam a divergir.
+    expect(ctx.openTasks).toHaveLength(ctx.summary!.total);
+    expect(ctx.block).toContain('2 tarefa(s) aberta(s)');
+    expect(ctx.block).toContain('2 task(s) já concluídas');
+  });
+
+  it('é vazio quando a consulta só devolveu trabalho encerrado', async () => {
+    const ctx = await buildOperationalContext(scope({ temporal: null }), depsCom([pronta, fechada]), NOW);
+    expect(ctx.openTasks).toEqual([]);
+    expect(ctx.summary!.total).toBe(0);
+  });
+
+  it('é vazio, nunca ausente, quando o turno nem chega a consultar', async () => {
+    const semOperacional = await buildOperationalContext(
+      scope({ operational: false, kind: 'NONE' }),
+      depsCom([abertaA]),
+      NOW,
+    );
+    expect(semOperacional.openTasks).toEqual([]);
+
+    const semLista = await buildOperationalContext(
+      scope({ kind: 'CLIENT', clients: [{ id: 'c-semlista', name: 'Gelateria Fratelli', slug: 'gelateria-fratelli' }], temporal: null }),
+      depsCom([abertaA]),
+      NOW,
+    );
+    expect(semLista.openTasks).toEqual([]);
+    expect(semLista.failure).toContain('não tem lista do ClickUp vinculada');
+  });
+
+  it('sobrevive à falha da consulta sem virar undefined', async () => {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      {
+        listAuthorizedClients: async () => CLIENTES,
+        queryTasks: async () => {
+          throw new Error('rede caiu');
+        },
+      },
+      NOW,
+    );
+    expect(ctx.openTasks).toEqual([]);
+    expect(ctx.failure).toContain('a consulta ao ClickUp falhou');
+  });
+});
+
+/**
+ * Medido duas vezes nas personas da Tammy no navegador (29/09/2026),
+ * perguntando quanto a agência faturou com um cliente:
+ *
+ *   "Logo, R$ 0,00 faturado registrado no sistema."
+ *   "zero. os dados consultados no ClickUp hoje mostram apenas o volume de
+ *    tarefas... não há nenhum campo ou métrica financeira nesse retorno."
+ *
+ * Nas duas o raciocínio estava certo e a conclusão inverteu o sinal. A segunda
+ * abre com a palavra "zero" e explica depois — quem lê rápido entende que o
+ * cliente faturou zero, e isso vira fato citável.
+ */
+describe('ausência de dado financeiro não pode virar zero', () => {
+  it('o bloco declara a lacuna e proíbe o número', async () => {
+    const ctx = await buildOperationalContext(scope({ kind: 'GLOBAL' }), deps(), NOW);
+    expect(ctx.block).toContain('AUSÊNCIA DE DADO NÃO É ZERO');
+    expect(ctx.block).toContain('faturamento');
+    expect(ctx.block).toContain('nunca abra a resposta com um número');
+  });
+});
+
+/**
+ * A CASA NÃO É CLIENTE (29/09/2026).
+ *
+ * Medido numa resposta real ao usuário: "Agência Desigual: 34 atrasadas"
+ * apareceu no meio da carteira, entre Cosentino e D. Carvalho. São 170 tarefas
+ * de trabalho real da própria agência — não podem sumir, e não podem ser
+ * somadas à carteira como se fossem de cliente.
+ */
+describe('trabalho interno separado da carteira', () => {
+  const CLIENTES_MISTOS = [
+    { id: 'c1', name: 'Cosentino', clickupListId: 'L-cos' },
+    { id: 'c2', name: 'Agência Desigual', clickupListId: 'L-casa' },
+    { id: 'c3', name: 'D. Carvalho', clickupListId: 'L-dc' },
+  ];
+  const tarefas = [
+    task({ id: 'a', name: 'Peça da Cosentino', listId: 'L-cos', listName: 'Cosentino' }),
+    task({ id: 'b', name: 'Site da própria agência', listId: 'L-casa', listName: 'Agência Desigual' }),
+    task({ id: 'c', name: 'Layout D. Carvalho', listId: 'L-dc', listName: 'D. Carvalho' }),
+  ];
+
+  async function bloco() {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      {
+        listAuthorizedClients: async () => CLIENTES_MISTOS,
+        queryTasks: async () => ({ tasks: tarefas, truncated: false }),
+      },
+      NOW,
+    );
+    return ctx;
+  }
+
+  it('a casa é ROTULADA como interna, não apagada', async () => {
+    const ctx = await bloco();
+    expect(ctx.block).toContain('Agência Desigual [INTERNO]');
+    // e a tarefa dela continua lá: é trabalho que alguém precisa fazer
+    expect(ctx.block).toContain('Site da própria agência');
+    expect(ctx.openTasks).toHaveLength(3);
+  });
+
+  it('o cabeçalho separa carteira de frente interna', async () => {
+    const ctx = await bloco();
+    expect(ctx.block).toContain('2 cliente(s) da carteira mais 1 frente(s) internas');
+  });
+
+  it('a instrução proíbe chamar a casa de cliente', async () => {
+    const ctx = await bloco();
+    expect(ctx.block).toContain('NÃO é cliente');
+  });
+
+  it('o interno vem DEPOIS de toda a carteira', async () => {
+    const ctx = await bloco();
+    const texto = ctx.block!;
+    expect(texto.indexOf('Cosentino (')).toBeLessThan(texto.indexOf('Agência Desigual [INTERNO]'));
+    expect(texto.indexOf('D. Carvalho (')).toBeLessThan(texto.indexOf('Agência Desigual [INTERNO]'));
+  });
+
+  it('carteira sem nenhum interno não ganha cabeçalho de separação', async () => {
+    const ctx = await buildOperationalContext(
+      scope({ temporal: null }),
+      {
+        listAuthorizedClients: async () => [CLIENTES_MISTOS[0]!, CLIENTES_MISTOS[2]!],
+        queryTasks: async () => ({ tasks: [tarefas[0]!, tarefas[2]!], truncated: false }),
+      },
+      NOW,
+    );
+    expect(ctx.block).not.toContain('TRABALHO INTERNO');
+    expect(ctx.block).toContain('em 2 cliente(s)');
+  });
+});
+
+/**
+ * QUEM ESTÁ FALANDO.
+ *
+ * Medido no chat de produção em 08/10/2026: "me lista as minhas tarefas
+ * abertas" devolveu as 414 tarefas da agência inteira. A resposta estava
+ * certa para a pergunta que o agente conseguia enxergar — o bloco trazia as
+ * tarefas e não dizia de quem era a voz do outro lado, então "minhas" não
+ * tinha a quem se referir.
+ */
+describe('identidade de quem pergunta', () => {
+  it('o bloco diz quem está falando e qual é o e-mail dele no ClickUp', async () => {
+    const r = await buildOperationalContext(
+      scope({ kind: 'GLOBAL' }),
+      deps({ quemPergunta: { nome: 'Pedro Gabriel', emailClickUp: 'pedro@exemplo.com' } }),
+      NOW,
+    );
+    expect(r.block).toContain('Pedro Gabriel');
+    expect(r.block).toContain('pedro@exemplo.com');
+    expect(r.block).toMatch(/minhas/i);
+  });
+
+  /**
+   * Sem e-mail do ClickUp não dá pra cruzar a pessoa daqui com a de lá. O
+   * bloco diz isso em vez de deixar o agente adivinhar por nome de exibição,
+   * que é apelido e muda.
+   */
+  it('sem e-mail do ClickUp, avisa que "minhas tarefas" não se resolve sozinho', async () => {
+    const r = await buildOperationalContext(
+      scope({ kind: 'GLOBAL' }),
+      deps({ quemPergunta: { nome: 'Alguém', emailClickUp: null } }),
+      NOW,
+    );
+    expect(r.block).toContain('Alguém');
+    expect(r.block).toMatch(/sem e-mail do ClickUp/i);
+  });
+
+  /** A integração do ClickUp não é pessoa: não há "minhas", e a linha não sai. */
+  it('sem quemPergunta, o bloco não inventa identidade', async () => {
+    const r = await buildOperationalContext(scope({ kind: 'GLOBAL' }), deps(), NOW);
+    expect(r.block).not.toMatch(/QUEM ESTÁ FALANDO/);
   });
 });

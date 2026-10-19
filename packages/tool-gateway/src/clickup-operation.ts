@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import type { ClickUpConfig } from './clickup-client';
 
-const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
+// CLICKUP_API_BASE_URL existe só para o teste de carga (Bento 3.1, 14/10/2026)
+// apontar para um simulador local: carga em cima do ClickUp real esbarra no
+// limite de 100 req/min e mexe em dado de verdade. Ausente, nada muda.
+const CLICKUP_API_BASE = process.env.CLICKUP_API_BASE_URL || 'https://api.clickup.com/api/v2';
 
 /**
  * clickup-operation.ts — consulta de tarefas no escopo da OPERAÇÃO INTEIRA, não de
@@ -46,9 +49,36 @@ const teamTaskSchema = z.object({
   priority: z.object({ priority: z.string().nullish(), color: z.string().nullish() }).nullish(),
   url: z.string().nullish(),
   assignees: z
-    .array(z.object({ id: z.number().nullish(), username: z.string().nullish(), email: z.string().nullish() }))
+    .array(
+      z.object({
+        id: z.number().nullish(),
+        username: z.string().nullish(),
+        email: z.string().nullish(),
+        // Foto de perfil do responsável — o quadro mostra a pessoa de verdade,
+        // não iniciais coloridas (pedido do Pedro, 15/10/2026).
+        profilePicture: z.string().nullish(),
+      }),
+    )
     .nullish(),
   tags: z.array(z.object({ name: z.string() })).nullish(),
+  /**
+   * A ÁRVORE. Medida no workspace real em 29/09/2026: 84% a 91% das tarefas
+   * abertas dos três maiores clientes são subtarefa, e `dependencies` e
+   * `linked_tasks` vêm ZERADOS em todos eles — a agência não usa dependência
+   * do ClickUp, usa hierarquia de subtarefa.
+   *
+   * O campo sempre veio na listagem e era descartado aqui, então o sistema era
+   * cego para a única relação entre tarefas que esta operação de fato mantém:
+   *
+   *   DC_Aprosoja
+   *   ├─ DC_Aprosoja_Captação            pronto
+   *   ├─ DC_Aprosoja_Vídeo Painel de Led pronto
+   *   │  ├─ _Bases    (Gui)
+   *   │  └─ _Edição   (Celso)
+   *   └─ DC_Aprosoja_Edições             aberto, 7 peças
+   */
+  parent: z.string().nullish(),
+  top_level_parent: z.string().nullish(),
   list: z.object({ id: z.string().nullish(), name: z.string().nullish() }).nullish(),
   folder: z.object({ id: z.string().nullish(), name: z.string().nullish() }).nullish(),
   space: z.object({ id: z.string().nullish() }).nullish(),
@@ -74,7 +104,20 @@ export interface OperationTask {
   createdAt: number | null;
   updatedAt: number | null;
   assignees: string[];
+  /**
+   * Identidade dos responsáveis, que `assignees` (nome de exibição) não dá.
+   * É o que liga a pessoa do ClickUp à pessoa do OS para o aviso proativo
+   * chegar a quem executa (Bento 3.1). Nome muda; id e e-mail não.
+   */
+  assigneeIds?: number[];
+  assigneeEmails?: string[];
+  /** Foto de perfil de cada responsável, na mesma ordem de `assignees`. */
+  assigneeAvatars?: (string | null)[];
   tags: string[];
+  /** Id da tarefa-mãe. `null` = está na raiz da lista. Ver nota no schema. */
+  parentId: string | null;
+  /** Id da raiz da árvore, quando o ClickUp a informa. */
+  topLevelParentId: string | null;
   listId: string | null;
   listName: string | null;
   folderName: string | null;
@@ -144,7 +187,12 @@ function normalizeTask(raw: z.infer<typeof teamTaskSchema>): OperationTask {
     createdAt: toNumberOrNull(raw.date_created),
     updatedAt: toNumberOrNull(raw.date_updated),
     assignees: (raw.assignees ?? []).map((a) => a.username || a.email || '').filter(Boolean),
+    assigneeIds: (raw.assignees ?? []).map((a) => a.id).filter((id): id is number => typeof id === 'number'),
+    assigneeEmails: (raw.assignees ?? []).map((a) => a.email?.trim().toLowerCase() ?? '').filter(Boolean),
+    assigneeAvatars: (raw.assignees ?? []).map((a) => a.profilePicture ?? null),
     tags: (raw.tags ?? []).map((t) => t.name),
+    parentId: raw.parent ?? null,
+    topLevelParentId: raw.top_level_parent ?? null,
     listId: raw.list?.id ?? null,
     listName: raw.list?.name ?? null,
     folderName: raw.folder?.name ?? null,
@@ -223,22 +271,38 @@ export async function queryOperationTasks(
 ): Promise<OperationTaskPage> {
   const listIds = query.listIds ?? [];
   if (listIds.length > LIST_IDS_POR_LOTE) {
+    const lotes: string[][] = [];
+    for (let i = 0; i < listIds.length; i += LIST_IDS_POR_LOTE) {
+      lotes.push(listIds.slice(i, i + LIST_IDS_POR_LOTE));
+    }
+    /**
+     * Lotes em PARALELO com teto (24/09/2026): eram sequenciais — 6 lotes ×
+     * ~5,5s ≈ 33s de consulta, e o POST /chat estourava o timeout de 30s do
+     * front: o balão ficava preso em "pensando" com a resposta JÁ gravada no
+     * banco (medido no aceite ao vivo, primeira listagem do fluxo de
+     * continuidade). 3 lotes simultâneos (1-3 req cada) ficam longe do rate
+     * limit e cortam a espera a ~1/3.
+     */
+    const CONCORRENCIA_LOTES = 3;
     const acumuladas: OperationTask[] = [];
     const vistos = new Set<string>();
     let truncatedTotal = false;
     let pagesTotal = 0;
-    for (let i = 0; i < listIds.length; i += LIST_IDS_POR_LOTE) {
-      const lote = listIds.slice(i, i + LIST_IDS_POR_LOTE);
-      const parcial = await queryOperationTasks(config, { ...query, listIds: lote });
-      // Dedup por id: uma task não pode ser contada duas vezes se aparecer
-      // em dois lotes (subtask cuja lista caiu noutro lote).
-      for (const t of parcial.tasks) {
-        if (vistos.has(t.id)) continue;
-        vistos.add(t.id);
-        acumuladas.push(t);
+    for (let i = 0; i < lotes.length; i += CONCORRENCIA_LOTES) {
+      const grupo = await Promise.all(
+        lotes.slice(i, i + CONCORRENCIA_LOTES).map((lote) => queryOperationTasks(config, { ...query, listIds: lote })),
+      );
+      for (const parcial of grupo) {
+        // Dedup por id: uma task não pode ser contada duas vezes se aparecer
+        // em dois lotes (subtask cuja lista caiu noutro lote).
+        for (const t of parcial.tasks) {
+          if (vistos.has(t.id)) continue;
+          vistos.add(t.id);
+          acumuladas.push(t);
+        }
+        truncatedTotal = truncatedTotal || parcial.truncated;
+        pagesTotal += parcial.pagesFetched;
       }
-      truncatedTotal = truncatedTotal || parcial.truncated;
-      pagesTotal += parcial.pagesFetched;
     }
     return { tasks: acumuladas, truncated: truncatedTotal, pagesFetched: pagesTotal };
   }
@@ -246,12 +310,56 @@ export async function queryOperationTasks(
   const tasks: OperationTask[] = [];
   let page = 0;
 
-  for (; page < MAX_PAGES; page += 1) {
-    const result = await fetchPage(config, query, page);
-    tasks.push(...result.tasks);
-    if (result.lastPage) {
-      return { tasks, truncated: false, pagesFetched: page + 1 };
+  /**
+   * PÁGINAS EM PARALELO quando não há filtro de lista — e só nesse caso.
+   *
+   * Medido em 07/10/2026, contra o ClickUp real da agência: a consulta do
+   * workspace inteiro (13 páginas) levava 11,6s sequencial, contra 6,4s do
+   * caminho por listas, que já paralelizava em lotes. Doze segundos é a tela
+   * de Tarefas parecendo travada no primeiro acesso.
+   *
+   * A janela vale 1 quando há `listIds` de propósito: esse caminho já roda
+   * dentro de lotes simultâneos lá em cima, e multiplicar as duas
+   * concorrências (3 lotes × 3 páginas) levaria a 9 requisições ao mesmo
+   * tempo — perto demais do rate limit para um ganho que aquele caminho já
+   * não precisa.
+   *
+   * O custo de errar para mais é barato: pedir uma página além do fim devolve
+   * vazio, e o laço descarta tudo depois da página que se declarou última.
+   */
+  const paginasSimultaneas = listIds.length === 0 ? 3 : 1;
+
+  /**
+   * A PRIMEIRA PÁGINA VAI SOZINHA, e isso não é detalhe: a maioria das
+   * consultas cabe nela. Disparar a janela inteira de cara gastaria três
+   * requisições para devolver um resultado de uma página — desperdício puro
+   * contra um rate limit real (100 req/min), e sem nenhum ganho de tempo,
+   * porque não havia o que buscar em paralelo. A paralelização só começa
+   * quando já se sabe que existe uma segunda página.
+   */
+  const primeira = await fetchPage(config, query, 0);
+  tasks.push(...primeira.tasks);
+  if (primeira.lastPage) {
+    return { tasks, truncated: false, pagesFetched: 1 };
+  }
+  page = 1;
+
+  while (page < MAX_PAGES) {
+    const janela = Math.min(paginasSimultaneas, MAX_PAGES - page);
+    const resultados = await Promise.all(
+      Array.from({ length: janela }, (_, i) => fetchPage(config, query, page + i)),
+    );
+
+    for (const [i, resultado] of resultados.entries()) {
+      tasks.push(...resultado.tasks);
+      if (resultado.lastPage) {
+        // As páginas seguintes da janela já foram buscadas e são descartadas:
+        // elas estão além do fim, e contá-las mentiria no `pagesFetched`.
+        return { tasks, truncated: false, pagesFetched: page + i + 1 };
+      }
     }
+
+    page += janela;
   }
 
   return { tasks, truncated: true, pagesFetched: page };

@@ -37,8 +37,35 @@ async function novaConversa(page: import('@playwright/test').Page) {
   await page.waitForTimeout(1500);
 }
 
+/**
+ * Seleciona o agente e CONFERE que pegou.
+ *
+ * A versão anterior era `getByRole('button', { name: /^Suzy/ }).first().click()`
+ * e é o mesmo defeito que já custou caro no outro harness, medido em 29/09/2026:
+ * a barra lateral tem conversas chamadas "Bento respondeu Oi! Tô por aqui...",
+ * o locator casa várias, e `.first()` clica no que vier primeiro no DOM — que
+ * pode ser uma CONVERSA, não o chip do agente.
+ *
+ * Quando isso acontece, o chip nunca é clicado, o turno vai pro roteador
+ * automático, e o teste reprova o PRODUTO por um erro do instrumento. Foi
+ * exatamente o que apareceu em 30/09: "selecionei Suzy na UI, mas o rótulo
+ * renderizado foi JARBAS" — acusação grave de roteamento que podia ser, e era
+ * preciso descobrir, apenas o clique no lugar errado.
+ *
+ * `button[aria-pressed]` são os únicos botões da tela com esse atributo (os
+ * quatro agentes e o AUTO), então o seletor é preciso sem precisar de testid no
+ * componente de produção. E o `toHaveAttribute` depois do clique é o que
+ * transforma "cliquei" em "está selecionado".
+ */
 async function selecionarAgente(page: import('@playwright/test').Page, agente: string) {
-  await page.getByRole('button', { name: new RegExp(`^${agente}`) }).first().click();
+  const chip = page.locator('button[aria-pressed]').filter({ hasText: new RegExp(`^${agente}`, 'i') }).first();
+  await expect(chip, `o chip do agente ${agente} não apareceu`).toBeVisible({ timeout: 20_000 });
+  await chip.click();
+  await expect(chip, `o chip ${agente} não ficou selecionado depois do clique`).toHaveAttribute(
+    'aria-pressed',
+    'true',
+    { timeout: 10_000 },
+  );
 }
 
 /** Envia, espera a bolha, devolve { label, texto } — label é o rótulo de agente renderizado acima da bolha. */
@@ -48,13 +75,65 @@ async function falarEVerAgente(
   timeout = 300_000,
 ): Promise<{ label: string; texto: string }> {
   const mensagens = page.getByTestId('chat-assistant-message');
-  const antes = await mensagens.count();
+
+  /**
+   * A LINHA DE BASE PRECISA ESTAR PARADA ANTES DE ENVIAR.
+   *
+   * A versão anterior contava as mensagens logo depois de `goto('/chat')` e
+   * usava esse número como índice da resposta nova (`nth(antes)`). Só que a tela
+   * RESTAURA a conversa anterior de forma assíncrona: a contagem saía 0, a
+   * conversa antiga chegava um instante depois, e `nth(0)` passava a apontar
+   * para a PRIMEIRA mensagem da conversa restaurada — a resposta do teste
+   * anterior.
+   *
+   * O sintoma foi uma acusação grave e falsa. Medido em 30/09/2026, o teste que
+   * falhava sempre mostrava o agente do teste ANTERIOR da fila: Suzy depois de
+   * Jarbas acusava "JARBAS", Jarbas depois de Otto acusava "OTTO". Parecia
+   * roteamento ignorando a escolha explícita do usuário — e era o teste lendo a
+   * bolha errada. (Conferido por interceptação do POST: o front mandava
+   * `agent_hint=SUZY` corretamente.)
+   *
+   * Duas correções, e as duas são necessárias: esperar a contagem PARAR de
+   * mudar, e depois ler a ÚLTIMA mensagem em vez de um índice calculado antes.
+   */
+  const contagemEstavel = async () => {
+    let anterior = -1;
+    for (let i = 0; i < 20; i++) {
+      const atual = await mensagens.count();
+      if (atual === anterior) return atual;
+      anterior = atual;
+      await page.waitForTimeout(500);
+    }
+    return anterior;
+  };
+  const antes = await contagemEstavel();
+
   const campo = page.getByRole('textbox').first();
   await campo.fill(texto);
   await campo.press('Enter');
   await expect.poll(async () => (await campo.inputValue()).trim() === '', { timeout: 10_000 }).toBe(true);
-  await expect.poll(async () => mensagens.count(), { timeout }).toBeGreaterThan(antes);
-  const nova = mensagens.nth(antes);
+
+  /**
+   * ANCORA NA PRÓPRIA MENSAGEM, e é isto que resolve de verdade.
+   *
+   * Descoberto interceptando o POST: todo envio vai com `conversation_id=null`,
+   * ou seja, CRIA uma conversa nova — e a interface só troca para ela depois.
+   * Durante essa troca, a tela ainda mostra a conversa anterior, então tanto
+   * `nth(antes)` quanto `last()` leem a resposta do teste passado.
+   *
+   * Foi exatamente isso que produziu a acusação falsa, três vezes seguidas e
+   * sempre com o agente ANTERIOR da fila: Suzy acusava JARBAS, Jarbas acusava
+   * OTTO, Otto acusava BENTO. Um bug de roteamento não escolheria justamente o
+   * vizinho de cima a cada rodada; um teste lendo a tela velha, sim.
+   *
+   * Esperar a NOSSA mensagem de usuário aparecer garante que a interface já
+   * está na conversa nova. Só depois disso a resposta lida é a resposta certa.
+   */
+  await expect(page.getByText(texto, { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+  await expect.poll(async () => mensagens.count(), { timeout }).toBeGreaterThan(0);
+  // A ÚLTIMA, não `nth(antes)`: o índice foi calculado antes da troca de
+  // conversa e aponta pro passado; a última é sempre a mais nova.
+  const nova = mensagens.last();
   const bolha = nova.getByTestId('chat-assistant-bubble');
   const conteudo = async () => (await bolha.innerText()).replace(/\n?\d\d:\d\d\n?/g, '').trim();
   await expect.poll(async () => (await conteudo()).length, { timeout }).toBeGreaterThan(5);

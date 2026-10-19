@@ -32,6 +32,7 @@ import {
   type CanvaPage,
   type ImageSearchResultWire,
   type ImageSearchProvider,
+  type ResumoDeHoje,
 } from '@desigual-os/types';
 
 export type ISODateString = string;
@@ -67,6 +68,26 @@ export type Theme = (typeof THEMES)[number];
  * (2026-09-01) - inconsistent with PATCH /me's snake_case response below, a known wart on
  * their side, not a frontend mapping bug.
  */
+/** Uma empresa em que a pessoa é membro. */
+export interface OrganizacaoDoUsuario {
+  id: string;
+  name: string;
+}
+
+/**
+ * A MARCA da empresa ativa, como o brand-provider aplica: primary/secondary/
+ * accent alimentam os tokens `--color-brand-*`. Vem de `GET /me`
+ * (`organizacao_ativa.marca`) desde que a API passou a devolvê-la (migração
+ * 0049); ausente ou com campos `null` = marca do produto, estado legítimo.
+ */
+export interface MarcaDaOrganizacao {
+  primary?: string | null;
+  secondary?: string | null;
+  accent?: string | null;
+  logo_url?: string | null;
+  nome_assistente?: string | null;
+}
+
 export interface MeResponse {
   id: string;
   email: string;
@@ -77,6 +98,20 @@ export interface MeResponse {
   language: Language;
   theme: Theme;
   clickupEmail: string | null;
+  /** Função na operação (Tráfego, Atendimento...), perguntada no primeiro acesso. */
+  jobTitle?: string | null;
+  /**
+   * DE QUAL EMPRESA A PESSOA É — o campo que a interface não tinha.
+   *
+   * Sem ele, não havia como o front saber em que empresa está, e por isso
+   * branding por tenant, troca de empresa e barra lateral por tenant não tinham
+   * de onde ler. `organizacoes` alimenta o seletor quando houver mais de uma;
+   * hoje existe uma só, então a interface não mostra escolha — porque não há.
+   */
+  organizacoes?: OrganizacaoDoUsuario[];
+  organizacao_ativa?: (OrganizacaoDoUsuario & { slug?: string; marca?: MarcaDaOrganizacao; eh_provedora?: boolean }) | null;
+  /** Opera no nível da plataforma. Nunca derivado só do papel. */
+  eh_provider?: boolean;
 }
 
 /** PATCH /me. Snake_case request and response, confirmed by the backend (2026-09-01). */
@@ -149,6 +184,18 @@ export interface InfrastructureHealthWire {
    * em 10/09/2026.
    */
   worker?: WorkerHealthWire;
+  /**
+   * Se a camada do roteador que interpreta linguagem livre tem credencial.
+   *
+   * Opcional porque API mais antiga que o frontend não manda — e nesse caso a
+   * tela não afirma nada, em vez de assumir que está tudo certo.
+   *
+   * Sem ela, o assistente só entende os pedidos que casam com as regras
+   * determinísticas e responde "não entendi" a todo o resto. Medido em
+   * 09/10/2026: isso parecia o Bento quebrado, e virava um `logger.warn` que
+   * ninguém lê.
+   */
+  router_classifier_configured?: boolean;
   last_backup_at: ISODateString | null;
   nodes: NodeSummaryWire[];
 }
@@ -185,6 +232,11 @@ export interface InfrastructureHealth {
   agentsConnected: { online: number; total: number };
   /** `null` = a API não reportou. Desconhecido não é o mesmo que saudável. */
   worker: WorkerHealth | null;
+  /**
+   * `null` quando a API é mais velha que o frontend e não manda o campo. Aí a
+   * tela não afirma nada, em vez de assumir que está configurado.
+   */
+  routerClassifierConfigured: boolean | null;
   lastBackupAt: ISODateString | null;
   nodes: NodeSummary[];
 }
@@ -205,6 +257,7 @@ export function mapInfrastructureHealth(wire: InfrastructureHealthWire): Infrast
           lastHeartbeatAt: wire.worker.last_heartbeat_at,
         }
       : null,
+    routerClassifierConfigured: wire.router_classifier_configured ?? null,
     lastBackupAt: wire.last_backup_at,
     nodes: wire.nodes.map((node) => ({
       nodeId: node.node_id,
@@ -342,6 +395,31 @@ export interface ChatAttachmentWire {
   contentType: string;
 }
 
+/** Briefing estruturado do Otto Motion Engine (card de briefing no chat).
+ * Chave snake_case no envelope, conteúdo camelCase — contrato congelado com o
+ * backend (24/09/2026). Só os campos preenchidos vão no POST. */
+export interface MotionBriefWire {
+  campaignName?: string;
+  objective?: string;
+  offer?: {
+    name?: string;
+    price?: string;
+    originalPrice?: string;
+    installments?: number;
+    installmentValue?: string;
+    discount?: string;
+    condition?: string;
+  };
+  cta?: string;
+  audience?: string;
+  platform?: string;
+  aspectRatio?: string;
+  duration?: number;
+  fps?: 24 | 30 | 60;
+  tone?: string;
+  notes?: string;
+}
+
 export interface ChatRequestWire {
   message: string;
   client_id: string | null;
@@ -352,6 +430,9 @@ export interface ChatRequestWire {
   attachment?: ChatAttachmentWire | undefined;
   /** Até 10 anexos (imagens/documentos), colados ou selecionados no composer. */
   attachments?: ChatAttachmentWire[] | undefined;
+  /** Briefing do MotionBriefCard: dispara a geração de motion com contexto
+   * estruturado em vez de depender só do texto livre da mensagem. */
+  motion_brief?: MotionBriefWire | undefined;
 }
 
 /** POST /uploads — upload genérico (anexo do composer do chat). Só hospeda e devolve a URL. */
@@ -384,13 +465,29 @@ export function mapChatResponse(wire: ChatResponseWire): ChatResponse {
   };
 }
 
+/**
+ * Uma ferramenta real que o agente executou no turno (ClickUp, principalmente).
+ * Bento 3.0, Fase 3: antes o worker calculava isto e descartava antes de
+ * chegar na API — o chat não tinha como mostrar o que de fato rodou.
+ *
+ * Nome `AgentToolCallWire`, não `ToolCallWire`: esse nome já existe abaixo
+ * pra outra coisa (fila de aprovação humana do Tool Gateway, seção 6.6).
+ */
+export interface AgentToolCallWire {
+  tool: string;
+  input_summary?: string;
+  ok: boolean;
+  duration_ms: number;
+  error?: string;
+}
+
 /** Sources cited by a step's answer: plain strings (e.g. Obsidian file paths like
  * "02 - Stack Tecnologica.md"), confirmed by the backend (2026-09-01). Not an object. */
 export interface ExecutionStepWire {
   step_index: number;
   agent: AgentName;
   status: ExecutionStatus;
-  output: { answer: string; sources: string[] } | null;
+  output: { answer: string; sources: string[]; tool_calls?: AgentToolCallWire[] } | null;
 }
 
 export interface ExecutionListItemWire {
@@ -405,6 +502,14 @@ export interface ExecutionListItemWire {
   completed_at: ISODateString | null;
   tokens_input: number;
   tokens_output: number;
+  /**
+   * Quem pediu. Passou a vir na listagem em 29/09/2026 — sem autor, atividade
+   * é log e não auditoria. Opcionais no tipo porque o front precisa continuar
+   * funcionando contra uma API que ainda não subiu com o campo.
+   */
+  user_id?: string | null;
+  user_name?: string | null;
+  created_at?: ISODateString | null;
 }
 
 export interface ExecutionDetailWire extends ExecutionListItemWire {
@@ -424,6 +529,10 @@ export interface ExecutionListItem {
   completedAt: ISODateString | null;
   tokensInput: number;
   tokensOutput: number;
+  /** Quem pediu. `null` = usuário apagado, e a tela mostra "—", nunca outro nome. */
+  userId: string | null;
+  userName: string | null;
+  createdAt: ISODateString | null;
 }
 
 export interface ExecutionStep {
@@ -432,6 +541,7 @@ export interface ExecutionStep {
   status: ExecutionStatus;
   answer: string | null;
   sources: string[];
+  toolCalls: AgentToolCallWire[];
 }
 
 export interface ExecutionDetail extends ExecutionListItem {
@@ -452,6 +562,12 @@ function mapExecutionListItem(wire: ExecutionListItemWire): ExecutionListItem {
     completedAt: wire.completed_at,
     tokensInput: wire.tokens_input,
     tokensOutput: wire.tokens_output,
+    // `?? null` e não `?? ''`: API antiga sem o campo vira "não sei quem foi",
+    // que a tela mostra como "—". String vazia viraria um autor em branco, que
+    // parece dado e não é.
+    userId: wire.user_id ?? null,
+    userName: wire.user_name ?? null,
+    createdAt: wire.created_at ?? null,
   };
 }
 
@@ -464,6 +580,7 @@ export function mapExecutionList(wire: { executions: ExecutionListItemWire[] }):
  * Confirmed real by the backend (2026-09-01), replacing the earlier frontend placeholder.
  */
 export interface ClientSummaryWire {
+  natureza?: NaturezaDeCliente;
   id: string;
   name: string;
   slug: string;
@@ -473,7 +590,29 @@ export interface ClientSummaryWire {
   clickup_url?: string | null;
   /** Idem: id do projeto de chat vinculado a este cliente, se existir. */
   project_id?: string | null;
+  /**
+   * QUANDO ESTE CLIENTE SE MEXEU PELA ÚLTIMA VEZ — três estados, não dois:
+   *
+   *   string     — a data. Houve movimento.
+   *   `null`     — nunca houve. Estado legítimo de cliente recém cadastrado.
+   *   `undefined`— não deu para ler. A API diz isso em `atividade_lida`.
+   *
+   * Juntar os dois últimos faria "não consegui medir" virar "parado há muito
+   * tempo", que é inventar um alarme a partir de uma falha de leitura.
+   */
+  ultima_atividade?: string | null;
+  pedidos_30d?: number;
 }
+
+/**
+ * CLIENTE, TRABALHO INTERNO OU FIXTURE DE TESTE.
+ *
+ * Vem do classificador do backend (`naturezaDoCliente`), não de uma regra
+ * repetida aqui. Opcional no tipo porque o front precisa continuar funcionando
+ * contra uma API que ainda não subiu com o campo — e nesse caso a tela trata
+ * como CLIENTE, que é o comportamento de antes.
+ */
+export type NaturezaDeCliente = 'CLIENTE' | 'INTERNO' | 'FIXTURE';
 
 export interface ClientSummary {
   id: string;
@@ -483,6 +622,10 @@ export interface ClientSummary {
   clickupListId: string | null;
   clickupUrl: string | null;
   projectId: string | null;
+  natureza: NaturezaDeCliente;
+  /** Ver `ClientSummaryWire.ultima_atividade`: três estados, de propósito. */
+  ultimaAtividade: string | null | undefined;
+  pedidos30d: number | undefined;
 }
 
 export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
@@ -494,6 +637,13 @@ export function mapClientSummary(wire: ClientSummaryWire): ClientSummary {
     clickupListId: wire.clickup_list_id ?? null,
     clickupUrl: wire.clickup_url ?? null,
     projectId: wire.project_id ?? null,
+    // API antiga sem o campo trata tudo como cliente — o comportamento de
+    // antes, não um default que esconde fixture sem avisar.
+    natureza: wire.natureza ?? 'CLIENTE',
+    // Repassado SEM `?? null`: aqui `undefined` carrega informação ("não deu
+    // para ler") e virar `null` o transformaria em "nunca se mexeu".
+    ultimaAtividade: wire.ultima_atividade,
+    pedidos30d: wire.pedidos_30d,
   };
 }
 
@@ -508,6 +658,7 @@ export function mapExecutionDetail(wire: ExecutionDetailWire): ExecutionDetail {
       status: step.status,
       answer: step.output?.answer ?? null,
       sources: step.output?.sources ?? [],
+      toolCalls: step.output?.tool_calls ?? [],
     })),
   };
 }
@@ -812,6 +963,86 @@ export function mapClientMemory(wire: ClientMemoryWire): ClientMemory {
  * O client_secret vive SÓ no backend: o frontend nunca vê token nenhum, só
  * pede a URL de autorização e manda o browser pra lá.
  */
+/**
+ * Conexão do Notion, por PESSOA (28/09/2026). `destinos` é o que a integração
+ * enxerga no workspace de quem conectou: conectar sem liberar nenhuma página é
+ * o erro silencioso mais provável aqui, e a tela precisa dizer isso antes do
+ * primeiro `@notion` falhar.
+ */
+/**
+ * GET /media/overview — a carteira de mídia. Cada cliente aparece SEMPRE,
+ * inclusive sem vínculo: a lista do que falta conectar é metade do valor da
+ * tela. Os estados são excludentes e honestos — "conectado" não implica "tem
+ * número", porque conexão revogada e API fora são coisas diferentes de zero.
+ */
+export type MediaOverviewClientWire =
+  | { client_id: string; client_name: string; status: string; connected: false }
+  | {
+      client_id: string;
+      client_name: string;
+      status: string;
+      connected: true;
+      account_id: string;
+      account_label: string | null;
+      data_available: false;
+      reason: string;
+    }
+  | {
+      client_id: string;
+      client_name: string;
+      status: string;
+      connected: true;
+      account_id: string;
+      account_label: string | null;
+      data_available: true;
+      insights: {
+        spend: number | null;
+        impressions: number | null;
+        clicks: number | null;
+        ctr: number | null;
+        results: number | null;
+      } | null;
+    };
+
+/**
+ * GET /clients/:id/media/meta/creatives — os anúncios com a imagem da peça.
+ * Mesmo union honesto das rotas irmãs de mídia: conectado não implica ter
+ * dado, e imagem ausente é `null`, nunca uma caixa fingindo criativo.
+ */
+export interface MetaCreativeWire {
+  id: string;
+  name: string;
+  status: string;
+  thumbnail_url: string | null;
+  image_url: string | null;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+export type ClientMetaCreativesWire =
+  | { connected: false }
+  | { connected: true; account_id: string; data_available: false; reason: string }
+  | { connected: true; account_id: string; data_available: true; creatives: MetaCreativeWire[] };
+
+export interface MediaOverviewWire {
+  clients: MediaOverviewClientWire[];
+}
+
+export interface NotionIntegrationStatusWire {
+  connected: boolean;
+  /** false = o Orchestrator não tem NOTION_CLIENT_ID/SECRET/REDIRECT_URI. */
+  configured: boolean;
+  /** QUAIS variáveis faltam. Vazio quando `configured` é true. Existe porque
+   *  quem lê esse aviso na agência costuma ser quem pode resolvê-lo — e
+   *  "não configurado" sozinho não diz o que configurar. */
+  missing_env?: string[];
+  workspace_name?: string | null;
+  connected_at?: ISODateString | null;
+  destinos: Array<{ id: string; title: string }>;
+}
+
 export interface ClickUpIntegrationStatusWire {
   connected: boolean;
   /** false = o Orchestrator não tem CLICKUP_CLIENT_ID/SECRET configurados. */
@@ -820,6 +1051,301 @@ export interface ClickUpIntegrationStatusWire {
   workspace_name?: string | null;
   last_synced_at?: ISODateString | null;
   connected_at?: ISODateString | null;
+}
+
+/**
+ * Meta Ads (Facebook for Business) — OAuth É POR COLABORADOR
+ * (/integrations/meta/*), mas qual Ad Account pertence a qual cliente é
+ * sempre decidido em /clients/:id/meta-accounts (nunca aqui). Ver
+ * apps/api/src/clients/routes.ts e o §34-38 do prompt de refinamento.
+ */
+export interface MetaIntegrationStatusWire {
+  connected: boolean;
+  /** false = o Orchestrator não tem META_APP_ID/SECRET/REDIRECT_URI configurados. */
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface MetaBusinessWire {
+  id: string;
+  name: string;
+}
+
+export interface MetaAdAccountWire {
+  /** Já vem com o prefixo "act_" — formato exigido de volta pela Graph API. */
+  id: string;
+  account_id: string;
+  name: string | null;
+  status: number | null;
+  currency: string | null;
+  business_id: string | null;
+  business_name: string | null;
+}
+
+/** Linha de /clients/:id/meta-accounts — o VÍNCULO cliente↔conta, não a conta "crua" da Graph API. */
+export interface ClientMetaAccountWire {
+  account_id: string;
+  business_id: string | null;
+  is_primary: boolean;
+  label: string | null;
+  /** false = o vínculo existe mas a conexão OAuth que o criou foi desconectada/expirou. */
+  connected: boolean;
+  created_at: ISODateString;
+}
+
+/**
+ * Relatório de POST /integrations/meta/sync-accounts (auto-sync de contas,
+ * 16/10/2026). camelCase de propósito: é um relatório computado na hora, não
+ * uma linha de tabela em snake_case.
+ */
+export interface MetaSyncReportWire {
+  status: 'ok';
+  vinculadas: { clientId: string; clientName: string; accountId: string; accountName: string }[];
+  jaVinculadas: { clientId: string; clientName: string; accountId: string; accountName: string }[];
+  pendentes: {
+    accountId: string;
+    accountName: string | null;
+    businessName: string | null;
+    motivo: 'sem_match' | 'ambigua';
+    candidatos?: string[];
+  }[];
+}
+
+export interface MetaAccountInsightsWire {
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  cpc: number | null;
+  cpm: number | null;
+  frequency: number | null;
+  results: number | null;
+  period_start: string | null;
+  period_end: string | null;
+}
+
+export interface MetaCampaignSummaryWire {
+  id: string;
+  name: string;
+  status: string;
+  spend: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+/** GET /clients/:id/media/meta/summary — `connected:false` é estado normal (cliente sem mídia ainda), nunca erro. */
+export type ClientMetaSummaryWire =
+  | { connected: false }
+  | { connected: true; account_id: string; data_available: false; reason: string }
+  | { connected: true; account_id: string; data_available: true; insights: MetaAccountInsightsWire | null; campaigns: MetaCampaignSummaryWire[] };
+
+/**
+ * Google Ads — mesma separação do Meta: OAuth é por colaborador
+ * (/integrations/google-ads/*), vínculo cliente↔Customer ID é sempre em
+ * /clients/:id/google-ads-accounts (§43-45 do prompt de refinamento).
+ */
+export interface GoogleAdsIntegrationStatusWire {
+  connected: boolean;
+  /** false = falta GOOGLE_ADS_CLIENT_ID/SECRET/REDIRECT_URI/DEVELOPER_TOKEN no Orchestrator. */
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface GoogleAdsAccountWire {
+  customer_id: string;
+  descriptive_name: string | null;
+  currency_code: string | null;
+  status: string | null;
+  manager_customer_id: string | null;
+}
+
+export interface ClientGoogleAdsAccountWire {
+  customer_id: string;
+  login_customer_id: string | null;
+  is_primary: boolean;
+  label: string | null;
+  connected: boolean;
+  created_at: ISODateString;
+}
+
+export interface GoogleAdsAccountInsightsWire {
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  average_cpc: number | null;
+  conversions: number | null;
+  conversions_value: number | null;
+}
+
+export interface GoogleAdsCampaignSummaryWire {
+  id: string;
+  name: string;
+  status: string;
+  spend: number | null;
+  clicks: number | null;
+  ctr: number | null;
+}
+
+/** GET/POST /calendar/events — Calendar Core (prompt "CALENDAR + AUTOMATIONS + BENTO V2", 06/10/2026). */
+export interface CalendarEventWire {
+  id: string;
+  client_id: string | null;
+  start_at: ISODateString;
+  end_at: ISODateString;
+  timezone: string;
+  status: string;
+  /** false = evento privado de outra pessoa — só isto é mostrado, nunca o resto (§27). */
+  visible: boolean;
+  title: string | null;
+  description: string | null;
+  location: string | null;
+  meeting_url: string | null;
+  source: string;
+  created_by: string;
+}
+
+export interface CalendarConflictWire {
+  member_id: string;
+  busy_slot: { start: ISODateString; end: ISODateString };
+}
+
+export interface CalendarAvailabilitySlotWire {
+  start: ISODateString;
+  end: ISODateString;
+}
+
+/** GET /calendar/events/:id/meeting-brief — Meeting Prep (§51-53 do prompt "CALENDAR + AUTOMATIONS + BENTO V2", 06/10/2026). */
+export interface MeetingBriefWire {
+  event: {
+    id: string;
+    title: string | null;
+    description: string | null;
+    start_at: ISODateString;
+    end_at: ISODateString;
+    location: string | null;
+    meeting_url: string | null;
+  };
+  client: { id: string; name: string };
+  participants: {
+    internal: Array<{ user_id: string; name: string; response_status: string }>;
+    external: Array<{ contact_id: string | null; name: string | null; email: string | null }>;
+  };
+  demands: { open_count: number; items: Array<{ id: string; title: string; status: string; due_date: ISODateString | null }> };
+  briefs: { open_count: number; items: Array<{ id: string; status: string; demand_title: string }> };
+  approvals: { pending_count: number; items: Array<{ id: string; resource_type: string; created_at: ISODateString }> };
+  last_conversation: { id: string; title: string | null; status: string; updated_at: ISODateString } | null;
+  previous_meeting: { id: string; title: string | null; description: string | null; start_at: ISODateString } | null;
+}
+
+/** GET /integrations/google-calendar/status — OAuth pessoal (Parte F do prompt "CALENDAR + AUTOMATIONS + BENTO V2"). */
+export interface GoogleCalendarIntegrationStatusWire {
+  connected: boolean;
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface GoogleCalendarListEntryWire {
+  id: string;
+  summary: string | null;
+  primary: boolean;
+  access_role: string;
+}
+
+export interface MemberCalendarAccountWire {
+  id: string;
+  external_calendar_id: string;
+  is_primary: boolean;
+  connected: boolean;
+  last_synced_at: ISODateString | null;
+}
+
+/** GET /integrations/microsoft-calendar/status — Outlook/Microsoft 365, mesmo desenho do Google Calendar (07/10/2026). */
+export interface MicrosoftCalendarIntegrationStatusWire {
+  connected: boolean;
+  configured: boolean;
+  connected_at?: ISODateString | null;
+}
+
+export interface MicrosoftCalendarListEntryWire {
+  id: string;
+  name: string | null;
+  is_default: boolean;
+  can_edit: boolean;
+}
+
+/** GET/POST /clients/:id/reports — Relatórios PDF (§46-51 do prompt de refinamento). */
+export interface ClientReportWire {
+  id: string;
+  /** 'queued' | 'processing' | 'ready' | 'failed'. */
+  status: string;
+  channels: string[];
+  period_days: number;
+  period_start: ISODateString;
+  period_end: ISODateString;
+  storage_url: string | null;
+  error_message: string | null;
+  created_at: ISODateString;
+}
+
+export type ClientGoogleAdsSummaryWire =
+  | { connected: false }
+  | { connected: true; customer_id: string; data_available: false; reason: string }
+  | { connected: true; customer_id: string; data_available: true; insights: GoogleAdsAccountInsightsWire | null; campaigns: GoogleAdsCampaignSummaryWire[] };
+
+/** GET /agency-control-center — "Controle da Agência" (§52-59 do prompt de refinamento). */
+export interface AgencyControlCenterWire {
+  kpis: {
+    clientes_ativos: number;
+    conversas_aguardando: number;
+    demandas_abertas: number;
+    atrasados: number;
+    aguardando_aprovacao: number;
+    previstas_hoje: number;
+  };
+  funil_de_workflow: {
+    novas: number;
+    briefing: number;
+    producao: number;
+    revisao: number;
+    aprovacao: number;
+    concluido: number;
+  };
+  clientes_em_atencao: Array<{
+    client_id: string;
+    client_name: string;
+    responsavel: string | null;
+    demandas_atrasadas: number;
+    aprovacoes_pendentes: number;
+  }>;
+  operacao_por_colaborador: Array<{
+    id: string;
+    name: string;
+    clientes: number;
+    em_andamento: number;
+    atrasados: number;
+    aprovacoes_pendentes: number;
+  }>;
+  media_summary: {
+    clientes_com_meta_conectado: number;
+    clientes_com_google_ads_conectado: number;
+    performance_agregada_disponivel: false;
+  };
+  /** Opcional: versão antiga do backend não manda — a seção some, não quebra. */
+  clickup_summary?: {
+    total_tarefas: number;
+    abertas: number;
+    atrasadas: number;
+    por_status: Array<{ status: string; total: number }>;
+  };
+  integration_health: {
+    clickup: { status: string; last_event_at: string | null };
+    whatsapp: { status: string };
+    meta: { status: string; collaborator_connections: number };
+    google_ads: { status: string; collaborator_connections: number };
+    calendar: { status: 'nao_implementado' };
+  };
+  gerado_em: ISODateString;
 }
 
 /**
@@ -883,6 +1409,10 @@ export interface AgencyTasksResponseWire {
   tasks: AgencyTaskWire[];
   /** true = bateu no teto de páginas (20 x 100 tarefas) - a lista é um MÍNIMO. */
   truncated: boolean;
+  /** Nomes de clientes cuja organização tem conector ClickUp quebrado —
+   *  ficaram de fora deste agregado (redesenho multi-org, 06/10/2026). Nunca
+   *  um id de organização, só o nome do cliente visível a quem pergunta. */
+  unavailable_clients?: string[];
 }
 
 export interface ClickUpSyncResultWire {
@@ -1089,6 +1619,30 @@ export function mapConversationSummary(wire: ConversationSummaryWire): Conversat
   };
 }
 
+/** Bloco de motion gravado pelo worker em messages.metadata.motion. */
+export interface ChatMotionRefWire {
+  motion_id: string;
+  status?: string;
+  format?: string;
+  duration_seconds?: number;
+  fps?: number;
+  width?: number;
+  height?: number;
+}
+
+/** Pedido de briefing gravado em messages.metadata.motion_brief_request:
+ * a mensagem assistente vira um card de briefing (MotionBriefCard) em vez de
+ * texto puro. `prefill` já traz o que o Otto inferiu do pedido. */
+export interface ChatMotionBriefRequestWire {
+  client_id: string;
+  prefill: {
+    campaignName?: string;
+    duration?: number;
+    fps?: 24 | 30 | 60;
+    aspectRatio?: string;
+  };
+}
+
 export interface ConversationMessageWire {
   id: string;
   role: 'user' | 'assistant';
@@ -1100,6 +1654,12 @@ export interface ConversationMessageWire {
   /** Lista completa de anexos (metadata.attachments); pode vir vazia mesmo
    * com attachment_url preenchido em mensagens antigas de antes desta coluna. */
   attachments?: ChatAttachmentWire[];
+  motion?: ChatMotionRefWire | null;
+  motion_brief_request?: ChatMotionBriefRequestWire | null;
+  /** Bento 3.0, Fase 3: gravado em metadata.sources/tool_calls pelo worker.
+   * Opcional porque mensagens antigas (antes desta mudança) não têm a chave. */
+  sources?: string[];
+  tool_calls?: AgentToolCallWire[];
   created_at: ISODateString;
 }
 
@@ -1112,6 +1672,10 @@ export interface ConversationMessage {
   attachmentType: string | null;
   attachmentFilename: string | null;
   attachments: ChatAttachmentWire[];
+  motion: ChatMotionRefWire | null;
+  motionBriefRequest: ChatMotionBriefRequestWire | null;
+  sources: string[];
+  toolCalls: AgentToolCallWire[];
   createdAt: ISODateString;
 }
 
@@ -1139,6 +1703,10 @@ export function mapConversationMessage(wire: ConversationMessageWire): Conversat
     attachmentType: wire.attachment_type,
     attachmentFilename: wire.attachment_filename,
     attachments,
+    motion: wire.motion ?? null,
+    motionBriefRequest: wire.motion_brief_request ?? null,
+    sources: wire.sources ?? [],
+    toolCalls: wire.tool_calls ?? [],
     createdAt: wire.created_at,
   };
 }
@@ -1371,6 +1939,7 @@ export interface CollaboratorWire {
   roles: string[];
   clickup: CollaboratorClickUpWire | null;
   last_seen_at: ISODateString | null;
+  atividade?: AtividadeNoClaude;
 }
 
 export interface CollaboratorsResponseWire {
@@ -1393,6 +1962,15 @@ export interface Collaborator {
     color: string | null;
   } | null;
   lastSeenAt: ISODateString | null;
+  /** `null` = a API não mandou (versão anterior). Diferente de "não usou". */
+  atividade: AtividadeNoClaude | null;
+}
+
+export interface AtividadeNoClaude {
+  conversas_30d: number;
+  mensagens_30d: number;
+  ultima_conversa: string | null;
+  agentes: Array<{ agent: string; total: number }>;
 }
 
 export function mapCollaborator(wire: CollaboratorWire): Collaborator {
@@ -1413,6 +1991,12 @@ export function mapCollaborator(wire: CollaboratorWire): Collaborator {
         }
       : null,
     lastSeenAt: wire.last_seen_at,
+    /**
+     * O que a pessoa anda pedindo ao Claude. O backend sempre manda; o `??`
+     * cobre uma API mais velha em deploy escalonado, e aí a tela mostra
+     * ausência em vez de zero — "não medi" e "não usou" são coisas diferentes.
+     */
+    atividade: wire.atividade ?? null,
   };
 }
 
@@ -1538,6 +2122,13 @@ export interface AutomationWire {
   /** Estimativa de minutos economizados por execução; null quando nunca informada. */
   estimated_minutes_saved: number | null;
   last_run_at: ISODateString | null;
+  /**
+   * Quando o AGENDADOR vai disparar de novo — o `next` do repeatable job do
+   * BullMQ, não um recálculo do cron. `null` significa que a automação existe
+   * no banco e não está agendada em lugar nenhum, que é um estado que a tela
+   * precisa poder mostrar.
+   */
+  next_run_at: ISODateString | null;
   created_at: ISODateString;
 }
 
@@ -1553,6 +2144,7 @@ export interface Automation {
   enabled: boolean;
   estimatedMinutesSaved: number | null;
   lastRunAt: ISODateString | null;
+  nextRunAt: ISODateString | null;
   createdAt: ISODateString;
 }
 
@@ -1569,6 +2161,7 @@ export function mapAutomation(wire: AutomationWire): Automation {
     enabled: wire.enabled,
     estimatedMinutesSaved: wire.estimated_minutes_saved,
     lastRunAt: wire.last_run_at,
+    nextRunAt: wire.next_run_at,
     createdAt: wire.created_at,
   };
 }
@@ -2024,3 +2617,347 @@ export function mapFontCatalogEntry(wire: FontCatalogEntryWire): FontCatalogEntr
     defaultSubset: wire.default_subset,
   };
 }
+
+/**
+ * INBOX (P1-A/C, 06/10/2026) — conversa externa (hoje WhatsApp). Distinto do
+ * chat interno com Bento (`ConversationDetailWire` acima): aqui o
+ * interlocutor é um CONTATO (telefone), não outro colaborador.
+ */
+export type InboxThreadStatus = 'open' | 'waiting_client' | 'waiting_agency' | 'archived';
+
+export interface InboxThreadWire {
+  id: string;
+  client_id: string | null;
+  client_name: string | null;
+  contact_id: string | null;
+  contact_name: string;
+  contact_phone: string | null;
+  contact_avatar_url?: string | null;
+  whatsapp_session_id?: string | null;
+  group_id?: string | null;
+  external_chat_id?: string | null;
+  kind?: string;
+  human_service_status?: 'unassigned' | 'active' | 'ended';
+  channel: string;
+  status: InboxThreadStatus;
+  assigned_to_user_id: string | null;
+  last_message_at: string | null;
+  last_message_preview?: string | null;
+  unread_count?: number;
+}
+
+export interface InboxThread {
+  id: string;
+  clientId: string | null;
+  clientName: string | null;
+  contactId: string | null;
+  contactName: string;
+  contactPhone: string | null;
+  contactAvatarUrl: string | null;
+  whatsappSessionId: string | null;
+  groupId: string | null;
+  externalChatId: string | null;
+  kind: string;
+  humanServiceStatus: 'unassigned' | 'active' | 'ended';
+  channel: string;
+  status: InboxThreadStatus;
+  assignedToUserId: string | null;
+  lastMessageAt: string | null;
+  lastMessagePreview: string | null;
+  unreadCount: number;
+}
+
+export function mapInboxThread(wire: InboxThreadWire): InboxThread {
+  return {
+    id: wire.id,
+    clientId: wire.client_id,
+    clientName: wire.client_name,
+    contactId: wire.contact_id,
+    contactName: wire.contact_name,
+    contactPhone: wire.contact_phone,
+    contactAvatarUrl: wire.contact_avatar_url ?? null,
+    whatsappSessionId: wire.whatsapp_session_id ?? null,
+    groupId: wire.group_id ?? null,
+    externalChatId: wire.external_chat_id ?? null,
+    kind: wire.kind ?? 'individual',
+    humanServiceStatus: wire.human_service_status ?? (wire.assigned_to_user_id ? 'active' : 'unassigned'),
+    channel: wire.channel,
+    status: wire.status,
+    assignedToUserId: wire.assigned_to_user_id,
+    lastMessageAt: wire.last_message_at,
+    lastMessagePreview: wire.last_message_preview ?? null,
+    unreadCount: wire.unread_count ?? 0,
+  };
+}
+
+export interface InboxMessageWire {
+  id: string;
+  direction: 'inbound' | 'outbound';
+  sender_contact_id: string | null;
+  sender_user_id: string | null;
+  sender_name?: string | null;
+  content: string | null;
+  attachment_url: string | null;
+  attachment_type?: string | null;
+  attachment_filename?: string | null;
+  attachment_size_bytes?: number | null;
+  external_message_id?: string | null;
+  delivery_status: string;
+  created_at: string;
+}
+
+export interface InboxMessage {
+  id: string;
+  direction: 'inbound' | 'outbound';
+  senderContactId: string | null;
+  senderUserId: string | null;
+  senderName: string | null;
+  content: string | null;
+  attachmentUrl: string | null;
+  attachmentType: string | null;
+  attachmentFilename: string | null;
+  attachmentSizeBytes: number | null;
+  externalMessageId: string | null;
+  deliveryStatus: string;
+  createdAt: string;
+}
+
+export function mapInboxMessage(wire: InboxMessageWire): InboxMessage {
+  return {
+    id: wire.id,
+    direction: wire.direction,
+    senderContactId: wire.sender_contact_id,
+    senderUserId: wire.sender_user_id,
+    senderName: wire.sender_name ?? null,
+    content: wire.content,
+    attachmentUrl: wire.attachment_url,
+    attachmentType: wire.attachment_type ?? null,
+    attachmentFilename: wire.attachment_filename ?? null,
+    attachmentSizeBytes: wire.attachment_size_bytes ?? null,
+    externalMessageId: wire.external_message_id ?? null,
+    deliveryStatus: wire.delivery_status,
+    createdAt: wire.created_at,
+  };
+}
+
+/** Demand (P1-D, 06/10/2026) — "o cliente pediu algo". */
+export type DemandStatus = 'new' | 'briefing' | 'in_production' | 'done' | 'cancelled';
+export type DemandSource = 'whatsapp' | 'manual' | 'bento';
+export type DemandPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+export interface DemandWire {
+  id: string;
+  client_id: string;
+  client_name: string | null;
+  owner_id: string | null;
+  title: string;
+  description: string | null;
+  source: DemandSource;
+  status: DemandStatus;
+  priority: DemandPriority;
+  requested_at: string;
+  due_date: string | null;
+  clickup_task_url: string | null;
+}
+
+export interface Demand {
+  id: string;
+  clientId: string;
+  clientName: string | null;
+  ownerId: string | null;
+  title: string;
+  description: string | null;
+  source: DemandSource;
+  status: DemandStatus;
+  priority: DemandPriority;
+  requestedAt: string;
+  dueDate: string | null;
+  clickupTaskUrl: string | null;
+}
+
+export function mapDemand(wire: DemandWire): Demand {
+  return {
+    id: wire.id,
+    clientId: wire.client_id,
+    clientName: wire.client_name,
+    ownerId: wire.owner_id,
+    title: wire.title,
+    description: wire.description,
+    source: wire.source,
+    status: wire.status,
+    priority: wire.priority,
+    requestedAt: wire.requested_at,
+    dueDate: wire.due_date,
+    clickupTaskUrl: wire.clickup_task_url,
+  };
+}
+
+/** Brief + BriefVersion (P1-E/F/G, 06/10/2026). */
+export type BriefStatus = 'draft' | 'in_review' | 'approved' | 'sent_to_production';
+
+export interface BriefContentWire {
+  objective?: string;
+  deliverable?: string;
+  channel?: string;
+  format?: string;
+  deadline?: string;
+  references?: string[];
+  direction?: string;
+  restrictions?: string;
+  assets?: string[];
+  notes?: string;
+}
+
+export interface BriefVersionWire {
+  id: string;
+  brief_id: string;
+  version: number;
+  content: BriefContentWire;
+  source: 'ai_draft' | 'human_edit';
+  created_at: string;
+}
+
+export interface BriefWire {
+  id: string;
+  client_id: string;
+  demand_id: string;
+  status: BriefStatus;
+  approved_version_id: string | null;
+  external_task_id: string | null;
+  external_task_provider: string | null;
+  versions?: BriefVersionWire[];
+  draft_version?: BriefVersionWire;
+}
+
+/** Aprovação genérica de recurso de negócio (P1-I/J, 06/10/2026) — distinta
+ *  da fila de aprovação de tool-call da IA (ToolCall acima). */
+export type ApprovalResourceType = 'brief' | 'creative' | 'copy' | 'task' | 'campaign' | 'budget' | 'publication';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'changes_requested';
+
+export interface ApprovalRequestWire {
+  id: string;
+  client_id: string | null;
+  resource_type: ApprovalResourceType;
+  resource_id: string;
+  version: string | null;
+  requested_by: string;
+  approver_id: string | null;
+  status: ApprovalStatus;
+  comment: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/** Responsabilidade operacional de um membro sobre um cliente (P0-C,
+ *  06/10/2026) — distinta do `role` de acesso ao workspace. Texto livre
+ *  validado no backend, não enum de banco (`packages/types/client-assignment.ts`). */
+export const CLIENT_RESPONSIBILITIES = [
+  'account',
+  'traffic',
+  'design',
+  'copy',
+  'social',
+  'video',
+  'manager',
+  'sales',
+  'other',
+] as const;
+export type ClientResponsibility = (typeof CLIENT_RESPONSIBILITIES)[number];
+
+export interface ClientAssignmentWire {
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  responsibility: string;
+}
+
+/** GET /organizations/:id/connectors — credenciais mascaradas, nunca o secret inteiro. */
+export interface OrganizationConnectorWire {
+  provider: string;
+  status: string;
+  credentials: Record<string, string>;
+  created_at: ISODateString | null;
+  updated_at: ISODateString | null;
+}
+
+/** GET /organizations/:id/connectors/whatsapp/health (07/10/2026). */
+export interface WhatsappHealthWire {
+  connected: boolean;
+  configured: boolean;
+  detail?: string | null;
+}
+
+/**
+ * PIPELINES — quadros de trabalho persistidos (GET /pipelines).
+ *
+ * `escopo` é a regra de propriedade na forma que a tela precisa: 'agencia' é
+ * o quadro da casa, que todo mundo da empresa vê; 'pessoal' é de quem criou e
+ * de mais ninguém. No banco isso é `owner_id IS NULL` contra `owner_id = eu`,
+ * mas a tela não deve precisar saber disso pra desenhar um selo.
+ */
+export interface PipelineStageWire {
+  id: string;
+  label: string;
+  color: string;
+  clickupStatus?: string | undefined;
+  /** Categoria geral (a_fazer/em_andamento/em_aprovacao/concluido) — só nos
+   * quadros que juntam a agência inteira; ver apps/api/src/pipeline/quadro-geral.ts. */
+  categoria?: 'a_fazer' | 'em_andamento' | 'em_aprovacao' | 'concluido' | undefined;
+}
+
+export interface PipelineCardWire {
+  id: string;
+  board_id: string;
+  stage_id: string;
+  name: string;
+  client_id: string | null;
+  clickup_task_id: string | null;
+  responsavel: string | null;
+  /** Foto do responsável (ClickUp profilePicture). */
+  responsavel_avatar?: string | null;
+  /** Vencimento da tarefa no ClickUp (ISO). */
+  prazo?: string | null;
+  /** 'urgent' | 'high' | 'normal' | 'low' do ClickUp. */
+  prioridade?: string | null;
+  valor: string | null;
+  nota: string;
+  anexos: { id: string; nome: string; url: string; tipo: string }[];
+  posicao: number;
+  atualizado_em: string;
+}
+
+export interface PipelineBoardWire {
+  id: string;
+  nome: string;
+  tipo: 'cliente' | 'tarefas' | 'colaborador';
+  escopo: 'agencia' | 'pessoal';
+  /** Só em `tipo='tarefas'`: de qual cliente este quadro é espelho — os
+   * status das colunas são da lista dele no ClickUp, nunca inventados. */
+  client_id: string | null;
+  stages: PipelineStageWire[];
+  posicao: number;
+  cards: PipelineCardWire[];
+}
+
+export interface PipelinesResponseWire {
+  boards: PipelineBoardWire[];
+}
+
+/**
+ * GET /today/summary (13/10/2026) — o agregado da tela "Hoje": uma chamada no
+ * lugar das treze. Cada seção é um `ResultadoDeSecao` (tipo canônico em
+ * `@desigual-os/types`) carregando EXATAMENTE o payload da rota original; o
+ * agregado só evita viagem, nunca cria dado. `ok: false` carrega o status
+ * HTTP que a rota de origem devolveu — é o que permite à tela distinguir o
+ * 409 de "ClickUp não vinculado" (estado esperado) de uma falha de leitura,
+ * e os dois de uma lista vazia de verdade (`ok: true` com `[]`).
+ */
+export type TodaySummaryWire = ResumoDeHoje<
+  MeResponse,
+  AgencyTasksResponseWire,
+  { threads: InboxThreadWire[] },
+  { events: CalendarEventWire[] },
+  { approvals: ApprovalRequestWire[] },
+  { demands: DemandWire[] },
+  { clients: ClientSummaryWire[] }
+>;

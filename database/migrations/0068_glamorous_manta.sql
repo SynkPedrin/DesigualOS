@@ -1,0 +1,1 @@
+ALTER TABLE "pipeline_cards" ADD COLUMN "anexos" jsonb DEFAULT '[]'::jsonb NOT NULL;

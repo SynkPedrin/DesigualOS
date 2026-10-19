@@ -5,14 +5,23 @@ import { uploadUserFile } from '../lib/storage';
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
-/** Anexos do composer do chat: imagens, PDF e texto (.md/.txt). Mesmo recorte
- * do accept do file input no frontend. */
+/**
+ * Anexos do composer do chat. Mesmo recorte do accept do file input no
+ * frontend — os dois precisam concordar, senão a pessoa escolhe um arquivo que
+ * o servidor recusa depois de subir.
+ *
+ * DOCX e PPTX entraram em 29/09/2026 porque transcrição de reunião e
+ * apresentação de cliente chegam nesses formatos, e o Bento passou a LER o
+ * conteúdo (ver bento-documentos.ts), não só anexar o arquivo.
+ */
 function isAcceptedUpload(mimetype: string, filename: string): boolean {
   return (
     mimetype.startsWith('image/') ||
     mimetype === 'application/pdf' ||
     mimetype.startsWith('text/') ||
-    /\.(md|txt)$/i.test(filename)
+    /\.(md|txt|csv|vtt|srt|docx|pptx)$/i.test(filename) ||
+    mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mimetype === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
   );
 }
 

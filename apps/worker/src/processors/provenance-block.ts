@@ -22,6 +22,55 @@ export function pedeProveniencia(mensagem: string): boolean {
   return PEDE_FONTE.test(mensagem);
 }
 
+/**
+ * QUEM registrou um conhecimento — a autoria que vem de `memories.metadata`
+ * quando a escrita foi feita por uma identidade operacional (credencial de
+ * conexão do MCP). Sem `actor_type` não há o que afirmar: `recorded_by` sozinho
+ * é texto legado e o bloco não o promove a autoria.
+ */
+export interface AutoriaDeRegistro {
+  /** `metadata.recorded_by` — "Pedro Claude", "Equipe Atendimento". */
+  recordedBy: string;
+  /** `metadata.actor_type` — decide se é honesto nomear uma pessoa. */
+  actorType: 'person' | 'shared_account' | 'service';
+}
+
+/**
+ * Lê a autoria de um `metadata` de memória. `null` quando falta qualquer uma
+ * das duas partes — memória antiga ou gravada pelo fluxo legado renderiza
+ * exatamente como antes.
+ */
+export function autoriaDeMetadata(metadata: unknown): AutoriaDeRegistro | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const m = metadata as Record<string, unknown>;
+  const recordedBy = typeof m.recorded_by === 'string' && m.recorded_by.trim().length > 0 ? m.recorded_by : null;
+  const actorType = m.actor_type;
+  if (!recordedBy) return null;
+  if (actorType !== 'person' && actorType !== 'shared_account' && actorType !== 'service') return null;
+  return { recordedBy, actorType };
+}
+
+/**
+ * A frase de autoria. Conta compartilhada carrega o aviso no próprio texto —
+ * é o que sustenta o "não é possível atribuir" quando perguntarem por uma
+ * pessoa específica.
+ */
+export function descreverAutoria(autoria: AutoriaDeRegistro): string {
+  if (autoria.actorType === 'shared_account') return `registrado por ${autoria.recordedBy} (conta compartilhada)`;
+  if (autoria.actorType === 'service') return `registrado por ${autoria.recordedBy} (automação)`;
+  return `registrado por ${autoria.recordedBy}`;
+}
+
+function dedupeAutorias(autorias: AutoriaDeRegistro[]): AutoriaDeRegistro[] {
+  const vistas = new Set<string>();
+  return autorias.filter((a) => {
+    const chave = `${a.actorType}|${a.recordedBy}`;
+    if (vistas.has(chave)) return false;
+    vistas.add(chave);
+    return true;
+  });
+}
+
 /** Como cada fonte do pacote se chama para um humano. */
 const NOME_HUMANO: Record<FonteDeContexto, string> = {
   frescor: 'estado de sincronização com o ClickUp',
@@ -32,6 +81,13 @@ const NOME_HUMANO: Record<FonteDeContexto, string> = {
   campanha: 'registro de campanhas, derivado das tarefas do ClickUp',
   pessoas: 'registro de pessoas e relações, derivado do ClickUp',
   episodios: 'memória do que foi decidido em conversas anteriores, com data',
+  // O event store é registro do que ACONTECEU (webhook do ClickUp, equipe via
+  // MCP) — não é memória de conversa nem dado ao vivo, e o nome precisa dizer
+  // isso pra quem confere a fonte.
+  eventos_recentes: 'registro de eventos recentes da operação (o que aconteceu, com data)',
+  // Recuperada por semelhança de texto, não por registro direto: o nome
+  // humano precisa carregar essa diferença de confiança.
+  memoria_semantica: 'memória relacionada ao assunto, recuperada por semelhança',
   preferencias: 'preferências consolidadas do cliente',
   // Atribuição honesta importa aqui mais que em qualquer outra fonte: dizer
   // "ClickUp" para algo que alguém falou no chat inventa uma autoridade que o
@@ -43,8 +99,14 @@ const NOME_HUMANO: Record<FonteDeContexto, string> = {
 /**
  * Bloco com as fontes REAIS deste turno. Vazio quando ninguém perguntou — não
  * é para todo turno virar bibliografia.
+ *
+ * `autorias` (opcional): QUEM registrou o conhecimento que entrou no contexto,
+ * quando a memória carrega `metadata.recorded_by` + `metadata.actor_type`. É o
+ * que permite ao Bento responder "foi a Tammy?" com a verdade: pessoa nomeada
+ * só quando a identidade é individual; conta compartilhada é a equipe, e
+ * escolher alguém seria inventar.
  */
-export function formatProvenanceBlock(mensagem: string, fontes: FonteDeContexto[]): string {
+export function formatProvenanceBlock(mensagem: string, fontes: FonteDeContexto[], autorias: AutoriaDeRegistro[] = []): string {
   if (!pedeProveniencia(mensagem)) return '';
   if (fontes.length === 0) {
     return [
@@ -54,6 +116,17 @@ export function formatProvenanceBlock(mensagem: string, fontes: FonteDeContexto[
   }
   const linhas = ['PERGUNTARAM DE ONDE VEIO A INFORMAÇÃO. As fontes deste turno, e só elas, são:'];
   for (const f of fontes) linhas.push(`- ${NOME_HUMANO[f] ?? f}`);
+  const autoriasUnicas = dedupeAutorias(autorias);
+  if (autoriasUnicas.length > 0) {
+    linhas.push('', 'AUTORIA do que a equipe registrou nestas fontes:');
+    for (const a of autoriasUnicas) linhas.push(`- ${descreverAutoria(a)}`);
+    if (autoriasUnicas.some((a) => a.actorType === 'shared_account')) {
+      linhas.push(
+        'Conta compartilhada NÃO é uma pessoa: se perguntarem "foi a Tammy?" (ou qualquer nome),',
+        'responda que não é possível atribuir — a informação veio da conta compartilhada. Não escolha ninguém.',
+      );
+    }
+  }
   linhas.push(
     '',
     'Cite-as ao responder, em linguagem de gente. NÃO invente fonte que não está aqui,',
@@ -76,7 +149,7 @@ export function formatProvenanceBlock(mensagem: string, fontes: FonteDeContexto[
  * Só aparece quando alguém PERGUNTA. Fonte em toda resposta transformaria o
  * chat numa auditoria e treinaria a equipe a ignorar o rodapé.
  */
-export function anexarFontes(resposta: string, mensagem: string, fontes: FonteDeContexto[]): string {
+export function anexarFontes(resposta: string, mensagem: string, fontes: FonteDeContexto[], autorias: AutoriaDeRegistro[] = []): string {
   if (!pedeProveniencia(mensagem)) return resposta;
   if (resposta.trim().length === 0) return resposta;
 
@@ -87,5 +160,9 @@ export function anexarFontes(resposta: string, mensagem: string, fontes: FonteDe
     return `${resposta.trimEnd()}\n\nFontes utilizadas: nenhuma fonte estruturada entrou neste turno.`;
   }
   const linhas = [...new Set(fontes.map((f) => NOME_HUMANO[f] ?? f))].map((n) => `- ${n}`);
-  return `${resposta.trimEnd()}\n\nFontes utilizadas:\n${linhas.join('\n')}`;
+  const autoriasUnicas = dedupeAutorias(autorias);
+  const blocoAutoria = autoriasUnicas.length > 0
+    ? `\nAutoria dos registros da equipe:\n${autoriasUnicas.map((a) => `- ${descreverAutoria(a)}`).join('\n')}`
+    : '';
+  return `${resposta.trimEnd()}\n\nFontes utilizadas:\n${linhas.join('\n')}${blocoAutoria}`;
 }

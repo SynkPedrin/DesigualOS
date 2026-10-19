@@ -226,23 +226,33 @@ export function formatCampaignBlock(
 }
 
 /**
- * Leitura da lista no ClickUp para a autocura. Vive aqui, e não no
- * context-engine, porque é o worker que tem credencial de ClickUp — o
- * context-engine continua sem dependência de rede e testável sem mock de HTTP.
+ * Leitura da lista para a autocura, agora pela INTERFACE de conectores.
+ *
+ * Antes montava `ClickUpConfig` das envs globais na mão; desde 01/10/2026
+ * resolve o provider da EMPRESA do turno (`organization_connectors`), caindo
+ * no fallback de env quando ela não tem conector próprio — que é o
+ * comportamento de sempre da Desigual. A decisão de credencial mora em
+ * `resolveTaskProvider` (tool-gateway), não aqui.
+ *
+ * Continua no worker e não no context-engine pela mesma razão de sempre: é
+ * aqui que existe credencial de plataforma, e o context-engine segue sem
+ * dependência de rede.
+ *
+ * Falha de configuração ou de rede viram lista vazia, nunca crash de turno:
+ * a autocura é reforço, não pré-requisito — sem ela o turno segue com o
+ * índice que já tem.
  */
-export async function buscarTasksDaLista(listId: string) {
-  const { queryOperationTasks } = await import('@desigual-os/tool-gateway');
-  const apiKey = process.env.CLICKUP_API_KEY;
-  const teamId = process.env.CLICKUP_TEAM_ID;
-  if (!apiKey || !teamId) return [];
-  const page = await queryOperationTasks({ apiKey, teamId }, { listIds: [listId], includeClosed: true, subtasks: true }).catch(() => null);
-  return (page?.tasks ?? []).map((t) => ({
+export async function buscarTasksDaLista(listId: string, organizationId: string | null = null) {
+  const { resolveTaskProvider } = await import('@desigual-os/tool-gateway');
+  const provider = await resolveTaskProvider(organizationId).catch(() => null);
+  if (!provider) return [];
+  const tasks = await provider.listTasks({ listIds: [listId], includeClosed: true, subtasks: true }).catch(() => null);
+  return (tasks ?? []).map((t) => ({
     id: t.id,
-    name: t.name,
+    name: t.title,
     description: t.description ?? '',
     status: t.status,
-    // O ClickUp marca encerramento no tipo do status; `closed` é o que decide
-    // se a campanha ainda está viva.
+    // O tipo do status — e não o rótulo — decide se a campanha ainda está viva.
     closed: t.statusType === 'closed' || t.statusType === 'done',
     updatedAt: t.updatedAt ? new Date(t.updatedAt) : null,
   }));

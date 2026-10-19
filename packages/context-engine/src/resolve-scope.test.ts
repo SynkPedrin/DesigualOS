@@ -111,9 +111,17 @@ describe('escopo de CLIENTE — cliente citado ganha de marcador global', () => 
 describe('ambiguidade — perguntar de volta e a atitude certa, mas nomeando os candidatos', () => {
   it('termo que bate em 2 clientes no mesmo nivel -> AMBIGUOUS com candidatos', async () => {
     const s = await resolveOperationalScope('como esta o case zero?', NOW);
-    // Sem cliente "case zero" no fixture, isso cai em NONE — o teste de ambiguidade real
-    // vive em resolve-client.test.ts, onde o fixture tem as duas linhas duplicadas.
-    expect(['NONE', 'AMBIGUOUS']).toContain(s.kind);
+    // Sem cliente "case zero" no fixture, o teste de ambiguidade real vive em
+    // resolve-client.test.ts, onde o fixture tem as duas linhas duplicadas.
+    //
+    // GLOBAL entrou na lista em 29/09/2026, com a inversão do portão de leitura
+    // (ver `pedeCompreensaoDaOperacao`): isto É uma pergunta, e pergunta agora
+    // consulta a operação por padrão em vez de cair em NONE e o agente
+    // responder "de qual cliente?" sem ter olhado para nada. O que este teste
+    // garante continua sendo o mesmo — nenhum cliente é INVENTADO a partir de
+    // um termo que não resolve.
+    expect(['NONE', 'AMBIGUOUS', 'GLOBAL']).toContain(s.kind);
+    expect(s.clients).toHaveLength(0);
   });
 });
 
@@ -473,5 +481,103 @@ describe('follow-up elíptico herda a ENTIDADE, não só a intenção', () => {
     const r = await resolveOperationalScope('e as mais urgentes?', new Date(), anterior);
     expect(r.kind).toBe('CLIENT');
     expect(r.clients[0]?.name).toBe('3Net');
+  });
+});
+
+/**
+ * 28/09/2026 — medido no chat real, com anexo. "cria a task X pra Fulano (...)
+ * prazo pra amanhã" batia em "task" e em "amanhã", o chamador varria as listas
+ * dos 52 clientes autorizados ANTES de enfileirar, e o POST /chat levava 186s.
+ * O fetch do frontend aborta em 120s: a task nascia no ClickUp e a pessoa ficava
+ * em "pensando" pra sempre. Ordem de escrita não é pedido de leitura.
+ */
+describe('ordem de escrita não gasta consulta ao vivo', () => {
+  it.each([
+    'cria a task do carrossel pra Matheus Sain, prazo pra amanhã',
+    'muda o prazo dessa task para sexta',
+    'coloca a Jamile também nessa tarefa',
+    'apaga essa task',
+    'fecha a task do layout',
+    'marca essa demanda como concluída',
+    'renomeia essa tarefa para Carrossel v2',
+  ])('%s -> operational=false', async (m) => {
+    const r = await resolveOperationalScope(m, new Date(), null);
+    expect(r.operational).toBe(false);
+    expect(r.signals).toContain('escrita:sem-consulta');
+  });
+
+  it.each([
+    'quais tasks vencem amanhã?',
+    'o que tá pegando hoje',
+    'me atualiza',
+    'quantas tarefas estão atrasadas',
+    'todas as tasks da agência que vencem amanhã',
+  ])('%s -> continua lendo (operational=true)', async (m) => {
+    const r = await resolveOperationalScope(m, new Date(), null);
+    expect(r.operational).toBe(true);
+  });
+
+  it('pedir as duas coisas na mesma frase mantém a leitura', async () => {
+    const r = await resolveOperationalScope('cria a task do carrossel e me diz o que mais vence amanhã', new Date(), null);
+    expect(r.operational).toBe(true);
+  });
+
+  it('"criação" não é ordem de escrita — palavra inteira, não prefixo', async () => {
+    const r = await resolveOperationalScope('quais tarefas estão na criação essa semana?', new Date(), null);
+    expect(r.operational).toBe(true);
+  });
+});
+
+/**
+ * PESSOA GANHA DE LINHA-DE-CLIENTE-QUE-É-PESSOA (29/09/2026).
+ *
+ * "Endrigo Almada" é linha em `clients`, com lista própria no ClickUp. Medido
+ * ao vivo: "Quais tarefas dependem do Endrigo?" resolvia CLIENT, consultava a
+ * lista pessoal (vazia) e o Bento respondia "não tenho a lista de tarefas que
+ * dependem do Endrigo nos dados" — com ele responsável por tarefa real.
+ */
+describe('pessoa citada não vira consulta à pasta pessoal dela', () => {
+  it('"Quais tarefas dependem do Endrigo?" resolve PERSON, não CLIENT', async () => {
+    const s = await resolveOperationalScope('Quais tarefas dependem do Endrigo?');
+    expect(s.kind).toBe('PERSON');
+    expect(s.operational).toBe(true);
+    expect(s.person?.name).toContain('endrigo');
+  });
+
+  it('as outras formas de gargalo também chegam na pessoa', async () => {
+    for (const frase of [
+      'o que está travado por causa do Endrigo?',
+      'quais entregas estão esperando pelo Endrigo?',
+      'o que depende do Endrigo hoje?',
+    ]) {
+      const s = await resolveOperationalScope(frase);
+      expect(s.kind, frase).toBe('PERSON');
+    }
+  });
+
+  it('CLIENTE continua sendo cliente — a regra é estreita', async () => {
+    // Só a lista curta de pessoas-viraram-cliente muda de comportamento.
+    // Qualquer outro cliente, inclusive com nome de gente, segue CLIENT.
+    const s = await resolveOperationalScope('me fala da D. Carvalho');
+    expect(s.kind).toBe('CLIENT');
+  });
+
+  it('"depende de APROVAÇÃO" não é uma pessoa chamada aprovação', async () => {
+    // Foi a suíte que pegou: o padrão de dependência capturava etapa de
+    // processo como se fosse nome.
+    const s = await resolveOperationalScope('o que depende de aprovação?');
+    expect(s.kind).not.toBe('PERSON');
+  });
+
+  it('nenhuma etapa de processo vira pessoa', async () => {
+    for (const frase of [
+      'o que depende de material do cliente?',
+      'o que está travado por falta de contrato?',
+      'quais tarefas dependem de revisão?',
+      'o que está esperando por feedback?',
+    ]) {
+      const s = await resolveOperationalScope(frase);
+      expect(s.kind, frase).not.toBe('PERSON');
+    }
   });
 });

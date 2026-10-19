@@ -59,6 +59,36 @@ export const ROUTING_RULES: RoutingRule[] = [
       'melhor resultado',
       'campanha que merece escala',
       'fadiga de criativo',
+      /**
+       * VOCABULÁRIO DE MÍDIA QUE NÃO PODE DEPENDER DE MODELO (29/09/2026).
+       *
+       * "quanto gastamos em Meta Ads esse mês?" e "qual criativo está
+       * performando melhor?" iam pro Jarbas pelo classificador local, nunca por
+       * regra. E o classificador é um 3B que divide a máquina com um modelo de
+       * 24 GB: com o grande carregado, ele estoura o tempo, a decisão cai num
+       * casamento fraco de regra e a pergunta de mídia vai parar no Bento.
+       *
+       * Medido: /api/ps com qwen3.6:35b-a3b residente, classifyLocally
+       * devolvendo TimeoutError, e o harness de roteamento caindo de 32/32 pra
+       * 30/32 sem nenhuma linha de código ter mudado.
+       *
+       * Depender de modelo pra vocabulário que é determinístico foi a escolha
+       * errada. Estas frases decidem sem rede e sem GPU — e o classificador
+       * continua valendo pro que é mesmo ambíguo.
+       */
+      'meta ads',
+      'facebook ads',
+      'google ads',
+      'quanto gastamos',
+      'quanto investimos',
+      'investimento em mídia',
+      'verba de mídia',
+      'criativo está performando',
+      'performando melhor',
+      'alcance da campanha',
+      'custo por clique',
+      'custo por lead',
+      'taxa de conversão',
     ],
     primaryAgent: 'jarbas',
     requiredTools: ['meta_ads'],
@@ -89,7 +119,7 @@ export const ROUTING_RULES: RoutingRule[] = [
      *
      * topicKeywords tem teto de 0,65 e o Router só decide a partir de 0,70:
      * sinal fraco existe pra ESCALAR pro classifier. Só que o classifier está
-     * indisponível em produção (ANTHROPIC_API_KEY vazia), então tudo que
+     * indisponível em produção (não havia credencial de LLM), então tudo que
      * depende dele cai no fallback — que é o Bento. Medido no front em
      * 24/09/2026: "faz 2 legendas pro aniversário da Cosentino" foi parar no
      * Bento, que respondeu com a data de fundação tirada do vault e zero
@@ -190,6 +220,98 @@ export const ROUTING_RULES: RoutingRule[] = [
       // de mídia. Sem isto dependia do classifier e virava esclarecimento.
       'pegando fogo',
       'pegar fogo',
+      /**
+       * RISCO é pergunta de operação, não de mídia paga.
+       *
+       * Medido em 29/09/2026, com o classificador local 3B decidindo:
+       *
+       *   "o que está em risco hoje"              -> jarbas, confiança 1.0
+       *   "o que está em risco na Cosentino?"     -> jarbas, confiança 0.8
+       *
+       * Ou seja: sem a pessoa escolher o Bento na mão, a pergunta central da
+       * gestão da operação ia parar no agente de mídia, e a análise causal
+       * (bento-arvore.ts) ficava inalcançável pela forma mais natural de
+       * perguntar. Apareceu nas personas da Tammy rodando no navegador, que é
+       * onde ninguém clica em chip de agente antes de perguntar.
+       *
+       * Regra determinística ganha de palpite de modelo 3B: "risco" aqui é
+       * sempre operação. Pergunta de mídia usa outro vocabulário (CPA, ROAS,
+       * investimento, campanha no Meta) e continua com o Jarbas.
+       */
+      'em risco',
+      'risco da operação',
+      'riscos da operação',
+      'algum risco',
+      'que risco',
+      /**
+       * ESTADO e O QUE ACONTECEU também são operação (achado da sessão de
+       * auditoria, 29/09/2026, com o harness de roteamento sem hint):
+       *
+       *   "Qual é o estado atual do Desigual OS?" -> jarbas, confiança 1.0
+       *   "Qual é o estado do Citável?"           -> jarbas, confiança 0.8
+       *   "O que aconteceu ontem?"                -> jarbas, confiança 0.8
+       *
+       * O 3B lê "estado" e "aconteceu" como vocabulário de desempenho. As duas
+       * primeiras são justamente as perguntas sobre os projetos INTERNOS da
+       * agência (Desigual OS e Citável são linha em `clients`), e a terceira é
+       * a pergunta temporal mais básica que existe — justo agora que o event
+       * store passou a respondê-la.
+       *
+       * "qual o estado da campanha do Meta" é legitimamente ambíguo e é por
+       * isso que existe o bloco J01-J04 no
+       * scripts/intelligence-routing-check.mts: ele reprova se consertar isto
+       * aqui empurrar pergunta de mídia pro Bento.
+       */
+      'o que aconteceu',
+      'estado atual',
+      'qual é o estado',
+      'qual o estado',
+      /**
+       * FATO SOBRE CLIENTE NOMEADO é pergunta de conhecimento, nunca de
+       * esclarecimento (bug reportado em produção, 01/10/2026):
+       *
+       *   "Quem é o decisor do Cliente Teste 7?" -> needs_routing_clarification
+       *
+       * Nenhuma regra cobria "decisor"/"orçamento", o classifier local 3B estava
+       * indisponível (mesmo cenário do bloco de mídia acima) e a paga sem chave
+       * — a decisão caía no fallback e o usuário recebia um pedido de
+       * esclarecimento numa pergunta cuja resposta está na memória do cliente.
+       * "quando é a entrega de X" já era coberta por 'entrega'; aqui entram o
+       * decisor, o orçamento e quem decide. Verba/investimento de MÍDIA seguem
+       * com o Jarbas ("quanto investimos", "verba de mídia") — vocabulário
+       * separado de propósito.
+       */
+      'decisor',
+      'decisores',
+      'quem decide',
+      'orçamento',
+      'orcamento',
+      /**
+       * A CARTEIRA é operação, e a pergunta mais básica sobre ela não era
+       * coberta por nenhuma regra.
+       *
+       * Medido no chat de produção em 08/10/2026, pelo navegador, sem hint de
+       * agente:
+       *
+       *   "operação: me lista as minhas tarefas abertas"        -> Bento, 414
+       *      tarefas reais, 30 clientes, 129 atrasadas (120s)
+       *   "quantos clientes ativos existem na carteira hoje?"   ->
+       *      needs_routing_clarification (13s)
+       *
+       * Mesmo domínio, mesma pessoa, mesma sessão: a primeira só funciona
+       * porque alguém escreveu a palavra "operação" na frente. Quem vai usar
+       * isto no dia a dia não escreve — e recebe um menu de três opções no
+       * lugar de um número que o sistema tem.
+       *
+       * Sem risco de roubar pergunta de mídia: carteira e contagem de clientes
+       * são vocabulário da agência inteira, não de campanha. O que é de mídia
+       * continua dito em CPA, ROAS, investimento e Meta, e o bloco J01-J04 de
+       * apps/worker/scripts/intelligence-routing-check.mts reprova se isto
+       * empurrar pergunta de mídia pro Bento.
+       */
+      'carteira',
+      'clientes ativos',
+      'quantos clientes',
     ],
     primaryAgent: 'bento',
     requiredTools: ['clickup'],

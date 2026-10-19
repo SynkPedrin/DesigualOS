@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AgentName } from '@desigual-os/types';
 import { AGENT_META, FEATURED_AGENTS } from '@/lib/agent-meta';
 import { AgentAvatar } from '@/components/ui/agent-avatar';
@@ -8,6 +8,16 @@ import { ClientSelector } from '@/components/chat/client-selector';
 import { ApiRequestError } from '@/lib/api/client';
 import type { Automation } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
+import { proximasDoCron } from '@/lib/proximas-do-cron';
+
+/** Dia da semana + dia/mês + hora: é o que responde "quando?" sem exigir conta. */
+const FORMATO_DA_PREVIA = new Intl.DateTimeFormat('pt-BR', {
+  weekday: 'short',
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+});
 
 const SCHEDULE_PRESETS = [
   { schedule: '0 8 * * *', label: 'Todos os dias às 08:00' },
@@ -86,6 +96,9 @@ export function AutomationForm({
       estimatedMinutesSaved,
     });
   }
+
+  /** Recalcula a cada tecla no campo cron: a pergunta é sobre o que está escrito AGORA. */
+  const previa = useMemo(() => proximasDoCron(schedule, new Date(), 3), [schedule]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -173,6 +186,42 @@ export function AutomationForm({
             className="mt-2 w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 font-mono text-xs text-branco-cru placeholder:text-nevoa focus:border-roxo-eletrico/60 focus:outline-none"
           />
         )}
+
+        {/*
+          * O QUE ESTE PADRÃO SIGNIFICA, enquanto a pessoa ainda está decidindo.
+          *
+          * Escolher "0 8 * * *" num seletor e descobrir no dia seguinte que o
+          * briefing não chegou é caro. A prévia responde "então isso dispara
+          * quando?" na hora.
+          *
+          * E ela se anuncia como PRÉVIA DO PADRÃO, não como próxima execução.
+          * A resposta autoritativa é o `next` do repeatable do BullMQ e só
+          * existe depois de salvar, porque quem decide é o agendador. As duas
+          * divergem justamente quando importa: fuso diferente no servidor,
+          * repeatable que não foi registrado, automação desligada. Chamar esta
+          * conta de "próxima execução" seria uma segunda opinião sobre o mesmo
+          * cron, com a confiança de um dado medido.
+          */}
+        <div className="mt-2 rounded-md border border-grafite-elevado bg-carbono px-3 py-2">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa">Este padrão dispara</p>
+          {previa.length > 0 ? (
+            <ul className="mt-1 space-y-0.5">
+              {previa.map((quando) => (
+                <li key={quando.toISOString()} className="font-mono text-xs text-branco-cru">
+                  {FORMATO_DA_PREVIA.format(quando)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-xs text-aviso">
+              Não consegui ler este padrão. Confira a expressão antes de salvar: sem leitura, não dá para dizer quando
+              ela dispararia.
+            </p>
+          )}
+          <p className="mt-1.5 text-[11px] text-nevoa">
+            Prévia do padrão, calculada aqui. O horário valendo é o que o agendador registrar ao salvar.
+          </p>
+        </div>
       </div>
 
       <div>
