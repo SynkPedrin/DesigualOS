@@ -10,6 +10,7 @@ import { ThreadChat } from '@/components/inbox/thread-chat';
 import { ThreadContextPanel } from '@/components/inbox/thread-context-panel';
 import { useInboxThreads } from '@/hooks/use-inbox';
 import { useWhatsappOpenwaSessions } from '@/hooks/use-whatsapp-openwa';
+import { useMe } from '@/hooks/use-me';
 import type { InboxThread } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
@@ -57,7 +58,10 @@ function InboxPageContent() {
   // em memória evita 4 variações de queryKey pra 12 conversas.
   const { data: threads, isPending } = useInboxThreads({ limit: 300 });
   const { data: whatsappSessions } = useWhatsappOpenwaSessions();
-  const activeSession = whatsappSessions?.find((session) => session.status === 'ready') ?? whatsappSessions?.[0] ?? null;
+  const { data: me } = useMe();
+  // A Inbox mostra só as conversas da PRÓPRIA conexão; master recebe a lista de
+  // todas as sessões (para administrar), então o cabeçalho precisa filtrar pelo dono.
+  const activeSession = whatsappSessions?.find((session) => session.owner_user_id === me?.id) ?? null;
   const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     return (threads ?? []).filter((t) => {

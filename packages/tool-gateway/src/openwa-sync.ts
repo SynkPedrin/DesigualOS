@@ -319,20 +319,29 @@ async function updateSyncJob(jobId: string, patch: Record<string, unknown>): Pro
   await db.update(schema.whatsappSyncJobs).set(patch).where(eq(schema.whatsappSyncJobs.id, jobId));
 }
 
+/**
+ * Um sync por sessão de cada vez. Checar e inserir em passos separados deixava
+ * o botão "Sincronizar agora" e a conferência de status criarem dois jobs no
+ * mesmo instante (visto em produção: dois "running" idênticos, carga dobrada
+ * no navegador do WhatsApp). A trava transacional por sessão serializa os dois.
+ */
 export async function createWhatsappSyncJob(session: Session, requestedByUserId: string | null): Promise<{ id: string; created: boolean }> {
-  const [existing] = await db.select().from(schema.whatsappSyncJobs).where(and(
-    eq(schema.whatsappSyncJobs.sessionId, session.id),
-    sql`${schema.whatsappSyncJobs.status} in ('queued','running')`,
-  )).orderBy(desc(schema.whatsappSyncJobs.createdAt)).limit(1);
-  if (existing) return { id: existing.id, created: false };
-  const [job] = await db.insert(schema.whatsappSyncJobs).values({
-    organizationId: session.organizationId,
-    sessionId: session.id,
-    requestedByUserId,
-    status: 'queued',
-    phase: 'queued',
-  }).returning();
-  return { id: job!.id, created: true };
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`whatsapp-sync:${session.id}`}))`);
+    const [existing] = await tx.select().from(schema.whatsappSyncJobs).where(and(
+      eq(schema.whatsappSyncJobs.sessionId, session.id),
+      sql`${schema.whatsappSyncJobs.status} in ('queued','running')`,
+    )).orderBy(desc(schema.whatsappSyncJobs.createdAt)).limit(1);
+    if (existing) return { id: existing.id, created: false };
+    const [job] = await tx.insert(schema.whatsappSyncJobs).values({
+      organizationId: session.organizationId,
+      sessionId: session.id,
+      requestedByUserId,
+      status: 'queued',
+      phase: 'queued',
+    }).returning();
+    return { id: job!.id, created: true };
+  });
 }
 
 /** Roda `worker` sobre `items` com no máximo `limit` em paralelo. */
@@ -351,8 +360,12 @@ function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Conversas importadas em paralelo. Mais que isso pressiona o WhatsApp Web (histórico é leitura ao vivo). */
-const CHATS_EM_PARALELO = 4;
+/**
+ * Conversas importadas em paralelo. O histórico é leitura ao vivo no navegador
+ * do WhatsApp Web; com 4 em paralelo o Chrome passou de 2 GB e foi morto pelo
+ * kernel no primeiro sync real (19/10/2026).
+ */
+const CHATS_EM_PARALELO = 2;
 const CONTATOS_EM_PARALELO = 8;
 
 /**
@@ -372,7 +385,7 @@ function transient(error: unknown): boolean {
  * falha passageira não aparece como "Erro de sincronização" na tela — o job
  * volta para a fila com uma explicação que a pessoa entende.
  */
-export async function processOpenwaSyncJob(jobId: string, options: { finalAttempt?: boolean } = {}): Promise<{ firstForSession: boolean; sessionId?: string }> {
+export async function processOpenwaSyncJob(jobId: string, options: { finalAttempt?: boolean; onProgress?: (ownerUserId: string) => void } = {}): Promise<{ firstForSession: boolean; sessionId?: string }> {
   const [job] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, jobId)).limit(1);
   if (!job || ['completed', 'completed_with_errors'].includes(job.status)) return { firstForSession: false };
   const session = await whatsappSessionById(job.sessionId);
@@ -431,6 +444,8 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
       }
       processedChats += 1;
       await updateSyncJob(jobId, progress());
+      // A Inbox se monta enquanto o sync anda: aviso a cada 10 conversas.
+      if (processedChats % 10 === 0) options.onProgress?.(session.ownerUserId);
     });
 
     await updateSyncJob(jobId, { phase: 'photos' });
@@ -484,6 +499,7 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
     const status = failures.length ? 'completed_with_errors' : 'completed';
     await updateSyncJob(jobId, { status, phase: status, ...progress(), finishedAt: new Date() });
     await db.update(schema.whatsappSessions).set({ lastSyncAt: new Date(), lastError: failures.length ? `${failures.length} pendência(s) na sincronização` : null }).where(eq(schema.whatsappSessions.id, session.id));
+    options.onProgress?.(session.ownerUserId);
     return { firstForSession: !session.lastSyncAt, sessionId: session.id };
   } catch (error) {
     if (transient(error) && options.finalAttempt === false) {
@@ -522,7 +538,7 @@ export async function registerOpenwaWebhookEvent(input: {
   return existing ? { id: existing.id, created: false } : null;
 }
 
-export async function processOpenwaWebhookEvent(eventId: string): Promise<{ syncSessionId?: string }> {
+export async function processOpenwaWebhookEvent(eventId: string): Promise<{ syncSessionId?: string; ownerUserId?: string; threadId?: string; inboxChanged?: boolean }> {
   const [event] = await db.select().from(schema.whatsappWebhookEvents).where(eq(schema.whatsappWebhookEvents.id, eventId)).limit(1);
   if (!event || event.status === 'processed' || event.status === 'ignored') return {};
   const session = await whatsappSessionById(event.sessionId);
@@ -532,8 +548,12 @@ export async function processOpenwaWebhookEvent(eventId: string): Promise<{ sync
     const envelope = event.payload as { data?: unknown };
     const data = (envelope.data && typeof envelope.data === 'object' ? envelope.data : {}) as Record<string, unknown>;
     let syncSessionId: string | undefined;
+    let threadId: string | undefined;
+    // Toda mudança de mensagem avisa a Inbox em tempo real (ver worker).
+    const inboxChanged = event.eventType.startsWith('message.');
     if (event.eventType === 'message.received' || event.eventType === 'message.sent') {
-      await persistOpenwaMessage({ session, message: normalizeOpenwaMessage(data), countUnread: true, importMedia: true });
+      const persisted = await persistOpenwaMessage({ session, message: normalizeOpenwaMessage(data), countUnread: true, importMedia: true });
+      threadId = persisted.message.threadId;
     } else if (event.eventType === 'message.ack' || event.eventType === 'message.failed') {
       const externalId = String(data.messageId ?? data.id ?? '');
       const status = event.eventType === 'message.failed' ? 'failed' : String(data.status ?? 'sent');
@@ -572,7 +592,7 @@ export async function processOpenwaWebhookEvent(eventId: string): Promise<{ sync
       if (status === 'ready') syncSessionId = session.id;
     }
     await db.update(schema.whatsappWebhookEvents).set({ status: 'processed', processedAt: new Date() }).where(eq(schema.whatsappWebhookEvents.id, eventId));
-    return syncSessionId ? { syncSessionId } : {};
+    return { ...(syncSessionId ? { syncSessionId } : {}), ownerUserId: session.ownerUserId, ...(threadId ? { threadId } : {}), inboxChanged };
   } catch (error) {
     await db.update(schema.whatsappWebhookEvents).set({ status: 'failed', error: error instanceof Error ? error.message : String(error), processedAt: new Date() }).where(eq(schema.whatsappWebhookEvents.id, eventId));
     throw error;

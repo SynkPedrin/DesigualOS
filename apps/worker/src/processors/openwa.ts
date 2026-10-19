@@ -3,6 +3,7 @@ import {
   enqueueWhatsappSync,
   enqueueWhatsappWebhook,
   getRedisConnection,
+  publishWsEvent,
   scheduleWhatsappFollowupSync,
   sendOpsAlert,
   WHATSAPP_QUEUE_NAME,
@@ -24,7 +25,10 @@ interface Logger {
 
 async function process(job: Job<WhatsappQueueJobData>): Promise<void> {
   if (job.data.type === 'sync') {
-    const result = await processOpenwaSyncJob(job.data.id, { finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1) });
+    const result = await processOpenwaSyncJob(job.data.id, {
+      finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
+      onProgress: (ownerUserId) => void publishWsEvent({ type: 'inbox.updated', payload: { owner_user_id: ownerUserId, sync: true } }).catch(() => undefined),
+    });
     if (result.firstForSession && result.sessionId) await scheduleWhatsappFollowupSync(result.sessionId);
     return;
   }
@@ -37,6 +41,9 @@ async function process(job: Job<WhatsappQueueJobData>): Promise<void> {
     return;
   }
   const result = await processOpenwaWebhookEvent(job.data.id);
+  if (result.inboxChanged && result.ownerUserId) {
+    await publishWsEvent({ type: 'inbox.updated', payload: { owner_user_id: result.ownerUserId, ...(result.threadId ? { thread_id: result.threadId } : {}) } }).catch(() => undefined);
+  }
   if (result.syncSessionId) {
     const session = await whatsappSessionById(result.syncSessionId);
     if (session) {

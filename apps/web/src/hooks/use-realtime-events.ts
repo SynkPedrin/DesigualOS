@@ -72,6 +72,18 @@ export function useRealtimeEvents(): void {
           }
           break;
         }
+        // Mensagem nova, entrega/leitura ou progresso de sync do WhatsApp: a
+        // Inbox atualiza na hora em vez de esperar o polling.
+        case 'inbox.updated': {
+          queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
+          const threadId = event.payload.thread_id;
+          if (typeof threadId === 'string') {
+            queryClient.invalidateQueries({ queryKey: ['inbox-messages', threadId] });
+            queryClient.invalidateQueries({ queryKey: ['inbox-thread', threadId] });
+          }
+          if (event.payload.sync === true) queryClient.invalidateQueries({ queryKey: ['openwa-sessions'] });
+          break;
+        }
         default:
           break;
       }

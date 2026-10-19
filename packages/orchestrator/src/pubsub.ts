@@ -43,7 +43,9 @@ export interface WsEvent {
     // Agentic V2: transição de fase do agent loop (UNDERSTANDING, ACTING,
     // EVALUATING, REPLANNING...). Alimenta os indicadores de atividade da
     // UI com eventos REAIS em vez de etapas inventadas.
-    | 'agent.phase';
+    | 'agent.phase'
+    // Inbox do WhatsApp: só ids, nunca conteúdo; o servidor entrega só ao dono da sessão.
+    | 'inbox.updated';
   payload: Record<string, unknown>;
 }
 
