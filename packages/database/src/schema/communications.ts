@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, timestampColumns } from './_shared';
 import { whatsappGroups, whatsappSessions } from './whatsapp';
 import { organizations } from './organizations';
@@ -67,6 +67,9 @@ export const conversationThreads = pgTable(
     /** `null` = não atribuída — é o que a aba "Não atribuídas" do Inbox lê. */
     assignedToUserId: uuid('assigned_to_user_id').references(() => users.id, { onDelete: 'set null' }),
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
+    /** Espelho do WhatsApp do dono da sessão (lista de chats do OpenWA): arquivada some de "Todas", fixada sobe. */
+    whatsappArchived: boolean('whatsapp_archived').notNull().default(false),
+    whatsappPinned: boolean('whatsapp_pinned').notNull().default(false),
     ...timestampColumns,
   },
   (table) => ({

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, SquarePen } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -56,7 +56,18 @@ function InboxPageContent() {
   // As 4 abas filtram no CLIENTE, não refazem a query: a lista inteira já
   // veio (conversa é um recurso pequeno, sem paginação hoje), então recortar
   // em memória evita 4 variações de queryKey pra 12 conversas.
-  const { data: threads, isPending } = useInboxThreads({ limit: 300 });
+  // Busca vai ao servidor (todas as conversas, não só as 300 carregadas), com
+  // uma pausa curta entre teclas para não disparar uma consulta por letra.
+  const [buscaServidor, setBuscaServidor] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setBuscaServidor(busca.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [busca]);
+  const { data: threads, isPending } = useInboxThreads({
+    limit: 300,
+    ...(filter === 'arquivadas' ? { view: 'archived' as const } : {}),
+    ...(buscaServidor ? { q: buscaServidor } : {}),
+  });
   const { data: whatsappSessions } = useWhatsappOpenwaSessions();
   const { data: me } = useMe();
   // A Inbox mostra só as conversas da PRÓPRIA conexão; master recebe a lista de
@@ -109,7 +120,8 @@ function InboxPageContent() {
           </div>
           <div className="flex flex-wrap gap-1 border-b border-grafite-elevado p-2">
             {INBOX_FILTERS.map((f) => {
-              const count = f.key === 'todas' ? threads?.length ?? 0 : (threads ?? []).filter((t) => (f.key === 'nao-lidas' ? t.unreadCount > 0 : f.key === 'clientes' ? Boolean(t.clientId) : t.channel === 'whatsapp')).length;
+              // Arquivadas vêm de outra consulta: o número só aparece com a aba aberta.
+              const count = f.key === 'arquivadas' ? (filter === 'arquivadas' ? threads?.length ?? 0 : null) : filter === 'arquivadas' ? null : f.key === 'todas' ? threads?.length ?? 0 : (threads ?? []).filter((t) => (f.key === 'nao-lidas' ? t.unreadCount > 0 : f.key === 'clientes' ? Boolean(t.clientId) : t.channel === 'whatsapp')).length;
               return (
                 <button
                   key={f.key}
@@ -120,7 +132,7 @@ function InboxPageContent() {
                     filter === f.key ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:bg-grafite-elevado',
                   )}
                 >
-                  {f.label} <span className="opacity-70">{count}</span>
+                  {f.label}{count !== null && <span className="opacity-70"> {count}</span>}
                 </button>
               );
             })}

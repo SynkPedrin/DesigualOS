@@ -31,6 +31,10 @@ export interface ListThreadsFilter {
   /** `true` = só as atribuídas a `callerId`; `false` = só não atribuídas; ausente = todas visíveis. */
   assignedToSelf?: boolean | undefined;
   unassignedOnly?: boolean | undefined;
+  /** 'archived' = só as arquivadas no WhatsApp; padrão = como a lista principal do celular, sem elas. */
+  view?: 'active' | 'archived' | undefined;
+  /** Busca no banco por nome, número ou prévia — não só no que a tela já carregou. */
+  q?: string | undefined;
   callerId: string;
   limit: number;
   offset: number;
@@ -55,6 +59,12 @@ export async function listThreads(filter: ListThreadsFilter) {
   if (filter.status) condicoes.push(eq(schema.conversationThreads.status, filter.status));
   if (filter.assignedToSelf) condicoes.push(eq(schema.conversationThreads.assignedToUserId, filter.callerId));
   if (filter.unassignedOnly) condicoes.push(isNull(schema.conversationThreads.assignedToUserId));
+  condicoes.push(eq(schema.conversationThreads.whatsappArchived, filter.view === 'archived'));
+  if (filter.q) {
+    const termo = `%${filter.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    const digitos = filter.q.replace(/\D/g, '');
+    condicoes.push(sql`(${schema.conversationThreads.title} ilike ${termo} or ${schema.contacts.name} ilike ${termo} or ${schema.whatsappGroups.name} ilike ${termo} or ${schema.conversationThreads.lastMessagePreview} ilike ${termo}${digitos.length >= 4 ? sql` or ${schema.contacts.phone} like ${`%${digitos}%`}` : sql``})`);
+  }
 
   const linhas = await db
     .select({
@@ -78,6 +88,8 @@ export async function listThreads(filter: ListThreadsFilter) {
       status: schema.conversationThreads.status,
       assignedToUserId: schema.conversationThreads.assignedToUserId,
       lastMessageAt: schema.conversationThreads.lastMessageAt,
+      whatsappArchived: schema.conversationThreads.whatsappArchived,
+      whatsappPinned: schema.conversationThreads.whatsappPinned,
     })
     .from(schema.conversationThreads)
     .leftJoin(schema.contacts, eq(schema.contacts.id, schema.conversationThreads.contactId))
@@ -86,7 +98,8 @@ export async function listThreads(filter: ListThreadsFilter) {
     .where(and(...condicoes))
     // Postgres põe NULL primeiro em DESC: conversa ainda sem data subia para o topo
     // e empurrava as de hoje para baixo.
-    .orderBy(sql`${schema.conversationThreads.lastMessageAt} desc nulls last`, desc(schema.conversationThreads.createdAt))
+    // Fixadas no topo, como no WhatsApp; dentro de cada grupo, a mais recente primeiro.
+    .orderBy(desc(schema.conversationThreads.whatsappPinned), sql`${schema.conversationThreads.lastMessageAt} desc nulls last`, desc(schema.conversationThreads.createdAt))
     .limit(filter.limit)
     .offset(filter.offset);
 

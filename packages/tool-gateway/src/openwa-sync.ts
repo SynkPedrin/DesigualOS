@@ -512,7 +512,7 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
         } catch (error) {
           failures.push({ chatId: chat.id, message: reason(error) });
         }
-        await db.update(schema.conversationThreads).set({ unreadCount: chat.unreadCount }).where(eq(schema.conversationThreads.id, thread.id));
+        await db.update(schema.conversationThreads).set({ unreadCount: chat.unreadCount, whatsappArchived: chat.archived, whatsappPinned: chat.pinned }).where(eq(schema.conversationThreads.id, thread.id));
       } catch (error) {
         const detail = error instanceof OpenwaGatewayError && error.status === 501 ? 'Histórico não disponível neste engine' : reason(error);
         failures.push({ chatId: chat.id, message: detail });

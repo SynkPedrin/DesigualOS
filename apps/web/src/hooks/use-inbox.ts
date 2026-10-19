@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
 import {
   mapInboxMessage,
@@ -16,11 +16,17 @@ export interface InboxThreadFilter {
    *  faz a tela CONHECER o próprio teto, que é o que permite dizer "30+" em
    *  vez de estampar 30 como se fosse o total (ver lib/teto-de-pagina.ts). */
   limit?: number;
+  /** 'archived' = arquivadas no WhatsApp; padrão = lista principal, sem elas. */
+  view?: 'archived';
+  /** Busca no servidor (nome, número, prévia), não só nas conversas carregadas. */
+  q?: string;
 }
 
 function queryString(filter: InboxThreadFilter): string {
   const params = new URLSearchParams();
   if (filter.status) params.set('status', filter.status);
+  if (filter.view) params.set('view', filter.view);
+  if (filter.q) params.set('q', filter.q);
   if (filter.assigned) params.set('assigned', filter.assigned);
   if (filter.limit !== undefined) params.set('limit', String(filter.limit));
   const qs = params.toString();
@@ -34,6 +40,8 @@ export function useInboxThreads(filter: InboxThreadFilter = {}) {
       const wire = await apiFetch<{ threads: InboxThreadWire[] }>(`/inbox/threads${queryString(filter)}`);
       return wire.threads.map(mapInboxThread);
     },
+    // Ao digitar na busca, a lista anterior fica na tela até a nova chegar.
+    placeholderData: keepPreviousData,
     staleTime: 5_000,
     refetchInterval: 8_000,
   });

@@ -526,6 +526,13 @@
       "when": 1792175364342,
       "tag": "0074_peaceful_infant_terrible",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1792428319023,
+      "tag": "0075_whatsapp_archived_pinned",
+      "breakpoints": true
     }
   ]
 }

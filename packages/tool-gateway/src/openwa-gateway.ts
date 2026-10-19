@@ -26,6 +26,8 @@ export interface OpenwaChat {
   timestamp: number | null;
   lastMessage: string | null;
   lastMessageType: string | null;
+  archived: boolean;
+  pinned: boolean;
 }
 
 export interface OpenwaContact {
@@ -280,6 +282,8 @@ export class OpenwaGatewayClient {
       timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : null,
       lastMessage: text(raw.lastMessage),
       lastMessageType: text(raw.lastMessageType),
+      archived: raw.archived === true,
+      pinned: raw.pinned === true,
     }));
   }
 

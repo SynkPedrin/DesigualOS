@@ -2642,6 +2642,8 @@ export interface InboxThreadWire {
   status: InboxThreadStatus;
   assigned_to_user_id: string | null;
   last_message_at: string | null;
+  whatsapp_archived?: boolean;
+  whatsapp_pinned?: boolean;
   last_message_preview?: string | null;
   unread_count?: number;
 }
@@ -2663,6 +2665,8 @@ export interface InboxThread {
   status: InboxThreadStatus;
   assignedToUserId: string | null;
   lastMessageAt: string | null;
+  /** Fixada no WhatsApp do dono da sessão: sobe para o topo, como no celular. */
+  whatsappPinned: boolean;
   lastMessagePreview: string | null;
   unreadCount: number;
 }
@@ -2685,6 +2689,7 @@ export function mapInboxThread(wire: InboxThreadWire): InboxThread {
     status: wire.status,
     assignedToUserId: wire.assigned_to_user_id,
     lastMessageAt: wire.last_message_at,
+    whatsappPinned: wire.whatsapp_pinned ?? false,
     lastMessagePreview: wire.last_message_preview ?? null,
     unreadCount: wire.unread_count ?? 0,
   };
