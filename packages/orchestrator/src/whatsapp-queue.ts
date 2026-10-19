@@ -22,8 +22,13 @@ export function getWhatsappQueue(): Queue<WhatsappQueueJobData> {
   return queue;
 }
 
+// Sync espera o WhatsApp Web terminar de carregar o histórico do celular, o
+// que numa conta grande leva minutos: 8 tentativas de 30 s em diante cobrem
+// ~2 h, no lugar das 5 de 5 s (~1 min) que valem para webhook.
+const SYNC_JOB_OPTIONS = { attempts: 8, backoff: { type: 'exponential' as const, delay: 30_000 } };
+
 export async function enqueueWhatsappSync(id: string): Promise<void> {
-  await getWhatsappQueue().add('sync', { type: 'sync', id }, { jobId: `whatsapp-sync-${id}` });
+  await getWhatsappQueue().add('sync', { type: 'sync', id }, { jobId: `whatsapp-sync-${id}`, ...SYNC_JOB_OPTIONS });
 }
 
 export async function enqueueWhatsappWebhook(id: string): Promise<void> {
@@ -31,7 +36,7 @@ export async function enqueueWhatsappWebhook(id: string): Promise<void> {
 }
 
 export async function retryWhatsappSync(id: string): Promise<void> {
-  await getWhatsappQueue().add('sync', { type: 'sync', id }, { jobId: `whatsapp-sync-${id}-${Date.now()}` });
+  await getWhatsappQueue().add('sync', { type: 'sync', id }, { jobId: `whatsapp-sync-${id}-${Date.now()}`, ...SYNC_JOB_OPTIONS });
 }
 
 export async function retryWhatsappWebhook(id: string): Promise<void> {

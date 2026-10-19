@@ -23,7 +23,7 @@ interface Logger {
 
 async function process(job: Job<WhatsappQueueJobData>): Promise<void> {
   if (job.data.type === 'sync') {
-    await processOpenwaSyncJob(job.data.id);
+    await processOpenwaSyncJob(job.data.id, { finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1) });
     return;
   }
   const result = await processOpenwaWebhookEvent(job.data.id);
