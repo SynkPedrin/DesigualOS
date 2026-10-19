@@ -139,9 +139,12 @@ async function refreshSession(session: WhatsappSessionRow) {
     lastError: snapshot.lastError,
     engineLoaded: snapshot.engineLoaded,
   }).where(eq(schema.whatsappSessions.id, session.id)).returning();
-  if (snapshot.status === 'ready' && previousStatus !== 'ready') {
+  // Primeira vez pronta, ou pronta sem nunca ter sincronizado (o webhook de
+  // "autenticado" pode não ter chegado): dispara a importação. O job é
+  // deduplicado enquanto houver um na fila ou rodando.
+  if (snapshot.status === 'ready' && (previousStatus !== 'ready' || (!session.lastSyncAt && !(await latestJob(session.id))))) {
     const job = await createWhatsappSyncJob(updated!, null);
-    await enqueueWhatsappSync(job.id);
+    if (job.created) await enqueueWhatsappSync(job.id);
   }
   return updated!;
 }
@@ -185,7 +188,18 @@ export async function registerOpenwaRoutes(app: FastifyInstance): Promise<void> 
       const conditions = [eq(schema.whatsappSessions.organizationId, request.tenantContext!.organizationId)];
       if (!canManageOthers(request)) conditions.push(eq(schema.whatsappSessions.ownerUserId, request.authUser!.id));
       const sessions = await db.select().from(schema.whatsappSessions).where(and(...conditions)).orderBy(desc(schema.whatsappSessions.createdAt));
-      return { sessions: await Promise.all(sessions.map(presentSession)) };
+      // A própria conexão é conferida no OpenWA enquanto não estiver pronta e
+      // sincronizada: sem isso, quem fecha o modal logo após escanear ficava
+      // com "Aguardando leitura" até um webhook que pode nunca chegar.
+      const fresh = await Promise.all(sessions.map(async (session) => {
+        if (session.ownerUserId !== request.authUser!.id || (session.status === 'ready' && session.lastSyncAt)) return session;
+        try {
+          return await refreshSession(session);
+        } catch {
+          return session;
+        }
+      }));
+      return { sessions: await Promise.all(fresh.map(presentSession)) };
     });
 
     authed.post('/openwa/sessions', { preHandler: requirePermission('communications', 'write'), config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -225,8 +239,9 @@ export async function registerOpenwaRoutes(app: FastifyInstance): Promise<void> 
           session = inserted!;
         }
         if (!createdNow) await ensureWebhook(session);
-        if (!session.engineLoaded || ['created', 'failed'].includes(session.status)) {
-          await gatewayForWhatsappSession(session).startSession();
+        if (!session.engineLoaded || ['created', 'failed', 'disconnected'].includes(session.status)) {
+          // Não espera o Chromium subir: o QR chega pelo status da sessão, que a tela acompanha.
+          await gatewayForWhatsappSession(session).requestStart();
         }
         session = await refreshSession(session);
         await auditarAcao(request, { action: 'whatsapp.session_connect', resourceType: 'whatsapp_session', resourceId: session.id, newValue: { status: session.status } });
@@ -266,7 +281,7 @@ export async function registerOpenwaRoutes(app: FastifyInstance): Promise<void> 
       const session = await ownedSession(request, request.params.id);
       if (!session) { reply.code(404); return { error: 'Sessão não encontrada.' }; }
       try {
-        if (!session.engineLoaded) await gatewayForWhatsappSession(session).startSession();
+        if (!session.engineLoaded || session.status !== 'ready') await gatewayForWhatsappSession(session).requestStart();
         return presentSession(await refreshSession(session));
       } catch (error) {
         return errorResponse(reply, error);

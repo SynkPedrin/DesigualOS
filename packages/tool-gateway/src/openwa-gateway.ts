@@ -34,6 +34,7 @@ export interface OpenwaContact {
   pushName: string | null;
   number: string | null;
   profilePicUrl: string | null;
+  isMyContact?: boolean;
 }
 
 export interface OpenwaMedia {
@@ -134,9 +135,9 @@ export class OpenwaGatewayClient {
     return `/api/sessions/${encodeURIComponent(this.config.sessionId)}${suffix}`;
   }
 
-  private async request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
+  private async request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, headers: Record<string, string> = {}, timeoutMs = this.timeoutMs): Promise<Response> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
       response = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}${path}`, {
@@ -202,6 +203,25 @@ export class OpenwaGatewayClient {
     return normalizeSession(await response.json() as Record<string, unknown>);
   }
 
+  /**
+   * O POST /start do OpenWA só responde quando o Chromium e o WhatsApp Web
+   * terminam de subir — 30 s a 2 min num VPS. Quem pede a conexão não pode
+   * esperar isso: o OpenWA continua subindo o engine mesmo que o cliente
+   * desista da resposta, e o QR aparece pelo status da sessão. Por isso aqui
+   * a espera é curta e "ainda subindo" (timeout) ou "já está subindo" (400)
+   * contam como sucesso; o resto é erro de verdade.
+   */
+  async requestStart(waitMs = 4_000): Promise<'started' | 'starting'> {
+    try {
+      await this.request('POST', this.sessionPath('/start'), undefined, {}, waitMs);
+      return 'started';
+    } catch (error) {
+      if (error instanceof OpenwaGatewayError && error.code === 'NETWORK' && /abort/i.test(error.message)) return 'starting';
+      if (error instanceof OpenwaGatewayError && error.status === 400 && /already (started|starting)/i.test(error.message)) return 'starting';
+      throw error;
+    }
+  }
+
   async stopSession(): Promise<OpenwaSessionSnapshot> {
     const response = await this.request('POST', this.sessionPath('/stop'));
     return normalizeSession(await response.json() as Record<string, unknown>);
@@ -257,16 +277,42 @@ export class OpenwaGatewayClient {
     }));
   }
 
-  async contacts(): Promise<OpenwaContact[]> {
-    const response = await this.request('GET', this.sessionPath('/contacts?limit=1000'));
-    const rows = await response.json() as Array<Record<string, unknown>>;
-    return rows.map((raw) => ({
-      id: String(raw.id ?? ''),
-      name: text(raw.name),
-      pushName: text(raw.pushName),
-      number: text(raw.number),
-      profilePicUrl: text(raw.profilePicUrl),
-    }));
+  /** Pagina a agenda inteira (o OpenWA entrega no máximo 1000 por chamada). */
+  async contacts(maxContacts = 5000): Promise<OpenwaContact[]> {
+    const pageSize = 1000;
+    const all: OpenwaContact[] = [];
+    for (let offset = 0; offset < maxContacts; offset += pageSize) {
+      const response = await this.request('GET', this.sessionPath(`/contacts?limit=${pageSize}&offset=${offset}`));
+      const rows = await response.json() as Array<Record<string, unknown>>;
+      for (const raw of rows) {
+        all.push({
+          id: String(raw.id ?? ''),
+          name: text(raw.name),
+          pushName: text(raw.pushName),
+          number: text(raw.number),
+          profilePicUrl: text(raw.profilePicUrl),
+          isMyContact: raw.isMyContact === true,
+        });
+      }
+      if (rows.length < pageSize) break;
+    }
+    return all;
+  }
+
+  /**
+   * Fotos de perfil em lote (até 50 ids por chamada). O whatsapp-web.js nunca
+   * preenche `profilePicUrl` na lista de contatos, então sem isto ninguém tem
+   * foto. Id sem foto, ou que o WhatsApp não respondeu, volta null.
+   */
+  async profilePictures(ids: string[]): Promise<Record<string, string | null>> {
+    const result: Record<string, string | null> = {};
+    for (let i = 0; i < ids.length; i += 50) {
+      const batch = ids.slice(i, i + 50);
+      const response = await this.request('GET', this.sessionPath(`/contacts/profile-pictures?ids=${batch.map(encodeURIComponent).join(',')}`), undefined, {}, 60_000);
+      const raw = await response.json() as { pictures?: Record<string, unknown> };
+      for (const id of batch) result[id] = text(raw.pictures?.[id]);
+    }
+    return result;
   }
 
   async group(groupId: string): Promise<{ id: string; name: string; participants: Array<Record<string, unknown>> }> {

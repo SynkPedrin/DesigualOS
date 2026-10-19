@@ -36,8 +36,22 @@ export interface ListThreadsFilter {
   offset: number;
 }
 
+/**
+ * Cada colaborador conecta o PRÓPRIO WhatsApp: conversa que veio por uma
+ * sessão OpenWA só existe para o dono daquela sessão — nem master vê o
+ * WhatsApp do colega pela Inbox. Conversas sem sessão (Evolution/W-API, da
+ * empresa) continuam visíveis para a equipe, como antes.
+ */
+export function threadVisibleTo(viewerId: string) {
+  return sql`(${schema.conversationThreads.whatsappSessionId} is null or exists (
+    select 1 from ${schema.whatsappSessions}
+    where ${schema.whatsappSessions.id} = ${schema.conversationThreads.whatsappSessionId}
+      and ${schema.whatsappSessions.ownerUserId} = ${viewerId}
+  ))`;
+}
+
 export async function listThreads(filter: ListThreadsFilter) {
-  const condicoes = [eq(schema.conversationThreads.organizationId, filter.organizationId)];
+  const condicoes = [eq(schema.conversationThreads.organizationId, filter.organizationId), threadVisibleTo(filter.callerId)];
   if (filter.status) condicoes.push(eq(schema.conversationThreads.status, filter.status));
   if (filter.assignedToSelf) condicoes.push(eq(schema.conversationThreads.assignedToUserId, filter.callerId));
   if (filter.unassignedOnly) condicoes.push(isNull(schema.conversationThreads.assignedToUserId));
@@ -77,7 +91,7 @@ export async function listThreads(filter: ListThreadsFilter) {
   return linhas;
 }
 
-export async function getThread(organizationId: string, threadId: string) {
+export async function getThread(organizationId: string, threadId: string, viewerId?: string) {
   const [linha] = await db
     .select({
       id: schema.conversationThreads.id,
@@ -106,7 +120,11 @@ export async function getThread(organizationId: string, threadId: string) {
     .leftJoin(schema.contacts, eq(schema.contacts.id, schema.conversationThreads.contactId))
     .leftJoin(schema.whatsappGroups, eq(schema.whatsappGroups.id, schema.conversationThreads.groupId))
     .leftJoin(schema.clients, eq(schema.clients.id, schema.conversationThreads.clientId))
-    .where(and(eq(schema.conversationThreads.id, threadId), eq(schema.conversationThreads.organizationId, organizationId)));
+    .where(and(
+      eq(schema.conversationThreads.id, threadId),
+      eq(schema.conversationThreads.organizationId, organizationId),
+      ...(viewerId ? [threadVisibleTo(viewerId)] : []),
+    ));
   return linha ?? null;
 }
 
@@ -320,12 +338,13 @@ export async function sendOutboundMediaMessage(params: {
   return { ok: true, message };
 }
 
-export async function getMessageMedia(organizationId: string, messageId: string) {
+export async function getMessageMedia(organizationId: string, messageId: string, viewerId: string) {
   const [message] = await db.select().from(schema.threadMessages).where(and(
     eq(schema.threadMessages.id, messageId),
     eq(schema.threadMessages.organizationId, organizationId),
   )).limit(1);
   if (!message) return null;
+  if (!(await getThread(organizationId, message.threadId, viewerId))) return null;
   const storageKey = message.metadata.storageKey;
   if (typeof storageKey !== 'string') return null;
   const bytes = await readWhatsappMedia(storageKey);

@@ -83,8 +83,12 @@ async function ensureThread(input: {
   const isGroup = input.kind === 'group' || input.chatId.endsWith('@g.us');
   const title = input.name || (isGroup ? 'Grupo WhatsApp' : input.contact?.name || input.chatId.split('@')[0] || 'Conversa WhatsApp');
   if (existing) {
-    if (input.contact && existing.contactId !== input.contact.id) {
-      const [updated] = await db.update(schema.conversationThreads).set({ contactId: input.contact.id }).where(eq(schema.conversationThreads.id, existing.id)).returning();
+    const patch: Partial<Thread> = {};
+    if (input.contact && existing.contactId !== input.contact.id) patch.contactId = input.contact.id;
+    // O primeiro contato com a conversa pode ter vindo só com o número; o nome chega depois.
+    if (input.name && input.name !== existing.title) patch.title = input.name;
+    if (Object.keys(patch).length > 0) {
+      const [updated] = await db.update(schema.conversationThreads).set(patch).where(eq(schema.conversationThreads.id, existing.id)).returning();
       return updated!;
     }
     return existing;
@@ -136,7 +140,8 @@ async function threadAndSender(session: Session, message: OpenwaMessage) {
     session,
     chatId: message.chatId,
     kind: isGroup ? 'group' : message.kind,
-    name: isGroup ? message.chatId.split('@')[0] : contact?.name,
+    // Grupo: o nome vem do sync (a mensagem não traz); passar o id aqui sobrescreveria o título bom.
+    name: isGroup ? undefined : contact?.name,
     contact: contact ?? undefined,
   });
   return { thread, senderContact: contact };
@@ -260,6 +265,32 @@ export async function createWhatsappSyncJob(session: Session, requestedByUserId:
   return { id: job!.id, created: true };
 }
 
+/** Roda `worker` sobre `items` com no máximo `limit` em paralelo. */
+async function inParallel<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++]!;
+      await worker(item);
+    }
+  });
+  await Promise.all(lanes);
+}
+
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Conversas importadas em paralelo. Mais que isso pressiona o WhatsApp Web (histórico é leitura ao vivo). */
+const CHATS_EM_PARALELO = 4;
+const CONTATOS_EM_PARALELO = 8;
+
+/**
+ * Ordem pensada no que a pessoa vê: primeiro as conversas (mais recentes
+ * antes, já aparecendo na Inbox enquanto o resto chega), depois as fotos,
+ * por último a agenda — que pode ter milhares de entradas e não bloqueia
+ * mais a Inbox como bloqueava quando vinha primeiro.
+ */
 export async function processOpenwaSyncJob(jobId: string): Promise<void> {
   const [job] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, jobId)).limit(1);
   if (!job || ['completed', 'completed_with_errors'].includes(job.status)) return;
@@ -272,39 +303,27 @@ export async function processOpenwaSyncJob(jobId: string): Promise<void> {
   let processedMessages = 0;
   let duplicateMessages = 0;
   let importedMedia = 0;
-  await updateSyncJob(jobId, { status: 'running', phase: 'contacts', startedAt: job.startedAt ?? new Date(), error: null });
+  const progress = () => ({ processedContacts, processedChats, processedMessages, duplicateMessages, importedMedia, failures });
+  await updateSyncJob(jobId, { status: 'running', phase: 'chats', startedAt: job.startedAt ?? new Date(), error: null });
   try {
-    const contacts = await client.contacts();
-    for (const contact of contacts) {
-      try {
-        await ensureContact({
-          session,
-          externalId: contact.id,
-          phone: contact.number,
-          name: contact.name ?? contact.pushName,
-          avatarUrl: contact.profilePicUrl,
-        });
-        processedContacts += 1;
-      } catch (error) {
-        failures.push({ message: error instanceof Error ? error.message : String(error) });
-      }
-    }
-    await updateSyncJob(jobId, { processedContacts, phase: 'chats', failures });
-    const chats = await client.chats();
-    for (const chat of chats) {
-      if (['status', 'broadcast', 'channel'].includes(chat.kind)) continue;
+    const chats = (await client.chats())
+      .filter((chat) => chat.id && !['status', 'broadcast', 'channel'].includes(chat.kind))
+      .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+    const contactByChat = new Map<string, string>();
+    await updateSyncJob(jobId, { phase: 'messages' });
+    await inParallel(chats, CHATS_EM_PARALELO, async (chat) => {
       try {
         const contact = chat.isGroup ? null : await ensureContact({ session, externalId: chat.id, phone: telefoneDoChat(chat.id), name: chat.name });
+        if (contact) contactByChat.set(chat.id, contact.id);
         const thread = await ensureThread({ session, chatId: chat.id, kind: chat.kind, name: chat.name ?? contact?.name, contact: contact ?? undefined });
         if (chat.isGroup) {
           try {
             const details = await client.group(chat.id);
             await db.update(schema.whatsappGroups).set({ name: details.name || chat.name || 'Grupo WhatsApp', participants: details.participants }).where(and(eq(schema.whatsappGroups.sessionId, session.id), eq(schema.whatsappGroups.externalGroupId, chat.id)));
           } catch (error) {
-            failures.push({ chatId: chat.id, message: `Participantes indisponíveis: ${error instanceof Error ? error.message : String(error)}` });
+            failures.push({ chatId: chat.id, message: `Participantes indisponíveis: ${reason(error)}` });
           }
         }
-        await updateSyncJob(jobId, { phase: 'messages' });
         const history = await client.history(chat.id, LIMITE_PADRAO_HISTORICO);
         for (const message of history) {
           try {
@@ -313,25 +332,77 @@ export async function processOpenwaSyncJob(jobId: string): Promise<void> {
             else duplicateMessages += 1;
             if (result.mediaImported) importedMedia += 1;
           } catch (error) {
-            failures.push({ chatId: chat.id, message: error instanceof Error ? error.message : String(error) });
+            failures.push({ chatId: chat.id, message: reason(error) });
           }
         }
-        processedChats += 1;
-        await db.update(schema.conversationThreads).set({ unreadCount: chat.unreadCount }).where(eq(schema.conversationThreads.id, thread.id));
-        await updateSyncJob(jobId, { processedChats, processedMessages, duplicateMessages, importedMedia, failures });
+        const patch: Record<string, unknown> = { unreadCount: chat.unreadCount };
+        // Conversa sem histórico legível ainda precisa de data e prévia, ou cai no fim da Inbox sem contexto.
+        if (history.length === 0 && chat.timestamp) {
+          patch.lastMessageAt = sql`coalesce(${schema.conversationThreads.lastMessageAt}, ${new Date(chat.timestamp * 1000)})`;
+          if (chat.lastMessage) patch.lastMessagePreview = sql`coalesce(${schema.conversationThreads.lastMessagePreview}, ${chat.lastMessage.slice(0, 500)})`;
+        }
+        await db.update(schema.conversationThreads).set(patch).where(eq(schema.conversationThreads.id, thread.id));
       } catch (error) {
-        const detail = error instanceof OpenwaGatewayError && error.status === 501
-          ? 'Histórico não disponível neste engine'
-          : error instanceof Error ? error.message : String(error);
+        const detail = error instanceof OpenwaGatewayError && error.status === 501 ? 'Histórico não disponível neste engine' : reason(error);
         failures.push({ chatId: chat.id, message: detail });
-        await updateSyncJob(jobId, { failures });
       }
+      processedChats += 1;
+      await updateSyncJob(jobId, progress());
+    });
+
+    await updateSyncJob(jobId, { phase: 'photos' });
+    try {
+      const pictures = await client.profilePictures(chats.map((chat) => chat.id));
+      for (const chat of chats) {
+        const url = pictures[chat.id];
+        if (!url) continue;
+        if (chat.isGroup) {
+          await db.update(schema.whatsappGroups).set({ avatarUrl: url }).where(and(eq(schema.whatsappGroups.sessionId, session.id), eq(schema.whatsappGroups.externalGroupId, chat.id)));
+        } else {
+          const contactId = contactByChat.get(chat.id);
+          if (contactId) {
+            await db.update(schema.contacts).set({ metadata: sql`coalesce(${schema.contacts.metadata}, '{}'::jsonb) || ${JSON.stringify({ profilePicUrl: url })}::jsonb` }).where(eq(schema.contacts.id, contactId));
+          }
+        }
+      }
+    } catch (error) {
+      // Foto é enfeite: sem ela a conversa continua inteira.
+      failures.push({ message: `Fotos de perfil indisponíveis: ${reason(error)}` });
     }
+
+    await updateSyncJob(jobId, { phase: 'contacts', ...progress() });
+    const seen = new Set<string>();
+    const contacts = (await client.contacts()).filter((contact) => {
+      if (!contact.id || contactByChat.has(contact.id)) return false;
+      if (!/@(c\.us|s\.whatsapp\.net|lid)$/.test(contact.id)) return false;
+      // A "agenda" do whatsapp-web.js inclui todo número que já cruzou a conta; só entra quem está salvo ou tem nome.
+      if (!contact.isMyContact && !contact.name) return false;
+      const key = contact.number?.replace(/\D/g, '') || contact.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    let sinceUpdate = 0;
+    await inParallel(contacts, CONTATOS_EM_PARALELO, async (contact) => {
+      try {
+        await ensureContact({ session, externalId: contact.id, phone: contact.number, name: contact.name ?? contact.pushName, avatarUrl: contact.profilePicUrl });
+        processedContacts += 1;
+      } catch (error) {
+        failures.push({ message: reason(error) });
+      }
+      sinceUpdate += 1;
+      if (sinceUpdate >= 50) {
+        sinceUpdate = 0;
+        await updateSyncJob(jobId, progress());
+      }
+    });
+    processedContacts += contactByChat.size;
+
     const status = failures.length ? 'completed_with_errors' : 'completed';
-    await updateSyncJob(jobId, { status, phase: status, processedContacts, processedChats, processedMessages, duplicateMessages, importedMedia, failures, finishedAt: new Date() });
+    await updateSyncJob(jobId, { status, phase: status, ...progress(), finishedAt: new Date() });
     await db.update(schema.whatsappSessions).set({ lastSyncAt: new Date(), lastError: failures.length ? `${failures.length} pendência(s) na sincronização` : null }).where(eq(schema.whatsappSessions.id, session.id));
   } catch (error) {
-    await updateSyncJob(jobId, { status: 'failed', phase: 'failed', error: error instanceof Error ? error.message : String(error), failures, finishedAt: new Date() });
+    await updateSyncJob(jobId, { status: 'failed', phase: 'failed', error: reason(error), failures, finishedAt: new Date() });
     throw error;
   }
 }
