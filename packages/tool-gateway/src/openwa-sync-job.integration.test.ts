@@ -189,4 +189,22 @@ describe('job de sincronização OpenWA em Postgres real', () => {
     expect(depois!.status).toBe('superseded');
     expect((await createWhatsappSyncJob(session, null)).id).toBe(novo.id);
   });
+
+  it('envio pela Inbox + confirmação do WhatsApp viram uma mensagem só', async () => {
+    if (!enabled) return;
+    const [thread] = await db.select().from(schema.conversationThreads).where(and(eq(schema.conversationThreads.whatsappSessionId, session.id), eq(schema.conversationThreads.externalChatId, PESSOA)));
+    const [pendente] = await db.insert(schema.threadMessages).values({
+      threadId: thread!.id, organizationId, whatsappSessionId: session.id, providerSessionKey: session.id,
+      channel: 'whatsapp', direction: 'outbound', senderUserId: userId, content: 'resposta da equipe', deliveryStatus: 'pending',
+    }).returning();
+    const eco = normalizeOpenwaMessage({ ...msg(PESSOA, 'eco-123', Math.floor(Date.now() / 1000)), body: 'resposta da equipe', fromMe: true, direction: 'outgoing', status: 'sent' });
+    const result = await persistOpenwaMessage({ session, message: eco, countUnread: true });
+    expect(result.created).toBe(false);
+    expect(result.message.id).toBe(pendente!.id);
+    const iguais = await db.select().from(schema.threadMessages).where(and(eq(schema.threadMessages.threadId, thread!.id), eq(schema.threadMessages.content, 'resposta da equipe')));
+    expect(iguais).toHaveLength(1);
+    expect(iguais[0]!.externalMessageId).toBe('eco-123');
+    expect(iguais[0]!.deliveryStatus).toBe('sent');
+    expect(iguais[0]!.senderUserId).toBe(userId);
+  });
 });

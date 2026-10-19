@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronLeft, Download, FileText, Loader2, MessageCircle, Mic, MoreHorizontal, Paperclip, Pause, Phone, Play, RotateCcw, Search, Smile, Square, Video, X } from 'lucide-react';
+import { ArrowUp, ChevronLeft, Download, FileText, MessageCircle, Mic, MoreHorizontal, Paperclip, Pause, Phone, Play, RotateCcw, Search, Smile, Square, Video, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useInboxMessages, useInboxThread, useMarkInboxRead, useSendInboxMedia, useSendInboxMessage } from '@/hooks/use-inbox';
@@ -92,7 +92,6 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
   const chunks = useRef<Blob[]>([]);
   const discardRecording = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
-  const sending = sendMessage.isPending || sendMedia.isPending;
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: 'smooth' });
@@ -123,21 +122,18 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
     if (fileInput.current) fileInput.current.value = '';
   }
 
-  async function handleSend() {
-    if (sending) return;
+  // Não espera o servidor: a bolha já aparece (ver optimistic em use-inbox) e o
+  // campo libera na hora para a próxima mensagem. Falha fica marcada na bolha.
+  function handleSend() {
     const text = draft.trim();
-    try {
-      if (selectedFile) {
-        await sendMedia.mutateAsync({ file: selectedFile, ...(text ? { caption: text } : {}), voiceNote });
-      } else {
-        if (!text) return;
-        await sendMessage.mutateAsync(text);
-      }
-      setDraft('');
-      clearFile();
-    } catch {
-      // O rascunho e o anexo permanecem para correção ou nova tentativa.
+    if (selectedFile) {
+      sendMedia.mutate({ file: selectedFile, ...(text ? { caption: text } : {}), voiceNote });
+    } else {
+      if (!text) return;
+      sendMessage.mutate(text);
     }
+    setDraft('');
+    clearFile();
   }
 
   async function startRecording() {
@@ -236,13 +232,13 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
         )}
         <div className="flex items-end gap-2">
           <input ref={fileInput} type="file" className="hidden" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" onChange={(event) => { const file = event.target.files?.[0] ?? null; setSelectedFile(file); setVoiceNote(false); }} />
-          <button type="button" title="Anexar arquivo" onClick={() => fileInput.current?.click()} disabled={sending || recording} className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-40"><Paperclip size={18} /></button>
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend(); } }} rows={1} placeholder={selectedFile ? 'Adicionar legenda…' : 'Digite uma mensagem...'} className="flex-1 resize-none rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none placeholder:text-nevoa/60 focus:border-sinal" />
+          <button type="button" title="Anexar arquivo" onClick={() => fileInput.current?.click()} disabled={recording} className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-40"><Paperclip size={18} /></button>
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSend(); } }} rows={1} placeholder={selectedFile ? 'Adicionar legenda…' : 'Digite uma mensagem...'} className="flex-1 resize-none rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none placeholder:text-nevoa/60 focus:border-sinal" />
           <button type="button" title="Emoji" className="hidden size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru sm:flex"><Smile size={18} /></button>
           {!draft.trim() && !selectedFile ? (
-            <button type="button" title={recording ? 'Gravando' : 'Gravar áudio'} onClick={() => void startRecording()} disabled={recording || sending} className="flex size-9 shrink-0 items-center justify-center rounded-md bg-grafite-elevado text-nevoa disabled:opacity-40"><Mic size={18} /></button>
+            <button type="button" title={recording ? 'Gravando' : 'Gravar áudio'} onClick={() => void startRecording()} disabled={recording} className="flex size-9 shrink-0 items-center justify-center rounded-md bg-grafite-elevado text-nevoa disabled:opacity-40"><Mic size={18} /></button>
           ) : (
-            <button type="button" onClick={() => void handleSend()} disabled={sending || recording} className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sinal text-carbono disabled:opacity-40">{sending ? <Loader2 size={17} className="animate-spin" /> : <ArrowUp size={18} />}</button>
+            <button type="button" onClick={() => handleSend()} disabled={recording} className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sinal text-carbono disabled:opacity-40"><ArrowUp size={18} /></button>
           )}
         </div>
       </div>

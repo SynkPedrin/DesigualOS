@@ -28,6 +28,23 @@ export async function whatsappSessionByExternalId(externalSessionId: string): Pr
   return row ?? null;
 }
 
+/**
+ * Mesma consulta com 30 s de memória, para o caminho quente das mensagens
+ * (cada evento do webhook buscava a sessão de novo, ~130 ms até o banco nos
+ * EUA). Evento de status de sessão continua lendo do banco.
+ */
+const sessionCache = new Map<string, { row: WhatsappSessionRow; at: number }>();
+const SESSION_CACHE_TTL_MS = 30_000;
+
+export async function cachedWhatsappSession(by: 'id' | 'external', key: string): Promise<WhatsappSessionRow | null> {
+  const cacheKey = `${by}:${key}`;
+  const hit = sessionCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < SESSION_CACHE_TTL_MS) return hit.row;
+  const row = by === 'id' ? await whatsappSessionById(key) : await whatsappSessionByExternalId(key);
+  if (row) sessionCache.set(cacheKey, { row, at: Date.now() });
+  return row;
+}
+
 export async function whatsappSessionForOwner(input: { id: string; organizationId: string; ownerUserId: string; canManageOthers?: boolean }): Promise<WhatsappSessionRow | null> {
   const conditions = [
     eq(schema.whatsappSessions.id, input.id),

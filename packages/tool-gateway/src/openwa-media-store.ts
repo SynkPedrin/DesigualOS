@@ -3,7 +3,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 
-export const WHATSAPP_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
+// 100 MB: cobre foto, vídeo, áudio e quase todo documento de trabalho. Acima
+// disso o arquivo atravessaria a memória do navegador do WhatsApp (whatsapp-web.js
+// carrega a mídia inteira em base64), que divide 4 GB com todos os números.
+export const WHATSAPP_MEDIA_MAX_BYTES = 100 * 1024 * 1024;
 
 const ALLOWED_MIME = /^(image\/(jpeg|png|gif|webp)|video\/(mp4|quicktime|webm)|audio\/(ogg|mpeg|mp4|wav|x-wav|webm|aac|opus)|application\/(pdf|msword|octet-stream|zip|x-zip-compressed|vnd\.openxmlformats-officedocument\.[a-z.]+|vnd\.ms-[a-z.]+)|text\/(plain|csv))([; ].*)?$/i;
 

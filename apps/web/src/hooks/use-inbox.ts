@@ -3,6 +3,7 @@ import { apiFetch } from '@/lib/api/client';
 import {
   mapInboxMessage,
   mapInboxThread,
+  type InboxMessage,
   type InboxMessageWire,
   type InboxThreadStatus,
   type InboxThreadWire,
@@ -66,6 +67,32 @@ function invalidateThread(queryClient: ReturnType<typeof useQueryClient>, thread
   void queryClient.invalidateQueries({ queryKey: ['inbox-thread', threadId] });
 }
 
+/**
+ * Bolha na hora do clique: a mensagem entra no cache como "aguardando envio"
+ * antes de o servidor responder, e o status real (enviada / falhou) chega pelo
+ * evento `inbox.updated`. Sem isso a pessoa via a mensagem só 5–7 s depois.
+ */
+function optimistic(queryClient: ReturnType<typeof useQueryClient>, threadId: string, partial: Partial<InboxMessage>): string {
+  const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const message: InboxMessage = {
+    id, direction: 'outbound', senderContactId: null, senderUserId: null, senderName: null, content: null,
+    attachmentUrl: null, attachmentType: null, attachmentFilename: null, attachmentSizeBytes: null,
+    externalMessageId: null, deliveryStatus: 'pending', createdAt: new Date().toISOString(), ...partial,
+  };
+  void queryClient.cancelQueries({ queryKey: ['inbox-messages', threadId] });
+  queryClient.setQueryData<InboxMessage[]>(['inbox-messages', threadId], (old) => [...(old ?? []), message]);
+  return id;
+}
+
+function settleOptimistic(queryClient: ReturnType<typeof useQueryClient>, threadId: string, localId: string, real: InboxMessage | null) {
+  queryClient.setQueryData<InboxMessage[]>(['inbox-messages', threadId], (old = []) => {
+    if (!real) return old.map((m) => (m.id === localId ? { ...m, deliveryStatus: 'failed' } : m));
+    // Um refetch pode já ter trazido a real; então a local só sai.
+    if (old.some((m) => m.id === real.id)) return old.filter((m) => m.id !== localId);
+    return old.map((m) => (m.id === localId ? real : m));
+  });
+}
+
 export function useSendInboxMessage(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -74,7 +101,10 @@ export function useSendInboxMessage(threadId: string) {
         method: 'POST',
         body: JSON.stringify({ text }),
       }),
-    onSuccess: () => invalidateThread(queryClient, threadId),
+    onMutate: (text) => ({ localId: optimistic(queryClient, threadId, { content: text }) }),
+    onSuccess: (wire, _text, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, mapInboxMessage(wire)); },
+    onError: (_error, _text, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, null); },
+    onSettled: () => invalidateThread(queryClient, threadId),
   });
 }
 
@@ -86,9 +116,20 @@ export function useSendInboxMedia(threadId: string) {
       if (input.caption) body.append('caption', input.caption);
       if (input.voiceNote) body.append('voiceNote', 'true');
       body.append('file', input.file);
-      return apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages/media`, { method: 'POST', body }, { timeoutMs: 120_000 });
+      return apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages/media`, { method: 'POST', body }, { timeoutMs: 600_000 });
     },
-    onSuccess: () => invalidateThread(queryClient, threadId),
+    onMutate: (input) => ({
+      localId: optimistic(queryClient, threadId, {
+        content: input.caption ?? null,
+        attachmentUrl: URL.createObjectURL(input.file),
+        attachmentType: input.file.type || 'application/octet-stream',
+        attachmentFilename: input.file.name,
+        attachmentSizeBytes: input.file.size,
+      }),
+    }),
+    onSuccess: (wire, _input, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, mapInboxMessage(wire)); },
+    onError: (_error, _input, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, null); },
+    onSettled: () => invalidateThread(queryClient, threadId),
   });
 }
 
