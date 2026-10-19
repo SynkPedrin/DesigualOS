@@ -5,7 +5,9 @@ export const WHATSAPP_QUEUE_NAME = 'queue-whatsapp';
 
 export type WhatsappQueueJobData =
   | { type: 'sync'; id: string }
-  | { type: 'webhook'; id: string };
+  | { type: 'webhook'; id: string }
+  /** Segunda passada agendada após o primeiro sync de uma sessão; `id` é o da sessão. */
+  | { type: 'followup'; id: string };
 
 let queue: Queue<WhatsappQueueJobData> | null = null;
 
@@ -29,6 +31,15 @@ const SYNC_JOB_OPTIONS = { attempts: 8, backoff: { type: 'exponential' as const,
 
 export async function enqueueWhatsappSync(id: string): Promise<void> {
   await getWhatsappQueue().add('sync', { type: 'sync', id }, { jobId: `whatsapp-sync-${id}`, ...SYNC_JOB_OPTIONS });
+}
+
+/**
+ * Logo após o QR, o WhatsApp Web só tem a última mensagem de cada conversa;
+ * o celular manda o resto nos minutos seguintes. Uma segunda passada depois
+ * disso busca o histórico que o primeiro sync ainda não tinha como ver.
+ */
+export async function scheduleWhatsappFollowupSync(sessionId: string, delayMs = 10 * 60_000): Promise<void> {
+  await getWhatsappQueue().add('followup', { type: 'followup', id: sessionId }, { jobId: `whatsapp-followup-${sessionId}`, delay: delayMs, attempts: 1 });
 }
 
 export async function enqueueWhatsappWebhook(id: string): Promise<void> {

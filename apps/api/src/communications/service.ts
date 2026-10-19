@@ -84,7 +84,9 @@ export async function listThreads(filter: ListThreadsFilter) {
     .leftJoin(schema.whatsappGroups, eq(schema.whatsappGroups.id, schema.conversationThreads.groupId))
     .leftJoin(schema.clients, eq(schema.clients.id, schema.conversationThreads.clientId))
     .where(and(...condicoes))
-    .orderBy(desc(schema.conversationThreads.lastMessageAt))
+    // Postgres põe NULL primeiro em DESC: conversa ainda sem data subia para o topo
+    // e empurrava as de hoje para baixo.
+    .orderBy(sql`${schema.conversationThreads.lastMessageAt} desc nulls last`, desc(schema.conversationThreads.createdAt))
     .limit(filter.limit)
     .offset(filter.offset);
 

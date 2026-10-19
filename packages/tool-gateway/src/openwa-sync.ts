@@ -372,9 +372,9 @@ function transient(error: unknown): boolean {
  * falha passageira não aparece como "Erro de sincronização" na tela — o job
  * volta para a fila com uma explicação que a pessoa entende.
  */
-export async function processOpenwaSyncJob(jobId: string, options: { finalAttempt?: boolean } = {}): Promise<void> {
+export async function processOpenwaSyncJob(jobId: string, options: { finalAttempt?: boolean } = {}): Promise<{ firstForSession: boolean; sessionId?: string }> {
   const [job] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, jobId)).limit(1);
-  if (!job || ['completed', 'completed_with_errors'].includes(job.status)) return;
+  if (!job || ['completed', 'completed_with_errors'].includes(job.status)) return { firstForSession: false };
   const session = await whatsappSessionById(job.sessionId);
   if (!session) throw new Error('Sessão da sincronização não encontrada');
   const client = gatewayForWhatsappSession(session);
@@ -398,6 +398,15 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
         const contact = chat.isGroup ? null : await ensureContact({ session, externalId: chat.id, phone: telefoneDoChat(chat.id), name: chat.name });
         if (contact) contactByChat.set(chat.id, contact.id);
         const thread = await ensureThread({ session, chatId: chat.id, kind: chat.kind, name: chat.name ?? contact?.name, contact: contact ?? undefined });
+        // Data e prévia da lista de chats ANTES do histórico: se o histórico falhar
+        // ou vier vazio, a conversa já entra na Inbox na posição certa.
+        if (chat.timestamp) {
+          const at = new Date(chat.timestamp * 1000).toISOString();
+          await db.update(schema.conversationThreads).set({
+            lastMessageAt: sql`greatest(${schema.conversationThreads.lastMessageAt}, ${at}::timestamptz)`,
+            ...(chat.lastMessage ? { lastMessagePreview: sql`case when ${schema.conversationThreads.lastMessageAt} is null or ${schema.conversationThreads.lastMessageAt} <= ${at}::timestamptz then ${chat.lastMessage.slice(0, 500)} else ${schema.conversationThreads.lastMessagePreview} end` } : {}),
+          }).where(eq(schema.conversationThreads.id, thread.id));
+        }
         if (chat.isGroup) {
           try {
             const details = await client.group(chat.id);
@@ -415,13 +424,7 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
         } catch (error) {
           failures.push({ chatId: chat.id, message: reason(error) });
         }
-        const patch: Record<string, unknown> = { unreadCount: chat.unreadCount };
-        // Conversa sem histórico legível ainda precisa de data e prévia, ou cai no fim da Inbox sem contexto.
-        if (history.length === 0 && chat.timestamp) {
-          patch.lastMessageAt = sql`coalesce(${schema.conversationThreads.lastMessageAt}, ${new Date(chat.timestamp * 1000).toISOString()}::timestamptz)`;
-          if (chat.lastMessage) patch.lastMessagePreview = sql`coalesce(${schema.conversationThreads.lastMessagePreview}, ${chat.lastMessage.slice(0, 500)})`;
-        }
-        await db.update(schema.conversationThreads).set(patch).where(eq(schema.conversationThreads.id, thread.id));
+        await db.update(schema.conversationThreads).set({ unreadCount: chat.unreadCount }).where(eq(schema.conversationThreads.id, thread.id));
       } catch (error) {
         const detail = error instanceof OpenwaGatewayError && error.status === 501 ? 'Histórico não disponível neste engine' : reason(error);
         failures.push({ chatId: chat.id, message: detail });
@@ -481,6 +484,7 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
     const status = failures.length ? 'completed_with_errors' : 'completed';
     await updateSyncJob(jobId, { status, phase: status, ...progress(), finishedAt: new Date() });
     await db.update(schema.whatsappSessions).set({ lastSyncAt: new Date(), lastError: failures.length ? `${failures.length} pendência(s) na sincronização` : null }).where(eq(schema.whatsappSessions.id, session.id));
+    return { firstForSession: !session.lastSyncAt, sessionId: session.id };
   } catch (error) {
     if (transient(error) && options.finalAttempt === false) {
       await updateSyncJob(jobId, { status: 'queued', phase: 'queued', error: 'O WhatsApp ainda está carregando as conversas do celular. Tentando de novo em instantes.', failures });
