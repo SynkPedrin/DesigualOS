@@ -7,7 +7,7 @@ import rateLimitPlugin from '@fastify/rate-limit';
 import helmetPlugin from '@fastify/helmet';
 import { z } from 'zod';
 import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/logging';
-import { getSchemaVersion, queryStats } from '@desigual-os/database';
+import { getSchemaVersion, queryStats, warmDatabasePool } from '@desigual-os/database';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
 import { registerReadyRoutes } from './health/ready-routes';
@@ -316,6 +316,10 @@ async function start(): Promise<void> {
   await app.register(registerAutomationRoutes);
   await app.register(registerUploadRoutes);
   await app.register(registerAgentRoutes);
+  // Pool aberto ANTES de aceitar tráfego: o healthcheck só fica verde com as
+  // conexões prontas, então a primeira tela depois de um deploy não paga 1,3 s.
+  const aquecimento = await warmDatabasePool();
+  app.log.info({ ms: aquecimento }, 'Pool do banco aberto');
   await app.listen({ port, host: '0.0.0.0' });
   const healthSweepTimer = startHealthSweep(logger);
   // Sem isto o sweep acima derruba tudo pra offline em 60s: nossos agentes

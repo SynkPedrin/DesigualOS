@@ -1,4 +1,5 @@
 import './env.js';
+import { warmDatabasePool } from '@desigual-os/database';
 import { Worker } from 'bullmq';
 import { AGENT_NAMES, type AgentName } from '@desigual-os/types';
 import { createLogger } from '@desigual-os/logging';
@@ -27,6 +28,9 @@ import { setupDailyJobs } from './scheduler/index.js';
 import { ottoMotionEnabled, startMotionWorker } from '@desigual-os/otto-motion';
 
 const logger = createLogger({ service: 'worker' });
+
+// Pool aberto já na subida (~1,3 s por conexão até us-east-1), não no primeiro job.
+void warmDatabasePool().then((ms) => logger.info({ ms }, 'Pool do banco aberto')).catch(() => undefined);
 
 /** true quando essa foi a ÚLTIMA tentativa (BullMQ não vai reenfileirar sozinho de novo). */
 function isFinalAttempt(

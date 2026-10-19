@@ -58,6 +58,11 @@ const client = postgres(connectionString, {
   prepare: false,
   max: poolMax,
   connect_timeout: CONNECT_TIMEOUT_S,
+  // Abrir conexão até us-east-1 custa ~1,3 s (TLS + autenticação no pooler,
+  // medido em 19/10/2026) e uma aberta responde em 125 ms sem cair parada. O
+  // padrão da biblioteca renova cada conexão a cada 30–60 min, e quem caía
+  // nessa troca pagava 1,3 s; 6 h deixa isso raro.
+  max_lifetime: 6 * 60 * 60,
   debug: () => {
     const stats = queryStats.getStore();
     if (stats) stats.count += 1;
@@ -65,5 +70,16 @@ const client = postgres(connectionString, {
 });
 
 export const db = drizzle(client, { schema });
+
+/**
+ * Abre o pool inteiro de uma vez, em paralelo, na subida do processo. Sem isto
+ * as primeiras requisições depois de um deploy pagavam ~1,3 s cada abrindo
+ * conexão. Falha aqui não derruba nada: a conexão abre sob demanda como antes.
+ */
+export async function warmDatabasePool(): Promise<number> {
+  const started = Date.now();
+  await Promise.all(Array.from({ length: poolMax }, () => client`select 1`.catch(() => undefined)));
+  return Date.now() - started;
+}
 
 export type Database = typeof db;
