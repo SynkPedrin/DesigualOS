@@ -195,16 +195,13 @@ async function touchThread(thread: Thread, message: OpenwaMessage, created: bool
   }
 }
 
-export async function persistOpenwaMessage(input: {
-  session: Session;
-  message: OpenwaMessage;
-  countUnread?: boolean;
-  importMedia?: boolean;
-}): Promise<{ created: boolean; message: Message; mediaImported: boolean }> {
-  const { session, message } = input;
-  if (!message.id || !message.chatId) throw new Error('Mensagem OpenWA sem id ou chatId');
-  const { thread, senderContact } = await threadAndSender(session, message);
-  const values = {
+// Função, não constante: lido no import, quebraria quem simula o schema sem esta tabela.
+function messageConflictTarget() {
+  return [schema.threadMessages.organizationId, schema.threadMessages.channel, schema.threadMessages.providerSessionKey, schema.threadMessages.externalMessageId];
+}
+
+function messageValues(session: Session, thread: Thread, senderContact: Contact | null, message: OpenwaMessage) {
+  return {
     threadId: thread.id,
     organizationId: session.organizationId,
     whatsappSessionId: session.id,
@@ -223,9 +220,19 @@ export async function persistOpenwaMessage(input: {
     createdAt: occurredAt(message),
     metadata: { type: message.type },
   };
-  const [inserted] = await db.insert(schema.threadMessages).values(values).onConflictDoNothing({
-    target: [schema.threadMessages.organizationId, schema.threadMessages.channel, schema.threadMessages.providerSessionKey, schema.threadMessages.externalMessageId],
-  }).returning();
+}
+
+export async function persistOpenwaMessage(input: {
+  session: Session;
+  message: OpenwaMessage;
+  countUnread?: boolean;
+  importMedia?: boolean;
+}): Promise<{ created: boolean; message: Message; mediaImported: boolean }> {
+  const { session, message } = input;
+  if (!message.id || !message.chatId) throw new Error('Mensagem OpenWA sem id ou chatId');
+  const { thread, senderContact } = await threadAndSender(session, message);
+  const values = messageValues(session, thread, senderContact, message);
+  const [inserted] = await db.insert(schema.threadMessages).values(values).onConflictDoNothing({ target: messageConflictTarget() }).returning();
   let row = inserted;
   if (!row) {
     const [existing] = await db.select().from(schema.threadMessages).where(and(
@@ -243,6 +250,65 @@ export async function persistOpenwaMessage(input: {
   }
   await touchThread(thread, message, Boolean(inserted), input.countUnread === true);
   return { created: Boolean(inserted), message: row, mediaImported };
+}
+
+/**
+ * Histórico de uma conversa gravado de uma vez: um INSERT para todas as
+ * mensagens e um UPDATE na conversa, no lugar de 5–7 idas ao banco POR
+ * mensagem do caminho do webhook. Conversa e contato já vêm resolvidos pelo
+ * sync; em grupo, o remetente de cada mensagem passa pelo `senderCache` do job
+ * para cada autor custar uma consulta só. Mensagem com mídia embutida segue o
+ * caminho normal (precisa baixar e anexar).
+ */
+async function persistHistoryBatch(input: {
+  session: Session;
+  thread: Thread;
+  contact: Contact | null;
+  messages: OpenwaMessage[];
+  senderCache: Map<string, Promise<Contact>>;
+}): Promise<{ created: number; duplicates: number; mediaImported: number }> {
+  const { session, thread } = input;
+  const plain = input.messages.filter((message) => message.id && message.chatId && !message.media);
+  let created = 0;
+  let duplicates = 0;
+  let mediaImported = 0;
+  for (const message of input.messages.filter((m) => m.media)) {
+    const result = await persistOpenwaMessage({ session, message, importMedia: true });
+    if (result.created) created += 1; else duplicates += 1;
+    if (result.mediaImported) mediaImported += 1;
+  }
+  if (plain.length === 0) return { created, duplicates, mediaImported };
+  const isGroup = thread.kind === 'group';
+  const rows = await Promise.all(plain.map(async (message) => {
+    let sender: Contact | null = input.contact;
+    if (isGroup) {
+      if (message.direction === 'outgoing') sender = null;
+      else {
+        const externalId = message.author ?? message.from ?? 'desconhecido@lid';
+        let pending = input.senderCache.get(externalId);
+        if (!pending) {
+          pending = ensureContact({ session, externalId, phone: phoneFromMessage(message), name: message.contact?.name ?? message.contact?.pushName });
+          input.senderCache.set(externalId, pending);
+        }
+        sender = await pending;
+      }
+    }
+    return messageValues(session, thread, sender, message);
+  }));
+  const inserted = await db.insert(schema.threadMessages).values(rows).onConflictDoNothing({ target: messageConflictTarget() }).returning({ id: schema.threadMessages.id });
+  created += inserted.length;
+  duplicates += plain.length - inserted.length;
+  const newest = plain.reduce((a, b) => (occurredAt(b) >= occurredAt(a) ? b : a));
+  const at = occurredAt(newest);
+  await db.update(schema.conversationThreads).set({
+    lastMessageAt: at,
+    lastMessagePreview: preview(newest),
+    status: newest.direction === 'incoming' ? 'waiting_agency' : 'waiting_client',
+  }).where(and(
+    eq(schema.conversationThreads.id, thread.id),
+    sql`(${schema.conversationThreads.lastMessageAt} is null or ${schema.conversationThreads.lastMessageAt} <= ${at.toISOString()}::timestamptz)`,
+  ));
+  return { created, duplicates, mediaImported };
 }
 
 async function updateSyncJob(jobId: string, patch: Record<string, unknown>): Promise<void> {
@@ -310,6 +376,7 @@ export async function processOpenwaSyncJob(jobId: string): Promise<void> {
       .filter((chat) => chat.id && !['status', 'broadcast', 'channel'].includes(chat.kind))
       .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
     const contactByChat = new Map<string, string>();
+    const senderCache = new Map<string, Promise<Contact>>();
     await updateSyncJob(jobId, { phase: 'messages' });
     await inParallel(chats, CHATS_EM_PARALELO, async (chat) => {
       try {
@@ -325,20 +392,18 @@ export async function processOpenwaSyncJob(jobId: string): Promise<void> {
           }
         }
         const history = await client.history(chat.id, LIMITE_PADRAO_HISTORICO);
-        for (const message of history) {
-          try {
-            const result = await persistOpenwaMessage({ session, message, importMedia: true });
-            if (result.created) processedMessages += 1;
-            else duplicateMessages += 1;
-            if (result.mediaImported) importedMedia += 1;
-          } catch (error) {
-            failures.push({ chatId: chat.id, message: reason(error) });
-          }
+        try {
+          const result = await persistHistoryBatch({ session, thread, contact, messages: history, senderCache });
+          processedMessages += result.created;
+          duplicateMessages += result.duplicates;
+          importedMedia += result.mediaImported;
+        } catch (error) {
+          failures.push({ chatId: chat.id, message: reason(error) });
         }
         const patch: Record<string, unknown> = { unreadCount: chat.unreadCount };
         // Conversa sem histórico legível ainda precisa de data e prévia, ou cai no fim da Inbox sem contexto.
         if (history.length === 0 && chat.timestamp) {
-          patch.lastMessageAt = sql`coalesce(${schema.conversationThreads.lastMessageAt}, ${new Date(chat.timestamp * 1000)})`;
+          patch.lastMessageAt = sql`coalesce(${schema.conversationThreads.lastMessageAt}, ${new Date(chat.timestamp * 1000).toISOString()}::timestamptz)`;
           if (chat.lastMessage) patch.lastMessagePreview = sql`coalesce(${schema.conversationThreads.lastMessagePreview}, ${chat.lastMessage.slice(0, 500)})`;
         }
         await db.update(schema.conversationThreads).set(patch).where(eq(schema.conversationThreads.id, thread.id));
