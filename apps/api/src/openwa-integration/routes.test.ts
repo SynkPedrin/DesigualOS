@@ -18,13 +18,13 @@ const admin = {
 };
 const gateway = {
   createWebhook: vi.fn(async () => ({ id: 'hook-1' })),
-  startSession: vi.fn(async () => ({ id: EXTERNAL, status: 'initializing' })),
+  requestStart: vi.fn(async () => 'starting' as const),
   getSession: vi.fn(async () => ({ id: EXTERNAL, name: 'session', status: snapshotStatus, phone: '5511999999999', pushName: 'Operação', connectedAt: null, lastActive: null, lastError: null, engineLoaded: true })),
   getQr: vi.fn(async () => ({ qrCode: 'data:image/png;base64,real-provider-payload', status: 'qr_ready' })),
   logoutSession: vi.fn(),
 };
-const enqueueSync = vi.fn(async () => undefined);
-const enqueueWebhook = vi.fn(async () => undefined);
+const enqueueSync = vi.fn(async (..._args: unknown[]) => undefined);
+const enqueueWebhook = vi.fn(async (..._args: unknown[]) => undefined);
 const registerEvent = vi.fn();
 
 vi.mock('@desigual-os/tool-gateway', () => ({
@@ -155,7 +155,7 @@ describe('sessões OpenWA', () => {
     expect(response.statusCode).toBe(202);
     expect(admin.createScopedOperatorKey).toHaveBeenCalledWith(expect.any(String), EXTERNAL);
     expect(gateway.createWebhook).toHaveBeenCalledWith({ url: 'https://api.example.com/openwa/webhook', secret: expect.any(String) });
-    expect(gateway.startSession).toHaveBeenCalled();
+    expect(gateway.requestStart).toHaveBeenCalled();
     expect(enqueueSync).not.toHaveBeenCalled();
     expect(sessions[0]).toMatchObject({ organizationId: ORG, ownerUserId: USER, externalSessionId: EXTERNAL });
   });

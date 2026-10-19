@@ -245,7 +245,7 @@ function SyncProgress({ session }: { session: WhatsappOpenwaSession }) {
   const sync = session.latest_sync;
   if (!sync) return <p className="mt-4 text-sm text-nevoa">Aguardando o início da sincronização…</p>;
   const running = ['queued', 'running'].includes(sync.status);
-  const labels: Record<string, string> = { queued: 'Na fila para sincronizar', contacts: 'Sincronizando contatos…', chats: 'Sincronizando conversas…', messages: 'Importando mensagens e preparando mídias…', completed: 'Sincronização concluída', completed_with_errors: 'Sincronização concluída com pendências', failed: 'Falha na sincronização' };
+  const labels: Record<string, string> = { queued: 'Na fila para sincronizar', contacts: 'Importando a agenda de contatos…', chats: 'Sincronizando conversas…', messages: 'Importando conversas, das mais recentes para as mais antigas…', photos: 'Buscando fotos de perfil…', completed: 'Sincronização concluída', completed_with_errors: 'Sincronização concluída com pendências', failed: 'Falha na sincronização' };
   return (
     <div className="mt-5 rounded-xl border border-grafite-elevado bg-carbono p-4 text-left">
       <div className="flex items-center gap-2">{running ? <Loader2 size={16} className="animate-spin text-sinal" /> : sync.status === 'failed' ? <AlertTriangle size={16} className="text-erro" /> : <CheckCircle2 size={16} className="text-sucesso" />}<p className="text-sm font-medium text-branco-cru">{labels[sync.phase] ?? labels[sync.status] ?? 'Sincronizando…'}</p></div>

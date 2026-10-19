@@ -170,9 +170,12 @@ frente OpenWA funcionando (QR de conexão):
    --env-file .env up -d --build`):
    - `WHATSAPP_OPENWA_ENABLED=true`
    - `WHATSAPP_OPENWA_ADMIN_ONLY=true` (homologação: só master)
-   - `OPENWA_BASE_URL=http://127.0.0.1:2785`
+   - `OPENWA_BASE_URL=http://openwa:2785` — a API roda em container; de dentro
+     dele `127.0.0.1` é o próprio container da API, não o OpenWA.
    - `OPENWA_ADMIN_API_KEY=<chave admin do OpenWA>`
-   - `OPENWA_WEBHOOK_URL=https://api.citavel.ai/openwa/webhook`
+   - `OPENWA_WEBHOOK_URL=http://api:3001/openwa/webhook` — rede interna do
+     compose; `api` já está em `SSRF_ALLOWED_HOSTS` do OpenWA. A URL pública
+     também funciona, mas depende do VPS conseguir chamar o próprio IP.
    - `API_PUBLIC_URL=https://api.citavel.ai`
    - `BENTO_WHATSAPP_ENABLED=true`
 
@@ -184,4 +187,17 @@ frente OpenWA funcionando (QR de conexão):
    Integrações renderiza o `<img>` com o data URL.
 
 5. **Fluxo manual pós-deploy:** escanear o QR com o celular do operador.
+
+6. **O que acontece depois do QR (19/10/2026):** a tela acompanha o status;
+   quando a sessão fica `ready` (pelo webhook ou pela própria consulta da
+   tela/listagem, o que chegar primeiro) um job entra na fila
+   `queue-whatsapp` do worker. Ordem do job: conversas (mais recentes
+   primeiro, 4 em paralelo, últimas 10 mensagens de cada) → fotos de perfil
+   (lote de 50; o whatsapp-web.js não manda foto na agenda) → agenda (só
+   contatos salvos ou com nome). As conversas aparecem na Inbox enquanto o
+   resto chega.
+
+7. **Isolamento:** conversa de uma sessão OpenWA só aparece na Inbox do dono
+   da sessão — nem master vê o WhatsApp do colega. Conversas sem sessão
+   (Evolution/W-API, da empresa) continuam visíveis para a equipe.
 

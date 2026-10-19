@@ -39,7 +39,11 @@ async function process(job: Job<WhatsappQueueJobData>): Promise<void> {
 export function startOpenwaWorker(logger: Logger): Worker<WhatsappQueueJobData> {
   const worker = new Worker<WhatsappQueueJobData>(WHATSAPP_QUEUE_NAME, process, {
     connection: getRedisConnection(),
-    concurrency: 3,
+    // Sync e webhook dividem a fila. Com 3 vagas, três pessoas conectando ao
+    // mesmo tempo (sync de minutos cada) seguravam toda mensagem nova que
+    // chegava pelo webhook até um sync terminar. Webhook é leve; sync de cada
+    // sessão usa o próprio navegador no OpenWA.
+    concurrency: 12,
   });
   worker.on('completed', (job) => logger.info({ jobId: job.id, type: job.data.type }, 'WhatsApp job completed'));
   worker.on('failed', (job, error) => {

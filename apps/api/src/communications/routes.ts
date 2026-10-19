@@ -125,7 +125,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.get<{ Params: { id: string } }>('/inbox/threads/:id', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
-      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id);
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) {
         reply.code(404);
         return { error: `Thread '${request.params.id}' not found` };
@@ -134,7 +134,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.get<{ Params: { id: string } }>('/inbox/threads/:id/messages', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
-      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id);
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) {
         reply.code(404);
         return { error: `Thread '${request.params.id}' not found` };
@@ -145,7 +145,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.post<{ Params: { id: string } }>('/inbox/threads/:id/messages', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
-      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id);
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) {
         reply.code(404);
         return { error: `Thread '${request.params.id}' not found` };
@@ -173,7 +173,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.post<{ Params: { id: string } }>('/inbox/threads/:id/messages/media', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
-      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id);
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
       const file = await request.file();
       if (!file) { reply.code(400); return { error: 'Nenhum arquivo enviado.' }; }
@@ -204,7 +204,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.get<{ Params: { id: string } }>('/inbox/messages/:id/media', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
-      const media = await svc.getMessageMedia(request.tenantContext!.organizationId, request.params.id);
+      const media = await svc.getMessageMedia(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!media) { reply.code(404); return { error: 'Mídia não encontrada.' }; }
       const filename = (media.message.attachmentFilename ?? 'arquivo').replace(/["\r\n]/g, '_');
       const inline = /^(image|audio|video)\//.test(media.message.attachmentType ?? '');
@@ -216,12 +216,14 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.post<{ Params: { id: string } }>('/inbox/threads/:id/read', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      if (!(await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id))) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
       const updated = await svc.markThreadRead(request.tenantContext!.organizationId, request.params.id);
       if (!updated) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
       return { ok: true };
     });
 
     authed.patch<{ Params: { id: string } }>('/inbox/threads/:id/status', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      if (!(await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id))) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
       const body = statusSchema.parse(request.body);
       const updated = await svc.updateThreadStatus(request.tenantContext!.organizationId, request.params.id, body.status);
       if (!updated) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
@@ -235,6 +237,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.patch<{ Params: { id: string } }>('/inbox/threads/:id/assign', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      if (!(await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id))) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
       const body = assignSchema.parse(request.body);
       const atualizado = await svc.assignThread(request.tenantContext!.organizationId, request.params.id, body.userId);
       if (!atualizado) {

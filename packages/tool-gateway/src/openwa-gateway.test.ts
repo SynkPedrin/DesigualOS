@@ -96,4 +96,44 @@ describe('OpenwaGatewayClient', () => {
     expect([...media.bytes]).toEqual([1, 2, 3]);
     expect(media.mimetype).toBe('audio/ogg');
   });
+
+  it('não espera o Chromium subir: start lento ou "já subindo" contam como em andamento', async () => {
+    stub((_url, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'AbortError')));
+    }));
+    const client = new OpenwaGatewayClient({ baseUrl: 'http://openwa.local', apiKey: 'scoped', sessionId: 's1' });
+    await expect(client.requestStart(20)).resolves.toBe('starting');
+
+    stub(() => json({ message: 'Session is already starting' }, 400));
+    await expect(client.requestStart(20)).resolves.toBe('starting');
+
+    stub(() => json({ message: 'Session not found' }, 404));
+    await expect(client.requestStart(20)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('pagina a agenda inteira em janelas de 1000', async () => {
+    const page = (start: number, size: number) => Array.from({ length: size }, (_, i) => ({ id: `${start + i}@c.us`, number: String(start + i), isMyContact: true }));
+    const calls = stub((url) => json(url.includes('offset=0') ? page(0, 1000) : page(1000, 3)));
+    const client = new OpenwaGatewayClient({ baseUrl: 'http://openwa.local', apiKey: 'scoped', sessionId: 's1' });
+    const contacts = await client.contacts();
+    expect(contacts).toHaveLength(1003);
+    expect(contacts[0]).toMatchObject({ isMyContact: true });
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://openwa.local/api/sessions/s1/contacts?limit=1000&offset=0',
+      'http://openwa.local/api/sessions/s1/contacts?limit=1000&offset=1000',
+    ]);
+  });
+
+  it('busca fotos de perfil em lotes de 50 e devolve null para quem não tem', async () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `55119${i}@c.us`);
+    const calls = stub((url) => {
+      const asked = decodeURIComponent(new URL(url).searchParams.get('ids') ?? '').split(',');
+      return json({ pictures: Object.fromEntries(asked.map((id) => [id, id === ids[0] ? 'https://pps.whatsapp.net/a.jpg' : null])) });
+    });
+    const client = new OpenwaGatewayClient({ baseUrl: 'http://openwa.local', apiKey: 'scoped', sessionId: 's1' });
+    const pictures = await client.profilePictures(ids);
+    expect(calls).toHaveLength(2);
+    expect(pictures[ids[0]!]).toBe('https://pps.whatsapp.net/a.jpg');
+    expect(pictures[ids[59]!]).toBeNull();
+  });
 });

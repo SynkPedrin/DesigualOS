@@ -138,7 +138,10 @@ vi.mock('@desigual-os/database', () => {
   const conversationThreads = {
     id: 'ct.id', organizationId: 'ct.organization_id', clientId: 'ct.client_id', contactId: 'ct.contact_id',
     channel: 'ct.channel', status: 'ct.status', assignedToUserId: 'ct.assigned_to_user_id', lastMessageAt: 'ct.last_message_at', createdAt: 'ct.created_at',
+    whatsappSessionId: 'ct.whatsapp_session_id',
   };
+  // Threads deste teste não vêm de sessão OpenWA: o filtro de visibilidade por dono deixa todas passar.
+  const whatsappSessions = { id: 'ws.id', ownerUserId: 'ws.owner_user_id' };
   const threadMessages = {
     id: 'tm.id', threadId: 'tm.thread_id', organizationId: 'tm.organization_id', channel: 'tm.channel', direction: 'tm.direction',
     senderContactId: 'tm.sender_contact_id', senderUserId: 'tm.sender_user_id', content: 'tm.content', attachmentUrl: 'tm.attachment_url',
@@ -152,7 +155,9 @@ vi.mock('@desigual-os/database', () => {
     const params = coletarParams(cond);
     const orgIds = params.filter((p) => [ORG_A, ORG_B].includes(p));
     const threadIds = params.filter((p) => threads.some((t) => t.id === p));
-    const userIds = params.filter((p) => p === JAMILLE);
+    const visibilidade = params.indexOf('ws.owner_user_id');
+    const semVisibilidade = visibilidade >= 0 ? params.filter((_, i) => i !== visibilidade + 1) : params;
+    const userIds = semVisibilidade.filter((p) => p === JAMILLE);
     return threads.filter(
       (t) =>
         (orgIds.length === 0 || orgIds.includes(t.organizationId)) &&
@@ -260,7 +265,7 @@ vi.mock('@desigual-os/database', () => {
         }),
       }),
     },
-    schema: { conversationThreads, threadMessages, contacts: contactsTable, clients, organizationConnectors, whatsappGroups: { id: 'wg.id', name: 'wg.name', avatarUrl: 'wg.avatar_url' } },
+    schema: { conversationThreads, threadMessages, contacts: contactsTable, clients, organizationConnectors, whatsappSessions, whatsappGroups: { id: 'wg.id', name: 'wg.name', avatarUrl: 'wg.avatar_url' } },
   };
 });
 
