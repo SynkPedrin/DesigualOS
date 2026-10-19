@@ -164,4 +164,17 @@ describe('job de sincronização OpenWA em Postgres real', () => {
     const [vencedor] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, novo!.id));
     expect(vencedor!.status).toBe('completed');
   });
+
+  it('dois syncs do mesmo milissegundo: exatamente um continua', async () => {
+    if (!enabled) return;
+    const mesmo = new Date();
+    const [a] = await db.insert(schema.whatsappSyncJobs).values({ organizationId, sessionId: session.id, status: 'queued', phase: 'queued', createdAt: mesmo }).returning();
+    const [b] = await db.insert(schema.whatsappSyncJobs).values({ organizationId, sessionId: session.id, status: 'queued', phase: 'queued', createdAt: mesmo }).returning();
+    // Empate de data: decide o id. O perdedor roda primeiro, com o vencedor ainda na fila.
+    const [perdedor, vencedor] = [a!.id, b!.id].sort();
+    await processOpenwaSyncJob(perdedor!);
+    await processOpenwaSyncJob(vencedor!);
+    const rows = await db.select({ status: schema.whatsappSyncJobs.status }).from(schema.whatsappSyncJobs).where(sql`${schema.whatsappSyncJobs.id} in (${a!.id}, ${b!.id})`);
+    expect(rows.map((r) => r.status).sort()).toEqual(['completed', 'superseded']);
+  });
 });

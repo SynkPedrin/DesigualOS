@@ -385,7 +385,10 @@ async function supersededBy(job: { id: string; sessionId: string; createdAt: Dat
     eq(schema.whatsappSyncJobs.sessionId, job.sessionId),
     sql`${schema.whatsappSyncJobs.id} <> ${job.id}`,
     sql`${schema.whatsappSyncJobs.status} in ('queued','running')`,
-    sql`${schema.whatsappSyncJobs.createdAt} > ${job.createdAt.toISOString()}::timestamptz`,
+    // Comparação no banco, com a precisão de microssegundos dele: dois jobs do
+    // mesmo milissegundo (visto em produção) viravam "mais novo" um do outro
+    // quando a data passava pelo Date do JS, e os dois se aposentavam.
+    sql`(${schema.whatsappSyncJobs.createdAt}, ${schema.whatsappSyncJobs.id}) > (select j.created_at, j.id from whatsapp_sync_jobs j where j.id = ${job.id})`,
   )).limit(1);
   return Boolean(newer);
 }
