@@ -5,6 +5,7 @@ import {
   mapInboxThread,
   type InboxMessage,
   type InboxMessageWire,
+  type InboxThread,
   type InboxThreadStatus,
   type InboxThreadWire,
 } from '@/lib/api/contracts';
@@ -56,13 +57,89 @@ export function useInboxThread(threadId: string | null) {
   });
 }
 
+/**
+ * Busca no servidor sem perder o que chegou ao vivo: a mensagem empurrada pelo
+ * WebSocket (`inbox.message`, ver applyLiveInboxMessage) existe na tela antes
+ * de existir no banco. Se o refetch chegar nesse meio-tempo, ela fica até o
+ * servidor devolvê-la (mesmo externalMessageId) — sem piscar.
+ */
+async function fetchMessages(queryClient: ReturnType<typeof useQueryClient>, threadId: string): Promise<InboxMessage[]> {
+  const wire = await apiFetch<{ messages: InboxMessageWire[] }>(`/inbox/threads/${threadId}/messages`);
+  const server = wire.messages.map(mapInboxMessage);
+  const known = new Set(server.map((m) => m.externalMessageId).filter(Boolean));
+  const previous = queryClient.getQueryData<InboxMessage[]>(['inbox-messages', threadId]) ?? [];
+  const now = Date.now();
+  const pendingLocal = previous.filter((m) =>
+    (m.id.startsWith('wa-') && !known.has(m.externalMessageId) && now - new Date(m.createdAt).getTime() < 60_000) ||
+    (m.id.startsWith('local-') && m.deliveryStatus === 'pending' && !server.some((s) => s.direction === 'outbound' && s.content === m.content && s.attachmentFilename === m.attachmentFilename)),
+  );
+  return pendingLocal.length ? [...server, ...pendingLocal].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : server;
+}
+
+/** Abre a conversa a partir do que já está em memória (ver usePrefetchInboxMessages). */
+export function prefetchInboxMessages(queryClient: ReturnType<typeof useQueryClient>, threadId: string) {
+  return queryClient.prefetchQuery({ queryKey: ['inbox-messages', threadId], queryFn: () => fetchMessages(queryClient, threadId), staleTime: 30_000 });
+}
+
+export interface LiveInboxMessage {
+  chat_id: string;
+  external_id: string;
+  direction: 'inbound' | 'outbound';
+  content: string | null;
+  type: string;
+  has_media: boolean;
+  sender_name: string | null;
+  created_at: string;
+}
+
+const PREVIEW_LABELS: Record<string, string> = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', ptt: 'Áudio', voice: 'Áudio', document: 'Documento', sticker: 'Figurinha' };
+
+/**
+ * Mensagem do WhatsApp na tela no instante em que o webhook chega (antes de o
+ * servidor gravar): sobe a conversa na lista e entra na conversa aberta. O
+ * dado definitivo vem logo depois pelo `inbox.updated`.
+ */
+export function applyLiveInboxMessage(queryClient: ReturnType<typeof useQueryClient>, live: LiveInboxMessage): boolean {
+  let threadId: string | null = null;
+  const preview = live.content ?? PREVIEW_LABELS[live.type] ?? 'Mensagem';
+  for (const [key, threads] of queryClient.getQueriesData<InboxThread[]>({ queryKey: ['inbox-threads'] })) {
+    if (!threads) continue;
+    const found = threads.find((t) => t.externalChatId === live.chat_id);
+    if (!found) continue;
+    threadId = found.id;
+    const updated: InboxThread = {
+      ...found,
+      lastMessageAt: live.created_at,
+      lastMessagePreview: preview,
+      unreadCount: live.direction === 'inbound' ? found.unreadCount + 1 : found.unreadCount,
+    };
+    const rest = threads.filter((t) => t.id !== found.id);
+    const pinned = rest.filter((t) => t.whatsappPinned);
+    const others = rest.filter((t) => !t.whatsappPinned);
+    queryClient.setQueryData(key, updated.whatsappPinned ? [updated, ...pinned, ...others] : [...pinned, updated, ...others]);
+  }
+  if (!threadId) return false;
+  queryClient.setQueryData<InboxMessage[]>(['inbox-messages', threadId], (old) => {
+    if (!old) return old;
+    if (old.some((m) => m.externalMessageId === live.external_id)) return old;
+    // Eco do que esta própria tela acabou de enviar: a bolha local já está lá.
+    if (live.direction === 'outbound' && old.some((m) => m.id.startsWith('local-') && m.content === live.content)) return old;
+    const message: InboxMessage = {
+      id: `wa-${live.external_id}`, direction: live.direction, senderContactId: null, senderUserId: null,
+      senderName: live.sender_name, content: live.content ?? (live.has_media ? null : preview),
+      attachmentUrl: null, attachmentType: null, attachmentFilename: null, attachmentSizeBytes: null,
+      externalMessageId: live.external_id, deliveryStatus: live.direction === 'outbound' ? 'sent' : 'delivered', createdAt: live.created_at,
+    };
+    return [...old, message];
+  });
+  return true;
+}
+
 export function useInboxMessages(threadId: string | null) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ['inbox-messages', threadId],
-    queryFn: async () => {
-      const wire = await apiFetch<{ messages: InboxMessageWire[] }>(`/inbox/threads/${threadId}/messages`);
-      return wire.messages.map(mapInboxMessage);
-    },
+    queryFn: () => fetchMessages(queryClient, threadId!),
     enabled: Boolean(threadId),
     staleTime: 3_000,
     refetchInterval: 4_000,

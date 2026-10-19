@@ -7,6 +7,7 @@ import {
   createWhatsappSyncJob,
   encryptToken,
   gatewayForWhatsappSession,
+  normalizeOpenwaMessage,
   OpenwaGatewayError,
   openwaAdminClient,
   recoverWhatsappWebhookEvent,
@@ -15,7 +16,7 @@ import {
   whatsappWebhookSecret,
   type WhatsappSessionRow,
 } from '@desigual-os/tool-gateway';
-import { enqueueWhatsappSync, enqueueWhatsappWebhook, retryWhatsappSync, retryWhatsappWebhook } from '@desigual-os/orchestrator';
+import { enqueueWhatsappSync, enqueueWhatsappWebhook, publishWsEvent, retryWhatsappSync, retryWhatsappWebhook } from '@desigual-os/orchestrator';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { requireModule } from '../auth/require-module';
 import { requireTenant } from '../lib/tenant-context';
@@ -385,7 +386,28 @@ export async function registerOpenwaRoutes(app: FastifyInstance): Promise<void> 
           signature: typeof signature === 'string' ? signature : undefined,
         });
         if (!event) return { ok: true, ignored: 'unknown_session' };
-        if (event.created) await enqueueWhatsappWebhook(event.id);
+        if (event.created) {
+          // Na tela do dono antes de gravar: gravar leva ~0,5 s (banco em
+          // us-east-1); a tela não precisa esperar isso para mostrar a mensagem.
+          if (envelope.event === 'message.received' || envelope.event === 'message.sent') {
+            const data = (envelope.data && typeof envelope.data === 'object' ? envelope.data : {}) as Record<string, unknown>;
+            const m = normalizeOpenwaMessage(data);
+            if (m.id && m.chatId) {
+              void publishWsEvent({ type: 'inbox.message', payload: {
+                owner_user_id: event.ownerUserId,
+                chat_id: m.chatId,
+                external_id: m.id,
+                direction: m.direction === 'outgoing' ? 'outbound' : 'inbound',
+                content: m.body,
+                type: m.type,
+                has_media: Boolean(m.media),
+                sender_name: m.contact?.name ?? m.contact?.pushName ?? null,
+                created_at: (m.timestamp ? new Date(m.timestamp * 1000) : new Date()).toISOString(),
+              } }).catch(() => undefined);
+            }
+          }
+          await enqueueWhatsappWebhook(event.id);
+        }
         return { ok: true, duplicate: !event.created };
       } catch (error) {
         if (error instanceof Error && error.message === 'INVALID_OPENWA_SIGNATURE') {

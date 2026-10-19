@@ -2,13 +2,14 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { Search, SquarePen } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { ThreadList, INBOX_FILTERS, type InboxFilterKey } from '@/components/inbox/thread-list';
 import { ThreadChat } from '@/components/inbox/thread-chat';
 import { ThreadContextPanel } from '@/components/inbox/thread-context-panel';
-import { useInboxThreads } from '@/hooks/use-inbox';
+import { prefetchInboxMessages, useInboxThreads } from '@/hooks/use-inbox';
 import { useWhatsappOpenwaSessions } from '@/hooks/use-whatsapp-openwa';
 import { useMe } from '@/hooks/use-me';
 import type { InboxThread } from '@/lib/api/contracts';
@@ -88,6 +89,24 @@ function InboxPageContent() {
     });
   }, [threads, filter, busca]);
 
+  // As conversas do topo já ficam carregadas: clicar abre do que está em
+  // memória em vez de esperar o banco (~1 s, ele fica nos EUA). Uma por vez,
+  // para não competir com o que a pessoa está fazendo agora.
+  const queryClient = useQueryClient();
+  const topo = (threads ?? []).slice(0, 12).map((t) => t.id).join(',');
+  useEffect(() => {
+    if (!topo) return;
+    let cancelled = false;
+    const ids = topo.split(',');
+    void (async () => {
+      for (const id of ids) {
+        if (cancelled) return;
+        await prefetchInboxMessages(queryClient, id).catch(() => undefined);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [topo, queryClient]);
+
   function selectThread(id: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set('t', id);
@@ -152,7 +171,7 @@ function InboxPageContent() {
             {filter === 'contatos' ? (
               <ContactsList threads={filtrados} selectedId={selectedId} onSelect={selectThread} />
             ) : (
-              <ThreadList threads={filtrados} isPending={isPending} selectedId={selectedId} onSelect={selectThread} />
+              <ThreadList threads={filtrados} isPending={isPending} selectedId={selectedId} onSelect={selectThread} onHover={(id) => void prefetchInboxMessages(queryClient, id)} />
             )}
           </div>
         </div>
