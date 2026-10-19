@@ -150,4 +150,18 @@ describe('job de sincronização OpenWA em Postgres real', () => {
     const [row] = await db.select().from(schema.threadMessages).where(eq(schema.threadMessages.id, result.message.id));
     expect(row!.metadata.mediaError).toBe('No media stored for this message');
   });
+
+  it('sync duplicado mais antigo se aposenta sem tocar no WhatsApp', async () => {
+    if (!enabled) return;
+    const [antigo] = await db.insert(schema.whatsappSyncJobs).values({ organizationId, sessionId: session.id, status: 'running', phase: 'messages', createdAt: new Date(Date.now() - 60_000) }).returning();
+    const [novo] = await db.insert(schema.whatsappSyncJobs).values({ organizationId, sessionId: session.id, status: 'queued', phase: 'queued' }).returning();
+    const chamadas = (fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    await processOpenwaSyncJob(antigo!.id);
+    expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(chamadas);
+    const [depois] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, antigo!.id));
+    expect(depois!.status).toBe('superseded');
+    await processOpenwaSyncJob(novo!.id);
+    const [vencedor] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, novo!.id));
+    expect(vencedor!.status).toBe('completed');
+  });
 });
