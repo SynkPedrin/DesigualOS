@@ -415,18 +415,42 @@ const LIMITE_CONSULTAS = 50;
 type ResultadoDeConsulta = Awaited<ReturnType<typeof queryOperationTasks>>;
 const consultasEmCache = new Map<string, { em: number; resultado: ResultadoDeConsulta; renovando: boolean }>();
 
-export function chaveDaConsulta(consulta: ConsultaDeWorkspace): string {
+export function chaveDaConsulta(consulta: ConsultaDeWorkspace, assigneeId?: number): string {
   const credencial = createHash('sha256').update(consulta.config.apiKey).digest('hex').slice(0, 12);
   const listas = consulta.listIds ? [...consulta.listIds].sort().join(',') : '*';
-  return `${consulta.config.teamId}|${credencial}|${listas}`;
+  return `${consulta.config.teamId}|${credencial}|${listas}${assigneeId !== undefined ? `|a:${assigneeId}` : ''}`;
 }
 
-async function consultarComCache(consulta: ConsultaDeWorkspace): Promise<ResultadoDeConsulta> {
-  const chave = chaveDaConsulta(consulta);
+/**
+ * `assigneeId` = "minhas tarefas" (só as de um membro). Antes essa visão ia
+ * direto ao ClickUp a cada abertura (~3 s, medido em 19/10/2026); agora usa o
+ * mesmo cache da visão da agência, com a chave própria do membro.
+ */
+/**
+ * Membro do ClickUp por e-mail, por workspace, em memória por 30 min: era uma
+ * chamada à API do ClickUp a cada abertura de "minhas tarefas". Quem não é
+ * membro também fica guardado (null), por 5 min.
+ */
+const membrosEmCache = new Map<string, { em: number; membro: Awaited<ReturnType<typeof findMemberByEmail>> }>();
+async function membroEmCache(config: ConsultaDeWorkspace['config'], email: string) {
+  const chave = `${config.teamId}|${email.toLowerCase()}`;
+  const guardado = membrosEmCache.get(chave);
+  if (guardado && Date.now() - guardado.em < (guardado.membro ? 30 : 5) * 60_000) return guardado.membro;
+  const membro = await findMemberByEmail(config, email);
+  if (membrosEmCache.size > 500) membrosEmCache.clear();
+  membrosEmCache.set(chave, { em: Date.now(), membro });
+  return membro;
+}
+
+async function consultarComCache(consulta: ConsultaDeWorkspace, assigneeId?: number): Promise<ResultadoDeConsulta> {
+  const chave = chaveDaConsulta(consulta, assigneeId);
   const agora = Date.now();
   const guardado = consultasEmCache.get(chave);
   const buscar = () =>
-    queryOperationTasks(consulta.config, consulta.listIds ? { listIds: consulta.listIds } : {});
+    queryOperationTasks(consulta.config, {
+      ...(consulta.listIds ? { listIds: consulta.listIds } : {}),
+      ...(assigneeId !== undefined ? { assigneeIds: [assigneeId] } : {}),
+    });
 
   if (guardado && agora - guardado.em < VALIDADE_MS) {
     if (agora - guardado.em >= FRESCO_MS && !guardado.renovando) {
@@ -467,6 +491,7 @@ async function consultarComCache(consulta: ConsultaDeWorkspace): Promise<Resulta
  */
 export function esquecerTarefasEmCache(): void {
   consultasEmCache.clear();
+  membrosEmCache.clear();
 }
 
 const TTL_RESUMO_MS = 60_000;
@@ -1051,20 +1076,22 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
    * quando a pessoa não bate em workspace NENHUM.
    */
   app.get('/clickup/tasks/me', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
-    // Vincula sozinho quando dá para saber quem é (garantirEmailDoClickUp).
-    await garantirEmailDoClickUp(request.authUser?.id ?? '').catch(() => null);
-    const [user] = await db.select().from(schema.users).where(eq(schema.users.id, request.authUser?.id ?? ''));
-    if (!user?.clickupEmail) {
-      reply.code(409);
-      return { error: 'No ClickUp email linked for this user yet' };
-    }
-
     const autenticado = request.authUser;
     if (!autenticado) {
       reply.code(401);
       return { error: 'Not authenticated' };
     }
-    const escopo = await escopoDeOrganizacao(autenticado);
+    // E-mail do ClickUp e escopo não dependem um do outro: juntos, não em fila.
+    // garantirEmailDoClickUp já devolve o e-mail — a segunda leitura de users saiu.
+    const [clickupEmail, escopo] = await Promise.all([
+      garantirEmailDoClickUp(autenticado.id).catch(() => null),
+      escopoDeOrganizacao(autenticado),
+    ]);
+    if (!clickupEmail) {
+      reply.code(409);
+      return { error: 'No ClickUp email linked for this user yet' };
+    }
+    const user = { clickupEmail };
     const proprias = new Set(escopo.organizationIds);
     const clientByListId = await clientsByClickUpListId(autenticado, escopo);
 
@@ -1090,7 +1117,7 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
         await Promise.all(
           consultas.map(async (consulta) => ({
             consulta,
-            member: await findMemberByEmail(consulta.config, user.clickupEmail!),
+            member: await membroEmCache(consulta.config, user.clickupEmail),
           })),
         )
       ).filter((c) => c.member !== null);
@@ -1100,14 +1127,7 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
         return { error: 'Linked ClickUp email does not match any member of any visible workspace' };
       }
 
-      const resultados = await Promise.all(
-        comMembro.map(({ consulta, member }) =>
-          queryOperationTasks(consulta.config, {
-            ...(consulta.listIds ? { listIds: consulta.listIds } : {}),
-            assigneeIds: [member!.id],
-          }),
-        ),
-      );
+      const resultados = await Promise.all(comMembro.map(({ consulta, member }) => consultarComCache(consulta, member!.id)));
       const tasks = semDuplicatas(resultados.flatMap((r) => r.tasks));
       const truncated = resultados.some((r) => r.truncated);
       return {

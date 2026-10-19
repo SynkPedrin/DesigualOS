@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { AuthenticatedUser } from '../auth/middleware';
 
@@ -92,7 +92,8 @@ export async function participantMemberIdsByEvent(eventIds: string[]): Promise<M
   const linhas = await db
     .select({ eventId: schema.calendarEventParticipants.eventId, memberId: schema.calendarEventParticipants.memberId })
     .from(schema.calendarEventParticipants)
-    .where(or(...eventIds.map((id) => eq(schema.calendarEventParticipants.eventId, id))));
+    // Uma lista (IN), não um OR por evento: um mês de agenda virava uma consulta de centenas de termos.
+    .where(inArray(schema.calendarEventParticipants.eventId, eventIds));
   for (const linha of linhas) {
     if (!linha.memberId) continue;
     const atual = mapa.get(linha.eventId) ?? new Set<string>();
