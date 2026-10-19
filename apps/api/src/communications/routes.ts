@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CONVERSATION_STATUSES } from '@desigual-os/types';
-import { parseEvolutionWebhookEvent, phoneFromRemoteJid } from '@desigual-os/tool-gateway';
+import { parseEvolutionWebhookEvent, phoneFromRemoteJid, WHATSAPP_MEDIA_MAX_BYTES } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { requireModule } from '../auth/require-module';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import * as svc from './service';
+import { sendMediaFast, sendTextFast } from './openwa-send';
 
 /**
  * communications/routes.ts — Inbox (P1-A/C, 06/10/2026).
@@ -151,6 +152,12 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
         return { error: `Thread '${request.params.id}' not found` };
       }
       const body = sendMessageSchema.parse(request.body);
+      if (thread.whatsappSessionId) {
+        const rapido = await sendTextFast({ organizationId: request.tenantContext!.organizationId, thread, senderUserId: request.authUser!.id, text: body.text });
+        if (!rapido.ok) { reply.code(409); return { error: rapido.detail }; }
+        reply.code(201);
+        return presentMessage(rapido.message);
+      }
       const resultado = await svc.sendOutboundMessage({
         organizationId: request.tenantContext!.organizationId,
         threadId: request.params.id,
@@ -175,12 +182,28 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     authed.post<{ Params: { id: string } }>('/inbox/threads/:id/messages/media', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
       const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
-      const file = await request.file();
+      // Limite próprio da Inbox (o global do servidor segue 25 MB para as outras rotas).
+      const file = await request.file({ limits: { fileSize: WHATSAPP_MEDIA_MAX_BYTES } });
       if (!file) { reply.code(400); return { error: 'Nenhum arquivo enviado.' }; }
       const fields = file.fields as Record<string, { value?: unknown }>;
       const caption = typeof fields.caption?.value === 'string' ? fields.caption.value.slice(0, 1024) : undefined;
       const voiceNote = fields.voiceNote?.value === 'true' || fields.voiceNote?.value === true;
       try {
+        if (thread.whatsappSessionId) {
+          const rapido = await sendMediaFast({
+            organizationId: request.tenantContext!.organizationId,
+            thread,
+            senderUserId: request.authUser!.id,
+            bytes: await file.toBuffer(),
+            mimetype: file.mimetype,
+            filename: file.filename,
+            caption,
+            voiceNote,
+          });
+          if (!rapido.ok) { reply.code(409); return { error: rapido.detail }; }
+          reply.code(201);
+          return presentMessage(rapido.message);
+        }
         const resultado = await svc.sendOutboundMediaMessage({
           organizationId: request.tenantContext!.organizationId,
           threadId: thread.id,

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { OpenwaGatewayError, normalizeOpenwaMessage, type OpenwaMessage } from './openwa-gateway';
-import { gatewayForWhatsappSession, whatsappSessionByExternalId, whatsappSessionById, whatsappWebhookSecret, type WhatsappSessionRow } from './openwa-session-store';
+import { cachedWhatsappSession, gatewayForWhatsappSession, whatsappSessionById, whatsappWebhookSecret, type WhatsappSessionRow } from './openwa-session-store';
 import { saveWhatsappMedia, WHATSAPP_MEDIA_MAX_BYTES } from './openwa-media-store';
 
 export const LIMITE_PADRAO_HISTORICO = 10;
@@ -124,7 +124,30 @@ async function ensureThread(input: {
   return created!;
 }
 
+/**
+ * Conversa e contato de cada chat em memória por 5 min. O banco fica nos EUA
+ * (~130 ms por ida a partir da VPS), e cada mensagem recebida resolvia os dois
+ * de novo — metade do tempo entre o WhatsApp e a Inbox (medido: 2,4 s p50).
+ * Só ids e o necessário para gravar; nome e foto se atualizam no sync.
+ */
+const HOT_TTL_MS = 5 * 60_000;
+const hotThreads = new Map<string, { thread: Thread; contact: Contact | null; at: number }>();
+
+function hotKey(session: Session, message: OpenwaMessage): string {
+  return `${session.id}|${message.chatId}|${message.isGroup ? message.author ?? message.from ?? '' : ''}|${message.direction}`;
+}
+
 async function threadAndSender(session: Session, message: OpenwaMessage) {
+  const key = hotKey(session, message);
+  const hit = hotThreads.get(key);
+  if (hit && Date.now() - hit.at < HOT_TTL_MS) return { thread: hit.thread, senderContact: hit.contact };
+  const resolved = await resolveThreadAndSender(session, message);
+  if (hotThreads.size > 5000) hotThreads.clear();
+  hotThreads.set(key, { thread: resolved.thread, contact: resolved.senderContact, at: Date.now() });
+  return resolved;
+}
+
+async function resolveThreadAndSender(session: Session, message: OpenwaMessage) {
   const isGroup = message.isGroup || message.kind === 'group' || message.chatId.endsWith('@g.us');
   const contactExternalId = isGroup ? message.author ?? message.from ?? 'desconhecido@lid' : message.chatId;
   const contact = isGroup && message.direction === 'outgoing'
@@ -181,22 +204,16 @@ async function attachMedia(session: Session, row: Message, message: OpenwaMessag
   }
 }
 
+/** Uma ida ao banco: a própria UPDATE decide se esta é a mensagem mais nova. */
 async function touchThread(thread: Thread, message: OpenwaMessage, created: boolean, countUnread: boolean): Promise<void> {
-  const at = occurredAt(message);
-  const [current] = await db.select({ lastMessageAt: schema.conversationThreads.lastMessageAt }).from(schema.conversationThreads).where(eq(schema.conversationThreads.id, thread.id)).limit(1);
-  const isNewest = !current?.lastMessageAt || at >= current.lastMessageAt;
-  const patch: Record<string, unknown> = {};
-  if (isNewest) {
-    patch.lastMessageAt = at;
-    patch.lastMessagePreview = preview(message);
-    patch.status = message.direction === 'incoming' ? 'waiting_agency' : 'waiting_client';
-  }
-  if (created && countUnread && message.direction === 'incoming') {
-    patch.unreadCount = sql`${schema.conversationThreads.unreadCount} + 1`;
-  }
-  if (Object.keys(patch).length > 0) {
-    await db.update(schema.conversationThreads).set(patch).where(eq(schema.conversationThreads.id, thread.id));
-  }
+  const at = occurredAt(message).toISOString();
+  const newest = sql`(${schema.conversationThreads.lastMessageAt} is null or ${schema.conversationThreads.lastMessageAt} <= ${at}::timestamptz)`;
+  await db.update(schema.conversationThreads).set({
+    lastMessageAt: sql`case when ${newest} then ${at}::timestamptz else ${schema.conversationThreads.lastMessageAt} end`,
+    lastMessagePreview: sql`case when ${newest} then ${preview(message)} else ${schema.conversationThreads.lastMessagePreview} end`,
+    status: sql`case when ${newest} then ${message.direction === 'incoming' ? 'waiting_agency' : 'waiting_client'} else ${schema.conversationThreads.status} end`,
+    ...(created && countUnread && message.direction === 'incoming' ? { unreadCount: sql`${schema.conversationThreads.unreadCount} + 1` } : {}),
+  }).where(eq(schema.conversationThreads.id, thread.id));
 }
 
 // Função, não constante: lido no import, quebraria quem simula o schema sem esta tabela.
@@ -236,6 +253,21 @@ export async function persistOpenwaMessage(input: {
   if (!message.id || !message.chatId) throw new Error('Mensagem OpenWA sem id ou chatId');
   const { thread, senderContact } = await threadAndSender(session, message);
   const values = messageValues(session, thread, senderContact, message);
+  // Enviada pela Inbox e ainda sem id externo (a entrega roda em segundo
+  // plano, ver apps/api/src/communications/openwa-send.ts): a confirmação do
+  // WhatsApp preenche a pendente em vez de virar uma segunda bolha igual.
+  if (message.direction === 'outgoing') {
+    const [pending] = await db.update(schema.threadMessages).set({ externalMessageId: message.id, deliveryStatus: values.deliveryStatus }).where(and(
+      eq(schema.threadMessages.threadId, thread.id),
+      eq(schema.threadMessages.direction, 'outbound'),
+      eq(schema.threadMessages.deliveryStatus, 'pending'),
+      sql`${schema.threadMessages.externalMessageId} is null`,
+      sql`${schema.threadMessages.createdAt} > now() - interval '10 minutes'`,
+      message.body ? eq(schema.threadMessages.content, message.body) : sql`${schema.threadMessages.attachmentType} is not null`,
+      sql`${schema.threadMessages.id} = (select m.id from thread_messages m where m.thread_id = ${thread.id} and m.direction = 'outbound' and m.delivery_status = 'pending' and m.external_message_id is null order by m.created_at limit 1)`,
+    )).returning();
+    if (pending) return { created: false, message: pending, mediaImported: false };
+  }
   const [inserted] = await db.insert(schema.threadMessages).values(values).onConflictDoNothing({ target: messageConflictTarget() }).returning();
   let row = inserted;
   if (!row) {
@@ -569,7 +601,7 @@ export async function registerOpenwaWebhookEvent(input: {
   rawBody: string;
   signature: string | undefined;
 }): Promise<{ id: string; created: boolean } | null> {
-  const session = await whatsappSessionByExternalId(input.externalSessionId);
+  const session = await cachedWhatsappSession('external', input.externalSessionId);
   if (!session) return null;
   const { assinaturaOpenwaValida } = await import('./openwa-signature');
   if (!assinaturaOpenwaValida(input.rawBody, input.signature, whatsappWebhookSecret(session))) {
@@ -591,7 +623,7 @@ export async function registerOpenwaWebhookEvent(input: {
 export async function processOpenwaWebhookEvent(eventId: string): Promise<{ syncSessionId?: string; ownerUserId?: string; threadId?: string; inboxChanged?: boolean }> {
   const [event] = await db.select().from(schema.whatsappWebhookEvents).where(eq(schema.whatsappWebhookEvents.id, eventId)).limit(1);
   if (!event || event.status === 'processed' || event.status === 'ignored') return {};
-  const session = await whatsappSessionById(event.sessionId);
+  const session = event.eventType.startsWith('message.') ? await cachedWhatsappSession('id', event.sessionId) : await whatsappSessionById(event.sessionId);
   if (!session) throw new Error('Sessão do evento não encontrada');
   await db.update(schema.whatsappWebhookEvents).set({ status: 'processing', attempts: event.attempts + 1, error: null }).where(eq(schema.whatsappWebhookEvents.id, eventId));
   try {
