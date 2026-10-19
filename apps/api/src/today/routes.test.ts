@@ -20,6 +20,8 @@ const state = vi.hoisted(() => ({
   user: { id: 'user-1', roles: ['master'], permissions: [] } as { id: string; roles: string[]; permissions: never[] },
   /** url da rota de origem -> status que ela deve devolver neste teste. */
   falhas: {} as Record<string, number>,
+  /** url da rota de origem que nunca responde neste teste. */
+  presa: null as string | null,
   chamadas: [] as Array<{ url: string; organizationId: unknown; authorization: unknown }>,
 }));
 
@@ -45,6 +47,7 @@ function stub(caminho: string, payload: unknown) {
       organizationId: request.headers['x-organization-id'],
       authorization: request.headers['authorization'],
     });
+    if (state.presa === caminho) return new Promise(() => undefined);
     const falha = state.falhas[caminho];
     if (falha) {
       reply.code(falha);
@@ -126,5 +129,23 @@ describe('/today/summary', () => {
     expect(urls).toContain('/inbox/threads?status=waiting_agency&assigned=me&limit=30');
     expect(urls).toContain('/inbox/threads?assigned=me&limit=4');
     expect(urls).toContain('/approvals?status=pending&limit=30');
+  });
+
+  it('seção que nunca responde vira falha só dela, as outras voltam (teto por seção)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      state.presa = '/clickup/tasks/agency';
+      const pendente = app.inject({ method: 'GET', url: `/today/summary?from=${encodeURIComponent('2026-10-19T03:00:00.000Z')}&to=${encodeURIComponent('2026-10-20T02:59:59.999Z')}`, headers: { authorization: 'Bearer t' } });
+      await vi.advanceTimersByTimeAsync(8_100);
+      const res = await pendente;
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.tarefas_da_agencia).toEqual({ ok: false, status: 504 });
+      expect(body.minhas_tarefas.ok).toBe(true);
+      expect(body.me.ok).toBe(true);
+    } finally {
+      state.presa = null;
+      vi.useRealTimers();
+    }
   });
 });

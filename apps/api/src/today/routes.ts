@@ -40,6 +40,8 @@ const logger = createLogger({ service: 'today-summary' });
 const TETO_DE_PAGINA = 30;
 /** As 4 conversas do painel "Conversas recentes" (RECENTES_NO_RODAPE na página). */
 const RECENTES_NO_RODAPE = 4;
+/** Quanto uma seção pode levar antes de virar falha só dela. */
+const SECAO_TETO_MS = 8_000;
 
 const querySchema = z.object({
   from: z.string().datetime(),
@@ -81,8 +83,14 @@ export async function registerTodayRoutes(app: FastifyInstance): Promise<void> {
     };
 
     const entradas = Object.entries(pedidos);
+    // Teto por seção: uma seção lenta ou presa vira falha só dela, nunca a
+    // tela inteira esperando até o navegador desistir aos 30 s (19/10/2026:
+    // uma subchamada presa derrubava os quatro cartões de uma vez).
     const resultados = await Promise.allSettled(
-      entradas.map(([, url]) => app.inject({ method: 'GET', url, headers })),
+      entradas.map(([nome, url]) => Promise.race([
+        app.inject({ method: 'GET', url, headers }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`seção ${nome} passou de ${SECAO_TETO_MS} ms`)), SECAO_TETO_MS)),
+      ])),
     );
 
     type Secoes = SecoesDoResumoDeHoje<unknown, unknown, unknown, unknown, unknown, unknown, unknown>;
@@ -95,7 +103,7 @@ export async function registerTodayRoutes(app: FastifyInstance): Promise<void> {
         // O inject em si explodir é o caso que não devolve resposta nenhuma —
         // vira falha de seção, nunca 500 do resumo inteiro.
         logger.warn({ error: resultado.reason, secao: nome }, 'Seção do resumo de hoje falhou sem resposta');
-        secoes[nome as keyof Secoes] = { ok: false, status: 500 };
+        secoes[nome as keyof Secoes] = { ok: false, status: String(resultado.reason).includes('passou de') ? 504 : 500 };
         return;
       }
       const res = resultado.value;
