@@ -374,6 +374,24 @@ const CONTATOS_EM_PARALELO = 8;
  * por último a agenda — que pode ter milhares de entradas e não bloqueia
  * mais a Inbox como bloqueava quando vinha primeiro.
  */
+/**
+ * Há outro sync mais novo para a mesma sessão? Então este se aposenta: dois
+ * jobs martelando o mesmo navegador só dobram a carga (visto em produção: 3
+ * syncs simultâneos da mesma sessão, criados antes da trava de criação). O
+ * mais novo vence porque é ele que a tela mostra como "o sync".
+ */
+async function supersededBy(job: { id: string; sessionId: string; createdAt: Date }): Promise<boolean> {
+  const [newer] = await db.select({ id: schema.whatsappSyncJobs.id }).from(schema.whatsappSyncJobs).where(and(
+    eq(schema.whatsappSyncJobs.sessionId, job.sessionId),
+    sql`${schema.whatsappSyncJobs.id} <> ${job.id}`,
+    sql`${schema.whatsappSyncJobs.status} in ('queued','running')`,
+    sql`${schema.whatsappSyncJobs.createdAt} > ${job.createdAt.toISOString()}::timestamptz`,
+  )).limit(1);
+  return Boolean(newer);
+}
+
+class SupersededSync extends Error {}
+
 /** OpenWA ocupado/lento ou WhatsApp Web ainda carregando: vale esperar e tentar de novo. */
 function transient(error: unknown): boolean {
   if (error instanceof OpenwaGatewayError) return error.retryable || error.status === 409 || error.status === 400;
@@ -387,7 +405,11 @@ function transient(error: unknown): boolean {
  */
 export async function processOpenwaSyncJob(jobId: string, options: { finalAttempt?: boolean; onProgress?: (ownerUserId: string) => void } = {}): Promise<{ firstForSession: boolean; sessionId?: string }> {
   const [job] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, jobId)).limit(1);
-  if (!job || ['completed', 'completed_with_errors'].includes(job.status)) return { firstForSession: false };
+  if (!job || ['completed', 'completed_with_errors', 'superseded'].includes(job.status)) return { firstForSession: false };
+  if (await supersededBy(job)) {
+    await updateSyncJob(jobId, { status: 'superseded', phase: 'superseded', finishedAt: new Date() });
+    return { firstForSession: false };
+  }
   const session = await whatsappSessionById(job.sessionId);
   if (!session) throw new Error('Sessão da sincronização não encontrada');
   const client = gatewayForWhatsappSession(session);
@@ -445,7 +467,10 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
       processedChats += 1;
       await updateSyncJob(jobId, progress());
       // A Inbox se monta enquanto o sync anda: aviso a cada 10 conversas.
-      if (processedChats % 10 === 0) options.onProgress?.(session.ownerUserId);
+      if (processedChats % 10 === 0) {
+        options.onProgress?.(session.ownerUserId);
+        if (await supersededBy(job)) throw new SupersededSync();
+      }
     });
 
     await updateSyncJob(jobId, { phase: 'photos' });
@@ -502,6 +527,10 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
     options.onProgress?.(session.ownerUserId);
     return { firstForSession: !session.lastSyncAt, sessionId: session.id };
   } catch (error) {
+    if (error instanceof SupersededSync) {
+      await updateSyncJob(jobId, { status: 'superseded', phase: 'superseded', ...progress(), finishedAt: new Date() });
+      return { firstForSession: false };
+    }
     if (transient(error) && options.finalAttempt === false) {
       await updateSyncJob(jobId, { status: 'queued', phase: 'queued', error: 'O WhatsApp ainda está carregando as conversas do celular. Tentando de novo em instantes.', failures });
     } else {
