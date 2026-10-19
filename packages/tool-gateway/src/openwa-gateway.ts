@@ -262,8 +262,14 @@ export class OpenwaGatewayClient {
     await this.request('PUT', this.sessionPath(`/webhooks/${encodeURIComponent(webhookId)}`), input);
   }
 
+  /**
+   * Lenta de propósito no OpenWA: monta no navegador o modelo de cada conversa
+   * (grupo busca metadados no WhatsApp). Logo após conectar, com o celular
+   * ainda enviando o histórico, uma conta grande passa de minutos — medido em
+   * produção em 19/10/2026: >170 s. Por isso o limite próprio, bem maior.
+   */
   async chats(): Promise<OpenwaChat[]> {
-    const response = await this.request('GET', this.sessionPath('/chats?limit=1000'));
+    const response = await this.request('GET', this.sessionPath('/chats?limit=1000'), undefined, {}, 10 * 60_000);
     const rows = await response.json() as Array<Record<string, unknown>>;
     return rows.map((raw) => ({
       id: String(raw.id ?? ''),
@@ -327,7 +333,7 @@ export class OpenwaGatewayClient {
 
   async history(chatId: string, limit = 10): Promise<OpenwaMessage[]> {
     try {
-      const response = await this.request('GET', this.sessionPath(`/messages/${encodeURIComponent(chatId)}/history?limit=${limit}&includeMedia=false`));
+      const response = await this.request('GET', this.sessionPath(`/messages/${encodeURIComponent(chatId)}/history?limit=${limit}&includeMedia=false`), undefined, {}, 90_000);
       const rows = await response.json() as Array<Record<string, unknown>>;
       return rows.map(normalizeMessage);
     } catch (error) {

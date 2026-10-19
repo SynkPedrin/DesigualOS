@@ -45,7 +45,7 @@ function stateOf(session: WhatsappOpenwaSession | null, connecting: boolean) {
   if (session.status === 'authenticating') return { label: 'Autenticando', detail: 'QR lido. Aguarde a confirmação do WhatsApp.', tone: 'warning' };
   if (session.status === 'qr_ready') return { label: 'Aguardando leitura', detail: 'Escaneie o QR Code com o celular.', tone: 'warning' };
   if (session.status === 'created' || session.status === 'initializing') return { label: 'Aguardando QR Code', detail: 'O OpenWA está preparando a autenticação.', tone: 'warning' };
-  if (session.status === 'ready' && sync && ['queued', 'running'].includes(sync.status)) return { label: 'Sincronizando', detail: 'Contatos, conversas, mensagens e mídias estão sendo importados.', tone: 'warning' };
+  if (session.status === 'ready' && sync && ['queued', 'running'].includes(sync.status)) return { label: 'Sincronizando', detail: sync.error ?? 'Contatos, conversas, mensagens e mídias estão sendo importados.', tone: 'warning' };
   if (sync?.status === 'failed') return { label: 'Erro de sincronização', detail: sync.error ?? 'A sincronização falhou. Você pode tentar novamente.', tone: 'error' };
   if (session.status === 'ready' && sync?.status === 'completed_with_errors') return { label: 'Sincronizado com pendências', detail: `${sync.failures.length} item(ns) precisam de atenção.`, tone: 'warning' };
   if (session.status === 'ready') return { label: sync?.status === 'completed' ? 'Sincronizado' : 'Conectado', detail: 'A sessão está ativa e o recebimento automático está habilitado.', tone: 'success' };
@@ -252,7 +252,7 @@ function SyncProgress({ session }: { session: WhatsappOpenwaSession }) {
       {running && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-grafite-elevado"><div className="h-full w-1/3 animate-pulse rounded-full bg-sinal" /></div>}
       <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div><p className="text-nevoa">Contatos</p><p className="mt-1 text-branco-cru">{sync.processed_contacts}</p></div><div><p className="text-nevoa">Conversas</p><p className="mt-1 text-branco-cru">{sync.processed_chats}</p></div><div><p className="text-nevoa">Mensagens</p><p className="mt-1 text-branco-cru">{sync.processed_messages}</p></div></div>
       {sync.failures.length > 0 && <p className="mt-3 text-xs text-aviso">{sync.failures.length} pendência(s). Consulte Gerenciar conexão para tentar novamente.</p>}
-      {sync.error && <p className="mt-3 text-xs text-erro">{sync.error}</p>}
+      {sync.error && <p className={cn('mt-3 text-xs', running ? 'text-nevoa' : 'text-erro')}>{sync.error}</p>}
     </div>
   );
 }

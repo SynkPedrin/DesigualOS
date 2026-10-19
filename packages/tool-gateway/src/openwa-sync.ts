@@ -357,7 +357,18 @@ const CONTATOS_EM_PARALELO = 8;
  * por último a agenda — que pode ter milhares de entradas e não bloqueia
  * mais a Inbox como bloqueava quando vinha primeiro.
  */
-export async function processOpenwaSyncJob(jobId: string): Promise<void> {
+/** OpenWA ocupado/lento ou WhatsApp Web ainda carregando: vale esperar e tentar de novo. */
+function transient(error: unknown): boolean {
+  if (error instanceof OpenwaGatewayError) return error.retryable || error.status === 409 || error.status === 400;
+  return false;
+}
+
+/**
+ * `finalAttempt` vem do worker: enquanto houver nova tentativa agendada, a
+ * falha passageira não aparece como "Erro de sincronização" na tela — o job
+ * volta para a fila com uma explicação que a pessoa entende.
+ */
+export async function processOpenwaSyncJob(jobId: string, options: { finalAttempt?: boolean } = {}): Promise<void> {
   const [job] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, jobId)).limit(1);
   if (!job || ['completed', 'completed_with_errors'].includes(job.status)) return;
   const session = await whatsappSessionById(job.sessionId);
@@ -467,7 +478,11 @@ export async function processOpenwaSyncJob(jobId: string): Promise<void> {
     await updateSyncJob(jobId, { status, phase: status, ...progress(), finishedAt: new Date() });
     await db.update(schema.whatsappSessions).set({ lastSyncAt: new Date(), lastError: failures.length ? `${failures.length} pendência(s) na sincronização` : null }).where(eq(schema.whatsappSessions.id, session.id));
   } catch (error) {
-    await updateSyncJob(jobId, { status: 'failed', phase: 'failed', error: reason(error), failures, finishedAt: new Date() });
+    if (transient(error) && options.finalAttempt === false) {
+      await updateSyncJob(jobId, { status: 'queued', phase: 'queued', error: 'O WhatsApp ainda está carregando as conversas do celular. Tentando de novo em instantes.', failures });
+    } else {
+      await updateSyncJob(jobId, { status: 'failed', phase: 'failed', error: reason(error), failures, finishedAt: new Date() });
+    }
     throw error;
   }
 }
