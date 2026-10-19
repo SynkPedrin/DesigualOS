@@ -188,6 +188,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
       const fields = file.fields as Record<string, { value?: unknown }>;
       const caption = typeof fields.caption?.value === 'string' ? fields.caption.value.slice(0, 1024) : undefined;
       const voiceNote = fields.voiceNote?.value === 'true' || fields.voiceNote?.value === true;
+      const asSticker = fields.sticker?.value === 'true' || fields.sticker?.value === true;
       try {
         if (thread.whatsappSessionId) {
           const rapido = await sendMediaFast({
@@ -199,6 +200,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
             filename: file.filename,
             caption,
             voiceNote,
+            asSticker,
           });
           if (!rapido.ok) { reply.code(409); return { error: rapido.detail }; }
           reply.code(201);
@@ -224,6 +226,32 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
         reply.code(400);
         return { error: error instanceof Error ? error.message : 'Arquivo inválido.' };
       }
+    });
+
+    authed.get('/inbox/stickers', { preHandler: requirePermission('communications', 'read') }, async (request) => {
+      const stickers = await svc.listRecentStickers(request.tenantContext!.organizationId, request.authUser!.id);
+      return { stickers: stickers.map((s) => ({ message_id: s.id, url: `/inbox/messages/${s.id}/media` })) };
+    });
+
+    // Reenvia uma figurinha de "Suas figurinhas" sem o navegador baixar e subir o arquivo de novo.
+    authed.post<{ Params: { id: string } }>('/inbox/threads/:id/messages/sticker', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
+      if (!thread?.whatsappSessionId) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
+      const body = z.object({ messageId: z.string().uuid() }).parse(request.body);
+      const media = await svc.getMessageMedia(request.tenantContext!.organizationId, body.messageId, request.authUser!.id);
+      if (!media) { reply.code(404); return { error: 'Figurinha não encontrada.' }; }
+      const rapido = await sendMediaFast({
+        organizationId: request.tenantContext!.organizationId,
+        thread,
+        senderUserId: request.authUser!.id,
+        bytes: media.bytes,
+        mimetype: media.message.attachmentType ?? 'image/webp',
+        filename: media.message.attachmentFilename ?? 'figurinha.webp',
+        asSticker: true,
+      });
+      if (!rapido.ok) { reply.code(409); return { error: rapido.detail }; }
+      reply.code(201);
+      return presentMessage(rapido.message);
     });
 
     authed.get<{ Params: { id: string } }>('/inbox/messages/:id/media', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {

@@ -111,10 +111,11 @@ export function useSendInboxMessage(threadId: string) {
 export function useSendInboxMedia(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { file: File; caption?: string; voiceNote?: boolean }) => {
+    mutationFn: (input: { file: File; caption?: string; voiceNote?: boolean; sticker?: boolean }) => {
       const body = new FormData();
       if (input.caption) body.append('caption', input.caption);
       if (input.voiceNote) body.append('voiceNote', 'true');
+      if (input.sticker) body.append('sticker', 'true');
       body.append('file', input.file);
       return apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages/media`, { method: 'POST', body }, { timeoutMs: 600_000 });
     },
@@ -129,6 +130,32 @@ export function useSendInboxMedia(threadId: string) {
     }),
     onSuccess: (wire, _input, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, mapInboxMessage(wire)); },
     onError: (_error, _input, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, null); },
+    onSettled: () => invalidateThread(queryClient, threadId),
+  });
+}
+
+export interface InboxSticker { messageId: string; url: string }
+
+/** Figurinhas que passaram pelo WhatsApp de quem está logado (ver listRecentStickers na API). */
+export function useInboxStickers(enabled: boolean) {
+  return useQuery({
+    queryKey: ['inbox-stickers'],
+    queryFn: async () => (await apiFetch<{ stickers: Array<{ message_id: string; url: string }> }>('/inbox/stickers')).stickers.map((s): InboxSticker => ({ messageId: s.message_id, url: s.url })),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useSendInboxSticker(threadId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sticker: InboxSticker) =>
+      apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages/sticker`, { method: 'POST', body: JSON.stringify({ messageId: sticker.messageId }) }),
+    onMutate: (sticker) => ({
+      localId: optimistic(queryClient, threadId, { attachmentUrl: sticker.url, attachmentType: 'image/webp', attachmentFilename: 'figurinha.webp' }),
+    }),
+    onSuccess: (wire, _s, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, mapInboxMessage(wire)); },
+    onError: (_e, _s, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, null); },
     onSettled: () => invalidateThread(queryClient, threadId),
   });
 }

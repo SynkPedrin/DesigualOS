@@ -154,6 +154,11 @@ export class OpenwaClient {
     return this.enviarMedia('send-audio', { ...this.corpoDeMidia(input), ...(input.ptt ? { ptt: true } : {}) }, input.idempotencyKey);
   }
 
+  /** POST /api/sessions/:sessionId/messages/send-sticker — o WhatsApp converte qualquer imagem em figurinha. */
+  async sendSticker(input: { chatId: string; url?: string; base64?: string; mimetype: string; filename?: string; idempotencyKey?: string }): Promise<OpenwaSentMessage> {
+    return this.enviarMedia('send-sticker', this.corpoDeMidia(input), input.idempotencyKey);
+  }
+
   /** POST /api/sessions/:sessionId/messages/send-document */
   async sendDocument(input: { chatId: string; url?: string; base64?: string; mimetype: string; filename: string; idempotencyKey?: string }): Promise<OpenwaSentMessage> {
     return this.enviarMedia('send-document', this.corpoDeMidia(input), input.idempotencyKey);

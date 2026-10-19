@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronLeft, Download, FileText, MessageCircle, Mic, MoreHorizontal, Paperclip, Pause, Phone, Play, RotateCcw, Search, Smile, Square, Video, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { useInboxMessages, useInboxThread, useMarkInboxRead, useSendInboxMedia, useSendInboxMessage } from '@/hooks/use-inbox';
-import { ApiRequestError, apiBlob } from '@/lib/api/client';
+import { useInboxMessages, useInboxThread, useMarkInboxRead, useSendInboxMedia, useSendInboxMessage, useSendInboxSticker } from '@/hooks/use-inbox';
+import { ApiRequestError } from '@/lib/api/client';
 import type { InboxMessage } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 import { InboxAvatar } from './inbox-avatar';
+import { EmojiStickerPicker } from './emoji-sticker-picker';
+import { useProtectedObjectUrl } from './use-protected-object-url';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -20,32 +22,6 @@ function formatBytes(value: number | null): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function useProtectedObjectUrl(source: string | null) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  useEffect(() => {
-    if (!source) { setUrl(null); return; }
-    let objectUrl: string | null = null;
-    let active = true;
-    setLoading(true);
-    setError(null);
-    apiBlob(source).then((blob) => {
-      if (!active) return;
-      objectUrl = URL.createObjectURL(blob);
-      setUrl(objectUrl);
-    }).catch((reason) => {
-      if (active) setError(reason);
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [source]);
-  return { url, loading, error };
-}
 
 function AttachmentView({ message, onImageOpen }: { message: InboxMessage; onImageOpen: (url: string) => void }) {
   const media = useProtectedObjectUrl(message.attachmentUrl);
@@ -78,6 +54,7 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
   const { data: messages, isPending } = useInboxMessages(threadId);
   const sendMessage = useSendInboxMessage(threadId ?? '');
   const sendMedia = useSendInboxMedia(threadId ?? '');
+  const sendSticker = useSendInboxSticker(threadId ?? '');
   const { mutate: markRead } = useMarkInboxRead(threadId ?? '');
   const [draft, setDraft] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -88,6 +65,8 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
   const [paused, setPaused] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const discardRecording = useRef(false);
@@ -120,6 +99,15 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
     setSelectedFile(null);
     setVoiceNote(false);
     if (fileInput.current) fileInput.current.value = '';
+  }
+
+  // Emoji entra onde está o cursor, não no fim do texto.
+  function insertEmoji(emoji: string) {
+    const el = textarea.current;
+    const start = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? draft.length;
+    setDraft(draft.slice(0, start) + emoji + draft.slice(end));
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + emoji.length, start + emoji.length); });
   }
 
   // Não espera o servidor: a bolha já aparece (ver optimistic em use-inbox) e o
@@ -230,11 +218,23 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
             <button type="button" onClick={() => stopRecording(true)} className="rounded p-1 text-erro" title="Cancelar"><X size={15} /></button>
           </div>
         )}
-        <div className="flex items-end gap-2">
+        <div className="relative flex items-end gap-2">
+          {pickerOpen && (
+            <>
+              <button type="button" aria-label="Fechar emojis" className="fixed inset-0 z-10 cursor-default" onClick={() => setPickerOpen(false)} />
+              <div className="absolute bottom-12 right-0 z-20">
+                <EmojiStickerPicker
+                  onEmoji={insertEmoji}
+                  onSticker={(sticker) => { sendSticker.mutate(sticker); setPickerOpen(false); }}
+                  onStickerFile={(file) => { sendMedia.mutate({ file, sticker: true }); setPickerOpen(false); }}
+                />
+              </div>
+            </>
+          )}
           <input ref={fileInput} type="file" className="hidden" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" onChange={(event) => { const file = event.target.files?.[0] ?? null; setSelectedFile(file); setVoiceNote(false); }} />
           <button type="button" title="Anexar arquivo" onClick={() => fileInput.current?.click()} disabled={recording} className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-40"><Paperclip size={18} /></button>
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSend(); } }} rows={1} placeholder={selectedFile ? 'Adicionar legenda…' : 'Digite uma mensagem...'} className="flex-1 resize-none rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none placeholder:text-nevoa/60 focus:border-sinal" />
-          <button type="button" title="Emoji" className="hidden size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru sm:flex"><Smile size={18} /></button>
+          <textarea ref={textarea} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSend(); } }} rows={1} placeholder={selectedFile ? 'Adicionar legenda…' : 'Digite uma mensagem...'} className="flex-1 resize-none rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none placeholder:text-nevoa/60 focus:border-sinal" />
+          <button type="button" title="Emojis e figurinhas" aria-expanded={pickerOpen} onClick={() => setPickerOpen((open) => !open)} className={cn('flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru', pickerOpen ? 'text-sinal' : 'text-nevoa')}><Smile size={18} /></button>
           {!draft.trim() && !selectedFile ? (
             <button type="button" title={recording ? 'Gravando' : 'Gravar áudio'} onClick={() => void startRecording()} disabled={recording} className="flex size-9 shrink-0 items-center justify-center rounded-md bg-grafite-elevado text-nevoa disabled:opacity-40"><Mic size={18} /></button>
           ) : (
