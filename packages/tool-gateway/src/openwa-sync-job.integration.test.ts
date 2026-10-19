@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { db, schema } from '@desigual-os/database';
-import { createWhatsappSyncJob, processOpenwaSyncJob } from './openwa-sync';
+import { createWhatsappSyncJob, persistOpenwaMessage, processOpenwaSyncJob } from './openwa-sync';
+import { normalizeOpenwaMessage } from './openwa-gateway';
 import { encryptToken } from './token-crypto';
 import type { WhatsappSessionRow } from './openwa-session-store';
 
@@ -49,6 +50,7 @@ function fakeOpenwa(url: string): Response {
       msg(GRUPO, 'g2', 400, { author: '5511933334444@c.us', contact: { pushName: 'Ana' } }),
     ]);
   }
+  if (path.includes('/sem-midia/media')) return new Response(JSON.stringify({ message: 'No media stored for this message' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
   if (path.includes('/history')) return json([]);
   if (path.includes('/contacts/profile-pictures')) return json({ pictures: { [PESSOA]: PICTURE, [GRUPO]: 'https://pps.whatsapp.net/v/grupo.jpg', [LID]: null } });
   if (path.includes('/contacts')) {
@@ -137,5 +139,15 @@ describe('job de sincronização OpenWA em Postgres real', () => {
     expect(after[0]!.n).toBe(before[0]!.n);
     const threads = await db.select().from(schema.conversationThreads).where(and(eq(schema.conversationThreads.organizationId, organizationId), eq(schema.conversationThreads.whatsappSessionId, session.id)));
     expect(threads).toHaveLength(3);
+  });
+
+  it('mídia que o OpenWA não guardou não derruba a mensagem nem o evento', async () => {
+    if (!enabled) return;
+    const message = normalizeOpenwaMessage({ ...msg(PESSOA, 'sem-midia', 500), type: 'image', body: null, media: { mimetype: 'image/jpeg', omitted: true } });
+    const result = await persistOpenwaMessage({ session, message, importMedia: true, countUnread: true });
+    expect(result.created).toBe(true);
+    expect(result.mediaImported).toBe(false);
+    const [row] = await db.select().from(schema.threadMessages).where(eq(schema.threadMessages.id, result.message.id));
+    expect(row!.metadata.mediaError).toBe('No media stored for this message');
   });
 });
