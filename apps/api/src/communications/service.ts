@@ -340,6 +340,29 @@ export async function sendOutboundMediaMessage(params: {
   return { ok: true, message };
 }
 
+/**
+ * "Suas figurinhas": as que passaram pelas conversas do PRÓPRIO WhatsApp de
+ * quem pede (enviadas ou recebidas), mais recentes primeiro, sem repetir. O
+ * OpenWA não expõe as figurinhas favoritas da conta; estas são as que a pessoa
+ * de fato usa. Repetição sai pelo tamanho do arquivo — a mesma figurinha chega
+ * sempre com os mesmos bytes.
+ */
+export async function listRecentStickers(organizationId: string, viewerId: string, limit = 60) {
+  const rows = await db.select({ id: schema.threadMessages.id, size: schema.threadMessages.attachmentSizeBytes, createdAt: schema.threadMessages.createdAt })
+    .from(schema.threadMessages)
+    .innerJoin(schema.whatsappSessions, eq(schema.whatsappSessions.id, schema.threadMessages.whatsappSessionId))
+    .where(and(
+      eq(schema.threadMessages.organizationId, organizationId),
+      eq(schema.whatsappSessions.ownerUserId, viewerId),
+      sql`${schema.threadMessages.metadata}->>'type' = 'sticker'`,
+      sql`${schema.threadMessages.metadata} ? 'storageKey'`,
+    ))
+    .orderBy(desc(schema.threadMessages.createdAt))
+    .limit(400);
+  const seen = new Set<number | null>();
+  return rows.filter((row) => (seen.has(row.size) ? false : (seen.add(row.size), true))).slice(0, limit);
+}
+
 export async function getMessageMedia(organizationId: string, messageId: string, viewerId: string) {
   const [message] = await db.select().from(schema.threadMessages).where(and(
     eq(schema.threadMessages.id, messageId),

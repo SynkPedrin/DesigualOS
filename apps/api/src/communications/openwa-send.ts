@@ -150,6 +150,8 @@ export async function sendMediaFast(params: {
   filename: string;
   caption?: string | undefined;
   voiceNote?: boolean | undefined;
+  /** Enviar como figurinha (a imagem vira sticker no WhatsApp). */
+  asSticker?: boolean | undefined;
 }): Promise<FastSendResult> {
   const { thread } = params;
   const session = thread.whatsappSessionId ? await loadSession(params.organizationId, thread.whatsappSessionId) : null;
@@ -174,7 +176,7 @@ export async function sendMediaFast(params: {
     attachmentType: params.mimetype,
     attachmentFilename: saved.filename,
     attachmentSizeBytes: saved.sizeBytes,
-    metadata: { storageKey: saved.storageKey, voiceNote: params.voiceNote === true },
+    metadata: { storageKey: saved.storageKey, voiceNote: params.voiceNote === true, ...(params.asSticker ? { type: 'sticker' } : {}) },
     deliveryStatus: 'pending',
   }).returning();
   const [pending] = await db.update(schema.threadMessages).set({ attachmentUrl: `/inbox/messages/${inserted!.id}/media` })
@@ -183,7 +185,7 @@ export async function sendMediaFast(params: {
   const labels: Record<string, string> = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio' };
   const kind = params.mimetype.split('/')[0] ?? '';
   void (async () => {
-    await touchThread(thread.id, pending!.createdAt, params.caption || labels[kind] || 'Documento').catch(() => undefined);
+    await touchThread(thread.id, pending!.createdAt, params.asSticker ? 'Figurinha' : params.caption || labels[kind] || 'Documento').catch(() => undefined);
     await deliver({
       session, thread, pending: pending!, senderUserId: params.senderUserId, summary: 'Enviou uma mídia.',
       send: async () => {
@@ -196,6 +198,7 @@ export async function sendMediaFast(params: {
           mimetype = converted.mimetype;
         }
         const sender = senderForWhatsappSession(session);
+        if (params.asSticker) return sender.sendSticker({ chatId, base64: bytes.toString('base64'), mimetype, filename: saved.filename, idempotencyKey: randomUUID() });
         const input = { chatId, base64: bytes.toString('base64'), mimetype, filename: saved.filename, ...(params.caption ? { caption: params.caption } : {}), idempotencyKey: randomUUID() };
         if (mimetype.startsWith('image/')) return sender.sendImage(input);
         if (mimetype.startsWith('video/')) return sender.sendVideo(input);
