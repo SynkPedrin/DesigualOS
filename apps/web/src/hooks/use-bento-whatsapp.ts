@@ -118,7 +118,10 @@ export function useBentoWhatsappAdminStatus(enabled: boolean) {
     queryKey: [...CHAVE, 'admin', 'status'],
     queryFn: () => apiFetch<BentoWhatsappAdminStatusWire>('/bento-whatsapp/admin/status'),
     enabled,
-    refetchInterval: 15_000,
+    // Durante a conexão (Chromium subindo, QR, autenticando) olha de 3 em 3 s;
+    // com tudo estável, de 15 em 15.
+    refetchInterval: (query) =>
+      ['created', 'initializing', 'qr_ready', 'authenticating'].includes(query.state.data?.session?.status ?? '') ? 3_000 : 15_000,
   });
 }
 

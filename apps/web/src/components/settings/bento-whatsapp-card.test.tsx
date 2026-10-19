@@ -159,4 +159,38 @@ describe('Bento no WhatsApp — vínculo', () => {
     expect(provisionou).toBe(true);
     expect(tela.textContent).toContain('Aguardando QR');
   });
+
+  it('QR ainda não pronto: a tela espera e tenta de novo sozinha, sem o usuário clicar outra vez', async () => {
+    papel.master = true;
+    let tentativas = 0;
+    apiFetchMock.mockImplementation(async (rota: string) => {
+      if (rota === '/bento-whatsapp/me') return { enabled: true, bot_phone: null, link: null, pending_code: null };
+      if (rota === '/bento-whatsapp/admin/links') return { links: [] };
+      if (rota === '/bento-whatsapp/admin/session/qr') {
+        tentativas += 1;
+        if (tentativas < 3) throw new Error('QR code is not ready yet. Please wait...');
+        return { qr_code: 'data:image/png;base64,AAAA', status: 'qr_ready' };
+      }
+      if (rota === '/bento-whatsapp/admin/status')
+        return {
+          enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO',
+          missing_config: [], bot_phone: null, transcription: 'none', documents: false, allowed_groups: 0,
+          session: { status: 'initializing' }, gateway: { ready: true }, brain: { last_reply_at: null },
+          last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } }, recent_failures: [], linked_users: 0,
+        };
+      throw new Error(`rota inesperada ${rota}`);
+    });
+    const tela = await montar();
+    await act(async () => botao(tela, 'Mostrar QR').click());
+    await assentar();
+    expect(tela.textContent).toContain('o QR aparece em alguns segundos');
+    expect(tela.querySelector('img[alt^="QR"]')).toBeNull();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 6_400));
+    });
+    await assentar();
+    expect(tentativas).toBe(3);
+    expect(tela.querySelector('img[alt^="QR"]')).not.toBeNull();
+    expect(tela.textContent).not.toContain('o QR aparece em alguns segundos');
+  }, 15_000);
 });

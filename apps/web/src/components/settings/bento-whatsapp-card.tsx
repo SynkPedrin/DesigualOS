@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ExternalLink, QrCode, RefreshCw, Smartphone, Unlink, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useIsMaster } from '@/hooks/use-is-master';
@@ -245,6 +245,40 @@ function PainelMaster() {
   const revogar = useRevogarVinculoBentoWhatsapp();
   const iniciar = useIniciarSessaoBentoWhatsapp();
   const qr = useQrBentoWhatsapp();
+  const [aguardandoQr, setAguardandoQr] = useState(false);
+  const tentativasQr = useRef(0);
+
+  /**
+   * O QR só existe depois que o Chromium do OpenWA termina de subir (~20 s
+   * medidos em produção em 19/10/2026). Clicar antes disso devolve "QR code is
+   * not ready yet" — e antes a tela só mostrava o erro e parava. Agora ela
+   * tenta de novo sozinha, de 3 em 3 s, até 90 s. Só a tentativa que dá certo
+   * entra na auditoria (ver o QR é poder conectar o número).
+   */
+  function pedirQr() {
+    tentativasQr.current = 0;
+    setAguardandoQr(true);
+    qr.mutate();
+  }
+  useEffect(() => {
+    if (!aguardandoQr) return;
+    if (qr.isSuccess) {
+      setAguardandoQr(false);
+      return;
+    }
+    if (!qr.isError) return;
+    if (tentativasQr.current >= 30) {
+      setAguardandoQr(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      tentativasQr.current += 1;
+      qr.mutate();
+    }, 3_000);
+    return () => clearTimeout(t);
+  }, [aguardandoQr, qr, qr.isError, qr.isSuccess]);
+  // Sessão já conectada: some o QR da tela.
+  const sessaoPronta = status.data?.session?.status === 'ready';
   const provisionar = useProvisionarSessaoBentoWhatsapp();
   const ligar = useLigarCanalBentoWhatsapp();
 
@@ -368,16 +402,23 @@ function PainelMaster() {
             )}
             <button
               type="button"
-              onClick={() => qr.mutate()}
-              disabled={qr.isPending}
+              onClick={pedirQr}
+              disabled={qr.isPending || aguardandoQr}
               className="flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru hover:bg-grafite-elevado disabled:opacity-50"
             >
-              <QrCode size={13} /> {qr.isPending ? 'Buscando…' : 'Mostrar QR'}
+              <QrCode size={13} /> {aguardandoQr ? 'Preparando o QR…' : qr.data ? 'Atualizar QR' : 'Mostrar QR'}
             </button>
           </div>
           {iniciar.isError && <p className="text-[11px] text-erro">{erroLegivel(iniciar.error, 'Falha ao iniciar.')}</p>}
-          {qr.isError && <p className="text-[11px] text-erro">{erroLegivel(qr.error, 'QR indisponível agora.')}</p>}
-          {qr.data && (
+          {aguardandoQr && (
+            <p className="text-[11px] text-nevoa">
+              A sessão do WhatsApp está iniciando; o QR aparece em alguns segundos, não precisa clicar de novo.
+            </p>
+          )}
+          {!aguardandoQr && qr.isError && (
+            <p className="text-[11px] text-erro">{erroLegivel(qr.error, 'QR indisponível agora.')} Clique em Mostrar QR para tentar de novo.</p>
+          )}
+          {qr.data && !sessaoPronta && (
             <img src={qr.data.qr_code} alt="QR para conectar o WhatsApp do Bento" className="size-52 rounded-md bg-white p-2" />
           )}
         </div>
