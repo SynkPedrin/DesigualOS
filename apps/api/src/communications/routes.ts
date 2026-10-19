@@ -23,7 +23,7 @@ import * as svc from './service';
 const listQuerySchema = z.object({
   status: z.enum(CONVERSATION_STATUSES).optional(),
   assigned: z.enum(['me', 'unassigned']).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(30),
+  limit: z.coerce.number().int().min(1).max(500).default(30),
   offset: z.coerce.number().int().min(0).default(0),
 });
 

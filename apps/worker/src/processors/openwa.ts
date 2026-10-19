@@ -3,6 +3,7 @@ import {
   enqueueWhatsappSync,
   enqueueWhatsappWebhook,
   getRedisConnection,
+  scheduleWhatsappFollowupSync,
   sendOpsAlert,
   WHATSAPP_QUEUE_NAME,
   type WhatsappQueueJobData,
@@ -23,7 +24,16 @@ interface Logger {
 
 async function process(job: Job<WhatsappQueueJobData>): Promise<void> {
   if (job.data.type === 'sync') {
-    await processOpenwaSyncJob(job.data.id, { finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1) });
+    const result = await processOpenwaSyncJob(job.data.id, { finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1) });
+    if (result.firstForSession && result.sessionId) await scheduleWhatsappFollowupSync(result.sessionId);
+    return;
+  }
+  if (job.data.type === 'followup') {
+    const session = await whatsappSessionById(job.data.id);
+    if (session?.status === 'ready') {
+      const sync = await createWhatsappSyncJob(session, null);
+      if (sync.created) await enqueueWhatsappSync(sync.id);
+    }
     return;
   }
   const result = await processOpenwaWebhookEvent(job.data.id);

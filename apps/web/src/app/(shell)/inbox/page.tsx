@@ -55,7 +55,7 @@ function InboxPageContent() {
   // As 4 abas filtram no CLIENTE, não refazem a query: a lista inteira já
   // veio (conversa é um recurso pequeno, sem paginação hoje), então recortar
   // em memória evita 4 variações de queryKey pra 12 conversas.
-  const { data: threads, isPending } = useInboxThreads({});
+  const { data: threads, isPending } = useInboxThreads({ limit: 300 });
   const { data: whatsappSessions } = useWhatsappOpenwaSessions();
   const activeSession = whatsappSessions?.find((session) => session.status === 'ready') ?? whatsappSessions?.[0] ?? null;
   const filtrados = useMemo(() => {

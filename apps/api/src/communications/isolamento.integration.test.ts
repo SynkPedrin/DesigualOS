@@ -50,4 +50,11 @@ describe('Inbox isolada por dono da sessão WhatsApp', () => {
     expect(await getThread(org, threadDoDono, colega)).toBeNull();
     expect(await getThread(org, threadDoDono, dono)).not.toBeNull();
   });
+
+  it('conversa sem data vai para o fim, nunca para o topo', async () => {
+    if (!enabled) return;
+    await db.update(schema.conversationThreads).set({ lastMessageAt: new Date() }).where(eq(schema.conversationThreads.id, threadDoDono));
+    const lista = await listThreads({ organizationId: org, callerId: dono, limit: 50, offset: 0 });
+    expect(lista.map((t) => t.id)).toEqual([threadDoDono, threadDaEmpresa]);
+  });
 });
