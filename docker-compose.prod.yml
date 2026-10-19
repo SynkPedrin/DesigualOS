@@ -123,7 +123,12 @@ services:
     container_name: desigual-os-openwa
     restart: unless-stopped
     stop_grace_period: 75s
-    mem_limit: ${OPENWA_MEM_LIMIT:-2g}
+    # Cada número conectado é um Chrome inteiro (~0,7–1 GB com o WhatsApp Web
+    # carregado). Com 2 GB e dois números, o kernel matou o Chrome no meio do
+    # primeiro sync real (19/10/2026, "Memory cgroup out of memory"), derrubando
+    # a sessão e o envio. 4 GB cabe ~3–4 números nesta VPS de 8 GB; acima disso,
+    # mais RAM na VPS ou o engine Baileys (sem navegador).
+    mem_limit: ${OPENWA_MEM_LIMIT:-4g}
     pids_limit: ${OPENWA_PIDS_LIMIT:-2048}
     security_opt:
       - 'no-new-privileges:true'

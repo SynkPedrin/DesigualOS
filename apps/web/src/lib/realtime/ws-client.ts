@@ -19,7 +19,9 @@ export interface WsEvent {
     | 'message.delta'
     | 'clickup.task_changed'
     // Agentic V2: fases reais do agent loop (ver agentic-dispatch no worker).
-    | 'agent.phase';
+    | 'agent.phase'
+    // Inbox do WhatsApp: só ids, nunca conteúdo; o servidor entrega só ao dono da sessão.
+    | 'inbox.updated';
   payload: Record<string, unknown>;
 }
 
