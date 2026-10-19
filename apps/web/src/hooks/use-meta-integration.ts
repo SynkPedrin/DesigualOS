@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
-import type { MetaAdAccountWire, MetaBusinessWire, MetaIntegrationStatusWire } from '@/lib/api/contracts';
+import type { MetaAdAccountWire, MetaBusinessWire, MetaIntegrationStatusWire, MetaSyncReportWire } from '@/lib/api/contracts';
 
 /** Conexão Meta POR COLABORADOR — mesmo desenho do useClickUpIntegration. */
 export function useMetaIntegration() {
@@ -46,5 +46,21 @@ export function useMetaAdAccounts(businessId: string | null, enabled: boolean) {
       return apiFetch<{ ad_accounts: MetaAdAccountWire[] }>(`/integrations/meta/ad-accounts${search}`);
     },
     enabled,
+  });
+}
+
+/**
+ * AUTO-SYNC de contas (16/10/2026): varre as Ad Accounts visíveis às BMs do
+ * colaborador e vincula por nome aos clientes. Invalida as queries de
+ * ad-accounts e de client_meta_accounts — os vínculos podem ter mudado.
+ */
+export function useSyncMetaAccounts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<MetaSyncReportWire>('/integrations/meta/sync-accounts', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['integrations', 'meta'] });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
   });
 }

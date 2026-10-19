@@ -22,6 +22,7 @@ export * from './evolution-client';
 export * from './meta-oauth';
 export * from './google-ads-oauth';
 export * from './meta-access-resolver';
+export * from './meta-sync';
 export * from './google-ads-access-resolver';
 export * from './availability';
 export * from './google-calendar-oauth';

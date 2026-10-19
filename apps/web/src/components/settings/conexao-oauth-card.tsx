@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Check, Link2, Unlink } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Check, Link2, RefreshCw, Unlink } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ApiRequestError } from '@/lib/api/client';
-import { useConnectMeta, useDisconnectMeta, useMetaIntegration } from '@/hooks/use-meta-integration';
+import { useConnectMeta, useDisconnectMeta, useMetaIntegration, useSyncMetaAccounts } from '@/hooks/use-meta-integration';
 import {
   useConnectGoogleAds,
   useDisconnectGoogleAds,
@@ -44,6 +44,8 @@ interface ConexaoProps {
   erroConectar: unknown;
   desconectar?: (() => void) | undefined;
   desconectando?: boolean | undefined;
+  /** Ação extra renderizada junto aos botões quando conectado (ex.: "Sincronizar contas" do Meta). */
+  acaoExtra?: ReactNode;
   /** Parâmetro que o callback devolve na URL (ex.: ?meta=conectado). */
   paramCallback: string;
 }
@@ -73,6 +75,7 @@ export function ConexaoOAuth({
   erroConectar,
   desconectar,
   desconectando,
+  acaoExtra,
   paramCallback,
 }: ConexaoProps) {
   const [aviso, setAviso] = useState<{ text: string; tone: 'ok' | 'erro' } | null>(null);
@@ -123,7 +126,7 @@ export function ConexaoOAuth({
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex items-start gap-2">
         {conectado && desconectar ? (
           <button
             type="button"
@@ -145,6 +148,7 @@ export function ConexaoOAuth({
             {conectando ? 'Abrindo…' : `Conectar ${nome}`}
           </button>
         )}
+        {conectado && acaoExtra}
       </div>
 
       {Boolean(erroConectar) && (
@@ -185,6 +189,9 @@ export function MetaConnect() {
   const meta = useMetaIntegration();
   const conectarMeta = useConnectMeta();
   const desconectarMeta = useDisconnectMeta();
+  const sincronizar = useSyncMetaAccounts();
+
+  const relatorio = sincronizar.data?.status === 'ok' ? sincronizar.data : null;
 
   return (
     <ConexaoOAuth
@@ -199,6 +206,28 @@ export function MetaConnect() {
         erroConectar={conectarMeta.error}
       desconectar={() => desconectarMeta.mutate()}
       desconectando={desconectarMeta.isPending}
+      acaoExtra={
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => sincronizar.mutate()}
+            disabled={sincronizar.isPending}
+            className="inline-flex items-center gap-2 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa transition-colors hover:text-branco-cru disabled:opacity-40"
+          >
+            <RefreshCw size={14} className={sincronizar.isPending ? 'animate-spin' : undefined} />
+            {sincronizar.isPending ? 'Sincronizando…' : 'Sincronizar contas'}
+          </button>
+          {relatorio && (
+            <p className="max-w-md text-sm text-sinal">
+              {relatorio.vinculadas.length} contas vinculadas, {relatorio.jaVinculadas.length} já vinculadas,{' '}
+              {relatorio.pendentes.length} pendentes de vínculo manual.
+            </p>
+          )}
+          {sincronizar.isError && (
+            <p className="text-sm text-erro">{mensagemDeErro(sincronizar.error, 'Não consegui sincronizar as contas.')}</p>
+          )}
+        </div>
+      }
       paramCallback="meta"
     />
   );

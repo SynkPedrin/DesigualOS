@@ -7,6 +7,7 @@ import {
   exchangeMetaCode,
   getMetaAdAccounts,
   getMetaBusinesses,
+  syncMetaAdAccountsForUser,
   type MetaOAuthConfig,
 } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
@@ -100,6 +101,18 @@ export async function registerMetaIntegrationRoutes(app: FastifyInstance): Promi
         });
 
         logger.info({ userId: parsed.userId }, 'Meta conectado');
+
+        // AUTO-SYNC logo após conectar (16/10/2026): as contas já chegam
+        // vinculadas quando a pessoa aterrissa em /settings. Aguardado de
+        // propósito — mas NUNCA quebra o fluxo de conexão: a conexão está
+        // gravada, então uma falha aqui vira log e a pessoa pode rodar a
+        // sync de novo pelo botão "Sincronizar contas".
+        try {
+          await syncMetaAdAccountsForUser(parsed.userId, 'web');
+        } catch (syncError) {
+          logger.error({ error: syncError, userId: parsed.userId }, 'Auto-sync de contas Meta falhou após conectar — conexão mantida');
+        }
+
         return reply.redirect(frontendUrl('/settings?meta=conectado'));
       } catch (err) {
         logger.error({ error: err }, 'Falha ao concluir OAuth do Meta');
@@ -177,6 +190,27 @@ export async function registerMetaIntegrationRoutes(app: FastifyInstance): Promi
       logger.error({ error: err }, 'Falha ao listar Ad Accounts do Meta');
       reply.code(502);
       return { error: err instanceof Error ? err.message : 'Meta ad accounts lookup failed' };
+    }
+  });
+
+  /**
+   * AUTO-SYNC de contas: varre todas as Ad Accounts visíveis às BMs deste
+   * colaborador e vincula por nome aos clientes ativos (ver meta-sync.ts no
+   * tool-gateway). A auditoria (integration.meta.sync) é escrita pela própria
+   * sync — aqui só se traduz o resultado pra HTTP.
+   */
+  app.post('/integrations/meta/sync-accounts', { preHandler: [requireAuth, requireModule('meta_ads')] }, async (request, reply) => {
+    try {
+      const report = await syncMetaAdAccountsForUser(request.authUser!.id, 'web');
+      if (report.status === 'not_connected') {
+        reply.code(409);
+        return { error: 'Meta not connected or token expired for this user' };
+      }
+      return report;
+    } catch (err) {
+      logger.error({ error: err }, 'Falha ao sincronizar contas Meta Ads');
+      reply.code(502);
+      return { error: err instanceof Error ? err.message : 'Meta accounts sync failed' };
     }
   });
 }

@@ -16,7 +16,10 @@ import { z } from 'zod';
  */
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION ?? 'v21.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
-const FACEBOOK_DIALOG_BASE = 'https://www.facebook.com/v21.0/dialog/oauth';
+// O dialog de OAuth segue a MESMA versão da Graph API — estava fixo em v21.0
+// enquanto GRAPH_API_VERSION já era env-driven, então trocar a versão por env
+// atualizava as chamadas de API mas deixava o authorize na versão velha.
+const FACEBOOK_DIALOG_BASE = `https://www.facebook.com/${GRAPH_API_VERSION}/dialog/oauth`;
 
 // Timeout de rede — mesmo raciocínio do clickup-oauth.ts: sem signal, uma
 // instabilidade do Graph API pendura a rota inteira que chamou isto.

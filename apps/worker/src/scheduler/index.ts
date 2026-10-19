@@ -10,6 +10,7 @@ import { expireStaleStudioJobs } from './studio-queue-timeout.js';
 import { expireStaleExecutions } from './execution-timeout.js';
 import { avisarDeConexoesMcp } from './aviso-de-conexao-mcp.js';
 import { syncAllGoogleCalendars } from './google-calendar-sync.js';
+import { syncAllMetaAdAccounts } from './meta-accounts-sync.js';
 import { syncAllMicrosoftCalendars } from './microsoft-calendar-sync.js';
 import { varrerOperacao } from './bento-varredura.js';
 import { briefingOperacional } from './bento-briefing.js';
@@ -38,6 +39,7 @@ const JOBS_REPETIVEIS = [
   'execution-timeout',
   'aviso-conexao-mcp',
   'google-calendar-sync',
+  'meta-accounts-sync',
   'microsoft-calendar-sync',
   'meeting-prep',
   'reconciliar-automacoes',
@@ -116,6 +118,13 @@ export function setupDailyJobs(): Worker {
     // integração, cadência que não esgota a cota da Calendar API nem deixa
     // a agenda ficar velha demais entre uma sync e outra.
     queue.add('google-calendar-sync', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'google-calendar-sync' }),
+    // SYNC DE CONTAS META ADS uma vez por dia, 04:30 (16/10/2026) — madrugada,
+    // fora do pico, meia hora depois da consolidação de conhecimento (03:00).
+    // Conta nova na BM ou cliente novo no cadastro viram vínculo por nome sem
+    // ninguém lembrar de apertar o botão. Diária e não mais frequente porque
+    // o vínculo é por NOME: não é dado que envelhece em minutos, e cada
+    // rodada varre todas as BMs de todas as conexões.
+    queue.add('meta-accounts-sync', {}, { repeat: { pattern: '30 4 * * *' }, jobId: 'meta-accounts-sync' }),
     // SYNC DO MICROSOFT/OUTLOOK CALENDAR (07/10/2026) — mesma cadência do
     // Google, mesma razão: fresco o bastante sem esgotar cota do Graph.
     queue.add('microsoft-calendar-sync', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'microsoft-calendar-sync' }),
@@ -193,6 +202,8 @@ export function setupDailyJobs(): Worker {
         await avisarDeConexoesMcp(logger);
       } else if (job.name === 'google-calendar-sync') {
         await syncAllGoogleCalendars(logger);
+      } else if (job.name === 'meta-accounts-sync') {
+        await syncAllMetaAdAccounts(logger);
       } else if (job.name === 'microsoft-calendar-sync') {
         await syncAllMicrosoftCalendars(logger);
       } else if (job.name === 'meeting-prep') {

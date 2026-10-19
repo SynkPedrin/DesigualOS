@@ -1093,6 +1093,24 @@ export interface ClientMetaAccountWire {
   created_at: ISODateString;
 }
 
+/**
+ * Relatório de POST /integrations/meta/sync-accounts (auto-sync de contas,
+ * 16/10/2026). camelCase de propósito: é um relatório computado na hora, não
+ * uma linha de tabela em snake_case.
+ */
+export interface MetaSyncReportWire {
+  status: 'ok';
+  vinculadas: { clientId: string; clientName: string; accountId: string; accountName: string }[];
+  jaVinculadas: { clientId: string; clientName: string; accountId: string; accountName: string }[];
+  pendentes: {
+    accountId: string;
+    accountName: string | null;
+    businessName: string | null;
+    motivo: 'sem_match' | 'ambigua';
+    candidatos?: string[];
+  }[];
+}
+
 export interface MetaAccountInsightsWire {
   spend: number | null;
   impressions: number | null;
