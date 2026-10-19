@@ -68,8 +68,6 @@ export interface ArmazemDoCanal {
   tentativasDeCodigo(telefone: string, desde: Date): Promise<number>;
   /** Turnos levados ao Brain para este usuário desde `desde`. */
   turnosDoUsuario(userId: string, desde: Date): Promise<number>;
-  /** Já avisamos este número de que ele não está vinculado desde `desde`? */
-  avisouNaoVinculado(telefone: string, desde: Date): Promise<boolean>;
   /** Transcrição de áudio esperando "sim" deste vínculo, mais nova que `desde`. */
   aguardandoConfirmacao(linkId: string, desde: Date): Promise<RegistroRecebido | null>;
   /** Mensagens que não chegaram ao fim (para retomar depois de reinício). */
@@ -204,15 +202,6 @@ export const armazemPostgres: ArmazemDoCanal = {
       .from(t)
       .where(and(eq(t.userId, userId), gte(t.createdAt, desde), isNotNull(t.conversationId)));
     return Number(linha?.n ?? 0);
-  },
-
-  async avisouNaoVinculado(telefone, desde) {
-    const [linha] = await db
-      .select({ id: t.id })
-      .from(t)
-      .where(and(eq(t.senderPhone, telefone), eq(t.reason, 'unlinked'), eq(t.status, 'replied'), gte(t.createdAt, desde)))
-      .limit(1);
-    return Boolean(linha);
   },
 
   async aguardandoConfirmacao(linkId, desde) {

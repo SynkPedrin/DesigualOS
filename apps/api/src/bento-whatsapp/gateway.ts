@@ -35,6 +35,11 @@ import type { AuthenticatedUser } from '../auth/middleware';
 const UMA_HORA = 60 * 60_000;
 const UM_DIA = 24 * UMA_HORA;
 const MAX_TENTATIVAS_DE_CODIGO_POR_HORA = 5;
+/** Mensagem mais velha que isto nunca é respondida (é histórico, não pedido). */
+const MAX_IDADE_DA_MENSAGEM_MS = 3 * 60_000;
+/** Disjuntor de saída: mais que isto de conversas DIFERENTES em 1 min trava todo envio. */
+const MAX_CONVERSAS_NOVAS_POR_MINUTO = 5;
+const TRAVA_DE_SAIDA_MS = 15 * 60_000;
 const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 const MAX_DOCUMENTO_BYTES = 10 * 1024 * 1024;
 const JANELA_DE_CONFIRMACAO_MS = 10 * 60_000;
@@ -146,6 +151,13 @@ export class GatewayDoBento {
     // Anti-loop, segunda barreira: mesmo que `fromMe` venha errado, o número
     // do próprio Bento nunca é remetente de pedido.
     if (config.botPhone && mensagem.telefone === config.botPhone) return { aceito: false, motivo: 'own_number' };
+
+    // A idade que conta é a da MENSAGEM, não a do envelope (o envelope é de
+    // agora, mesmo quando o aparelho entrega histórico). Um pedido de verdade
+    // é respondido em segundos; o que tem minutos de idade é backlog.
+    if (mensagem.enviadaEm && this.agora().getTime() - mensagem.enviadaEm.getTime() > MAX_IDADE_DA_MENSAGEM_MS) {
+      return { aceito: false, motivo: 'mensagem_antiga' };
+    }
 
     const { id, nova } = await this.deps.armazem.registrar(mensagem);
     if (!nova) return { aceito: true, id, duplicado: true };
@@ -370,12 +382,17 @@ export class GatewayDoBento {
       }
       return this.responder(ids, mensagem, TEXTOS.codigoInvalido, 'link_code_invalid');
     }
-    // Um aviso por dia por número: quem insiste sem vínculo não ganha uma
-    // resposta por mensagem (nem o Bento vira gerador de spam).
-    if (await armazem.avisouNaoVinculado(telefone, new Date(this.agora().getTime() - UM_DIA))) {
-      return this.ignorar(ids, 'unlinked_already_warned');
-    }
-    return this.responder(ids, mensagem, TEXTOS.naoVinculado, 'unlinked');
+    /**
+     * SILÊNCIO com quem não está vinculado (19/10/2026, depois do incidente).
+     *
+     * Antes o Bento respondia "ainda não reconheço este número" a qualquer
+     * remetente. Ao conectar o aparelho, o OpenWA entregou uma rajada de
+     * mensagens e o Bento mandou esse aviso a 24 contatos diferentes em um
+     * minuto. O Bento só fala com quem está vinculado — ou com quem manda um
+     * código de vínculo, que é um pedido explícito e de formato inconfundível.
+     * Qualquer outra coisa de número desconhecido é registrada e ignorada.
+     */
+    return this.ignorar(ids, 'unlinked_silent');
   }
 
   private async conteudoDoTurno(
@@ -640,7 +657,34 @@ export class GatewayDoBento {
    * mandar outra — "resultado incerto" vira "verifica antes de repetir" sem
    * consulta extra.
    */
+  /** Conversas para as quais saiu mensagem no último minuto (disjuntor de saída). */
+  private readonly saidas = new Map<string, number>();
+  private travadoAte = 0;
+
+  /**
+   * DISJUNTOR DE SAÍDA. O Bento responde a quem escreve; nunca dispara para
+   * muita gente ao mesmo tempo. Se, por qualquer bug ou rajada, o envio
+   * tentar alcançar mais de 5 conversas diferentes em 1 minuto, tudo trava
+   * por 15 minutos e fica registrado como erro — melhor perder respostas do
+   * que repetir o que aconteceu em 19/10/2026.
+   */
+  private autorizarSaida(chatId: string): void {
+    const agora = this.agora().getTime();
+    if (agora < this.travadoAte) throw new ErroDeEnvio('envio travado pelo disjuntor de saída', []);
+    for (const [chat, quando] of this.saidas) if (agora - quando > 60_000) this.saidas.delete(chat);
+    if (!this.saidas.has(chatId) && this.saidas.size >= MAX_CONVERSAS_NOVAS_POR_MINUTO) {
+      this.travadoAte = agora + TRAVA_DE_SAIDA_MS;
+      this.deps.log.error(
+        { conversas: this.saidas.size + 1 },
+        '[bento-whatsapp] DISJUNTOR DE SAÍDA ACIONADO: envio para conversas demais em 1 minuto; envios travados por 15 min',
+      );
+      throw new ErroDeEnvio('envio travado pelo disjuntor de saída', []);
+    }
+    this.saidas.set(chatId, agora);
+  }
+
   private async enviar(idBase: string, mensagem: MensagemRecebida, partes: string[], rotulo: string): Promise<string[]> {
+    this.autorizarSaida(mensagem.chatId);
     const enviados: string[] = [];
     for (let i = 0; i < partes.length; i++) {
       let ultimoErro: unknown;

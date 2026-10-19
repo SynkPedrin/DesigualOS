@@ -195,12 +195,6 @@ export class ArmazemEmMemoria implements ArmazemDoCanal {
     return this.recebidas.filter((r) => r.userId === userId && r.createdAt >= desde && r.conversationId).length;
   }
 
-  async avisouNaoVinculado(telefone: string, desde: Date) {
-    return this.recebidas.some(
-      (r) => r.senderPhone === telefone && r.reason === 'unlinked' && r.status === 'replied' && r.createdAt >= desde,
-    );
-  }
-
   async aguardandoConfirmacao(linkId: string, desde: Date) {
     return (
       [...this.recebidas]

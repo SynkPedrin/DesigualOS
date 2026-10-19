@@ -46,3 +46,24 @@ Opcional por variável: `BENTO_WHATSAPP_AGENT_HINT=BENTO` (fixa o Bento),
 
 Limites conhecidos: imagem vira anexo do turno, mas só lê quem tem leitura de
 imagem; ação por áudio exige "sim" antes de ir ao Brain.
+
+## Regra de ouro: o Bento só RESPONDE a quem escreve para ele
+
+Incidente em 19/10/2026: ao conectar o número, o aparelho entregou uma rajada de
+mensagens e o Bento mandou o aviso "ainda não reconheço este número" a 24
+contatos diferentes em ~1 minuto. Causa: ele respondia a QUALQUER remetente
+desconhecido. Hoje:
+
+1. **Silêncio com quem não está vinculado.** Número desconhecido não recebe nada
+   (fica registrado como `unlinked_silent`). A única exceção é quem manda um
+   código de vínculo (`BENTO-XXXX-XXXX`), que é um pedido explícito.
+2. **Mensagem antiga é ignorada.** Conta a idade da mensagem (não do envelope):
+   mais de 3 minutos = histórico, não pedido.
+3. **Disjuntor de saída.** Mais de 5 conversas diferentes em 1 minuto trava todo
+   envio por 15 min e registra erro `DISJUNTOR DE SAÍDA ACIONADO`.
+4. Grupos: silêncio, exceto grupo autorizado + menção (e mesmo assim só chama
+   para o privado).
+
+Antes de reconectar o número depois de uma parada, confira no log da API que não
+há `DISJUNTOR DE SAÍDA ACIONADO` e que `bento_whatsapp_inbound` não tem linhas
+`replied` com `reason = 'unlinked'` novas.

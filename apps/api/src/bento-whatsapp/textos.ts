@@ -9,10 +9,6 @@ import { telefoneLegivel } from './identity';
  * "erro interno", nunca stack, nunca prometer o que não foi feito.
  */
 export const TEXTOS = {
-  naoVinculado:
-    'Oi! Ainda não reconheço este número. Para conversar comigo por aqui, entre no Desigual OS, ' +
-    'abra *Integrações > Bento no WhatsApp* e toque em *Vincular meu WhatsApp*. Depois é só me mandar o código que aparecer.',
-
   codigoRecebido: (telefone: string) =>
     `Recebi seu código. Agora confirme no Desigual OS que o número ${telefoneLegivel(telefone)} é seu — ` +
     'o vínculo só vale depois dessa confirmação.',

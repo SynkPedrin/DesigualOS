@@ -112,14 +112,51 @@ describe('duplicidade', () => {
 });
 
 describe('identidade e vínculo', () => {
-  it('número não vinculado recebe UM aviso por dia e nunca chega ao Brain', async () => {
+  it('INCIDENTE 19/10: 24 números desconhecidos escrevendo juntos => ZERO mensagens enviadas', async () => {
+    const { gateway, transporte, brain, armazem } = montar();
+    for (let i = 0; i < 24; i++) {
+      await gateway.receber(texto(`55119000000${String(i).padStart(2, '0')}`, 'oi'));
+    }
+    await gateway.ocioso();
+    expect(transporte.enviados).toHaveLength(0);
+    expect(brain.pedidos).toHaveLength(0);
+    expect(armazem.recebidas.every((r) => r.reason === 'unlinked_silent')).toBe(true);
+  });
+
+  it('número não vinculado recebe SILÊNCIO e nunca chega ao Brain', async () => {
     const { gateway, transporte, brain } = montar();
     await gateway.receber(texto(ESTRANHO, 'me passa as tarefas da agência'));
     await gateway.ocioso();
     await gateway.receber(texto(ESTRANHO, 'oi??'));
     await gateway.ocioso();
     expect(brain.pedidos).toHaveLength(0);
-    expect(transporte.textos()).toEqual([TEXTOS.naoVinculado]);
+    expect(transporte.enviados).toHaveLength(0);
+  });
+
+  it('mensagem antiga (histórico entregue ao conectar) é ignorada, mesmo de gente vinculada', async () => {
+    const { gateway, armazem, transporte, brain } = montar();
+    armazem.vincular('u-jamille', JAMILLE);
+    const velha = envelope({ id: 'velha', chatId: `${JAMILLE}@c.us`, body: 'oi', timestamp: Math.floor((Date.now() - 20 * 60_000) / 1000) });
+    expect(await gateway.receber(velha)).toEqual({ aceito: false, motivo: 'mensagem_antiga' });
+    await gateway.ocioso();
+    expect(brain.pedidos).toHaveLength(0);
+    expect(transporte.enviados).toHaveLength(0);
+  });
+
+  it('disjuntor de saída: rajada para conversas demais trava o envio e registra erro', async () => {
+    const erros: object[] = [];
+    const { gateway, armazem, transporte } = montar({ log: { info: () => undefined, warn: () => undefined, error: (o) => void erros.push(o) } });
+    const numeros = Array.from({ length: 9 }, (_, i) => `551899900000${i}`);
+    numeros.forEach((n, i) => armazem.vincular(`u-${i}`, n));
+    for (const n of numeros) await gateway.receber(texto(n, 'tarefas?'));
+    await gateway.ocioso();
+    expect(transporte.enviados.length).toBeLessThanOrEqual(5);
+    expect(erros.some((e) => JSON.stringify(e).includes('conversas'))).toBe(true);
+    // Travado: nem a conversa 10 passa, e nada sai "de fininho" depois.
+    armazem.vincular('u-10', '5518999000099');
+    await gateway.receber(texto('5518999000099', 'oi'));
+    await gateway.ocioso();
+    expect(transporte.enviados.length).toBeLessThanOrEqual(5);
   });
 
   it('código válido enviado pelo número é reivindicado e pede confirmação na web', async () => {
