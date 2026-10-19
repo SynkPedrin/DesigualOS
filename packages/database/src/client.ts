@@ -63,6 +63,13 @@ const client = postgres(connectionString, {
   // padrão da biblioteca renova cada conexão a cada 30–60 min, e quem caía
   // nessa troca pagava 1,3 s; 6 h deixa isso raro.
   max_lifetime: 6 * 60 * 60,
+  // Conexão parada por muito tempo é cortada em silêncio no caminho até o
+  // pooler (19/10/2026: com o pool de 12 aberto na subida, a maioria ficava
+  // ociosa e, minutos depois, toda consulta que caía numa delas ficava sem
+  // resposta para sempre — API e worker travados, só /health respondia).
+  // Fechar a ociosa e reabrir sob demanda custa ~1,3 s; travar custa tudo.
+  idle_timeout: 45,
+  keep_alive: 15,
   debug: () => {
     const stats = queryStats.getStore();
     if (stats) stats.count += 1;
