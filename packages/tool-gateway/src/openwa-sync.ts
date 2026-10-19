@@ -332,7 +332,15 @@ export async function createWhatsappSyncJob(session: Session, requestedByUserId:
       eq(schema.whatsappSyncJobs.sessionId, session.id),
       sql`${schema.whatsappSyncJobs.status} in ('queued','running')`,
     )).orderBy(desc(schema.whatsappSyncJobs.createdAt)).limit(1);
-    if (existing) return { id: existing.id, created: false };
+    // Um sync que não anda há 10 min (worker reiniciado no meio, fila perdeu o
+    // job) não pode prender a sessão: sem isso a tela ficava em "Sincronizando"
+    // e o botão bloqueado para sempre. O próprio job, se voltar, se aposenta
+    // ao ver este mais novo.
+    const stale = existing && Date.now() - existing.updatedAt.getTime() > 10 * 60_000;
+    if (existing && !stale) return { id: existing.id, created: false };
+    if (existing) {
+      await tx.update(schema.whatsappSyncJobs).set({ status: 'superseded', phase: 'superseded', error: 'Interrompido; substituído por um sync novo.', finishedAt: new Date() }).where(eq(schema.whatsappSyncJobs.id, existing.id));
+    }
     const [job] = await tx.insert(schema.whatsappSyncJobs).values({
       organizationId: session.organizationId,
       sessionId: session.id,
