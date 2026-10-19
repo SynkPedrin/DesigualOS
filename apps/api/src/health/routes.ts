@@ -9,10 +9,25 @@ import { exigirProvedor } from '../lib/escopo-de-organizacao';
 import { separarRegistrosAposentados } from './retired-nodes';
 import { classificadorDisponivel } from '@desigual-os/router';
 
+
+/**
+ * Mesma resposta por 10 s para todas as abas: o estado dos agentes não depende
+ * de quem pergunta (a permissão continua checada em cada chamada, no
+ * preHandler). Pollada a cada 15 s por aba, era a rota que mais somava tempo
+ * no servidor (63 chamadas × ~0,6 s em 45 min, medido em 19/10/2026).
+ */
+let infraCache: { value: unknown; at: number } | null = null;
+async function infraestruturaEmCache<T>(compute: () => Promise<T>): Promise<T> {
+  if (infraCache && Date.now() - infraCache.at < 10_000) return infraCache.value as T;
+  const value = await compute();
+  infraCache = { value, at: Date.now() };
+  return value;
+}
+
 export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
   // Gerenciamento de agentes/infra é assunto de master (pedido do usuário:
   // colaborador só vê o dia a dia dele, não saúde de máquina).
-  app.get('/health/infrastructure', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => {
+  app.get('/health/infrastructure', { preHandler: [requireAuth, requirePermission('nodes', 'read'), exigirProvedor()] }, async () => infraestruturaEmCache(async () => {
     /**
      * O WORKER É CONSULTADO EM PARALELO, e isso é a continuação da mesma
      * correção que o comentário mais abaixo descreve.
@@ -158,7 +173,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
       last_backup_at: null,
       nodes,
     };
-  });
+  }));
 
   app.get<{ Params: { node_id: string } }>(
     '/nodes/:node_id',

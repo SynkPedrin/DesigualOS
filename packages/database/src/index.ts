@@ -1,5 +1,5 @@
 export * as schema from './schema/index';
-export { db, queryStats } from './client';
+export { db, queryStats, warmDatabasePool } from './client';
 export type { Database } from './client';
 export { getSchemaVersion } from './schema-version.js';
 export {
