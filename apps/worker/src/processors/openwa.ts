@@ -2,6 +2,7 @@ import { Worker, type Job } from 'bullmq';
 import {
   enqueueWhatsappSync,
   enqueueWhatsappWebhook,
+  retryWhatsappSync,
   getRedisConnection,
   publishWsEvent,
   scheduleWhatsappFollowupSync,
@@ -81,7 +82,11 @@ export async function recoverOpenwaJobs(logger: Logger): Promise<void> {
     listPendingWhatsappSyncJobs(),
     listPendingWhatsappWebhookEvents(),
   ]);
-  for (const job of syncJobs) await enqueueWhatsappSync(job.id);
+  // Identificador NOVO na fila: o job que um restart interrompeu fica no
+  // conjunto "failed" do BullMQ com o id original ("stalled more than allowable
+  // limit"), e reenfileirar com o mesmo id era ignorado em silêncio — o sync
+  // ficava "running" no banco para sempre (visto em produção, 19/10/2026).
+  for (const job of syncJobs) await retryWhatsappSync(job.id);
   for (const event of webhookEvents) await enqueueWhatsappWebhook(event.id);
   logger.info({ syncJobs: syncJobs.length, webhookEvents: webhookEvents.length }, 'WhatsApp recovery finished');
 }

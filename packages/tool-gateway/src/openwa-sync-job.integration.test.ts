@@ -177,4 +177,16 @@ describe('job de sincronização OpenWA em Postgres real', () => {
     const rows = await db.select({ status: schema.whatsappSyncJobs.status }).from(schema.whatsappSyncJobs).where(sql`${schema.whatsappSyncJobs.id} in (${a!.id}, ${b!.id})`);
     expect(rows.map((r) => r.status).sort()).toEqual(['completed', 'superseded']);
   });
+
+  it('sync parado há mais de 10 min não prende a sessão', async () => {
+    if (!enabled) return;
+    await db.update(schema.whatsappSyncJobs).set({ status: 'completed' }).where(sql`${schema.whatsappSyncJobs.sessionId} = ${session.id} and ${schema.whatsappSyncJobs.status} in ('queued','running')`);
+    const velho = new Date(Date.now() - 20 * 60_000);
+    const [orfao] = await db.insert(schema.whatsappSyncJobs).values({ organizationId, sessionId: session.id, status: 'running', phase: 'messages', createdAt: velho, updatedAt: velho }).returning();
+    const novo = await createWhatsappSyncJob(session, null);
+    expect(novo.created).toBe(true);
+    const [depois] = await db.select().from(schema.whatsappSyncJobs).where(eq(schema.whatsappSyncJobs.id, orfao!.id));
+    expect(depois!.status).toBe('superseded');
+    expect((await createWhatsappSyncJob(session, null)).id).toBe(novo.id);
+  });
 });
