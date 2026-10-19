@@ -22,18 +22,23 @@ import { resolveEnabledModules } from '../workspace/access';
  * limpa a entrada na hora (forgetEnabledModules); fora isso vale em até 20 s.
  */
 const MODULES_TTL_MS = 20_000;
-const modulesCache = new Map<string, { modules: Set<string>; at: number }>();
+const modulesCache = new Map<string, { resolved: Awaited<ReturnType<typeof resolveEnabledModules>>; at: number }>();
 
 export function forgetEnabledModules(userId: string): void {
   modulesCache.delete(userId);
 }
 
-async function enabledModulesOf(userId: string): Promise<Set<string>> {
+/** Mesmo resultado de resolveEnabledModules, com os 20 s de memória (também usado por GET /me/workspace). */
+export async function resolveEnabledModulesCached(userId: string): Promise<Awaited<ReturnType<typeof resolveEnabledModules>>> {
   const hit = modulesCache.get(userId);
-  if (hit && Date.now() - hit.at < MODULES_TTL_MS) return hit.modules;
-  const { modules } = await resolveEnabledModules(userId);
-  modulesCache.set(userId, { modules, at: Date.now() });
-  return modules;
+  if (hit && Date.now() - hit.at < MODULES_TTL_MS) return hit.resolved;
+  const resolved = await resolveEnabledModules(userId);
+  modulesCache.set(userId, { resolved, at: Date.now() });
+  return resolved;
+}
+
+async function enabledModulesOf(userId: string): Promise<Set<string>> {
+  return (await resolveEnabledModulesCached(userId)).modules;
 }
 
 export function requireModule(module: WorkspaceModule) {

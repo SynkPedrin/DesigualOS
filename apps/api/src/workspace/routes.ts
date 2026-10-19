@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { forgetEnabledModules } from '../auth/require-module';
+import { forgetEnabledModules, resolveEnabledModulesCached } from '../auth/require-module';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { WORKSPACE_MODULES, WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS, isWorkspaceModule } from '@desigual-os/types';
@@ -67,7 +67,7 @@ export async function registerWorkspaceRoutes(app: FastifyInstance): Promise<voi
   }));
 
   app.get('/me/workspace', { preHandler: requireAuth }, async (request) => {
-    return apresentacaoDe(await resolveEnabledModules(request.authUser!.id));
+    return apresentacaoDe(await resolveEnabledModulesCached(request.authUser!.id));
   });
 
   app.get<{ Params: { userId: string } }>(

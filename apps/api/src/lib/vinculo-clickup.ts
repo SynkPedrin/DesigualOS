@@ -12,7 +12,22 @@ import { resolveSharedClickUpAccess } from '../integrations/access';
  * Só grava quando o casamento é único (casarMembroDoClickUp). Sem casamento,
  * devolve null e a tela explica; nunca liga a pessoa errada.
  */
+/**
+ * E-mail já vinculado não muda sozinho: guardado por 10 min, `/me` (chamado em
+ * toda navegação) e "minhas tarefas" deixam de ler `users` para isto. Quem
+ * ainda não tem vínculo continua sendo conferido a cada chamada.
+ */
+const vinculadosEmCache = new Map<string, { email: string; em: number }>();
+
 export async function garantirEmailDoClickUp(userId: string): Promise<string | null> {
+  const guardado = vinculadosEmCache.get(userId);
+  if (guardado && Date.now() - guardado.em < 10 * 60_000) return guardado.email;
+  const email = await resolverEmailDoClickUp(userId);
+  if (email) vinculadosEmCache.set(userId, { email, em: Date.now() });
+  return email;
+}
+
+async function resolverEmailDoClickUp(userId: string): Promise<string | null> {
   const [u] = await db
     .select({ email: schema.users.email, nome: schema.users.name, clickupEmail: schema.users.clickupEmail })
     .from(schema.users)
