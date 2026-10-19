@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { requireEnv } from './env';
@@ -44,11 +45,23 @@ const poolMax = Number(process.env.DATABASE_POOL_MAX) || 3;
  */
 const CONNECT_TIMEOUT_S = Number(process.env.DATABASE_CONNECT_TIMEOUT_S) || 15;
 
+/**
+ * Contador de consultas por requisição (API registra no fim de cada uma). Com
+ * o banco em us-east-1 e a API no Brasil, cada consulta custa ~125 ms (medido
+ * em 19/10/2026): o NÚMERO de consultas de uma rota é o que decide a
+ * velocidade dela, e é isto que mostra onde cortar.
+ */
+export const queryStats = new AsyncLocalStorage<{ count: number }>();
+
 const client = postgres(connectionString, {
   ssl: sslDoDestino(connectionString),
   prepare: false,
   max: poolMax,
   connect_timeout: CONNECT_TIMEOUT_S,
+  debug: () => {
+    const stats = queryStats.getStore();
+    if (stats) stats.count += 1;
+  },
 });
 
 export const db = drizzle(client, { schema });

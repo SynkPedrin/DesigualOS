@@ -7,7 +7,7 @@ import rateLimitPlugin from '@fastify/rate-limit';
 import helmetPlugin from '@fastify/helmet';
 import { z } from 'zod';
 import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/logging';
-import { getSchemaVersion } from '@desigual-os/database';
+import { getSchemaVersion, queryStats } from '@desigual-os/database';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
 import { registerReadyRoutes } from './health/ready-routes';
@@ -202,6 +202,17 @@ async function start(): Promise<void> {
   // preflight, senão bloqueia com "Permission was denied". Quem está fora da
   // tailnet resolve o IP público do edge e nem nota. Sem ele, ninguém do
   // escritório conseguia usar o app publicado.
+  // Consultas ao banco por requisição, no log de cada uma (ver queryStats).
+  app.addHook('onRequest', (_request, _reply, done) => {
+    queryStats.enterWith({ count: 0 });
+    done();
+  });
+  app.addHook('onResponse', (request, reply, done) => {
+    const stats = queryStats.getStore();
+    if (stats && request.method !== 'OPTIONS') request.log.info({ dbQueries: stats.count, responseTime: reply.elapsedTime }, 'db queries');
+    done();
+  });
+
   app.addHook('onSend', (request, reply, _payload, done) => {
     if (request.headers.origin) {
       reply.header('Access-Control-Allow-Private-Network', 'true');
