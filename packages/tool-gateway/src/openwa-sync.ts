@@ -377,6 +377,15 @@ const CHATS_EM_PARALELO = 2;
 const CONTATOS_EM_PARALELO = 8;
 
 /**
+ * Só as conversas mais recentes abrem o histórico no navegador. Medido em
+ * produção (19/10/2026): ler o histórico das 1000 conversas de uma conta
+ * grande levou o Chrome dessa sessão sozinho a 2 GB e o kernel o matou mesmo
+ * com 4 GB no container. As demais entram com nome, data e prévia da lista de
+ * chats; mensagem nova em qualquer uma chega na hora pelo webhook.
+ */
+const CONVERSAS_COM_HISTORICO = 200;
+
+/**
  * Ordem pensada no que a pessoa vê: primeiro as conversas (mais recentes
  * antes, já aparecendo na Inbox enquanto o resto chega), depois as fotos,
  * por último a agenda — que pode ter milhares de entradas e não bloqueia
@@ -453,7 +462,8 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
             ...(chat.lastMessage ? { lastMessagePreview: sql`case when ${schema.conversationThreads.lastMessageAt} is null or ${schema.conversationThreads.lastMessageAt} <= ${at}::timestamptz then ${chat.lastMessage.slice(0, 500)} else ${schema.conversationThreads.lastMessagePreview} end` } : {}),
           }).where(eq(schema.conversationThreads.id, thread.id));
         }
-        if (chat.isGroup) {
+        const recente = chats.indexOf(chat) < CONVERSAS_COM_HISTORICO;
+        if (chat.isGroup && recente) {
           try {
             const details = await client.group(chat.id);
             await db.update(schema.whatsappGroups).set({ name: details.name || chat.name || 'Grupo WhatsApp', participants: details.participants }).where(and(eq(schema.whatsappGroups.sessionId, session.id), eq(schema.whatsappGroups.externalGroupId, chat.id)));
@@ -461,7 +471,7 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
             failures.push({ chatId: chat.id, message: `Participantes indisponíveis: ${reason(error)}` });
           }
         }
-        const history = await client.history(chat.id, LIMITE_PADRAO_HISTORICO);
+        const history = recente ? await client.history(chat.id, LIMITE_PADRAO_HISTORICO) : [];
         try {
           const result = await persistHistoryBatch({ session, thread, contact, messages: history, senderCache });
           processedMessages += result.created;
