@@ -153,6 +153,33 @@ export async function listMessages(organizationId: string, threadId: string, lim
     .offset(offset);
 }
 
+/**
+ * As mensagens MAIS RECENTES de uma conversa visível para quem pede, numa
+ * ida ao banco só (permissão e mensagens juntas; antes eram duas, ~125 ms cada
+ * até us-east-1). Devolve null se a conversa não existe para essa pessoa.
+ *
+ * `offset` conta a partir da mais nova: 0 = a página atual, 50 = a anterior.
+ * A versão antiga ordenava da mais velha e cortava em 50 — conversa com mais de
+ * 50 mensagens abria sem as últimas.
+ */
+export async function listRecentMessagesVisible(organizationId: string, threadId: string, viewerId: string, limit: number, offset: number): Promise<MessageRow[] | null> {
+  const rows = await db
+    .select({ thread: schema.conversationThreads.id, message: schema.threadMessages })
+    .from(schema.conversationThreads)
+    .leftJoin(schema.threadMessages, sql`${schema.threadMessages.id} in (
+      select m.id from thread_messages m
+      where m.thread_id = ${schema.conversationThreads.id} and m.organization_id = ${organizationId}
+      order by m.created_at desc limit ${limit} offset ${offset}
+    )`)
+    .where(and(
+      eq(schema.conversationThreads.id, threadId),
+      eq(schema.conversationThreads.organizationId, organizationId),
+      threadVisibleTo(viewerId),
+    ));
+  if (rows.length === 0) return null;
+  return rows.flatMap((row) => (row.message ? [row.message] : [])).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+}
+
 export async function assignThread(organizationId: string, threadId: string, assignedToUserId: string | null): Promise<ThreadRow | null> {
   const [atualizado] = await db
     .update(schema.conversationThreads)

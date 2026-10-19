@@ -34,6 +34,7 @@ vi.mock('@desigual-os/tool-gateway', () => ({
   openwaAdminClient: () => admin,
   gatewayForWhatsappSession: () => gateway,
   encryptToken: (value: string) => `encrypted:${value}`,
+  normalizeOpenwaMessage: (raw: Record<string, unknown>) => ({ id: String(raw.id ?? ''), chatId: String(raw.chatId ?? ''), body: null, type: 'chat', direction: 'incoming', timestamp: null }),
   createWhatsappSyncJob: vi.fn(async () => ({ id: 'job-1', created: true })),
   recoverWhatsappWebhookEvent: vi.fn(async () => undefined),
   registerOpenwaWebhookEvent: (...args: unknown[]) => registerEvent(...args),
@@ -48,6 +49,7 @@ vi.mock('@desigual-os/orchestrator', () => ({
   enqueueWhatsappWebhook: (...args: unknown[]) => enqueueWebhook(...args),
   retryWhatsappSync: vi.fn(async () => undefined),
   retryWhatsappWebhook: vi.fn(async () => undefined),
+  publishWsEvent: vi.fn(async () => undefined),
 }));
 vi.mock('../auth/middleware', () => ({
   requireAuth: async (request: { authUser?: unknown }) => { request.authUser = currentUser; },

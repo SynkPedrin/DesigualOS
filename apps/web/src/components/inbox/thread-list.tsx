@@ -32,11 +32,14 @@ export function ThreadList({
   isPending,
   selectedId,
   onSelect,
+  onHover,
 }: {
   threads: InboxThread[] | undefined;
   isPending: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Pré-carga ao passar o mouse: a conversa abre do que já está em memória. */
+  onHover?: (id: string) => void;
 }) {
   if (isPending) {
     return (
@@ -65,6 +68,8 @@ export function ThreadList({
             <button
               type="button"
               onClick={() => onSelect(thread.id)}
+              onMouseEnter={() => onHover?.(thread.id)}
+              onFocus={() => onHover?.(thread.id)}
               className={cn(
                 'flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-grafite-elevado/60',
                 selectedId === thread.id && 'bg-grafite-elevado',

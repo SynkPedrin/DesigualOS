@@ -600,7 +600,7 @@ export async function registerOpenwaWebhookEvent(input: {
   envelope: Record<string, unknown>;
   rawBody: string;
   signature: string | undefined;
-}): Promise<{ id: string; created: boolean } | null> {
+}): Promise<{ id: string; created: boolean; ownerUserId: string } | null> {
   const session = await cachedWhatsappSession('external', input.externalSessionId);
   if (!session) return null;
   const { assinaturaOpenwaValida } = await import('./openwa-signature');
@@ -615,9 +615,9 @@ export async function registerOpenwaWebhookEvent(input: {
     payload: input.envelope,
     status: 'queued',
   }).onConflictDoNothing({ target: schema.whatsappWebhookEvents.dedupeKey }).returning();
-  if (event) return { id: event.id, created: true };
+  if (event) return { id: event.id, created: true, ownerUserId: session.ownerUserId };
   const [existing] = await db.select({ id: schema.whatsappWebhookEvents.id }).from(schema.whatsappWebhookEvents).where(eq(schema.whatsappWebhookEvents.dedupeKey, input.dedupeKey)).limit(1);
-  return existing ? { id: existing.id, created: false } : null;
+  return existing ? { id: existing.id, created: false, ownerUserId: session.ownerUserId } : null;
 }
 
 export async function processOpenwaWebhookEvent(eventId: string): Promise<{ syncSessionId?: string; ownerUserId?: string; threadId?: string; inboxChanged?: boolean }> {

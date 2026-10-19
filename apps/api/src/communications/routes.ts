@@ -143,13 +143,12 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
     });
 
     authed.get<{ Params: { id: string } }>('/inbox/threads/:id/messages', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
-      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
-      if (!thread) {
+      const q = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0) }).parse(request.query);
+      const mensagens = await svc.listRecentMessagesVisible(request.tenantContext!.organizationId, request.params.id, request.authUser!.id, q.limit, q.offset);
+      if (!mensagens) {
         reply.code(404);
         return { error: `Thread '${request.params.id}' not found` };
       }
-      const q = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0) }).parse(request.query);
-      const mensagens = await svc.listMessages(request.tenantContext!.organizationId, request.params.id, q.limit, q.offset);
       return { messages: mensagens.map(presentMessage) };
     });
 

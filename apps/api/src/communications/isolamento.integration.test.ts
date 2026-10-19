@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, schema } from '@desigual-os/database';
-import { getThread, listThreads } from './service';
+import { getThread, listRecentMessagesVisible, listThreads } from './service';
 
 /** Isolamento da Inbox por dono da sessão, em Postgres real (só com OPENWA_TEST_DATABASE_URL). */
 const enabled = Boolean(process.env.OPENWA_TEST_DATABASE_URL);
@@ -69,5 +69,22 @@ describe('Inbox isolada por dono da sessão WhatsApp', () => {
     expect(busca.map((t) => t.id)).toEqual([threadDoDono]);
     const nada = await listThreads({ organizationId: org, callerId: dono, view: 'archived', q: '100%_x', limit: 50, offset: 0 });
     expect(nada).toHaveLength(0);
+  });
+
+  it('conversa com mais de 50 mensagens abre nas MAIS RECENTES, em ordem; colega não vê', async () => {
+    if (!enabled) return;
+    const base = Date.now() - 60 * 60_000;
+    await db.insert(schema.threadMessages).values(Array.from({ length: 60 }, (_, i) => ({
+      threadId: threadDoDono, organizationId: org, channel: 'whatsapp' as const, direction: 'inbound' as const,
+      content: `m${i}`, deliveryStatus: 'delivered' as const, createdAt: new Date(base + i * 1000),
+    })));
+    const pagina = await listRecentMessagesVisible(org, threadDoDono, dono, 50, 0);
+    expect(pagina).toHaveLength(50);
+    expect(pagina![0]!.content).toBe('m10');
+    expect(pagina![49]!.content).toBe('m59');
+    const anterior = await listRecentMessagesVisible(org, threadDoDono, dono, 50, 50);
+    expect(anterior!.map((m) => m.content)).toEqual(Array.from({ length: 10 }, (_, i) => `m${i}`));
+    expect(await listRecentMessagesVisible(org, threadDoDono, colega, 50, 0)).toBeNull();
+    expect(await listRecentMessagesVisible(org, threadDaEmpresa, colega, 50, 0)).toEqual([]);
   });
 });

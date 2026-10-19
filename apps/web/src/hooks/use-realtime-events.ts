@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { realtimeClient, type WsEvent } from '@/lib/realtime/ws-client';
 import { useSupabaseSession } from '@/hooks/use-supabase-session';
+import { applyLiveInboxMessage, type LiveInboxMessage } from '@/hooks/use-inbox';
 
 /**
  * Ponte entre o canal WS do backend e o cache do React Query: em vez de
@@ -74,6 +75,13 @@ export function useRealtimeEvents(): void {
         }
         // Mensagem nova, entrega/leitura ou progresso de sync do WhatsApp: a
         // Inbox atualiza na hora em vez de esperar o polling.
+        case 'inbox.message': {
+          // Conversa nova (ainda fora da lista) não tem onde encaixar: busca a lista.
+          if (!applyLiveInboxMessage(queryClient, event.payload as unknown as LiveInboxMessage)) {
+            queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
+          }
+          break;
+        }
         case 'inbox.updated': {
           queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
           const threadId = event.payload.thread_id;

@@ -45,7 +45,10 @@ export interface WsEvent {
     // UI com eventos REAIS em vez de etapas inventadas.
     | 'agent.phase'
     // Inbox do WhatsApp: só ids, nunca conteúdo; o servidor entrega só ao dono da sessão.
-    | 'inbox.updated';
+    | 'inbox.updated'
+    // Mensagem do WhatsApp no instante em que o webhook chega, antes de gravar:
+    // a tela encaixa na conversa sem buscar nada. Conteúdo: entregue só ao dono.
+    | 'inbox.message';
   payload: Record<string, unknown>;
 }
 

@@ -53,6 +53,7 @@ export async function trocarOrganizacaoAtiva(
       .update(schema.users)
       .set({ organizacaoAtivaId: null })
       .where(eq(schema.users.id, user.id));
+    esquecerOrganizacaoAtiva(user.id);
     return { ok: true, motivo: null, organizacao: null };
   }
 
@@ -92,6 +93,7 @@ export async function trocarOrganizacaoAtiva(
     .update(schema.users)
     .set({ organizacaoAtivaId: org.id })
     .where(eq(schema.users.id, user.id));
+  esquecerOrganizacaoAtiva(user.id);
 
   /**
    * Toda troca é auditada. É o registro que responde "quem entrou na conta de
@@ -120,7 +122,40 @@ export async function trocarOrganizacaoAtiva(
  * da empresa DEPOIS de entrar nela, e nesse caso o contexto salvo passa a ser
  * uma permissão vencida guardada no banco.
  */
+/**
+ * Empresa ativa (coluna + linha da empresa) em memória por 20 s. São duas idas
+ * ao banco em us-east-1 (~250 ms) que toda requisição autenticada pagava,
+ * medido em 19/10/2026. A troca de empresa limpa na hora
+ * (esquecerOrganizacaoAtiva); o vínculo continua revalidado a cada chamada,
+ * contra o escopo, logo abaixo.
+ */
+const ATIVA_TTL_MS = 20_000;
+type OrgAtiva = { id: string; name: string; slug: string };
+const ativaCache = new Map<string, { ativa: string | null; org: OrgAtiva | null; at: number }>();
+
+export function esquecerOrganizacaoAtiva(userId?: string): void {
+  if (userId) ativaCache.delete(userId);
+  else ativaCache.clear();
+}
+
 export async function organizacaoAtivaDe(
+  user: AuthenticatedUser,
+  escopoJaLido?: EscopoDeOrganizacao,
+): Promise<{ id: string; name: string; slug: string } | null> {
+  const hit = ativaCache.get(user.id);
+  if (hit && Date.now() - hit.at < ATIVA_TTL_MS) {
+    if (!hit.ativa) return null;
+    const escopo = escopoJaLido ?? (await escopoDeOrganizacao(user));
+    if (!escopo.ehProvider && !escopo.organizationIds.includes(hit.ativa)) {
+      ativaCache.delete(user.id);
+      return organizacaoAtivaDe(user, escopo);
+    }
+    return hit.org;
+  }
+  return organizacaoAtivaSemCache(user, escopoJaLido);
+}
+
+async function organizacaoAtivaSemCache(
   user: AuthenticatedUser,
   escopoJaLido?: EscopoDeOrganizacao,
 ): Promise<{ id: string; name: string; slug: string } | null> {
@@ -130,7 +165,10 @@ export async function organizacaoAtivaDe(
     .where(eq(schema.users.id, user.id))
     .catch(() => []);
 
-  if (!linha?.ativa) return null;
+  if (!linha?.ativa) {
+    if (linha) ativaCache.set(user.id, { ativa: null, org: null, at: Date.now() });
+    return null;
+  }
 
   /**
    * `escopoJaLido` não é micro-otimização: foi uma regressão medida. Quando
@@ -145,6 +183,7 @@ export async function organizacaoAtivaDe(
     // Vínculo perdido desde a entrada: limpa e volta ao provedor, em silêncio
     // para a pessoa mas sem manter o acesso.
     await db.update(schema.users).set({ organizacaoAtivaId: null }).where(eq(schema.users.id, user.id));
+    ativaCache.delete(user.id);
     return null;
   }
 
@@ -154,6 +193,7 @@ export async function organizacaoAtivaDe(
     .where(and(eq(schema.organizations.id, linha.ativa), eq(schema.organizations.status, 'ativa')))
     .catch(() => []);
 
+  ativaCache.set(user.id, { ativa: linha.ativa, org: org ?? null, at: Date.now() });
   return org ?? null;
 }
 
@@ -283,6 +323,7 @@ export async function contextoCompletoDe(user: AuthenticatedUser): Promise<Conte
   if (linhaAtiva && !ativaVale && !escopo.ehProvider && !escopo.organizationIds.includes(linhaAtiva.id)) {
     // Limpa o contexto vencido. Em silêncio para a pessoa, mas sem manter o
     // acesso. Não bloqueia a resposta: se falhar, a validação acima já barrou.
+    esquecerOrganizacaoAtiva(user.id);
     void db
       .update(schema.users)
       .set({ organizacaoAtivaId: null })

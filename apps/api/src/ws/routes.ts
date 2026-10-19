@@ -125,7 +125,7 @@ export async function registerWsRoutes(app: FastifyInstance): Promise<void> {
         if (payload.sender_id !== userId && payload.recipient_id !== userId) continue;
       }
       // Conversa de sessão WhatsApp é do dono da sessão (mesma regra da REST /inbox).
-      if (event.type === 'inbox.updated' && (event.payload as { owner_user_id?: string }).owner_user_id !== userId) continue;
+      if ((event.type === 'inbox.updated' || event.type === 'inbox.message') && (event.payload as { owner_user_id?: string }).owner_user_id !== userId) continue;
       if (event.type === 'message.delta') {
         const payload = event.payload as { owner_user_id?: string; visibility?: string; client_id?: string | null };
         if (payload.visibility === 'private' && payload.owner_user_id !== userId) continue;
