@@ -33,7 +33,8 @@ export function useInboxThreads(filter: InboxThreadFilter = {}) {
       const wire = await apiFetch<{ threads: InboxThreadWire[] }>(`/inbox/threads${queryString(filter)}`);
       return wire.threads.map(mapInboxThread);
     },
-    staleTime: 15_000,
+    staleTime: 5_000,
+    refetchInterval: 8_000,
   });
 }
 
@@ -42,6 +43,7 @@ export function useInboxThread(threadId: string | null) {
     queryKey: ['inbox-thread', threadId],
     queryFn: async () => mapInboxThread(await apiFetch<InboxThreadWire>(`/inbox/threads/${threadId}`)),
     enabled: Boolean(threadId),
+    refetchInterval: 10_000,
   });
 }
 
@@ -53,8 +55,15 @@ export function useInboxMessages(threadId: string | null) {
       return wire.messages.map(mapInboxMessage);
     },
     enabled: Boolean(threadId),
-    staleTime: 5_000,
+    staleTime: 3_000,
+    refetchInterval: 4_000,
   });
+}
+
+function invalidateThread(queryClient: ReturnType<typeof useQueryClient>, threadId: string) {
+  void queryClient.invalidateQueries({ queryKey: ['inbox-messages', threadId] });
+  void queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
+  void queryClient.invalidateQueries({ queryKey: ['inbox-thread', threadId] });
 }
 
 export function useSendInboxMessage(threadId: string) {
@@ -65,10 +74,38 @@ export function useSendInboxMessage(threadId: string) {
         method: 'POST',
         body: JSON.stringify({ text }),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['inbox-messages', threadId] });
-      queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
+    onSuccess: () => invalidateThread(queryClient, threadId),
+  });
+}
+
+export function useSendInboxMedia(threadId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { file: File; caption?: string; voiceNote?: boolean }) => {
+      const body = new FormData();
+      if (input.caption) body.append('caption', input.caption);
+      if (input.voiceNote) body.append('voiceNote', 'true');
+      body.append('file', input.file);
+      return apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages/media`, { method: 'POST', body }, { timeoutMs: 120_000 });
     },
+    onSuccess: () => invalidateThread(queryClient, threadId),
+  });
+}
+
+export function useMarkInboxRead(threadId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch(`/inbox/threads/${threadId}/read`, { method: 'POST' }),
+    onSuccess: () => invalidateThread(queryClient, threadId),
+  });
+}
+
+export function useUpdateInboxStatus(threadId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (status: 'open' | 'waiting_client' | 'waiting_agency' | 'archived') =>
+      apiFetch(`/inbox/threads/${threadId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    onSuccess: () => invalidateThread(queryClient, threadId),
   });
 }
 
@@ -80,9 +117,6 @@ export function useAssignInboxThread(threadId: string) {
         method: 'PATCH',
         body: JSON.stringify({ userId }),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
-      queryClient.invalidateQueries({ queryKey: ['inbox-thread', threadId] });
-    },
+    onSuccess: () => invalidateThread(queryClient, threadId),
   });
 }

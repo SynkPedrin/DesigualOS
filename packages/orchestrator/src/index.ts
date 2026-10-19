@@ -27,3 +27,4 @@ export * from './alerts';
 export * from './worker-heartbeat';
 export * from './thumbnail-queue';
 export * from './client-report-queue';
+export * from './whatsapp-queue';

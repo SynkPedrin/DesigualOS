@@ -38,8 +38,10 @@ import { ClickUpIntegrationSection } from '@/components/settings/clickup-integra
 import { NotionIntegrationSection } from '@/components/settings/notion-integration-card';
 import { MotionProvidersSection } from '@/components/settings/motion-providers-card';
 import { WhatsAppConnectCard } from '@/components/settings/whatsapp-connect-card';
+import { WhatsappBusinessCard } from '@/components/settings/whatsapp-business-card';
 import { BentoWhatsappSection } from '@/components/settings/bento-whatsapp-card';
 import { useBentoWhatsappMe } from '@/hooks/use-bento-whatsapp';
+import { useWhatsappOpenwaSessions } from '@/hooks/use-whatsapp-openwa';
 import { InteligenciaConectada } from '@/components/control/inteligencia-conectada';
 import { saudeDasIntegracoes } from '@/lib/saude-das-integracoes';
 
@@ -57,6 +59,8 @@ export default function IntegrationsPage() {
   const { data: mcp, isPending: mcpPendente } = useMcpStatus();
   const { data: me } = useMe();
   const { data: whatsapp, isPending: whatsappPendente } = useWhatsappHealth(me?.organizacao_ativa?.id ?? null);
+  const { data: openwaSessions, isPending: openwaPendente } = useWhatsappOpenwaSessions();
+  const openwaConnected = openwaSessions?.some((session) => session.status === 'ready') === true;
   const { data: meta, isPending: metaPendente } = useMetaIntegration();
   const { data: googleAds, isPending: googleAdsPendente } = useGoogleAdsIntegration();
   const { data: microsoftCal, isPending: microsoftCalPendente } = useMicrosoftCalendarIntegration();
@@ -74,7 +78,7 @@ export default function IntegrationsPage() {
     meta,
     googleAds,
     microsoftCal,
-    { connected: whatsapp?.connected === true, configured: whatsapp !== undefined },
+    { connected: openwaConnected || whatsapp?.connected === true, configured: whatsapp !== undefined || (openwaSessions?.length ?? 0) > 0 },
     /**
      * O CLAUDE ENTRA NA CONTA, e não entrava.
      *
@@ -174,9 +178,17 @@ export default function IntegrationsPage() {
           categoria: 'Mensageria',
           bannerClassName: 'bg-[#25D366]',
           logo: <img src="/logos/whatsapp.webp" alt="" className="size-10 rounded-[6px]" />,
-          estado: whatsappPendente ? 'desconhecido' : whatsapp?.connected ? 'ok' : 'atencao',
-          texto: whatsappPendente ? 'Consultando' : whatsapp?.connected ? 'Conectado' : whatsapp?.configured ? 'Vinculado, verificando' : 'Não vinculado',
-          painel: <WhatsAppConnectCard />,
+          estado: openwaPendente || whatsappPendente ? 'desconhecido' : openwaConnected || whatsapp?.connected ? 'ok' : 'atencao',
+          texto: openwaPendente || whatsappPendente ? 'Consultando' : openwaConnected || whatsapp?.connected ? 'Conectado' : (openwaSessions?.length ?? 0) > 0 ? 'Sessão em configuração' : whatsapp?.configured ? 'Vinculado, verificando' : 'Não vinculado',
+          painel: (
+            <div className="space-y-4">
+              <WhatsappBusinessCard />
+              <details className="rounded-lg border border-grafite-elevado px-4 py-3 text-sm text-nevoa">
+                <summary className="cursor-pointer">Conector W-API legado</summary>
+                <div className="mt-3"><WhatsAppConnectCard /></div>
+              </details>
+            </div>
+          ),
         },
       ],
     },

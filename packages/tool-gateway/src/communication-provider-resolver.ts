@@ -1,7 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CommunicationProvider } from './communication-provider';
 import { evolutionHealth, evolutionSendText, type EvolutionConfig } from './evolution-client';
 import { wapiHealth, wapiSendAudio, wapiSendDocument, wapiSendImage, wapiSendText, type WApiConfig } from './wapi-client';
+import {
+  OpenwaClient,
+  type OpenwaConfig,
+} from './openwa-client';
 import { ConnectorConfigError, loadConnectorRows } from './organization-connector-store';
 import { conectorAtivo } from './task-provider-resolver.js';
 
@@ -44,7 +49,19 @@ const wapiCredentialsSchema = z.object({
   webhookSecret: z.string().trim().min(1).optional(),
 });
 
-const whatsappCredentialsSchema = z.union([evolutionCredentialsSchema, wapiCredentialsSchema]);
+const openwaCredentialsSchema = z.object({
+  vendor: z.literal('openwa'),
+  baseUrl: z.string().trim().url(),
+  apiKey: z.string().trim().min(1),
+  /**
+   * Sessão OpenWA desta organização (UUID). Sem ela o envio não sabe para
+   * onde ir — a sessão só nasce de uma conexão humana no painel, nunca por
+   * credencial automática.
+   */
+  sessionId: z.string().trim().min(1),
+});
+
+const whatsappCredentialsSchema = z.union([evolutionCredentialsSchema, wapiCredentialsSchema, openwaCredentialsSchema]);
 
 class EvolutionCommunicationProvider implements CommunicationProvider {
   readonly provider = 'whatsapp' as const;
@@ -91,6 +108,84 @@ class WApiCommunicationProvider implements CommunicationProvider {
 }
 
 /**
+ * OpenwaCommunicationProvider (16/10/2026) — o mesmo contrato já documentado
+ * em `openwa-client.ts`. Envia texto/imagem/áudio/documento e reporta o
+ * estado da sessão. O envio é sempre escopado a `config.sessionId`; sessões
+ * corporativas do Inbox e a sessão dedicada do Bento permanecem separadas.
+ */
+class OpenwaCommunicationProvider implements CommunicationProvider {
+  readonly provider = 'whatsapp' as const;
+  constructor(private readonly config: OpenwaConfig) {}
+
+  async sendMessage(input: { to: string; text: string }): Promise<{ externalMessageId: string | null }> {
+    const sent = await new OpenwaClient({
+      baseUrl: this.config.baseUrl,
+      apiKey: this.config.apiKey,
+      sessionId: this.config.sessionId,
+    }).sendText({
+      chatId: input.to,
+      text: input.text,
+      idempotencyKey: randomUUID(),
+    });
+    return { externalMessageId: sent.messageId };
+  }
+
+  async sendImage(input: { to: string; url: string; caption?: string }): Promise<{ externalMessageId: string | null }> {
+    const sent = await new OpenwaClient({
+      baseUrl: this.config.baseUrl,
+      apiKey: this.config.apiKey,
+      sessionId: this.config.sessionId,
+    }).sendImage({
+      chatId: input.to,
+      url: input.url,
+      mimetype: guessMimeType(input.url),
+      ...(input.caption ? { caption: input.caption } : {}),
+      idempotencyKey: randomUUID(),
+    });
+    return { externalMessageId: sent.messageId };
+  }
+
+  async sendAudio(input: { to: string; url: string }): Promise<{ externalMessageId: string | null }> {
+    const sent = await new OpenwaClient({
+      baseUrl: this.config.baseUrl,
+      apiKey: this.config.apiKey,
+      sessionId: this.config.sessionId,
+    }).sendAudio({
+      chatId: input.to,
+      url: input.url,
+      mimetype: guessMimeType(input.url),
+      idempotencyKey: randomUUID(),
+    });
+    return { externalMessageId: sent.messageId };
+  }
+
+  async sendDocument(input: { to: string; url: string; filename: string }): Promise<{ externalMessageId: string | null }> {
+    const sent = await new OpenwaClient({
+      baseUrl: this.config.baseUrl,
+      apiKey: this.config.apiKey,
+      sessionId: this.config.sessionId,
+    }).sendDocument({
+      chatId: input.to,
+      url: input.url,
+      mimetype: guessMimeType(input.url),
+      filename: input.filename,
+      idempotencyKey: randomUUID(),
+    });
+    return { externalMessageId: sent.messageId };
+  }
+
+  async health(): Promise<{ healthy: boolean; detail?: string }> {
+    const cliente = new OpenwaClient({
+      baseUrl: this.config.baseUrl,
+      apiKey: this.config.apiKey,
+      sessionId: this.config.sessionId,
+    });
+    const saude = await cliente.health();
+    return { healthy: saude.healthy, ...(saude.detail ? { detail: saude.detail } : {}) };
+  }
+}
+
+/**
  * O provider de WhatsApp da empresa, ou `null` se ela não tem um
  * configurado. Conector existente mas quebrado (inativo/credencial
  * incompleta) lança `ConnectorConfigError` — nunca `null` (que pareceria
@@ -119,5 +214,26 @@ export async function resolveCommunicationProvider(
     );
   }
   // O discriminador que troca o vendor sem mexer em mais nada fora daqui.
-  return parsed.data.vendor === 'wapi' ? new WApiCommunicationProvider(parsed.data) : new EvolutionCommunicationProvider(parsed.data);
+  return parsed.data.vendor === 'wapi'
+    ? new WApiCommunicationProvider(parsed.data)
+    : parsed.data.vendor === 'openwa'
+      ? new OpenwaCommunicationProvider(parsed.data)
+      : new EvolutionCommunicationProvider(parsed.data);
+}
+
+/**
+ * Estima o mimetype a partir da extensão do arquivo — o chamador já enviou
+ * o arquivo e conhece o tipo real; esta estimativa existe só pra não deixar
+ * o DTO do OpenWA sem o campo exigido.
+ */
+function guessMimeType(url: string): string {
+  const extensao = url.split('.').pop() ?? '';
+  if (extensao === 'png') return 'image/png';
+  if (extensao === 'jpg' || extensao === 'jpeg') return 'image/jpeg';
+  if (extensao === 'webp') return 'image/webp';
+  if (extensao === 'gif') return 'image/gif';
+  if (extensao === 'mp3') return 'audio/mpeg';
+  if (extensao === 'ogg' || extensao === 'opus') return 'audio/ogg';
+  if (extensao === 'pdf') return 'application/pdf';
+  return 'application/octet-stream';
 }

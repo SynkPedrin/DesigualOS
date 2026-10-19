@@ -136,3 +136,16 @@ export async function apiFetch<T>(path: string, init?: RequestInit, options?: Ap
     callerSignal?.removeEventListener('abort', abortFromCaller);
   }
 }
+
+export async function apiBlob(path: string, init?: RequestInit): Promise<Blob> {
+  let token = accessTokenProvider?.() ?? null;
+  if (!token && accessTokenAsyncProvider) token = await accessTokenAsyncProvider().catch(() => null);
+  const headers = new Headers(init?.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as ApiError | null;
+    throw new ApiRequestError(body?.error ?? response.statusText, response.status, body?.details, body ?? undefined);
+  }
+  return response.blob();
+}

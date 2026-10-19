@@ -112,3 +112,8 @@ nodes/otto-node/scripts/.golden-results/
 # MP4 e cópias dos assets do cliente. Tudo reproduzível e, no caso dos
 # assets, material de cliente que não deve entrar num repositório público.
 packages/otto-motion/runtime/
+.mcp.json
+.agentsroom/handoff-transcript-*.txt
+.agentsroom/handoff-summary-*.md
+.agentsroom/fork-context-*.txt
+.agentsroom/transfer-context-*.txt

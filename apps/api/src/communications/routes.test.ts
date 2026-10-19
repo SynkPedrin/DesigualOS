@@ -167,48 +167,45 @@ vi.mock('@desigual-os/database', () => {
   return {
     db: {
       select: () => ({
-        from: (table: unknown) => ({
-          innerJoin: (joinTable: unknown) => ({
-            leftJoin: () => ({
-              where: (cond: unknown) => comPaginacao(filtrarThreads(cond).map((t) => ({
-                id: t.id, organizationId: t.organizationId, clientId: t.clientId, clientName: null,
-                contactId: t.contactId, contactName: contacts.find((c) => c.id === t.contactId)?.name ?? '',
-                contactPhone: contacts.find((c) => c.id === t.contactId)?.phone ?? null,
-                channel: t.channel, status: t.status, assignedToUserId: t.assignedToUserId, lastMessageAt: t.lastMessageAt,
-              }))),
-            }),
+        from: (table: unknown) => {
+          const whereJoined = (cond: unknown) => comPaginacao(filtrarThreads(cond).map((t) => ({
+            id: t.id, organizationId: t.organizationId, clientId: t.clientId, clientName: null,
+            contactId: t.contactId, contactName: contacts.find((c) => c.id === t.contactId)?.name ?? '',
+            contactPhone: contacts.find((c) => c.id === t.contactId)?.phone ?? null, contactMetadata: null,
+            whatsappSessionId: null, groupId: null, externalChatId: null, kind: 'individual', title: null,
+            unreadCount: 0, lastMessagePreview: null, groupName: null, groupAvatarUrl: null,
+            channel: t.channel, status: t.status, assignedToUserId: t.assignedToUserId, lastMessageAt: t.lastMessageAt,
+          })));
+          const joined: { leftJoin: () => typeof joined; where: (cond: unknown) => unknown } = {
+            leftJoin: () => joined,
+            where: whereJoined,
+          };
+          return {
+            leftJoin: () => joined,
             where: (cond: unknown) => {
               if (table === threadMessages) {
                 const params = coletarParams(cond);
-                const linhas = messages.filter((m) => params.includes(m.channel) || params.includes(m.externalMessageId ?? '__none__'));
+                const threadIds = params.filter((p) => threads.some((t) => t.id === p));
+                const linhas = messages.filter((m) => threadIds.length === 0 || threadIds.includes(m.threadId));
                 return comPaginacao(linhas);
               }
-              return comPaginacao([]);
+              if (table === contactsTable) {
+                const params = coletarParams(cond);
+                return Promise.resolve(contacts.filter((c) => params.includes(c.organizationId) && params.includes(c.phone ?? '__none__')));
+              }
+              if (table === organizationConnectors) {
+                const params = coletarParams(cond);
+                return Promise.resolve(connectors.filter((c) => params.includes('whatsapp') ? c.provider === 'whatsapp' : true).filter((c) => params.includes('ativa') ? c.status === 'ativa' : true));
+              }
+              if (table === conversationThreads) {
+                const params = coletarParams(cond);
+                const linhas = threads.filter((t) => params.includes(t.organizationId) && params.includes(t.contactId) && params.includes(t.channel));
+                return comPaginacao(linhas);
+              }
+              return Promise.resolve([]);
             },
-          }),
-          where: (cond: unknown) => {
-            if (table === threadMessages) {
-              const params = coletarParams(cond);
-              const threadIds = params.filter((p) => threads.some((t) => t.id === p));
-              const linhas = messages.filter((m) => threadIds.length === 0 || threadIds.includes(m.threadId));
-              return comPaginacao(linhas);
-            }
-            if (table === contactsTable) {
-              const params = coletarParams(cond);
-              return Promise.resolve(contacts.filter((c) => params.includes(c.organizationId) && params.includes(c.phone ?? '__none__')));
-            }
-            if (table === organizationConnectors) {
-              const params = coletarParams(cond);
-              return Promise.resolve(connectors.filter((c) => params.includes('whatsapp') ? c.provider === 'whatsapp' : true).filter((c) => params.includes('ativa') ? c.status === 'ativa' : true));
-            }
-            if (table === conversationThreads) {
-              const params = coletarParams(cond);
-              const linhas = threads.filter((t) => params.includes(t.organizationId) && params.includes(t.contactId) && params.includes(t.channel));
-              return comPaginacao(linhas);
-            }
-            return Promise.resolve([]);
-          },
-        }),
+          };
+        },
       }),
       insert: (table: unknown) => ({
         values: (v: Record<string, unknown>) => {
@@ -263,7 +260,7 @@ vi.mock('@desigual-os/database', () => {
         }),
       }),
     },
-    schema: { conversationThreads, threadMessages, contacts: contactsTable, clients, organizationConnectors },
+    schema: { conversationThreads, threadMessages, contacts: contactsTable, clients, organizationConnectors, whatsappGroups: { id: 'wg.id', name: 'wg.name', avatarUrl: 'wg.avatar_url' } },
   };
 });
 

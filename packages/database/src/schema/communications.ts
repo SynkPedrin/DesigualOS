@@ -1,5 +1,6 @@
-import { index, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { idColumn, timestampColumns } from './_shared';
+import { whatsappGroups, whatsappSessions } from './whatsapp';
 import { organizations } from './organizations';
 import { clients } from './clients';
 import { users } from './identity';
@@ -53,17 +54,18 @@ export const conversationThreads = pgTable(
     ...idColumn,
     organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
     clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
-    contactId: uuid('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+    contactId: uuid('contact_id').references(() => contacts.id, { onDelete: 'cascade' }),
+    whatsappSessionId: uuid('whatsapp_session_id').references(() => whatsappSessions.id, { onDelete: 'set null' }),
+    groupId: uuid('group_id').references(() => whatsappGroups.id, { onDelete: 'set null' }),
+    externalChatId: text('external_chat_id'),
+    kind: text('kind').notNull().default('individual'),
+    title: text('title'),
+    unreadCount: integer('unread_count').notNull().default(0),
+    lastMessagePreview: text('last_message_preview'),
     channel: communicationChannelEnum('channel').notNull(),
     status: conversationStatusEnum('status').notNull().default('open'),
     /** `null` = não atribuída — é o que a aba "Não atribuídas" do Inbox lê. */
     assignedToUserId: uuid('assigned_to_user_id').references(() => users.id, { onDelete: 'set null' }),
-    /**
-     * Tocado explicitamente a cada mensagem nova (thread é PAI de
-     * threadMessages — `$onUpdate` do `updatedAt` só cobre UPDATE na
-     * própria linha, não quando uma tabela FILHA muda. Mesmo padrão já
-     * documentado em `_shared.ts`/`touchConversation`).
-     */
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
     ...timestampColumns,
   },
@@ -72,6 +74,7 @@ export const conversationThreads = pgTable(
     clientIdx: index('conversation_threads_client_id_idx').on(table.clientId),
     contactIdx: index('conversation_threads_contact_id_idx').on(table.contactId),
     assignedIdx: index('conversation_threads_assigned_to_user_id_idx').on(table.assignedToUserId),
+    sessionChatIdx: index('conversation_threads_session_chat_idx').on(table.whatsappSessionId, table.externalChatId),
   }),
 );
 
@@ -81,15 +84,20 @@ export const threadMessages = pgTable(
     ...idColumn,
     threadId: uuid('thread_id').notNull().references(() => conversationThreads.id, { onDelete: 'cascade' }),
     organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    whatsappSessionId: uuid('whatsapp_session_id').references(() => whatsappSessions.id, { onDelete: 'set null' }),
+    providerSessionKey: text('provider_session_key').notNull().default('legacy'),
     channel: communicationChannelEnum('channel').notNull(),
     direction: messageDirectionEnum('direction').notNull(),
     senderContactId: uuid('sender_contact_id').references(() => contacts.id, { onDelete: 'set null' }),
     senderUserId: uuid('sender_user_id').references(() => users.id, { onDelete: 'set null' }),
+    senderExternalId: text('sender_external_id'),
+    senderName: text('sender_name'),
     content: text('content'),
     attachmentUrl: text('attachment_url'),
     attachmentType: text('attachment_type'),
-    /** Id da mensagem na origem — chave de idempotência (§94 do prompt
-     *  master): webhook reentrega, a mesma mensagem não pode duplicar. */
+    attachmentFilename: text('attachment_filename'),
+    attachmentSizeBytes: integer('attachment_size_bytes'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
     externalMessageId: text('external_message_id'),
     deliveryStatus: messageDeliveryStatusEnum('delivery_status').notNull().default('pending'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -97,9 +105,11 @@ export const threadMessages = pgTable(
   (table) => ({
     threadIdx: index('thread_messages_thread_id_idx').on(table.threadId),
     organizationIdx: index('thread_messages_organization_id_idx').on(table.organizationId),
-    /** Postgres trata múltiplos NULL como distintos em UNIQUE — mensagem
-     *  sem id externo (nota interna, falha de envio antes de confirmar)
-     *  nunca colide por engano com outra sem id. */
-    externalDedupe: unique('thread_messages_channel_external_id_unique').on(table.channel, table.externalMessageId),
+    externalDedupe: unique('thread_messages_org_channel_session_external_unique').on(
+      table.organizationId,
+      table.channel,
+      table.providerSessionKey,
+      table.externalMessageId,
+    ),
   }),
 );

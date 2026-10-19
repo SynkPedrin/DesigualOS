@@ -4,11 +4,12 @@ import { Suspense, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, SquarePen } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { EntityAvatar } from '@/components/ui/entity-avatar';
+import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { ThreadList, INBOX_FILTERS, type InboxFilterKey } from '@/components/inbox/thread-list';
 import { ThreadChat } from '@/components/inbox/thread-chat';
 import { ThreadContextPanel } from '@/components/inbox/thread-context-panel';
 import { useInboxThreads } from '@/hooks/use-inbox';
+import { useWhatsappOpenwaSessions } from '@/hooks/use-whatsapp-openwa';
 import type { InboxThread } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 
@@ -29,7 +30,7 @@ function ContactsList({ threads, selectedId, onSelect }: { threads: InboxThread[
               selectedId === t.id && 'bg-grafite-elevado',
             )}
           >
-            <EntityAvatar name={t.clientName ?? t.contactName} kind={t.clientId ? 'client' : 'person'} size="md" />
+            <InboxAvatar name={t.clientName ?? t.contactName} photoUrl={t.contactAvatarUrl} kind={t.clientId ? 'client' : 'person'} />
             <div className="min-w-0 flex-1">
               <p className="truncate font-semibold text-branco-cru">{t.clientName ?? t.contactName}</p>
               <p className="truncate font-mono text-xs text-nevoa">{t.contactPhone ?? 'Sem número'}</p>
@@ -55,6 +56,8 @@ function InboxPageContent() {
   // veio (conversa é um recurso pequeno, sem paginação hoje), então recortar
   // em memória evita 4 variações de queryKey pra 12 conversas.
   const { data: threads, isPending } = useInboxThreads({});
+  const { data: whatsappSessions } = useWhatsappOpenwaSessions();
+  const activeSession = whatsappSessions?.find((session) => session.status === 'ready') ?? whatsappSessions?.[0] ?? null;
   const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     return (threads ?? []).filter((t) => {
@@ -76,14 +79,20 @@ function InboxPageContent() {
     router.push(`/inbox?${params.toString()}`, { scroll: false });
   }
 
+  function clearThread() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('t');
+    router.push(`/inbox?${params.toString()}`, { scroll: false });
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0">
         <PageHeader eyebrow="Atendimento" title="Inbox" description="Conversas com clientes, por WhatsApp." />
       </div>
 
-      <div className="mt-6 grid min-h-0 flex-1 grid-cols-[300px_1fr_300px] overflow-hidden rounded-lg border border-grafite-elevado">
-        <div className="flex min-h-0 flex-col border-r border-grafite-elevado">
+      <div className="mt-6 grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-lg border border-grafite-elevado lg:grid-cols-[300px_1fr] xl:grid-cols-[300px_1fr_300px]">
+        <div className={cn('min-h-0 flex-col border-r border-grafite-elevado', selectedId ? 'hidden lg:flex' : 'flex')}>
           <div className="flex items-center justify-between gap-2 border-b border-grafite-elevado px-3 py-2.5">
             <h2 className="font-heading text-sm font-semibold text-branco-cru">Conversas</h2>
             <button type="button" title="Nova conversa" className="flex size-7 items-center justify-center rounded-md bg-roxo-eletrico text-branco-cru transition-opacity hover:opacity-90">
@@ -92,9 +101,7 @@ function InboxPageContent() {
           </div>
           <div className="flex items-center gap-1.5 border-b border-grafite-elevado px-3 py-2">
             <img src="/logos/whatsapp.webp" alt="WhatsApp" className="size-3.5 shrink-0 rounded-sm" />
-            {/* Nenhuma integração real de WhatsApp existe ainda: a tela diz isso
-                em vez de exibir um número fictício como se fosse conexão. */}
-            <span className="truncate font-mono text-[11px] text-nevoa">WhatsApp ainda não conectado</span>
+            <span className="truncate font-mono text-[11px] text-nevoa">{activeSession?.status === 'ready' ? `+${activeSession.phone_number ?? ''} · Conectado` : activeSession ? 'WhatsApp em configuração' : 'WhatsApp não conectado'}</span>
           </div>
           <div className="flex flex-wrap gap-1 border-b border-grafite-elevado p-2">
             {INBOX_FILTERS.map((f) => {
@@ -134,9 +141,11 @@ function InboxPageContent() {
           </div>
         </div>
 
-        <ThreadChat threadId={selectedId} />
+        <div className={cn('min-h-0', selectedId ? 'block' : 'hidden lg:block')}>
+          <ThreadChat threadId={selectedId} onBack={clearThread} />
+        </div>
 
-        <div className="min-h-0 overflow-y-auto border-l border-grafite-elevado">
+        <div className="hidden min-h-0 overflow-y-auto border-l border-grafite-elevado xl:block">
           <ThreadContextPanel threadId={selectedId} />
         </div>
       </div>

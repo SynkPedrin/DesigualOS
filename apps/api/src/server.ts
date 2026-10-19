@@ -40,6 +40,7 @@ import { registerWsRoutes } from './ws/routes';
 import { registerCostRoutes } from './costs/routes';
 import { registerClientRoutes } from './clients/routes';
 import { registerCommunicationRoutes } from './communications/routes';
+import { registerOpenwaRoutes } from './openwa-integration/routes';
 import { registerDemandRoutes } from './demands/routes';
 import { registerBriefRoutes } from './briefs/routes';
 import { registerApprovalRequestRoutes } from './approvals/routes';
@@ -277,6 +278,7 @@ async function start(): Promise<void> {
   await app.register(registerCostRoutes);
   await app.register(registerClientRoutes);
   await app.register(registerCommunicationRoutes);
+  await app.register(registerOpenwaRoutes);
   await app.register(registerDemandRoutes);
   await app.register(registerBriefRoutes);
   await app.register(registerApprovalRequestRoutes);

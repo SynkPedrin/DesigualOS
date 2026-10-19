@@ -3,7 +3,7 @@
 import { MessageCircle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { EntityAvatar } from '@/components/ui/entity-avatar';
+import { InboxAvatar } from './inbox-avatar';
 import { formatRelativeTime } from '@/lib/format';
 import type { InboxThread } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
@@ -68,14 +68,15 @@ export function ThreadList({
                 selectedId === thread.id && 'bg-grafite-elevado',
               )}
             >
-              <EntityAvatar name={nome} kind={thread.clientId ? 'client' : 'person'} size="md" />
+              <InboxAvatar name={nome} photoUrl={thread.contactAvatarUrl} kind={thread.clientId ? 'client' : 'person'} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-semibold text-branco-cru">{nome}</span>
+                  <span className="flex min-w-0 items-center gap-1.5"><span className="truncate font-semibold text-branco-cru">{nome}</span>{thread.kind === 'group' && <span className="shrink-0 rounded bg-grafite-elevado px-1.5 py-0.5 text-[8px] uppercase text-nevoa">Grupo</span>}</span>
                   {thread.lastMessageAt && <span className="shrink-0 text-xs text-nevoa">{formatRelativeTime(thread.lastMessageAt)}</span>}
                 </div>
+                <p className="mt-0.5 truncate font-mono text-[10px] text-nevoa/80">{thread.kind === 'group' ? 'WhatsApp' : thread.contactPhone ?? 'WhatsApp'}</p>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-xs text-nevoa">{thread.lastMessagePreview ?? (thread.clientName ? 'Sem mensagens ainda' : 'Conversa interna')}</span>
+                  <span className="truncate text-xs text-nevoa">{thread.lastMessagePreview ?? 'Sem mensagens ainda'}</span>
                   {thread.unreadCount > 0 && (
                     <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-roxo-eletrico text-[10px] font-semibold text-branco-cru">
                       {thread.unreadCount}

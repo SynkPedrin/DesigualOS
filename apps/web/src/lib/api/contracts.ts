@@ -2629,17 +2629,20 @@ export interface InboxThreadWire {
   id: string;
   client_id: string | null;
   client_name: string | null;
-  contact_id: string;
+  contact_id: string | null;
   contact_name: string;
   contact_phone: string | null;
+  contact_avatar_url?: string | null;
+  whatsapp_session_id?: string | null;
+  group_id?: string | null;
+  external_chat_id?: string | null;
+  kind?: string;
+  human_service_status?: 'unassigned' | 'active' | 'ended';
   channel: string;
   status: InboxThreadStatus;
   assigned_to_user_id: string | null;
   last_message_at: string | null;
-  /** Prévia da última mensagem (lista da Inbox) — opcional: versão antiga da
-   * API não manda, a lista cai pra mostrar só nome/horário (ver ThreadList). */
   last_message_preview?: string | null;
-  /** Mensagens não lidas nesta conversa — mesmo contrato opcional acima. */
   unread_count?: number;
 }
 
@@ -2647,9 +2650,15 @@ export interface InboxThread {
   id: string;
   clientId: string | null;
   clientName: string | null;
-  contactId: string;
+  contactId: string | null;
   contactName: string;
   contactPhone: string | null;
+  contactAvatarUrl: string | null;
+  whatsappSessionId: string | null;
+  groupId: string | null;
+  externalChatId: string | null;
+  kind: string;
+  humanServiceStatus: 'unassigned' | 'active' | 'ended';
   channel: string;
   status: InboxThreadStatus;
   assignedToUserId: string | null;
@@ -2666,6 +2675,12 @@ export function mapInboxThread(wire: InboxThreadWire): InboxThread {
     contactId: wire.contact_id,
     contactName: wire.contact_name,
     contactPhone: wire.contact_phone,
+    contactAvatarUrl: wire.contact_avatar_url ?? null,
+    whatsappSessionId: wire.whatsapp_session_id ?? null,
+    groupId: wire.group_id ?? null,
+    externalChatId: wire.external_chat_id ?? null,
+    kind: wire.kind ?? 'individual',
+    humanServiceStatus: wire.human_service_status ?? (wire.assigned_to_user_id ? 'active' : 'unassigned'),
     channel: wire.channel,
     status: wire.status,
     assignedToUserId: wire.assigned_to_user_id,
@@ -2680,8 +2695,13 @@ export interface InboxMessageWire {
   direction: 'inbound' | 'outbound';
   sender_contact_id: string | null;
   sender_user_id: string | null;
+  sender_name?: string | null;
   content: string | null;
   attachment_url: string | null;
+  attachment_type?: string | null;
+  attachment_filename?: string | null;
+  attachment_size_bytes?: number | null;
+  external_message_id?: string | null;
   delivery_status: string;
   created_at: string;
 }
@@ -2691,8 +2711,13 @@ export interface InboxMessage {
   direction: 'inbound' | 'outbound';
   senderContactId: string | null;
   senderUserId: string | null;
+  senderName: string | null;
   content: string | null;
   attachmentUrl: string | null;
+  attachmentType: string | null;
+  attachmentFilename: string | null;
+  attachmentSizeBytes: number | null;
+  externalMessageId: string | null;
   deliveryStatus: string;
   createdAt: string;
 }
@@ -2703,8 +2728,13 @@ export function mapInboxMessage(wire: InboxMessageWire): InboxMessage {
     direction: wire.direction,
     senderContactId: wire.sender_contact_id,
     senderUserId: wire.sender_user_id,
+    senderName: wire.sender_name ?? null,
     content: wire.content,
     attachmentUrl: wire.attachment_url,
+    attachmentType: wire.attachment_type ?? null,
+    attachmentFilename: wire.attachment_filename ?? null,
+    attachmentSizeBytes: wire.attachment_size_bytes ?? null,
+    externalMessageId: wire.external_message_id ?? null,
     deliveryStatus: wire.delivery_status,
     createdAt: wire.created_at,
   };

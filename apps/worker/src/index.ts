@@ -22,6 +22,7 @@ import { agentLoopEnabledFor, processAgentJob } from './processors/execute-job.j
 import { processAutomationJob } from './processors/run-automation.js';
 import { backfillThumbnails, generateThumbnail } from './processors/generate-thumbnail.js';
 import { generateClientReport } from './processors/generate-client-report.js';
+import { recoverOpenwaJobs, startOpenwaWorker } from './processors/openwa.js';
 import { setupDailyJobs } from './scheduler/index.js';
 import { ottoMotionEnabled, startMotionWorker } from '@desigual-os/otto-motion';
 
@@ -45,6 +46,9 @@ const motionWorker = ottoMotionEnabled() ? startMotionWorker(logger) : null;
 if (motionWorker) {
   logger.info({ queue: 'otto-motion' }, 'Otto Motion Engine ligado');
 }
+
+const openwaWorker = startOpenwaWorker(logger);
+recoverOpenwaJobs(logger).catch((error: unknown) => logger.error({ error }, 'Falha ao recuperar jobs do WhatsApp'));
 
 const automationsWorker = new Worker<AutomationJobData>(
   AUTOMATIONS_QUEUE_NAME,
@@ -251,7 +255,7 @@ async function shutdown(motivo: string): Promise<void> {
   await stopWorkerHeartbeat();
 
   const dreno = Promise.all(
-    [...workers, dailyDigestWorker, automationsWorker, thumbnailsWorker, clientReportsWorker, ...(motionWorker ? [motionWorker] : [])].map(
+    [...workers, dailyDigestWorker, automationsWorker, openwaWorker, thumbnailsWorker, clientReportsWorker, ...(motionWorker ? [motionWorker] : [])].map(
       (worker) => worker.close(),
     ),
   );

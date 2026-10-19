@@ -29,14 +29,25 @@ const listQuerySchema = z.object({
 
 const sendMessageSchema = z.object({ text: z.string().trim().min(1).max(4000) });
 const assignSchema = z.object({ userId: z.string().uuid().nullable() });
+const statusSchema = z.object({ status: z.enum(CONVERSATION_STATUSES) });
 
 interface PresentableThread {
   id: string;
   clientId: string | null;
   clientName: string | null;
-  contactId: string;
-  contactName: string;
+  contactId: string | null;
+  contactName: string | null;
   contactPhone: string | null;
+  contactMetadata: Record<string, unknown> | null;
+  whatsappSessionId: string | null;
+  groupId: string | null;
+  externalChatId: string | null;
+  kind: string;
+  title: string | null;
+  unreadCount: number;
+  lastMessagePreview: string | null;
+  groupName: string | null;
+  groupAvatarUrl: string | null;
   channel: string;
   status: string;
   assignedToUserId: string | null;
@@ -45,13 +56,22 @@ interface PresentableThread {
 
 function presentThread(t: PresentableThread | null) {
   if (!t) return null;
+  const avatar = t.groupAvatarUrl ?? (typeof t.contactMetadata?.profilePicUrl === 'string' ? t.contactMetadata.profilePicUrl : null);
   return {
     id: t.id,
     client_id: t.clientId,
     client_name: t.clientName,
     contact_id: t.contactId,
-    contact_name: t.contactName,
-    contact_phone: t.contactPhone,
+    contact_name: t.kind === 'group' ? t.groupName ?? t.title ?? 'Grupo WhatsApp' : t.contactName ?? t.title ?? 'Contato WhatsApp',
+    contact_phone: t.kind === 'group' ? null : t.contactPhone,
+    contact_avatar_url: avatar,
+    whatsapp_session_id: t.whatsappSessionId,
+    group_id: t.groupId,
+    external_chat_id: t.externalChatId,
+    kind: t.kind,
+    unread_count: t.unreadCount,
+    last_message_preview: t.lastMessagePreview,
+    human_service_status: t.status === 'archived' ? 'ended' : t.assignedToUserId ? 'active' : 'unassigned',
     channel: t.channel,
     status: t.status,
     assigned_to_user_id: t.assignedToUserId,
@@ -59,14 +79,19 @@ function presentThread(t: PresentableThread | null) {
   };
 }
 
-function presentMessage(m: { id: string; direction: string; senderContactId: string | null; senderUserId: string | null; content: string | null; attachmentUrl: string | null; deliveryStatus: string; createdAt: Date }) {
+function presentMessage(m: { id: string; direction: string; senderContactId: string | null; senderUserId: string | null; senderName: string | null; content: string | null; attachmentUrl: string | null; attachmentType: string | null; attachmentFilename: string | null; attachmentSizeBytes: number | null; externalMessageId: string | null; deliveryStatus: string; createdAt: Date }) {
   return {
     id: m.id,
     direction: m.direction,
     sender_contact_id: m.senderContactId,
     sender_user_id: m.senderUserId,
+    sender_name: m.senderName,
     content: m.content,
     attachment_url: m.attachmentUrl,
+    attachment_type: m.attachmentType,
+    attachment_filename: m.attachmentFilename,
+    attachment_size_bytes: m.attachmentSizeBytes,
+    external_message_id: m.externalMessageId,
     delivery_status: m.deliveryStatus,
     created_at: m.createdAt.toISOString(),
   };
@@ -145,6 +170,68 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
 
       reply.code(201);
       return presentMessage(resultado.message);
+    });
+
+    authed.post<{ Params: { id: string } }>('/inbox/threads/:id/messages/media', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id);
+      if (!thread) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
+      const file = await request.file();
+      if (!file) { reply.code(400); return { error: 'Nenhum arquivo enviado.' }; }
+      const fields = file.fields as Record<string, { value?: unknown }>;
+      const caption = typeof fields.caption?.value === 'string' ? fields.caption.value.slice(0, 1024) : undefined;
+      const voiceNote = fields.voiceNote?.value === 'true' || fields.voiceNote?.value === true;
+      try {
+        const resultado = await svc.sendOutboundMediaMessage({
+          organizationId: request.tenantContext!.organizationId,
+          threadId: thread.id,
+          senderUserId: request.authUser!.id,
+          bytes: await file.toBuffer(),
+          mimetype: file.mimetype,
+          filename: file.filename,
+          caption,
+          voiceNote,
+        });
+        if (!resultado.ok) {
+          reply.code(resultado.reason === 'no_provider_configured' ? 409 : 502);
+          return { error: 'detail' in resultado ? resultado.detail : 'Falha ao enviar mídia.' };
+        }
+        reply.code(201);
+        return presentMessage(resultado.message);
+      } catch (error) {
+        reply.code(400);
+        return { error: error instanceof Error ? error.message : 'Arquivo inválido.' };
+      }
+    });
+
+    authed.get<{ Params: { id: string } }>('/inbox/messages/:id/media', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
+      const media = await svc.getMessageMedia(request.tenantContext!.organizationId, request.params.id);
+      if (!media) { reply.code(404); return { error: 'Mídia não encontrada.' }; }
+      const filename = (media.message.attachmentFilename ?? 'arquivo').replace(/["\r\n]/g, '_');
+      const inline = /^(image|audio|video)\//.test(media.message.attachmentType ?? '');
+      reply.header('Content-Type', media.message.attachmentType ?? 'application/octet-stream');
+      reply.header('Content-Length', media.bytes.byteLength);
+      reply.header('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${filename}"`);
+      reply.header('Cache-Control', 'private, max-age=3600');
+      return reply.send(media.bytes);
+    });
+
+    authed.post<{ Params: { id: string } }>('/inbox/threads/:id/read', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      const updated = await svc.markThreadRead(request.tenantContext!.organizationId, request.params.id);
+      if (!updated) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
+      return { ok: true };
+    });
+
+    authed.patch<{ Params: { id: string } }>('/inbox/threads/:id/status', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      const body = statusSchema.parse(request.body);
+      const updated = await svc.updateThreadStatus(request.tenantContext!.organizationId, request.params.id, body.status);
+      if (!updated) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
+      await auditarAcao(request, {
+        action: 'conversation.status_changed',
+        resourceType: 'conversation_thread',
+        resourceId: request.params.id,
+        newValue: { status: body.status },
+      });
+      return { id: updated.id, status: updated.status };
     });
 
     authed.patch<{ Params: { id: string } }>('/inbox/threads/:id/assign', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {

@@ -155,6 +155,7 @@ beforeEach(() => {
     if (rota.startsWith('/motion/providers')) return { providers: [] };
     // Bento no WhatsApp: canal ligado, número desta pessoa ainda não vinculado.
     if (rota.startsWith('/bento-whatsapp/me')) return { enabled: true, bot_phone: '+55 18 99798-7295', link: null, pending_code: null };
+    if (rota.startsWith('/openwa/sessions')) return { sessions: [] };
     // Conectores da empresa (WhatsApp) — lista vazia é o estado "não vinculado".
     if (rota.includes('/whatsapp')) return { status: 'nao_vinculado', configured: false, connected: false };
     if (rota.includes('/connectors')) return { connectors: [] };

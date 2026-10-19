@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useInboxThread, useAssignInboxThread } from '@/hooks/use-inbox';
+import { useInboxThread, useAssignInboxThread, useUpdateInboxStatus } from '@/hooks/use-inbox';
 import { useCollaborators } from '@/hooks/use-collaborators';
 import { useClientWorkspace } from '@/hooks/use-client-workspace';
-import { EntityAvatar } from '@/components/ui/entity-avatar';
+import { InboxAvatar } from './inbox-avatar';
 import { ClientOverviewPanel } from '@/components/clients/client-overview-panel';
 import { ClientDemandsPanel } from '@/components/clients/client-demands-panel';
 import { ClientTasksPanel } from '@/components/clients/client-tasks-panel';
@@ -41,6 +41,7 @@ export function ThreadContextPanel({ threadId }: { threadId: string | null }) {
   const { data: thread } = useInboxThread(threadId);
   const { data: collaboratorsData } = useCollaborators();
   const assign = useAssignInboxThread(threadId ?? '');
+  const updateStatus = useUpdateInboxStatus(threadId ?? '');
   const { data: workspace } = useClientWorkspace(thread?.clientId ?? null);
   const [tab, setTab] = useState<Tab>('Visão geral');
 
@@ -56,7 +57,7 @@ export function ThreadContextPanel({ threadId }: { threadId: string | null }) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-4 p-4">
         <div className="flex items-center gap-3">
-          <EntityAvatar name={thread.clientName ?? thread.contactName} kind="client" size="lg" />
+          <InboxAvatar name={thread.clientName ?? thread.contactName} photoUrl={thread.contactAvatarUrl} kind={thread.clientId ? 'client' : 'person'} size="lg" />
           <div className="min-w-0">
             <p className="truncate font-semibold text-branco-cru">{thread.clientName ?? 'Sem cliente vinculado'}</p>
             {statusMeta && (
@@ -86,13 +87,17 @@ export function ThreadContextPanel({ threadId }: { threadId: string | null }) {
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-xs uppercase tracking-wide text-nevoa">Canal</p>
-            <p className="text-sm text-branco-cru">WhatsApp · {thread.contactPhone}</p>
+            <p className="text-sm text-branco-cru">WhatsApp · {thread.kind === 'group' ? 'Grupo' : thread.contactPhone}</p>
           </div>
           <div className="text-right">
             <p className="text-xs uppercase tracking-wide text-nevoa">Status</p>
             <p className="text-sm text-branco-cru">{STATUS_LABEL[thread.status] ?? thread.status}</p>
           </div>
         </div>
+        {thread.assignedToUserId && <p className="rounded-md bg-sinal/10 px-3 py-2 text-xs text-sinal">Atendimento humano em andamento</p>}
+        <button type="button" onClick={() => updateStatus.mutate(thread.status === 'archived' ? 'open' : 'archived')} disabled={updateStatus.isPending} className="w-full rounded-md border border-grafite-elevado px-3 py-2 text-xs text-nevoa hover:text-branco-cru disabled:opacity-50">
+          {thread.status === 'archived' ? 'Reabrir conversa' : 'Encerrar atendimento'}
+        </button>
       </div>
 
       <div className="flex shrink-0 gap-1 border-y border-grafite-elevado px-2 py-2">
