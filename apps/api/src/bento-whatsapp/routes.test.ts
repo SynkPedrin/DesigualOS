@@ -96,12 +96,52 @@ afterEach(() => vi.clearAllMocks());
 describe('webhook', () => {
   const evento = () => JSON.stringify(texto('5518991110001', 'oi bento'));
 
-  it('desligado: 200 e nada é processado', async () => {
-    const { app, gateway } = await servidor({ enabled: false });
+  it('desligado: mensagem assinada recebe 200 e nada é processado; sem assinatura continua 401', async () => {
+    const { app, gateway, config } = await servidor({ enabled: false });
     const corpo = evento();
-    const r = await app.inject({ method: 'POST', url: '/bento-whatsapp/webhook', payload: corpo, headers: { 'content-type': 'application/json' } });
-    expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ ok: true, ignored: 'disabled' });
+    const assinada = await app.inject({
+      method: 'POST',
+      url: '/bento-whatsapp/webhook',
+      payload: corpo,
+      headers: { 'content-type': 'application/json', 'x-openwa-signature': assinarComoOpenwa(corpo, config.webhookSecret!) },
+    });
+    expect(assinada.statusCode).toBe(200);
+    expect(assinada.json()).toEqual({ ok: true, ignored: 'disabled' });
+    const semAssinatura = await app.inject({ method: 'POST', url: '/bento-whatsapp/webhook', payload: corpo, headers: { 'content-type': 'application/json' } });
+    expect(semAssinatura.statusCode).toBe(401);
+    expect(gateway.receber).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('número conectou (session.status ready): prepara o Bento mesmo com o canal desligado; só com assinatura e da sessão certa', async () => {
+    const aoConectar = vi.fn(async () => ({ modoAbertoAte: null }));
+    const config = configDeTeste({ enabled: false });
+    const gateway = gatewayFalso();
+    const app: FastifyInstance = Fastify();
+    await app.register(async (escopo) =>
+      registerBentoWhatsappRoutes(escopo, { config, gateway, transporte: new TransporteFalso(), retomarNaSubida: false, aoConectar }),
+    );
+    await app.ready();
+    const enviar = (corpo: object, segredo = config.webhookSecret!) => {
+      const texto = JSON.stringify(corpo);
+      return app.inject({
+        method: 'POST',
+        url: '/bento-whatsapp/webhook',
+        payload: texto,
+        headers: { 'content-type': 'application/json', 'x-openwa-signature': assinarComoOpenwa(texto, segredo) },
+      });
+    };
+    const ready = { event: 'session.status', timestamp: new Date().toISOString(), sessionId: config.sessionId, data: { status: 'ready' } };
+
+    expect((await enviar(ready)).json()).toEqual({ ok: true, connected: true });
+    expect(aoConectar).toHaveBeenCalledTimes(1);
+    // Outra sessão do OpenWA (de um colaborador) nunca prepara o Bento.
+    await enviar({ ...ready, sessionId: 'sessao-de-outra-pessoa' });
+    // Estado que não é "pronto" não conta.
+    await enviar({ ...ready, data: { status: 'qr_ready' } });
+    // Assinatura errada: recusado, não prepara nada.
+    expect((await enviar(ready, 'outro-segredo-qualquer')).statusCode).toBe(401);
+    expect(aoConectar).toHaveBeenCalledTimes(1);
     expect(gateway.receber).not.toHaveBeenCalled();
     await app.close();
   });

@@ -47,6 +47,8 @@ export interface CredenciaisDoBento {
   botPhone: string | null;
   /** Modo teste aberto: ver BentoWhatsappConfig.modoAberto. `ate` em ISO. */
   modoAberto?: { userId: string; ate: string } | null;
+  /** O master que mexeu por último na conexão (QR, iniciar, provisionar): é quem "assina" o atendimento aberto. */
+  responsavelId?: string | null;
 }
 
 export interface LinhaDoBento {
@@ -314,4 +316,28 @@ export async function definirModoAberto(input: { userId: string; minutos: number
     modoAberto: ate ? { userId: input.userId, ate: ate.toISOString() } : null,
   });
   return ate;
+}
+
+/** Guarda quem está conectando o número (qualquer ação de conexão no painel, só master). */
+export async function lembrarResponsavel(userId: string): Promise<void> {
+  const linha = await linhaDoBento();
+  if (!linha || linha.credenciais.responsavelId === userId) return;
+  await salvarCredenciais(linha.id, { ...linha.credenciais, responsavelId: userId });
+}
+
+/**
+ * O número do Bento acabou de conectar (evento do OpenWA): grava o número, liga
+ * o canal e liga o atendimento aberto pelo prazo máximo, em nome de quem
+ * conectou. É o "escaneei o QR e funciona", sem mais cliques — e continua com
+ * prazo: passado o prazo, volta a atender só vinculados até alguém renovar.
+ */
+export async function aoConectarOBento(telefone: string | null | undefined): Promise<{ modoAbertoAte: Date | null }> {
+  await lembrarNumeroDoBento(telefone).catch(() => undefined);
+  const linha = await linhaDoBento();
+  if (!linha) return { modoAbertoAte: null };
+  if (linha.status !== 'ativa') await definirCanalAtivo(true);
+  const responsavel = linha.credenciais.responsavelId;
+  if (!responsavel) return { modoAbertoAte: null };
+  const ate = await definirModoAberto({ userId: responsavel, minutos: MODO_ABERTO_MAX_MINUTOS });
+  return { modoAbertoAte: ate instanceof Date ? ate : null };
 }

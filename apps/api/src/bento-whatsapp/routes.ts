@@ -11,6 +11,8 @@ import { brainPeloChat } from './brain';
 import { pendenciasDeConfiguracao, type BentoWhatsappConfig } from './config';
 import {
   MODO_ABERTO_PADRAO_MINUTOS,
+  aoConectarOBento,
+  lembrarResponsavel,
   definirCanalAtivo,
   definirModoAberto,
   lembrarNumeroDoBento,
@@ -50,6 +52,8 @@ export interface OpcoesDasRotas {
   gateway?: GatewayDoBento;
   /** false nos testes: não roda a retomada de pendências na subida. */
   retomarNaSubida?: boolean;
+  /** Troca em testes: o que fazer quando o número do Bento conecta. */
+  aoConectar?: typeof aoConectarOBento;
 }
 
 interface Canal {
@@ -167,10 +171,10 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
       { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } },
       async (request, reply) => {
         const { config, gateway } = await canal();
-        // Desligado: 200 e nada mais. Não grava, não processa, não responde no
-        // WhatsApp. 200 para o OpenWA não ficar re-tentando à toa.
-        if (!config.enabled) return { ok: true, ignored: 'disabled' };
+        // Sem segredo/gateway não há como verificar nada. Desligado: 200 e nada
+        // mais (200 para o OpenWA não ficar re-tentando à toa).
         if (!config.webhookSecret || !gateway) {
+          if (!config.enabled) return { ok: true, ignored: 'disabled' };
           reply.code(503);
           return { error: 'Bento no WhatsApp sem configuração completa' };
         }
@@ -190,6 +194,21 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
         }
         // Evento de teste do próprio OpenWA (POST .../webhooks/:id/test).
         if (envelope.event === 'test') return { ok: true };
+        // O número acabou de conectar: deixa tudo pronto sem mais cliques.
+        const dados = (envelope.data ?? {}) as { status?: string; phone?: string };
+        const conectou =
+          envelope.sessionId === config.sessionId &&
+          (envelope.event === 'session.authenticated' || (envelope.event === 'session.status' && dados.status === 'ready'));
+        if (conectou) {
+          await (opcoes.aoConectar ?? aoConectarOBento)(dados.phone).catch((error: unknown) =>
+            request.log.error({ error }, '[bento-whatsapp] falha ao preparar o Bento depois de conectar'),
+          );
+          await canal();
+          return { ok: true, connected: true };
+        }
+        // Canal desligado: a assinatura já foi conferida acima, mas nenhuma
+        // MENSAGEM é gravada nem processada, e nada é respondido.
+        if (!config.enabled) return { ok: true, ignored: 'disabled' };
         try {
           const resultado = await gateway.receber(envelope);
           return { ok: true, ...resultado };
@@ -495,6 +514,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
         return { error: 'Sua conta não está em nenhuma empresa; não há onde guardar a sessão do Bento.' };
       }
       const resultado = await provisionarSessaoDoBento({ organizationId });
+      await lembrarResponsavel(request.authUser!.id).catch(() => undefined);
       await auditarAcao(request, {
         action: resultado.criada ? 'bento_whatsapp.session_provisioned' : 'bento_whatsapp.session_resumed',
         organizationId,
@@ -551,6 +571,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
   });
 
   app.post('/bento-whatsapp/admin/session/start', soMaster, async (request, reply) => {
+    if (!fixo) void lembrarResponsavel(request.authUser!.id).catch(() => undefined);
     const { config, transporte } = await canal();
     if (!transporte) {
       reply.code(409);
@@ -600,6 +621,7 @@ export async function registerBentoWhatsappRoutes(app: FastifyInstance, opcoes: 
   });
 
   app.get('/bento-whatsapp/admin/session/qr', soMaster, async (request, reply) => {
+    if (!fixo) void lembrarResponsavel(request.authUser!.id).catch(() => undefined);
     const { config, transporte } = await canal();
     if (!transporte) {
       reply.code(409);

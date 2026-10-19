@@ -244,3 +244,27 @@ describe('modo teste aberto: prazo', () => {
     expect(await prov.definirModoAberto({ userId: 'u-pedro', minutos: 30 })).toBe('sem_canal');
   });
 });
+
+describe('número do Bento conectou', () => {
+  const linhaComResponsavel = (extra: Record<string, unknown> = {}, status = 'desativada') =>
+    linhaDoPainel({ status, credentials: { ...linhaDoPainel().credentials, ...extra } });
+
+  it('liga o canal e o atendimento aberto pelo prazo máximo, em nome de quem conectou', async () => {
+    estado.conectores = [linhaComResponsavel({ responsavelId: 'u-pedro' })];
+    const r = await prov.aoConectarOBento('+55 18 99798-7295');
+    expect(r.modoAbertoAte).toBeInstanceOf(Date);
+    const minutos = (r.modoAbertoAte!.getTime() - Date.now()) / 60_000;
+    expect(minutos).toBeGreaterThan(235);
+    expect(minutos).toBeLessThanOrEqual(240);
+  });
+
+  it('sem saber quem conectou, não abre o atendimento (só garante o canal ligado)', async () => {
+    estado.conectores = [linhaComResponsavel()];
+    expect(await prov.aoConectarOBento('5518997987295')).toEqual({ modoAbertoAte: null });
+  });
+
+  it('sem sessão do Bento provisionada, não faz nada', async () => {
+    estado.conectores = [];
+    expect(await prov.aoConectarOBento('5518997987295')).toEqual({ modoAbertoAte: null });
+  });
+});
