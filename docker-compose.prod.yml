@@ -68,6 +68,13 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      # Com o pooler do Supabase em modo transação (porta 6543 na DATABASE_URL)
+      # a conexão só ocupa o servidor durante cada consulta, então a API pode
+      # ter mais que as 3 de antes. Medido em 19/10/2026: com 3, cada foto da
+      # Inbox esperava ~20 s na fila por uma conexão (125 ms por consulta até
+      # us-east-1). Em session mode (5432) este número estouraria o limite do
+      # projeto — o default de 3 no código continua valendo fora daqui.
+      DATABASE_POOL_MAX: ${API_DATABASE_POOL_MAX:-12}
     volumes:
       - whatsapp_media:/data/whatsapp-media
     depends_on:
@@ -100,6 +107,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-6}
     volumes:
       - whatsapp_media:/data/whatsapp-media
     depends_on:

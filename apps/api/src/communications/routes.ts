@@ -24,6 +24,8 @@ import { sendMediaFast, sendTextFast } from './openwa-send';
 const listQuerySchema = z.object({
   status: z.enum(CONVERSATION_STATUSES).optional(),
   assigned: z.enum(['me', 'unassigned']).optional(),
+  view: z.enum(['active', 'archived']).optional(),
+  q: z.string().trim().min(1).max(100).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(30),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -53,6 +55,8 @@ interface PresentableThread {
   status: string;
   assignedToUserId: string | null;
   lastMessageAt: Date | null;
+  whatsappArchived?: boolean;
+  whatsappPinned?: boolean;
 }
 
 function presentThread(t: PresentableThread | null) {
@@ -77,6 +81,8 @@ function presentThread(t: PresentableThread | null) {
     status: t.status,
     assigned_to_user_id: t.assignedToUserId,
     last_message_at: t.lastMessageAt?.toISOString() ?? null,
+    whatsapp_archived: t.whatsappArchived ?? false,
+    whatsapp_pinned: t.whatsappPinned ?? false,
   };
 }
 
@@ -119,6 +125,8 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
         status: q.status,
         assignedToSelf: q.assigned === 'me',
         unassignedOnly: q.assigned === 'unassigned',
+        view: q.view,
+        q: q.q,
         limit: q.limit,
         offset: q.offset,
       });

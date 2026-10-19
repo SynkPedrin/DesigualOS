@@ -57,4 +57,17 @@ describe('Inbox isolada por dono da sessão WhatsApp', () => {
     const lista = await listThreads({ organizationId: org, callerId: dono, limit: 50, offset: 0 });
     expect(lista.map((t) => t.id)).toEqual([threadDoDono, threadDaEmpresa]);
   });
+
+  it('arquivada no WhatsApp sai da lista principal e aparece em Arquivadas; busca acha pelo título', async () => {
+    if (!enabled) return;
+    await db.update(schema.conversationThreads).set({ whatsappArchived: true, title: 'Grupo da Campanha' }).where(eq(schema.conversationThreads.id, threadDoDono));
+    const principal = await listThreads({ organizationId: org, callerId: dono, limit: 50, offset: 0 });
+    const arquivadas = await listThreads({ organizationId: org, callerId: dono, view: 'archived', limit: 50, offset: 0 });
+    expect(principal.map((t) => t.id)).toEqual([threadDaEmpresa]);
+    expect(arquivadas.map((t) => t.id)).toEqual([threadDoDono]);
+    const busca = await listThreads({ organizationId: org, callerId: dono, view: 'archived', q: 'campanha', limit: 50, offset: 0 });
+    expect(busca.map((t) => t.id)).toEqual([threadDoDono]);
+    const nada = await listThreads({ organizationId: org, callerId: dono, view: 'archived', q: '100%_x', limit: 50, offset: 0 });
+    expect(nada).toHaveLength(0);
+  });
 });

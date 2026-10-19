@@ -84,15 +84,33 @@ async function latestJob(sessionId: string) {
   return job ?? null;
 }
 
-async function presentSession(session: WhatsappSessionRow) {
-  const [job, counts, contactCounts, messageCounts] = await Promise.all([
-    latestJob(session.id),
+/**
+ * As três contagens (conversas, contatos, mensagens) em memória por 60 s: a
+ * Inbox e Integrações pedem a sessão a cada poucos segundos, e a de contatos
+ * varre a agenda inteira da empresa. Medido em 19/10/2026: GET /openwa/sessions
+ * em 2,5 s de mediana.
+ */
+const countsCache = new Map<string, { value: [Array<{ threads: number }>, Array<{ contacts: number }>, Array<{ messages: number }>]; at: number }>();
+
+async function sessionCounts(session: WhatsappSessionRow) {
+  const hit = countsCache.get(session.id);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+  const value = await Promise.all([
     db.select({ threads: sql<number>`count(distinct ${schema.conversationThreads.id})::int` }).from(schema.conversationThreads).where(eq(schema.conversationThreads.whatsappSessionId, session.id)),
     db.select({ contacts: sql<number>`count(*)::int` }).from(schema.contacts).where(and(
       eq(schema.contacts.organizationId, session.organizationId),
       sql`${schema.contacts.externalIds} ? ${`openwa:${session.id}`}`,
     )),
     db.select({ messages: sql<number>`count(*)::int` }).from(schema.threadMessages).where(eq(schema.threadMessages.whatsappSessionId, session.id)),
+  ]);
+  countsCache.set(session.id, { value, at: Date.now() });
+  return value;
+}
+
+async function presentSession(session: WhatsappSessionRow) {
+  const [job, [counts, contactCounts, messageCounts]] = await Promise.all([
+    latestJob(session.id),
+    sessionCounts(session),
   ]);
   return {
     id: session.id,

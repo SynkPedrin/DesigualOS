@@ -58,6 +58,26 @@ async function vinculosDe(userId: string) {
     .catch(() => []);
 }
 
+/**
+ * Vínculos e escopo por pessoa em memória por 20 s (a empresa ATIVA continua
+ * lida a cada requisição, porque trocar de empresa precisa valer na hora).
+ * Medido em 19/10/2026: cada requisição gastava ~125 ms só nesta consulta
+ * até o banco em us-east-1. Vínculo removido vale em até 20 s; usuário
+ * desativado já é barrado antes, em requireAuth.
+ */
+const VINCULOS_TTL_MS = 20_000;
+const vinculosCache = new Map<string, { vinculos: Awaited<ReturnType<typeof vinculosDe>>; escopo: Awaited<ReturnType<typeof escopoDeOrganizacao>>; at: number }>();
+
+async function fatosDeVinculo(user: NonNullable<FastifyRequest['authUser']>) {
+  const hit = vinculosCache.get(user.id);
+  if (hit && Date.now() - hit.at < VINCULOS_TTL_MS) return hit;
+  const [vinculos, escopo] = await Promise.all([vinculosDe(user.id), escopoDeOrganizacao(user)]);
+  const fresh = { vinculos, escopo, at: Date.now() };
+  // Falha de banco devolve [] em vinculosDe: não guardar, para não prender a pessoa fora por 20 s.
+  if (vinculos.length > 0 || escopo.ehProvider) vinculosCache.set(user.id, fresh);
+  return fresh;
+}
+
 export async function requireTenant(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const user = request.authUser;
   if (!user) { reply.code(401).send({ error: 'Not authenticated' }); return; }
@@ -73,7 +93,7 @@ export async function requireTenant(request: FastifyRequest, reply: FastifyReply
    * mais rápido e era mais lento: ela relia o escopo por dentro, e com
    * `DATABASE_POOL_MAX=3` a consulta repetida vira fila, não desperdício.
    */
-  const [vinculos, escopo] = await Promise.all([vinculosDe(user.id), escopoDeOrganizacao(user)]);
+  const { vinculos, escopo } = await fatosDeVinculo(user);
   const ativa = await organizacaoAtivaDe(user, escopo);
 
   const escolha = decidirOrganizacaoDeTrabalho({

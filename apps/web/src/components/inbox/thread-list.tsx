@@ -1,6 +1,6 @@
 'use client';
 
-import { MessageCircle } from 'lucide-react';
+import { MessageCircle, Pin } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { InboxAvatar } from './inbox-avatar';
@@ -16,13 +16,15 @@ import { cn } from '@/lib/utils';
  * status (minhas/não atribuídas/aguardando...) porque é o que o mockup pede
  * pra tela mais visível da demo; o recorte por status continua disponível
  * via filtro avançado, não removido do backend. */
-export type InboxFilterKey = 'todas' | 'nao-lidas' | 'clientes' | 'contatos';
+export type InboxFilterKey = 'todas' | 'nao-lidas' | 'clientes' | 'contatos' | 'arquivadas';
 
 export const INBOX_FILTERS: Array<{ key: InboxFilterKey; label: string }> = [
   { key: 'todas', label: 'Todas' },
   { key: 'nao-lidas', label: 'Não lidas' },
   { key: 'clientes', label: 'Clientes' },
   { key: 'contatos', label: 'Contatos' },
+  // Arquivadas no WhatsApp da pessoa: fora de "Todas", como na lista principal do celular.
+  { key: 'arquivadas', label: 'Arquivadas' },
 ];
 
 export function ThreadList({
@@ -71,7 +73,7 @@ export function ThreadList({
               <InboxAvatar name={nome} photoUrl={thread.contactAvatarUrl} kind={thread.clientId ? 'client' : 'person'} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-1.5"><span className="truncate font-semibold text-branco-cru">{nome}</span>{thread.kind === 'group' && <span className="shrink-0 rounded bg-grafite-elevado px-1.5 py-0.5 text-[8px] uppercase text-nevoa">Grupo</span>}</span>
+                  <span className="flex min-w-0 items-center gap-1.5"><span className="truncate font-semibold text-branco-cru">{nome}</span>{thread.kind === 'group' && <span className="shrink-0 rounded bg-grafite-elevado px-1.5 py-0.5 text-[8px] uppercase text-nevoa">Grupo</span>}{thread.whatsappPinned && <Pin size={11} className="shrink-0 text-nevoa" aria-label="Fixada" />}</span>
                   {thread.lastMessageAt && <span className="shrink-0 text-xs text-nevoa">{formatRelativeTime(thread.lastMessageAt)}</span>}
                 </div>
                 <p className="mt-0.5 truncate font-mono text-[10px] text-nevoa/80">{thread.kind === 'group' ? 'WhatsApp' : thread.contactPhone ?? 'WhatsApp'}</p>

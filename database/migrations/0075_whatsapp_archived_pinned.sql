@@ -1,0 +1,2 @@
+ALTER TABLE "conversation_threads" ADD COLUMN "whatsapp_archived" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "conversation_threads" ADD COLUMN "whatsapp_pinned" boolean DEFAULT false NOT NULL;

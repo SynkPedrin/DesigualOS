@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { forgetEnabledModules } from '../auth/require-module';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import { WORKSPACE_MODULES, WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS, isWorkspaceModule } from '@desigual-os/types';
@@ -101,6 +102,7 @@ export async function registerWorkspaceRoutes(app: FastifyInstance): Promise<voi
           set: { templateId, modules: body.data.modules, updatedBy: request.authUser!.id, updatedAt: new Date() },
         });
 
+      forgetEnabledModules(userId);
       await auditarAcao(request, {
         action: 'workspace.configured',
         resourceType: 'user',
