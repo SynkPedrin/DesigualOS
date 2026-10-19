@@ -79,6 +79,31 @@ const client = postgres(connectionString, {
 export const db = drizzle(client, { schema });
 
 /**
+ * Vigia do banco: a cada 30 s um `select 1` com teto de 10 s. Três falhas
+ * seguidas = o pool deste processo está travado (visto em 19/10/2026: API e
+ * worker sem resposta em nenhuma rota que usa o banco, até reiniciar). Aí o
+ * processo encerra e o Docker (restart: unless-stopped) sobe um limpo — o pior
+ * caso vira ~1,5 min, não "travado até alguém perceber".
+ */
+export function startDatabaseWatchdog(onStuck: (falhas: number) => void, intervalMs = 30_000, timeoutMs = 10_000): () => void {
+  let falhas = 0;
+  let rodando = false;
+  const timer = setInterval(async () => {
+    if (rodando) return;
+    rodando = true;
+    const ok = await Promise.race([
+      client`select 1`.then(() => true, () => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
+    rodando = false;
+    falhas = ok ? 0 : falhas + 1;
+    if (falhas >= 3) onStuck(falhas);
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/**
  * Abre o pool inteiro de uma vez, em paralelo, na subida do processo. Sem isto
  * as primeiras requisições depois de um deploy pagavam ~1,3 s cada abrindo
  * conexão. Falha aqui não derruba nada: a conexão abre sob demanda como antes.

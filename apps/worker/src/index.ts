@@ -1,5 +1,5 @@
 import './env.js';
-import { warmDatabasePool } from '@desigual-os/database';
+import { startDatabaseWatchdog, warmDatabasePool } from '@desigual-os/database';
 import { Worker } from 'bullmq';
 import { AGENT_NAMES, type AgentName } from '@desigual-os/types';
 import { createLogger } from '@desigual-os/logging';
@@ -31,6 +31,10 @@ const logger = createLogger({ service: 'worker' });
 
 // Pool aberto já na subida (~1,3 s por conexão até us-east-1), não no primeiro job.
 void warmDatabasePool().then((ms) => logger.info({ ms }, 'Pool do banco aberto')).catch(() => undefined);
+startDatabaseWatchdog((falhas) => {
+  logger.error({ falhas }, 'Banco sem resposta pelo pool deste processo; encerrando para o Docker reiniciar limpo');
+  process.exit(1);
+});
 
 /** true quando essa foi a ÚLTIMA tentativa (BullMQ não vai reenfileirar sozinho de novo). */
 function isFinalAttempt(
