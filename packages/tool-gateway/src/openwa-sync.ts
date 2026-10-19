@@ -173,7 +173,11 @@ async function attachMedia(session: Session, row: Message, message: OpenwaMessag
     await db.update(schema.threadMessages).set({
       metadata: { ...row.metadata, mediaError: error instanceof Error ? error.message : String(error) },
     }).where(eq(schema.threadMessages.id, row.id));
-    throw error;
+    // Só falha passageira (rede, 429, 5xx) merece repetir o evento. Mídia que o
+    // OpenWA não guardou (404 "No media stored", acima do limite) nunca vai
+    // aparecer: repetir só deixava a mensagem — já gravada — marcada como erro.
+    if (error instanceof OpenwaGatewayError && error.retryable) throw error;
+    return false;
   }
 }
 
