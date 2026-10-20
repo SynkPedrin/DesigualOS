@@ -6,6 +6,8 @@ import { realtimeClient, type WsEvent } from '@/lib/realtime/ws-client';
 import { useSupabaseSession } from '@/hooks/use-supabase-session';
 import { supabase } from '@/lib/supabase/client';
 import { applyLiveInboxMessage, type LiveInboxMessage } from '@/hooks/use-inbox';
+import { applyInternalChatEvent, recoverInternalChat } from '@/hooks/use-internal-chat';
+import { useMe } from '@/hooks/use-me';
 
 /**
  * Ponte entre o canal WS do backend e o cache do React Query: em vez de
@@ -20,6 +22,8 @@ export function useRealtimeEvents(): void {
   const queryClient = useQueryClient();
   const { session } = useSupabaseSession();
   const accessToken = session?.access_token ?? null;
+  const { data: me } = useMe();
+  const meId = me?.id ?? null;
 
   // O servidor exige um token de sessão no handshake do WS (query string
   // `?token=`, já que o WebSocket nativo do browser não manda Authorization).
@@ -100,11 +104,17 @@ export function useRealtimeEvents(): void {
           if (event.payload.sync === true) queryClient.invalidateQueries({ queryKey: ['openwa-sessions'] });
           break;
         }
+        // Comunicação interna: o servidor só manda a quem pode ler a conversa.
+        case 'chat.event':
+          applyInternalChatEvent(queryClient, event.payload, meId);
+          break;
         default:
           break;
       }
     }
 
-    return realtimeClient.subscribe(handleEvent);
-  }, [queryClient]);
+    const pararDeOuvir = realtimeClient.subscribe(handleEvent);
+    const pararReconexao = realtimeClient.onReconnect(() => recoverInternalChat(queryClient));
+    return () => { pararDeOuvir(); pararReconexao(); };
+  }, [queryClient, meId]);
 }

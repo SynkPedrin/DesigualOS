@@ -13,6 +13,7 @@ import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
 import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
+import { useChatUnread } from '@/hooks/use-internal-chat';
 import { supabase } from '@/lib/supabase/client';
 import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
 import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
@@ -126,6 +127,11 @@ export function Sidebar({
    * recolhida, ela abre. Senão, quem chega em /audit por link vê a barra
    * inteira sem nenhum sinal de onde está.
    */
+  // Contador da Comunicação: só pergunta se o item está na barra.
+  const comunicacaoVisivel = visibleNavItems.some((i) => i.href === '/comunicacao');
+  const { data: chatNaoLidas = 0 } = useChatUnread(comunicacaoVisivel);
+  const badgeDe = (href: string) => (href === '/comunicacao' ? chatNaoLidas : 0);
+
   const [abertas, setAbertas] = useState<Set<string>>(
     () =>
       new Set(
@@ -348,6 +354,19 @@ export function Sidebar({
               )}
               <Icon size={18} className="shrink-0" />
               {!collapsed && <span className="truncate">{item.label}</span>}
+              {badgeDe(item.href) > 0 && (
+                <span
+                  aria-label={`${badgeDe(item.href)} não lidas`}
+                  className={cn(
+                    'rounded-full bg-sinal font-mono font-semibold text-grafite',
+                    collapsed
+                      ? 'absolute right-1.5 top-0.5 min-w-[16px] px-1 text-center text-[9px] leading-4'
+                      : 'ml-auto min-w-[20px] px-1.5 text-center text-[10px] leading-5',
+                  )}
+                >
+                  {badgeDe(item.href) > 99 ? '99+' : badgeDe(item.href)}
+                </span>
+              )}
             </>
           );
 

@@ -134,7 +134,7 @@ describe('sidebar final por contexto — NAV_ITEMS de verdade', () => {
    * convites, papéis e desativação de conta. Antes era `modulo: 'equipe'`, e
    * bastava o template "Gestão" para um colaborador ver a lista.
    */
-  const BARRA_BASE = ['/today', '/calendar', '/', '/clients', '/inbox', '/demands', '/midias', '/pipeline'];
+  const BARRA_BASE = ['/today', '/calendar', '/', '/clients', '/inbox', '/comunicacao', '/demands', '/midias', '/pipeline'];
   const BARRA_DO_TENANT_MASTER = [...BARRA_BASE, '/people', '/tasks', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
   const BARRA_DO_TENANT_COLABORADOR = [...BARRA_BASE, '/tasks', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
 
@@ -173,6 +173,7 @@ describe('sidebar final por contexto — NAV_ITEMS de verdade', () => {
       '/organizations',
       '/clients',
       '/inbox',
+      '/comunicacao',
       '/demands',
       '/midias',
       '/pipeline',

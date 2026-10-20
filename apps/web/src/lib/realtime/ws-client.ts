@@ -81,6 +81,18 @@ class RealtimeClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private manuallyClosed = false;
   private token: string | null = null;
+  private jaAbriu = false;
+  private aoReconectar = new Set<() => void>();
+
+  /**
+   * Avisado quando a conexão VOLTA (não na primeira). Evento perdido enquanto
+   * o socket estava fora não é reenviado pelo servidor: quem depende de evento
+   * ao vivo (Comunicação) busca de novo aqui.
+   */
+  onReconnect(cb: () => void): () => void {
+    this.aoReconectar.add(cb);
+    return () => { this.aoReconectar.delete(cb); };
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -117,6 +129,8 @@ class RealtimeClient {
       }
     };
     socket.onopen = () => {
+      if (this.jaAbriu) this.aoReconectar.forEach((cb) => cb());
+      this.jaAbriu = true;
       // Só zera a espera se a conexão SE MANTIVER: abrir e ser recusada logo em
       // seguida (token vencido) não pode contar como sucesso.
       this.stableTimer = setTimeout(() => { this.reconnectDelayMs = 1000; }, 5_000);
