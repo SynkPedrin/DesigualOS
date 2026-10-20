@@ -341,7 +341,7 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
     rotas.post<{ Params: { id: string } }>('/internal-chat/conversations/:id/attachments', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
       const { organizationId, userId } = contexto(request);
       try {
-        const conversa = await svc.conversaAcessivel(organizationId, userId, request.params.id);
+        const [conversa, usado] = await Promise.all([svc.conversaAcessivel(organizationId, userId, request.params.id), svc.espacoUsado(organizationId)]);
         const politica = politicaDeAnexos();
         const file = await request.file({ limits: { fileSize: Math.max(...Object.values(politica.limites)) + 1 } });
         if (!file) { reply.code(400); return { error: 'Nenhum arquivo enviado.' }; }
@@ -351,7 +351,7 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
           filename: file.filename,
           mimetype: file.mimetype,
           stream: file.file,
-          usadoPelaOrganizacao: await svc.espacoUsado(organizationId),
+          usadoPelaOrganizacao: usado,
         });
         if (file.file.truncated) {
           await apagarAnexo(gravado.storageKey);
