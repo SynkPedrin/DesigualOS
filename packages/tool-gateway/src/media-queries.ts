@@ -18,6 +18,11 @@ export interface MediaScope {
   clientIds: string[] | null;
 }
 
+export type MediaProviderName = 'meta' | 'google_ads';
+
+/** Meta usa `act_123`; Google usa só dígitos do Customer ID. O prefixo basta para saber de quem é a conta. */
+export const providerOfAccount = (accountId: string): MediaProviderName => (accountId.startsWith('act_') ? 'meta' : 'google_ads');
+
 const n = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 // ── Contas ───────────────────────────────────────────────────────────────
@@ -25,7 +30,7 @@ const n = (v: unknown): number | null => (v === null || v === undefined ? null :
 export interface LinkedMediaAccount {
   clientId: string;
   clientName: string;
-  provider: 'meta';
+  provider: MediaProviderName;
   accountId: string;
   label: string | null;
   isPrimary: boolean;
@@ -46,43 +51,64 @@ export async function listLinkedAccounts(scope: MediaScope, filter: { clientId?:
   if (scope.clientIds) conditions.push(inArray(schema.clients.id, scope.clientIds));
   if (filter.clientId) conditions.push(eq(schema.clients.id, filter.clientId));
 
-  const rows = await db
-    .select({
-      clientId: schema.clients.id,
-      clientName: schema.clients.name,
-      accountId: schema.clientMetaAccounts.accountId,
-      label: schema.clientMetaAccounts.label,
-      isPrimary: schema.clientMetaAccounts.isPrimary,
-      name: schema.mediaAdAccounts.name,
-      currency: schema.mediaAdAccounts.currency,
-      timezone: schema.mediaAdAccounts.timezone,
-      status: schema.mediaAdAccounts.status,
-      balanceKind: schema.mediaAdAccounts.balanceKind,
-      balanceAmount: schema.mediaAdAccounts.balanceAmount,
-      spendCap: schema.mediaAdAccounts.spendCap,
-      lastSyncedAt: schema.mediaAdAccounts.lastSyncedAt,
-      lastSyncError: schema.mediaAdAccounts.lastSyncError,
-    })
-    .from(schema.clientMetaAccounts)
-    .innerJoin(schema.clients, eq(schema.clients.id, schema.clientMetaAccounts.clientId))
-    .leftJoin(
-      schema.mediaAdAccounts,
-      and(
-        eq(schema.mediaAdAccounts.organizationId, scope.organizationId),
-        eq(schema.mediaAdAccounts.provider, 'meta'),
-        eq(schema.mediaAdAccounts.externalId, schema.clientMetaAccounts.accountId),
-      ),
-    )
-    .where(and(...conditions))
-    .orderBy(asc(schema.clients.name), desc(schema.clientMetaAccounts.isPrimary), asc(schema.clientMetaAccounts.createdAt));
+  const catalog = (provider: MediaProviderName, externalId: typeof schema.clientMetaAccounts.accountId | typeof schema.clientGoogleAdsAccounts.customerId) =>
+    and(eq(schema.mediaAdAccounts.organizationId, scope.organizationId), eq(schema.mediaAdAccounts.provider, provider), eq(schema.mediaAdAccounts.externalId, externalId));
 
-  return rows.map((r) => ({
+  const [meta, google] = await Promise.all([
+    db
+      .select({
+        clientId: schema.clients.id,
+        clientName: schema.clients.name,
+        accountId: schema.clientMetaAccounts.accountId,
+        label: schema.clientMetaAccounts.label,
+        isPrimary: schema.clientMetaAccounts.isPrimary,
+        createdAt: schema.clientMetaAccounts.createdAt,
+        name: schema.mediaAdAccounts.name,
+        currency: schema.mediaAdAccounts.currency,
+        timezone: schema.mediaAdAccounts.timezone,
+        status: schema.mediaAdAccounts.status,
+        balanceKind: schema.mediaAdAccounts.balanceKind,
+        balanceAmount: schema.mediaAdAccounts.balanceAmount,
+        spendCap: schema.mediaAdAccounts.spendCap,
+        lastSyncedAt: schema.mediaAdAccounts.lastSyncedAt,
+        lastSyncError: schema.mediaAdAccounts.lastSyncError,
+      })
+      .from(schema.clientMetaAccounts)
+      .innerJoin(schema.clients, eq(schema.clients.id, schema.clientMetaAccounts.clientId))
+      .leftJoin(schema.mediaAdAccounts, catalog('meta', schema.clientMetaAccounts.accountId))
+      .where(and(...conditions)),
+    db
+      .select({
+        clientId: schema.clients.id,
+        clientName: schema.clients.name,
+        accountId: schema.clientGoogleAdsAccounts.customerId,
+        label: schema.clientGoogleAdsAccounts.label,
+        isPrimary: schema.clientGoogleAdsAccounts.isPrimary,
+        createdAt: schema.clientGoogleAdsAccounts.createdAt,
+        name: schema.mediaAdAccounts.name,
+        currency: schema.mediaAdAccounts.currency,
+        timezone: schema.mediaAdAccounts.timezone,
+        status: schema.mediaAdAccounts.status,
+        balanceKind: schema.mediaAdAccounts.balanceKind,
+        balanceAmount: schema.mediaAdAccounts.balanceAmount,
+        spendCap: schema.mediaAdAccounts.spendCap,
+        lastSyncedAt: schema.mediaAdAccounts.lastSyncedAt,
+        lastSyncError: schema.mediaAdAccounts.lastSyncError,
+      })
+      .from(schema.clientGoogleAdsAccounts)
+      .innerJoin(schema.clients, eq(schema.clients.id, schema.clientGoogleAdsAccounts.clientId))
+      .leftJoin(schema.mediaAdAccounts, catalog('google_ads', schema.clientGoogleAdsAccounts.customerId))
+      .where(and(...conditions)),
+  ]);
+
+  const toRow = (provider: MediaProviderName) => (r: (typeof meta)[number]): LinkedMediaAccount & { createdAt: Date } => ({
     clientId: r.clientId,
     clientName: r.clientName,
-    provider: 'meta' as const,
+    provider,
     accountId: r.accountId,
     label: r.label,
     isPrimary: r.isPrimary,
+    createdAt: r.createdAt,
     name: r.name,
     currency: r.currency,
     timezone: r.timezone,
@@ -92,10 +118,14 @@ export async function listLinkedAccounts(scope: MediaScope, filter: { clientId?:
     spendCap: n(r.spendCap),
     lastSyncedAt: r.lastSyncedAt?.toISOString() ?? null,
     lastSyncError: r.lastSyncError,
-  }));
+  });
+  return [...meta.map(toRow('meta')), ...google.map(toRow('google_ads'))]
+    .sort((a, b) => a.clientName.localeCompare(b.clientName, 'pt-BR') || Number(b.isPrimary) - Number(a.isPrimary) || a.createdAt.getTime() - b.createdAt.getTime())
+    .map(({ createdAt: _createdAt, ...row }) => row);
 }
 
 export interface UnlinkedMediaAccount {
+  provider: MediaProviderName;
   accountId: string;
   name: string | null;
   currency: string | null;
@@ -106,17 +136,20 @@ export interface UnlinkedMediaAccount {
 /** Contas descobertas que nenhum cliente reivindicou. A associação é manual: nome parecido não é prova. */
 export async function listUnlinkedAccounts(organizationId: string): Promise<UnlinkedMediaAccount[]> {
   const rows = await db
-    .select({ accountId: schema.mediaAdAccounts.externalId, name: schema.mediaAdAccounts.name, currency: schema.mediaAdAccounts.currency, status: schema.mediaAdAccounts.status, businessId: schema.mediaAdAccounts.businessId })
+    .select({ provider: schema.mediaAdAccounts.provider, accountId: schema.mediaAdAccounts.externalId, name: schema.mediaAdAccounts.name, currency: schema.mediaAdAccounts.currency, status: schema.mediaAdAccounts.status, businessId: schema.mediaAdAccounts.businessId })
     .from(schema.mediaAdAccounts)
     .where(
       and(
         eq(schema.mediaAdAccounts.organizationId, organizationId),
-        eq(schema.mediaAdAccounts.provider, 'meta'),
-        sql`not exists (select 1 from client_meta_accounts cma where cma.account_id = ${schema.mediaAdAccounts.externalId})`,
+        sql`(
+          (${schema.mediaAdAccounts.provider} = 'meta' and not exists (select 1 from client_meta_accounts cma where cma.account_id = ${schema.mediaAdAccounts.externalId}))
+          or
+          (${schema.mediaAdAccounts.provider} = 'google_ads' and not exists (select 1 from client_google_ads_accounts cga where cga.customer_id = ${schema.mediaAdAccounts.externalId}))
+        )`,
       ),
     )
-    .orderBy(asc(schema.mediaAdAccounts.name));
-  return rows;
+    .orderBy(asc(schema.mediaAdAccounts.provider), asc(schema.mediaAdAccounts.name));
+  return rows.map((r) => ({ ...r, provider: r.provider as MediaProviderName }));
 }
 
 /** Garante que a conta pertence a um cliente que esta pessoa pode ver. Base de toda leitura por conta. */
@@ -139,11 +172,11 @@ function totalsFrom(r: Record<string, unknown>): RawTotals {
 }
 
 /** Soma de um nível inteiro da conta no período. "Conta" = soma das campanhas: elas cobrem todo o gasto. */
-export async function accountTotals(organizationId: string, accountId: string, range: DateRange, level: Level = 'campaign') {
+export async function accountTotals(organizationId: string, accountId: string, range: DateRange, level: Level = 'campaign', provider: MediaProviderName = providerOfAccount(accountId)) {
   const rows = (await db.execute(sql`
     select ${sums()}, max(synced_at) as synced_at, array_agg(distinct results_kind) filter (where results_kind is not null) as kinds
     from media_insights_daily
-    where organization_id = ${organizationId} and provider = 'meta' and account_external_id = ${accountId}
+    where organization_id = ${organizationId} and provider = ${provider} and account_external_id = ${accountId}
       and level = ${level} and day >= ${range.since} and day <= ${range.until}`)) as unknown as Array<Record<string, unknown>>;
   const r = rows[0] ?? {};
   return { totals: totalsFrom(r), syncedAt: (r.synced_at as Date | null) ?? null, resultKinds: ((r.kinds as string[] | null) ?? []) };
@@ -158,11 +191,11 @@ export interface DailyPoint {
   costPerResult: number | null;
 }
 
-export async function accountDaily(organizationId: string, accountId: string, range: DateRange): Promise<DailyPoint[]> {
+export async function accountDaily(organizationId: string, accountId: string, range: DateRange, provider: MediaProviderName = providerOfAccount(accountId)): Promise<DailyPoint[]> {
   const rows = (await db.execute(sql`
     select day::text as day, ${sums()}
     from media_insights_daily
-    where organization_id = ${organizationId} and provider = 'meta' and account_external_id = ${accountId}
+    where organization_id = ${organizationId} and provider = ${provider} and account_external_id = ${accountId}
       and level = 'campaign' and day >= ${range.since} and day <= ${range.until}
     group by day order by day`)) as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => {
@@ -196,13 +229,13 @@ export async function getAccountSummary(scope: MediaScope, accountId: string, ra
   const prevRange = compare ? previousRange(range) : null;
 
   const [cur, prev, daily, statusRows] = await Promise.all([
-    accountTotals(org, accountId, range),
-    prevRange ? accountTotals(org, accountId, prevRange) : Promise.resolve(null),
-    accountDaily(org, accountId, range),
+    accountTotals(org, accountId, range, 'campaign', account.provider),
+    prevRange ? accountTotals(org, accountId, prevRange, 'campaign', account.provider) : Promise.resolve(null),
+    accountDaily(org, accountId, range, account.provider),
     db.execute(sql`
       select coalesce(effective_status, status, 'UNKNOWN') as st, count(*)::int as c
       from media_entities
-      where organization_id = ${org} and provider = 'meta' and account_external_id = ${accountId} and level = 'campaign'
+      where organization_id = ${org} and provider = ${account.provider} and account_external_id = ${accountId} and level = 'campaign'
       group by 1`),
   ]);
 
@@ -263,15 +296,16 @@ export interface EntityQuery {
 }
 
 export async function listEntities(scope: MediaScope, accountId: string, q: EntityQuery): Promise<EntityRow[] | null> {
-  if (!(await assertAccountInScope(scope, accountId))) return null;
-  return listEntitiesInScope(scope.organizationId, accountId, q);
+  const account = await assertAccountInScope(scope, accountId);
+  if (!account) return null;
+  return listEntitiesInScope(scope.organizationId, accountId, q, account.provider);
 }
 
 /** Miolo sem checagem de escopo: só chamar depois de `assertAccountInScope`. */
-async function listEntitiesInScope(org: string, accountId: string, q: EntityQuery): Promise<EntityRow[]> {
+async function listEntitiesInScope(org: string, accountId: string, q: EntityQuery, provider: MediaProviderName): Promise<EntityRow[]> {
   const conds = [
     eq(schema.mediaEntities.organizationId, org),
-    eq(schema.mediaEntities.provider, 'meta'),
+    eq(schema.mediaEntities.provider, provider),
     eq(schema.mediaEntities.accountExternalId, accountId),
     eq(schema.mediaEntities.level, q.level),
   ];
@@ -285,7 +319,7 @@ async function listEntitiesInScope(org: string, accountId: string, q: EntityQuer
   const metricRows = (await db.execute(sql`
     select entity_external_id as id, ${sums()}
     from media_insights_daily
-    where organization_id = ${org} and provider = 'meta' and account_external_id = ${accountId}
+    where organization_id = ${org} and provider = ${provider} and account_external_id = ${accountId}
       and level = ${q.level} and day >= ${q.range.since} and day <= ${q.range.until}
     group by entity_external_id`)) as unknown as Array<Record<string, unknown>>;
   const byId = new Map(metricRows.map((r) => [String(r.id), totalsFrom(r)]));
@@ -338,10 +372,11 @@ export interface CreativeRow extends EntityRow {
 }
 
 export async function listCreatives(scope: MediaScope, accountId: string, q: Omit<EntityQuery, 'level'>): Promise<CreativeRow[] | null> {
-  if (!(await assertAccountInScope(scope, accountId))) return null;
+  const account = await assertAccountInScope(scope, accountId);
+  if (!account) return null;
   const org = scope.organizationId;
   const [ads, parents, creativeRows] = await Promise.all([
-    listEntitiesInScope(org, accountId, { ...q, level: 'ad' }),
+    listEntitiesInScope(org, accountId, { ...q, level: 'ad' }, account.provider),
     db
       .select({ level: schema.mediaEntities.level, id: schema.mediaEntities.externalId, name: schema.mediaEntities.name, parent: schema.mediaEntities.parentExternalId })
       .from(schema.mediaEntities)
@@ -365,6 +400,7 @@ export async function listCreatives(scope: MediaScope, accountId: string, q: Omi
 // ── Visão consolidada da agência ─────────────────────────────────────────
 
 export interface AgencyAccountRow {
+  provider: MediaProviderName;
   clientId: string;
   clientName: string;
   accountId: string;
@@ -390,9 +426,9 @@ export async function getAgencyOverview(scope: MediaScope, range: DateRange): Pr
   const accounts: AgencyAccountRow[] = await Promise.all(
     linked.map(async (acc): Promise<AgencyAccountRow> => {
       const [cur, pre, active] = await Promise.all([
-        accountTotals(scope.organizationId, acc.accountId, range),
-        accountTotals(scope.organizationId, acc.accountId, prev),
-        db.execute(sql`select count(*)::int as c from media_entities where organization_id = ${scope.organizationId} and provider = 'meta' and account_external_id = ${acc.accountId} and level = 'campaign' and effective_status = 'ACTIVE'`),
+        accountTotals(scope.organizationId, acc.accountId, range, 'campaign', acc.provider),
+        accountTotals(scope.organizationId, acc.accountId, prev, 'campaign', acc.provider),
+        db.execute(sql`select count(*)::int as c from media_entities where organization_id = ${scope.organizationId} and provider = ${acc.provider} and account_external_id = ${acc.accountId} and level = 'campaign' and effective_status = 'ACTIVE'`),
       ]);
       const d = deriveMetrics(cur.totals);
       const attention: string[] = [];
@@ -401,6 +437,7 @@ export async function getAgencyOverview(scope: MediaScope, range: DateRange): Pr
       const rc = pctChange(cur.totals.results, pre.totals.results);
       if (rc !== null && rc <= -30) attention.push('queda_de_resultados');
       return {
+        provider: acc.provider,
         clientId: acc.clientId,
         clientName: acc.clientName,
         accountId: acc.accountId,

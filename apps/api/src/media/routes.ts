@@ -16,10 +16,12 @@ import {
   listEntities,
   listLinkedAccounts,
   listUnlinkedAccounts,
+  providerOfAccount,
   renderTemplate,
   resolvePeriod,
   runAlertEvaluation,
   setMediaSetting,
+  syncGoogleMedia,
   syncMediaForCentralConnection,
   validateTemplate,
   type MediaPeriod,
@@ -157,6 +159,12 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
     const accounts = await listLinkedAccounts(scope);
     if (!accounts.some((a) => a.accountId === request.params.accountId)) return fail(reply, 404, 'Conta não encontrada para esta empresa.');
     try {
+      if (providerOfAccount(request.params.accountId) === 'google_ads') {
+        const g = await syncGoogleMedia({ onlyCustomerId: request.params.accountId });
+        await auditarAcao(request, { action: 'media.account.synced', organizationId: scope.organizationId, metadata: { accountId: request.params.accountId, provider: 'google_ads' } });
+        if (g.accountsFailed.length > 0) return fail(reply, 502, g.accountsFailed[0]!.error);
+        return g;
+      }
       const report = await syncMediaForCentralConnection({ onlyAccountId: request.params.accountId });
       if ('status' in report) return fail(reply, 409, 'Conexão central do Meta não está ativa.');
       await auditarAcao(request, { action: 'media.account.synced', organizationId: scope.organizationId, metadata: { accountId: request.params.accountId } });
@@ -178,7 +186,7 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
 
   // ── Configurações (fonte única) ────────────────────────────────────────
   app.get<{ Querystring: { client_id?: string; account_id?: string } }>('/media/settings', { preHandler: read }, async (request) => {
-    const accountKey = request.query.account_id ? `meta:${request.query.account_id}` : null;
+    const accountKey = request.query.account_id ? `${providerOfAccount(request.query.account_id)}:${request.query.account_id}` : null;
     const resolved = await getMediaSettings(scopeOf(request).organizationId, request.query.client_id ?? null, accountKey);
     return { ...resolved, keys: Object.keys(MEDIA_SETTING_DEFS) };
   });
@@ -202,7 +210,7 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
       await setMediaSetting({
         organizationId: scope.organizationId,
         clientId: body.data.client_id ?? null,
-        accountKey: body.data.account_id ? `meta:${body.data.account_id}` : null,
+        accountKey: body.data.account_id ? `${providerOfAccount(body.data.account_id)}:${body.data.account_id}` : null,
         key: body.data.key,
         value: body.data.reset ? undefined : body.data.value,
         userId: request.authUser!.id,
@@ -211,7 +219,7 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
       if (error instanceof MediaSettingError) return fail(reply, 400, error.message);
       throw error;
     }
-    return getMediaSettings(scope.organizationId, body.data.client_id ?? null, body.data.account_id ? `meta:${body.data.account_id}` : null);
+    return getMediaSettings(scope.organizationId, body.data.client_id ?? null, body.data.account_id ? `${providerOfAccount(body.data.account_id)}:${body.data.account_id}` : null);
   });
 
   // ── Regras de alerta ───────────────────────────────────────────────────
@@ -250,13 +258,13 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
     if (!body.success) return fail(reply, 400, body.error.issues.map((i) => i.message).join(' '));
     const org = scopeOf(request).organizationId;
     if (!(await accountBelongsToClient(org, body.data.client_id, body.data.account_id))) return fail(reply, 400, 'Esta conta não está vinculada a este cliente.');
-    const settings = await getMediaSettings(org, body.data.client_id, `meta:${body.data.account_id}`);
+    const settings = await getMediaSettings(org, body.data.client_id, `${providerOfAccount(body.data.account_id)}:${body.data.account_id}`);
     const [rule] = await db
       .insert(schema.mediaAlertRules)
       .values({
         organizationId: org,
         clientId: body.data.client_id,
-        provider: 'meta',
+        provider: providerOfAccount(body.data.account_id),
         accountExternalId: body.data.account_id,
         type: body.data.type,
         threshold: body.data.threshold === null || body.data.threshold === undefined ? null : String(body.data.threshold),
@@ -534,6 +542,7 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
   app.post('/media/actions', { preHandler: write }, async (request, reply) => {
     const body = actionBody.safeParse(request.body);
     if (!body.success) return fail(reply, 400, body.error.issues.map((i) => i.message).join(' '));
+    if (providerOfAccount(body.data.account_id) !== 'meta') return fail(reply, 400, 'Ações em campanha só estão disponíveis para o Meta Ads por enquanto.');
     if (body.data.action === 'set_budget' && body.data.daily_budget === undefined) return fail(reply, 400, 'Informe o orçamento diário.');
     const org = scopeOf(request).organizationId;
     if (!(await accountBelongsToClient(org, body.data.client_id, body.data.account_id))) return fail(reply, 400, 'Esta conta não está vinculada a este cliente.');
@@ -542,7 +551,7 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
       .values({
         organizationId: org,
         clientId: body.data.client_id,
-        provider: 'meta',
+        provider: providerOfAccount(body.data.account_id),
         accountExternalId: body.data.account_id,
         action: body.data.action,
         targetExternalId: body.data.campaign_id,

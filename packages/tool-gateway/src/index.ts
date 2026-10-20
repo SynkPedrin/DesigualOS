@@ -32,6 +32,7 @@ export * from './meta-sync';
 export * from './meta-system-user';
 export * from './meta-system-connection';
 export * from './meta-media-graph';
+export * from './google-media-graph';
 export * from './media-sync';
 export * from './media-settings';
 export * from './media-metrics';

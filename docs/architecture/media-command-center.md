@@ -14,6 +14,11 @@ Meta Marketing API ──(job 30 min, só leitura)──► media_* (Postgres)
    /midias/:id    (worker 15m)   (client_reports)  media-agent-tools  media_settings
 ```
 
+## Telas
+
+- `/midias/:clientId`: grade de **instâncias** do cliente (cada conta Meta ou Google é um cartão com saúde, última sincronização e gasto) e, abaixo, o painel de gerenciamento da instância escolhida.
+- Configurações → **Mídia e performance** (workspace): os mesmos padrões da empresa (`media_settings`, camada empresa) que a aba Configurações de cada cliente sobrescreve.
+
 ## Quem é a "Alicia"
 
 **Alicia é uma pessoa da equipe (tráfego), não um agente de IA.** Não existe agente Alicia no código nem em `agents`. O agente de tráfego é o **Jarbas** (`jarbas-local.ts`). As "ferramentas da Alicia" foram implementadas como ferramentas de agente genéricas (`media-agent-tools.ts`) e ligadas ao Jarbas; a Alicia usa as telas. Se for desejado um agente chamado Alicia, é decisão de produto separada.
@@ -72,7 +77,7 @@ Migração 0076 só cria tabelas: `DROP TABLE media_*` (ordem inversa das FKs) d
 
 ## Limitações conhecidas
 
-- **Google Ads: não implementado.** Falta `GOOGLE_ADS_DEVELOPER_TOKEN` e a conexão é OAuth por pessoa. A aba Google continua com o painel anterior.
+- **Google Ads**: implementado nas mesmas tabelas e telas (`google-media-graph.ts`, `syncGoogleMedia`), sem developer token (o Google aposentou a exigência). **Não verificado contra a API real**: a conexão gravada em 14/10 foi emitida pelo cliente OAuth anterior (o `.env` mudou em 20/10) e o Google responde `unauthorized_client` ao renovar. Basta reconectar em Integrações → Google Ads; a próxima sincronização (30 min) puxa tudo. Ações em campanha ainda só no Meta; Google não tem saldo/limite (`UNAVAILABLE`).
 - **Saldo real indisponível** com este token; alerta de saldo só atua em contas com limite de gastos (estimativa rotulada como tal).
 - **Limite de requisições do Meta**: a carga inicial de 90 dias de 14 contas excede o limite; a sync recua e retoma a cada 30 min. Contas novas chegam completas em algumas rodadas.
 - **Envio por WhatsApp não configurado**: a organização não tem conector `whatsapp` (`organization_connectors`). Alertas ficam registrados; nada é enviado.

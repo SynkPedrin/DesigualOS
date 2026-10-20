@@ -1,12 +1,17 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { resolveMetaSystemAccess, type MetaAccess } from './meta-access-resolver';
+import { type GoogleAdsOAuthConfig } from './google-ads-oauth';
+import { resolveGoogleAdsAccessByConnectionId } from './google-ads-access-resolver';
+import { fetchGoogleCustomerDetails, fetchGoogleDailyInsights, fetchGoogleEntities } from './google-media-graph';
 import {
   MetaGraphError,
   fetchMetaBusinessAccountDetails,
   fetchMetaDailyInsights,
   fetchMetaEntities,
   type MetaAccountDetails,
+  type MetaDailyInsight,
+  type MetaEntity,
   type MetaLevel,
 } from './meta-media-graph';
 
@@ -68,10 +73,11 @@ async function recordRun(
   kind: 'accounts' | 'entities' | 'insights',
   accountExternalId: string | null,
   fn: () => Promise<number>,
+  provider: MediaProvider = 'meta',
 ): Promise<{ ok: boolean; rows: number; error?: string; rateLimited?: boolean }> {
   const [run] = await db
     .insert(schema.mediaSyncRuns)
-    .values({ organizationId, provider: 'meta', accountExternalId, kind, status: 'running' })
+    .values({ organizationId, provider, accountExternalId, kind, status: 'running' })
     .returning({ id: schema.mediaSyncRuns.id });
   try {
     const rows = await fn();
@@ -86,14 +92,16 @@ async function recordRun(
 
 // ── Contas ───────────────────────────────────────────────────────────────
 
-export async function upsertMetaAccounts(organizationId: string, connectionId: string, accounts: MetaAccountDetails[]): Promise<number> {
+export type MediaProvider = 'meta' | 'google_ads';
+
+export async function upsertMetaAccounts(organizationId: string, connectionId: string, accounts: MetaAccountDetails[], provider: MediaProvider = 'meta'): Promise<number> {
   for (const part of chunks(accounts)) {
     await db
       .insert(schema.mediaAdAccounts)
       .values(
         part.map((a) => ({
           organizationId,
-          provider: 'meta',
+          provider,
           externalId: a.id,
           name: a.name,
           currency: a.currency,
@@ -134,16 +142,20 @@ export async function upsertMetaAccounts(organizationId: string, connectionId: s
 // ── Entidades e insights de UMA conta ────────────────────────────────────
 
 export async function syncMetaAccountEntities(organizationId: string, token: string, accountId: string): Promise<number> {
+  return syncAccountEntities(organizationId, 'meta', accountId, (level) => fetchMetaEntities(token, accountId, level));
+}
+
+export async function syncAccountEntities(organizationId: string, provider: MediaProvider, accountId: string, fetchLevel: (level: MetaLevel) => Promise<MetaEntity[]>): Promise<number> {
   let written = 0;
   for (const level of LEVELS) {
-    const entities = await fetchMetaEntities(token, accountId, level);
+    const entities = await fetchLevel(level);
     for (const part of chunks(entities)) {
       await db
         .insert(schema.mediaEntities)
         .values(
           part.map((e) => ({
             organizationId,
-            provider: 'meta',
+            provider,
             accountExternalId: accountId,
             level: e.level,
             externalId: e.id,
@@ -187,15 +199,26 @@ export async function syncMetaAccountInsights(
   currency: string | null,
   days: number,
 ): Promise<number> {
+  return syncAccountInsights(organizationId, 'meta', accountId, currency, days, (level, range) => fetchMetaDailyInsights(token, accountId, level, range));
+}
+
+export async function syncAccountInsights(
+  organizationId: string,
+  provider: MediaProvider,
+  accountId: string,
+  currency: string | null,
+  days: number,
+  fetchRange: (level: MetaLevel, range: { since: string; until: string }) => Promise<MetaDailyInsight[]>,
+): Promise<number> {
   let written = 0;
   for (const level of LEVELS) {
     // Janelas curtas: uma conta grande com 90 dias no nível de anúncio faz o
     // Meta responder "Service temporarily unavailable" (medido em 20/10/2026),
     // e repetir a mesma chamada gigante não resolve. Pedaços pequenos passam.
-    const rows: Awaited<ReturnType<typeof fetchMetaDailyInsights>> = [];
+    const rows: MetaDailyInsight[] = [];
     // Em sequência, não em paralelo: a rajada é justamente o que o Meta recusa.
     for (const range of splitRange(days)) {
-      rows.push(...(await fetchMetaDailyInsights(token, accountId, level, range)));
+      rows.push(...(await fetchRange(level, range)));
       await sleep(150);
     }
     for (const part of chunks(rows)) {
@@ -204,7 +227,7 @@ export async function syncMetaAccountInsights(
         .values(
           part.map((r) => ({
             organizationId,
-            provider: 'meta',
+            provider,
             accountExternalId: accountId,
             level: r.level,
             entityExternalId: r.entityId,
@@ -330,6 +353,92 @@ export async function syncMediaForCentralConnection(options: MediaSyncOptions = 
       break;
     }
     await sleep(GAP_BETWEEN_ACCOUNTS_MS);
+  }
+  return report;
+}
+
+// ── Google Ads ───────────────────────────────────────────────────────────
+
+export interface GoogleSyncReport {
+  links: number;
+  accountsSynced: number;
+  accountsFailed: Array<{ customerId: string; error: string }>;
+  rows: { entities: number; insights: number };
+}
+
+/**
+ * Sincroniza as contas Google Ads VINCULADAS a clientes. Cada vínculo carrega a
+ * conexão (OAuth de quem conectou) e a MCC (`login_customer_id`) a usar.
+ * Conexão recusada pelo Google (cliente OAuth trocado, acesso revogado) vira
+ * erro na conta, com a instrução de reconectar; as demais seguem.
+ */
+export async function syncGoogleMedia(options: { onlyCustomerId?: string; backfill?: boolean } = {}): Promise<GoogleSyncReport> {
+  const report: GoogleSyncReport = { links: 0, accountsSynced: 0, accountsFailed: [], rows: { entities: 0, insights: 0 } };
+  const links = await db
+    .select({
+      customerId: schema.clientGoogleAdsAccounts.customerId,
+      loginCustomerId: schema.clientGoogleAdsAccounts.loginCustomerId,
+      connectionId: schema.clientGoogleAdsAccounts.connectionId,
+      organizationId: schema.clients.organizationId,
+    })
+    .from(schema.clientGoogleAdsAccounts)
+    .innerJoin(schema.clients, eq(schema.clients.id, schema.clientGoogleAdsAccounts.clientId));
+
+  const seen = new Set<string>();
+  for (const link of links) {
+    if (!link.organizationId || seen.has(link.customerId)) continue;
+    if (options.onlyCustomerId && link.customerId !== options.onlyCustomerId) continue;
+    seen.add(link.customerId);
+    report.links += 1;
+    const org = link.organizationId;
+    const where = and(eq(schema.mediaAdAccounts.organizationId, org), eq(schema.mediaAdAccounts.provider, 'google_ads'), eq(schema.mediaAdAccounts.externalId, link.customerId));
+
+    const fail = async (error: string) => {
+      report.accountsFailed.push({ customerId: link.customerId, error });
+      await db
+        .insert(schema.mediaAdAccounts)
+        .values({ organizationId: org, provider: 'google_ads', externalId: link.customerId, connectionId: link.connectionId, lastSyncError: error.slice(0, 500) })
+        .onConflictDoUpdate({ target: [schema.mediaAdAccounts.organizationId, schema.mediaAdAccounts.provider, schema.mediaAdAccounts.externalId], set: { lastSyncError: error.slice(0, 500), updatedAt: new Date() } });
+    };
+
+    if (!link.connectionId) {
+      await fail('Vínculo sem conexão do Google Ads: reconecte em Integrações.');
+      continue;
+    }
+    const access = await resolveGoogleAdsAccessByConnectionId(link.connectionId);
+    if (!access) {
+      await fail('O Google recusou a conexão (credencial OAuth trocada ou acesso revogado). Reconecte o Google Ads em Integrações.');
+      continue;
+    }
+    const cfg: GoogleAdsOAuthConfig = { ...access.config, ...(link.loginCustomerId ? { loginCustomerId: link.loginCustomerId } : {}) };
+
+    try {
+      const detail = await fetchGoogleCustomerDetails(cfg, access.accessToken, link.customerId);
+      await upsertMetaAccounts(
+        org,
+        link.connectionId,
+        [{ id: link.customerId, name: detail.name, currency: detail.currency, timezone: detail.timezone, status: detail.status, disableReason: null, businessId: link.loginCustomerId, balanceKind: 'UNAVAILABLE', balanceAmount: null, spendCap: null, amountSpent: null }],
+        'google_ads',
+      );
+      const [{ n } = { n: 0 }] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.mediaInsightsDaily)
+        .where(and(eq(schema.mediaInsightsDaily.provider, 'google_ads'), eq(schema.mediaInsightsDaily.accountExternalId, link.customerId)));
+      const days = options.backfill || n === 0 ? BACKFILL_DAYS : INCREMENTAL_DAYS;
+
+      const entities = await recordRun(org, 'entities', link.customerId, () => syncAccountEntities(org, 'google_ads', link.customerId, (level) => fetchGoogleEntities(cfg, access.accessToken, link.customerId, level)), 'google_ads');
+      const insights = await recordRun(org, 'insights', link.customerId, () => syncAccountInsights(org, 'google_ads', link.customerId, detail.currency, days, (level, range) => fetchGoogleDailyInsights(cfg, access.accessToken, link.customerId, level, range)), 'google_ads');
+      report.rows.entities += entities.rows;
+      report.rows.insights += insights.rows;
+      if (entities.ok && insights.ok) {
+        report.accountsSynced += 1;
+        await db.update(schema.mediaAdAccounts).set({ lastSyncedAt: new Date(), lastSyncError: null }).where(where);
+      } else {
+        await fail(entities.error ?? insights.error ?? 'falha desconhecida');
+      }
+    } catch (error) {
+      await fail(error instanceof Error ? error.message : String(error));
+    }
   }
   return report;
 }

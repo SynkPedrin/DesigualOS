@@ -2,6 +2,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { getMediaSettings } from './media-settings';
 import {
+  providerOfAccount,
   getAccountSummary,
   getAgencyOverview,
   listCreatives,
@@ -36,7 +37,7 @@ export class AgentDeniedError extends Error {
 }
 
 async function ensureAllowed(scope: MediaScope, clientId: string | null, accountId: string | null, permission: AgentPermission): Promise<void> {
-  const settings = await getMediaSettings(scope.organizationId, clientId, accountId ? `meta:${accountId}` : null);
+  const settings = await getMediaSettings(scope.organizationId, clientId, accountId ? `${providerOfAccount(accountId)}:${accountId}` : null);
   if (!settings.values['agent.permissions'][permission]) {
     throw new AgentDeniedError(permission, `Esta ação está desligada para agentes nas configurações de Mídia (escopo: ${settings.source['agent.permissions']}).`);
   }
@@ -126,7 +127,7 @@ export const mediaTools = {
 
   /** get_media_settings: a MESMA resolução que a tela mostra. */
   async getSettings(scope: MediaScope, clientId: string | null, accountId: string | null) {
-    return getMediaSettings(scope.organizationId, clientId, accountId ? `meta:${accountId}` : null);
+    return getMediaSettings(scope.organizationId, clientId, accountId ? `${providerOfAccount(accountId)}:${accountId}` : null);
   },
 
   /** list_whatsapp_destinations: só o que a sessão conectada realmente tem. */
@@ -145,7 +146,7 @@ export const mediaTools = {
     if (!template || !summary) return { ok: false as const, reason: 'template_ou_dados_indisponiveis' };
     const values: TemplateValues = {
       cliente: account.clientName,
-      plataforma: 'Meta Ads',
+      plataforma: account.provider === 'meta' ? 'Meta Ads' : 'Google Ads',
       conta: account.name,
       saldo: account.balanceKind === 'UNAVAILABLE' ? null : formatMoney(account.balanceAmount, account.currency),
       orcamento: formatMoney(account.spendCap, account.currency),
@@ -171,12 +172,13 @@ export const mediaTools = {
     const account = (await listLinkedAccounts(scope)).find((a) => a.accountId === input.accountId);
     if (!account) return null;
     await ensureAllowed(scope, account.clientId, input.accountId, 'proposeActions');
+    if (account.provider !== 'meta') throw new Error('Ações em campanha só estão disponíveis para o Meta Ads por enquanto.');
     const [row] = await db
       .insert(schema.mediaActionRequests)
       .values({
         organizationId: scope.organizationId,
         clientId: account.clientId,
-        provider: 'meta',
+        provider: account.provider,
         accountExternalId: input.accountId,
         action: input.action,
         targetExternalId: input.campaignId,

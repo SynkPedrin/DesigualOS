@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AreaTrend } from '@/components/ui/area-trend';
 import { ClientReportsPanel } from '@/components/clients/client-reports-panel';
 import { useMediaAccounts, useMediaSettings, useMediaSummary, useSyncMediaAccount } from '@/hooks/use-media';
-import { MEDIA_PERIODS, type MediaAccountSummary, type MediaLinkedAccount, type MediaPeriod } from '@/lib/api/media';
+import { MEDIA_PERIODS, PROVIDER_LABEL, type MediaAccountSummary, type MediaLinkedAccount, type MediaPeriod } from '@/lib/api/media';
 import { cn } from '@/lib/utils';
 import { change, dash, int, money, pct, resultLabel, when } from './format';
 import { CampaignsTab, CreativesTab } from './media-tables';
@@ -95,22 +95,13 @@ export function MediaCommandCenter({ clientId }: { clientId: string }) {
 
   return (
     <div className="space-y-4">
+      <InstanceGrid accounts={linked} unlinked={accounts.data?.unlinked ?? []} activeId={account.accountId} onPick={setAccountId} period={effectivePeriod} />
+
       <Surface className="flex flex-wrap items-center gap-3 p-3">
-        <label className="flex items-center gap-2 text-xs text-nevoa">
-          Conta
-          <select
-            value={account.accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            className="max-w-[260px] rounded-md border border-grafite-elevado bg-carbono px-2 py-1.5 text-sm text-branco-cru"
-            aria-label="Conta de anúncios"
-          >
-            {linked.map((a) => (
-              <option key={a.accountId} value={a.accountId}>
-                {(a.name ?? a.label ?? a.accountId) + (a.isPrimary ? ' · principal' : '')}
-              </option>
-            ))}
-          </select>
-        </label>
+        <span className="inline-flex items-center gap-2 text-sm text-branco-cru">
+          <PlatformBadge provider={account.provider} />
+          <span className="font-medium">{account.name ?? account.label ?? account.accountId}</span>
+        </span>
         <label className="flex items-center gap-2 text-xs text-nevoa">
           Período
           <select
@@ -277,4 +268,72 @@ function Balance({ account }: { account: MediaLinkedAccount }) {
       </p>
     );
   return <p className="mt-1">Saldo indisponível: a conexão atual não lê o saldo desta conta e ela não tem limite de gastos definido. Alertas de saldo ficam inativos nesta conta.</p>;
+}
+
+function PlatformBadge({ provider }: { provider: 'meta' | 'google_ads' }) {
+  return (
+    <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide', provider === 'meta' ? 'bg-roxo-eletrico/20 text-roxo-eletrico' : 'bg-aviso/20 text-aviso')}>
+      {PROVIDER_LABEL[provider]}
+    </span>
+  );
+}
+
+/**
+ * AS INSTÂNCIAS DO CLIENTE: cada conta de anúncio (Meta ou Google) é um cartão
+ * com saúde, última sincronização e gasto do período. Escolher o cartão abre o
+ * painel de gerenciamento dessa conta logo abaixo. Conta sem cliente aparece
+ * numa faixa à parte (só para quem pode vincular) e nunca é associada sozinha.
+ */
+function InstanceGrid({ accounts, unlinked, activeId, onPick, period }: { accounts: MediaLinkedAccount[]; unlinked: Array<{ accountId: string; name: string | null; provider: 'meta' | 'google_ads' }>; activeId: string; onPick: (id: string) => void; period: MediaPeriod }) {
+  return (
+    <section aria-label="Instâncias do cliente" className="space-y-2">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {accounts.map((a) => (
+          <InstanceCard key={`${a.provider}:${a.accountId}`} account={a} active={a.accountId === activeId} onPick={() => onPick(a.accountId)} period={period} />
+        ))}
+      </div>
+      {unlinked.length > 0 && (
+        <details className="rounded-lg border border-grafite-elevado p-3">
+          <summary className="cursor-pointer text-sm text-nevoa">{unlinked.length} conta(s) da agência ainda sem cliente</summary>
+          <ul className="mt-2 space-y-1 text-sm text-nevoa">
+            {unlinked.map((u) => (
+              <li key={`${u.provider}:${u.accountId}`} className="flex items-center gap-2">
+                <PlatformBadge provider={u.provider} /> {u.name ?? u.accountId} <span className="text-[11px]">({u.accountId})</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-nevoa">Vincule na ficha do cliente. O sistema não associa por nome parecido.</p>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function InstanceCard({ account, active, onPick, period }: { account: MediaLinkedAccount; active: boolean; onPick: () => void; period: MediaPeriod }) {
+  const summary = useMediaSummary(account.accountId, period, false);
+  const problem = account.lastSyncError || (account.status && account.status !== 'ACTIVE');
+  const cur = summary.data?.current;
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      aria-pressed={active}
+      className={cn('rounded-lg border p-3 text-left transition-colors', active ? 'border-roxo-eletrico bg-roxo-eletrico/5' : 'border-grafite-elevado bg-grafite hover:border-nevoa')}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <PlatformBadge provider={account.provider} />
+        <span className={cn('inline-flex items-center gap-1 text-[11px]', problem ? 'text-erro' : 'text-sinal')}>
+          {problem ? <AlertTriangle size={11} /> : <span className="size-1.5 rounded-full bg-sinal" />}
+          {account.lastSyncError ? 'sincronização falhou' : account.status && account.status !== 'ACTIVE' ? account.status : 'saudável'}
+        </span>
+      </div>
+      <p className="mt-2 truncate text-sm font-medium text-branco-cru">{account.name ?? account.label ?? account.accountId}</p>
+      <p className="truncate text-[11px] text-nevoa">{account.accountId}{account.isPrimary ? ' · principal' : ''}</p>
+      <div className="mt-2 flex items-end justify-between gap-2 text-[11px] text-nevoa">
+        <span>{summary.isPending ? '…' : cur?.spend != null ? `${money(cur.spend, account.currency)} no período` : 'sem dados no período'}</span>
+        <span>{when(account.lastSyncedAt)}</span>
+      </div>
+      {account.lastSyncError && <p className="mt-1 line-clamp-2 text-[11px] text-erro">{account.lastSyncError}</p>}
+    </button>
+  );
 }

@@ -118,9 +118,9 @@ async function gatherFacts(organizationId: string, account: LinkedMediaAccount, 
   const range: DateRange = base;
   const prev = previousRange(range);
   const [cur, pre, spentRows, stopped, rejected] = await Promise.all([
-    accountTotals(organizationId, account.accountId, range),
-    accountTotals(organizationId, account.accountId, prev),
-    db.select({ amountSpent: schema.mediaAdAccounts.amountSpent }).from(schema.mediaAdAccounts).where(and(eq(schema.mediaAdAccounts.organizationId, organizationId), eq(schema.mediaAdAccounts.provider, 'meta'), eq(schema.mediaAdAccounts.externalId, account.accountId))),
+    accountTotals(organizationId, account.accountId, range, 'campaign', account.provider),
+    accountTotals(organizationId, account.accountId, prev, 'campaign', account.provider),
+    db.select({ amountSpent: schema.mediaAdAccounts.amountSpent }).from(schema.mediaAdAccounts).where(and(eq(schema.mediaAdAccounts.organizationId, organizationId), eq(schema.mediaAdAccounts.provider, account.provider), eq(schema.mediaAdAccounts.externalId, account.accountId))),
     db.execute(sql`
       select e.name from media_entities e
       where e.organization_id = ${organizationId} and e.account_external_id = ${account.accountId} and e.level = 'campaign'
@@ -221,7 +221,7 @@ export async function runAlertEvaluation(options: { now?: Date; sender?: Message
       await settle('not_requested');
       continue;
     }
-    const settings = await getMediaSettings(rule.organizationId, rule.clientId, `meta:${rule.accountExternalId}`);
+    const settings = await getMediaSettings(rule.organizationId, rule.clientId, `${rule.provider}:${rule.accountExternalId}`);
     if (!settings.values['whatsapp.sendEnabled']) { await settle('suppressed', 'envio desligado na configuração do workspace'); continue; }
     if (!rule.destination) { await settle('suppressed', 'regra sem destino'); continue; }
     if (!withinSendWindow(rule.sendWindow ?? settings.values['whatsapp.sendWindow'], now)) { await settle('suppressed', 'fora do horário permitido'); continue; }
@@ -231,7 +231,7 @@ export async function runAlertEvaluation(options: { now?: Date; sender?: Message
     const [client] = await db.select({ name: schema.clients.name }).from(schema.clients).where(eq(schema.clients.id, rule.clientId));
     const values: TemplateValues = {
       cliente: client?.name ?? null,
-      plataforma: 'Meta Ads',
+      plataforma: account.provider === 'meta' ? 'Meta Ads' : 'Google Ads',
       conta: account.name,
       saldo: account.balanceAmount === null ? null : formatMoney(account.balanceAmount, account.currency),
       orcamento: formatMoney(account.spendCap, account.currency),

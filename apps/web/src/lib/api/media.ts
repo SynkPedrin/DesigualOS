@@ -20,7 +20,7 @@ export interface DateRange {
 export interface MediaLinkedAccount {
   clientId: string;
   clientName: string;
-  provider: 'meta';
+  provider: 'meta' | 'google_ads';
   accountId: string;
   label: string | null;
   isPrimary: boolean;
@@ -36,6 +36,7 @@ export interface MediaLinkedAccount {
 }
 
 export interface MediaUnlinkedAccount {
+  provider: 'meta' | 'google_ads';
   accountId: string;
   name: string | null;
   currency: string | null;
@@ -222,3 +223,5 @@ export interface MediaActionRequest {
   stateAfter: Record<string, unknown> | null;
   createdAt: string;
 }
+
+export const PROVIDER_LABEL: Record<'meta' | 'google_ads', string> = { meta: 'Meta Ads', google_ads: 'Google Ads' };
