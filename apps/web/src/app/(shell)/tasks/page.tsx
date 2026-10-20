@@ -17,6 +17,7 @@ import { useUpdateMe } from '@/hooks/use-update-me';
 import { ApiRequestError } from '@/lib/api/client';
 import { classificarPrioridade } from '@/lib/prioridade-de-tarefa';
 import { cn } from '@/lib/utils';
+import { tarefaConcluida } from '@/lib/tarefa-concluida';
 
 type Scope = 'agency' | 'mine';
 
@@ -175,7 +176,7 @@ export default function TasksPage() {
    * contrato, e um delta inventado é pior que um cartão sem delta.
    */
   const todas = active.data?.tasks ?? [];
-  const abertas = todas.filter((t) => t.status_type !== 'closed');
+  const abertas = todas.filter((t) => !tarefaConcluida(t));
   const agora = Date.now();
   const fimDeHoje = inicioDoDia(new Date()).getTime() + 24 * 60 * 60_000 - 1;
   const vencemHoje = abertas.filter((t) => t.due_date !== null && t.due_date >= agora && t.due_date <= fimDeHoje).length;

@@ -3,17 +3,20 @@
 import { CalendarDays, UserRound } from 'lucide-react';
 import type { AgencyTaskWire } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
+import { tarefaConcluida } from '@/lib/tarefa-concluida';
+
 
 const SEM_STATUS = 'Sem status';
 
-function dueLabel(ms: number | null): { text: string; late: boolean } | null {
+// Tarefa concluída (pronto/encerrado) nunca está atrasada, por mais velho que seja o prazo.
+function dueLabel(ms: number | null, concluida: boolean): { text: string; late: boolean; concluida: boolean } | null {
   if (!ms) return null;
-  const late = ms < Date.now();
-  return { text: new Date(ms).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }), late };
+  const late = !concluida && ms < Date.now();
+  return { text: new Date(ms).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }), late, concluida };
 }
 
 function TaskKanbanCard({ task, showClient }: { task: AgencyTaskWire; showClient: boolean }) {
-  const due = dueLabel(task.due_date);
+  const due = dueLabel(task.due_date, tarefaConcluida(task));
   const donos = task.assignees.filter((a) => a.trim().length > 0);
 
   return (
@@ -32,9 +35,9 @@ function TaskKanbanCard({ task, showClient }: { task: AgencyTaskWire; showClient
         </span>
       </div>
       {due && (
-        <span className={cn('flex items-center gap-1 text-[11px]', due.late ? 'font-medium text-erro' : 'text-nevoa')}>
+        <span className={cn('flex items-center gap-1 text-[11px]', due.late ? 'font-medium text-erro' : due.concluida ? 'text-sucesso' : 'text-nevoa')}>
           <CalendarDays size={12} />
-          {due.late ? `atrasada desde ${due.text}` : due.text}
+          {due.concluida ? `concluída · ${due.text}` : due.late ? `atrasada desde ${due.text}` : due.text}
         </span>
       )}
     </a>

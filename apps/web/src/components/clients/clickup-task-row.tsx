@@ -3,6 +3,8 @@
 import { CalendarDays, ExternalLink } from 'lucide-react';
 import type { ClickUpPersonWire, ClickUpTaskWire } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
+import { tarefaConcluida } from '@/lib/tarefa-concluida';
+
 
 /** Avatar real do ClickUp, com as iniciais/cor da própria conta como fallback. */
 function PersonAvatar({ person, size = 24 }: { person: ClickUpPersonWire; size?: number }) {
@@ -25,10 +27,11 @@ function PersonAvatar({ person, size = 24 }: { person: ClickUpPersonWire; size?:
   );
 }
 
-function dueLabel(iso: string | null): { text: string; late: boolean } | null {
+// Tarefa concluída (pronto/encerrado) nunca está atrasada, por mais velho que seja o prazo.
+function dueLabel(iso: string | null, concluida: boolean): { text: string; late: boolean } | null {
   if (!iso) return null;
   const due = new Date(iso);
-  const late = due.getTime() < Date.now();
+  const late = !concluida && due.getTime() < Date.now();
   return { text: due.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }), late };
 }
 
@@ -38,7 +41,7 @@ function dueLabel(iso: string | null): { text: string; late: boolean } | null {
  * do Endrigo pra bater o olho e saber de quem é.
  */
 export function ClickUpTaskRow({ task, fallbackUrl }: { task: ClickUpTaskWire; fallbackUrl: string | null }) {
-  const due = dueLabel(task.due_date);
+  const due = dueLabel(task.due_date, tarefaConcluida(task));
 
   return (
     <a
