@@ -1,3 +1,4 @@
+import { threadVisibleTo } from '../communications/service';
 import type { FastifyInstance } from 'fastify';
 import { and, asc, count, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -136,6 +137,38 @@ const linkGoogleAdsAccountSchema = z.object({
   label: z.string().trim().min(1).max(80).optional(),
   is_primary: z.boolean().optional(),
 });
+
+/**
+ * Tarefas e comentários do ClickUp da visão geral do cliente: eram buscados
+ * inteiros a cada abertura (3–4 s, medido em 20/10/2026). Fresco por 60 s; até
+ * 10 min devolve o último e atualiza por trás. O webhook do ClickUp já limpa o
+ * cache das telas de tarefas; aqui 60 s é o atraso máximo de uma mudança.
+ */
+const tarefasDaLista = new Map<string, { em: number; valor: Awaited<ReturnType<typeof getTasksInListPaged>>; renovando: boolean }>();
+async function tarefasDaListaEmCache(token: string, listId: string) {
+  const guardado = tarefasDaLista.get(listId);
+  const buscar = () => getTasksInListPaged(token, listId, true);
+  if (guardado && Date.now() - guardado.em < 10 * 60_000) {
+    if (Date.now() - guardado.em >= 60_000 && !guardado.renovando) {
+      guardado.renovando = true;
+      void buscar().then((valor) => tarefasDaLista.set(listId, { em: Date.now(), valor, renovando: false })).catch(() => { guardado.renovando = false; });
+    }
+    return guardado.valor;
+  }
+  const valor = await buscar();
+  if (tarefasDaLista.size > 200) tarefasDaLista.clear();
+  tarefasDaLista.set(listId, { em: Date.now(), valor, renovando: false });
+  return valor;
+}
+const comentariosDaLista = new Map<string, { em: number; valor: ClientClickUpComment[] }>();
+async function comentariosEmCache(listId: string, buscar: () => Promise<ClientClickUpComment[]>) {
+  const guardado = comentariosDaLista.get(listId);
+  if (guardado && Date.now() - guardado.em < 60_000) return guardado.valor;
+  const valor = (await buscar()).slice(0, 5);
+  if (comentariosDaLista.size > 200) comentariosDaLista.clear();
+  comentariosDaLista.set(listId, { em: Date.now(), valor });
+  return valor;
+}
 
 export async function registerClientRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', async (request, reply) => {
@@ -911,11 +944,31 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         return { error: 'No access granted to this client workspace' };
       }
 
-      const [conversationCountRow, assetCountRow, recentConversations, recentAssets] = await Promise.all([
+      // Conversas do WhatsApp (Inbox) vinculadas a este cliente — as que esta
+      // pessoa pode ver (a do WhatsApp de um colega fica com o colega).
+      const whatsappVisivel = and(eq(schema.conversationThreads.clientId, clientId), threadVisibleTo(request.authUser.id));
+      const [conversationCountRow, assetCountRow, recentConversations, recentAssets, whatsappCountRow, whatsappRecentes] = await Promise.all([
         db.select({ value: count() }).from(schema.conversations).where(eq(schema.conversations.clientId, clientId)),
         db.select({ value: count() }).from(schema.studioAssets).where(eq(schema.studioAssets.clientId, clientId)),
         db.select().from(schema.conversations).where(eq(schema.conversations.clientId, clientId)).orderBy(desc(schema.conversations.updatedAt)).limit(5),
         db.select().from(schema.studioAssets).where(eq(schema.studioAssets.clientId, clientId)).orderBy(desc(schema.studioAssets.createdAt)).limit(4),
+        db.select({ value: count() }).from(schema.conversationThreads).where(whatsappVisivel),
+        db.select({
+          id: schema.conversationThreads.id,
+          kind: schema.conversationThreads.kind,
+          title: schema.conversationThreads.title,
+          contactName: schema.contacts.name,
+          groupName: schema.whatsappGroups.name,
+          preview: schema.conversationThreads.lastMessagePreview,
+          unread: schema.conversationThreads.unreadCount,
+          lastMessageAt: schema.conversationThreads.lastMessageAt,
+        })
+          .from(schema.conversationThreads)
+          .leftJoin(schema.contacts, eq(schema.contacts.id, schema.conversationThreads.contactId))
+          .leftJoin(schema.whatsappGroups, eq(schema.whatsappGroups.id, schema.conversationThreads.groupId))
+          .where(whatsappVisivel)
+          .orderBy(sql`${schema.conversationThreads.lastMessageAt} desc nulls last`)
+          .limit(5),
       ]);
 
       // Sem lista vinculada o ClickUp não entra no resumo (null = estado
@@ -941,7 +994,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
           // (100 tarefas) e exibia o resultado como se fosse o total do cliente. Cliente
           // grande aparecia com número errado sem nenhum sinal de erro. `truncated` sobe pro
           // wire pra que a UI possa dizer "mínimo" em vez de afirmar um total falso.
-          const { tasks, truncated } = await getTasksInListPaged(access.token, client.clickupListId, true);
+          const { tasks, truncated } = await tarefasDaListaEmCache(access.token, client.clickupListId);
           const byStatus = new Map<string, { status: string; color: string | null; count: number }>();
           for (const task of tasks) {
             const key = task.status ?? 'sem status';
@@ -954,7 +1007,7 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
             counts_truncated: truncated,
             open_tasks: tasks.filter((task) => task.statusType !== 'closed' && task.statusType !== 'done').length,
             by_status: [...byStatus.values()].sort((a, b) => b.count - a.count),
-            latest_comments: (await fetchAggregatedComments(tasks, { apiKey: access.token, teamId: access.teamId })).slice(0, 5),
+            latest_comments: await comentariosEmCache(client.clickupListId, () => fetchAggregatedComments(tasks, { apiKey: access.token, teamId: access.teamId })),
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -966,6 +1019,17 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
 
       return {
         clickup,
+        whatsapp: {
+          total: whatsappCountRow[0]?.value ?? 0,
+          latest: whatsappRecentes.map((row) => ({
+            id: row.id,
+            name: row.kind === 'group' ? row.groupName ?? row.title ?? 'Grupo WhatsApp' : row.contactName ?? row.title ?? 'Contato WhatsApp',
+            kind: row.kind,
+            last_message_preview: row.preview,
+            unread_count: row.unread,
+            last_message_at: row.lastMessageAt?.toISOString() ?? null,
+          })),
+        },
         conversations: {
           total: conversationCountRow[0]?.value ?? 0,
           latest: recentConversations.map((row) => ({ id: row.id, title: row.title, status: row.status, updated_at: row.updatedAt.toISOString() })),

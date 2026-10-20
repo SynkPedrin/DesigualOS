@@ -2298,6 +2298,11 @@ export interface ClientOverviewWire {
     by_status: Array<{ status: string; color: string | null; count: number }>;
     latest_comments: ClickUpClientCommentWire[];
   } | null;
+  /** Conversas do WhatsApp (Inbox) vinculadas ao cliente e visíveis para quem pede. Opcional: API antiga não manda. */
+  whatsapp?: {
+    total: number;
+    latest: Array<{ id: string; name: string; kind: string; last_message_preview: string | null; unread_count: number; last_message_at: ISODateString | null }>;
+  };
   conversations: {
     total: number;
     latest: Array<{ id: string; title: string | null; status: string; updated_at: ISODateString }>;
