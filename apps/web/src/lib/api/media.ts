@@ -93,6 +93,8 @@ export interface MediaEntityRow extends Derived {
   dailyBudget: number | null;
   lifetimeBudget: number | null;
   updatedAt: string;
+  /** Investimento por dia no período (zero onde não houve veiculação). */
+  spark: number[];
 }
 
 export interface MediaCreativeRow extends MediaEntityRow {

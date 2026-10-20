@@ -6,11 +6,12 @@ import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AreaTrend } from '@/components/ui/area-trend';
 import { ClientReportsPanel } from '@/components/clients/client-reports-panel';
-import { useMediaAccounts, useMediaSettings, useMediaSummary, useSyncMediaAccount } from '@/hooks/use-media';
+import { useMediaAccounts, useMediaCreatives, useMediaEntities, useMediaSettings, useMediaSummary, useSyncMediaAccount } from '@/hooks/use-media';
 import { MEDIA_PERIODS, PROVIDER_LABEL, type MediaAccountSummary, type MediaLinkedAccount, type MediaPeriod } from '@/lib/api/media';
 import { cn } from '@/lib/utils';
 import { change, dash, int, money, pct, resultLabel, when } from './format';
-import { CampaignsTab, CreativesTab } from './media-tables';
+import { CampaignsTab, CreativesTab, Thumb } from './media-tables';
+import { ComboChart, DeltaChip, Donut, HBars, Sparkline, type BarItem } from './media-charts';
 import { ActionsSection, AlertsTab, ReportSchedulesSection, SettingsTab } from './media-alerts-settings';
 
 /**
@@ -186,35 +187,49 @@ function AccountHealth({ account }: { account: MediaLinkedAccount }) {
   );
 }
 
-function Kpi({ label, value, delta, invert = false, hint }: { label: string; value: string; delta?: number | null | undefined; invert?: boolean; hint?: string | undefined }) {
-  const hasDelta = delta !== undefined;
-  // Para custo (CPC, CPL), subir é ruim: a cor inverte.
-  const good = delta === null || delta === undefined ? null : invert ? delta < 0 : delta > 0;
+function Kpi({ label, value, delta, invert = false, hint, spark, tone }: { label: string; value: string; delta?: number | null | undefined; invert?: boolean; hint?: string | undefined; spark?: Array<number | null> | undefined; tone?: string | undefined }) {
   return (
-    <Surface className="p-4">
-      <p className="text-xs text-nevoa">{label}</p>
-      <p className="mt-1 font-heading text-2xl font-semibold tracking-tight text-branco-cru">{value}</p>
-      {hasDelta && (
-        <p className={cn('mt-1 text-xs', good === null ? 'text-nevoa' : good ? 'text-sinal' : 'text-erro')}>
-          {change(delta)} <span className="text-nevoa">vs período anterior</span>
-        </p>
-      )}
-      {hint && <p className="mt-1 text-[11px] text-nevoa">{hint}</p>}
+    <Surface className="flex flex-col gap-1 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-nevoa">{label}</p>
+        {delta !== undefined && <DeltaChip value={delta} invert={invert} />}
+      </div>
+      <p className="font-heading text-2xl font-semibold tracking-tight tabular-nums text-branco-cru">{value}</p>
+      <div className="flex items-end justify-between gap-2">
+        <p className="text-[11px] leading-tight text-nevoa">{hint ?? (delta !== undefined ? 'vs período anterior' : '')}</p>
+        {spark && spark.length > 1 && <Sparkline values={spark} tone={tone ?? 'text-roxo-eletrico'} width={80} height={26} />}
+      </div>
     </Surface>
   );
 }
 
 function Overview({ accountId, period, compare, account }: { accountId: string; period: MediaPeriod; compare: boolean; account: MediaLinkedAccount }) {
   const summary = useMediaSummary(accountId, period, compare);
+  const campaigns = useMediaEntities(accountId, period, { level: 'campaign', sort: 'spend', dir: 'desc' });
+  const creatives = useMediaCreatives(accountId, period, 'spend', 'desc');
   if (summary.isPending) return <Skeleton className="h-72 w-full" />;
   if (summary.isError || !summary.data) return <Surface className="p-5 text-sm text-erro">Não consegui carregar o resumo desta conta.</Surface>;
   const s: MediaAccountSummary = summary.data;
   const cur = s.current;
   const c = s.changes;
   const empty = cur.spend === null && cur.impressions === null;
+  const cc = s.currency;
+  const resLabel = resultLabel(s.resultKinds);
+  const series = (k: 'spend' | 'impressions' | 'clicks' | 'results' | 'costPerResult') => s.daily.map((d) => d[k]);
 
-  const spendSeries = s.daily.filter((d) => d.spend !== null).map((d) => ({ label: d.day.slice(5), value: d.spend as number }));
-  const resultSeries = s.daily.filter((d) => d.results !== null).map((d) => ({ label: d.day.slice(5), value: d.results as number }));
+  const camps = (campaigns.data?.rows ?? []).filter((r) => (r.spend ?? 0) > 0);
+  const top = camps.slice(0, 6);
+  const rest = camps.slice(6).reduce((sum, r) => sum + (r.spend ?? 0), 0);
+  const spendItems: BarItem[] = top.map((r) => ({ key: r.id, label: r.name, value: r.spend ?? 0, display: money(r.spend, cc), sub: r.results !== null ? `${int(r.results)} resultado(s)${r.costPerResult !== null ? ` · ${money(r.costPerResult, cc)} cada` : ''}` : 'sem resultados rastreados' }));
+  const efficient = camps.filter((r) => r.costPerResult !== null);
+  const cprMax = Math.max(0, ...efficient.map((r) => r.costPerResult as number));
+  const cprItems: BarItem[] = [...efficient]
+    .sort((a, b) => (a.costPerResult as number) - (b.costPerResult as number))
+    .slice(0, 6)
+    .map((r) => ({ key: r.id, label: r.name, value: r.costPerResult as number, display: money(r.costPerResult, cc), sub: `${int(r.results)} resultado(s) · investiu ${money(r.spend, cc)}`, tone: cur.costPerResult !== null && (r.costPerResult as number) > cur.costPerResult * 1.3 ? 'erro' : 'sinal' }));
+  void cprMax;
+
+  const bestAds = [...(creatives.data?.rows ?? [])].filter((r) => r.costPerResult !== null && (r.spend ?? 0) > 0).sort((a, b) => (a.costPerResult as number) - (b.costPerResult as number)).slice(0, 4);
 
   return (
     <div className="space-y-4">
@@ -225,29 +240,67 @@ function Overview({ accountId, period, compare, account }: { accountId: string; 
       </p>
       {empty && <Surface className="p-5 text-sm text-nevoa">Sem dados no período para esta conta. Pode não ter havido veiculação, ou a primeira sincronização ainda não terminou.</Surface>}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
-        <Kpi label="Investimento" value={money(cur.spend, s.currency)} delta={c?.spend} />
-        <Kpi label="Impressões" value={int(cur.impressions)} delta={c?.impressions} />
-        <Kpi label="Alcance" value={int(cur.reach)} delta={c?.reach} hint="Soma diária: não é alcance único do período" />
-        <Kpi label="Cliques" value={int(cur.clicks)} delta={c?.clicks} />
-        <Kpi label="CTR" value={pct(cur.ctr)} delta={c?.ctr} />
-        <Kpi label="CPC" value={money(cur.cpc, s.currency)} delta={c?.cpc} invert />
-        <Kpi label="CPM" value={money(cur.cpm, s.currency)} delta={c?.cpm} invert />
-        <Kpi label={resultLabel(s.resultKinds)} value={int(cur.results)} delta={c?.results} hint={s.resultKinds.length === 0 ? 'Esta conta não rastreia resultados no período' : undefined} />
-        <Kpi label="Custo por resultado" value={money(cur.costPerResult, s.currency)} delta={c?.costPerResult} invert />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Kpi label="Investimento" value={money(cur.spend, cc)} delta={c?.spend} spark={series('spend')} />
+        <Kpi label="Impressões" value={int(cur.impressions)} delta={c?.impressions} spark={series('impressions')} tone="text-aviso" />
+        <Kpi label="Cliques" value={int(cur.clicks)} delta={c?.clicks} spark={series('clicks')} tone="text-aviso" />
+        <Kpi label="CTR" value={pct(cur.ctr)} delta={c?.ctr} hint={cur.cpc !== null ? `CPC ${money(cur.cpc, cc)}` : undefined} />
+        <Kpi label={resLabel} value={int(cur.results)} delta={c?.results} spark={series('results')} tone="text-sinal" hint={s.resultKinds.length === 0 ? 'Não rastreia resultados no período' : undefined} />
+        <Kpi label="Custo por resultado" value={money(cur.costPerResult, cc)} delta={c?.costPerResult} invert spark={series('costPerResult')} tone="text-sinal" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Kpi label="CPM" value={money(cur.cpm, cc)} delta={c?.cpm} invert />
+        <Kpi label="Alcance" value={int(cur.reach)} delta={c?.reach} hint={cur.reach === null ? 'Indisponível nesta plataforma' : 'Soma diária, não único'} />
         <Kpi label="ROAS" value={cur.roas === null ? dash : `${cur.roas.toFixed(2)}x`} delta={c?.roas} hint={cur.roas === null ? 'Sem valor de compra rastreado' : undefined} />
-        <Kpi label="Campanhas ativas" value={`${s.campaigns.active} de ${s.campaigns.total}`} hint={`${s.campaigns.paused} pausadas`} />
-        <Kpi label="Com problemas" value={String(s.campaigns.withIssues)} hint={s.campaigns.withIssues ? 'Reprovadas ou com pendência' : 'Nenhuma'} />
+        <Kpi label="Campanhas" value={`${s.campaigns.active} ativas`} hint={`${s.campaigns.total} no total · ${s.campaigns.paused} pausadas${s.campaigns.withIssues ? ` · ${s.campaigns.withIssues} com problema` : ''}`} />
+      </div>
+
+      <Surface className="p-4">
+        <p className="mb-1 text-sm font-medium text-branco-cru">Investimento e {resLabel.toLowerCase()} por dia</p>
+        <ComboChart points={s.daily.map((d) => ({ day: d.day, spend: d.spend, results: d.results, costPerResult: d.costPerResult }))} formatMoney={(v) => money(v, cc)} resultLabel={resLabel} />
+      </Surface>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Surface className="p-4">
+          <p className="mb-3 text-sm font-medium text-branco-cru">Para onde foi o investimento</p>
+          {campaigns.isPending ? <Skeleton className="h-40 w-full" /> : (
+            <Donut
+              centerLabel="Total"
+              centerValue={money(camps.reduce((sum, r) => sum + (r.spend ?? 0), 0), cc)}
+              items={[...top.map((r) => ({ key: r.id, label: r.name, value: r.spend ?? 0, display: money(r.spend, cc) })), ...(rest > 0 ? [{ key: 'outras', label: 'Outras campanhas', value: rest, display: money(rest, cc) }] : [])].slice(0, 5)}
+            />
+          )}
+        </Surface>
+        <Surface className="p-4">
+          <p className="mb-3 text-sm font-medium text-branco-cru">Campanhas que mais investem</p>
+          {campaigns.isPending ? <Skeleton className="h-40 w-full" /> : <HBars items={spendItems} empty="Nenhuma campanha investiu no período." />}
+        </Surface>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Surface className="p-4">
-          <p className="mb-2 text-sm font-medium text-branco-cru">Investimento por dia</p>
-          {spendSeries.length > 1 ? <AreaTrend data={spendSeries} formatValue={(v) => money(v, s.currency)} height={200} /> : <p className="py-10 text-center text-sm text-nevoa">Poucos dias com dado para desenhar a curva.</p>}
+          <p className="mb-1 text-sm font-medium text-branco-cru">Custo por resultado por campanha</p>
+          <p className="mb-3 text-[11px] text-nevoa">Menor é melhor. Em vermelho, mais de 30% acima da média da conta ({money(cur.costPerResult, cc)}).</p>
+          {campaigns.isPending ? <Skeleton className="h-40 w-full" /> : <HBars items={cprItems} empty="Nenhuma campanha com resultado rastreado no período." />}
         </Surface>
         <Surface className="p-4">
-          <p className="mb-2 text-sm font-medium text-branco-cru">{resultLabel(s.resultKinds)} por dia</p>
-          {resultSeries.length > 1 ? <AreaTrend data={resultSeries} colorVar="--color-sinal" formatValue={(v) => int(v)} height={200} /> : <p className="py-10 text-center text-sm text-nevoa">Sem resultados rastreados nos dias do período.</p>}
+          <p className="mb-3 text-sm font-medium text-branco-cru">Melhores criativos do período</p>
+          {creatives.isPending ? <Skeleton className="h-40 w-full" /> : bestAds.length === 0 ? <p className="py-6 text-center text-sm text-nevoa">Nenhum anúncio com resultado rastreado no período.</p> : (
+            <ul className="grid grid-cols-2 gap-3">
+              {bestAds.map((ad, i) => (
+                <li key={ad.id} className="overflow-hidden rounded-md border border-grafite-elevado">
+                  <div className="relative">
+                    <Thumb row={ad} className="aspect-[4/3] w-full" />
+                    <span className="absolute left-1.5 top-1.5 rounded bg-carbono/80 px-1.5 py-0.5 text-[10px] font-medium text-branco-cru">#{i + 1}</span>
+                  </div>
+                  <div className="p-2">
+                    <p className="truncate text-xs text-branco-cru" title={ad.name}>{ad.name}</p>
+                    <p className="mt-0.5 flex items-baseline justify-between text-[11px] text-nevoa"><span>{money(ad.costPerResult, cc)}/res.</span><span>{int(ad.results)} res.</span></p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </Surface>
       </div>
 
