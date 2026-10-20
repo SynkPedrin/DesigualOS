@@ -180,6 +180,30 @@ export async function listRecentMessagesVisible(organizationId: string, threadId
   return rows.flatMap((row) => (row.message ? [row.message] : [])).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
 
+/**
+ * Vincula a conversa a um cliente (ou desvincula, com null). O CONTATO também
+ * passa a ser do cliente, e as outras conversas dele vão junto: é a mesma
+ * pessoa, e as próximas conversas dela já nascem vinculadas (ensureThread lê
+ * contacts.client_id). Grupo não tem contato — só a conversa muda.
+ * Quem chama garante que o cliente é da empresa (clientBelongsToTenant).
+ */
+export async function linkThreadToClient(organizationId: string, threadId: string, clientId: string | null): Promise<ThreadRow | null> {
+  return db.transaction(async (tx) => {
+    const [atualizada] = await tx.update(schema.conversationThreads).set({ clientId })
+      .where(and(eq(schema.conversationThreads.id, threadId), eq(schema.conversationThreads.organizationId, organizationId)))
+      .returning();
+    if (!atualizada) return null;
+    if (atualizada.contactId) {
+      await tx.update(schema.contacts).set({ clientId }).where(and(eq(schema.contacts.id, atualizada.contactId), eq(schema.contacts.organizationId, organizationId)));
+      await tx.update(schema.conversationThreads).set({ clientId }).where(and(
+        eq(schema.conversationThreads.contactId, atualizada.contactId),
+        eq(schema.conversationThreads.organizationId, organizationId),
+      ));
+    }
+    return atualizada;
+  });
+}
+
 export async function assignThread(organizationId: string, threadId: string, assignedToUserId: string | null): Promise<ThreadRow | null> {
   const [atualizado] = await db
     .update(schema.conversationThreads)
@@ -423,9 +447,13 @@ export async function markThreadRead(organizationId: string, threadId: string): 
     eq(schema.conversationThreads.id, threadId),
     eq(schema.conversationThreads.organizationId, organizationId),
   ));
+  // Avisar o WhatsApp (os dois risquinhos azuis) não segura a resposta: era
+  // ~3 s esperando o OpenWA a cada conversa aberta (medido em 19/10/2026).
   if (thread.whatsappSessionId && thread.externalChatId) {
-    const session = await whatsappSessionById(thread.whatsappSessionId);
-    if (session) await gatewayForWhatsappSession(session).markRead(thread.externalChatId).catch(() => undefined);
+    const chatId = thread.externalChatId;
+    void whatsappSessionById(thread.whatsappSessionId)
+      .then((session) => (session ? gatewayForWhatsappSession(session).markRead(chatId) : undefined))
+      .catch(() => undefined);
   }
   return true;
 }

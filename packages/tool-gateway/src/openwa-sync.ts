@@ -110,7 +110,8 @@ async function ensureThread(input: {
   }
   const [created] = await db.insert(schema.conversationThreads).values({
     organizationId: input.session.organizationId,
-    clientId: null,
+    // Contato já vinculado a um cliente (pela Inbox): a conversa nova nasce no cliente.
+    clientId: isGroup ? null : input.contact?.clientId ?? null,
     contactId: isGroup ? null : input.contact?.id ?? null,
     whatsappSessionId: input.session.id,
     groupId,

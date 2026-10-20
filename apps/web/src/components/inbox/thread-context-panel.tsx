@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useInboxThread, useAssignInboxThread, useUpdateInboxStatus } from '@/hooks/use-inbox';
+import { useInboxThread, useAssignInboxThread, useLinkInboxThreadClient, useUpdateInboxStatus } from '@/hooks/use-inbox';
+import { useClients } from '@/hooks/use-clients';
 import { useCollaborators } from '@/hooks/use-collaborators';
 import { useClientWorkspace } from '@/hooks/use-client-workspace';
 import { InboxAvatar } from './inbox-avatar';
@@ -32,7 +33,7 @@ const CLIENT_STATUS_META: Record<string, { label: string; className: string }> =
 function SemCliente() {
   return (
     <p className="py-8 text-center text-sm text-nevoa">
-      Esta conversa ainda não está vinculada a um cliente — atribua um responsável e o cliente certo pra ver isso aqui.
+      Esta conversa ainda não está vinculada a um cliente. Escolha o cliente acima para ver as demandas, tarefas e arquivos dele aqui.
     </p>
   );
 }
@@ -41,6 +42,8 @@ export function ThreadContextPanel({ threadId }: { threadId: string | null }) {
   const { data: thread } = useInboxThread(threadId);
   const { data: collaboratorsData } = useCollaborators();
   const assign = useAssignInboxThread(threadId ?? '');
+  const linkClient = useLinkInboxThreadClient(threadId ?? '');
+  const { data: clients } = useClients();
   const updateStatus = useUpdateInboxStatus(threadId ?? '');
   const { data: workspace } = useClientWorkspace(thread?.clientId ?? null);
   const [tab, setTab] = useState<Tab>('Visão geral');
@@ -66,6 +69,26 @@ export function ThreadContextPanel({ threadId }: { threadId: string | null }) {
               </span>
             )}
           </div>
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-wide text-nevoa">Cliente</p>
+          <select
+            aria-label="Cliente desta conversa"
+            className="mt-1 w-full rounded-md border border-grafite-elevado bg-carbono px-2 py-1.5 text-sm text-branco-cru disabled:opacity-60"
+            value={thread.clientId ?? ''}
+            disabled={linkClient.isPending}
+            onChange={(e) => linkClient.mutate(e.target.value || null)}
+          >
+            <option value="">Sem cliente</option>
+            {(clients ?? []).slice().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          {linkClient.isError && <p className="mt-1 text-xs text-erro">Não consegui vincular o cliente. Tente de novo.</p>}
+          {thread.kind !== 'group' && thread.clientId && <p className="mt-1 text-[11px] text-nevoa">As próximas conversas deste contato já chegam neste cliente.</p>}
         </div>
 
         <div>

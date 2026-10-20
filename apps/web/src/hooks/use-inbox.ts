@@ -44,7 +44,8 @@ export function useInboxThreads(filter: InboxThreadFilter = {}) {
     // Ao digitar na busca, a lista anterior fica na tela até a nova chegar.
     placeholderData: keepPreviousData,
     staleTime: 5_000,
-    refetchInterval: 8_000,
+    // Rede de segurança: o normal é o WebSocket (inbox.message / inbox.updated) atualizar na hora.
+    refetchInterval: 20_000,
   });
 }
 
@@ -53,7 +54,7 @@ export function useInboxThread(threadId: string | null) {
     queryKey: ['inbox-thread', threadId],
     queryFn: async () => mapInboxThread(await apiFetch<InboxThreadWire>(`/inbox/threads/${threadId}`)),
     enabled: Boolean(threadId),
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
 }
 
@@ -142,7 +143,8 @@ export function useInboxMessages(threadId: string | null) {
     queryFn: () => fetchMessages(queryClient, threadId!),
     enabled: Boolean(threadId),
     staleTime: 3_000,
-    refetchInterval: 4_000,
+    // Idem: mensagem nova chega pelo WebSocket; isto só cobre conexão caída.
+    refetchInterval: 12_000,
   });
 }
 
@@ -259,6 +261,19 @@ export function useUpdateInboxStatus(threadId: string) {
     mutationFn: (status: 'open' | 'waiting_client' | 'waiting_agency' | 'archived') =>
       apiFetch(`/inbox/threads/${threadId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     onSuccess: () => invalidateThread(queryClient, threadId),
+  });
+}
+
+/** Vincula a conversa (e o contato) a um cliente; null desvincula. */
+export function useLinkInboxThreadClient(threadId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (clientId: string | null) =>
+      apiFetch<InboxThreadWire>(`/inbox/threads/${threadId}/client`, { method: 'PATCH', body: JSON.stringify({ clientId }) }),
+    onSuccess: (wire) => {
+      queryClient.setQueryData(['inbox-thread', threadId], mapInboxThread(wire));
+      invalidateThread(queryClient, threadId);
+    },
   });
 }
 

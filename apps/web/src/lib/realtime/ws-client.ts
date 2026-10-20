@@ -68,6 +68,14 @@ class RealtimeClient {
   private socket: WebSocket | null = null;
   private listeners = new Set<Listener>();
   private reconnectDelayMs = 1000;
+  private stableTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Chamado quando o servidor recusa o token (close 4401). Quem usa o cliente
+   * pede um token novo ao Supabase; o setToken resultante reconecta. Sem isto
+   * uma aba com sessão vencida reconectava a cada 1–2 s para sempre com o mesmo
+   * token (visto em produção, 19/10/2026: 151 conexões recusadas em 5 min).
+   */
+  onAuthExpired: (() => void) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private manuallyClosed = false;
   private token: string | null = null;
@@ -107,10 +115,14 @@ class RealtimeClient {
       }
     };
     socket.onopen = () => {
-      this.reconnectDelayMs = 1000; // volta ao delay mínimo depois de uma conexão bem-sucedida
+      // Só zera a espera se a conexão SE MANTIVER: abrir e ser recusada logo em
+      // seguida (token vencido) não pode contar como sucesso.
+      this.stableTimer = setTimeout(() => { this.reconnectDelayMs = 1000; }, 5_000);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       this.socket = null;
+      if (this.stableTimer) { clearTimeout(this.stableTimer); this.stableTimer = null; }
+      if (event.code === 4401) this.onAuthExpired?.();
       if (!this.manuallyClosed && this.listeners.size > 0) this.scheduleReconnect();
     };
     socket.onerror = () => {
@@ -123,7 +135,7 @@ class RealtimeClient {
       this.reconnectTimer = null;
       this.connect();
     }, this.reconnectDelayMs);
-    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 15_000);
+    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 30_000);
   }
 
   private disconnect() {
