@@ -584,4 +584,55 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
     await auditarAcao(request, { action: 'media.action.executed', result: outcome.status, organizationId: org, clientId: current.clientId, metadata: { actionId: current.id, outcome: outcome.status, reason: 'reason' in outcome ? outcome.reason : undefined } });
     return outcome;
   });
+
+  // ── Associação MANUAL de conta a cliente ────────────────────────────────
+  // Só contas JÁ descobertas pela conexão central (catálogo da empresa) podem ser vinculadas, e só a clientes
+  // da mesma empresa. Nada é vinculado por nome parecido: quem chama escolhe o cliente.
+  app.post('/media/accounts/link', { preHandler: write }, async (request, reply) => {
+    const body = z.object({ client_id: z.string().uuid(), account_id: z.string().min(1), make_primary: z.boolean().optional() }).safeParse(request.body);
+    if (!body.success) return fail(reply, 400, body.error.issues.map((i) => i.message).join(' '));
+    const org = scopeOf(request).organizationId;
+    const provider = providerOfAccount(body.data.account_id);
+
+    const [client] = await db.select({ id: schema.clients.id, name: schema.clients.name }).from(schema.clients).where(and(eq(schema.clients.id, body.data.client_id), eq(schema.clients.organizationId, org)));
+    if (!client) return fail(reply, 404, 'Cliente não encontrado nesta empresa.');
+    const [account] = await db
+      .select()
+      .from(schema.mediaAdAccounts)
+      .where(and(eq(schema.mediaAdAccounts.organizationId, org), eq(schema.mediaAdAccounts.provider, provider), eq(schema.mediaAdAccounts.externalId, body.data.account_id)));
+    if (!account) return fail(reply, 404, 'Esta conta não foi descoberta pela conexão da agência. Sincronize as contas antes.');
+    if (!account.connectionId) return fail(reply, 409, 'A conta não tem conexão associada; reconecte a integração.');
+
+    if (provider === 'meta') {
+      const existing = await db.select({ id: schema.clientMetaAccounts.id }).from(schema.clientMetaAccounts).where(eq(schema.clientMetaAccounts.clientId, client.id));
+      await db
+        .insert(schema.clientMetaAccounts)
+        .values({ clientId: client.id, accountId: account.externalId, businessId: account.businessId, connectionId: account.connectionId, isPrimary: body.data.make_primary ?? existing.length === 0, label: account.name })
+        .onConflictDoNothing();
+    } else {
+      const existing = await db.select({ id: schema.clientGoogleAdsAccounts.id }).from(schema.clientGoogleAdsAccounts).where(eq(schema.clientGoogleAdsAccounts.clientId, client.id));
+      await db
+        .insert(schema.clientGoogleAdsAccounts)
+        .values({ clientId: client.id, customerId: account.externalId, loginCustomerId: account.businessId, connectionId: account.connectionId, isPrimary: body.data.make_primary ?? existing.length === 0, label: account.name })
+        .onConflictDoNothing();
+    }
+    await auditarAcao(request, { action: 'media.account.linked', organizationId: org, clientId: client.id, metadata: { provider, accountId: account.externalId, accountName: account.name, manual: true } });
+    return { ok: true, client: client.name, provider, accountId: account.externalId };
+  });
+
+  app.delete<{ Params: { accountId: string }; Querystring: { client_id?: string } }>('/media/accounts/:accountId/link', { preHandler: write }, async (request, reply) => {
+    const org = scopeOf(request).organizationId;
+    const clientId = request.query.client_id;
+    if (!clientId) return fail(reply, 400, 'Informe o cliente.');
+    const [client] = await db.select({ id: schema.clients.id }).from(schema.clients).where(and(eq(schema.clients.id, clientId), eq(schema.clients.organizationId, org)));
+    if (!client) return fail(reply, 404, 'Cliente não encontrado nesta empresa.');
+    const provider = providerOfAccount(request.params.accountId);
+    const gone =
+      provider === 'meta'
+        ? await db.delete(schema.clientMetaAccounts).where(and(eq(schema.clientMetaAccounts.clientId, clientId), eq(schema.clientMetaAccounts.accountId, request.params.accountId))).returning({ id: schema.clientMetaAccounts.id })
+        : await db.delete(schema.clientGoogleAdsAccounts).where(and(eq(schema.clientGoogleAdsAccounts.clientId, clientId), eq(schema.clientGoogleAdsAccounts.customerId, request.params.accountId))).returning({ id: schema.clientGoogleAdsAccounts.id });
+    if (gone.length === 0) return fail(reply, 404, 'Vínculo não encontrado.');
+    await auditarAcao(request, { action: 'media.account.unlinked', organizationId: org, clientId, metadata: { provider, accountId: request.params.accountId } });
+    return { ok: true };
+  });
 }

@@ -215,3 +215,15 @@ export function useDecideAction() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['media', 'actions'] }),
   });
 }
+
+/** Associação MANUAL de uma conta sem cliente a um cliente (nunca por nome parecido). */
+export function useLinkMediaAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: { clientId: string; accountId: string }) => apiFetch<{ ok: boolean; client: string }>('/media/accounts/link', { method: 'POST', body: JSON.stringify({ client_id: b.clientId, account_id: b.accountId }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] });
+      qc.invalidateQueries({ queryKey: ['clients'] });
+    },
+  });
+}

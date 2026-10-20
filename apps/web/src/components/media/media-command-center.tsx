@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, Bell, FileText, ImageIcon, Layers, RefreshCw, Settings2 } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
 import { ApiRequestError } from '@/lib/api/client';
+import { useClients } from '@/hooks/use-clients';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AreaTrend } from '@/components/ui/area-trend';
 import { ClientReportsPanel } from '@/components/clients/client-reports-panel';
-import { useMediaAccounts, useMediaCreatives, useMediaEntities, useMediaSettings, useMediaSummary, useSyncMediaAccount } from '@/hooks/use-media';
+import { useLinkMediaAccount, useMediaAccounts, useMediaCreatives, useMediaEntities, useMediaSettings, useMediaSummary, useSyncMediaAccount } from '@/hooks/use-media';
 import { MEDIA_PERIODS, PROVIDER_LABEL, type MediaAccountSummary, type MediaLinkedAccount, type MediaPeriod } from '@/lib/api/media';
 import { cn } from '@/lib/utils';
 import { change, dash, int, money, pct, resultLabel, when } from './format';
@@ -351,20 +352,38 @@ function InstanceGrid({ accounts, unlinked, activeId, onPick, period }: { accoun
           <InstanceCard key={`${a.provider}:${a.accountId}`} account={a} active={a.accountId === activeId} onPick={() => onPick(a.accountId)} period={period} />
         ))}
       </div>
-      {unlinked.length > 0 && (
-        <details className="rounded-lg border border-grafite-elevado p-3">
-          <summary className="cursor-pointer text-sm text-nevoa">{unlinked.length} conta(s) da agência ainda sem cliente</summary>
-          <ul className="mt-2 space-y-1 text-sm text-nevoa">
-            {unlinked.map((u) => (
-              <li key={`${u.provider}:${u.accountId}`} className="flex items-center gap-2">
-                <PlatformBadge provider={u.provider} /> {u.name ?? u.accountId} <span className="text-[11px]">({u.accountId})</span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[11px] text-nevoa">Vincule na ficha do cliente. O sistema não associa por nome parecido.</p>
-        </details>
-      )}
+      {unlinked.length > 0 && <UnlinkedAccounts unlinked={unlinked} />}
     </section>
+  );
+}
+
+function UnlinkedAccounts({ unlinked }: { unlinked: Array<{ accountId: string; name: string | null; provider: 'meta' | 'google_ads' }> }) {
+  const clients = useClients();
+  const link = useLinkMediaAccount();
+  const [pick, setPick] = useState<Record<string, string>>({});
+  const active = (clients.data ?? []).filter((c) => c.status !== 'inactive');
+  return (
+    <details className="rounded-lg border border-grafite-elevado p-3">
+      <summary className="cursor-pointer text-sm text-nevoa">{unlinked.length} conta(s) da agência ainda sem cliente · associar</summary>
+      <p className="mt-2 text-[11px] text-nevoa">A associação é sempre manual: o sistema não vincula por nome parecido. Escolha o cliente e confirme.</p>
+      <ul className="mt-2 space-y-2">
+        {unlinked.map((u) => (
+          <li key={`${u.provider}:${u.accountId}`} className="flex flex-wrap items-center gap-2 text-sm text-nevoa">
+            <PlatformBadge provider={u.provider} />
+            <span className="min-w-[160px] text-branco-cru">{u.name ?? u.accountId}</span>
+            <span className="text-[11px]">{u.accountId}</span>
+            <select value={pick[u.accountId] ?? ''} onChange={(e) => setPick({ ...pick, [u.accountId]: e.target.value })} aria-label={`Cliente para ${u.name ?? u.accountId}`} className="ml-auto max-w-[220px] rounded-md border border-grafite-elevado bg-carbono px-2 py-1 text-sm text-branco-cru">
+              <option value="">Escolher cliente…</option>
+              {active.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button type="button" disabled={!pick[u.accountId] || link.isPending} onClick={() => { const cid = pick[u.accountId]; if (cid && window.confirm(`Vincular "${u.name ?? u.accountId}" a este cliente?`)) link.mutate({ clientId: cid, accountId: u.accountId }); }} className="rounded-md bg-roxo-eletrico px-3 py-1 text-sm text-branco-cru hover:opacity-90 disabled:opacity-40">Vincular</button>
+          </li>
+        ))}
+      </ul>
+      {link.isError && <p className="mt-2 text-sm text-erro">{link.error instanceof ApiRequestError ? link.error.message : 'Não consegui vincular.'}</p>}
+    </details>
   );
 }
 
