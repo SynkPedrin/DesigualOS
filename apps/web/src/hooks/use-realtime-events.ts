@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { realtimeClient, type WsEvent } from '@/lib/realtime/ws-client';
 import { useSupabaseSession } from '@/hooks/use-supabase-session';
+import { supabase } from '@/lib/supabase/client';
 import { applyLiveInboxMessage, type LiveInboxMessage } from '@/hooks/use-inbox';
 
 /**
@@ -25,6 +26,13 @@ export function useRealtimeEvents(): void {
   useEffect(() => {
     realtimeClient.setToken(accessToken);
   }, [accessToken]);
+
+  // Token recusado pelo servidor: renova a sessão; o token novo chega por
+  // useSupabaseSession e o setToken acima reconecta.
+  useEffect(() => {
+    realtimeClient.onAuthExpired = () => { void supabase.auth.refreshSession().catch(() => undefined); };
+    return () => { realtimeClient.onAuthExpired = null; };
+  }, []);
 
   useEffect(() => {
     function handleEvent(event: WsEvent) {

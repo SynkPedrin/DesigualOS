@@ -5,7 +5,7 @@ import { parseEvolutionWebhookEvent, phoneFromRemoteJid, WHATSAPP_MEDIA_MAX_BYTE
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { requireModule } from '../auth/require-module';
-import { requireTenant } from '../lib/tenant-context';
+import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import * as svc from './service';
 import { sendMediaFast, sendTextFast } from './openwa-send';
@@ -32,6 +32,7 @@ const listQuerySchema = z.object({
 
 const sendMessageSchema = z.object({ text: z.string().trim().min(1).max(4000) });
 const assignSchema = z.object({ userId: z.string().uuid().nullable() });
+const linkClientSchema = z.object({ clientId: z.string().uuid().nullable() });
 const statusSchema = z.object({ status: z.enum(CONVERSATION_STATUSES) });
 
 interface PresentableThread {
@@ -292,6 +293,23 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
         newValue: { status: body.status },
       });
       return { id: updated.id, status: updated.status };
+    });
+
+    authed.patch<{ Params: { id: string } }>('/inbox/threads/:id/client', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      const organizationId = request.tenantContext!.organizationId;
+      if (!(await svc.getThread(organizationId, request.params.id, request.authUser!.id))) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
+      const body = linkClientSchema.parse(request.body);
+      // Cliente de outra empresa não existe para esta: 404, nunca vínculo cruzado.
+      if (body.clientId && !(await clientBelongsToTenant(body.clientId, organizationId))) { reply.code(404); return { error: 'Cliente não encontrado.' }; }
+      const atualizada = await svc.linkThreadToClient(organizationId, request.params.id, body.clientId);
+      if (!atualizada) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
+      await auditarAcao(request, {
+        action: 'conversation.client_linked',
+        resourceType: 'conversation_thread',
+        resourceId: request.params.id,
+        newValue: { clientId: body.clientId, contactId: atualizada.contactId },
+      });
+      return presentThread(await svc.getThread(organizationId, request.params.id, request.authUser!.id));
     });
 
     authed.patch<{ Params: { id: string } }>('/inbox/threads/:id/assign', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {

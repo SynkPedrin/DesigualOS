@@ -45,7 +45,8 @@ export function useWhatsappOpenwaSessions() {
   return useQuery({
     queryKey: ['openwa-sessions'],
     queryFn: async () => (await apiFetch<{ sessions: WhatsappOpenwaSession[] }>('/openwa/sessions')).sessions,
-    refetchInterval: 15_000,
+    // Cabeçalho da Inbox e cartão de Integrações; a tela de conexão tem o próprio polling rápido.
+    refetchInterval: 60_000,
   });
 }
 

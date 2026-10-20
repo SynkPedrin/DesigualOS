@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, schema } from '@desigual-os/database';
-import { getThread, listRecentMessagesVisible, listThreads } from './service';
+import { getThread, linkThreadToClient, listRecentMessagesVisible, listThreads } from './service';
 
 /** Isolamento da Inbox por dono da sessão, em Postgres real (só com OPENWA_TEST_DATABASE_URL). */
 const enabled = Boolean(process.env.OPENWA_TEST_DATABASE_URL);
@@ -86,5 +86,23 @@ describe('Inbox isolada por dono da sessão WhatsApp', () => {
     expect(anterior!.map((m) => m.content)).toEqual(Array.from({ length: 10 }, (_, i) => `m${i}`));
     expect(await listRecentMessagesVisible(org, threadDoDono, colega, 50, 0)).toBeNull();
     expect(await listRecentMessagesVisible(org, threadDaEmpresa, colega, 50, 0)).toEqual([]);
+  });
+
+  it('vincular a conversa a um cliente leva o contato e as outras conversas dele junto; null desvincula', async () => {
+    if (!enabled) return;
+    const [cliente] = await db.insert(schema.clients).values({ organizationId: org, name: 'Cliente QA', slug: `cliente-qa-${org.slice(0, 8)}` }).returning();
+    const [contato] = await db.insert(schema.contacts).values({ organizationId: org, name: 'Contato QA', phone: '5511999990000' }).returning();
+    const [a] = await db.insert(schema.conversationThreads).values({ organizationId: org, contactId: contato!.id, channel: 'whatsapp', status: 'open' }).returning();
+    const [b] = await db.insert(schema.conversationThreads).values({ organizationId: org, contactId: contato!.id, channel: 'whatsapp', status: 'open' }).returning();
+    await linkThreadToClient(org, a!.id, cliente!.id);
+    const [c1] = await db.select().from(schema.contacts).where(eq(schema.contacts.id, contato!.id));
+    const [tb] = await db.select().from(schema.conversationThreads).where(eq(schema.conversationThreads.id, b!.id));
+    expect(c1!.clientId).toBe(cliente!.id);
+    expect(tb!.clientId).toBe(cliente!.id);
+    expect((await getThread(org, a!.id, dono))!.clientName).toBe('Cliente QA');
+    await linkThreadToClient(org, a!.id, null);
+    const [c2] = await db.select().from(schema.contacts).where(eq(schema.contacts.id, contato!.id));
+    expect(c2!.clientId).toBeNull();
+    expect(await linkThreadToClient(randomUUID(), a!.id, null)).toBeNull();
   });
 });
