@@ -1,7 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { resolveMetaSystemAccess, type MetaAccess } from './meta-access-resolver';
-import { type GoogleAdsOAuthConfig } from './google-ads-oauth';
+import { getGoogleAdsAccounts, type GoogleAdsOAuthConfig } from './google-ads-oauth';
 import { resolveGoogleAdsAccessByConnectionId } from './google-ads-access-resolver';
 import { fetchGoogleCustomerDetails, fetchGoogleDailyInsights, fetchGoogleEntities } from './google-media-graph';
 import {
@@ -360,6 +360,8 @@ export async function syncMediaForCentralConnection(options: MediaSyncOptions = 
 // ── Google Ads ───────────────────────────────────────────────────────────
 
 export interface GoogleSyncReport {
+  /** Contas descobertas na MCC (vinculadas ou não). */
+  discovered: number;
   links: number;
   accountsSynced: number;
   accountsFailed: Array<{ customerId: string; error: string }>;
@@ -373,7 +375,7 @@ export interface GoogleSyncReport {
  * erro na conta, com a instrução de reconectar; as demais seguem.
  */
 export async function syncGoogleMedia(options: { onlyCustomerId?: string; backfill?: boolean } = {}): Promise<GoogleSyncReport> {
-  const report: GoogleSyncReport = { links: 0, accountsSynced: 0, accountsFailed: [], rows: { entities: 0, insights: 0 } };
+  const report: GoogleSyncReport = { discovered: 0, links: 0, accountsSynced: 0, accountsFailed: [], rows: { entities: 0, insights: 0 } };
   const links = await db
     .select({
       customerId: schema.clientGoogleAdsAccounts.customerId,
@@ -383,6 +385,27 @@ export async function syncGoogleMedia(options: { onlyCustomerId?: string; backfi
     })
     .from(schema.clientGoogleAdsAccounts)
     .innerJoin(schema.clients, eq(schema.clients.id, schema.clientGoogleAdsAccounts.clientId));
+
+  // DESCOBERTA: toda conta que a MCC enxerga entra no catálogo, vinculada ou não. As sem cliente
+  // aparecem em "contas sem cliente" para associação MANUAL; nada é vinculado por nome.
+  const mccs = new Map<string, { org: string; connectionId: string; login: string }>();
+  for (const l of links) if (l.organizationId && l.connectionId && l.loginCustomerId) mccs.set(`${l.connectionId}:${l.loginCustomerId}`, { org: l.organizationId, connectionId: l.connectionId, login: l.loginCustomerId });
+  for (const m of mccs.values()) {
+    try {
+      const access = await resolveGoogleAdsAccessByConnectionId(m.connectionId);
+      if (!access) continue;
+      const found = await getGoogleAdsAccounts({ ...access.config, loginCustomerId: m.login }, access.accessToken, m.login);
+      await upsertMetaAccounts(
+        m.org,
+        m.connectionId,
+        found.map((a) => ({ id: a.customerId, name: a.descriptiveName, currency: a.currencyCode, timezone: null, status: a.status === 'ENABLED' ? 'ACTIVE' : a.status, disableReason: null, businessId: m.login, balanceKind: 'UNAVAILABLE' as const, balanceAmount: null, spendCap: null, amountSpent: null })),
+        'google_ads',
+      );
+      report.discovered += found.length;
+    } catch {
+      // Descoberta é bônus: falhar aqui não impede sincronizar as contas já vinculadas.
+    }
+  }
 
   const seen = new Set<string>();
   for (const link of links) {

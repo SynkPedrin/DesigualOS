@@ -190,7 +190,8 @@ export async function runGaqlPaged(config: GoogleAdsOAuthConfig, accessToken: st
     const response = await fetchGoogle(`${GOOGLE_ADS_API_BASE}/customers/${customerId}/googleAds:search`, {
       method: 'POST',
       headers: authHeaders(config, accessToken),
-      body: JSON.stringify({ query, pageSize: 5000, ...(pageToken ? { pageToken } : {}) }),
+      // Sem `pageSize`: a API recusa (PAGE_SIZE_NOT_SUPPORTED); a página é fixa em 10.000 linhas.
+      body: JSON.stringify({ query, ...(pageToken ? { pageToken } : {}) }),
     });
     await assertOk(response, `Google Ads query failed for customer ${customerId}`);
     const body = gaqlResponseSchema.extend({ nextPageToken: z.string().optional() }).parse(await response.json());
