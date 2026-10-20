@@ -75,8 +75,11 @@ services:
       # us-east-1). Em session mode (5432) este número estouraria o limite do
       # projeto — o default de 3 no código continua valendo fora daqui.
       DATABASE_POOL_MAX: ${API_DATABASE_POOL_MAX:-12}
+      INTERNAL_CHAT_FILES_DIR: /data/internal-chat-files
     volumes:
       - whatsapp_media:/data/whatsapp-media
+      # Anexos da Comunicação interna: privados, só saem pela API (internal-chat/arquivos.ts).
+      - internal_chat_files:/data/internal-chat-files
     depends_on:
       redis:
         condition: service_healthy
@@ -201,4 +204,5 @@ services:
 volumes:
   redis_data:
   whatsapp_media:
+  internal_chat_files:
   openwa_data:

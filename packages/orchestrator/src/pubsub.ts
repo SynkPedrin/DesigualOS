@@ -48,7 +48,9 @@ export interface WsEvent {
     | 'inbox.updated'
     // Mensagem do WhatsApp no instante em que o webhook chega, antes de gravar:
     // a tela encaixa na conversa sem buscar nada. Conteúdo: entregue só ao dono.
-    | 'inbox.message';
+    | 'inbox.message'
+    // Comunicação interna: entregue só aos ids em payload.recipient_ids (filtro no servidor de WS).
+    | 'chat.event';
   payload: Record<string, unknown>;
 }
 

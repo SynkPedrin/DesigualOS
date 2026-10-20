@@ -540,6 +540,13 @@
       "when": 1792498212691,
       "tag": "0076_media_command_center",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1792508909059,
+      "tag": "0077_comunicacao_interna",
+      "breakpoints": true
     }
   ]
 }

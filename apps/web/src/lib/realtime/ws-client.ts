@@ -22,7 +22,9 @@ export interface WsEvent {
     | 'agent.phase'
     // Inbox do WhatsApp: só ids, nunca conteúdo; o servidor entrega só ao dono da sessão.
     | 'inbox.updated'
-    | 'inbox.message';
+    | 'inbox.message'
+    // Comunicação interna: entregue só aos ids em payload.recipient_ids (filtro no servidor de WS).
+    | 'chat.event';
   payload: Record<string, unknown>;
 }
 
