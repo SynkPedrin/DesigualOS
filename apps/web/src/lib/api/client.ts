@@ -149,3 +149,30 @@ export async function apiBlob(path: string, init?: RequestInit): Promise<Blob> {
   }
   return response.blob();
 }
+
+/**
+ * Upload com progresso (o fetch não informa quanto já subiu). Mesmo token e
+ * mesma base da apiFetch; `signal` cancela no meio. Usado pelos anexos da
+ * Comunicação, que mostram barra por arquivo e botão de cancelar.
+ */
+export async function apiUploadWithProgress<T>(path: string, body: FormData, onProgress: (fraction: number) => void, signal?: AbortSignal): Promise<T> {
+  let token = accessTokenProvider?.() ?? null;
+  if (!token && accessTokenAsyncProvider) token = await accessTokenAsyncProvider().catch(() => null);
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}${path}`);
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded / event.total); };
+    xhr.onload = () => {
+      let parsed: unknown = null;
+      try { parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { parsed = null; }
+      if (xhr.status >= 200 && xhr.status < 300) { onProgress(1); resolve(parsed as T); return; }
+      const body = parsed as ApiError | null;
+      reject(new ApiRequestError(body?.error ?? (xhr.status === 413 ? 'Arquivo acima do limite.' : `Falha no envio (HTTP ${xhr.status})`), xhr.status, body?.details, body ?? undefined));
+    };
+    xhr.onerror = () => reject(new ApiRequestError('Sem conexão com o servidor durante o envio.', 0));
+    xhr.onabort = () => reject(new ApiRequestError('Envio cancelado.', 0));
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+    xhr.send(body);
+  });
+}

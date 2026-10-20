@@ -37,6 +37,10 @@ export const WORKSPACE_MODULES = [
    *  colaborador comum (fica de fora de MODULOS_PADRAO_COLABORADOR), incluído
    *  nos templates de gestão. */
   'automations',
+  /** Comunicação interna (20/10/2026): #Geral da organização e conversas
+   *  privadas entre colaboradores. Está em MODULOS_DE_TODOS — conversar com a
+   *  equipe não é recurso de cargo. */
+  'comunicacao',
 ] as const;
 
 export type WorkspaceModule = (typeof WORKSPACE_MODULES)[number];
@@ -139,7 +143,7 @@ export function modulosPadrao(ehMaster: boolean): readonly WorkspaceModule[] {
  * para quem chegar, sem migração de dado. No editor de cargo o item aparece
  * travado, para a tela não oferecer um interruptor que não desliga nada.
  */
-export const MODULOS_DE_TODOS: readonly WorkspaceModule[] = ['automations'];
+export const MODULOS_DE_TODOS: readonly WorkspaceModule[] = ['automations', 'comunicacao'];
 
 export function ehModuloDeTodos(modulo: string): boolean {
   return (MODULOS_DE_TODOS as readonly string[]).includes(modulo);

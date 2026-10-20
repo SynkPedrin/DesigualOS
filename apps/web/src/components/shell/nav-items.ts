@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   Megaphone,
   MessageSquare,
+  MessagesSquare,
   Plug,
   Radar,
   ScrollText,
@@ -179,6 +180,9 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/clients', label: 'Clientes', icon: Users, section: 'dia', modulo: 'clientes' },
   // "o cliente mandou mensagem, alguém já viu?" (P1-A/C, 06/10/2026)
   { href: '/inbox', label: 'Inbox', icon: MessageSquare, section: 'dia', modulo: 'inbox' },
+  // "preciso falar com alguém da equipe" (20/10/2026): #Geral + privadas
+  // entre colaboradores. NÃO é a Inbox — ali é cliente no WhatsApp.
+  { href: '/comunicacao', label: 'Comunicação', icon: MessagesSquare, section: 'dia', modulo: 'comunicacao' },
   // "o que o cliente pediu, e em que pé está?" (P1-D/E/F/G, 06/10/2026)
   // Continua em /demands e na tabela `demands` por baixo — renomear a rota/
   // schema seria mexer num dado de produção já estável só por rótulo, risco

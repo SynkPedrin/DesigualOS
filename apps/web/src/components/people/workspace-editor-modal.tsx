@@ -24,6 +24,7 @@ const ROTULO_DO_MODULO: Record<string, string> = {
   calendario: 'Calendário',
   relatorios: 'Relatórios (aba Mídia do cliente)',
   automations: 'Automações',
+  comunicacao: 'Comunicação',
 };
 
 /**

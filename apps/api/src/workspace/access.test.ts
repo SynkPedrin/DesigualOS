@@ -18,7 +18,7 @@ describe('resolveEnabledModules e os módulos de todos', () => {
     linha.atual = { templateId: 'designer', modules: ['hoje', 'demandas'] };
     const { resolveEnabledModules } = await import('./access');
     const r = await resolveEnabledModules('u1');
-    expect([...r.modules].sort()).toEqual(['automations', 'demandas', 'hoje']);
+    expect([...r.modules].sort()).toEqual(['automations', 'comunicacao', 'demandas', 'hoje']);
     expect(r.configured).toBe(true);
   });
 

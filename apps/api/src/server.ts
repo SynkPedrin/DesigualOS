@@ -61,6 +61,7 @@ import { registerGoogleCalendarIntegrationRoutes } from './integrations/google-c
 import { registerMicrosoftCalendarIntegrationRoutes } from './integrations/microsoft-calendar-routes';
 import { registerNotificationRoutes } from './notifications/routes';
 import { registerMessageRoutes } from './messages/routes';
+import { registerInternalChatRoutes } from './internal-chat/routes';
 import { registerTeamRoutes } from './team/routes';
 import { registerCollaboratorRoutes } from './collaborators/routes';
 import { registerSearchRoutes } from './search/routes';
@@ -291,6 +292,7 @@ async function start(): Promise<void> {
   await app.register(registerClientRoutes);
   await app.register(registerCommunicationRoutes);
   await app.register(registerOpenwaRoutes);
+  await app.register(registerInternalChatRoutes);
   await app.register(registerDemandRoutes);
   await app.register(registerBriefRoutes);
   await app.register(registerApprovalRequestRoutes);

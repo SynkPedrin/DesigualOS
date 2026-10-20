@@ -39,3 +39,4 @@ export * from './approvals';
 export * from './bento-whatsapp';
 export * from './whatsapp';
 export * from './media';
+export * from './internal-chat';

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { subscribeToWsEvents } from '@desigual-os/orchestrator';
 import { loadUserAccess, resolveOrProvisionUser, verifySupabaseToken } from '@desigual-os/auth';
 import { tenantSharingScope } from '../lib/access';
+import { marcarPresenca } from '../internal-chat/presenca';
 
 function getMasterEmails(): ReadonlySet<string> {
   return new Set(
@@ -87,6 +88,13 @@ export async function registerWsRoutes(app: FastifyInstance): Promise<void> {
       const scope = access.roles.includes('master') ? null : await tenantSharingScope(user.id);
       clients.set(socket, { userId: user.id, scope });
 
+      // Presença da Comunicação: online enquanto o WebSocket estiver aberto
+      // (chave no Redis com validade; ver internal-chat/presenca.ts).
+      void marcarPresenca(user.id);
+      const presenca = setInterval(() => void marcarPresenca(user.id), 45_000);
+      presenca.unref?.();
+      socket.on('close', () => clearInterval(presenca));
+
       // Fecha sozinho quando o token vence. `unref` pra este temporizador não
       // segurar o processo vivo num desligamento gracioso.
       const expiraEm = expiracaoDoToken(claims);
@@ -126,6 +134,12 @@ export async function registerWsRoutes(app: FastifyInstance): Promise<void> {
       }
       // Conversa de sessão WhatsApp é do dono da sessão (mesma regra da REST /inbox).
       if ((event.type === 'inbox.updated' || event.type === 'inbox.message') && (event.payload as { owner_user_id?: string }).owner_user_id !== userId) continue;
+      // Comunicação interna: só quem pode ler a conversa recebe (lista montada
+      // pela API a cada evento: participantes da privada / membros ativos no #Geral).
+      if (event.type === 'chat.event') {
+        const recipients = (event.payload as { recipient_ids?: unknown }).recipient_ids;
+        if (!Array.isArray(recipients) || !recipients.includes(userId)) continue;
+      }
       if (event.type === 'message.delta') {
         const payload = event.payload as { owner_user_id?: string; visibility?: string; client_id?: string | null };
         if (payload.visibility === 'private' && payload.owner_user_id !== userId) continue;
