@@ -50,10 +50,11 @@ const poolMax = Number(process.env.DATABASE_POOL_MAX) || 3;
  * todo parâmetro é texto/número/booleano/data/null (o servidor infere os tipos
  * no Parse do mesmo jeito; com lista ou objeto, continua descrevendo).
  * Resultado conferido idêntico em 15 tipos com a configuração do drizzle.
- * Sem pipeline nesse atalho: na primeira versão, o pooler devolveu respostas
- * trocadas entre consultas enfileiradas na mesma conexão (20/10/2026, ~4 min
- * no ar, "Invalid time value"). Uma por vez por conexão, como já andavam as
- * consultas sem parâmetro.
+ * SEM PIPELINE em nenhuma consulta (mesmo patch): o pooler devolveu
+ * respostas trocadas entre consultas enfileiradas na mesma conexão (20/10/2026,
+ * ~4 min no ar, "Invalid time value"), e o warm-up da subida enfileirava 12
+ * "select 1" — a hipótese para as requisições presas logo após cada deploy.
+ * Uma consulta por vez por conexão. PG_PIPELINE=1 devolve o original.
  * Para voltar ao comportamento original sem rebuild: PG_DESCRIBE_SEMPRE=1.
  */
 const CONNECT_TIMEOUT_S = Number(process.env.DATABASE_CONNECT_TIMEOUT_S) || 15;
