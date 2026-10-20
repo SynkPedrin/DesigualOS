@@ -448,41 +448,66 @@ export interface AgencyAccountRow {
 export async function getAgencyOverview(scope: MediaScope, range: DateRange): Promise<{ range: DateRange; accounts: AgencyAccountRow[]; totalsByCurrency: Record<string, { spend: number; results: number | null }> }> {
   const linked = await listLinkedAccounts(scope);
   const prev = previousRange(range);
-  const accounts: AgencyAccountRow[] = await Promise.all(
-    linked.map(async (acc): Promise<AgencyAccountRow> => {
-      const [cur, pre, active] = await Promise.all([
-        accountTotals(scope.organizationId, acc.accountId, range, 'campaign', acc.provider),
-        accountTotals(scope.organizationId, acc.accountId, prev, 'campaign', acc.provider),
-        db.execute(sql`select count(*)::int as c from media_entities where organization_id = ${scope.organizationId} and provider = ${acc.provider} and account_external_id = ${acc.accountId} and level = 'campaign' and effective_status = 'ACTIVE'`),
-      ]);
-      const d = deriveMetrics(cur.totals);
-      const attention: string[] = [];
-      if (acc.lastSyncError) attention.push('falha_de_sincronizacao');
-      if (acc.status && acc.status !== 'ACTIVE') attention.push(`conta_${acc.status.toLowerCase()}`);
-      const rc = pctChange(cur.totals.results, pre.totals.results);
-      if (rc !== null && rc <= -30) attention.push('queda_de_resultados');
-      return {
-        provider: acc.provider,
-        clientId: acc.clientId,
-        clientName: acc.clientName,
-        accountId: acc.accountId,
-        accountName: acc.name,
-        currency: acc.currency,
-        status: acc.status,
-        lastSyncedAt: acc.lastSyncedAt,
-        lastSyncError: acc.lastSyncError,
-        spend: cur.totals.spend,
-        previousSpend: pre.totals.spend,
-        spendChange: pctChange(cur.totals.spend, pre.totals.spend),
-        results: cur.totals.results,
-        previousResults: pre.totals.results,
-        resultsChange: rc,
-        costPerResult: d.costPerResult,
-        activeCampaigns: (active as unknown as Array<{ c: number }>)[0]?.c ?? 0,
-        needsAttention: attention,
-      };
-    }),
-  );
+  const ids = linked.map((a) => a.accountId);
+
+  // TRÊS consultas agrupadas por conta, não 3 por conta. Com 14+ contas, a versão
+  // por conta disparava ~40 consultas simultâneas num pool de 3 conexões e o
+  // pooler derrubava a conexão (ECONNRESET → 500 em produção, 20/10/2026).
+  const grouped = async (r: DateRange) => {
+    if (ids.length === 0) return new Map<string, RawTotals>();
+    const rows = (await db.execute(sql`
+      select account_external_id as id, ${sums()}
+      from media_insights_daily
+      where organization_id = ${scope.organizationId} and level = 'campaign'
+        and account_external_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+        and day >= ${r.since} and day <= ${r.until}
+      group by account_external_id`)) as unknown as Array<Record<string, unknown>>;
+    return new Map(rows.map((row) => [String(row.id), totalsFrom(row)]));
+  };
+  const [curById, preById, activeRows] = await Promise.all([
+    grouped(range),
+    grouped(prev),
+    ids.length === 0
+      ? Promise.resolve([] as unknown[])
+      : db.execute(sql`
+          select account_external_id as id, count(*)::int as c from media_entities
+          where organization_id = ${scope.organizationId} and level = 'campaign' and effective_status = 'ACTIVE'
+            and account_external_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+          group by account_external_id`),
+  ]);
+  const activeById = new Map((activeRows as unknown as Array<{ id: string; c: number }>).map((r) => [r.id, r.c]));
+  const empty: RawTotals = { spend: null, impressions: null, reach: null, clicks: null, results: null, conversionValue: null };
+
+  const accounts: AgencyAccountRow[] = linked.map((acc) => {
+    const cur = curById.get(acc.accountId) ?? empty;
+    const pre = preById.get(acc.accountId) ?? empty;
+    const d = deriveMetrics(cur);
+    const attention: string[] = [];
+    if (acc.lastSyncError) attention.push('falha_de_sincronizacao');
+    if (acc.status && acc.status !== 'ACTIVE') attention.push(`conta_${acc.status.toLowerCase()}`);
+    const rc = pctChange(cur.results, pre.results);
+    if (rc !== null && rc <= -30) attention.push('queda_de_resultados');
+    return {
+      provider: acc.provider,
+      clientId: acc.clientId,
+      clientName: acc.clientName,
+      accountId: acc.accountId,
+      accountName: acc.name,
+      currency: acc.currency,
+      status: acc.status,
+      lastSyncedAt: acc.lastSyncedAt,
+      lastSyncError: acc.lastSyncError,
+      spend: cur.spend,
+      previousSpend: pre.spend,
+      spendChange: pctChange(cur.spend, pre.spend),
+      results: cur.results,
+      previousResults: pre.results,
+      resultsChange: rc,
+      costPerResult: d.costPerResult,
+      activeCampaigns: activeById.get(acc.accountId) ?? 0,
+      needsAttention: attention,
+    };
+  });
   // Moedas nunca se somam entre si: um total por moeda.
   const totalsByCurrency: Record<string, { spend: number; results: number | null }> = {};
   for (const a of accounts) {

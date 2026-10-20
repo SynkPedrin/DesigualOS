@@ -210,5 +210,8 @@ describe('transcrição', () => {
     } finally {
       process.env.OPENAI_API_KEY = original;
     }
-  });
+    // Folga de tempo: o transcritor faz `import()` tardio do pacote do provedor (carrega o
+    // banco). Frio custa ~0,2 s sozinho e passa de 1 s com a CPU ocupada; com a suíte inteira
+    // em paralelo estourava o limite padrão de 5 s, de forma intermitente (20/10/2026).
+  }, 30_000);
 });
