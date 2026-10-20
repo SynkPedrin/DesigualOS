@@ -301,4 +301,9 @@ describe.skipIf(!enabled)('Comunicação interna (Postgres real)', () => {
     expect(await chave(enviado)).toBeDefined();
     expect((await get(bia, `/internal-chat/attachments/${enviado}`)).statusCode).toBe(200);
   });
+  it('id de conversa malformado é "não encontrada" (404), nunca erro de banco', async () => {
+    for (const rota of ['/internal-chat/conversations/nao-e-uuid/messages', '/internal-chat/conversations/nao-e-uuid/attachments', "/internal-chat/conversations/1'%20or%201=1/messages"]) {
+      expect((await get(ana, rota)).statusCode).toBe(404);
+    }
+  });
 });

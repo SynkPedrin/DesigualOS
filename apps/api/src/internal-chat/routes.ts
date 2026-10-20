@@ -213,8 +213,12 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
       const { organizationId, userId } = contexto(request);
       try {
         const q = z.object({ before: z.string().uuid().optional(), after: z.string().uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(40) }).parse(request.query);
-        const conversa = await svc.conversaAcessivel(organizationId, userId, request.params.id);
-        const pagina = await svc.paginaDeMensagens(conversa, { antes: q.before, depois: q.after, limite: q.limit });
+        // Acesso e página EM PARALELO (uma ida ao banco a menos). A página só lê
+        // esta conversa e nada sai daqui se o acesso for negado.
+        const [, pagina] = await Promise.all([
+          svc.conversaAcessivel(organizationId, userId, request.params.id),
+          svc.paginaDeMensagens({ id: request.params.id }, { antes: q.before, depois: q.after, limite: q.limit }),
+        ]);
         return { messages: pagina.messages.map(apresentarMensagem), has_more: pagina.hasMore };
       } catch (erro) { return falha(reply, erro); }
     });
@@ -316,8 +320,10 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
       const { organizationId, userId } = contexto(request);
       try {
         const q = z.object({ kind: z.enum(['image', 'video', 'document', 'archive']).optional(), q: z.string().trim().max(100).optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }).parse(request.query);
-        const conversa = await svc.conversaAcessivel(organizationId, userId, request.params.id);
-        const arquivos = await svc.arquivosDaConversa(conversa, { kind: q.kind, q: q.q, limite: q.limit });
+        const [, arquivos] = await Promise.all([
+          svc.conversaAcessivel(organizationId, userId, request.params.id),
+          svc.arquivosDaConversa({ id: request.params.id }, { kind: q.kind, q: q.q, limite: q.limit }),
+        ]);
         return { files: arquivos.map((a) => ({ ...apresentarAnexo(a.attachment), sender_name: a.senderName })) };
       } catch (erro) { return falha(reply, erro); }
     });

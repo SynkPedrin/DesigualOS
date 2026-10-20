@@ -19,6 +19,7 @@ type Mensagem = typeof schema.internalMessages.$inferSelect;
 type Anexo = typeof schema.internalMessageAttachments.$inferSelect;
 
 export const LIMITE_DE_TEXTO = 8000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class AcessoNegado extends Error {
   constructor(message = 'Conversa não encontrada.') {
@@ -81,6 +82,8 @@ export async function garantirGeral(organizationId: string): Promise<Conversa> {
  * (sempre "não encontrada" — não confirmar que um id existe também é proteção).
  */
 export async function conversaAcessivel(organizationId: string, userId: string, conversationId: string): Promise<Conversa> {
+  // Id malformado é "não encontrada", não erro de banco.
+  if (!UUID.test(conversationId)) throw new AcessoNegado();
   // Uma ida ao banco só (cada ida custa ~250 ms daqui até o banco): a conversa
   // e as duas condições de acesso vêm juntas.
   const [linha] = await db.select({
@@ -234,7 +237,7 @@ async function completar(mensagens: Mensagem[]): Promise<MensagemCompleta[]> {
  * Página de mensagens por cursor (created_at, id) — estável mesmo com
  * mensagens chegando no meio. `antes` = id da mensagem mais antiga já vista.
  */
-export async function paginaDeMensagens(conversa: Conversa, opcoes: { antes?: string | undefined; depois?: string | undefined; limite: number }) {
+export async function paginaDeMensagens(conversa: Pick<Conversa, 'id'>, opcoes: { antes?: string | undefined; depois?: string | undefined; limite: number }) {
   const condicoes = [eq(schema.internalMessages.conversationId, conversa.id)];
   // Cursor comparado DENTRO do banco, como par (created_at, id): passar a data
   // pelo Date do JS corta os microssegundos e a mensagem de referência voltava
@@ -410,7 +413,7 @@ export async function buscar(organizationId: string, userId: string, termo: stri
 }
 
 /** Arquivos compartilhados numa conversa, com quem enviou e a mensagem de origem. */
-export async function arquivosDaConversa(conversa: Conversa, filtro: { kind?: string | undefined; q?: string | undefined; limite: number }) {
+export async function arquivosDaConversa(conversa: Pick<Conversa, 'id'>, filtro: { kind?: string | undefined; q?: string | undefined; limite: number }) {
   const condicoes = [
     eq(schema.internalMessageAttachments.conversationId, conversa.id),
     sql`${schema.internalMessageAttachments.messageId} is not null`,
