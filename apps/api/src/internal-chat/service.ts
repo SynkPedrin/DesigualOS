@@ -443,4 +443,17 @@ export async function anexosOrfaos(antesDe: Date) {
     .limit(500);
 }
 
+/**
+ * Apaga os registros dos órfãos e devolve só as chaves que REALMENTE saíram.
+ * A condição "ainda sem mensagem" vai no próprio DELETE: um anexo que virou
+ * mensagem entre a listagem e a faxina fica, e o arquivo dele também.
+ */
+export async function apagarOrfaos(ids: string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const apagados = await db.delete(schema.internalMessageAttachments)
+    .where(and(inArray(schema.internalMessageAttachments.id, ids), isNull(schema.internalMessageAttachments.messageId)))
+    .returning({ storageKey: schema.internalMessageAttachments.storageKey });
+  return apagados.map((a) => a.storageKey);
+}
+
 export { ne };

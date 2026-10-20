@@ -120,7 +120,34 @@ function contexto(request: FastifyRequest) {
   return { organizationId: request.tenantContext!.organizationId, userId: request.authUser!.id };
 }
 
+/**
+ * FAXINA DOS ANEXOS QUE NUNCA VIRARAM MENSAGEM. O arquivo sobe antes do envio
+ * (é o que dá barra de progresso); se a pessoa remove da caixa ou fecha a aba,
+ * ele ficava no disco e na quota da empresa para sempre. Roda na API porque é
+ * ela que monta o volume dos arquivos.
+ */
+export async function faxinaDeAnexos(agora = new Date()): Promise<number> {
+  const orfaos = await svc.anexosOrfaos(new Date(agora.getTime() - 24 * 60 * 60_000));
+  const chaves = await svc.apagarOrfaos(orfaos.map((o) => o.id));
+  await Promise.all(chaves.map((k) => apagarAnexo(k).catch(() => undefined)));
+  return chaves.length;
+}
+
+let faxinaAgendada = false;
+function agendarFaxina() {
+  if (faxinaAgendada || process.env.VITEST) return;
+  faxinaAgendada = true;
+  const rodar = () => {
+    faxinaDeAnexos()
+      .then((n) => { if (n) logger.info({ removidos: n }, 'Faxina de anexos da Comunicação'); })
+      .catch((error) => logger.warn({ error }, 'Faxina de anexos da Comunicação falhou'));
+  };
+  setTimeout(rodar, 5 * 60_000).unref();
+  setInterval(rodar, 6 * 60 * 60_000).unref();
+}
+
 export async function registerInternalChatRoutes(app: FastifyInstance): Promise<void> {
+  agendarFaxina();
   await app.register(async (rotas) => {
     rotas.addHook('preHandler', async (request, reply) => {
       await requireAuth(request, reply);

@@ -280,4 +280,25 @@ describe.skipIf(!enabled)('Comunicação interna (Postgres real)', () => {
     expect(tentativa.statusCode).toBe(400);
     expect((await get(ana, `/internal-chat/attachments/${daBia}`)).statusCode).toBe(404);
   });
+  it('faxina apaga anexo que nunca virou mensagem (registro e arquivo), e só esse', async () => {
+    const { stat } = await import('node:fs/promises');
+    const velho = (await upload(ana, privadaAnaBia, 'esquecido.png', 'image/png', arquivos.png)).json().id as string;
+    const recente = (await upload(ana, privadaAnaBia, 'recente.png', 'image/png', arquivos.png)).json().id as string;
+    const enviado = (await upload(ana, privadaAnaBia, 'enviado.png', 'image/png', arquivos.png)).json().id as string;
+    expect((await post(ana, `/internal-chat/conversations/${privadaAnaBia}/messages`, { content: null, clientMessageId: 'cli-faxina-01', attachmentIds: [enviado] })).statusCode).toBe(201);
+    await connection`update internal_message_attachments set created_at = now() - interval '2 days' where id in (${velho}, ${enviado})`;
+    const chave = (id: string) => connection`select storage_key from internal_message_attachments where id = ${id}`.then((r) => r[0]?.storage_key as string | undefined);
+    const arquivoDoVelho = join(pasta, (await chave(velho))!);
+    // Prova que o caminho está certo: sem isto, o "sumiu" abaixo passaria com caminho errado.
+    expect((await stat(arquivoDoVelho)).size).toBe(arquivos.png.length);
+
+    const { faxinaDeAnexos } = await import('./routes');
+    expect(await faxinaDeAnexos()).toBeGreaterThanOrEqual(1);
+
+    expect(await chave(velho)).toBeUndefined();
+    await expect(stat(arquivoDoVelho)).rejects.toThrow();
+    expect(await chave(recente)).toBeDefined();
+    expect(await chave(enviado)).toBeDefined();
+    expect((await get(bia, `/internal-chat/attachments/${enviado}`)).statusCode).toBe(200);
+  });
 });
