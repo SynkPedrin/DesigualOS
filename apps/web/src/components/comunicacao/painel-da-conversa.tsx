@@ -22,6 +22,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/stores/toast-store';
 import { AnexosDaMensagem } from './anexos';
 import { Composer, type ComposerHandle } from './composer';
+import { textoComLinks } from '@/lib/links-no-texto';
 import { cn } from '@/lib/utils';
 
 const REACOES_RAPIDAS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
@@ -43,18 +44,17 @@ function hora(iso: string) {
 /** Texto com links clicáveis e @menções destacadas. */
 function TextoDaMensagem({ texto, nomesMencionados, meuNome }: { texto: string; nomesMencionados: string[]; meuNome: string | null }) {
   const partes = useMemo(() => {
+    if (nomesMencionados.length === 0) return [texto];
     const nomes = nomesMencionados.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    const padrao = new RegExp(`(https?://[^\\s]+${nomes.length ? `|@(?:${nomes.join('|')})` : ''})`, 'g');
-    return texto.split(padrao);
+    return texto.split(new RegExp(`(@(?:${nomes.join('|')}))`, 'g'));
   }, [texto, nomesMencionados]);
   return (
-    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-branco-cru">
+    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-branco-cru [overflow-wrap:anywhere]">
       {partes.map((p, i) => {
-        if (/^https?:\/\//.test(p)) return <a key={i} href={p} target="_blank" rel="noreferrer noopener" className="text-roxo-eletrico underline underline-offset-2">{p}</a>;
         if (p.startsWith('@') && nomesMencionados.includes(p.slice(1))) {
           return <span key={i} className={cn('rounded px-0.5 font-medium', p.slice(1) === meuNome ? 'bg-sinal/20 text-sinal' : 'bg-roxo-eletrico/20 text-roxo-eletrico')}>{p}</span>;
         }
-        return <Fragment key={i}>{p}</Fragment>;
+        return <Fragment key={i}>{textoComLinks(p, 'text-roxo-eletrico underline underline-offset-2 hover:opacity-80', `${i}-`)}</Fragment>;
       })}
     </p>
   );
