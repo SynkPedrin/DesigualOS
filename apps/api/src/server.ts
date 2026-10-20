@@ -52,6 +52,7 @@ import { registerIntegrationRoutes } from './integrations/routes';
 import { registerClickUpMcpOAuthRoutes } from './integrations/clickup-mcp-routes';
 import { registerNotionRoutes } from './integrations/notion-routes';
 import { registerMetaIntegrationRoutes } from './integrations/meta-routes';
+import { registerMediaRoutes } from './media/routes';
 import { registerGoogleAdsIntegrationRoutes } from './integrations/google-ads-routes';
 import { registerAgencyControlCenterRoutes } from './agency-control-center/routes';
 import { registerWorkspaceRoutes } from './workspace/routes';
@@ -301,6 +302,7 @@ async function start(): Promise<void> {
   await app.register(registerNotionRoutes);
   await app.register(registerClickUpMcpOAuthRoutes);
   await app.register(registerMetaIntegrationRoutes);
+  await app.register(registerMediaRoutes);
   await app.register(registerGoogleAdsIntegrationRoutes);
   await app.register(registerAgencyControlCenterRoutes);
   await app.register(registerWorkspaceRoutes);

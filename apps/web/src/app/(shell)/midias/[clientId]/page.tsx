@@ -2,13 +2,14 @@
 
 import { use, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ExternalLink, FileText, Link2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Link2 } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { ClientMetaAdsPanel } from '@/components/clients/client-meta-ads-panel';
+import { MediaCommandCenter } from '@/components/media/media-command-center';
+import { useMediaAccounts } from '@/hooks/use-media';
 import { ClientGoogleAdsPanel } from '@/components/clients/client-google-ads-panel';
-import { ClientReportsPanel } from '@/components/clients/client-reports-panel';
 import { useClients } from '@/hooks/use-clients';
 import { useClientMetaAccounts } from '@/hooks/use-client-meta-accounts';
 import { useClientGoogleAdsAccounts } from '@/hooks/use-client-google-ads-accounts';
@@ -58,6 +59,8 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
   const temMeta = (contasMeta.data?.length ?? 0) > 0;
   const temGoogle = (contasGoogle.data?.length ?? 0) > 0;
   const temAlguma = temMeta || temGoogle;
+  // Se o painel novo não carregou, a leitura ao vivo abre sozinha: a pessoa não fica sem nada para ver.
+  const painelNovo = useMediaAccounts(clientId);
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-6">
@@ -95,31 +98,6 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
         </div>
       </div>
 
-      {/* AS DUAS PLATAFORMAS, lado a lado e nomeadas. O Pedro pediu "por
-          cliente E por plataforma": a troca aqui é o segundo eixo. */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {(['meta', 'google'] as Plataforma[]).map((p) => {
-          const temConta = p === 'meta' ? temMeta : temGoogle;
-          return (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setPlataforma(p)}
-              aria-pressed={plataforma === p}
-              className={cn(
-                'flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors',
-                plataforma === p ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:bg-grafite-elevado hover:text-branco-cru',
-              )}
-            >
-              {ROTULO[p]}
-              {/* Ponto só quando há conta: ausência de ponto é ausência de
-                  vínculo, não "não medi". O painel abaixo explica qual é. */}
-              {temConta && <span className="size-1.5 rounded-full bg-sinal" />}
-            </button>
-          );
-        })}
-      </div>
-
       {!contasMeta.isPending && !contasGoogle.isPending && !temAlguma && (
         <Surface className="flex flex-wrap items-center justify-between gap-4 border-aviso/40 bg-aviso/5 p-5">
           <div className="min-w-0">
@@ -139,17 +117,23 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
         </Surface>
       )}
 
-      {plataforma === 'meta' ? <ClientMetaAdsPanel clientId={clientId} /> : <ClientGoogleAdsPanel clientId={clientId} />}
+      <MediaCommandCenter clientId={clientId} />
 
-      {/* RELATÓRIO EM PDF no fim, porque é o que se faz DEPOIS de olhar: o
-          PDF é o que vai pro cliente, e sai do mesmo dado desta tela. */}
-      <Surface className="flex flex-col gap-3 p-5">
-        <div className="flex items-center gap-2">
-          <FileText size={16} className="text-nevoa" />
-          <h2 className="font-heading text-base font-semibold text-branco-cru">Relatório para o cliente</h2>
+      {/* A leitura ao vivo anterior continua disponível: é a conferência direta com a plataforma quando um número do painel parecer estranho. */}
+      <details open={painelNovo.isError} className="rounded-lg border border-grafite-elevado p-3">
+        <summary className="cursor-pointer text-sm text-nevoa">Leitura ao vivo na plataforma (conferência)</summary>
+        <div className="mt-3 space-y-4">
+          <div className="flex flex-wrap gap-1.5">
+            {(['meta', 'google'] as Plataforma[]).map((p) => (
+              <button key={p} type="button" onClick={() => setPlataforma(p)} aria-pressed={plataforma === p} className={cn('rounded-full px-4 py-1.5 text-sm', plataforma === p ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:bg-grafite-elevado hover:text-branco-cru')}>
+                {ROTULO[p]}
+              </button>
+            ))}
+          </div>
+          {plataforma === 'meta' ? <ClientMetaAdsPanel clientId={clientId} /> : <ClientGoogleAdsPanel clientId={clientId} />}
         </div>
-        <ClientReportsPanel clientId={clientId} />
-      </Surface>
+      </details>
+
     </div>
   );
 }
