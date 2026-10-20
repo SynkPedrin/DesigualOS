@@ -6,7 +6,7 @@ import { getSupabaseAdminClient } from '@desigual-os/auth';
 import { ROLE_NAMES } from '@desigual-os/types';
 import { invalidateUserAccessCache, requireAuth, requirePermission, requireRole } from '../auth/middleware';
 import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
-import { requireTenant, userBelongsToTenant } from '../lib/tenant-context';
+import { esquecerVinculos, requireTenant, userBelongsToTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import { conferirEntrega, entregaFalhou, sendInviteEmail } from '../lib/email';
 import { linkDeConviteSeguro, urlPublicaDoAppCom } from '../lib/url-do-app';
@@ -310,6 +310,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           .insert(schema.organizationMembers)
           .values({ organizationId, userId: user.id, role: body.role === 'master' ? 'admin' : 'collaborator' })
           .onConflictDoNothing({ target: [schema.organizationMembers.organizationId, schema.organizationMembers.userId] });
+        esquecerVinculos(user.id);
       }
 
       await db.insert(schema.auditLogs).values({

@@ -90,15 +90,16 @@ describe.skipIf(!enabled)('Workspace Builder, resolução de módulos e gate de 
     expect(body.modules).toEqual(expect.arrayContaining(['meta_ads', 'google_ads', 'operacao']));
   });
 
-  it('colaborador sem workspace configurado ganha o padrão generoso (compatibilidade), nunca mídia/operação', async () => {
+  // 14/10/2026 (pedido do Pedro): mídia, relatórios, Studio e Operação ENTRARAM
+  // no padrão do colaborador — a Alicia (tráfego) abria Mídias e levava 403.
+  // Automações continua fora do padrão de cargo (vem por MODULOS_DE_TODOS).
+  it('colaborador sem workspace configurado ganha o padrão da operação, com mídia e operação', async () => {
     state.userId = colaboradorSemConfig;
     const response = await app.inject({ method: 'GET', url: '/me/workspace' });
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.configured).toBe(false);
-    expect(body.modules.length).toBeGreaterThan(0);
-    expect(body.modules).not.toContain('meta_ads');
-    expect(body.modules).not.toContain('operacao');
+    expect(body.modules).toEqual(expect.arrayContaining(['hoje', 'clientes', 'inbox', 'meta_ads', 'google_ads', 'operacao', 'relatorios', 'comunicacao']));
   });
 
   it('gestão configura o workspace de um colaborador da MESMA empresa, e o colaborador passa a ver só isso', async () => {
@@ -115,7 +116,8 @@ describe.skipIf(!enabled)('Workspace Builder, resolução de módulos e gate de 
     const me = await app.inject({ method: 'GET', url: '/me/workspace' });
     const body = me.json();
     expect(body.configured).toBe(true);
-    expect(body.modules.sort()).toEqual(['clientes', 'google_ads', 'hoje', 'meta_ads']);
+    // O configurado + os módulos de todos (MODULOS_DE_TODOS), que nenhum cargo tira.
+    expect(body.modules.sort()).toEqual(['automations', 'clientes', 'comunicacao', 'google_ads', 'hoje', 'meta_ads']);
     expect(body.modules).not.toContain('aprovacoes'); // o padrão de atendimento tinha; a configuração explícita substitui, não soma.
   });
 

@@ -9,6 +9,7 @@ import { enviarConviteDeOrganizacao } from '../lib/convite';
 import { sendAddedToOrganizationEmail } from '../lib/email';
 import { podeConfigurar, type PermissaoDeConfigurar } from './ficha';
 import { esquecerOrganizacaoAtiva } from './contexto';
+import { esquecerVinculos } from '../lib/tenant-context';
 
 /**
  * membros.ts — QUEM TRABALHA NA EMPRESA: membros e convites.
@@ -158,6 +159,7 @@ export async function registerOrganizationMemberRoutes(app: FastifyInstance): Pr
       }
 
       await db.insert(schema.organizationMembers).values({ organizationId: acesso.orgId, userId: pessoa.id, role: body.role });
+      esquecerVinculos(pessoa.id);
 
       const [convite] = await db
         .insert(schema.organizationInvites)
@@ -353,6 +355,7 @@ export async function registerOrganizationMemberRoutes(app: FastifyInstance): Pr
       .update(schema.organizationMembers)
       .set({ role: body.role, updatedAt: new Date() })
       .where(eq(schema.organizationMembers.id, alvo.id));
+    esquecerVinculos(userId);
 
     await auditarAcao(request, {
       action: 'member.role_changed',
@@ -401,6 +404,7 @@ export async function registerOrganizationMemberRoutes(app: FastifyInstance): Pr
 
     await db.delete(schema.organizationMembers).where(eq(schema.organizationMembers.id, alvo.id));
     esquecerOrganizacaoAtiva(userId);
+    esquecerVinculos(userId);
     await db
       .update(schema.users)
       .set({ organizacaoAtivaId: null })

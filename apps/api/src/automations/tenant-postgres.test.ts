@@ -23,7 +23,7 @@ vi.mock('../auth/middleware', () => ({
   },
   requirePermission: () => async () => {},
 }));
-vi.mock('@desigual-os/orchestrator', () => ({ registerAutomationJob: state.register, removeAutomationJob: state.remove, runAutomationNow: state.enqueue }));
+vi.mock('@desigual-os/orchestrator', () => ({ registerAutomationJob: state.register, removeAutomationJob: state.remove, runAutomationNow: state.enqueue, proximasExecucoes: async () => new Map<string, number>() }));
 
 describe.skipIf(!enabled)('tenant security against actual PostgreSQL (master included)', () => {
   const a = { org: randomUUID(), user: randomUUID(), client: randomUUID(), automation: randomUUID() };
@@ -79,6 +79,8 @@ describe.skipIf(!enabled)('tenant security against actual PostgreSQL (master inc
   it('requires explicit selection when membership is ambiguous', async () => {
     state.userId = a.user;
     await connection`insert into organization_members(organization_id,user_id) values (${b.org},${a.user})`;
+    // Vínculo novo vale na hora (esquecerVinculos), como em membros.ts.
+    (await import('../lib/tenant-context')).esquecerVinculos(a.user);
     expect((await app.inject({ method:'GET',url:'/automations' })).statusCode).toBe(403);
     const selected = await app.inject({ method:'GET',url:'/automations',headers:{'x-organization-id':a.org} });
     expect(selected.json().automations.map((x: {id:string})=>x.id)).toEqual([a.automation]);

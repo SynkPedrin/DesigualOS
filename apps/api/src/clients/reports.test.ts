@@ -101,6 +101,9 @@ describe.skipIf(!enabled)('relatórios PDF por cliente, isolamento e gate de mó
     const semModulo = randomUUID();
     await connection`insert into users(id, name, email) values (${semModulo}, 'QA sem modulo', ${semModulo + '@reports-routes-qa.invalid'})`;
     await connection`insert into organization_members(organization_id, user_id, role) values (${cosentino.org}, ${semModulo}, 'member')`;
+    // Workspace configurado SEM Relatórios. Desde 14/10/2026 o padrão de quem
+    // nunca foi configurado já inclui Relatórios, então o gate só aparece aqui.
+    await connection`insert into workspace_configs(user_id, modules) values (${semModulo}, ${JSON.stringify(['hoje', 'clientes'])}::jsonb)`;
 
     state.userId = semModulo;
     const response = await app.inject({ method: 'POST', url: `/clients/${cosentino.client}/reports`, payload: { channels: ['meta'] } });

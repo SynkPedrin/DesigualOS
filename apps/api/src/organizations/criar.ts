@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { esquecerVinculos } from '../lib/tenant-context';
 
 /**
  * criar.ts — a fábrica de empresas.
@@ -125,7 +126,7 @@ export async function criarEmpresa(entrada: NovaEmpresa): Promise<EmpresaCriada>
         `A empresa foi criada; convide a pessoa em Equipe para ela virar administradora.`;
   }
 
-  return db.transaction(async (tx) => {
+  const criada = await db.transaction(async (tx) => {
     const [org] = await tx
       .insert(schema.organizations)
       .values({
@@ -183,4 +184,8 @@ export async function criarEmpresa(entrada: NovaEmpresa): Promise<EmpresaCriada>
       avisoSobreDono,
     };
   });
+  // Depois do commit: quem acabou de entrar na empresa já a enxerga na próxima requisição.
+  esquecerVinculos(entrada.criadoPor);
+  if (donoId) esquecerVinculos(donoId);
+  return criada;
 }

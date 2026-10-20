@@ -68,6 +68,14 @@ async function vinculosDe(userId: string) {
 const VINCULOS_TTL_MS = 20_000;
 const vinculosCache = new Map<string, { vinculos: Awaited<ReturnType<typeof vinculosDe>>; escopo: Awaited<ReturnType<typeof escopoDeOrganizacao>>; at: number }>();
 
+/**
+ * Vínculo mudou (entrou, saiu, trocou de papel): esquece na hora. Sem isto,
+ * quem era removido de uma empresa continuava entrando nela por até 20 s.
+ */
+export function esquecerVinculos(userId: string): void {
+  vinculosCache.delete(userId);
+}
+
 async function fatosDeVinculo(user: NonNullable<FastifyRequest['authUser']>) {
   const hit = vinculosCache.get(user.id);
   if (hit && Date.now() - hit.at < VINCULOS_TTL_MS) return hit;

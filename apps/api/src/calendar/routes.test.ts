@@ -38,7 +38,8 @@ const listGoogleCalendars = vi.fn();
 const syncMemberGoogleCalendar = vi.fn();
 const resolveMicrosoftCalendarAccess = vi.fn();
 const listMicrosoftCalendars = vi.fn();
-const syncMemberMicrosoftCalendar = vi.fn();
+// Vincular agora sincroniza na hora (routes.ts): o falso precisa responder como o de verdade.
+const syncMemberMicrosoftCalendar = vi.fn(async (_accountId: string) => ({ upserted: 0, cancelled: 0 }));
 
 vi.mock('@desigual-os/tool-gateway', async () => {
   const actual = await vi.importActual<typeof ToolGatewayModule>('@desigual-os/tool-gateway');
