@@ -4,7 +4,6 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { Search, SquarePen } from 'lucide-react';
-import { PageHeader } from '@/components/ui/page-header';
 import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { ThreadList, INBOX_FILTERS, type InboxFilterKey } from '@/components/inbox/thread-list';
 import { ThreadChat } from '@/components/inbox/thread-chat';
@@ -120,12 +119,14 @@ function InboxPageContent() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0">
-        <PageHeader eyebrow="Atendimento" title="Inbox" description="Conversas com clientes, por WhatsApp." />
-      </div>
-
-      <div className="mt-6 grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-lg border border-grafite-elevado lg:grid-cols-[300px_1fr] xl:grid-cols-[300px_1fr_300px]">
+    // Tela de trabalho, não de leitura (20/10/2026, referência: inbox do
+    // GoHighLevel): sem o banner do topo e quase sem margem, para a conversa
+    // ocupar a altura toda. As margens negativas anulam o px-8/pb-8 do shell.
+    <div className="-mx-6 -mb-6 flex h-[calc(100%+1.5rem)] min-h-0 flex-col pt-2">
+      <h1 className="sr-only">Inbox</h1>
+      {/* minmax(0,1fr): sem isto a coluna da conversa crescia com o conteúdo
+          (um token longo sem espaço) e espremia a lista e o painel do contato. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-lg border border-grafite-elevado lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)_340px]">
         <div className={cn('min-h-0 flex-col border-r border-grafite-elevado', selectedId ? 'hidden lg:flex' : 'flex')}>
           <div className="flex items-center justify-between gap-2 border-b border-grafite-elevado px-3 py-2.5">
             <h2 className="font-heading text-sm font-semibold text-branco-cru">Conversas</h2>
@@ -176,7 +177,7 @@ function InboxPageContent() {
           </div>
         </div>
 
-        <div className={cn('min-h-0', selectedId ? 'block' : 'hidden lg:block')}>
+        <div className={cn('min-h-0 min-w-0', selectedId ? 'block' : 'hidden lg:block')}>
           <ThreadChat threadId={selectedId} onBack={clearThread} />
         </div>
 
