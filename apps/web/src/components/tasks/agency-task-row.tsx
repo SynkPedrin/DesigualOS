@@ -4,11 +4,14 @@ import { CalendarDays, ExternalLink, UserRound } from 'lucide-react';
 import type { AgencyTaskWire } from '@/lib/api/contracts';
 import { CLASSE_DE_PRIORIDADE, classificarPrioridade } from '@/lib/prioridade-de-tarefa';
 import { cn } from '@/lib/utils';
+import { tarefaConcluida } from '@/lib/tarefa-concluida';
 
-function dueLabel(ms: number | null): { text: string; late: boolean } | null {
+
+// Tarefa concluída (pronto/encerrado) nunca está atrasada, por mais velho que seja o prazo.
+function dueLabel(ms: number | null, concluida: boolean): { text: string; late: boolean; concluida: boolean } | null {
   if (!ms) return null;
-  const late = ms < Date.now();
-  return { text: new Date(ms).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }), late };
+  const late = !concluida && ms < Date.now();
+  return { text: new Date(ms).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }), late, concluida };
 }
 
 /**
@@ -28,7 +31,7 @@ function dueLabel(ms: number | null): { text: string; late: boolean } | null {
  * nenhum, e some entre as outras exatamente como se estivesse resolvida.
  */
 export function AgencyTaskRow({ task, showClient }: { task: AgencyTaskWire; showClient: boolean }) {
-  const due = dueLabel(task.due_date);
+  const due = dueLabel(task.due_date, tarefaConcluida(task));
   const donos = task.assignees.filter((a) => a.trim().length > 0);
 
   return (
@@ -66,11 +69,11 @@ export function AgencyTaskRow({ task, showClient }: { task: AgencyTaskWire; show
           <span
             className={cn(
               'inline-flex items-center gap-1 text-[13px]',
-              due.late ? 'font-medium text-erro' : 'text-nevoa',
+              due.late ? 'font-medium text-erro' : due.concluida ? 'text-sucesso' : 'text-nevoa',
             )}
           >
             <CalendarDays size={13} />
-            {due.late ? `atrasada desde ${due.text}` : `vence ${due.text}`}
+            {due.concluida ? `concluída · prazo ${due.text}` : due.late ? `atrasada desde ${due.text}` : `vence ${due.text}`}
           </span>
         )}
       </div>

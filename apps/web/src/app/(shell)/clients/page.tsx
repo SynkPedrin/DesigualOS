@@ -27,6 +27,7 @@ import { DEMO_MODE } from '@/lib/demo-mode';
 import { formatRelativeTime } from '@/lib/format';
 import type { ClientSummary } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
+import { tarefaConcluida } from '@/lib/tarefa-concluida';
 
 /**
  * CLIENTES — mestre-detalhe (mockup "Clientes", 07/10/2026): lista à esquerda,
@@ -310,7 +311,7 @@ function ClientCenterPanel({ client, tab, onTab }: { client: ClientSummary; tab:
 
   const ativasCount = (demandasAtivas.data ?? []).filter((d) => d.status !== 'done' && d.status !== 'cancelled').length;
   const emAndamentoCount = (demandasAtivas.data ?? []).filter((d) => d.status === 'in_production').length;
-  const tarefasAndamento = tarefas.data?.filter((t) => t.status_type !== 'closed').length ?? 0;
+  const tarefasAndamento = tarefas.data?.filter((t) => !tarefaConcluida(t)).length ?? 0;
   const proximaReuniao = (eventos.data ?? []).find((e) => new Date(e.start_at).getTime() > Date.now());
   const conversas = (threadsDoCliente.data ?? []).filter((t) => t.clientId === client.id).slice(0, 4);
 

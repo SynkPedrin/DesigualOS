@@ -27,6 +27,7 @@ import { formatClockTime, formatRelativeTime } from '@/lib/format';
 import { ApiRequestError } from '@/lib/api/client';
 import { TETO_DE_PAGINA, comoPiso, veioCheia } from '@/lib/teto-de-pagina';
 import { cn } from '@/lib/utils';
+import { tarefaConcluida } from '@/lib/tarefa-concluida';
 
 /** 409 de "Minhas tarefas" = e-mail do ClickUp ainda não vinculado, estado
  *  esperado (resolve-se em /tasks), nunca uma falha de verdade. */
@@ -208,10 +209,10 @@ export default function TodayPage() {
     (d) => d.dueDate !== null && new Date(d.dueDate).getTime() <= fimHoje && d.status !== 'done' && d.status !== 'cancelled',
   ).length;
 
-  const tarefasAbertas = (minhasTarefas.data?.tasks ?? []).filter((t) => t.status_type !== 'closed');
+  const tarefasAbertas = (minhasTarefas.data?.tasks ?? []).filter((t) => !tarefaConcluida(t));
   const tarefasAtrasadas = tarefasAbertas.filter((t) => t.due_date !== null && t.due_date < Date.now()).length;
   const tarefasNoPrazo = tarefasAbertas.length - tarefasAtrasadas;
-  const tarefasConcluidas = (minhasTarefas.data?.tasks ?? []).filter((t) => t.status_type === 'closed').length;
+  const tarefasConcluidas = (minhasTarefas.data?.tasks ?? []).filter((t) => tarefaConcluida(t)).length;
   const conversasUrgentes = (conversasAguardando.data ?? []).filter(
     (t) => t.lastMessageAt && Date.now() - new Date(t.lastMessageAt).getTime() > 10 * 60_000,
   ).length;
@@ -306,7 +307,7 @@ export default function TodayPage() {
   // aberto e atrasado na agência inteira", que é outra pergunta e por isso
   // outra query. Sem isto a aba mostraria as minhas linhas de novo.
   const prioridadesDaEquipe: ItemDePrioridade[] = (tarefasDaAgencia.data?.tasks ?? [])
-    .filter((t) => t.status_type !== 'closed' && t.due_date !== null && t.due_date < Date.now())
+    .filter((t) => !tarefaConcluida(t) && t.due_date !== null && t.due_date < Date.now())
     .map((t) => ({
       id: `equipe-${t.id}`,
       titulo: t.name,
@@ -863,7 +864,7 @@ function SaudeOperacional({ consulta }: { consulta: SecaoTarefas }) {
   const porCliente = useMemo(() => {
     const mapa = new Map<string, { nome: string; abertas: number; atrasadas: number }>();
     for (const t of consulta.data?.tasks ?? []) {
-      if (t.status_type === 'closed') continue;
+      if (tarefaConcluida(t)) continue;
       const nome = t.client?.name ?? 'Sem cliente';
       const atual = mapa.get(nome) ?? { nome, abertas: 0, atrasadas: 0 };
       atual.abertas += 1;

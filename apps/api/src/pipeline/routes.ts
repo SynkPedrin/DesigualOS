@@ -1132,7 +1132,7 @@ export async function registerPipelineRoutes(app: FastifyInstance): Promise<void
       if (!estagio) {
         // Encerrada sem coluna é escolha da pessoa (os encerrados vêm
         // desmarcados), não tarefa perdida — não entra no aviso de "ficou de fora".
-        if (task.statusType !== 'closed') semColuna++;
+        if (task.statusType !== 'closed' && task.statusType !== 'done') semColuna++;
         continue;
       }
       paraCriar.push({ boardId: quadro.id, stageId: estagio.id, clickupTaskId: task.id, ...camposDaTarefa(task) });
