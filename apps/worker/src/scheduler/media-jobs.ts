@@ -15,7 +15,18 @@ import type { Logger } from '@desigual-os/logging';
 
 let syncing = false;
 
+/**
+ * Os jobs de mídia rodam em UM lugar só: o servidor de produção. Uma máquina de desenvolvimento
+ * que aponta para o mesmo banco com um `.env` diferente (credencial Google trocada, por exemplo)
+ * sobrescrevia com erro o que o servidor tinha sincronizado e gastava o limite de requisições do
+ * Meta, que é por app (medido em 20/10/2026). `MEDIA_JOBS_ENABLED=false` desliga aqui.
+ */
+export function mediaJobsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MEDIA_JOBS_ENABLED !== 'false';
+}
+
 export function startMediaSync(logger: Logger): void {
+  if (!mediaJobsEnabled()) return;
   if (syncing) {
     logger.info('[media-sync] rodada anterior ainda em andamento, pulando');
     return;
@@ -49,6 +60,7 @@ export function startMediaSync(logger: Logger): void {
 
 /** Avalia as regras de alerta. Rápido (só banco), roda no handler mesmo. */
 export async function runMediaAlerts(logger: Logger): Promise<void> {
+  if (!mediaJobsEnabled()) return;
   try {
     const summary = await runAlertEvaluation();
     if (summary.rulesEvaluated > 0) logger.info(summary, '[media-alerts] avaliação concluída');
@@ -59,6 +71,7 @@ export async function runMediaAlerts(logger: Logger): Promise<void> {
 
 /** Gera os relatórios agendados que venceram. Cada período é gerado uma vez (ver media-report-schedules.ts). */
 export async function runMediaReportSchedules(logger: Logger): Promise<void> {
+  if (!mediaJobsEnabled()) return;
   try {
     const summary = await runDueReportSchedules(enqueueClientReport);
     if (summary.generated > 0 || summary.failed.length > 0) logger.info(summary, '[media-reports] agendamentos processados');

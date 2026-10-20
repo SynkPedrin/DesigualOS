@@ -27,3 +27,24 @@ describe('Google Ads → formato do Media Command Center', () => {
     expect(normalizeGoogleInsight('campaign', { campaign: { id: '1' }, metrics: {} })).toBeNull();
   });
 });
+
+import { afterEach, vi } from 'vitest';
+import { runGaqlPaged } from './google-ads-oauth';
+
+describe('runGaqlPaged', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const cfg = { clientId: 'c', clientSecret: 's', redirectUri: 'r' };
+  it('não manda pageSize (o Google recusa) e segue o nextPageToken', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const mock = vi.fn(async (_url: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)));
+      const first = calls.length === 1;
+      return { ok: true, status: 200, text: async () => '', json: async () => ({ results: [{ n: calls.length }], ...(first ? { nextPageToken: 'T2' } : {}) }) };
+    });
+    vi.stubGlobal('fetch', mock);
+    const rows = await runGaqlPaged(cfg, 'tok', '123', 'SELECT customer.id FROM customer');
+    expect(rows).toHaveLength(2);
+    expect(calls[0]).not.toHaveProperty('pageSize');
+    expect(calls[1]).toMatchObject({ pageToken: 'T2' });
+  });
+});
