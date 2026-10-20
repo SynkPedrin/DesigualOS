@@ -97,7 +97,7 @@ export interface MetaSyncPendente {
   accountId: string;
   accountName: string | null;
   businessName: string | null;
-  motivo: 'sem_match' | 'ambigua';
+  motivo: 'sem_match' | 'ambigua' | 'sugerida';
   /** Nomes dos clientes candidatos, quando ambígua — é o que a revisão manual precisa ver. */
   candidatos?: string[];
 }
@@ -205,6 +205,14 @@ async function syncMetaAdAccounts(access: MetaAccess, userId: string, origem?: '
     }
 
     const { cliente } = match;
+
+    // Conexão CENTRAL: nome parecido NÃO é prova de que a conta é do cliente.
+    // Vira sugestão para uma pessoa confirmar, a menos que META_AUTO_LINK_BY_NAME=true.
+    // (Vínculos já existentes continuam valendo e aparecem como "já vinculadas".)
+    if (access.kind === 'system' && process.env.META_AUTO_LINK_BY_NAME !== 'true' && !vinculosExistentes.has(`${cliente.id}:${conta.id}`)) {
+      pendentes.push({ accountId: conta.id, accountName: conta.name, businessName: conta.businessName, motivo: 'sugerida', candidatos: [cliente.name] });
+      continue;
+    }
     const vinculo: MetaSyncVinculo = {
       clientId: cliente.id,
       clientName: cliente.name,

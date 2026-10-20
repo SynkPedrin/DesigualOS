@@ -9,6 +9,7 @@ import {
   getGoogleAdsEnvConfig,
   getMetaAccountInsights,
   getMetaCampaigns,
+  mediaContextForAgent,
   resolveGoogleAdsAccessByConnectionId,
   resolveMetaAccessByConnectionId,
 } from '@desigual-os/tool-gateway';
@@ -371,7 +372,21 @@ export async function responderJarbasLocal(params: {
 
   const periodo = periodoDaPergunta(params.pergunta, params.agora);
   const canais = await Promise.all([lerMeta(cliente.id, periodo, logger), lerGoogle(cliente.id, periodo, logger)]);
-  const dados = dadosEmTexto(cliente.name, periodo, canais);
+  let dados = dadosEmTexto(cliente.name, periodo, canais);
+
+  // MEDIA COMMAND CENTER: as MESMAS configurações e dados da tela de Mídia.
+  // Se a análise por agente estiver desligada ali, o Jarbas respeita; se
+  // estiver ligada, ele recebe também o que a sincronização guardou (contas,
+  // criativos, alertas abertos). Falha aqui nunca derruba a resposta antiga.
+  if (params.organizationId) {
+    try {
+      const ctx = await mediaContextForAgent({ organizationId: params.organizationId, clientIds: null }, cliente.id);
+      if (!ctx.allowed) return resposta(`A análise de mídia por agentes está desligada para a ${cliente.name}. Quem administra liga em Mídia → Configurações → Agentes de IA.`);
+      if (ctx.text) dados = `${dados}\n\n${ctx.text}`;
+    } catch (error) {
+      logger.warn({ clientId: cliente.id, motivo: error instanceof Error ? error.message : String(error) }, '[jarbas-local] contexto do Media Command Center indisponível');
+    }
+  }
 
   if (canais.every((c) => !c.conectado)) {
     const motivos = canais.map((c) => `${c.canal}: ${c.motivo}`).join('; ');

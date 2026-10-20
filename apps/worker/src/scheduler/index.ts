@@ -11,6 +11,7 @@ import { expireStaleExecutions } from './execution-timeout.js';
 import { avisarDeConexoesMcp } from './aviso-de-conexao-mcp.js';
 import { syncAllGoogleCalendars } from './google-calendar-sync.js';
 import { syncAllMetaAdAccounts } from './meta-accounts-sync.js';
+import { runMediaAlerts, runMediaReportSchedules, startMediaSync } from './media-jobs.js';
 import { syncAllMicrosoftCalendars } from './microsoft-calendar-sync.js';
 import { varrerOperacao } from './bento-varredura.js';
 import { briefingOperacional } from './bento-briefing.js';
@@ -40,6 +41,9 @@ const JOBS_REPETIVEIS = [
   'aviso-conexao-mcp',
   'google-calendar-sync',
   'meta-accounts-sync',
+  'media-sync',
+  'media-alerts',
+  'media-report-schedules',
   'microsoft-calendar-sync',
   'meeting-prep',
   'reconciliar-automacoes',
@@ -125,6 +129,13 @@ export function setupDailyJobs(): Worker {
     // o vínculo é por NOME: não é dado que envelhece em minutos, e cada
     // rodada varre todas as BMs de todas as conexões.
     queue.add('meta-accounts-sync', {}, { repeat: { pattern: '30 4 * * *' }, jobId: 'meta-accounts-sync' }),
+    // MEDIA COMMAND CENTER (20/10/2026): sincroniza contas, hierarquia e
+    // métricas diárias do Meta para o banco (a tela lê de lá) a cada 30 min, e
+    // avalia as regras de alerta a cada 15. Alerta tem deduplicação e
+    // cooldown próprios, então a cadência curta não repete mensagem.
+    queue.add('media-sync', {}, { repeat: { pattern: '*/30 * * * *' }, jobId: 'media-sync' }),
+    queue.add('media-alerts', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'media-alerts' }),
+    queue.add('media-report-schedules', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'media-report-schedules' }),
     // SYNC DO MICROSOFT/OUTLOOK CALENDAR (07/10/2026) — mesma cadência do
     // Google, mesma razão: fresco o bastante sem esgotar cota do Graph.
     queue.add('microsoft-calendar-sync', {}, { repeat: { pattern: '*/15 * * * *' }, jobId: 'microsoft-calendar-sync' }),
@@ -204,6 +215,12 @@ export function setupDailyJobs(): Worker {
         await syncAllGoogleCalendars(logger);
       } else if (job.name === 'meta-accounts-sync') {
         await syncAllMetaAdAccounts(logger);
+      } else if (job.name === 'media-sync') {
+        startMediaSync(logger);
+      } else if (job.name === 'media-alerts') {
+        await runMediaAlerts(logger);
+      } else if (job.name === 'media-report-schedules') {
+        await runMediaReportSchedules(logger);
       } else if (job.name === 'microsoft-calendar-sync') {
         await syncAllMicrosoftCalendars(logger);
       } else if (job.name === 'meeting-prep') {

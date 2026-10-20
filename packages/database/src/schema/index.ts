@@ -38,3 +38,4 @@ export * from './briefs';
 export * from './approvals';
 export * from './bento-whatsapp';
 export * from './whatsapp';
+export * from './media';
