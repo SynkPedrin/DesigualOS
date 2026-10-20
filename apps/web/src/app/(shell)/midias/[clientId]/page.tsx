@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { ClientMetaAdsPanel } from '@/components/clients/client-meta-ads-panel';
 import { MediaCommandCenter } from '@/components/media/media-command-center';
+import { useMediaAccounts } from '@/hooks/use-media';
 import { ClientGoogleAdsPanel } from '@/components/clients/client-google-ads-panel';
 import { useClients } from '@/hooks/use-clients';
 import { useClientMetaAccounts } from '@/hooks/use-client-meta-accounts';
@@ -58,6 +59,8 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
   const temMeta = (contasMeta.data?.length ?? 0) > 0;
   const temGoogle = (contasGoogle.data?.length ?? 0) > 0;
   const temAlguma = temMeta || temGoogle;
+  // Se o painel novo não carregou, a leitura ao vivo abre sozinha: a pessoa não fica sem nada para ver.
+  const painelNovo = useMediaAccounts(clientId);
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-6">
@@ -117,7 +120,7 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
       <MediaCommandCenter clientId={clientId} />
 
       {/* A leitura ao vivo anterior continua disponível: é a conferência direta com a plataforma quando um número do painel parecer estranho. */}
-      <details className="rounded-lg border border-grafite-elevado p-3">
+      <details open={painelNovo.isError} className="rounded-lg border border-grafite-elevado p-3">
         <summary className="cursor-pointer text-sm text-nevoa">Leitura ao vivo na plataforma (conferência)</summary>
         <div className="mt-3 space-y-4">
           <div className="flex flex-wrap gap-1.5">
