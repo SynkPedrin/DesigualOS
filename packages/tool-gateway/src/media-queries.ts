@@ -269,6 +269,14 @@ export async function getAccountSummary(scope: MediaScope, accountId: string, ra
   };
 }
 
+/** Todos os dias do intervalo, inclusive os sem dado (YYYY-MM-DD). Limite de 400 por segurança. */
+export function enumerateDays(range: DateRange): string[] {
+  const out: string[] = [];
+  const end = new Date(`${range.until}T00:00:00Z`).getTime();
+  for (let t = new Date(`${range.since}T00:00:00Z`).getTime(); t <= end && out.length < 400; t += 86_400_000) out.push(new Date(t).toISOString().slice(0, 10));
+  return out;
+}
+
 // ── Tabela hierárquica ───────────────────────────────────────────────────
 
 export interface EntityRow extends DerivedMetrics {
@@ -282,6 +290,8 @@ export interface EntityRow extends DerivedMetrics {
   dailyBudget: number | null;
   lifetimeBudget: number | null;
   updatedAt: string;
+  /** Gasto por dia no período (um valor por dia, zero onde não houve veiculação), para o minigráfico de tendência. */
+  spark: number[];
 }
 
 export interface EntityQuery {
@@ -323,6 +333,20 @@ async function listEntitiesInScope(org: string, accountId: string, q: EntityQuer
       and level = ${q.level} and day >= ${q.range.since} and day <= ${q.range.until}
     group by entity_external_id`)) as unknown as Array<Record<string, unknown>>;
   const byId = new Map(metricRows.map((r) => [String(r.id), totalsFrom(r)]));
+
+  // Série diária de gasto por entidade (uma consulta só), alinhada aos dias do período.
+  const sparkRows = (await db.execute(sql`
+    select entity_external_id as id, day::text as day, coalesce(spend, 0) as spend
+    from media_insights_daily
+    where organization_id = ${org} and provider = ${provider} and account_external_id = ${accountId}
+      and level = ${q.level} and day >= ${q.range.since} and day <= ${q.range.until}`)) as unknown as Array<{ id: string; day: string; spend: string | number }>;
+  const days = enumerateDays(q.range);
+  const sparkById = new Map<string, Map<string, number>>();
+  for (const r of sparkRows) {
+    const m = sparkById.get(String(r.id)) ?? new Map<string, number>();
+    m.set(String(r.day), Number(r.spend));
+    sparkById.set(String(r.id), m);
+  }
   const empty: RawTotals = { spend: null, impressions: null, reach: null, clicks: null, results: null, conversionValue: null };
 
   const rows: EntityRow[] = entities.map((e) => ({
@@ -336,6 +360,7 @@ async function listEntitiesInScope(org: string, accountId: string, q: EntityQuer
     dailyBudget: n(e.dailyBudget),
     lifetimeBudget: n(e.lifetimeBudget),
     updatedAt: e.updatedAt.toISOString(),
+    spark: days.map((d) => sparkById.get(e.externalId)?.get(d) ?? 0),
     ...deriveMetrics(byId.get(e.externalId) ?? empty),
   }));
 

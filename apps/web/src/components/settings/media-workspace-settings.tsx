@@ -18,7 +18,7 @@ export function MediaWorkspaceSettings() {
   const probe = useMediaSettings(null, null);
 
   // Quem não tem o módulo de Mídia recebe 403: a seção simplesmente não existe para essa pessoa.
-  if (probe.isError) return null;
+  if (probe.isError || (!probe.isPending && !probe.data?.values)) return null;
 
   return (
     <section className="mt-10" aria-labelledby="midia-workspace">

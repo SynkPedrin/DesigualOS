@@ -227,7 +227,7 @@ export function SettingsTab({ clientId, accountId }: { clientId: string | null; 
   const [scope, setScope] = useState<'client' | 'organization' | 'account'>(clientId ? 'client' : 'organization');
 
   if (settings.isPending) return <Skeleton className="h-48 w-full" />;
-  if (settings.isError || !settings.data) return <Surface className="p-5 text-sm text-erro">Não consegui carregar as configurações.</Surface>;
+  if (settings.isError || !settings.data?.values || !settings.data.source) return <Surface className="p-5 text-sm text-erro">Não consegui carregar as configurações.</Surface>;
   const v = settings.data.values;
   const src = settings.data.source;
   const target = { clientId: scope === 'organization' ? null : clientId, accountId: scope === 'account' ? accountId : null };
