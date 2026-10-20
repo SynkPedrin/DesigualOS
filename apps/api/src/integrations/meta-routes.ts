@@ -8,10 +8,14 @@ import {
   getMetaAdAccounts,
   getMetaBusinesses,
   syncMetaAdAccountsForUser,
+  connectMetaSystemUser,
+  getMetaCentralStatus,
+  getMetaSystemConnection,
+  getMetaSystemUserConfig,
   type MetaOAuthConfig,
 } from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
-import { requireAuth } from '../auth/middleware';
+import { requireAuth, requirePermission } from '../auth/middleware';
 import { requireModule } from '../auth/require-module';
 import { encryptToken } from '../lib/token-crypto';
 import { buildOAuthState, frontendUrl, parseOAuthState } from './routes';
@@ -121,12 +125,71 @@ export async function registerMetaIntegrationRoutes(app: FastifyInstance): Promi
     },
   );
 
+  /**
+   * `connected` = a pessoa consegue ler Meta agora: Facebook próprio OU a
+   * conexão central da agência. `central_*` são só booleanos (sem BM, sem
+   * escopo): o detalhe vive em /integrations/meta/central/status, atrás de
+   * permissão. Esta rota é aberta a qualquer autenticado.
+   */
   app.get('/integrations/meta/status', { preHandler: requireAuth }, async (request) => {
     const connection = await getMetaConnection(request.authUser!.id);
+    const centralConfigured = getMetaSystemUserConfig() !== null;
+    const centralConnected = (await getMetaSystemConnection()) !== null;
+    const base = { central_configured: centralConfigured, central_connected: centralConnected };
     if (!connection || connection.status !== 'connected') {
-      return { connected: false, configured: getOAuthConfig() !== null };
+      return { ...base, connected: centralConnected, configured: getOAuthConfig() !== null || centralConfigured };
     }
-    return { connected: true, configured: true, connected_at: connection.createdAt.toISOString() };
+    return { ...base, connected: true, configured: true, connected_at: connection.createdAt.toISOString() };
+  });
+
+  /**
+   * ─── CONEXÃO CENTRAL DA AGÊNCIA (usuário do sistema, sem OAuth) ───────
+   * Estado real, conferido no Meta a cada chamada. Nunca devolve token.
+   */
+  app.get('/integrations/meta/central/status', { preHandler: [requireAuth, requirePermission('clients', 'write'), requireModule('meta_ads')] }, async () => {
+    const s = await getMetaCentralStatus();
+    if (s.state === 'not_configured') return { state: s.state, missing: s.missing };
+    if (s.state === 'not_connected') return { state: s.state, business_id: s.businessId };
+    if (s.state === 'error') return { state: s.state, business_id: s.businessId, message: s.message };
+    return {
+      state: s.state,
+      business_id: s.businessId,
+      business_name: s.businessName,
+      token_type: s.tokenType,
+      scopes: s.scopes,
+      missing_scopes: s.missingScopes,
+      expires_at: s.expiresAt,
+      reason: s.reason,
+      linked_accounts: s.linkedAccounts,
+      connected_at: s.connectedAt,
+      last_synced_at: s.lastSyncedAt,
+    };
+  });
+
+  /** Valida token + permissões + acesso à BM, grava a conexão e já importa e vincula as contas. */
+  app.post('/integrations/meta/central/connect', { preHandler: [requireAuth, requirePermission('clients', 'write'), requireModule('meta_ads')] }, async (request, reply) => {
+    const userId = request.authUser!.id;
+    const result = await connectMetaSystemUser(userId);
+    if (!result.ok) {
+      reply.code(result.code === 'not_configured' ? 503 : result.code === 'meta_error' ? 502 : 409);
+      return { error: result.message, code: result.code };
+    }
+
+    let sync: Awaited<ReturnType<typeof syncMetaAdAccountsForUser>> | null = null;
+    try {
+      sync = await syncMetaAdAccountsForUser(userId, 'web');
+    } catch (error) {
+      // A conexão está gravada; a importação pode ser repetida pelo botão.
+      logger.error({ error, userId }, 'Importação de contas após conexão central falhou — conexão mantida');
+    }
+    return {
+      connected: true,
+      business_id: result.businessId,
+      business_name: result.businessName,
+      scopes: result.inspection.scopes,
+      accounts: result.accounts,
+      sync,
+    };
   });
 
   app.delete('/integrations/meta', { preHandler: [requireAuth, requireModule('meta_ads')] }, async (request, reply) => {
