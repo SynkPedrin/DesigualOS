@@ -71,13 +71,23 @@ Escrita (exige `clients:write`): `PUT /media/settings`, CRUD de regras/templates
 
 `META_SYSTEM_USER_TOKEN`, `META_BUSINESS_ID`, `META_APP_ID`, `META_APP_SECRET`, `MEDIA_ORGANIZATION_ID` (opcional; sem ela vale a organização com mais clientes), `MEDIA_ACTIONS_ENABLED` (padrão false).
 
+## Produção (como está publicado, 20/10/2026)
+
+- **Front:** Vercel, projeto `desigual-os`, domínio `desigual-os.vercel.app`. Publicar a partir de uma EXPORTAÇÃO limpa do commit (`git archive <sha> | tar -x -C <pasta>`; copiar `.vercel`; `vercel deploy --prod`). Não publicar de `git worktree`: a CLI trava no upload e deixa deploy fantasma na fila.
+- **API e worker:** VPS Locaweb `191.252.203.180` (`api.citavel.ai`), repositório em `/opt/desigual-os` na `main`. Publicar: `git pull --ff-only origin main` e `docker compose -f docker-compose.prod.yml --env-file .env up -d --build api worker` (leva ~5 min; OpenWA e Redis não são tocados). O `.env` do servidor é a fonte de produção (Meta, Google, `MEDIA_ORGANIZATION_ID`).
+- **Um escritor só:** os jobs de mídia rodam apenas na VPS. Máquinas de desenvolvimento que apontam para o mesmo banco devem ter `MEDIA_JOBS_ENABLED=false`; sem isso elas sobrescrevem erro em `media_ad_accounts` e gastam o limite de requisições do Meta (por app).
+- **Google Ads** usa as credenciais OAuth do servidor (diferentes das de um `.env` local novo). Sem developer token.
+
 ## Rollback
+
+Servidor: imagens `desigual-os-api:rollback-20261020` e `desigual-os-worker:rollback-20261020` e o commit anterior em `/opt/desigual-os/.rollback-commit-20261020` (`422b9a8`); `.env` anterior em `.env.bak-20261020-midia`.
+
 
 Migração 0076 só cria tabelas: `DROP TABLE media_*` (ordem inversa das FKs) desfaz. O código novo é aditivo; `git revert` do commit remove rotas, jobs e telas. A tela anterior segue na página como "Leitura ao vivo no Meta".
 
 ## Limitações conhecidas
 
-- **Google Ads**: implementado nas mesmas tabelas e telas (`google-media-graph.ts`, `syncGoogleMedia`), sem developer token (o Google aposentou a exigência). **Não verificado contra a API real**: a conexão gravada em 14/10 foi emitida pelo cliente OAuth anterior (o `.env` mudou em 20/10) e o Google responde `unauthorized_client` ao renovar. Basta reconectar em Integrações → Google Ads; a próxima sincronização (30 min) puxa tudo. Ações em campanha ainda só no Meta; Google não tem saldo/limite (`UNAVAILABLE`).
+- **Google Ads**: verificado contra a API real em produção (3Net: 5 campanhas, anúncios com texto, métricas; MCC com 21 contas descobertas). Ações em campanha só no Meta; Google não tem saldo/limite (`UNAVAILABLE`); "resultado" é `conversions` (atribuição diferente do Meta, nunca somar os dois).
 - **Saldo real indisponível** com este token; alerta de saldo só atua em contas com limite de gastos (estimativa rotulada como tal).
 - **Limite de requisições do Meta**: a carga inicial de 90 dias de 14 contas excede o limite; a sync recua e retoma a cada 30 min. Contas novas chegam completas em algumas rodadas.
 - **Envio por WhatsApp não configurado**: a organização não tem conector `whatsapp` (`organization_connectors`). Alertas ficam registrados; nada é enviado.
