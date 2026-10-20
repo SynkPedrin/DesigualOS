@@ -44,18 +44,20 @@ const poolMax = Number(process.env.DATABASE_POOL_MAX) || 3;
  * (pgbouncer em modo transaction), que não suporta prepared statements.
  * Medido em 20/10/2026: prepare: true no pooler da porta 6543 TRAVA.
  *
- * Sem prepare, o postgres-js original fazia DUAS idas ao banco em toda
- * consulta com parâmetro (Describe antes do Bind) — ~250 ms em vez de ~125 ms
- * daqui até us-east-1. `patches/postgres@3.4.9.patch` pula o Describe quando
- * todo parâmetro é texto/número/booleano/data/null (o servidor infere os tipos
- * no Parse do mesmo jeito; com lista ou objeto, continua descrevendo).
- * Resultado conferido idêntico em 15 tipos com a configuração do drizzle.
- * SEM PIPELINE em nenhuma consulta (mesmo patch): o pooler devolveu
- * respostas trocadas entre consultas enfileiradas na mesma conexão (20/10/2026,
- * ~4 min no ar, "Invalid time value"), e o warm-up da subida enfileirava 12
- * "select 1" — a hipótese para as requisições presas logo após cada deploy.
- * Uma consulta por vez por conexão. PG_PIPELINE=1 devolve o original.
- * Para voltar ao comportamento original sem rebuild: PG_DESCRIBE_SEMPRE=1.
+ * Sem prepare, o postgres-js faz DUAS idas ao banco em toda consulta com
+ * parâmetro (Describe antes do Bind): ~250 ms em vez de ~125 ms até us-east-1.
+ * `patches/postgres@3.4.9.patch` tem um atalho que pula o Describe, mas ele
+ * fica DESLIGADO. Em 20/10/2026, com o pooler do Supabase (porta 6543), deu
+ * erro em produção com e sem pipeline ("Invalid time value", depois 46 erros
+ * em 1 min). Com Postgres direto funciona: 1800/1800 certos e 15 tipos
+ * idênticos. Só se liga com PG_DESCRIBE_ATALHO=1.
+ *
+ * O que FICA ligado no mesmo patch: nenhuma consulta enfileira (pipeline) na
+ * mesma conexão. O pooler trocava ou perdia respostas enfileiradas, e uma
+ * resposta perdida deixava requisições presas para sempre logo depois de cada
+ * deploy (o warm-up manda 12 "select 1" de uma vez). Com o pipeline desligado,
+ * foram 0 presas em 3 reinícios seguidos de carga. PG_PIPELINE=1 devolve o
+ * comportamento original.
  */
 const CONNECT_TIMEOUT_S = Number(process.env.DATABASE_CONNECT_TIMEOUT_S) || 15;
 
