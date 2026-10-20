@@ -221,10 +221,10 @@ function RuleRow({ rule, accounts, onDelete, save }: { rule: MediaAlertRule; acc
 
 const SOURCE_LABEL = { default: 'padrão do sistema', organization: 'empresa', client: 'este cliente', account: 'esta conta' } as const;
 
-export function SettingsTab({ clientId, accountId }: { clientId: string; accountId: string }) {
+export function SettingsTab({ clientId, accountId }: { clientId: string | null; accountId: string | null }) {
   const settings = useMediaSettings(clientId, accountId);
   const set = useSetMediaSetting();
-  const [scope, setScope] = useState<'client' | 'organization' | 'account'>('client');
+  const [scope, setScope] = useState<'client' | 'organization' | 'account'>(clientId ? 'client' : 'organization');
 
   if (settings.isPending) return <Skeleton className="h-48 w-full" />;
   if (settings.isError || !settings.data) return <Surface className="p-5 text-sm text-erro">Não consegui carregar as configurações.</Surface>;
@@ -255,8 +255,8 @@ export function SettingsTab({ clientId, accountId }: { clientId: string; account
             Gravar em
             <select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)} className="rounded-md border border-grafite-elevado bg-carbono px-2 py-1 text-sm text-branco-cru">
               <option value="organization">Toda a empresa</option>
-              <option value="client">Só este cliente</option>
-              <option value="account">Só esta conta</option>
+              {clientId && <option value="client">Só este cliente</option>}
+              {clientId && accountId && <option value="account">Só esta conta</option>}
             </select>
           </label>
         </div>

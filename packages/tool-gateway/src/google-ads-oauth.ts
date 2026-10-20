@@ -177,6 +177,30 @@ async function runGaqlQuery(config: GoogleAdsOAuthConfig, accessToken: string, c
   return gaqlResponseSchema.parse(await response.json()).results ?? [];
 }
 
+/**
+ * GAQL com TODAS as páginas (`nextPageToken`). A leitura simples acima pega só
+ * a primeira página (até 10.000 linhas), o que trunca uma conta grande no
+ * nível de anúncio ou nos dias do backfill sem avisar. Usado pelo Media
+ * Command Center, que precisa do conjunto completo.
+ */
+export async function runGaqlPaged(config: GoogleAdsOAuthConfig, accessToken: string, customerId: string, query: string, maxPages = 100): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await fetchGoogle(`${GOOGLE_ADS_API_BASE}/customers/${customerId}/googleAds:search`, {
+      method: 'POST',
+      headers: authHeaders(config, accessToken),
+      body: JSON.stringify({ query, pageSize: 5000, ...(pageToken ? { pageToken } : {}) }),
+    });
+    await assertOk(response, `Google Ads query failed for customer ${customerId}`);
+    const body = gaqlResponseSchema.extend({ nextPageToken: z.string().optional() }).parse(await response.json());
+    rows.push(...(body.results ?? []));
+    pageToken = body.nextPageToken;
+    if (!pageToken) break;
+  }
+  return rows;
+}
+
 export interface GoogleAdsAccount {
   customerId: string;
   descriptiveName: string | null;

@@ -344,6 +344,16 @@ export function CreativesTab({ accountId, period, currency }: { accountId: strin
 function Thumb({ row, className }: { row: MediaCreativeRow; className?: string }) {
   const [failed, setFailed] = useState(false);
   const src = row.creative?.imageUrl ?? row.creative?.thumbnailUrl ?? null;
+  // Anúncio de pesquisa (Google) não tem imagem: o criativo é o texto, e é ele que aparece.
+  if (!src && (row.creative?.title || row.creative?.body)) {
+    return (
+      <div className={cn('flex flex-col justify-center gap-1 overflow-hidden bg-carbono p-3 text-left', className)}>
+        {row.creative?.title && <p className="line-clamp-3 text-sm font-medium text-roxo-eletrico">{row.creative.title}</p>}
+        {row.creative?.linkUrl && <p className="truncate text-[11px] text-sinal">{row.creative.linkUrl.replace(/^https?:\/\//, '')}</p>}
+        {row.creative?.body && <p className="line-clamp-4 text-xs text-nevoa">{row.creative.body}</p>}
+      </div>
+    );
+  }
   // A URL do Meta é assinada e EXPIRA em horas. Quando falha, diz "indisponível" em vez de ficar um quadrado quebrado.
   if (!src || failed) {
     return (

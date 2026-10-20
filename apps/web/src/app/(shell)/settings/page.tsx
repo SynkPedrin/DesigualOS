@@ -15,6 +15,7 @@ import { LANGUAGES, THEMES, type Language, type Theme } from '@/lib/api/contract
 import { cn } from '@/lib/utils';
 import { Administracao } from '@/components/shell/administracao';
 import { EmpresaConfig } from '@/components/settings/empresa-config';
+import { MediaWorkspaceSettings } from '@/components/settings/media-workspace-settings';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiRequestError ? error.message : fallback;
@@ -281,6 +282,8 @@ export default function SettingsPage() {
         * componente decide sozinho se aparece e se edita (quem não responde
         * pela empresa lê, não escreve — e a API é quem defende de verdade). */}
       <EmpresaConfig />
+
+      <MediaWorkspaceSettings />
 
       {/*
         * A PORTA DAS FERRAMENTAS TÉCNICAS. A navegação principal saiu de 30

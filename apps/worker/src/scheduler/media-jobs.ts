@@ -1,5 +1,5 @@
 import { enqueueClientReport } from '@desigual-os/orchestrator';
-import { runAlertEvaluation, runDueReportSchedules, syncMediaForCentralConnection } from '@desigual-os/tool-gateway';
+import { runAlertEvaluation, runDueReportSchedules, syncGoogleMedia, syncMediaForCentralConnection } from '@desigual-os/tool-gateway';
 import type { Logger } from '@desigual-os/logging';
 
 /**
@@ -35,6 +35,13 @@ export function startMediaSync(logger: Logger): void {
       for (const f of report.accountsFailed) logger.warn({ accountId: f.accountId, error: f.error }, '[media-sync] conta falhou — as outras seguiram');
     })
     .catch((error: unknown) => logger.error({ motivo: error instanceof Error ? error.message : String(error) }, '[media-sync] falhou'))
+    // Google Ads na sequência: outra API, outros limites; uma falha não afeta a outra.
+    .then(() => syncGoogleMedia())
+    .then((g) => {
+      if (g.links > 0) logger.info({ links: g.links, synced: g.accountsSynced, failed: g.accountsFailed.length, rows: g.rows }, '[media-sync] Google Ads concluído');
+      for (const f of g.accountsFailed) logger.warn({ customerId: f.customerId, error: f.error }, '[media-sync] conta Google falhou');
+    })
+    .catch((error: unknown) => logger.error({ motivo: error instanceof Error ? error.message : String(error) }, '[media-sync] Google falhou'))
     .finally(() => {
       syncing = false;
     });

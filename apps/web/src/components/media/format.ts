@@ -33,6 +33,7 @@ export const RESULT_KIND_LABEL: Record<string, string> = {
   'onsite_conversion.messaging_conversation_started_7d': 'conversas iniciadas',
   'offsite_conversion.fb_pixel_purchase': 'compras',
   purchase: 'compras',
+  google_conversions: 'conversões',
   'offsite_conversion.fb_pixel_complete_registration': 'cadastros',
 };
 
