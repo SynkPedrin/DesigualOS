@@ -120,7 +120,12 @@ class RealtimeClient {
     const socket = new WebSocket(url);
     this.socket = socket;
 
+    // Cada handler só age se ESTE socket ainda é o atual. Sem isso, o close
+    // atrasado de um socket substituído zerava a referência do NOVO, o cliente
+    // abria um terceiro e o segundo ficava órfão e aberto — todo evento chegava
+    // duas vezes (medido em 20/10/2026: contador da Comunicação somando 2 por mensagem).
     socket.onmessage = (event) => {
+      if (this.socket !== socket) return;
       try {
         const parsed = JSON.parse(event.data) as WsEvent;
         this.listeners.forEach((listener) => listener(parsed));
@@ -129,6 +134,7 @@ class RealtimeClient {
       }
     };
     socket.onopen = () => {
+      if (this.socket !== socket) { socket.close(); return; }
       if (this.jaAbriu) this.aoReconectar.forEach((cb) => cb());
       this.jaAbriu = true;
       // Só zera a espera se a conexão SE MANTIVER: abrir e ser recusada logo em
@@ -136,6 +142,7 @@ class RealtimeClient {
       this.stableTimer = setTimeout(() => { this.reconnectDelayMs = 1000; }, 5_000);
     };
     socket.onclose = (event) => {
+      if (this.socket !== socket) return;
       this.socket = null;
       if (this.stableTimer) { clearTimeout(this.stableTimer); this.stableTimer = null; }
       if (event.code === 4401) this.onAuthExpired?.();

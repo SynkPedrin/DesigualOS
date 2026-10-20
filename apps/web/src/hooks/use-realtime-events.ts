@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { realtimeClient, type WsEvent } from '@/lib/realtime/ws-client';
 import { useSupabaseSession } from '@/hooks/use-supabase-session';
@@ -23,7 +23,9 @@ export function useRealtimeEvents(): void {
   const { session } = useSupabaseSession();
   const accessToken = session?.access_token ?? null;
   const { data: me } = useMe();
-  const meId = me?.id ?? null;
+  // Ref, não dependência do efeito: o /me chegar não deve derrubar e reabrir o socket.
+  const meId = useRef<string | null>(null);
+  meId.current = me?.id ?? null;
 
   // O servidor exige um token de sessão no handshake do WS (query string
   // `?token=`, já que o WebSocket nativo do browser não manda Authorization).
@@ -106,7 +108,7 @@ export function useRealtimeEvents(): void {
         }
         // Comunicação interna: o servidor só manda a quem pode ler a conversa.
         case 'chat.event':
-          applyInternalChatEvent(queryClient, event.payload, meId);
+          applyInternalChatEvent(queryClient, event.payload, meId.current);
           break;
         default:
           break;
@@ -116,5 +118,5 @@ export function useRealtimeEvents(): void {
     const pararDeOuvir = realtimeClient.subscribe(handleEvent);
     const pararReconexao = realtimeClient.onReconnect(() => recoverInternalChat(queryClient));
     return () => { pararDeOuvir(); pararReconexao(); };
-  }, [queryClient, meId]);
+  }, [queryClient]);
 }

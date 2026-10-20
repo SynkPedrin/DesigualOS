@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Paperclip, RotateCcw, Send, Smile, X } from 'lucide-react';
 import {
   newClientMessageId,
@@ -57,6 +57,15 @@ export const Composer = forwardRef<ComposerHandle, {
   const area = useRef<HTMLTextAreaElement>(null);
   const seletor = useRef<HTMLInputElement>(null);
   const politica = useAttachmentPolicy();
+  // Cursor depois de inserir a menção: aplicado no MESMO commit que troca o
+  // texto. Num requestAnimationFrame, a letra digitada nesse meio-tempo ia
+  // parar no fim da frase.
+  const cursorPendente = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (cursorPendente.current === null || !area.current) return;
+    area.current.setSelectionRange(cursorPendente.current, cursorPendente.current);
+    cursorPendente.current = null;
+  }, [texto]);
 
   const candidatos = useMemo(() => {
     if (!sugestao) return [];
@@ -154,15 +163,14 @@ export const Composer = forwardRef<ComposerHandle, {
     setTexto(novo);
     setMencionados((m) => new Map(m).set(membro.id, membro.name));
     setSugestao(null);
-    requestAnimationFrame(() => {
-      const pos = sugestao.inicio + membro.name.length + 2;
-      el?.focus();
-      el?.setSelectionRange(pos, pos);
-    });
+    cursorPendente.current = sugestao.inicio + membro.name.length + 2;
+    el?.focus();
   }
 
   return (
-    <div className="border-t border-grafite-elevado bg-grafite px-3 py-2.5">
+    // pr-20: a bolha do Bento flutua no canto inferior direito da tela e
+    // cobria o botão de enviar.
+    <div className="border-t border-grafite-elevado bg-grafite py-2.5 pl-3 pr-20">
       {replyTo && (
         <div className="mb-2 flex items-center gap-2 rounded-md border-l-2 border-roxo-eletrico bg-grafite-elevado/60 px-3 py-1.5">
           <div className="min-w-0 flex-1">
