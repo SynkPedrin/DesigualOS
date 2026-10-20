@@ -61,11 +61,19 @@ export async function ehMembroAtivo(organizationId: string, userId: string): Pro
 
 /** O #Geral da organização, criado na primeira vez que alguém precisa dele (idempotente). */
 export async function garantirGeral(organizationId: string): Promise<Conversa> {
-  await db.insert(schema.internalConversations).values({ organizationId, kind: 'general', title: 'Geral' }).onConflictDoNothing();
-  const [geral] = await db.select().from(schema.internalConversations)
-    .where(and(eq(schema.internalConversations.organizationId, organizationId), eq(schema.internalConversations.kind, 'general')))
-    .limit(1);
-  return geral!;
+  // Insere e lê no mesmo comando: o "union" pega a linha nova (se inseriu) ou a existente.
+  const [geral] = await db.execute<Record<string, unknown>>(sql`
+    with nova as (
+      insert into internal_conversations (organization_id, kind, title) values (${organizationId}, 'general', 'Geral')
+      on conflict do nothing returning id
+    )
+    select id from nova
+    union all
+    select id from internal_conversations where organization_id = ${organizationId} and kind = 'general'
+    limit 1
+  `);
+  const [conversa] = await db.select().from(schema.internalConversations).where(eq(schema.internalConversations.id, String(geral!.id))).limit(1);
+  return conversa!;
 }
 
 /**
@@ -73,17 +81,20 @@ export async function garantirGeral(organizationId: string): Promise<Conversa> {
  * (sempre "não encontrada" — não confirmar que um id existe também é proteção).
  */
 export async function conversaAcessivel(organizationId: string, userId: string, conversationId: string): Promise<Conversa> {
-  const [conversa] = await db.select().from(schema.internalConversations)
+  // Uma ida ao banco só (cada ida custa ~250 ms daqui até o banco): a conversa
+  // e as duas condições de acesso vêm juntas.
+  const [linha] = await db.select({
+    conversa: schema.internalConversations,
+    ativo: sql<boolean>`exists (select 1 from organization_members om join users u on u.id = om.user_id
+      where om.organization_id = ${organizationId} and om.user_id = ${userId} and u.active and u.deleted_at is null)`,
+    participa: sql<boolean>`exists (select 1 from internal_conversation_members cm
+      where cm.conversation_id = ${schema.internalConversations.id} and cm.user_id = ${userId})`,
+  }).from(schema.internalConversations)
     .where(and(eq(schema.internalConversations.id, conversationId), eq(schema.internalConversations.organizationId, organizationId)))
     .limit(1);
-  if (!conversa) throw new AcessoNegado();
-  if (!(await ehMembroAtivo(organizationId, userId))) throw new AcessoNegado();
-  if (conversa.kind === 'general') return conversa;
-  const participantes = await db.select({ userId: schema.internalConversationMembers.userId })
-    .from(schema.internalConversationMembers)
-    .where(eq(schema.internalConversationMembers.conversationId, conversa.id));
-  if (!participantes.some((p) => p.userId === userId)) throw new AcessoNegado();
-  return conversa;
+  if (!linha || !linha.ativo) throw new AcessoNegado();
+  if (linha.conversa.kind !== 'general' && !linha.participa) throw new AcessoNegado();
+  return linha.conversa;
 }
 
 /** Quem recebe os eventos ao vivo de uma conversa. */
@@ -127,10 +138,25 @@ async function membroDaConversa(conversa: Conversa, userId: string) {
  * Lista de conversas de uma pessoa: #Geral primeiro, depois as privadas pela
  * mensagem mais recente — com a outra pessoa, a última mensagem e as não lidas.
  */
-export async function listarConversas(organizationId: string, userId: string) {
+/**
+ * Quem já teve o #Geral e a participação nele garantidos NESTE processo. Só
+ * pula as escritas idempotentes da preparação; a checagem de vínculo ativo
+ * continua em toda chamada, dentro da própria consulta da lista.
+ */
+const preparados = new Set<string>();
+
+async function prepararGeral(organizationId: string, userId: string) {
+  const chave = `${organizationId}:${userId}`;
+  if (preparados.has(chave)) return;
   if (!(await ehMembroAtivo(organizationId, userId))) throw new AcessoNegado();
   const geral = await garantirGeral(organizationId);
   await membroDaConversa(geral, userId);
+  if (preparados.size > 50_000) preparados.clear();
+  preparados.add(chave);
+}
+
+export async function listarConversas(organizationId: string, userId: string) {
+  await prepararGeral(organizationId, userId);
   const linhas = await db.execute<{
     id: string; kind: string; title: string | null; last_message_at: Date | string | null; muted_at: Date | string | null;
     partner_id: string | null; partner_name: string | null; partner_avatar: string | null; partner_active: boolean | null;
@@ -153,6 +179,9 @@ export async function listarConversas(organizationId: string, userId: string) {
       select m.* from internal_messages m where m.conversation_id = c.id order by m.created_at desc, m.id desc limit 1
     ) lm on true
     where c.organization_id = ${organizationId}
+      -- vínculo ativo conferido aqui, a cada chamada: desativou, a lista zera na hora
+      and exists (select 1 from organization_members om join users u on u.id = om.user_id
+        where om.organization_id = ${organizationId} and om.user_id = ${userId} and u.active and u.deleted_at is null)
     order by (c.kind = 'general') desc, c.last_message_at desc nulls last, c.created_at desc
   `);
   return linhas.filter((c) => c.kind === 'general' || c.partner_active);
@@ -366,12 +395,14 @@ export async function estadoDosMembros(conversa: Conversa, userIds: string[]) {
 export async function buscar(organizationId: string, userId: string, termo: string, limite = 30) {
   const q = termo.trim();
   if (q.length < 2) return [];
-  const conversas = await listarConversas(organizationId, userId);
-  const ids = conversas.map((c) => c.id);
-  if (ids.length === 0) return [];
+  await prepararGeral(organizationId, userId);
   const padrao = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+  // Só conversas de que a pessoa participa, desta organização, e só enquanto o vínculo estiver ativo.
   const linhas = await db.select().from(schema.internalMessages).where(and(
-    inArray(schema.internalMessages.conversationId, ids),
+    eq(schema.internalMessages.organizationId, organizationId),
+    sql`${schema.internalMessages.conversationId} in (select cm.conversation_id from internal_conversation_members cm where cm.user_id = ${userId})`,
+    sql`exists (select 1 from organization_members om join users u on u.id = om.user_id
+      where om.organization_id = ${organizationId} and om.user_id = ${userId} and u.active and u.deleted_at is null)`,
     isNull(schema.internalMessages.deletedAt),
     sql`${schema.internalMessages.content} ilike ${padrao}`,
   )).orderBy(desc(schema.internalMessages.createdAt)).limit(limite);

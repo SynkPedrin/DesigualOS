@@ -191,8 +191,9 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
     rotas.get('/internal-chat/members', async (request, reply) => {
       const { organizationId, userId } = contexto(request);
       try {
-        if (!(await svc.ehMembroAtivo(organizationId, userId))) throw new svc.AcessoNegado();
         const membros = await svc.membrosAtivos(organizationId);
+        // A própria pessoa está na lista se (e só se) o vínculo dela está ativo: uma consulta em vez de duas.
+        if (!membros.some((m) => m.id === userId)) throw new svc.AcessoNegado();
         const online = await presentes(membros.map((m) => m.id));
         return { members: membros.map((m) => ({ id: m.id, name: m.name, avatar_url: m.avatarUrl, is_me: m.id === userId, online: online.has(m.id) })) };
       } catch (erro) { return falha(reply, erro); }
