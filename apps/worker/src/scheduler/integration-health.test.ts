@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '@desigual-os/logging';
 
 const fakeLogger = (): Logger =>
@@ -14,6 +14,11 @@ afterEach(() => {
  * custo é dado velho em silêncio.
  */
 describe('religar webhook', () => {
+  // A chave vinha do .env de quem rodava: em checkout limpo (CI) o teste falhava
+  // em 'falhou' antes de chegar no que importa. O fetch é falso; a chave também.
+  beforeEach(() => { vi.stubEnv('CLICKUP_API_KEY', 'pk_teste_falso'); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
   it('não reativa quando o endpoint não responde: seria só agendar a próxima suspensão', async () => {
     const chamadas: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { method?: string }) => {

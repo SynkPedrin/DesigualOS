@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  postgres@3.4.9:
+    hash: pakgn2gj32qj23tjgj3hz3hxhq
+    path: patches/postgres@3.4.9.patch
+
 importers:
 
   .:
@@ -85,7 +90,7 @@ importers:
         version: 16.6.1
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       fastify:
         specifier: ^4.28.0
         version: 4.29.1
@@ -104,7 +109,7 @@ importers:
         version: 11.3.0
       postgres:
         specifier: ^3.4.4
-        version: 3.4.9
+        version: 3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq)
       tsx:
         specifier: ^4.19.0
         version: 4.23.13
@@ -149,7 +154,7 @@ importers:
         version: 16.6.1
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       express:
         specifier: ^5.2.1
         version: 5.2.1
@@ -340,7 +345,7 @@ importers:
         version: 16.6.1
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -368,7 +373,7 @@ importers:
         version: 5.11.1
       postgres:
         specifier: ^3.4.4
-        version: 3.4.9
+        version: 3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq)
       tsx:
         specifier: ^4.19.0
         version: 4.23.13
@@ -487,7 +492,7 @@ importers:
         version: 16.6.1
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       ffmpeg-static:
         specifier: 5.3.0
         version: 5.3.0
@@ -564,7 +569,7 @@ importers:
         version: 2.112.4
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       jose:
         specifier: ^5.9.6
         version: 5.10.0
@@ -620,7 +625,7 @@ importers:
         version: link:../types
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
     devDependencies:
       '@types/node':
         specifier: ^22.5.0
@@ -642,10 +647,10 @@ importers:
         version: link:../types
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       postgres:
         specifier: ^3.4.4
-        version: 3.4.9
+        version: 3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq)
     devDependencies:
       '@types/node':
         specifier: ^22.5.0
@@ -730,7 +735,7 @@ importers:
         version: link:../types
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       openai:
         specifier: ^4.68.0
         version: 4.104.0(ws@8.21.3)(zod@3.25.76)
@@ -782,7 +787,7 @@ importers:
         version: 5.81.4
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       ioredis:
         specifier: ^5.4.1
         version: 5.11.1
@@ -871,7 +876,7 @@ importers:
         version: 5.81.4
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -957,7 +962,7 @@ importers:
         version: link:../types
       drizzle-orm:
         specifier: ^0.33.0
-        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+        version: 0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8)
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -967,7 +972,7 @@ importers:
         version: 22.20.1
       postgres:
         specifier: ^3.4.4
-        version: 3.4.9
+        version: 3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq)
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -8969,10 +8974,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.33.0(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8):
+  drizzle-orm@0.33.0(@types/react@19.2.18)(postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq))(react@19.2.8):
     optionalDependencies:
       '@types/react': 19.2.18
-      postgres: 3.4.9
+      postgres: 3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq)
       react: 19.2.8
 
   dunder-proto@1.0.1:
@@ -10447,7 +10452,7 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  postgres@3.4.9: {}
+  postgres@3.4.9(patch_hash=pakgn2gj32qj23tjgj3hz3hxhq): {}
 
   prelude-ls@1.2.1: {}
 

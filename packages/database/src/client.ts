@@ -42,6 +42,15 @@ const poolMax = Number(process.env.DATABASE_POOL_MAX) || 3;
  *
  * prepare: false porque o Supabase pode estar atrás do connection pooler
  * (pgbouncer em modo transaction), que não suporta prepared statements.
+ * Medido em 20/10/2026: prepare: true no pooler da porta 6543 TRAVA.
+ *
+ * Sem prepare, o postgres-js original fazia DUAS idas ao banco em toda
+ * consulta com parâmetro (Describe antes do Bind) — ~250 ms em vez de ~125 ms
+ * daqui até us-east-1. `patches/postgres@3.4.9.patch` pula o Describe quando
+ * todo parâmetro é texto/número/booleano/data/null (o servidor infere os tipos
+ * no Parse do mesmo jeito; com lista ou objeto, continua descrevendo).
+ * Resultado conferido idêntico em 15 tipos com a configuração do drizzle.
+ * Para voltar ao comportamento original sem rebuild: PG_DESCRIBE_SEMPRE=1.
  */
 const CONNECT_TIMEOUT_S = Number(process.env.DATABASE_CONNECT_TIMEOUT_S) || 15;
 
