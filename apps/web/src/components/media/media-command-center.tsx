@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, Bell, FileText, ImageIcon, Layers, RefreshCw, Settings2 } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
+import { ApiRequestError } from '@/lib/api/client';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AreaTrend } from '@/components/ui/area-trend';
 import { ClientReportsPanel } from '@/components/clients/client-reports-panel';
@@ -80,9 +81,14 @@ export function MediaCommandCenter({ clientId }: { clientId: string }) {
 
   if (accounts.isPending) return <Skeleton className="h-64 w-full" />;
   if (accounts.isError) {
+    // 404 = a API publicada ainda é de antes do Command Center (as rotas /media/* não existem lá).
+    // Não é erro de quem usa: a leitura ao vivo abaixo continua funcionando.
+    const semRota = accounts.error instanceof ApiRequestError && accounts.error.status === 404;
     return (
-      <Surface className="border-erro/40 bg-erro/5 p-5 text-sm text-erro">
-        Não consegui carregar as contas de mídia deste cliente. Tente recarregar a página.
+      <Surface className={semRota ? 'border-aviso/40 bg-aviso/5 p-5 text-sm text-aviso' : 'border-erro/40 bg-erro/5 p-5 text-sm text-erro'}>
+        {semRota
+          ? 'O servidor da API ainda não tem o painel novo de mídia (está em uma versão anterior). Enquanto isso, use a leitura ao vivo logo abaixo: ela mostra campanhas, criativos e resultados direto da plataforma.'
+          : 'Não consegui carregar as contas de mídia deste cliente. Tente recarregar a página.'}
       </Surface>
     );
   }
