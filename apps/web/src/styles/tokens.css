@@ -113,7 +113,22 @@
 html {
   background-color: var(--color-carbono);
   color-scheme: dark;
+  /*
+   * ESCALA FLUIDA DA INTERFACE (20/10/2026, pedido da operação: "no monitor de 27 pol fica
+   * pequeno e no Mac dos colaboradores fica minúsculo e apertado").
+   *
+   * Tudo que o Tailwind mede em rem (espaçamento, text-sm/base, larguras w-64...) cresce junto
+   * com esta base, que acompanha a largura da janela: ~16,5px em 1280, ~17px em 1440 (notebook),
+   * ~18,7px em 1920 e ~21px em 2560 (monitor de 27"). Os breakpoints do Tailwind NÃO mudam: media
+   * query em rem usa o tamanho padrão do navegador, não esta base. `--ui-scale` é a preferência
+   * da pessoa (Configurações → Tamanho da interface).
+   */
+  --ui-scale: 1;
+  font-size: calc(clamp(15px, calc(12px + 0.35vw), 22px) * var(--ui-scale));
 }
+html[data-ui-scale='compact'] { --ui-scale: 0.92; }
+html[data-ui-scale='comfortable'] { --ui-scale: 1.1; }
+html[data-ui-scale='large'] { --ui-scale: 1.22; }
 
 html[data-theme='light'] {
   color-scheme: light;
@@ -171,3 +186,19 @@ body {
     animation: none;
   }
 }
+
+/*
+ * TEXTO EM PIXEL FIXO → rem. O app tem ~870 usos de text-[10px]/[11px]/[13px]... em 163
+ * arquivos; em pixel fixo eles nunca acompanham a escala acima e viram o "tudo minúsculo". Estas
+ * regras (fora de @layer, por isso vencem as utilities geradas) trocam só o tamanho para rem, com
+ * um piso um pouco maior nos menores (9-10px lidos em tela de notebook cansam). Quem quiser um
+ * tamanho exato continua podendo usar text-xs/sm/base.
+ */
+.text-\[8px\] { font-size: 0.6875rem; }
+.text-\[9px\] { font-size: 0.6875rem; }
+.text-\[10px\] { font-size: 0.75rem; }
+.text-\[11px\] { font-size: 0.8125rem; }
+.text-\[12px\] { font-size: 0.875rem; }
+.text-\[13px\] { font-size: 0.9375rem; }
+.text-\[14px\] { font-size: 1rem; }
+.text-\[15px\] { font-size: 1.0625rem; }

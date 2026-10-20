@@ -73,6 +73,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `try{var t=localStorage.getItem('desigual:theme');if(!t){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t)}catch(e){document.documentElement.setAttribute('data-theme','dark')}`,
           }}
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var u=localStorage.getItem('desigual:ui-scale');if(u&&u!=='auto')document.documentElement.setAttribute('data-ui-scale',u)}catch(e){}`,
+          }}
+        />
       </head>
       <body>
         <QueryProvider>

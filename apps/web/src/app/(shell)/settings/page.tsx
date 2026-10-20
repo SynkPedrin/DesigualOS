@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { Administracao } from '@/components/shell/administracao';
 import { EmpresaConfig } from '@/components/settings/empresa-config';
 import { MediaWorkspaceSettings } from '@/components/settings/media-workspace-settings';
+import { EscalaDaInterface } from '@/components/settings/escala-da-interface';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiRequestError ? error.message : fallback;
@@ -253,6 +254,11 @@ export default function SettingsPage() {
                 />
               ))}
             </div>
+          </section>
+
+          <section className="p-5">
+            <h2 className="mb-4 font-heading text-sm font-semibold uppercase tracking-wider text-nevoa">Tamanho da interface</h2>
+            <EscalaDaInterface />
           </section>
 
           {/* Requisito de licença do TradingView Lightweight Charts (gráficos de
