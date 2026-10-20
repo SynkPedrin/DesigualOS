@@ -306,4 +306,17 @@ describe.skipIf(!enabled)('Comunicação interna (Postgres real)', () => {
       expect((await get(ana, rota)).statusCode).toBe(404);
     }
   });
+  it('primeiro acesso simultâneo de muita gente: todos recebem o MESMO #Geral, ninguém recebe erro', async () => {
+    const svc = await import('./service');
+    const orgs = Array.from({ length: 8 }, () => randomUUID());
+    await connection`insert into organizations ${connection(orgs.map((id) => ({ id, name: 'Corrida', slug: id })))}`;
+    try {
+      for (const org of orgs) {
+        const gerais = await Promise.all(Array.from({ length: 10 }, () => svc.garantirGeral(org)));
+        expect(gerais.every((g) => g && g.id === gerais[0]!.id)).toBe(true);
+      }
+    } finally {
+      await connection`delete from organizations where id in ${connection(orgs)}`;
+    }
+  });
 });

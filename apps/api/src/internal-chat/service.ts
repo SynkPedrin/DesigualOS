@@ -73,7 +73,12 @@ export async function garantirGeral(organizationId: string): Promise<Conversa> {
     select id from internal_conversations where organization_id = ${organizationId} and kind = 'general'
     limit 1
   `);
-  const [conversa] = await db.select().from(schema.internalConversations).where(eq(schema.internalConversations.id, String(geral!.id))).limit(1);
+  // Corrida no primeiro acesso: se outra pessoa inseriu ao mesmo tempo, este
+  // comando esperou o insert dela mas lê com a foto tirada ANTES — e não vê a
+  // linha. Uma leitura nova (foto nova) acha. Visto no teste de 3 acessos simultâneos.
+  const [conversa] = await db.select().from(schema.internalConversations)
+    .where(geral ? eq(schema.internalConversations.id, String(geral.id)) : and(eq(schema.internalConversations.organizationId, organizationId), eq(schema.internalConversations.kind, 'general')))
+    .limit(1);
   return conversa!;
 }
 
@@ -430,18 +435,35 @@ export async function arquivosDaConversa(conversa: Pick<Conversa, 'id'>, filtro:
     .limit(filtro.limite);
 }
 
-/** Anexo + a conversa dele, conferindo que a pessoa pode ler essa conversa (download autorizado). */
+/**
+ * Anexo + a conversa dele, conferindo que a pessoa pode ler essa conversa
+ * (download autorizado). Uma consulta só: cada miniatura de imagem passa por
+ * aqui, e três idas ao banco eram ~750 ms por imagem.
+ */
 export async function anexoAcessivel(organizationId: string, userId: string, attachmentId: string): Promise<Anexo> {
-  const [anexo] = await db.select().from(schema.internalMessageAttachments)
-    .where(and(eq(schema.internalMessageAttachments.id, attachmentId), eq(schema.internalMessageAttachments.organizationId, organizationId)));
-  if (!anexo) throw new AcessoNegado('Arquivo não encontrado.');
-  await conversaAcessivel(organizationId, userId, anexo.conversationId);
+  if (!UUID.test(attachmentId)) throw new AcessoNegado('Arquivo não encontrado.');
+  const [linha] = await db.select({
+    anexo: schema.internalMessageAttachments,
+    kind: schema.internalConversations.kind,
+    mensagemApagada: sql<boolean>`(${schema.internalMessages.deletedAt} is not null)`,
+    ativo: sql<boolean>`exists (select 1 from organization_members om join users u on u.id = om.user_id
+      where om.organization_id = ${organizationId} and om.user_id = ${userId} and u.active and u.deleted_at is null)`,
+    participa: sql<boolean>`exists (select 1 from internal_conversation_members cm
+      where cm.conversation_id = ${schema.internalMessageAttachments.conversationId} and cm.user_id = ${userId})`,
+  }).from(schema.internalMessageAttachments)
+    .innerJoin(schema.internalConversations, and(
+      eq(schema.internalConversations.id, schema.internalMessageAttachments.conversationId),
+      eq(schema.internalConversations.organizationId, organizationId),
+    ))
+    .leftJoin(schema.internalMessages, eq(schema.internalMessages.id, schema.internalMessageAttachments.messageId))
+    .where(and(eq(schema.internalMessageAttachments.id, attachmentId), eq(schema.internalMessageAttachments.organizationId, organizationId)))
+    .limit(1);
+  if (!linha || !linha.ativo) throw new AcessoNegado('Arquivo não encontrado.');
+  if (linha.kind !== 'general' && !linha.participa) throw new AcessoNegado('Arquivo não encontrado.');
+  const anexo = linha.anexo;
   // Anexo solto (ainda não enviado) só para quem subiu; mensagem apagada leva o arquivo junto.
   if (!anexo.messageId && anexo.uploaderId !== userId) throw new AcessoNegado('Arquivo não encontrado.');
-  if (anexo.messageId) {
-    const [mensagem] = await db.select({ deletedAt: schema.internalMessages.deletedAt }).from(schema.internalMessages).where(eq(schema.internalMessages.id, anexo.messageId));
-    if (mensagem?.deletedAt) throw new AcessoNegado('Arquivo não encontrado.');
-  }
+  if (anexo.messageId && linha.mensagemApagada) throw new AcessoNegado('Arquivo não encontrado.');
   return anexo;
 }
 
