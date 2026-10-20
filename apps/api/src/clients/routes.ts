@@ -10,6 +10,7 @@ import {
   getGoogleAdsCampaigns,
   getMetaAccountInsights,
   getMetaAds,
+  getMetaAdSets,
   getMetaAdAccounts,
   getMetaCampaigns,
   getTaskComments,
@@ -1555,6 +1556,63 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
         logger.error({ error, clientId }, 'Falha ao buscar criativos do Meta');
         reply.code(502);
         return { error: error instanceof Error ? error.message : 'Meta creatives lookup failed' };
+      }
+    },
+  );
+
+  /**
+   * Conjuntos de anúncios do cliente — o nível entre campanha e anúncio.
+   * Só leitura, mesma resolução de conexão das outras rotas de mídia.
+   */
+  app.get<{ Params: { id: string }; Querystring: { date_preset?: string } }>(
+    '/clients/:id/media/meta/adsets',
+    { preHandler: [requireAuth, requirePermission('clients', 'read'), requireModule('meta_ads')] },
+    async (request, reply) => {
+      const clientId = request.params.id;
+      if (!request.authUser || !(await hasClientAccess(request.authUser, clientId))) {
+        reply.code(403);
+        return { error: 'No access granted to this client' };
+      }
+
+      const [mapping] = await db
+        .select()
+        .from(schema.clientMetaAccounts)
+        .where(eq(schema.clientMetaAccounts.clientId, clientId))
+        .orderBy(desc(schema.clientMetaAccounts.isPrimary), asc(schema.clientMetaAccounts.createdAt))
+        .limit(1);
+
+      if (!mapping) return { connected: false };
+      if (!mapping.connectionId) {
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'Vínculo sem conexão associada, reconecte o Meta.' };
+      }
+      const access = await resolveMetaAccessByConnectionId(mapping.connectionId);
+      if (!access) {
+        return { connected: true, account_id: mapping.accountId, data_available: false, reason: 'A conexão Meta usada neste vínculo foi desconectada ou expirou.' };
+      }
+
+      try {
+        const adsets = await getMetaAdSets(access.token, mapping.accountId, request.query.date_preset ?? 'last_30d');
+        return {
+          connected: true,
+          account_id: mapping.accountId,
+          data_available: true,
+          adsets: adsets.map((a) => ({
+            id: a.id,
+            name: a.name,
+            status: a.status,
+            campaign_id: a.campaignId,
+            daily_budget: a.dailyBudget,
+            optimization_goal: a.optimizationGoal,
+            spend: a.spend,
+            impressions: a.impressions,
+            clicks: a.clicks,
+            ctr: a.ctr,
+          })),
+        };
+      } catch (error) {
+        logger.error({ error, clientId }, 'Falha ao buscar conjuntos do Meta');
+        reply.code(502);
+        return { error: error instanceof Error ? error.message : 'Meta adsets lookup failed' };
       }
     },
   );

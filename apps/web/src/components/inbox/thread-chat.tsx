@@ -187,7 +187,7 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
             <div className={cn('max-w-[88%] rounded-lg px-3 py-2 text-sm shadow-sm sm:max-w-[72%]', message.direction === 'outbound' ? 'bg-[#c7f5d5] text-[#173c2a]' : 'bg-grafite-elevado text-branco-cru')}>
               {thread?.kind === 'group' && message.direction === 'inbound' && <p className="mb-1 text-[11px] font-semibold text-sinal">{message.senderName ?? message.senderContactId ?? 'Participante'}</p>}
               {message.attachmentUrl && <AttachmentView message={message} onImageOpen={setLightbox} />}
-              {message.content && <p className={cn('whitespace-pre-wrap break-words', message.attachmentUrl && 'mt-1.5')}>{message.content}</p>}
+              {message.content && <p className={cn('whitespace-pre-wrap break-words [overflow-wrap:anywhere]', message.attachmentUrl && 'mt-1.5')}>{message.content}</p>}
               <div className={cn('mt-1 flex items-center gap-2 text-[10px]', message.direction === 'outbound' ? 'text-[#173c2a]/70' : 'text-nevoa')}>
                 <span>{formatTime(message.createdAt)}{deliveryLabel(message)}</span>
                 {message.deliveryStatus === 'failed' && message.direction === 'outbound' && message.content && (

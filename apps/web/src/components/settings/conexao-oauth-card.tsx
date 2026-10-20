@@ -4,7 +4,14 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Check, Link2, RefreshCw, Unlink } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ApiRequestError } from '@/lib/api/client';
-import { useConnectMeta, useDisconnectMeta, useMetaIntegration, useSyncMetaAccounts } from '@/hooks/use-meta-integration';
+import {
+  useConnectMeta,
+  useConnectMetaCentral,
+  useDisconnectMeta,
+  useMetaCentralStatus,
+  useMetaIntegration,
+  useSyncMetaAccounts,
+} from '@/hooks/use-meta-integration';
 import {
   useConnectGoogleAds,
   useDisconnectGoogleAds,
@@ -185,7 +192,102 @@ export function ConexaoOAuth({
  * que ela concede. Num cartão de conexão isso importa nos dois sentidos, e
  * não só no de prometer demais.
  */
+const ESTADO_CENTRAL: Record<string, string> = {
+  connected: 'Conectada e válida',
+  invalid: 'Token recusado pelo Meta',
+  missing_scopes: 'Token sem as permissões necessárias',
+  not_connected: 'Credenciais no servidor, falta validar e conectar',
+  error: 'Não consegui consultar o Meta agora',
+};
+
+/**
+ * Conexão CENTRAL da Business Manager da agência: token de usuário do sistema,
+ * validado no servidor. Não abre tela do Facebook, então não depende de URL de
+ * redirecionamento cadastrada no app.
+ */
+function MetaCentral() {
+  const status = useMetaCentralStatus(true);
+  const conectar = useConnectMetaCentral();
+  const sincronizar = useSyncMetaAccounts();
+  const s = status.data;
+  if (status.isError) {
+    return <p className="mt-4 text-sm text-erro">{mensagemDeErro(status.error, 'Não consegui ler o estado da conexão Meta.')}</p>;
+  }
+  if (!s) return <Skeleton className="mt-4 h-24 w-full" />;
+
+  if (s.state === 'not_configured') {
+    return (
+      <div className="mt-4 rounded-lg border border-aviso/40 bg-aviso/10 p-4 text-sm text-aviso">
+        <p className="font-medium">Falta configurar a conexão central do Meta Ads no servidor.</p>
+        <ul className="mt-1.5 font-mono text-[11px]">
+          {s.missing.map((v) => (
+            <li key={v}>· {v}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  const ok = s.state === 'connected';
+  const detalhe = s.state === 'error' ? s.message : 'reason' in s ? s.reason : null;
+  const relatorio = conectar.data?.sync?.status === 'ok' ? conectar.data.sync : sincronizar.data?.status === 'ok' ? sincronizar.data : null;
+
+  return (
+    <div className="mt-4 rounded-lg border border-grafite-elevado p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="font-medium text-branco-cru">Business Manager da agência</p>
+          <p className="mt-1 text-sm text-nevoa">
+            {'business_name' in s && s.business_name ? `${s.business_name} · ` : ''}BM {s.business_id}
+          </p>
+          <p className={`mt-1 text-sm ${ok ? 'text-sinal' : 'text-aviso'}`}>{ESTADO_CENTRAL[s.state]}</p>
+          {'missing_scopes' in s && s.missing_scopes.length > 0 && (
+            <p className="mt-1 text-sm text-erro">Faltam: {s.missing_scopes.join(', ')}</p>
+          )}
+          {detalhe && <p className="mt-1 text-[13px] text-nevoa">{detalhe}</p>}
+          {'linked_accounts' in s && (
+            <p className="mt-1 text-[13px] text-nevoa">
+              {s.linked_accounts} contas vinculadas a clientes
+              {s.last_synced_at ? ` · última sincronização ${new Date(s.last_synced_at).toLocaleString('pt-BR')}` : ''}
+            </p>
+          )}
+        </div>
+        {ok && <Check size={16} className="mt-1 shrink-0 text-sinal" />}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            onClick={() => (ok ? sincronizar.mutate() : conectar.mutate())}
+            disabled={conectar.isPending || sincronizar.isPending}
+            className="inline-flex items-center gap-2 rounded-md bg-roxo-eletrico px-3 py-1.5 text-sm text-branco-cru transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            <RefreshCw size={14} className={conectar.isPending || sincronizar.isPending ? 'animate-spin' : undefined} />
+            {conectar.isPending ? 'Validando…' : sincronizar.isPending ? 'Importando…' : ok ? 'Importar contas agora' : 'Validar e conectar'}
+          </button>
+        </div>
+        {relatorio && (
+          <p className="max-w-md text-sm text-sinal">
+            {relatorio.vinculadas.length} contas vinculadas, {relatorio.jaVinculadas.length} já vinculadas, {relatorio.pendentes.length} pendentes de vínculo manual.
+          </p>
+        )}
+        {(conectar.isError || sincronizar.isError) && (
+          <p className="text-sm text-erro">{mensagemDeErro(conectar.error ?? sincronizar.error, 'Não consegui concluir.')}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function MetaConnect() {
+  const meta = useMetaIntegration();
+  // Com credenciais do usuário do sistema no servidor, o caminho é a conexão
+  // central. O Facebook pessoal (OAuth) fica só para quem não tem BM central.
+  if (meta.data?.central_configured || meta.data?.central_connected) return <MetaCentral />;
+  return <MetaConnectOAuth />;
+}
+
+function MetaConnectOAuth() {
   const meta = useMetaIntegration();
   const conectarMeta = useConnectMeta();
   const desconectarMeta = useDisconnectMeta();

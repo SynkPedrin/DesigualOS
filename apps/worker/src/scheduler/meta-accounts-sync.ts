@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
-import { META_PROVIDER, syncMetaAdAccountsForUser } from '@desigual-os/tool-gateway';
+import { META_PROVIDER, syncMetaAdAccountsForUser, syncMetaCentralAccounts } from '@desigual-os/tool-gateway';
 import type { Logger } from '@desigual-os/logging';
 
 /**
@@ -19,6 +19,7 @@ export async function syncAllMetaAdAccounts(logger: Logger): Promise<void> {
     .select({ userId: schema.integrationConnections.userId })
     .from(schema.integrationConnections)
     .where(and(eq(schema.integrationConnections.provider, META_PROVIDER), eq(schema.integrationConnections.status, 'connected')));
+  await syncMetaCentral(logger);
   if (conexoes.length === 0) return;
 
   let sucesso = 0;
@@ -47,4 +48,21 @@ export async function syncAllMetaAdAccounts(logger: Logger): Promise<void> {
     }
   }
   logger.info({ total: conexoes.length, sucesso, falha, naoConectado }, 'Sync diária de contas Meta Ads concluída');
+}
+
+/**
+ * Sync da conexão CENTRAL (usuário do sistema). Roda junto da diária: conta
+ * nova na BM ou cliente novo no cadastro se vincula sem ninguém apertar botão.
+ */
+export async function syncMetaCentral(logger: Logger): Promise<void> {
+  try {
+    const relatorio = await syncMetaCentralAccounts('worker');
+    if (relatorio.status === 'not_connected') return;
+    logger.info(
+      { vinculadas: relatorio.vinculadas.length, jaVinculadas: relatorio.jaVinculadas.length, pendentes: relatorio.pendentes.length },
+      'Contas Meta Ads da conexão central sincronizadas',
+    );
+  } catch (error) {
+    logger.error({ motivo: error instanceof Error ? error.message : String(error) }, 'Falha ao sincronizar a conexão Meta central');
+  }
 }

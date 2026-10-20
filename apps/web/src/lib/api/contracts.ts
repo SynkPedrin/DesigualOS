@@ -1064,7 +1064,30 @@ export interface MetaIntegrationStatusWire {
   /** false = o Orchestrator não tem META_APP_ID/SECRET/REDIRECT_URI configurados. */
   configured: boolean;
   connected_at?: ISODateString | null;
+  /** Credenciais do usuário do sistema presentes no servidor (sem OAuth). */
+  central_configured?: boolean;
+  /** Existe conexão central gravada. O estado real vem de MetaCentralStatusWire. */
+  central_connected?: boolean;
 }
+
+/** GET /integrations/meta/central/status — nunca traz token. */
+export type MetaCentralStatusWire =
+  | { state: 'not_configured'; missing: string[] }
+  | { state: 'not_connected'; business_id: string }
+  | { state: 'error'; business_id: string; message: string }
+  | {
+      state: 'connected' | 'invalid' | 'missing_scopes';
+      business_id: string;
+      business_name: string | null;
+      token_type: string | null;
+      scopes: string[];
+      missing_scopes: string[];
+      expires_at: ISODateString | null;
+      reason: string | null;
+      linked_accounts: number;
+      connected_at: ISODateString | null;
+      last_synced_at: ISODateString | null;
+    };
 
 export interface MetaBusinessWire {
   id: string;

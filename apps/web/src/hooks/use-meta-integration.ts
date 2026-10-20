@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
-import type { MetaAdAccountWire, MetaBusinessWire, MetaIntegrationStatusWire, MetaSyncReportWire } from '@/lib/api/contracts';
+import type { MetaAdAccountWire, MetaBusinessWire, MetaCentralStatusWire, MetaIntegrationStatusWire, MetaSyncReportWire } from '@/lib/api/contracts';
 
 /** Conexão Meta POR COLABORADOR — mesmo desenho do useClickUpIntegration. */
 export function useMetaIntegration() {
@@ -58,6 +58,31 @@ export function useSyncMetaAccounts() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => apiFetch<MetaSyncReportWire>('/integrations/meta/sync-accounts', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['integrations', 'meta'] });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+  });
+}
+
+/** Conexão CENTRAL da agência (usuário do sistema): estado real, conferido no Meta. */
+export function useMetaCentralStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: ['integrations', 'meta', 'central'],
+    queryFn: () => apiFetch<MetaCentralStatusWire>('/integrations/meta/central/status'),
+    enabled,
+  });
+}
+
+/** Valida o token no servidor, grava a conexão e importa as contas. Sem redirect, sem OAuth. */
+export function useConnectMetaCentral() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ connected: boolean; business_name: string; accounts: { total: number; owned: number; client: number }; sync: MetaSyncReportWire | null }>(
+        '/integrations/meta/central/connect',
+        { method: 'POST' },
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['integrations', 'meta'] });
       queryClient.invalidateQueries({ queryKey: ['clients'] });

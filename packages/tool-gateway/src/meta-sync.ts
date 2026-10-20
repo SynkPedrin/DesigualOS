@@ -1,7 +1,8 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { getMetaAdAccounts, getMetaBusinesses, type MetaAdAccount } from './meta-oauth';
-import { resolveMetaAccess } from './meta-access-resolver';
+import { markMetaCentralSynced } from './meta-system-connection';
+import { resolveMetaAccess, resolveMetaSystemAccess, getMetaSystemConnection, type MetaAccess } from './meta-access-resolver';
 
 /**
  * meta-sync.ts — AUTO-SYNC de contas Meta Ads (16/10/2026).
@@ -126,12 +127,31 @@ export type MetaSyncReport =
 export async function syncMetaAdAccountsForUser(userId: string, origem?: 'web' | 'worker'): Promise<MetaSyncReport> {
   const access = await resolveMetaAccess(userId);
   if (!access) return { status: 'not_connected' };
+  return syncMetaAdAccounts(access, userId, origem);
+}
 
+/**
+ * Sync da conexão CENTRAL, sem usuário na frente (job diário do worker). A
+ * auditoria usa o dono da linha da conexão, que é quem a estabeleceu.
+ */
+export async function syncMetaCentralAccounts(origem: 'web' | 'worker' = 'worker'): Promise<MetaSyncReport> {
+  const connection = await getMetaSystemConnection();
+  if (!connection) return { status: 'not_connected' };
+  const access = await resolveMetaSystemAccess();
+  if (!access) return { status: 'not_connected' };
+  return syncMetaAdAccounts(access, connection.userId, origem);
+}
+
+async function syncMetaAdAccounts(access: MetaAccess, userId: string, origem?: 'web' | 'worker'): Promise<MetaSyncReport> {
   // TODAS as BMs (owned + client accounts) + o fallback /me/adaccounts, que
   // enxerga conta solta fora de BM. Dedup por id (act_...) — a mesma conta
   // aparece em mais de um caminho quando a BM é dona E parceira dela.
   const porId = new Map<string, MetaAdAccount>();
-  const businesses = await getMetaBusinesses(access.token);
+  // Usuário do sistema não lista BMs em /me/businesses: parte da BM configurada.
+  const businesses =
+    access.kind === 'system' && access.businessId
+      ? [{ id: access.businessId, name: access.businessId }]
+      : await getMetaBusinesses(access.token);
   for (const bm of businesses) {
     for (const conta of await getMetaAdAccounts(access.token, bm.id)) porId.set(conta.id, conta);
   }
@@ -224,8 +244,11 @@ export async function syncMetaAdAccountsForUser(userId: string, origem?: 'web' |
       vinculadas: vinculadas.length,
       jaVinculadas: jaVinculadas.length,
       pendentes: pendentes.length,
+      conexao: access.kind,
     },
   });
+
+  if (access.kind === 'system') await markMetaCentralSynced();
 
   return { status: 'ok', vinculadas, jaVinculadas, pendentes };
 }
