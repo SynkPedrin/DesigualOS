@@ -76,7 +76,7 @@ export default function MonitoringPage() {
             ))}
           </div>
 
-          <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.3fr]">
+          <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
             <Surface level="grafite" className="flex items-center justify-center p-4">
               {isPending ? (
                 <Skeleton className="aspect-square w-full" />

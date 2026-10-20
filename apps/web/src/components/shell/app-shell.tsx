@@ -40,7 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               * busca de vista — justo o que precisa ficar à mão numa tela de
               * lista. Agora o quadro é fixo, como a sidebar sempre foi, e quem
               * rola é a área de conteúdo logo abaixo. */}
-            <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <AnimatePresence mode="wait">
               <motion.div
                 key={pathname}
@@ -48,7 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.25, ease: 'easeOut' }}
-                className="mx-auto flex h-full min-h-0 w-full flex-col overflow-y-auto px-8 pb-8"
+                className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden px-8 pb-8"
               >
                 {children}
               </motion.div>

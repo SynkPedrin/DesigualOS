@@ -36,7 +36,7 @@ export default function ControlPlanePage() {
   const temControleDaAgencia = !(erroDoControleDaAgencia instanceof ApiRequestError && erroDoControleDaAgencia.status === 403);
 
   return (
-    <div className="mx-auto max-w-[1400px]">
+    <div className="mx-auto max-w-[1680px]">
       <PageHeader
         title="Desigual OS · Control Plane"
         description="Inteligência, memória e governança da operação."
@@ -83,7 +83,7 @@ export default function ControlPlanePage() {
         */}
       <LinhaDoSistema />
 
-      <div className="grid gap-8 lg:grid-cols-[1.15fr_1fr]">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <Secao
           titulo="Atividade recente"
           acao={

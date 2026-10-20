@@ -461,7 +461,7 @@ export default function TodayPage() {
         acao={{ label: 'Ver detalhes', href: '/chat' }}
       />
 
-      <div className="grid max-w-[1400px] gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={MessageSquare}
           iconClassName="bg-roxo-eletrico/15 text-roxo-eletrico"
@@ -529,7 +529,7 @@ export default function TodayPage() {
           "Seu dia" mais "Saúde operacional", virando um retângulo vazio de uma
           tela de altura com uma frase no meio. Cada painel agora tem a altura
           do que tem dentro. */}
-      <div className="grid items-start gap-6 lg:grid-cols-[1.3fr_1fr]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <Surface className="flex flex-col gap-4 p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -708,19 +708,19 @@ function AbasDeRecorte({
 function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
   return (
     <div className="-mx-2 overflow-x-auto">
-      <table className="w-full border-collapse text-left">
+      <table className="w-full table-fixed border-collapse text-left">
         <thead className="hidden md:table-header-group">
           <tr className="border-b border-grafite-elevado">
             <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa">Item</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa">Cliente / Projeto</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa">Status</th>
-            <th className="px-2 pb-2 text-right font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa">Prazo</th>
+            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[26%]">Cliente / Projeto</th>
+            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[15%]">Status</th>
+            <th className="px-2 pb-2 text-right font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[14%]">Prazo</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-grafite-elevado">
           {itens.map((item) => (
             <tr key={item.id} className="group transition-colors hover:bg-grafite-elevado/40">
-              <td className="px-2 py-3 align-middle">
+              <td className="min-w-0 px-2 py-3 align-middle">
                 <LinhaDeItem item={item}>
                   <span className={cn('size-2 shrink-0 rounded-full', PONTO_CLASS[item.badge.tom])} />
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-branco-cru">{item.titulo}</span>

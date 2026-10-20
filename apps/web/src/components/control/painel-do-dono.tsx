@@ -185,7 +185,7 @@ export function PainelDoDono() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr] xl:grid-cols-[1.5fr_1fr_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
         {/* USO AO LONGO DO TEMPO — a forma da curva diz mais que o total. */}
         <Cartao titulo="Uso da inteligência, dia a dia" legenda="Últimos 14 dias. A faixa escura é o que falhou.">
           {serie.length === 0 ? (
