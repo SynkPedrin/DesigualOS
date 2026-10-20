@@ -1,8 +1,23 @@
 diff --git a/cf/src/connection.js b/cf/src/connection.js
-index 8e79170aeb13efe8c3c77ccede0cd3a115b5e1b5..cc4cdd04b1e5a0cf30612496eba935ccf6ebea13 100644
+index 8e79170aeb13efe8c3c77ccede0cd3a115b5e1b5..e60266385e7dcb337bc9d91787e4b17e6e2a1ba9 100644
 --- a/cf/src/connection.js
 +++ b/cf/src/connection.js
-@@ -223,6 +223,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -172,8 +172,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+         : (query = q, query.active = true)
+ 
+       build(q)
++      // Sem pipeline no atalho: medido em 20/10/2026, o pooler do Supabase em
++      // modo transação devolveu respostas trocadas entre consultas enfileiradas
++      // na mesma conexão ("Invalid time value" lendo datas de outra consulta).
++      // Uma consulta por vez por conexão é exatamente como as consultas sem
++      // parâmetro já andam em produção.
+       return write(toBuffer(q))
+         && !q.describeFirst
++        && !q.semDescribe
+         && !q.cursorFn
+         && sent.length < max_pipeline
+         && (!q.options.onexecute || q.options.onexecute(connection))
+@@ -223,6 +229,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      ])
    }
  
@@ -13,7 +28,7 @@ index 8e79170aeb13efe8c3c77ccede0cd3a115b5e1b5..cc4cdd04b1e5a0cf30612496eba935cc
    function build(q) {
      const parameters = []
          , types = []
-@@ -237,7 +241,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -237,7 +247,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      q.onlyDescribe && (delete statements[q.signature])
      q.parameters = q.parameters || parameters
      q.prepared = q.prepare && q.signature in statements
@@ -24,17 +39,32 @@ index 8e79170aeb13efe8c3c77ccede0cd3a115b5e1b5..cc4cdd04b1e5a0cf30612496eba935cc
 +    // do servidor). Com só texto/número/booleano/data/null, o servidor infere
 +    // os tipos no Parse do mesmo jeito: vai direto. PG_DESCRIBE_SEMPRE=1 volta
 +    // ao comportamento original sem rebuild.
-+    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !(
-+      !q.prepare && process.env.PG_DESCRIBE_SEMPRE !== '1' && q.parameters.every(valorSemTipoDoServidor)
-+    ))
++    q.semDescribe = Boolean(parameters.length && !q.prepared && !q.onlyDescribe &&
++      !q.prepare && process.env.PG_DESCRIBE_SEMPRE !== '1' && q.parameters.every(valorSemTipoDoServidor))
++    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !q.semDescribe)
      q.statement = q.prepared
        ? statements[q.signature]
        : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
-index 07f6716702ac888215c86ad6e0071aaf55ae519c..8f9ff3588a19aee0af9bf9ca799bdb62633807a9 100644
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..e388340801dfcab30ba80581325ba7ebc436f4ca 100644
 --- a/cjs/src/connection.js
 +++ b/cjs/src/connection.js
-@@ -221,6 +221,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -170,8 +170,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+         : (query = q, query.active = true)
+ 
+       build(q)
++      // Sem pipeline no atalho: medido em 20/10/2026, o pooler do Supabase em
++      // modo transação devolveu respostas trocadas entre consultas enfileiradas
++      // na mesma conexão ("Invalid time value" lendo datas de outra consulta).
++      // Uma consulta por vez por conexão é exatamente como as consultas sem
++      // parâmetro já andam em produção.
+       return write(toBuffer(q))
+         && !q.describeFirst
++        && !q.semDescribe
+         && !q.cursorFn
+         && sent.length < max_pipeline
+         && (!q.options.onexecute || q.options.onexecute(connection))
+@@ -221,6 +227,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      ])
    }
  
@@ -45,7 +75,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..8f9ff3588a19aee0af9bf9ca799bdb62
    function build(q) {
      const parameters = []
          , types = []
-@@ -235,7 +239,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,7 +245,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      q.onlyDescribe && (delete statements[q.signature])
      q.parameters = q.parameters || parameters
      q.prepared = q.prepare && q.signature in statements
@@ -56,17 +86,32 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..8f9ff3588a19aee0af9bf9ca799bdb62
 +    // do servidor). Com só texto/número/booleano/data/null, o servidor infere
 +    // os tipos no Parse do mesmo jeito: vai direto. PG_DESCRIBE_SEMPRE=1 volta
 +    // ao comportamento original sem rebuild.
-+    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !(
-+      !q.prepare && process.env.PG_DESCRIBE_SEMPRE !== '1' && q.parameters.every(valorSemTipoDoServidor)
-+    ))
++    q.semDescribe = Boolean(parameters.length && !q.prepared && !q.onlyDescribe &&
++      !q.prepare && process.env.PG_DESCRIBE_SEMPRE !== '1' && q.parameters.every(valorSemTipoDoServidor))
++    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !q.semDescribe)
      q.statement = q.prepared
        ? statements[q.signature]
        : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
 diff --git a/src/connection.js b/src/connection.js
-index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..5b5244efff2aaa3ca2ac8ffbf89d3044ba537fd2 100644
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..5e0270b9c053b37b0e4288c703d70c0ebd69b2a9 100644
 --- a/src/connection.js
 +++ b/src/connection.js
-@@ -221,6 +221,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -170,8 +170,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+         : (query = q, query.active = true)
+ 
+       build(q)
++      // Sem pipeline no atalho: medido em 20/10/2026, o pooler do Supabase em
++      // modo transação devolveu respostas trocadas entre consultas enfileiradas
++      // na mesma conexão ("Invalid time value" lendo datas de outra consulta).
++      // Uma consulta por vez por conexão é exatamente como as consultas sem
++      // parâmetro já andam em produção.
+       return write(toBuffer(q))
+         && !q.describeFirst
++        && !q.semDescribe
+         && !q.cursorFn
+         && sent.length < max_pipeline
+         && (!q.options.onexecute || q.options.onexecute(connection))
+@@ -221,6 +227,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      ])
    }
  
@@ -77,7 +122,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..5b5244efff2aaa3ca2ac8ffbf89d3044
    function build(q) {
      const parameters = []
          , types = []
-@@ -235,7 +239,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,7 +245,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      q.onlyDescribe && (delete statements[q.signature])
      q.parameters = q.parameters || parameters
      q.prepared = q.prepare && q.signature in statements
@@ -88,9 +133,9 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..5b5244efff2aaa3ca2ac8ffbf89d3044
 +    // do servidor). Com só texto/número/booleano/data/null, o servidor infere
 +    // os tipos no Parse do mesmo jeito: vai direto. PG_DESCRIBE_SEMPRE=1 volta
 +    // ao comportamento original sem rebuild.
-+    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !(
-+      !q.prepare && process.env.PG_DESCRIBE_SEMPRE !== '1' && q.parameters.every(valorSemTipoDoServidor)
-+    ))
++    q.semDescribe = Boolean(parameters.length && !q.prepared && !q.onlyDescribe &&
++      !q.prepare && process.env.PG_DESCRIBE_SEMPRE !== '1' && q.parameters.every(valorSemTipoDoServidor))
++    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !q.semDescribe)
      q.statement = q.prepared
        ? statements[q.signature]
        : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
