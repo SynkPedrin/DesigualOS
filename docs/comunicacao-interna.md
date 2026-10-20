@@ -62,17 +62,21 @@ para `.pdf` é recusado.
 | `INTERNAL_CHAT_MAX_IMAGE_MB` | 25 | Limite por imagem |
 | `INTERNAL_CHAT_MAX_DOCUMENT_MB` | 25 | Limite por documento |
 | `INTERNAL_CHAT_MAX_ARCHIVE_MB` | 25 | Limite por ZIP |
-| `INTERNAL_CHAT_MAX_VIDEO_MB` | 100 | Limite por vídeo |
+| `INTERNAL_CHAT_MAX_VIDEO_MB` | 100 (produção: 250) | Limite por vídeo |
 | `INTERNAL_CHAT_ORG_QUOTA_MB` | 20480 | Espaço total por organização |
 | `INTERNAL_CHAT_ALLOWED_EXTENSIONS` | todas acima | Restringe a lista, separada por vírgula |
 
-O vídeo começa em 100 MB porque o nginx da API aceita até 110 MB por
-requisição. A rota de upload já usa o maior limite da tabela, e não o limite
-global de 25 MB do multipart. Para subir o vídeo, aumente o
-`client_max_body_size` do nginx na VPS **junto** com
-`INTERNAL_CHAT_MAX_VIDEO_MB`. Se subir só a variável, o nginx corta antes com
-413. Conferido em 20/10/2026: 60 MB passam inteiros; 101 MB voltam 413 em
-menos de 0,1 s, sem sobra no disco.
+Em produção o vídeo vai até **250 MB** (20/10/2026): o `docker-compose.prod.yml`
+define `INTERNAL_CHAT_MAX_VIDEO_MB=250` e o nginx da API
+(`/etc/nginx/sites-available/desigual-os-api` na VPS) aceita
+`client_max_body_size 260m`. A rota de upload já usa o maior limite da tabela,
+e não o limite global de 25 MB do multipart. Para subir mais, os dois números
+sobem juntos. Se subir só a variável, o nginx corta antes com 413.
+
+Arquivo grande ocupa disco na VPS, que é dividida com outros serviços. Em
+20/10/2026 o disco estava em 93% por causa de 78 GB de cache de build do
+Docker. A limpeza segura é `docker builder prune -f --keep-storage 15GB`, que
+só apaga cache e não mexe em contêiner nenhum.
 
 ## Tempo real
 

@@ -76,6 +76,9 @@ services:
       # projeto — o default de 3 no código continua valendo fora daqui.
       DATABASE_POOL_MAX: ${API_DATABASE_POOL_MAX:-12}
       INTERNAL_CHAT_FILES_DIR: /data/internal-chat-files
+      # 250 MB por vídeo: o nginx da API (sites-available/desigual-os-api) aceita 260m.
+      # Subir este número exige subir o client_max_body_size lá junto.
+      INTERNAL_CHAT_MAX_VIDEO_MB: ${INTERNAL_CHAT_MAX_VIDEO_MB:-250}
     volumes:
       - whatsapp_media:/data/whatsapp-media
       # Anexos da Comunicação interna: privados, só saem pela API (internal-chat/arquivos.ts).
