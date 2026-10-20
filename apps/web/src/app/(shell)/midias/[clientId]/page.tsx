@@ -7,6 +7,7 @@ import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { ClientMetaAdsPanel } from '@/components/clients/client-meta-ads-panel';
+import { MediaCommandCenter } from '@/components/media/media-command-center';
 import { ClientGoogleAdsPanel } from '@/components/clients/client-google-ads-panel';
 import { ClientReportsPanel } from '@/components/clients/client-reports-panel';
 import { useClients } from '@/hooks/use-clients';
@@ -139,10 +140,24 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
         </Surface>
       )}
 
-      {plataforma === 'meta' ? <ClientMetaAdsPanel clientId={clientId} /> : <ClientGoogleAdsPanel clientId={clientId} />}
+      {plataforma === 'meta' ? (
+        <>
+          <MediaCommandCenter clientId={clientId} />
+          {/* A leitura ao vivo anterior continua disponível: é a conferência direta com o Meta quando um número do painel parecer estranho. */}
+          <details className="rounded-lg border border-grafite-elevado p-3">
+            <summary className="cursor-pointer text-sm text-nevoa">Leitura ao vivo no Meta (conferência)</summary>
+            <div className="mt-3">
+              <ClientMetaAdsPanel clientId={clientId} />
+            </div>
+          </details>
+        </>
+      ) : (
+        <ClientGoogleAdsPanel clientId={clientId} />
+      )}
 
       {/* RELATÓRIO EM PDF no fim, porque é o que se faz DEPOIS de olhar: o
           PDF é o que vai pro cliente, e sai do mesmo dado desta tela. */}
+      {plataforma !== 'meta' && (
       <Surface className="flex flex-col gap-3 p-5">
         <div className="flex items-center gap-2">
           <FileText size={16} className="text-nevoa" />
@@ -150,6 +165,7 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
         </div>
         <ClientReportsPanel clientId={clientId} />
       </Surface>
+      )}
     </div>
   );
 }
