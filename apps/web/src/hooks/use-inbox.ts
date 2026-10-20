@@ -271,8 +271,13 @@ export function useLinkInboxThreadClient(threadId: string) {
     mutationFn: (clientId: string | null) =>
       apiFetch<InboxThreadWire>(`/inbox/threads/${threadId}/client`, { method: 'PATCH', body: JSON.stringify({ clientId }) }),
     onSuccess: (wire) => {
+      const anterior = queryClient.getQueryData<InboxThread>(['inbox-thread', threadId])?.clientId;
       queryClient.setQueryData(['inbox-thread', threadId], mapInboxThread(wire));
       invalidateThread(queryClient, threadId);
+      // A visão geral do cliente novo (e do antigo, se trocou) mostra as conversas do WhatsApp.
+      for (const id of new Set([wire.client_id, anterior].filter(Boolean))) {
+        void queryClient.invalidateQueries({ queryKey: ['clients', id, 'overview'] });
+      }
     },
   });
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { ImageIcon, Loader2, MessageSquare } from 'lucide-react';
+import Link from 'next/link';
+import { ImageIcon, Loader2, MessageCircle, MessageSquare } from 'lucide-react';
 import { useClientOverview } from '@/hooks/use-client-overview';
 import { formatRelativeTime } from '@/lib/format';
 
@@ -109,6 +110,33 @@ export function ClientOverviewPanel({ clientId }: { clientId: string }) {
       </section>
 
       <section className="space-y-2">
+        <SectionTitle>Conversas no WhatsApp · {data.whatsapp?.total ?? 0}</SectionTitle>
+        {!data.whatsapp || data.whatsapp.latest.length === 0 ? (
+          <p className="text-sm text-nevoa">Nenhuma conversa do WhatsApp vinculada a este cliente. Vincule pela Inbox, no painel da conversa.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {data.whatsapp.latest.map((thread) => (
+              <li key={thread.id}>
+                <Link href={`/inbox?t=${thread.id}`} className="flex items-center justify-between gap-3 rounded-md border border-grafite-elevado bg-carbono px-3 py-2 hover:border-sinal/40">
+                  <span className="flex min-w-0 items-center gap-2 text-xs text-branco-cru">
+                    <MessageCircle size={12} className="shrink-0 text-[#25D366]" />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{thread.name}{thread.kind === 'group' ? ' · grupo' : ''}</span>
+                      {thread.last_message_preview && <span className="block truncate text-nevoa">{thread.last_message_preview}</span>}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {thread.unread_count > 0 && <span className="rounded-full bg-roxo-eletrico px-1.5 text-[10px] text-branco-cru">{thread.unread_count}</span>}
+                    {thread.last_message_at && <span className="font-mono text-[10px] text-nevoa">{formatRelativeTime(thread.last_message_at)}</span>}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-2">
         <SectionTitle>Conversas no Desigual OS · {data.conversations.total}</SectionTitle>
         {data.conversations.latest.length === 0 ? (
           <p className="text-sm text-nevoa">Nenhuma conversa com os agentes sobre este cliente ainda.</p>
@@ -127,7 +155,7 @@ export function ClientOverviewPanel({ clientId }: { clientId: string }) {
         )}
       </section>
 
-      {data.studio.latest.length === 0 && data.conversations.latest.length === 0 && !data.clickup && (
+      {data.studio.latest.length === 0 && data.conversations.latest.length === 0 && !data.whatsapp?.latest.length && !data.clickup && (
         <p className="flex items-center gap-2 text-sm text-nevoa">
           <ImageIcon size={15} /> Nada registrado pra este cliente ainda.
         </p>
