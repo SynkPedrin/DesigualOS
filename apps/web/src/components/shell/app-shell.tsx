@@ -2,6 +2,8 @@
 
 import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect } from 'react';
+import { useUiStore } from '@/stores/ui-store';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 import { ContextoDaEmpresa } from './contexto-da-empresa';
@@ -23,6 +25,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // de uma vez: mensagens, notificações e execuções passam a atualizar na
   // hora em vez de esperar o próximo poll (10s/20s antes disso).
   useRealtimeEvents();
+
+  // Lembra se a barra lateral estava recolhida e dá o atalho ⌘/Ctrl+B.
+  useEffect(() => {
+    useUiStore.getState().hidratarSidebar();
+    function aoTeclar(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        useUiStore.getState().toggleSidebar();
+      }
+    }
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  }, []);
 
   return (
     <TourProvider>

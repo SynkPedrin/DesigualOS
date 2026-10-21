@@ -1,8 +1,29 @@
 import { create } from 'zustand';
 
+const SIDEBAR_KEY = 'desigual-os:sidebar-collapsed';
+
+function lerSidebarSalva(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function salvarSidebar(colapsada: boolean) {
+  try {
+    window.localStorage.setItem(SIDEBAR_KEY, colapsada ? '1' : '0');
+  } catch {
+    // Storage bloqueado (janela privada): a barra só não lembra, segue funcionando.
+  }
+}
+
 interface UiState {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
+  /** Lê a preferência salva. Roda depois do mount: no servidor não há storage, e
+   * ler no estado inicial faria o HTML do SSR divergir do cliente. */
+  hidratarSidebar: () => void;
   /** Drawer da sidebar em telas < md (ver mobile-nav-drawer.tsx) - independente do
    * collapse de desktop, que não faz sentido num overlay que já fecha sozinho. */
   mobileNavOpen: boolean;
@@ -23,7 +44,13 @@ interface UiState {
 
 export const useUiStore = create<UiState>((set) => ({
   sidebarCollapsed: false,
-  toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+  toggleSidebar: () =>
+    set((state) => {
+      const proxima = !state.sidebarCollapsed;
+      salvarSidebar(proxima);
+      return { sidebarCollapsed: proxima };
+    }),
+  hidratarSidebar: () => set({ sidebarCollapsed: lerSidebarSalva() }),
   mobileNavOpen: false,
   setMobileNavOpen: (open) => set({ mobileNavOpen: open }),
   toggleMobileNav: () => set((state) => ({ mobileNavOpen: !state.mobileNavOpen })),
