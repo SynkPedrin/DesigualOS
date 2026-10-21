@@ -4,6 +4,7 @@ import { db, schema } from '@desigual-os/database';
 import { decidirOrganizacaoDeTrabalho } from '@desigual-os/auth';
 import { organizacaoAtivaDe } from '../organizations/contexto';
 import { escopoDeOrganizacao, organizacaoProvedora } from './escopo-de-organizacao';
+import { LIMITE_DO_VALOR_VELHO_MS, renovarEmSegundoPlano } from './renovacao';
 
 /**
  * tenant-context.ts — decide em qual empresa a requisição está trabalhando e
@@ -78,12 +79,25 @@ export function esquecerVinculos(userId: string): void {
 
 async function fatosDeVinculo(user: NonNullable<FastifyRequest['authUser']>) {
   const hit = vinculosCache.get(user.id);
-  if (hit && Date.now() - hit.at < VINCULOS_TTL_MS) return hit;
-  const [vinculos, escopo] = await Promise.all([vinculosDe(user.id), escopoDeOrganizacao(user)]);
-  const fresh = { vinculos, escopo, at: Date.now() };
+  const idade = hit ? Date.now() - hit.at : Infinity;
+  if (hit && idade < VINCULOS_TTL_MS) return hit;
+  if (hit && idade < LIMITE_DO_VALOR_VELHO_MS) {
+    renovarEmSegundoPlano(`vinculos:${user.id}`, async () => {
+      const novo = await lerVinculos(user);
+      // esquecerVinculos durante a releitura ganha: não grava por cima do apagamento.
+      if (vinculosCache.get(user.id) === hit && (novo.vinculos.length > 0 || novo.escopo.ehProvider)) vinculosCache.set(user.id, novo);
+    });
+    return hit;
+  }
+  const fresh = await lerVinculos(user);
   // Falha de banco devolve [] em vinculosDe: não guardar, para não prender a pessoa fora por 20 s.
-  if (vinculos.length > 0 || escopo.ehProvider) vinculosCache.set(user.id, fresh);
+  if (fresh.vinculos.length > 0 || fresh.escopo.ehProvider) vinculosCache.set(user.id, fresh);
   return fresh;
+}
+
+async function lerVinculos(user: NonNullable<FastifyRequest['authUser']>) {
+  const [vinculos, escopo] = await Promise.all([vinculosDe(user.id), escopoDeOrganizacao(user)]);
+  return { vinculos, escopo, at: Date.now() };
 }
 
 export async function requireTenant(request: FastifyRequest, reply: FastifyReply): Promise<void> {

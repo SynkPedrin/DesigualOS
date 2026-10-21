@@ -47,6 +47,16 @@ vi.mock('../auth/middleware', () => ({
 
 vi.mock('../lib/auditoria', () => ({ auditarAcao: async () => undefined }));
 
+/** O evento ao vivo sai logo DEPOIS da resposta do envio (Hub 2.1): espera até ele aparecer (ou desiste em 2 s). */
+async function esperarEvento(eventos: Array<{ type: string; payload: Record<string, unknown> }>, nome: string) {
+  for (let i = 0; i < 40; i++) {
+    const e = eventos.find((x) => x.payload.event === nome);
+    if (e) return e;
+    await new Promise((ok) => setTimeout(ok, 50));
+  }
+  return undefined;
+}
+
 describe.skipIf(!enabled)('Comunicação interna (Postgres real)', () => {
   const orgA = randomUUID();
   const orgB = randomUUID();
@@ -126,7 +136,7 @@ describe.skipIf(!enabled)('Comunicação interna (Postgres real)', () => {
   it('mensagem no #Geral persiste, chega ao vivo para todos da organização e conta como não lida', async () => {
     const r = await post(ana, `/internal-chat/conversations/${geral}/messages`, { content: 'Bom dia, equipe!\nReunião às 10h.', clientMessageId: 'cli-geral-0001' });
     expect(r.statusCode).toBe(201);
-    const evento = eventos.find((e) => e.type === 'chat.event' && e.payload.event === 'message.created')!;
+    const evento = (await esperarEvento(eventos, 'message.created'))!;
     expect(new Set(evento.payload.recipient_ids as string[])).toEqual(new Set([ana, bia, caio]));
     const pagina = (await get(bia, `/internal-chat/conversations/${geral}/messages`)).json();
     expect(pagina.messages.at(-1)).toMatchObject({ content: 'Bom dia, equipe!\nReunião às 10h.', sender_id: ana });
@@ -180,7 +190,7 @@ describe.skipIf(!enabled)('Comunicação interna (Postgres real)', () => {
 
     const enviada = await post(ana, `/internal-chat/conversations/${privadaAnaBia}/messages`, { content: 'só entre nós', clientMessageId: 'cli-dm-00001' });
     expect(enviada.statusCode).toBe(201);
-    const evento = eventos.find((e) => e.payload.event === 'message.created')!;
+    const evento = (await esperarEvento(eventos, 'message.created'))!;
     expect(new Set(evento.payload.recipient_ids as string[])).toEqual(new Set([ana, bia]));
     expect((await get(bia, `/internal-chat/conversations/${privadaAnaBia}/messages`)).json().messages[0].content).toBe('só entre nós');
 

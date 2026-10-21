@@ -388,7 +388,7 @@ export function Sidebar({
           }
 
           return (
-            <Link key={item.href} href={item.href} className={itemClassName} onClick={() => onNavigate?.()}>
+            <Link key={item.href} href={item.href} className={itemClassName} onClick={() => onNavigate?.()} data-tour-id={`nav-${item.href.slice(1) || 'inicio'}`}>
               {itemContent}
             </Link>
           );

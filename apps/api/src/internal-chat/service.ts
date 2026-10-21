@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, lt, ne, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 
 /**
@@ -705,6 +705,151 @@ export async function enviarMensagem(conversa: Conversa, remetenteId: string, in
     participantesDaThread = [...new Set([raiz.senderId, ...quem.map((q) => q.id)])].filter((id) => id !== remetenteId);
   }
   return { criada: true, mensagem, mencionados, autorRespondido, raiz, participantesDaThread };
+}
+
+/** Linha que veio como JSON do Postgres (snake_case, datas em texto) → linha do Drizzle. */
+function linhaDoJson<T extends Record<string, unknown>>(tabela: Parameters<typeof getTableColumns>[0], json: Record<string, unknown>): T {
+  const saida: Record<string, unknown> = {};
+  for (const [chave, coluna] of Object.entries(getTableColumns(tabela))) {
+    const valor = json[coluna.name];
+    saida[chave] = valor == null ? null : coluna.columnType === 'PgTimestamp' ? new Date(String(valor)) : valor;
+  }
+  return saida as T;
+}
+
+export interface EnvioRapido {
+  conversa: Conversa;
+  criada: true;
+  mensagem: MensagemCompleta;
+  mencionados: string[];
+  autorRespondido: string | null;
+  raiz: Mensagem | null;
+}
+
+/**
+ * O ENVIO NUMA CONSULTA SÓ (Hub 2.1). Cada consulta com parâmetro custa ~250 ms
+ * daqui até o banco; o envio fazia 15 a 28 (2,3 a 4,2 s, medido). Esta faz a
+ * mesma coisa num comando: confere quem pode escrever (a MESMA regra de
+ * `leituraSql`, mais "não arquivada"), filtra as menções para quem lê, grava a
+ * mensagem e os itens compartilhados, move a conversa (ou a thread) e marca o
+ * remetente como quem leu. Um comando só é atômico por definição.
+ *
+ * Devolve null quando NÃO gravou — sem acesso, arquivada, thread/resposta
+ * inválida, `clientMessageId` repetido, discussão, ou com anexo. Aí quem chama
+ * segue o caminho completo (`enviarMensagem`), que dá o erro certo ou devolve a
+ * já gravada. Discussão fica de fora de propósito: o acesso a ela depende do
+ * objeto (cliente/quinzena), que só `conversaAcessivel` confere.
+ */
+export async function enviarRapido(organizationId: string, conversationId: string, remetenteId: string, input: {
+  content?: string | null | undefined;
+  clientMessageId: string;
+  replyToId?: string | null | undefined;
+  threadRootId?: string | null | undefined;
+  attachmentIds?: string[] | undefined;
+  mentions?: string[] | undefined;
+}, objetos: ObjetoParaGravar[] = []): Promise<EnvioRapido | null> {
+  if (!UUID.test(conversationId)) return null;
+  if (input.attachmentIds?.length) return null;
+  if ((input.replyToId && !UUID.test(input.replyToId)) || (input.threadRootId && !UUID.test(input.threadRootId))) return null;
+  const content = limparTexto(input.content);
+  if (!content && objetos.length === 0) return null;
+  const mencoes = [...new Set(input.mentions ?? [])].filter((id) => UUID.test(id) && id !== remetenteId).slice(0, 50);
+  const raizId = input.threadRootId ?? null;
+  const respostaId = input.replyToId ?? null;
+  const lista = (ids: string[]) => ids.length ? sql`array[${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)}]` : sql`array[]::uuid[]`;
+  const objetosJson = JSON.stringify(objetos.map((o) => ({ object_type: o.objectType, object_id: o.objectId, provider: o.provider, context: o.context, snapshot: o.snapshot, snapshot_version: o.snapshotVersion })));
+
+  const [linha] = await db.execute<{ conversa: Record<string, unknown>; nova: Record<string, unknown>; raiz: Record<string, unknown> | null; objetos: Array<Record<string, unknown>> | null; autor_respondido: string | null; resposta: { id: string; content: string | null; deleted: boolean; sender_name: string | null } | null; remetente: { id: string; name: string; avatar_url: string | null } }>(sql`
+    with c as (
+      select c.* from internal_conversations c
+      where c.id = ${conversationId} and c.archived_at is null and c.kind <> 'discussion'
+        and ${leituraSql('c', organizationId, remetenteId)}
+    ),
+    alvo_raiz as (
+      select m.* from internal_messages m
+      where m.id = ${raizId}::uuid and m.conversation_id = ${conversationId} and m.deleted_at is null and m.thread_root_id is null
+    ),
+    alvo_resposta as (
+      select m.id, m.sender_id, m.content, (m.deleted_at is not null) as deleted, u.name as sender_name
+      from internal_messages m left join users u on u.id = m.sender_id
+      where m.id = ${respostaId}::uuid and m.conversation_id = ${conversationId}
+    ),
+    -- Menção só vale para quem pode ler a conversa: #Geral e canal público, qualquer membro ativo; o resto, participante.
+    mencionados as (
+      select coalesce(array_agg(x.id), array[]::uuid[]) as ids from unnest(${lista(mencoes)}) as x(id), c
+      where (c.kind = 'general' or (c.kind = 'channel' and c.visibility = 'public'))
+          and ${sql`exists (select 1 from organization_members om join users u on u.id = om.user_id where om.organization_id = ${organizationId} and om.user_id = x.id and u.active and u.deleted_at is null)`}
+        or not (c.kind = 'general' or (c.kind = 'channel' and c.visibility = 'public'))
+          and exists (select 1 from internal_conversation_members cm where cm.conversation_id = c.id and cm.user_id = x.id)
+    ),
+    nova as (
+      insert into internal_messages (organization_id, conversation_id, sender_id, content, reply_to_id, thread_root_id, mentions, client_message_id)
+      select c.organization_id, c.id, ${remetenteId}::uuid, ${content}::text, ${respostaId}::uuid, ${raizId}::uuid, (select ids from mencionados), ${input.clientMessageId}::text
+      from c
+      where (${raizId}::uuid is null or exists (select 1 from alvo_raiz))
+        and (${respostaId}::uuid is null or exists (select 1 from alvo_resposta))
+      on conflict do nothing
+      returning *
+    ),
+    objs as (
+      insert into internal_message_objects (organization_id, message_id, created_by, object_type, object_id, provider, context, snapshot, snapshot_version)
+      select nova.organization_id, nova.id, ${remetenteId}::uuid, o.object_type, o.object_id, o.provider, coalesce(o.context, '{}'::jsonb), o.snapshot, o.snapshot_version
+      from nova, jsonb_to_recordset(${objetosJson}::jsonb) as o(object_type text, object_id text, provider text, context jsonb, snapshot jsonb, snapshot_version int)
+      returning *
+    ),
+    conv as (
+      update internal_conversations set last_message_at = nova.created_at from nova
+      where internal_conversations.id = nova.conversation_id and nova.thread_root_id is null
+      returning 1
+    ),
+    raiz as (
+      update internal_messages set reply_count = internal_messages.reply_count + 1, last_reply_at = nova.created_at from nova
+      where internal_messages.id = nova.thread_root_id
+      returning internal_messages.*
+    ),
+    -- Quem envia leu até aqui (resposta de thread não mexe na leitura da linha principal); canal público: entra ao escrever.
+    membro as (
+      insert into internal_conversation_members (conversation_id, user_id, organization_id, last_read_at)
+      select nova.conversation_id, ${remetenteId}::uuid, nova.organization_id, case when nova.thread_root_id is null then nova.created_at end from nova
+      on conflict (conversation_id, user_id) do update set last_read_at = coalesce(excluded.last_read_at, internal_conversation_members.last_read_at)
+      returning 1
+    )
+    select row_to_json(c) as conversa, row_to_json(nova) as nova,
+      (select row_to_json(raiz) from raiz) as raiz,
+      (select json_agg(row_to_json(objs)) from objs) as objetos,
+      (select sender_id from alvo_resposta) as autor_respondido,
+      (select json_build_object('id', id, 'content', left(content, 200), 'deleted', deleted, 'sender_name', sender_name) from alvo_resposta) as resposta,
+      (select json_build_object('id', u.id, 'name', u.name, 'avatar_url', u.avatar_url) from users u where u.id = ${remetenteId}::uuid) as remetente
+    from c, nova
+  `);
+  if (!linha) return null;
+  const mensagem = linhaDoJson<Mensagem>(schema.internalMessages, linha.nova);
+  const raiz = linha.raiz ? linhaDoJson<Mensagem>(schema.internalMessages, linha.raiz) : null;
+  const objs = (linha.objetos ?? []).map((o) => linhaDoJson<ObjetoDaMensagem>(schema.internalMessageObjects, o));
+  return {
+    conversa: linhaDoJson<Conversa>(schema.internalConversations, linha.conversa),
+    criada: true,
+    mencionados: mensagem.mentions ?? [],
+    autorRespondido: linha.autor_respondido,
+    raiz,
+    mensagem: {
+      message: mensagem,
+      sender: { id: linha.remetente.id, name: linha.remetente.name, avatarUrl: linha.remetente.avatar_url },
+      attachments: [],
+      reactions: [],
+      replyTo: linha.resposta ? { id: linha.resposta.id, senderName: linha.resposta.sender_name, content: linha.resposta.deleted ? null : linha.resposta.content, deleted: linha.resposta.deleted } : null,
+      objects: objs,
+      threadParticipants: [],
+      saved: false,
+    },
+  };
+}
+
+/** Quem já participa de uma thread (para avisar da resposta nova), menos `exceto`. */
+export async function participantesDaThread(raiz: Mensagem, exceto: string): Promise<string[]> {
+  const quem = await db.selectDistinct({ id: schema.internalMessages.senderId }).from(schema.internalMessages)
+    .where(and(eq(schema.internalMessages.threadRootId, raiz.id), isNull(schema.internalMessages.deletedAt)));
+  return [...new Set([raiz.senderId, ...quem.map((q) => q.id)])].filter((id) => id !== exceto);
 }
 
 async function mensagemPropria(conversa: Pick<Conversa, 'id'>, userId: string, messageId: string): Promise<Mensagem> {

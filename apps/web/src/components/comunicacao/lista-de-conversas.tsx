@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AtSign, BellOff, Bookmark, Compass, FolderOpen, Hash, Home, Loader2, Lock, MessageSquarePlus, Paperclip, Plus, Search, SquarePen, Users, X } from 'lucide-react';
+import { AtSign, BellOff, Bookmark, Compass, FolderOpen, GraduationCap, Hash, HelpCircle, Home, Loader2, Lock, MessageSquarePlus, Paperclip, Plus, Search, SquarePen, Users, X } from 'lucide-react';
 import { useChatMembers, useOpenDirectChat, type ChatConversation, type ChatMember } from '@/hooks/use-internal-chat';
 import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { toast } from '@/stores/toast-store';
@@ -33,7 +33,7 @@ function Linha({ c, ativa, meId, onSelect }: { c: ChatConversation; ativa: boole
   const naoLida = c.unread_count > 0;
   const mencao = (c.mentions_unread ?? 0) > 0;
   return (
-    <button type="button" onClick={onSelect} aria-current={ativa ? 'true' : undefined} className={cn('flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-grafite-elevado/60', ativa && 'bg-grafite-elevado')}>
+    <button type="button" onClick={onSelect} aria-current={ativa ? 'true' : undefined} data-tour-id={c.kind === 'general' ? 'comunicacao-geral' : undefined} className={cn('flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-grafite-elevado/60', ativa && 'bg-grafite-elevado')}>
       <IconeDaConversa c={c} tamanho="sm" />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline justify-between gap-2">
@@ -101,7 +101,7 @@ function Secao({ titulo, children, acao }: { titulo: string; children: React.Rea
   );
 }
 
-export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, meId, onSelect, onVisao, onSearch, onCriarCanal, onCriarGrupo, onProcurarCanais }: {
+export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, meId, onSelect, onVisao, onSearch, onCriarCanal, onCriarGrupo, onProcurarCanais, onConhecer }: {
   conversas: ChatConversation[];
   carregando: boolean;
   erro: boolean;
@@ -114,10 +114,13 @@ export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, 
   onCriarCanal: () => void;
   onCriarGrupo: () => void;
   onProcurarCanais: () => void;
+  /** Ajuda → Conhecer Comunicação: reabre o tutorial guiado. */
+  onConhecer: () => void;
 }) {
   const [busca, setBusca] = useState('');
   const [nova, setNova] = useState(false);
   const [menuNovo, setMenuNovo] = useState(false);
+  const [menuAjuda, setMenuAjuda] = useState(false);
   const geral = conversas.filter((c) => c.kind === 'general');
   const canais = conversas.filter((c) => c.kind === 'channel');
   const privadas = conversas.filter((c) => c.kind === 'direct' || c.kind === 'group');
@@ -135,8 +138,17 @@ export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, 
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between gap-2 border-b border-grafite-elevado px-3 py-2.5">
         <h1 className="font-heading text-sm font-semibold text-branco-cru">Comunicação</h1>
+        <div className="flex items-center gap-1">
         <div className="relative">
-          <button type="button" onClick={() => setMenuNovo((v) => !v)} title="Nova conversa" aria-label="Nova conversa" aria-expanded={menuNovo} className="flex size-7 items-center justify-center rounded-md bg-roxo-eletrico text-branco-cru transition-opacity hover:opacity-90"><SquarePen size={14} /></button>
+          <button type="button" onClick={() => setMenuAjuda((v) => !v)} title="Ajuda da Comunicação" aria-label="Ajuda da Comunicação" aria-expanded={menuAjuda} className="flex size-7 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru"><HelpCircle size={15} /></button>
+          {menuAjuda && (
+            <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-lg border border-grafite-elevado bg-grafite py-1 shadow-2xl">
+              <button type="button" role="menuitem" onClick={() => { setMenuAjuda(false); onConhecer(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-branco-cru hover:bg-grafite-elevado"><GraduationCap size={15} className="text-nevoa" /> Conhecer Comunicação</button>
+            </div>
+          )}
+        </div>
+        <div className="relative">
+          <button type="button" onClick={() => setMenuNovo((v) => !v)} title="Nova conversa" aria-label="Nova conversa" aria-expanded={menuNovo} data-tour-id="comunicacao-nova-conversa" className="flex size-7 items-center justify-center rounded-md bg-roxo-eletrico text-branco-cru transition-opacity hover:opacity-90"><SquarePen size={14} /></button>
           {menuNovo && (
             <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-lg border border-grafite-elevado bg-grafite py-1 shadow-2xl">
               {([
@@ -149,6 +161,7 @@ export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, 
               ))}
             </div>
           )}
+        </div>
         </div>
       </div>
       <form className="border-b border-grafite-elevado p-2" onSubmit={(e) => { e.preventDefault(); onSearch(busca); }}>
