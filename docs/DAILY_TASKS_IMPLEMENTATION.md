@@ -76,3 +76,11 @@ Sem `DATABASE_URL` local, esses arquivos são PULADOS (não falham).
 3. Backup do banco; aplicar migração aditiva.
 4. Deploy de API e worker na VPS; front na Vercel (exportação limpa do commit, ver `docs/architecture/media-command-center.md`).
 5. Ligar a flag só para os administradores autorizados.
+
+## Importação do ClickUp (checkpoint)
+
+- Fluxo: `cu_snapshot` (leitura da API do ClickUp, só GET) → arquivos JSON fora do repositório → `packages/work-engine/src/clickup-import.ts` (escrita, idempotente via `work_external_mappings`). CLI: `clickup-import-cli.ts --snapshot <dir> --org <uuid> --user <uuid> [--aplicar]` (sem `--aplicar` é ensaio, transação desfeita).
+- Vínculos: usuário por **e-mail igual**, cliente por **nome normalizado igual** (sem aproximação; teste com mutação comprova). O que não casa vai para o relatório e para `work_external_mappings.meta`.
+- Medido no ClickUp da Desigual: 4 espaços, 12 pastas, 78 listas, 8.599 tarefas (1.147 abertas, 7.452 concluídas/fechadas; 6.991 subtarefas), 60 checklists, 70 dependências, 13 campos personalizados.
+- Importado só no banco LOCAL de QA. Produção: NÃO aplicado (migrações 0079/0080 e importação aguardam autorização).
+- Não importado: Docs, Goals, Views, automações e templates do ClickUp; tempo registrado (a API respondeu 403 — o token não tem esse escopo); comentários/anexos de tarefas fechadas ainda sendo baixados (detalhe por tarefa, ~100 req/min).
