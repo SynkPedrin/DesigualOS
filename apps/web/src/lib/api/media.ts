@@ -227,3 +227,91 @@ export interface MediaActionRequest {
 }
 
 export const PROVIDER_LABEL: Record<'meta' | 'google_ads', string> = { meta: 'Meta Ads', google_ads: 'Google Ads' };
+
+// ── Tela inicial de Mídias (carteira inteira) ────────────────────────────
+
+export type MediaProvider = 'meta' | 'google_ads';
+
+export interface HubDaily {
+  day: string;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  results: number | null;
+  ctr: number | null;
+  costPerResult: number | null;
+}
+
+export interface MediaHub {
+  range: DateRange;
+  previousRange: DateRange | null;
+  kpis: {
+    currency: string;
+    otherCurrencies: string[];
+    current: Derived;
+    previous: Derived | null;
+    changes: Record<string, number | null> | null;
+    daily: HubDaily[];
+  };
+  facets: {
+    providers: Array<{ provider: MediaProvider; accounts: number; ads: number }>;
+    accounts: Array<{ provider: MediaProvider; accountId: string; name: string | null; clientName: string; ads: number }>;
+    objectives: Array<{ objective: string; ads: number }>;
+    statuses: Array<{ status: string; ads: number }>;
+    unlinkedAccounts: number;
+  };
+  attention: Array<{ id: string; tone: 'critical' | 'warning' | 'info'; title: string; detail: string; clientId?: string }>;
+  insights: Array<{ id: string; tone: 'good' | 'warn' | 'info'; title: string; detail: string }>;
+  activity: Array<{ id: string; at: string; who: string | null; action: string; detail: string | null; clientName: string | null }>;
+  lastSyncedAt: string | null;
+}
+
+export interface HubCreative extends Derived {
+  id: string;
+  provider: MediaProvider;
+  accountId: string;
+  accountName: string | null;
+  currency: string | null;
+  clientId: string;
+  clientName: string;
+  name: string;
+  status: string | null;
+  campaignName: string | null;
+  adsetName: string | null;
+  objective: string | null;
+  creative: MediaCreativeRow['creative'];
+  lastDay: string | null;
+  spark: number[];
+}
+
+export interface HubCreativeFilters {
+  period: MediaPeriod;
+  provider?: MediaProvider | undefined;
+  accountId?: string | undefined;
+  q?: string | undefined;
+  status?: string | undefined;
+  objective?: string | undefined;
+  withSpend?: boolean | undefined;
+  sort?: 'spend' | 'results' | 'ctr' | 'costPerResult' | 'active' | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+export const OBJECTIVE_LABEL: Record<string, string> = {
+  OUTCOME_LEADS: 'Leads',
+  OUTCOME_ENGAGEMENT: 'Engajamento',
+  OUTCOME_TRAFFIC: 'Tráfego',
+  OUTCOME_SALES: 'Vendas',
+  OUTCOME_AWARENESS: 'Reconhecimento',
+  OUTCOME_APP_PROMOTION: 'App',
+  LINK_CLICKS: 'Tráfego',
+  CONVERSIONS: 'Conversões',
+  MESSAGES: 'Mensagens',
+  REACH: 'Alcance',
+  SEARCH: 'Pesquisa',
+  PERFORMANCE_MAX: 'Performance Max',
+  DISPLAY: 'Display',
+  VIDEO: 'Vídeo',
+  SHOPPING: 'Shopping',
+  DEMAND_GEN: 'Geração de demanda',
+};

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard } from '@/components/ui/stat-card';
+import { MidiaHojePanel } from '@/components/media/hub/midia-hoje';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { BentoBriefing, type InsightDoBento } from '@/components/bento/painel-de-insights';
 import { useCalendarEvents } from '@/hooks/use-calendar';
@@ -140,7 +141,24 @@ interface ItemDePrioridade {
   externo?: boolean;
 }
 
+/**
+ * Escala da tela Hoje (pedido: "uma visão mais longe, mais informação, sem rolar"). Menor que o resto do
+ * app porque aqui o objetivo é panorama. Acompanha a ALTURA da janela: monitor de 27" fica em ~0,77 e o
+ * notebook (janela baixa) em 0,72, que é onde mais precisa de espaço.
+ */
+function useZoomDoHoje(): number {
+  const [z, setZ] = useState(0.77);
+  useEffect(() => {
+    const calc = () => setZ(Math.min(0.8, Math.max(0.72, window.innerHeight / 1700)));
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
+  }, []);
+  return z;
+}
+
 export default function TodayPage() {
+  const zoomDoHoje = useZoomDoHoje();
   // Fixado no MOUNT: recalcular a cada render mudaria a queryKey das consultas
   // de calendário (intervalo [from,to] levemente diferente toda vez) e elas
   // nunca estabilizariam. Achado real, não hipotético (travou a aba Calendário
@@ -436,22 +454,17 @@ export default function TodayPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1800px] space-y-6">
+    <div className="@container mx-auto w-full max-w-[2400px] space-y-3" style={{ zoom: zoomDoHoje }}>
       <div>
         <PageHeader
+          compact
           eyebrow="Hoje"
           title={`${saudacao(agora.getHours())}, ${me ? primeiroNome(me.name) : '...'}.`}
-          description="Veja o que precisa da sua atenção hoje."
+          description={`${new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())} · veja o que precisa da sua atenção hoje.`}
         />
-        {/* A DATA ANDA COM A SAUDAÇÃO. Antes ela ficava encostada na margem
-            direita, a meia tela de distância do texto a que pertence, e lida
-            sozinha não dizia de quê era a data. No mockup ela vem logo abaixo
-            do "Bom dia", que é onde a frase termina. */}
-        <p className="-mt-4 text-sm text-nevoa">
-          {new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())}
-        </p>
       </div>
 
+      <div className="grid gap-3 @min-[1900px]:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
       <BentoBriefing
         itens={insights}
         carregando={briefingPendente}
@@ -462,7 +475,7 @@ export default function TodayPage() {
         acao={{ label: 'Ver detalhes', href: '/chat' }}
       />
 
-      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid content-start gap-3 grid-cols-2 @min-[1100px]:grid-cols-4">
         <StatCard
           icon={MessageSquare}
           iconClassName="bg-roxo-eletrico/15 text-roxo-eletrico"
@@ -524,17 +537,18 @@ export default function TodayPage() {
           }
         />
       </div>
+      </div>
 
       {/* `items-start`: sem isto o grid iguala a altura das duas colunas, e numa
           conta sem pendência o painel de Prioridades esticava até a altura de
           "Seu dia" mais "Saúde operacional", virando um retângulo vazio de uma
           tela de altura com uma frase no meio. Cada painel agora tem a altura
           do que tem dentro. */}
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-        <Surface className="flex flex-col gap-4 p-6">
+      <div className="grid items-start gap-3 @min-[1000px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] @min-[1800px]:grid-cols-[minmax(0,5fr)_minmax(0,3.3fr)_minmax(0,3.7fr)]">
+        <Surface className="flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <h2 className="font-heading text-lg font-semibold text-branco-cru">Prioridades de hoje</h2>
+              <h2 className="font-heading text-base font-semibold text-branco-cru">Prioridades de hoje</h2>
               {prioridadesOrdenadas.length > 0 && (
                 <span className="rounded-full bg-sinal/20 px-2.5 py-1 text-xs font-semibold text-sinal">{prioridadesOrdenadas.length}</span>
               )}
@@ -563,8 +577,8 @@ export default function TodayPage() {
           )}
         </Surface>
 
-        <div className="flex flex-col gap-6">
-          <Surface className="flex flex-col gap-3 p-5">
+        <div className="flex flex-col gap-3">
+          <Surface className="flex flex-col gap-3 p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-base font-semibold text-branco-cru">Seu dia</h2>
               <Link href="/calendar" className="flex items-center gap-1 font-mono text-[11px] text-nevoa hover:text-branco-cru">
@@ -628,9 +642,11 @@ export default function TodayPage() {
 
           <SaudeOperacional consulta={tarefasDaAgencia} />
         </div>
-      </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+        {/* Terceira coluna: o resumo do que está esperando, empilhado. Abaixo de xl volta a ser uma
+            faixa de três colunas embaixo, como era. */}
+        <div className="grid content-start gap-3 @min-[700px]:grid-cols-3 @min-[1000px]:col-span-2 @min-[1800px]:col-span-1 @min-[1800px]:grid-cols-1">
+        <MidiaHojePanel />
         <ConversasRecentesPanel consulta={resumo.conversasRecentes} />
         <TarefasDoDiaPanel
           atrasadas={tarefasAtrasadas}
@@ -640,6 +656,7 @@ export default function TodayPage() {
           indisponivel={clickupNaoVinculado(minhasTarefas.error)}
         />
         <AprovacoesPendentesPanel aprovacoes={aprovacoesPendentes} clientes={resumo.clientes} />
+        </div>
       </div>
     </div>
   );

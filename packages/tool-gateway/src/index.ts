@@ -37,6 +37,7 @@ export * from './media-sync';
 export * from './media-settings';
 export * from './media-metrics';
 export * from './media-queries';
+export * from './media-hub';
 export * from './media-templates';
 export * from './media-alerts';
 export * from './media-agent-tools';

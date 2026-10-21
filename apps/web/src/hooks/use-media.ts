@@ -1,7 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
 import type {
+  HubCreative,
+  HubCreativeFilters,
   MediaAccountSummary,
+  MediaHub,
   MediaActionRequest,
   MediaReportSchedule,
   MediaAlertEvent,
@@ -225,5 +228,28 @@ export function useLinkMediaAccount() {
       qc.invalidateQueries({ queryKey: ['media'] });
       qc.invalidateQueries({ queryKey: ['clients'] });
     },
+  });
+}
+
+/** A carteira inteira: KPIs com tendência, atenção, insights e atividade (tela inicial de Mídias). */
+export function useMediaHub(period: MediaPeriod, compare = true) {
+  return useQuery({
+    queryKey: ['media', 'hub', period, compare],
+    queryFn: () => apiFetch<MediaHub>(`/media/hub${qs({ period, compare })}`),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+}
+
+/** Criativos de TODAS as contas vinculadas, com filtros no servidor e paginação. */
+export function useHubCreatives(f: HubCreativeFilters) {
+  return useQuery({
+    queryKey: ['media', 'hub-creatives', f],
+    queryFn: () =>
+      apiFetch<{ total: number; rows: HubCreative[] }>(
+        `/media/hub/creatives${qs({ period: f.period, provider: f.provider, account_id: f.accountId, q: f.q, status: f.status, objective: f.objective, with_spend: f.withSpend === false ? 'false' : undefined, sort: f.sort, limit: f.limit ?? 24, offset: f.offset })}`,
+      ),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
   });
 }

@@ -61,6 +61,12 @@ export function MediaCommandCenter({ clientId }: { clientId: string }) {
     if (p.accountId) setAccountId(p.accountId);
     if (p.period) setPeriod(p.period);
     if (p.tab) setTab(p.tab);
+    // Link da galeria de Mídias (?conta=...&aba=criativos) vale mais que a última escolha guardada.
+    const qs = new URLSearchParams(window.location.search);
+    const conta = qs.get('conta');
+    if (conta) setAccountId(conta);
+    const aba = ({ visao: 'overview', campanhas: 'campaigns', criativos: 'creatives', alertas: 'alerts', relatorios: 'reports', config: 'settings' } as const)[qs.get('aba') as 'visao'];
+    if (aba) setTab(aba);
   }, [clientId]);
 
   const settings = useMediaSettings(clientId, accountId);

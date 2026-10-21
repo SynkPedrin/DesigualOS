@@ -11,6 +11,8 @@ import {
   MediaSettingError,
   getAccountSummary,
   getAgencyOverview,
+  getHub,
+  listAllCreatives,
   getMediaSettings,
   listCreatives,
   listEntities,
@@ -634,5 +636,49 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
     if (gone.length === 0) return fail(reply, 404, 'Vínculo não encontrado.');
     await auditarAcao(request, { action: 'media.account.unlinked', organizationId: org, clientId, metadata: { provider, accountId: request.params.accountId } });
     return { ok: true };
+  });
+
+  // ── Tela inicial de Mídias: carteira inteira ────────────────────────────
+  app.get<{ Querystring: { period?: string; since?: string; until?: string; compare?: string; currency?: string } }>('/media/hub', { preHandler: read }, async (request, reply) => {
+    const range = rangeFrom(request.query);
+    if (!range) return fail(reply, 400, 'Período inválido.');
+    const currency = /^[A-Z]{3}$/.test(request.query.currency ?? '') ? request.query.currency! : 'BRL';
+    return getHub(scopeOf(request), range, { compare: request.query.compare !== 'false', currency });
+  });
+
+  const hubCreativesQuery = z.object({
+    provider: z.enum(['meta', 'google_ads']).optional(),
+    account_id: z.string().max(64).optional(),
+    client_id: z.string().uuid().optional(),
+    q: z.string().max(100).optional(),
+    status: z.enum(['ACTIVE', 'PAUSED', 'DISAPPROVED', 'WITH_ISSUES', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED']).optional(),
+    objective: z.string().max(60).optional(),
+    with_spend: z.enum(['true', 'false']).optional(),
+    sort: z.enum(['spend', 'results', 'ctr', 'costPerResult', 'active']).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    offset: z.coerce.number().int().min(0).max(100000).optional(),
+    period: z.string().optional(),
+    since: z.string().optional(),
+    until: z.string().optional(),
+  });
+
+  app.get('/media/hub/creatives', { preHandler: read }, async (request, reply) => {
+    const q = hubCreativesQuery.safeParse(request.query);
+    if (!q.success) return fail(reply, 400, q.error.issues.map((i) => i.message).join(' '));
+    const range = rangeFrom(q.data);
+    if (!range) return fail(reply, 400, 'Período inválido.');
+    return listAllCreatives(scopeOf(request), {
+      range,
+      ...(q.data.provider ? { provider: q.data.provider } : {}),
+      ...(q.data.account_id ? { accountId: q.data.account_id } : {}),
+      ...(q.data.client_id ? { clientId: q.data.client_id } : {}),
+      ...(q.data.q ? { search: q.data.q } : {}),
+      ...(q.data.status ? { status: q.data.status } : {}),
+      ...(q.data.objective ? { objective: q.data.objective } : {}),
+      withSpend: q.data.with_spend !== 'false',
+      ...(q.data.sort ? { sort: q.data.sort } : {}),
+      ...(q.data.limit ? { limit: q.data.limit } : {}),
+      ...(q.data.offset ? { offset: q.data.offset } : {}),
+    });
   });
 }
