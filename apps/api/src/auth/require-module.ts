@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { WorkspaceModule } from '@desigual-os/types';
 import { resolveEnabledModules } from '../workspace/access';
+import { LIMITE_DO_VALOR_VELHO_MS, renovarEmSegundoPlano } from '../lib/renovacao';
 
 /**
  * requireModule.ts — o lado de API do Workspace Builder (§79 do prompt de
@@ -31,7 +32,16 @@ export function forgetEnabledModules(userId: string): void {
 /** Mesmo resultado de resolveEnabledModules, com os 20 s de memória (também usado por GET /me/workspace). */
 export async function resolveEnabledModulesCached(userId: string): Promise<Awaited<ReturnType<typeof resolveEnabledModules>>> {
   const hit = modulesCache.get(userId);
-  if (hit && Date.now() - hit.at < MODULES_TTL_MS) return hit.resolved;
+  const idade = hit ? Date.now() - hit.at : Infinity;
+  if (hit && idade < MODULES_TTL_MS) return hit.resolved;
+  if (hit && idade < LIMITE_DO_VALOR_VELHO_MS) {
+    renovarEmSegundoPlano(`modulos:${userId}`, async () => {
+      const novo = await resolveEnabledModules(userId);
+      // Só grava se ninguém apagou/trocou a entrada enquanto relia (forgetEnabledModules ganha).
+      if (modulesCache.get(userId) === hit) modulesCache.set(userId, { resolved: novo, at: Date.now() });
+    });
+    return hit.resolved;
+  }
   const resolved = await resolveEnabledModules(userId);
   modulesCache.set(userId, { resolved, at: Date.now() });
   return resolved;

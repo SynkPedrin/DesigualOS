@@ -4,6 +4,7 @@ import { extractBearerToken, hasPermission, loadUserAccess, resolveOrProvisionUs
 import { db, schema } from '@desigual-os/database';
 import { createLogger } from '@desigual-os/logging';
 import type { RoleName } from '@desigual-os/types';
+import { LIMITE_DO_VALOR_VELHO_MS, renovarEmSegundoPlano } from '../lib/renovacao';
 
 const logger = createLogger({ service: 'orchestrator-api' });
 
@@ -75,14 +76,21 @@ interface CachedAccess {
 
 const userCache = new Map<string, CachedAccess>();
 
-function getCachedAccess(authUserId: string): CachedAccess | null {
+/**
+ * Passou o TTL mas não o limite do valor velho: devolve a entrada e marca
+ * `velha` — quem chama relê em segundo plano (lib/renovacao.ts). Acima do
+ * limite, apaga e a leitura volta a ser síncrona.
+ */
+function getCachedAccess(authUserId: string): { entry: CachedAccess; velha: boolean } | null {
   const entry = userCache.get(authUserId);
   if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
+  const agora = Date.now();
+  if (entry.expiresAt <= agora) {
+    if (agora - entry.expiresAt < LIMITE_DO_VALOR_VELHO_MS) return { entry, velha: true };
     userCache.delete(authUserId);
     return null;
   }
-  return entry;
+  return { entry, velha: false };
 }
 
 function setCachedAccess(authUserId: string, entry: Omit<CachedAccess, 'expiresAt'>): void {
@@ -191,7 +199,20 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
   }
 
   try {
-    const cached = getCachedAccess(claims.sub);
+    const achado = getCachedAccess(claims.sub);
+    const cached = achado?.entry ?? null;
+    if (achado?.velha) {
+      const sub = claims.sub;
+      const claimsDaRenovacao = claims;
+      renovarEmSegundoPlano(`acesso:${sub}`, async () => {
+        const novoUsuario = await resolveOrProvisionUser(claimsDaRenovacao, getMasterEmails());
+        const novoAcesso = await loadUserAccess(novoUsuario.id);
+        // invalidateUserAccessCache durante a releitura ganha: não grava por cima do apagamento.
+        if (userCache.get(sub) !== achado.entry) return;
+        if (!novoUsuario.active) { userCache.delete(sub); return; }
+        setCachedAccess(sub, { user: novoUsuario, roles: novoAcesso.roles, permissions: novoAcesso.permissions });
+      });
+    }
     const user = cached?.user ?? (await resolveOrProvisionUser(claims, getMasterEmails()));
 
     // users.active existia no schema desde o início mas nunca era checado
