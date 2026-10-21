@@ -56,6 +56,8 @@ const REGRAS: Record<string, Regra> = {
   txt: { kind: 'document', mimes: /^(text\/plain|application\/octet-stream)$/, assinatura: texto, servirComo: 'text/plain; charset=utf-8' },
   mp4: { kind: 'video', mimes: /^video\/(mp4|x-m4v)$/, assinatura: isoBmff, servirComo: 'video/mp4' },
   mov: { kind: 'video', mimes: /^video\/(quicktime|mp4)$/, assinatura: isoBmff, servirComo: 'video/quicktime' },
+  // WEBM é Matroska: começa com o cabeçalho EBML 1A 45 DF A3.
+  webm: { kind: 'video', mimes: /^(video|audio)\/webm$/, assinatura: comeca([0x1a, 0x45, 0xdf, 0xa3]), servirComo: 'video/webm' },
   zip: { kind: 'archive', mimes: /^application\/(zip|x-zip-compressed|octet-stream)$/, assinatura: zip, servirComo: 'application/zip' },
 };
 
@@ -76,7 +78,7 @@ export function politicaDeAnexos() {
     permitidas: new Set(permitidas),
     limites: {
       image: limite('INTERNAL_CHAT_MAX_IMAGE_MB', 25),
-      document: limite('INTERNAL_CHAT_MAX_DOCUMENT_MB', 25),
+      document: limite('INTERNAL_CHAT_MAX_DOCUMENT_MB', 50),
       archive: limite('INTERNAL_CHAT_MAX_ARCHIVE_MB', 25),
       video: limite('INTERNAL_CHAT_MAX_VIDEO_MB', 100),
     } satisfies Record<AttachmentKind, number>,

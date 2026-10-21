@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { subscribeToWsEvents } from '@desigual-os/orchestrator';
 import { loadUserAccess, resolveOrProvisionUser, verifySupabaseToken } from '@desigual-os/auth';
 import { tenantSharingScope } from '../lib/access';
-import { marcarPresenca } from '../internal-chat/presenca';
+import { marcarPresenca, renovarPresenca } from '../internal-chat/presenca';
 
 function getMasterEmails(): ReadonlySet<string> {
   return new Set(
@@ -91,7 +91,7 @@ export async function registerWsRoutes(app: FastifyInstance): Promise<void> {
       // Presença da Comunicação: online enquanto o WebSocket estiver aberto
       // (chave no Redis com validade; ver internal-chat/presenca.ts).
       void marcarPresenca(user.id);
-      const presenca = setInterval(() => void marcarPresenca(user.id), 45_000);
+      const presenca = setInterval(() => void renovarPresenca(user.id), 45_000);
       presenca.unref?.();
       socket.on('close', () => clearInterval(presenca));
 
