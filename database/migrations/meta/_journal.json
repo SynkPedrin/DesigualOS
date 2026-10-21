@@ -547,6 +547,13 @@
       "when": 1792508909059,
       "tag": "0077_comunicacao_interna",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1792584097361,
+      "tag": "0078_comunicacao_hub",
+      "breakpoints": true
     }
   ]
 }

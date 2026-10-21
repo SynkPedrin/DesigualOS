@@ -81,7 +81,8 @@ test('quem está em outra tela vê o contador na barra lateral, e ele some ao le
 });
 
 test('conversa privada com menção: aparece para o outro com não lida', async () => {
-  await ana.getByRole('button', { name: 'Nova conversa' }).click();
+  await ana.getByRole('button', { name: 'Nova conversa', exact: true }).click();
+  await ana.getByRole('menuitem', { name: 'Conversa privada' }).click();
   await ana.getByLabel('Buscar colega').fill('Bru');
   await ana.getByRole('dialog', { name: 'Nova conversa' }).getByRole('button', { name: /Bruno Lima/ }).click();
   await expect(ana.getByRole('heading', { name: 'Bruno Lima' })).toBeVisible();
@@ -139,7 +140,8 @@ test('reação, edição e remoção chegam ao vivo', async () => {
   await expect(msgDaAna(ana).getByRole('button', { name: /👍\s*1/ })).toBeVisible({ timeout: 5_000 });
 
   await msgDaAna(ana).hover();
-  await msgDaAna(ana).getByRole('button', { name: 'Editar' }).click();
+  await msgDaAna(ana).getByRole('button', { name: 'Mais ações' }).click();
+  await msgDaAna(ana).getByRole('menuitem', { name: 'Editar' }).click();
   const edicao = ana.getByLabel('Editar mensagem');
   await edicao.fill(`Segue o material (corrigido) ${marca}`);
   await edicao.press('Enter');
@@ -147,7 +149,8 @@ test('reação, edição e remoção chegam ao vivo', async () => {
   await expect(corrigida(bruno).getByText('(editada)')).toBeVisible({ timeout: 5_000 });
 
   await corrigida(ana).hover();
-  await corrigida(ana).getByRole('button', { name: 'Apagar' }).click();
+  await corrigida(ana).getByRole('button', { name: 'Mais ações' }).click();
+  await corrigida(ana).getByRole('menuitem', { name: 'Apagar' }).click();
   await ana.getByRole('alertdialog').getByRole('button', { name: 'Apagar' }).click();
   await expect(mensagens(bruno).getByText(`(corrigido) ${marca}`)).toHaveCount(0, { timeout: 5_000 });
   await expect(mensagens(bruno).getByText('Mensagem apagada').first()).toBeVisible();
@@ -157,7 +160,8 @@ test('recarregar mantém tudo; busca acha a mensagem e leva até ela', async () 
   await bruno.reload();
   await expect(mensagens(bruno).getByText(`pode revisar? ${marca}`)).toBeVisible();
   await bruno.getByLabel('Buscar nas mensagens').fill(`Bom dia, equipe ${marca}`);
-  await bruno.getByRole('button', { name: new RegExp(`Bom dia, equipe ${marca}`) }).click();
+  await bruno.getByLabel('Buscar nas mensagens').press('Enter');
+  await bruno.getByRole('region', { name: 'Busca' }).getByRole('button', { name: new RegExp(`Bom dia, equipe ${marca}`) }).click();
   await expect(bruno.getByRole('heading', { name: '# Geral' })).toBeVisible();
   await expect(mensagens(bruno).getByText(`Bom dia, equipe ${marca}`)).toBeInViewport();
 });

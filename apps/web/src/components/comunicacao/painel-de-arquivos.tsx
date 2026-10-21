@@ -15,7 +15,7 @@ const FILTROS = [
 ] as const;
 
 /** Tudo que foi compartilhado na conversa aberta, do mais novo para o mais velho. */
-export function PainelDeArquivos({ conversationId, onClose, onJump }: { conversationId: string; onClose: () => void; onJump: (messageId: string) => void }) {
+export function PainelDeArquivos({ conversationId, onClose, onJump }: { conversationId: string; onClose: () => void; onJump: (messageId: string, threadRootId?: string | null) => void }) {
   const [filtro, setFiltro] = useState<string>('');
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState<ChatAttachment | null>(null);
@@ -55,7 +55,7 @@ export function PainelDeArquivos({ conversationId, onClose, onJump }: { conversa
                 </span>
               </button>
               {a.message_id && (
-                <button type="button" onClick={() => onJump(a.message_id!)} aria-label="Ver na conversa" title="Ver na conversa" className="text-nevoa hover:text-branco-cru"><MessageSquareText size={15} /></button>
+                <button type="button" onClick={() => onJump(a.message_id!, a.thread_root_id)} aria-label="Ver na conversa" title="Ver na conversa" className="text-nevoa hover:text-branco-cru"><MessageSquareText size={15} /></button>
               )}
               <button type="button" onClick={() => void baixarAnexo(a)} aria-label={`Baixar ${a.filename}`} title="Baixar" className="text-nevoa hover:text-branco-cru"><Download size={15} /></button>
             </li>

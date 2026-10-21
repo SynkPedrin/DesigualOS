@@ -42,6 +42,23 @@ function conversas() {
 }
 
 export const internalChatHandlers = [
+  http.get('/internal-chat/conversations/:id', ({ params }) => {
+    const c = conversas().find((x) => x.id === params.id);
+    if (!c) return HttpResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 });
+    return HttpResponse.json({ id: c.id, kind: c.kind, title: c.title, description: null, visibility: c.kind === 'general' ? null : null, archived: false, entity: null, my_role: 'member', is_member: true, can_manage: false, members: membros.map((m) => ({ id: m.id, name: m.name, avatar_url: null, role: 'member', last_read_at: null, presence: m.online ? 'online' : 'offline' })), pinned_count: 0 });
+  }),
+  http.get('/internal-chat/conversations/:id/pins', () => HttpResponse.json({ messages: [] })),
+  http.get('/internal-chat/conversations/:id/threads/:messageId', ({ params }) => {
+    const root = mensagens.find((m) => m.id === params.messageId);
+    return root ? HttpResponse.json({ root, replies: [], has_more: false }) : HttpResponse.json({ error: 'Mensagem não encontrada.' }, { status: 404 });
+  }),
+  http.get('/internal-chat/mentions', () => HttpResponse.json({ messages: [] })),
+  http.get('/internal-chat/saved', () => HttpResponse.json({ messages: [] })),
+  http.get('/internal-chat/files', () => HttpResponse.json({ files: [], has_more: false })),
+  http.get('/internal-chat/channels/browse', () => HttpResponse.json({ channels: [] })),
+  http.get('/internal-chat/preferences', () => HttpResponse.json({ dnd_until: null, notify_reactions: true, notify_channel_messages: false })),
+  http.put('/internal-chat/preferences', async ({ request }) => HttpResponse.json({ dnd_until: null, notify_reactions: true, notify_channel_messages: false, ...((await request.json()) as object) })),
+  http.post('/internal-chat/presence', () => HttpResponse.json({ ok: true })),
   http.get('/internal-chat/conversations', () => HttpResponse.json({ conversations: conversas() })),
   http.get('/internal-chat/unread', () => HttpResponse.json({ unread: 1 })),
   http.get('/internal-chat/members', () => HttpResponse.json({ members: membros })),

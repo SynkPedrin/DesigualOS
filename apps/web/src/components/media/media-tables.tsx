@@ -9,6 +9,7 @@ import type { MediaCreativeRow, MediaEntityRow, MediaPeriod } from '@/lib/api/me
 import { cn } from '@/lib/utils';
 import { dash, int, money, pct, STATUS_LABEL, TONE_CLASS } from './format';
 import { DataBar, DeltaChip, Sparkline } from './media-charts';
+import { CompartilharNaComunicacao } from '@/components/comunicacao/compartilhar-na-comunicacao';
 
 type Level = 'campaign' | 'adset' | 'ad';
 const LEVEL_LABEL: Record<Level, string> = { campaign: 'Campanhas', adset: 'Conjuntos', ad: 'Anúncios' };
@@ -191,6 +192,8 @@ export function CampaignsTab({ accountId, period, currency }: { accountId: strin
                 return (
                   <tr key={r.id} className="border-b border-grafite-elevado/50 hover:bg-grafite-elevado/30">
                     <td className="sticky left-0 max-w-[320px] bg-grafite px-3 py-2">
+                      <div className="flex items-center gap-1">
+                      <div className="min-w-0 flex-1">
                       {next ? (
                         <button type="button" onClick={() => setTrail([...trail, { level, id: r.id, name: r.name }])} className="flex max-w-full items-center gap-1 truncate text-left text-branco-cru hover:text-roxo-eletrico">
                           <span className="truncate">{r.name}</span>
@@ -199,6 +202,9 @@ export function CampaignsTab({ accountId, period, currency }: { accountId: strin
                       ) : (
                         <span className="block truncate text-branco-cru">{r.name}</span>
                       )}
+                      </div>
+                      <CompartilharNaComunicacao compacto objeto={{ type: level, id: r.id, label: r.name, context: { account_id: accountId, period } }} />
+                      </div>
                     </td>
                     {COLUMNS.filter((c) => columns.includes(c.key)).map((c) => (
                       <td key={c.key} className="px-2 py-1.5 text-right tabular-nums text-nevoa">
@@ -360,7 +366,7 @@ export function CreativesTab({ accountId, period, currency }: { accountId: strin
         </Surface>
       )}
 
-      {open && <CreativeDrawer row={open} currency={currency} onClose={() => setOpen(null)} />}
+      {open && <CreativeDrawer row={open} currency={currency} accountId={accountId} period={period} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -441,7 +447,7 @@ function CreativeCard({ row, currency, selected, onToggle, onOpen, avgCost, maxC
   );
 }
 
-function CreativeDrawer({ row, currency, onClose }: { row: MediaCreativeRow; currency: string | null; onClose: () => void }) {
+function CreativeDrawer({ row, currency, onClose, accountId, period }: { row: MediaCreativeRow; currency: string | null; onClose: () => void; accountId: string; period: MediaPeriod }) {
   const [note, setNote] = useState(() => {
     try {
       return window.localStorage.getItem(`media:note:${row.id}`) ?? '';
@@ -455,7 +461,10 @@ function CreativeDrawer({ row, currency, onClose }: { row: MediaCreativeRow; cur
       <aside className="h-full w-full max-w-md overflow-y-auto border-l border-grafite-elevado bg-grafite p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between gap-3">
           <h3 className="font-heading text-base font-semibold text-branco-cru">{row.name}</h3>
-          <button type="button" onClick={onClose} aria-label="Fechar" className="text-nevoa hover:text-branco-cru"><X size={16} /></button>
+          <div className="flex shrink-0 items-center gap-1">
+            <CompartilharNaComunicacao objeto={{ type: 'ad', id: row.id, label: row.name, context: { account_id: accountId, period } }} />
+            <button type="button" onClick={onClose} aria-label="Fechar" className="text-nevoa hover:text-branco-cru"><X size={16} /></button>
+          </div>
         </div>
         <Thumb row={row} className="mb-3 aspect-square w-full rounded-md" />
         <div className="space-y-1 text-sm text-nevoa">
