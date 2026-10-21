@@ -28,6 +28,7 @@ import {
 import { ALERT_TYPE_LABEL, ALERT_TYPE_UNIT, MEDIA_PERIODS, type MediaAlertRule, type MediaDestination, type MediaLinkedAccount } from '@/lib/api/media';
 import { cn } from '@/lib/utils';
 import { dash, when } from './format';
+import { CompartilharNaComunicacao } from '@/components/comunicacao/compartilhar-na-comunicacao';
 
 const errMsg = (e: unknown, fallback: string) => (e instanceof ApiRequestError ? e.message : fallback);
 
@@ -82,6 +83,7 @@ export function AlertsTab({ clientId, accounts }: { clientId: string; accounts: 
                 </p>
               </div>
               <span className="text-[11px] text-nevoa">{a.status === 'open' ? 'Aberto' : a.status === 'resolved' ? 'Resolvido' : 'Ignorado'}</span>
+              <CompartilharNaComunicacao compacto objeto={{ type: 'media_alert', id: a.id, label: a.title }} />
               {a.status === 'open' ? (
                 <>
                   <button type="button" onClick={() => setStatus.mutate({ id: a.id, status: 'resolved' })} className="rounded-md border border-grafite-elevado px-2 py-1 text-xs text-nevoa hover:text-branco-cru">Resolver</button>

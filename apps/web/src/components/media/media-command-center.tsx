@@ -15,6 +15,7 @@ import { change, dash, int, money, pct, resultLabel, when } from './format';
 import { CampaignsTab, CreativesTab, Thumb } from './media-tables';
 import { ComboChart, DeltaChip, Donut, HBars, Sparkline, type BarItem } from './media-charts';
 import { ActionsSection, AlertsTab, ReportSchedulesSection, SettingsTab } from './media-alerts-settings';
+import { CompartilharNaComunicacao } from '@/components/comunicacao/compartilhar-na-comunicacao';
 
 /**
  * MEDIA COMMAND CENTER de um cliente (Meta Ads).
@@ -126,11 +127,12 @@ export function MediaCommandCenter({ clientId }: { clientId: string }) {
           </select>
         </label>
         <AccountHealth account={account} />
+        <CompartilharNaComunicacao className="ml-auto" objeto={{ type: 'media_account', id: account.accountId, label: account.name ?? account.label ?? account.accountId, context: { period: effectivePeriod } }} />
         <button
           type="button"
           onClick={() => sync.mutate(account.accountId)}
           disabled={sync.isPending}
-          className="ml-auto inline-flex items-center gap-2 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa transition-colors hover:text-branco-cru disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa transition-colors hover:text-branco-cru disabled:opacity-40"
         >
           <RefreshCw size={14} className={sync.isPending ? 'animate-spin' : undefined} />
           {sync.isPending ? 'Sincronizando…' : 'Sincronizar'}

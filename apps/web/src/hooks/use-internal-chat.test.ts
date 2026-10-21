@@ -81,4 +81,36 @@ describe('eventos ao vivo da Comunicação', () => {
     expect(qc.getQueryData<ChatConversation[]>(['internal-chat', 'conversations'])!.find((c) => c.id === 'c-dm')!.unread_count).toBe(1);
     expect(qc.getQueryData(['internal-chat', 'unread'])).toBe(0);
   });
+
+  it('resposta em thread vai para a thread, não entra na linha principal nem conta como não lida', () => {
+    const qc = montar();
+    qc.setQueryData(['internal-chat', 'thread', 'm1'], { pages: [{ messages: [], has_more: false, root: mensagem('m1') }], pageParams: [null] });
+    applyInternalChatEvent(qc, { event: 'message.created', conversation_id: 'c-dm', message: mensagem('r1', { thread_root_id: 'm1' }) }, 'eu');
+    expect(flattenMessages(qc.getQueryData(['internal-chat', 'messages', 'c-dm'])).map((m) => m.id)).toEqual(['m1']);
+    expect(flattenMessages(qc.getQueryData(['internal-chat', 'thread', 'm1'])).map((m) => m.id)).toEqual(['r1']);
+    expect(qc.getQueryData(['internal-chat', 'unread'])).toBe(0);
+  });
+
+  it('leitura de outra pessoa atualiza o "visto"; a minha zera o contador', () => {
+    const qc = montar();
+    qc.setQueryData(['internal-chat', 'detail', 'c-dm'], { members: [{ id: 'ana', last_read_at: null }, { id: 'eu', last_read_at: null }] });
+    applyInternalChatEvent(qc, { event: 'conversation.read', conversation_id: 'c-dm', user_id: 'ana', read_at: '2026-10-21T10:00:00.000Z' }, 'eu');
+    const detalhe = qc.getQueryData<{ members: Array<{ id: string; last_read_at: string | null }> }>(['internal-chat', 'detail', 'c-dm'])!;
+    expect(detalhe.members.find((m) => m.id === 'ana')!.last_read_at).toBe('2026-10-21T10:00:00.000Z');
+  });
+
+  it('evento ao vivo sem resumo do item não apaga o resumo que o leitor já tinha', () => {
+    const qc = montar();
+    const obj = { id: 'o1', type: 'client' as const, object_id: 'c1', provider: null, context: {}, snapshot: { name: 'Cliente A' }, restricted: false, shared_at: '' };
+    qc.setQueryData(['internal-chat', 'messages', 'c-dm'], { pages: [{ messages: [mensagem('m5', { objects: [obj] })], has_more: false }], pageParams: [null] });
+    applyInternalChatEvent(qc, { event: 'message.updated', conversation_id: 'c-dm', message: mensagem('m5', { objects: [{ ...obj, snapshot: null, object_id: null }] }) }, 'eu');
+    const m = flattenMessages(qc.getQueryData(['internal-chat', 'messages', 'c-dm']))[0]!;
+    expect(m.objects![0]!.snapshot).toEqual({ name: 'Cliente A' });
+  });
+
+  it('aviso de sistema não conta como não lido', () => {
+    const qc = montar();
+    applyInternalChatEvent(qc, { event: 'message.created', conversation_id: 'c-dm', message: mensagem('s1', { kind: 'system', content: 'criou o grupo' }) }, 'eu');
+    expect(qc.getQueryData(['internal-chat', 'unread'])).toBe(0);
+  });
 });

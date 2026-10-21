@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -19,6 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { useClientWorkspace } from '@/hooks/use-client-workspace';
+import { AbrirDiscussao } from '@/components/comunicacao/abrir-discussao';
 import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useClientOverview } from '@/hooks/use-client-overview';
 import { useInboxThreads } from '@/hooks/use-inbox';
@@ -77,6 +78,14 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const { id } = use(params);
   const { data: workspace, isPending, isError, error } = useClientWorkspace(id);
   const [tab, setTab] = useState<Tab>('Visão geral');
+  // ?aba=relatorios (link de card da Comunicação, de notificação): abre direto na aba.
+  useEffect(() => {
+    const aba = new URLSearchParams(window.location.search).get('aba');
+    if (!aba) return;
+    const normal = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, '-');
+    const achada = TABS.find((t) => normal(t) === normal(aba));
+    if (achada) setTab(achada);
+  }, []);
 
   /**
    * A aba Mídia só aparece para quem tem mídia no workspace.
@@ -163,6 +172,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <AbrirDiscussao entityType="client" entityId={client.id} titulo={client.name} />
           {primeiraThread && (
             <Link
               href={`/inbox?t=${primeiraThread.id}`}

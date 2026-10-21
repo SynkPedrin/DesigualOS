@@ -6,7 +6,7 @@ import { realtimeClient, type WsEvent } from '@/lib/realtime/ws-client';
 import { useSupabaseSession } from '@/hooks/use-supabase-session';
 import { supabase } from '@/lib/supabase/client';
 import { applyLiveInboxMessage, type LiveInboxMessage } from '@/hooks/use-inbox';
-import { applyInternalChatEvent, recoverInternalChat } from '@/hooks/use-internal-chat';
+import { applyInternalChatEvent, recoverInternalChat, reportPresence } from '@/hooks/use-internal-chat';
 import { useMe } from '@/hooks/use-me';
 
 /**
@@ -39,6 +39,15 @@ export function useRealtimeEvents(): void {
     realtimeClient.onAuthExpired = () => { void supabase.auth.refreshSession().catch(() => undefined); };
     return () => { realtimeClient.onAuthExpired = null; };
   }, []);
+
+  // Presença da Comunicação: aba à vista = online; em segundo plano = ausente.
+  // Só o estado de agora — nada de histórico de quanto tempo alguém ficou.
+  useEffect(() => {
+    if (!accessToken) return;
+    const aoMudar = () => reportPresence(document.visibilityState === 'visible' ? 'online' : 'away');
+    document.addEventListener('visibilitychange', aoMudar);
+    return () => document.removeEventListener('visibilitychange', aoMudar);
+  }, [accessToken]);
 
   useEffect(() => {
     function handleEvent(event: WsEvent) {

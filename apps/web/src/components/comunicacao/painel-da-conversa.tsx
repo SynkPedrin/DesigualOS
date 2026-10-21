@@ -1,206 +1,95 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, Bell, BellOff, CornerUpLeft, FolderOpen, Hash, Loader2, Pencil, RotateCcw, SmilePlus, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Archive, ArrowDown, ArrowLeft, Bell, BellOff, Bot, Building2, ClipboardList, FolderOpen, Hash, Loader2, Lock, Pin, Users } from 'lucide-react';
 import {
   flattenMessages,
   setOpenConversation,
+  useAskAgent,
   useChatMessages,
-  useDeleteChatMessage,
-  useEditChatMessage,
+  useConversationDetail,
   useMarkChatRead,
   useMuteChat,
-  useReactChatMessage,
-  useSendChatMessage,
+  usePins,
   useTypingUsers,
   type ChatConversation,
   type ChatMember,
   type ChatMessage,
 } from '@/hooks/use-internal-chat';
 import { InboxAvatar } from '@/components/inbox/inbox-avatar';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/stores/toast-store';
-import { AnexosDaMensagem } from './anexos';
 import { Composer, type ComposerHandle } from './composer';
-import { textoComLinks } from '@/lib/links-no-texto';
+import { Mensagem, rotuloDoDia } from './mensagem';
+import { TextoFormatado } from './texto-formatado';
+import { useAcoesDeMensagem } from './use-acoes';
 import { cn } from '@/lib/utils';
 
-const REACOES_RAPIDAS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
 const JANELA_DE_AGRUPAMENTO_MS = 5 * 60_000;
 
-function rotuloDoDia(iso: string): string {
-  const d = new Date(iso);
-  const hoje = new Date();
-  const ontem = new Date(); ontem.setDate(hoje.getDate() - 1);
-  if (d.toDateString() === hoje.toDateString()) return 'Hoje';
-  if (d.toDateString() === ontem.toDateString()) return 'Ontem';
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: d.getFullYear() === hoje.getFullYear() ? undefined : 'numeric' });
+export type PainelLateral = { tipo: 'arquivos' } | { tipo: 'detalhes' } | { tipo: 'thread'; rootId: string } | null;
+
+export function tituloDaConversa(c: Pick<ChatConversation, 'kind' | 'title'>) {
+  if (c.kind === 'general') return '# Geral';
+  if (c.kind === 'channel') return `# ${c.title}`;
+  return c.title;
 }
 
-function hora(iso: string) {
-  return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-}
-
-/** Texto com links clicáveis e @menções destacadas. */
-function TextoDaMensagem({ texto, nomesMencionados, meuNome }: { texto: string; nomesMencionados: string[]; meuNome: string | null }) {
-  const partes = useMemo(() => {
-    if (nomesMencionados.length === 0) return [texto];
-    const nomes = nomesMencionados.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    return texto.split(new RegExp(`(@(?:${nomes.join('|')}))`, 'g'));
-  }, [texto, nomesMencionados]);
+export function IconeDaConversa({ c, tamanho = 'md' }: { c: Pick<ChatConversation, 'kind' | 'title' | 'visibility' | 'partner' | 'entity'>; tamanho?: 'sm' | 'md' }) {
+  const caixa = tamanho === 'sm' ? 'size-7' : 'size-9';
+  const icone = tamanho === 'sm' ? 14 : 18;
+  if (c.kind === 'general' || c.kind === 'channel') {
+    const Icone = c.visibility === 'private' ? Lock : Hash;
+    return <span className={cn('flex shrink-0 items-center justify-center rounded-md bg-roxo-eletrico/20 text-roxo-eletrico', caixa)}><Icone size={icone} /></span>;
+  }
+  if (c.kind === 'group') return <span className={cn('flex shrink-0 items-center justify-center rounded-full bg-grafite-elevado text-nevoa', caixa)}><Users size={icone} /></span>;
+  if (c.kind === 'discussion') {
+    const Icone = c.entity?.type === 'demand' ? ClipboardList : Building2;
+    return <span className={cn('flex shrink-0 items-center justify-center rounded-md bg-sinal/15 text-sinal', caixa)}><Icone size={icone} /></span>;
+  }
   return (
-    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-branco-cru [overflow-wrap:anywhere]">
-      {partes.map((p, i) => {
-        if (p.startsWith('@') && nomesMencionados.includes(p.slice(1))) {
-          return <span key={i} className={cn('rounded px-0.5 font-medium', p.slice(1) === meuNome ? 'bg-sinal/20 text-sinal' : 'bg-roxo-eletrico/20 text-roxo-eletrico')}>{p}</span>;
-        }
-        return <Fragment key={i}>{textoComLinks(p, 'text-roxo-eletrico underline underline-offset-2 hover:opacity-80', `${i}-`)}</Fragment>;
-      })}
-    </p>
+    <span className="relative shrink-0">
+      <InboxAvatar name={c.title} photoUrl={c.partner?.avatar_url} size={tamanho} />
+      {c.partner?.online && <span className="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-grafite bg-sinal" />}
+    </span>
   );
 }
 
-function Mensagem({ m, agrupada, souEu, me, membros, destacada, onReply, onRetry, onEdit, onDelete, onReact, onJump }: {
-  m: ChatMessage;
-  agrupada: boolean;
-  souEu: boolean;
-  me: { id: string; name: string | null };
-  membros: Map<string, ChatMember>;
-  destacada: boolean;
-  onReply: () => void;
-  onRetry: () => void;
-  onEdit: (content: string) => void;
-  onDelete: () => void;
-  onReact: (emoji: string) => void;
-  onJump: (id: string) => void;
-}) {
-  const [editando, setEditando] = useState(false);
-  const [rascunho, setRascunho] = useState(m.content ?? '');
-  const [reagindo, setReagindo] = useState(false);
-  const local = m.id.startsWith('local-');
-  const nomesMencionados = m.mentions.map((id) => membros.get(id)?.name).filter((n): n is string => Boolean(n));
-
-  return (
-    <div
-      id={`msg-${m.id}`}
-      className={cn('group relative flex gap-3 rounded-md px-4 transition-colors hover:bg-grafite-elevado/30', agrupada ? 'py-0.5' : 'mt-2 pt-1.5 pb-0.5', destacada && 'bg-roxo-eletrico/15')}
-    >
-      <div className="w-9 shrink-0">
-        {!agrupada && <InboxAvatar name={m.sender_name ?? 'Colaborador'} photoUrl={m.sender_avatar_url} size="md" />}
-        {agrupada && <span className="hidden pt-1 font-mono text-[10px] text-nevoa/60 group-hover:block">{hora(m.created_at)}</span>}
-      </div>
-      <div className="min-w-0 flex-1">
-        {!agrupada && (
-          <p className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold text-branco-cru">{souEu ? 'Você' : m.sender_name ?? 'Colaborador'}</span>
-            <span className="font-mono text-[11px] text-nevoa">{hora(m.created_at)}</span>
-          </p>
-        )}
-        {m.reply_to && (
-          <button type="button" onClick={() => onJump(m.reply_to!.id)} className="mb-1 mt-0.5 block max-w-full truncate rounded border-l-2 border-nevoa/40 bg-grafite-elevado/40 px-2 py-0.5 text-left text-xs text-nevoa hover:text-branco-cru">
-            <span className="font-semibold">{m.reply_to.sender_name ?? 'Colaborador'}:</span> {m.reply_to.deleted ? 'mensagem apagada' : m.reply_to.content || 'arquivo'}
-          </button>
-        )}
-        {m.deleted ? (
-          <p className="text-sm italic text-nevoa">Mensagem apagada</p>
-        ) : editando ? (
-          <div className="mt-1">
-            <textarea
-              autoFocus
-              value={rascunho}
-              onChange={(e) => setRascunho(e.target.value)}
-              aria-label="Editar mensagem"
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') { setEditando(false); setRascunho(m.content ?? ''); }
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (rascunho.trim() || m.attachments.length) { onEdit(rascunho.trim()); setEditando(false); } }
-              }}
-              className="w-full resize-none rounded-md border border-roxo-eletrico/60 bg-carbono/40 px-2 py-1.5 text-sm text-branco-cru focus:outline-none"
-              rows={Math.min(6, Math.max(1, rascunho.split('\n').length))}
-            />
-            <p className="font-mono text-[10px] text-nevoa">Enter salva · Esc cancela</p>
-          </div>
-        ) : (
-          <>
-            {m.content && <TextoDaMensagem texto={m.content} nomesMencionados={nomesMencionados} meuNome={me.name} />}
-            <AnexosDaMensagem anexos={m.attachments} />
-            {m.edited_at && <span className="font-mono text-[10px] text-nevoa/70">(editada)</span>}
-          </>
-        )}
-        {m.local_status === 'sending' && <p className="font-mono text-[10px] text-nevoa">Enviando…</p>}
-        {m.local_status === 'failed' && (
-          <p className="flex items-center gap-2 font-mono text-[11px] text-erro">
-            Não enviada.
-            <button type="button" onClick={onRetry} className="flex items-center gap-1 underline"><RotateCcw size={11} /> Tentar de novo</button>
-          </p>
-        )}
-        {m.reactions.length > 0 && !m.deleted && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {m.reactions.map((r) => {
-              const minha = r.user_ids.includes(me.id);
-              const quem = r.user_ids.map((id) => (id === me.id ? 'você' : membros.get(id)?.name ?? 'alguém')).join(', ');
-              return (
-                <button key={r.emoji} type="button" onClick={() => onReact(r.emoji)} title={quem} aria-pressed={minha} className={cn('flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs', minha ? 'border-roxo-eletrico/60 bg-roxo-eletrico/15 text-branco-cru' : 'border-grafite-elevado text-nevoa hover:border-nevoa/40')}>
-                  <span>{r.emoji}</span><span className="font-mono">{r.user_ids.length}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-      {!m.deleted && !local && !editando && (
-        <div className="absolute -top-3 right-4 hidden items-center gap-0.5 rounded-md border border-grafite-elevado bg-grafite p-0.5 shadow-lg group-hover:flex group-focus-within:flex">
-          <div className="relative">
-            <button type="button" onClick={() => setReagindo((v) => !v)} aria-label="Reagir" title="Reagir" className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><SmilePlus size={14} /></button>
-            {reagindo && (
-              <div className="absolute right-0 top-full z-20 mt-1 flex gap-0.5 rounded-md border border-grafite-elevado bg-grafite p-1 shadow-xl">
-                {REACOES_RAPIDAS.map((e) => <button key={e} type="button" onClick={() => { onReact(e); setReagindo(false); }} className="rounded p-1 text-base hover:bg-grafite-elevado">{e}</button>)}
-              </div>
-            )}
-          </div>
-          <button type="button" onClick={onReply} aria-label="Responder" title="Responder" className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><CornerUpLeft size={14} /></button>
-          {souEu && (
-            <>
-              <button type="button" onClick={() => { setRascunho(m.content ?? ''); setEditando(true); }} aria-label="Editar" title="Editar" className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><Pencil size={13} /></button>
-              <button type="button" onClick={onDelete} aria-label="Apagar" title="Apagar" className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-erro"><Trash2 size={13} /></button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function PainelDaConversa({ conversa, me, membros, focoMensagemId, onBack, onOpenFiles }: {
+export function PainelDaConversa({ conversa, me, membros, focoMensagemId, painel, onPainel, onBack }: {
   conversa: ChatConversation;
   me: { id: string; name: string | null };
   membros: ChatMember[];
   focoMensagemId: string | null;
+  painel: PainelLateral;
+  onPainel: (p: PainelLateral) => void;
   onBack: () => void;
-  onOpenFiles: () => void;
 }) {
+  const router = useRouter();
   const consulta = useChatMessages(conversa.id);
+  const detalhe = useConversationDetail(conversa.id);
   const mensagens = useMemo(() => flattenMessages(consulta.data), [consulta.data]);
-  const enviar = useSendChatMessage(conversa.id, me);
-  const editar = useEditChatMessage(conversa.id);
-  const apagar = useDeleteChatMessage(conversa.id);
-  const reagir = useReactChatMessage(conversa.id);
   const marcarLida = useMarkChatRead();
   const silenciar = useMuteChat();
+  const agente = useAskAgent();
   const digitando = useTypingUsers(conversa.id);
   const [respondendo, setRespondendo] = useState<ChatMessage | null>(null);
-  const [paraApagar, setParaApagar] = useState<ChatMessage | null>(null);
   const [destaque, setDestaque] = useState<string | null>(null);
   const [arrastando, setArrastando] = useState(false);
   const [longeDoFim, setLongeDoFim] = useState(false);
+  const [vendoFixadas, setVendoFixadas] = useState(false);
+  const fixadas = usePins(conversa.id, vendoFixadas);
   const rolagem = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerHandle>(null);
   const alturaAntes = useRef<number | null>(null);
   const colarNoFim = useRef(true);
   const mapaDeMembros = useMemo(() => new Map(membros.map((m) => [m.id, m])), [membros]);
+  const arquivada = Boolean(detalhe.data?.archived);
+  const podeEscrever = !arquivada;
 
   useEffect(() => {
     setOpenConversation(conversa.id);
     setRespondendo(null);
+    setVendoFixadas(false);
     colarNoFim.current = true;
     return () => setOpenConversation(null);
   }, [conversa.id]);
@@ -255,7 +144,7 @@ export function PainelDaConversa({ conversa, me, membros, focoMensagemId, onBack
       await new Promise((r) => requestAnimationFrame(() => r(null)));
     }
     const alvo = document.getElementById(`msg-${id}`);
-    if (!alvo) { toast('Essa mensagem não está mais disponível.', 'info'); return; }
+    if (!alvo) { toast('Essa mensagem não está na linha principal (pode estar numa thread) ou não existe mais.', 'info'); return; }
     colarNoFim.current = false;
     alvo.scrollIntoView({ block: 'center', behavior: 'smooth' });
     setDestaque(id);
@@ -266,53 +155,110 @@ export function PainelDaConversa({ conversa, me, membros, focoMensagemId, onBack
     if (focoMensagemId && consulta.isSuccess) void irPara(focoMensagemId);
   }, [focoMensagemId, consulta.isSuccess, conversa.id]);
 
+  const { acoes, enviar, modais } = useAcoesDeMensagem(conversa.id, me, {
+    onReply: (m) => { setRespondendo(m); composer.current?.focus(); },
+    onThread: (m) => onPainel({ tipo: 'thread', rootId: m.id }),
+    onJump: (id) => void irPara(id),
+    aoEnviar: () => { colarNoFim.current = true; },
+  });
+
   function aoEnviar(input: Parameters<typeof enviar.mutate>[0]) {
     colarNoFim.current = true;
-    enviar.mutate(input);
+    enviar.mutate(input, { onError: (e) => { if (/arquivad/i.test(e.message)) toast(e.message, 'error'); } });
     setRespondendo(null);
   }
 
-  const titulo = conversa.kind === 'general' ? 'Geral' : conversa.title;
+  async function resumirConversa() {
+    try {
+      const r = await agente.mutateAsync({ action: 'summarize_conversation', conversation_id: conversa.id });
+      router.push(`/chat?conversation=${r.conversation_id}&agent=${r.agent}`);
+    } catch (e) { toast(e instanceof Error ? e.message : 'O agente não está disponível agora.', 'error'); }
+  }
+
+  // "Visto por" na última mensagem minha, em privada e grupo.
+  const ultimaMinha = useMemo(() => [...mensagens].reverse().find((m) => m.sender_id === me.id && m.kind !== 'system' && !m.local_status), [mensagens, me.id]);
+  const visto = useMemo(() => {
+    if (!ultimaMinha || (conversa.kind !== 'direct' && conversa.kind !== 'group')) return null;
+    const quem = (detalhe.data?.members ?? []).filter((p) => p.id !== me.id && p.last_read_at && p.last_read_at >= ultimaMinha.created_at);
+    if (quem.length === 0) return null;
+    if (conversa.kind === 'direct') return 'Visto';
+    return `Visto por ${quem.slice(0, 3).map((p) => p.name.split(' ')[0]).join(', ')}${quem.length > 3 ? ` +${quem.length - 3}` : ''}`;
+  }, [ultimaMinha, detalhe.data, me.id, conversa.kind]);
+
+  const subtitulo = conversa.kind === 'general' ? `Toda a equipe · ${membros.length} pessoas`
+    : conversa.kind === 'channel' ? `${conversa.visibility === 'private' ? 'Canal privado' : 'Canal público'} · ${detalhe.data?.members.length ?? conversa.member_count ?? '…'} pessoas`
+      : conversa.kind === 'group' ? `Grupo privado · ${detalhe.data?.members.length ?? conversa.member_count ?? '…'} pessoas`
+        : conversa.kind === 'discussion' ? `Discussão ${conversa.entity?.type === 'demand' ? 'da quinzena' : 'do cliente'}`
+          : conversa.partner?.online ? 'Online' : 'Conversa privada';
+  const nome = tituloDaConversa(conversa);
+  const inicio = conversa.kind === 'general' ? { t: 'Início do #Geral', d: 'Todo mundo da equipe lê e escreve aqui.' }
+    : conversa.kind === 'channel' ? { t: `Início de #${conversa.title}`, d: conversa.description || (conversa.visibility === 'private' ? 'Só quem foi convidado lê este canal.' : 'Qualquer pessoa da equipe encontra e entra neste canal.') }
+      : conversa.kind === 'group' ? { t: `Início do grupo ${conversa.title}`, d: 'Só os participantes veem estas mensagens.' }
+        : conversa.kind === 'discussion' ? { t: `Discussão: ${conversa.title}`, d: 'Decisões e combinados sobre este item. Quem pode ver o item participa.' }
+          : { t: `Início da conversa com ${conversa.title}`, d: 'Só vocês dois veem estas mensagens.' };
+  const totalFixadas = detalhe.data?.pinned_count ?? 0;
+
+  const botao = 'flex size-8 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru';
 
   return (
     <section
-      aria-label={`Conversa ${titulo}`}
+      aria-label={`Conversa ${nome}`}
       className="relative flex h-full min-h-0 flex-col"
-      onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setArrastando(true); } }}
+      onDragOver={(e) => { if (podeEscrever && e.dataTransfer.types.includes('Files')) { e.preventDefault(); setArrastando(true); } }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setArrastando(false); }}
       onDrop={(e) => { e.preventDefault(); setArrastando(false); if (e.dataTransfer.files.length) composer.current?.addFiles(e.dataTransfer.files); }}
     >
       <header className="flex items-center gap-3 border-b border-grafite-elevado px-4 py-2.5">
         <button type="button" onClick={onBack} aria-label="Voltar para conversas" className="text-nevoa hover:text-branco-cru lg:hidden"><ArrowLeft size={18} /></button>
-        {conversa.kind === 'general' ? (
-          <span className="flex size-9 items-center justify-center rounded-md bg-roxo-eletrico/20 text-roxo-eletrico"><Hash size={18} /></span>
-        ) : (
-          <span className="relative">
-            <InboxAvatar name={conversa.title} photoUrl={conversa.partner?.avatar_url} />
-            {conversa.partner?.online && <span className="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-grafite bg-sinal" />}
-          </span>
-        )}
+        <IconeDaConversa c={conversa} />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-heading text-sm font-semibold text-branco-cru">{conversa.kind === 'general' ? '# Geral' : conversa.title}</h2>
-          <p className="truncate font-mono text-[11px] text-nevoa">
-            {conversa.kind === 'general' ? `Toda a equipe · ${membros.length} pessoas` : conversa.partner?.online ? 'Online' : 'Conversa privada'}
-          </p>
+          <h2 className="truncate font-heading text-sm font-semibold text-branco-cru">{nome}</h2>
+          <p className="truncate font-mono text-[11px] text-nevoa">{subtitulo}{conversa.kind === 'channel' && conversa.description ? ` · ${conversa.description}` : ''}</p>
         </div>
-        <button type="button" onClick={() => silenciar.mutate({ conversationId: conversa.id, muted: !conversa.muted })} aria-label={conversa.muted ? 'Reativar notificações' : 'Silenciar conversa'} title={conversa.muted ? 'Reativar notificações' : 'Silenciar conversa'} className="flex size-8 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru">
+        {totalFixadas > 0 && (
+          <button type="button" onClick={() => setVendoFixadas((v) => !v)} aria-expanded={vendoFixadas} aria-label={`${totalFixadas} mensagens fixadas`} title="Mensagens fixadas" className={cn(botao, 'w-auto gap-1 px-2 font-mono text-[11px]', vendoFixadas && 'bg-grafite-elevado text-branco-cru')}>
+            <Pin size={14} /> {totalFixadas}
+          </button>
+        )}
+        <button type="button" onClick={() => void resumirConversa()} disabled={agente.isPending || mensagens.length === 0} aria-label="Resumir com Bento" title="Pedir ao Bento um resumo desta conversa (só você vê a resposta)" className={cn(botao, 'disabled:opacity-40')}><Bot size={16} /></button>
+        <button type="button" onClick={() => silenciar.mutate({ conversationId: conversa.id, muted: !conversa.muted })} aria-label={conversa.muted ? 'Reativar notificações' : 'Silenciar conversa'} title={conversa.muted ? 'Reativar notificações' : 'Silenciar conversa'} className={botao}>
           {conversa.muted ? <BellOff size={16} /> : <Bell size={16} />}
         </button>
-        <button type="button" onClick={onOpenFiles} aria-label="Arquivos da conversa" title="Arquivos da conversa" className="flex size-8 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><FolderOpen size={16} /></button>
+        <button type="button" onClick={() => onPainel(painel?.tipo === 'arquivos' ? null : { tipo: 'arquivos' })} aria-label="Arquivos da conversa" title="Arquivos da conversa" className={cn(botao, painel?.tipo === 'arquivos' && 'bg-grafite-elevado text-branco-cru')}><FolderOpen size={16} /></button>
+        {conversa.kind !== 'general' && (
+          <button type="button" onClick={() => onPainel(painel?.tipo === 'detalhes' ? null : { tipo: 'detalhes' })} aria-label="Detalhes e participantes" title="Detalhes e participantes" className={cn(botao, painel?.tipo === 'detalhes' && 'bg-grafite-elevado text-branco-cru')}><Users size={16} /></button>
+        )}
       </header>
+
+      {vendoFixadas && (
+        <div className="max-h-56 overflow-y-auto border-b border-grafite-elevado bg-grafite-elevado/30 px-4 py-2" aria-label="Mensagens fixadas">
+          {fixadas.isPending && <Loader2 size={14} className="animate-spin text-nevoa" />}
+          {(fixadas.data ?? []).map((m) => (
+            <button key={m.id} type="button" onClick={() => { setVendoFixadas(false); void irPara(m.id); }} className="block w-full rounded px-2 py-1 text-left hover:bg-grafite-elevado/60">
+              <span className="font-mono text-[10px] text-aviso">{m.sender_name} · {rotuloDoDia(m.created_at)}</span>
+              <TextoFormatado texto={(m.content ?? 'Mensagem com anexo').slice(0, 220)} className="line-clamp-2 text-xs" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {arquivada && (
+        <p className="flex items-center gap-2 border-b border-grafite-elevado bg-aviso/10 px-4 py-1.5 text-xs text-aviso"><Archive size={13} /> Canal arquivado: o histórico continua aqui, mas não dá para escrever.</p>
+      )}
 
       <div ref={rolagem} onScroll={aoRolar} className="min-h-0 flex-1 overflow-y-auto py-3" role="log" aria-live="polite" aria-label="Mensagens">
         {consulta.isFetchingNextPage && <p className="flex justify-center py-2 text-nevoa"><Loader2 size={16} className="animate-spin" /></p>}
         {!consulta.hasNextPage && consulta.isSuccess && (
           <div className="px-4 pb-4 pt-6">
-            <p className="font-heading text-base font-semibold text-branco-cru">{conversa.kind === 'general' ? 'Início do #Geral' : `Início da conversa com ${conversa.title}`}</p>
-            <p className="text-sm text-nevoa">{conversa.kind === 'general' ? 'Todo mundo da equipe lê e escreve aqui.' : 'Só vocês dois veem estas mensagens.'}</p>
+            <p className="font-heading text-base font-semibold text-branco-cru">{inicio.t}</p>
+            <p className="text-sm text-nevoa">{inicio.d}</p>
           </div>
         )}
-        {consulta.isPending && <p className="flex justify-center py-10 text-nevoa"><Loader2 className="animate-spin" /></p>}
+        {consulta.isPending && (
+          <div className="space-y-4 px-4 py-6" aria-label="Carregando mensagens">
+            {[0, 1, 2].map((i) => <div key={i} className="flex gap-3"><span className="size-9 animate-pulse rounded-full bg-grafite-elevado" /><span className="flex-1 space-y-2"><span className="block h-3 w-32 animate-pulse rounded bg-grafite-elevado" /><span className="block h-3 w-3/4 animate-pulse rounded bg-grafite-elevado/70" /></span></div>)}
+          </div>
+        )}
         {consulta.isError && (
           <div className="px-4 py-10 text-center text-sm text-erro">
             Não foi possível carregar as mensagens. <button type="button" onClick={() => void consulta.refetch()} className="underline">Tentar de novo</button>
@@ -321,7 +267,7 @@ export function PainelDaConversa({ conversa, me, membros, focoMensagemId, onBack
         {mensagens.map((m, i) => {
           const anterior = mensagens[i - 1];
           const novoDia = !anterior || new Date(anterior.created_at).toDateString() !== new Date(m.created_at).toDateString();
-          const agrupada = !novoDia && Boolean(anterior) && anterior!.sender_id === m.sender_id && !m.reply_to && new Date(m.created_at).getTime() - new Date(anterior!.created_at).getTime() < JANELA_DE_AGRUPAMENTO_MS;
+          const agrupada = !novoDia && Boolean(anterior) && anterior!.kind !== 'system' && m.kind !== 'system' && anterior!.sender_id === m.sender_id && !m.reply_to && !(anterior!.reply_count) && new Date(m.created_at).getTime() - new Date(anterior!.created_at).getTime() < JANELA_DE_AGRUPAMENTO_MS;
           return (
             <Fragment key={m.client_message_id + m.sender_id}>
               {novoDia && (
@@ -331,27 +277,14 @@ export function PainelDaConversa({ conversa, me, membros, focoMensagemId, onBack
                   <span className="h-px flex-1 bg-grafite-elevado" />
                 </div>
               )}
-              <Mensagem
-                m={m}
-                agrupada={agrupada}
-                souEu={m.sender_id === me.id}
-                me={me}
-                membros={mapaDeMembros}
-                destacada={destaque === m.id}
-                onReply={() => { setRespondendo(m); composer.current?.focus(); }}
-                onRetry={() => aoEnviar({ clientMessageId: m.client_message_id, content: m.content ?? '', attachments: m.attachments, mentions: m.mentions, replyTo: m.reply_to })}
-                onEdit={(content) => editar.mutate({ messageId: m.id, content }, { onError: (e) => toast(e.message, 'error') })}
-                onDelete={() => setParaApagar(m)}
-                onReact={(emoji) => reagir.mutate({ messageId: m.id, emoji }, { onError: (e) => toast(e.message, 'error') })}
-                onJump={(id) => void irPara(id)}
-              />
+              <Mensagem m={m} agrupada={agrupada} me={me} membros={mapaDeMembros} destacada={destaque === m.id} podeEscrever={podeEscrever} acoes={acoes} visto={m === ultimaMinha ? visto : null} />
             </Fragment>
           );
         })}
       </div>
 
       {longeDoFim && (
-        <button type="button" onClick={() => { const el = rolagem.current; if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }} aria-label="Ir para as mensagens mais recentes" className="absolute bottom-24 right-6 flex size-9 items-center justify-center rounded-full border border-grafite-elevado bg-grafite text-nevoa shadow-lg hover:text-branco-cru">
+        <button type="button" onClick={() => { const el = rolagem.current; if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }} aria-label="Ir para as mensagens mais recentes" className="absolute bottom-32 right-6 flex size-9 items-center justify-center rounded-full border border-grafite-elevado bg-grafite text-nevoa shadow-lg hover:text-branco-cru">
           <ArrowDown size={16} />
         </button>
       )}
@@ -366,7 +299,8 @@ export function PainelDaConversa({ conversa, me, membros, focoMensagemId, onBack
         replyTo={respondendo}
         onCancelReply={() => setRespondendo(null)}
         onSend={aoEnviar}
-        placeholder={conversa.kind === 'general' ? 'Mensagem para #Geral' : `Mensagem para ${conversa.title}`}
+        placeholder={conversa.kind === 'general' ? 'Mensagem para #Geral' : conversa.kind === 'channel' ? `Mensagem para #${conversa.title}` : `Mensagem para ${conversa.title}`}
+        readOnly={arquivada ? 'Este canal está arquivado: só leitura.' : null}
       />
 
       {arrastando && (
@@ -374,17 +308,7 @@ export function PainelDaConversa({ conversa, me, membros, focoMensagemId, onBack
           <p className="font-heading text-sm text-branco-cru">Solte para anexar</p>
         </div>
       )}
-
-      {paraApagar && (
-        <ConfirmDialog
-          title="Apagar mensagem?"
-          description="Ela some para todos da conversa, junto com os arquivos anexados. Não dá para desfazer."
-          confirmLabel="Apagar"
-          isPending={apagar.isPending}
-          onCancel={() => setParaApagar(null)}
-          onConfirm={() => apagar.mutate(paraApagar.id, { onSettled: () => setParaApagar(null), onError: (e) => toast(e.message, 'error') })}
-        />
-      )}
+      {modais}
     </section>
   );
 }

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Download, FileText, Loader2 } from 'lucide-react';
 import { useClientReports, useCreateClientReport } from '@/hooks/use-client-reports';
 import { ApiRequestError } from '@/lib/api/client';
+import { CompartilharNaComunicacao } from '@/components/comunicacao/compartilhar-na-comunicacao';
 
 /**
  * Relatórios PDF (§46-51 do prompt de refinamento, 06/10/2026). Geração é
@@ -120,6 +121,7 @@ export function ClientReportsPanel({ clientId }: { clientId: string }) {
                     <Download size={11} /> Baixar
                   </a>
                 )}
+                {r.status === 'ready' && <CompartilharNaComunicacao compacto objeto={{ type: 'report', id: r.id, label: `Relatório ${r.channels.join(' + ')} · ${r.period_days} dias` }} />}
               </div>
             </li>
           ))}
