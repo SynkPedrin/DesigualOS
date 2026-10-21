@@ -38,8 +38,8 @@ Sem `DATABASE_URL` local, esses arquivos são PULADOS (não falham).
 ## Incrementos
 | # | Incremento | Estado |
 |---|---|---|
-| 1 | Fundação: flag, schema, domínio, APIs, permissões | **IMPLEMENTED + testes reais** (back-end). Menu/UI: ver abaixo |
-| 2 | Gestão básica: espaços, pastas, projetos, listas, tarefas, subtarefas, status, responsáveis, prioridade, prazos | **IMPLEMENTED + testes reais** (back-end) |
+| 1 | Fundação: flag, schema, domínio, APIs, permissões | **IMPLEMENTED + testes reais** (back-end). Menu "Daily Tasks — Beta" só aparece com `/work/access` allowed (sidebar e ⌘K); layout com abas (só as prontas são links) |
+| 2 | Gestão básica: espaços, pastas, projetos, listas, tarefas, subtarefas, status, responsáveis, prioridade, prazos | **IMPLEMENTED + testes reais** (back-end); UI básica: árvore Espaço→Lista, criar espaço/lista/tarefa, mudar status (typecheck + 80 testes web; **não validada em navegador** com flag ligada) |
 | 3 | Colaboração: comentários, anexos, menções, checklists, dependências | NOT_IMPLEMENTED |
 | 4 | Visualizações: lista, kanban, calendário, gantt/timeline | NOT_IMPLEMENTED |
 | 5 | Produtividade: Meu Trabalho, caixa, time tracking, aprovações, workload, views salvas | NOT_IMPLEMENTED |
