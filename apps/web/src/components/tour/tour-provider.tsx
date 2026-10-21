@@ -244,11 +244,13 @@ function SobreposicaoDoTour({ tour, indice, onIr, onPular, onConcluir }: { tour:
       {alvo ? (
         <div
           aria-hidden
+          data-testid="tour-destaque"
           className="pointer-events-none fixed rounded-lg ring-2 ring-roxo-eletrico transition-all duration-200 ease-out"
           style={{ top: alvo.top - 6, left: alvo.left - 6, width: alvo.width + 12, height: alvo.height + 12, boxShadow: '0 0 0 9999px rgba(10, 10, 14, 0.62)' }}
         />
       ) : (
-        <div aria-hidden className="fixed inset-0 bg-carbono/70" />
+        // Mesmo véu escuro do destaque (nos dois temas): procurar o alvo não "pisca" de claro para escuro.
+        <div aria-hidden className="fixed inset-0" style={{ background: 'rgba(10, 10, 14, 0.62)' }} />
       )}
       <div className="fixed inset-0" onClick={(e) => e.stopPropagation()} />
       <CartaoDaEtapa
@@ -299,11 +301,14 @@ function CartaoDaEtapa({ refCartao, refPrincipal, etapa, indice, total, alvo, pr
 }) {
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [celular, setCelular] = useState(false);
+  // No celular o cartão é uma faixa de ponta a ponta: embaixo, a não ser que o alvo esteja na metade de baixo (o composer) — aí em cima, para não cobri-lo.
+  const [noTopo, setNoTopo] = useState(false);
 
   useLayoutEffect(() => {
     const calcular = () => {
       const tela = { width: window.innerWidth, height: window.innerHeight };
       setCelular(tela.width < 640);
+      setNoTopo(Boolean(alvo && alvo.top + alvo.height / 2 > tela.height / 2));
       const el = refCartao.current;
       const medida = { width: el?.offsetWidth ?? LARGURA, height: el?.offsetHeight ?? 200 };
       setPos(posicionar(alvo, etapa.posicao, medida, tela));
@@ -327,7 +332,7 @@ function CartaoDaEtapa({ refCartao, refPrincipal, etapa, indice, total, alvo, pr
       transition={{ duration: 0.2, ease: 'easeOut' }}
       className={cn(
         'fixed z-[301] rounded-xl border border-grafite-elevado bg-grafite p-4 shadow-2xl outline-none',
-        celular ? 'inset-x-4 bottom-4' : 'w-[340px]',
+        celular ? (noTopo ? 'inset-x-4 top-4' : 'inset-x-4 bottom-4') : 'w-[340px]',
       )}
       style={celular || !pos ? {} : { top: pos.top, left: pos.left }}
     >
@@ -352,7 +357,7 @@ function CartaoDaEtapa({ refCartao, refPrincipal, etapa, indice, total, alvo, pr
           {indice > 0 && (
             <button type="button" onClick={onAnterior} className="rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru transition-colors hover:border-roxo-eletrico/60">Anterior</button>
           )}
-          <button ref={refPrincipal} type="button" onClick={onProximo} className="rounded-md bg-roxo-eletrico px-3 py-1.5 text-sm font-medium text-branco-cru transition-opacity hover:opacity-90">
+          <button ref={refPrincipal} type="button" onClick={onProximo} className="rounded-md bg-roxo-eletrico px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90">
             {ultima ? etapa.acaoFinal?.rotulo ?? 'Concluir' : 'Próximo'}
           </button>
         </div>

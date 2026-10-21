@@ -31,28 +31,36 @@ import { tourDoAnuncio } from '@/components/tour/tours';
 
 const VISOES: Visao[] = ['inicio', 'mencoes', 'salvos', 'arquivos', 'busca'];
 
-function ConversaForaDaLista({ id, me, membros, painel, onPainel, onBack, foco }: { id: string; me: { id: string; name: string | null }; membros: ReturnType<typeof useChatMembers>['data']; painel: PainelLateral; onPainel: (p: PainelLateral) => void; onBack: () => void; foco: string | null }) {
+/**
+ * A conversa aberta — da lista ou não. Um componente só para os dois casos de
+ * propósito: quando alguém entra num canal público, ele passa a estar na lista;
+ * se cada caso fosse um componente, o painel (e o composer) remontava nesse
+ * instante e o Enter digitado logo depois de "Entrar no canal" caía no composer
+ * que estava sendo descartado (achado no E2E do Hub 2.1).
+ */
+function ConversaAberta({ id, daLista, me, membros, painel, onPainel, onBack, foco }: { id: string; daLista: ChatConversation | null; me: { id: string; name: string | null }; membros: ReturnType<typeof useChatMembers>['data']; painel: PainelLateral; onPainel: (p: PainelLateral) => void; onBack: () => void; foco: string | null }) {
   // Canal público ainda não aberto, ou discussão aberta por link: a lista não
   // tem a linha (só mostra o que a pessoa participa), mas ela pode ler.
   const detalhe = useConversationDetail(id);
   const acoes = useConversationActions(id);
-  if (detalhe.isPending) return <div className="flex h-full items-center justify-center text-sm text-nevoa">Abrindo…</div>;
-  if (detalhe.isError || !detalhe.data) return <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center"><MessagesSquare className="text-nevoa" /><p className="text-sm text-nevoa">Essa conversa não existe ou você não participa dela.</p></div>;
   const d = detalhe.data;
-  const conversa: ChatConversation = {
-    id: d.id, kind: d.kind, title: d.kind === 'general' ? 'Geral' : d.title ?? 'Conversa', description: d.description, visibility: d.visibility,
-    entity: d.entity, member_count: d.members.length, partner: null, last_message: null, unread_count: 0, muted: false,
+  if (!daLista && detalhe.isPending) return <div className="flex h-full items-center justify-center text-sm text-nevoa">Abrindo…</div>;
+  if (!daLista && (detalhe.isError || !d)) return <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center"><MessagesSquare className="text-nevoa" /><p className="text-sm text-nevoa">Essa conversa não existe ou você não participa dela.</p></div>;
+  const conversa: ChatConversation = daLista ?? {
+    id: d!.id, kind: d!.kind, title: d!.kind === 'general' ? 'Geral' : d!.title ?? 'Conversa', description: d!.description, visibility: d!.visibility,
+    entity: d!.entity, member_count: d!.members.length, partner: null, last_message: null, unread_count: 0, muted: false,
   };
+  const mostrarConvite = !daLista && d?.kind === 'channel' && !d.is_member && !d.archived;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {d.kind === 'channel' && !d.is_member && !d.archived && (
+      {mostrarConvite && (
         <div className="flex items-center justify-between gap-3 border-b border-grafite-elevado bg-roxo-eletrico/10 px-4 py-2 text-xs text-branco-cru">
-          <span className="flex items-center gap-1.5">{d.visibility === 'private' ? <Lock size={13} /> : <Hash size={13} />} Você está vendo #{d.title}. Entre para aparecer na sua lista e receber as mensagens.</span>
-          <button type="button" onClick={() => acoes.join.mutate(undefined, { onError: (e) => toast(e.message, 'error') })} className="rounded-md bg-roxo-eletrico px-2.5 py-1 font-medium">Entrar no canal</button>
+          <span className="flex items-center gap-1.5">{d!.visibility === 'private' ? <Lock size={13} /> : <Hash size={13} />} Você está vendo #{d!.title}. Entre para aparecer na sua lista e receber as mensagens.</span>
+          <button type="button" onClick={() => acoes.join.mutate(undefined, { onError: (e) => toast(e.message, 'error') })} className="rounded-md bg-roxo-eletrico px-2.5 py-1 font-medium text-white">Entrar no canal</button>
         </div>
       )}
       <div className="min-h-0 flex-1">
-        <PainelDaConversa key={d.id} conversa={conversa} me={me} membros={membros ?? []} focoMensagemId={foco} painel={painel} onPainel={onPainel} onBack={onBack} />
+        <PainelDaConversa key={conversa.id} conversa={conversa} me={me} membros={membros ?? []} focoMensagemId={foco} painel={painel} onPainel={onPainel} onBack={onBack} />
       </div>
     </div>
   );
@@ -136,11 +144,9 @@ function ComunicacaoConteudo() {
   else if (visao === 'busca') principal = <VisaoBusca termoInicial={params.get('q') ?? ''} onOpen={abrir} />;
   else if (pedida === 'geral') principal = <div className="flex h-full items-center justify-center text-sm text-nevoa">Abrindo o #Geral…</div>;
   else if (pedida && meuPerfil) {
-    principal = exibida
-      ? <PainelDaConversa key={exibida.id} conversa={exibida} me={meuPerfil} membros={membros.data ?? []} focoMensagemId={foco} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?lista=1', { scroll: false })} />
-      : conversas.isSuccess
-        ? <ConversaForaDaLista id={pedida} me={meuPerfil} membros={membros.data} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?lista=1', { scroll: false })} foco={foco} />
-        : <div className="flex h-full items-center justify-center text-sm text-nevoa">Carregando…</div>;
+    principal = exibida || conversas.isSuccess
+      ? <ConversaAberta key={pedida} id={pedida} daLista={exibida} me={meuPerfil} membros={membros.data} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?lista=1', { scroll: false })} foco={foco} />
+      : <div className="flex h-full items-center justify-center text-sm text-nevoa">Carregando…</div>;
   } else {
     principal = <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center"><MessagesSquare className="text-nevoa" /><p className="text-sm text-nevoa">Escolha uma conversa.</p></div>;
   }

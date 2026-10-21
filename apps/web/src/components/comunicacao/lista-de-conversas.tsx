@@ -140,7 +140,7 @@ export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, 
         <h1 className="font-heading text-sm font-semibold text-branco-cru">Comunicação</h1>
         <div className="flex items-center gap-1">
         <div className="relative">
-          <button type="button" onClick={() => setMenuAjuda((v) => !v)} title="Ajuda" aria-label="Ajuda" aria-expanded={menuAjuda} className="flex size-7 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru"><HelpCircle size={15} /></button>
+          <button type="button" onClick={() => setMenuAjuda((v) => !v)} title="Ajuda da Comunicação" aria-label="Ajuda da Comunicação" aria-expanded={menuAjuda} className="flex size-7 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru"><HelpCircle size={15} /></button>
           {menuAjuda && (
             <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-lg border border-grafite-elevado bg-grafite py-1 shadow-2xl">
               <button type="button" role="menuitem" onClick={() => { setMenuAjuda(false); onConhecer(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-branco-cru hover:bg-grafite-elevado"><GraduationCap size={15} className="text-nevoa" /> Conhecer Comunicação</button>

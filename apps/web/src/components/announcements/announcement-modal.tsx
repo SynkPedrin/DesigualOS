@@ -98,7 +98,7 @@ export function AnnouncementModal({ anuncio, onPrincipal, onSecundario, onFechar
                 {anuncio.secondary_cta.label}
               </button>
             )}
-            <button ref={principal} type="button" onClick={onPrincipal} className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-medium text-branco-cru transition-opacity hover:opacity-90">
+            <button ref={principal} type="button" onClick={onPrincipal} className="rounded-md bg-roxo-eletrico px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90">
               {anuncio.primary_cta.label}
             </button>
           </div>

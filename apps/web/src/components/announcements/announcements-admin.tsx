@@ -68,7 +68,7 @@ export function AnnouncementsAdmin() {
                         if (r.valor === 'all' && !window.confirm(`Mostrar "${a.title}" para todo o público agora?`)) return;
                         mudar(a, { key: a.key, rollout: r.valor });
                       }}
-                      className={cn('px-3 py-1.5 text-xs transition-colors', a.rollout === r.valor ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru')}
+                      className={cn('px-3 py-1.5 text-xs transition-colors', a.rollout === r.valor ? 'bg-roxo-eletrico text-white' : 'text-nevoa hover:text-branco-cru')}
                     >
                       {r.rotulo}
                     </button>
