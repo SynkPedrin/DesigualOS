@@ -114,7 +114,9 @@ describe.skipIf(!enabled)('work-engine × PostgreSQL real', () => {
     });
     it('idempotência: a mesma chave devolve a MESMA tarefa', async () => {
       const key = randomUUID();
-      const [a, b] = await Promise.all(Array.from({ length: 6 }, () => E.createTask(ctxA(), { listId: listA, title: 'Uma só', idempotencyKey: key })).slice(0, 2));
+      const first = await Promise.all(Array.from({ length: 2 }, () => E.createTask(ctxA(), { listId: listA, title: 'Uma só', idempotencyKey: key })));
+      const a = first[0]!;
+      const b = first[1]!;
       const c = await E.createTask(ctxA(), { listId: listA, title: 'Uma só', idempotencyKey: key });
       expect(c.id).toBe(a.id);
       expect(b.id).toBe(a.id);
