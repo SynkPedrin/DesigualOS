@@ -91,6 +91,21 @@ const teamTasksResponseSchema = z.object({
 
 /** Tarefa já normalizada: nomes em camelCase, datas em ms numérico, nunca `undefined`
  * no meio (quem monta briefing não deveria ter que defender de 6 formatos do ClickUp). */
+/**
+ * TAREFA CONCLUÍDA, pelo TIPO do status (a regra de `apps/web/src/lib/tarefa-concluida.ts`,
+ * agora no backend).
+ *
+ * O ClickUp separa o status em tipos: `open`, `custom`, `done` ("pronto") e
+ * `closed` ("encerrado"). Com `include_closed=false` ele esconde SÓ o `closed`;
+ * as de tipo `done` continuam voltando como se estivessem abertas. Medido ao
+ * vivo em 21/10/2026: das tarefas com prazo vencido, 1.301 estavam pronto ou
+ * encerrado e apenas 99 estavam de fato atrasadas — e as ferramentas que só
+ * comparam `prazo < agora` contavam as 1.301 como atrasadas.
+ */
+export function statusConcluido(statusType: string | null | undefined): boolean {
+  return statusType === 'done' || statusType === 'closed';
+}
+
 export interface OperationTask {
   id: string;
   name: string;

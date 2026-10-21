@@ -41,6 +41,7 @@ import {
 } from '@/mocks/pipeline';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { estagioConcluido } from '@/lib/tarefa-concluida';
 
 /**
  * PIPELINES — mais de um quadro, cada um de um tipo:
@@ -1374,7 +1375,7 @@ function PipelineBoardUI() {
                     const anexos = card.anexos.length;
                     const ehTarefa = board.tipo === 'tarefas';
                     const nomeCliente = card.clientId ? nomeDoCliente.get(card.clientId) : undefined;
-                    const prazo = prazoDoCartao(card.prazo, stage.categoria === 'concluido');
+                    const prazo = prazoDoCartao(card.prazo, estagioConcluido(stage));
                     const bandeira = card.prioridade ? PRIORIDADE_BANDEIRA[card.prioridade] : undefined;
                     return (
                       <div

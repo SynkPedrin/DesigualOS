@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import {
   createTaskComment, deleteTask as gatewayDeleteTask, getTask as gatewayGetTask,
-  getTaskComments, queryOperationTasks, resolveMemberByName, updateTask as gatewayUpdateTask,
+  getTaskComments, queryOperationTasks, resolveMemberByName, statusConcluido, updateTask as gatewayUpdateTask,
   createVerifiedSeniorTask, type ClickUpConfig, type OperationTask, type SeniorToolContext,
 } from '@desigual-os/tool-gateway';
 import type {
@@ -125,6 +125,10 @@ export class ClickUpTaskProvider implements TaskProvider {
     });
 
     let tasks = r.tasks.map((t) => this.paraTaskRef(t, mapa));
+    // "Só abertas" (padrão) é só abertas: pronto (done) e encerrado (closed) saem.
+    // O ClickUp só esconde o `closed`; sem este filtro, tarefa "pronto" com prazo
+    // velho entrava em "abertas" e em "atrasadas" (todas as ferramentas de operação).
+    if (!(query.includeClosed ?? false)) tasks = tasks.filter((t) => !statusConcluido(t.statusType));
     if (query.text) {
       const alvo = query.text.toLowerCase();
       tasks = tasks.filter((t) => t.title.toLowerCase().includes(alvo));

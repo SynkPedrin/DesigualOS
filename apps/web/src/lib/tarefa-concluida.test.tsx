@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
-import { tarefaConcluida } from './tarefa-concluida';
+import { estagioConcluido, tarefaConcluida } from './tarefa-concluida';
 import { AgencyTaskRow } from '@/components/tasks/agency-task-row';
 import type { AgencyTaskWire } from '@/lib/api/contracts';
 
@@ -19,6 +19,22 @@ describe('tarefa concluída (status reais do ClickUp da agência)', () => {
     expect(tarefaConcluida({ status: 'Pronto', status_type: null })).toBe(true);
     expect(tarefaConcluida({ status: 'encerrado', status_type: null })).toBe(true);
     expect(tarefaConcluida({ status: 'pronto para aprovação', status_type: null })).toBe(false);
+  });
+
+  it('etapa do Pipeline: concluída pela categoria, ou pelo status/nome quando não há categoria', () => {
+    // Quadro "tarefas agencia": a categoria manda.
+    expect(estagioConcluido({ label: 'Concluído', categoria: 'concluido' })).toBe(true);
+    expect(estagioConcluido({ label: 'Revisão', categoria: 'em_aprovacao' })).toBe(false);
+    // Categoria que diz outra coisa não é desmentida pelo nome.
+    expect(estagioConcluido({ label: 'pronto', categoria: 'em_andamento' })).toBe(false);
+    // Quadro "Tarefas" (colunas livres, sem categoria): vale o status do ClickUp.
+    expect(estagioConcluido({ label: 'pronto', clickupStatus: 'pronto', categoria: null })).toBe(true);
+    expect(estagioConcluido({ label: 'encerrado', clickupStatus: 'encerrado' })).toBe(true);
+    for (const rotulo of ['aberto', 'to do', 'pendente', 'aguardando aprovação', 'alteração', 'reprovado', 'em progresso']) {
+      expect(estagioConcluido({ label: rotulo, clickupStatus: rotulo })).toBe(false);
+    }
+    expect(estagioConcluido({ label: 'pronto para aprovação' })).toBe(false);
+    expect(estagioConcluido({})).toBe(false);
   });
 
   it('linha de tarefa pronta com prazo vencido diz "concluída", nunca "atrasada"', () => {

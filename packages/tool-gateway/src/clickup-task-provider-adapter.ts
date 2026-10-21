@@ -6,7 +6,7 @@ import {
   type ClickUpConfig,
   type TaskDetail,
 } from './clickup-client';
-import { queryOperationTasks, type OperationTask } from './clickup-operation';
+import { queryOperationTasks, statusConcluido, type OperationTask } from './clickup-operation';
 import type {
   CreateTaskInput,
   ProviderTask,
@@ -81,7 +81,9 @@ export class ClickUpTaskProvider implements TaskProvider {
       ...(scope.includeClosed !== undefined ? { includeClosed: scope.includeClosed } : {}),
       ...(scope.subtasks !== undefined ? { subtasks: scope.subtasks } : {}),
     });
-    return page.tasks.map(fromOperationTask);
+    const tarefas = page.tasks.map(fromOperationTask);
+    // Sem `includeClosed`, concluída (done ou closed) não é "aberta".
+    return scope.includeClosed ? tarefas : tarefas.filter((t) => !statusConcluido(t.statusType));
   }
 
   async getTask(id: string): Promise<ProviderTask | null> {
