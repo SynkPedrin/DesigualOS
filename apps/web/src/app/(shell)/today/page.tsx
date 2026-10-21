@@ -143,13 +143,13 @@ interface ItemDePrioridade {
 
 /**
  * Escala da tela Hoje (pedido: "uma visão mais longe, mais informação, sem rolar"). Menor que o resto do
- * app porque aqui o objetivo é panorama. Acompanha a ALTURA da janela: monitor de 27" fica em ~0,77 e o
- * notebook (janela baixa) em 0,72, que é onde mais precisa de espaço.
+ * app porque aqui o objetivo é panorama. Acompanha a ALTURA da janela: monitor de 27" fica em ~0,72 e o
+ * notebook (janela baixa) em 0,68, que é onde mais precisa de espaço.
  */
 function useZoomDoHoje(): number {
-  const [z, setZ] = useState(0.77);
+  const [z, setZ] = useState(0.72);
   useEffect(() => {
-    const calc = () => setZ(Math.min(0.8, Math.max(0.72, window.innerHeight / 1700)));
+    const calc = () => setZ(Math.min(0.8, Math.max(0.68, window.innerHeight / 1800)));
     calc();
     window.addEventListener('resize', calc);
     return () => window.removeEventListener('resize', calc);
