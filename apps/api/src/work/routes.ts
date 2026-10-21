@@ -4,6 +4,11 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
+  addChecklistItem,
+  addComment,
+  createChecklist,
+  getTaskDetail,
+  setChecklistItemDone,
   WorkError,
   bulkUpdateTasks,
   createFolder,
@@ -274,9 +279,35 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── Pessoas (seletor de responsável) ───────────────────────────────────
+  // ── Colaboração (gaveta da tarefa)
+  app.get<{ Params: { id: string } }>('/work/tasks/:id/detail', guard, async (request, reply) => {
+    if (!uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Id inválido.' });
+    try { return await getTaskDetail(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/comments', guard, async (request, reply) => {
+    const b = z.object({ body: z.string().min(1).max(20000), parentCommentId: uuid.nullable().optional() }).safeParse(request.body);
+    if (!b.success || !uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Dados inválidos.' });
+    try { return await addComment(workContext(request), request.params.id, b.data.body, b.data.parentCommentId); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/checklists', guard, async (request, reply) => {
+    const b = z.object({ name: z.string().min(1).max(200) }).safeParse(request.body);
+    if (!b.success || !uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Dados inválidos.' });
+    try { return await createChecklist(workContext(request), request.params.id, b.data.name); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/checklists/:id/items', guard, async (request, reply) => {
+    const b = z.object({ text: z.string().min(1).max(500) }).safeParse(request.body);
+    if (!b.success || !uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Dados inválidos.' });
+    try { return await addChecklistItem(workContext(request), request.params.id, b.data.text); } catch (e) { return fail(reply, e); }
+  });
+  app.patch<{ Params: { id: string } }>('/work/checklist-items/:id', guard, async (request, reply) => {
+    const b = z.object({ done: z.boolean() }).safeParse(request.body);
+    if (!b.success || !uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Dados inválidos.' });
+    try { return await setChecklistItemDone(workContext(request), request.params.id, b.data.done); } catch (e) { return fail(reply, e); }
+  });
+
   app.get('/work/members', guard, async (request) => {
     const rows = await db
-      .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, role: schema.organizationMembers.role })
+      .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, avatarUrl: schema.users.avatarUrl, role: schema.organizationMembers.role })
       .from(schema.organizationMembers)
       .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
       .where(eq(schema.organizationMembers.organizationId, request.tenantContext!.organizationId));

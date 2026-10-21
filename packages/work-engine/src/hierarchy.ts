@@ -244,7 +244,7 @@ export async function setArchived(ctx: WorkContext, kind: ContainerKind, id: str
 
 // ── Árvore (para o menu lateral) ─────────────────────────────────────────
 
-export interface TreeList { id: string; name: string; folderId: string | null; projectId: string | null; archived: boolean }
+export interface TreeList { id: string; name: string; folderId: string | null; projectId: string | null; archived: boolean; openTaskCount: number }
 export interface TreeProject { id: string; name: string; folderId: string | null; clientId: string | null; status: string; archived: boolean }
 export interface TreeFolder { id: string; name: string; archived: boolean }
 export interface TreeSpace { id: string; name: string; color: string | null; icon: string | null; archived: boolean; folders: TreeFolder[]; projects: TreeProject[]; lists: TreeList[] }
@@ -252,12 +252,17 @@ export interface TreeSpace { id: string; name: string; color: string | null; ico
 export async function getTree(ctx: WorkContext, opts: { includeArchived?: boolean } = {}): Promise<TreeSpace[]> {
   const org = ctx.organizationId;
   const visible = <T extends { archivedAt: unknown }>(c: T) => opts.includeArchived || c.archivedAt === null;
-  const [spaces, folders, projects, lists] = await Promise.all([
+  const [spaces, folders, projects, lists, contagens] = await Promise.all([
     db.select().from(schema.workSpaces).where(eq(schema.workSpaces.organizationId, org)).orderBy(asc(schema.workSpaces.position)),
     db.select().from(schema.workFolders).where(eq(schema.workFolders.organizationId, org)).orderBy(asc(schema.workFolders.position)),
     db.select().from(schema.workProjects).where(eq(schema.workProjects.organizationId, org)).orderBy(asc(schema.workProjects.position)),
     db.select().from(schema.workLists).where(eq(schema.workLists.organizationId, org)).orderBy(asc(schema.workLists.position)),
+    // Tarefas em aberto (de topo) por lista: a árvore mostra onde há trabalho e abre na lista certa.
+    db.select({ listId: schema.workTasks.listId, n: sql<number>`count(*)::int` }).from(schema.workTasks)
+      .where(and(eq(schema.workTasks.organizationId, org), isNull(schema.workTasks.archivedAt), isNull(schema.workTasks.parentTaskId), isNull(schema.workTasks.completedAt)))
+      .groupBy(schema.workTasks.listId),
   ]);
+  const abertas = new Map(contagens.map((c) => [c.listId, c.n]));
   return spaces.filter(visible).map((s) => ({
     id: s.id,
     name: s.name,
@@ -266,6 +271,6 @@ export async function getTree(ctx: WorkContext, opts: { includeArchived?: boolea
     archived: s.archivedAt !== null,
     folders: folders.filter((f) => f.spaceId === s.id && visible(f)).map((f) => ({ id: f.id, name: f.name, archived: f.archivedAt !== null })),
     projects: projects.filter((p) => p.spaceId === s.id && visible(p)).map((p) => ({ id: p.id, name: p.name, folderId: p.folderId, clientId: p.clientId, status: p.status, archived: p.archivedAt !== null })),
-    lists: lists.filter((l) => l.spaceId === s.id && visible(l)).map((l) => ({ id: l.id, name: l.name, folderId: l.folderId, projectId: l.projectId, archived: l.archivedAt !== null })),
+    lists: lists.filter((l) => l.spaceId === s.id && visible(l)).map((l) => ({ id: l.id, name: l.name, folderId: l.folderId, projectId: l.projectId, archived: l.archivedAt !== null, openTaskCount: abertas.get(l.id) ?? 0 })),
   }));
 }

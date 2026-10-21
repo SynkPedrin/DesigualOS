@@ -197,7 +197,7 @@ async function start(): Promise<void> {
     // front publicado inteiro ficou preso em "Carregando..." — o preflight
     // passou a devolver a origem errada e o Chrome bloqueou TUDO.)
     origin: origensDoFront(),
-    allowedHeaders: ['Authorization', 'Content-Type'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
   });
   // Private Network Access (14/09/2026, medido no smoke de produção): quando a
   // API é alcançada via Tailscale Funnel de DENTRO da tailnet, o hostname
