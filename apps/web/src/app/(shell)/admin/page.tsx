@@ -7,6 +7,7 @@ import { Surface } from '@/components/ui/surface';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { PERMISSION_MATRIX } from '@/lib/admin/sample-users';
+import { AnnouncementsAdmin } from '@/components/announcements/announcements-admin';
 
 /**
  * ADMIN — o que sobrou depois que a gestão de acessos foi para a Equipe.
@@ -61,6 +62,8 @@ export default function AdminPage() {
         </div>
         <ArrowRight size={18} className="shrink-0 text-nevoa" />
       </Link>
+
+      <AnnouncementsAdmin />
 
       <div className="mb-3 flex items-center gap-2">
         <ShieldCheck size={15} className="text-nevoa" />

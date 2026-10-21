@@ -13,6 +13,8 @@ import { MobileNavDrawer } from './mobile-nav-drawer';
 import { StudioModal } from '@/components/studio/studio-modal';
 import { BentoBolha } from '@/components/chat/bento-bolha';
 import { useRealtimeEvents } from '@/hooks/use-realtime-events';
+import { TourProvider } from '@/components/tour/tour-provider';
+import { AnnouncementHost } from '@/components/announcements/announcement-host';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -22,6 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useRealtimeEvents();
 
   return (
+    <TourProvider>
     <div className="flex h-screen justify-center overflow-hidden bg-carbono">
       <NoiseOverlay />
       {/* Sidebar + content together, capped and centered as a unit - on an ultra-wide
@@ -65,6 +68,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         * transição de rota (AnimatePresence lá em cima troca o filho a cada
         * navegação), ou a conversa aberta se perderia a cada clique no menu. */}
       <BentoBolha />
+      {/* Novidades: abre sozinho uma vez por pessoa, depois que perfil e permissões chegaram. */}
+      <AnnouncementHost />
     </div>
+    </TourProvider>
   );
 }

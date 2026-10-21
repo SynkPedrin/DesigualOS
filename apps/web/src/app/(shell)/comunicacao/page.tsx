@@ -15,6 +15,8 @@ import { VisaoArquivos, VisaoBusca, VisaoInicio, VisaoMencoes, VisaoSalvos } fro
 import { Toaster } from '@/components/ui/toaster';
 import { toast } from '@/stores/toast-store';
 import { cn } from '@/lib/utils';
+import { useTour } from '@/components/tour/tour-provider';
+import { tourDoAnuncio } from '@/components/tour/tours';
 
 /**
  * COMUNICAÇÃO — a conversa interna da equipe: #Geral, canais, privadas, grupos
@@ -24,6 +26,7 @@ import { cn } from '@/lib/utils';
  * Tudo que define o que está aberto mora na URL, para o link da notificação
  * (e o "ver na conversa") abrir exatamente o lugar certo:
  *   ?c=<conversa>  ?m=<mensagem a destacar>  ?t=<raiz da thread>  ?v=<visão>  ?q=<busca>
+ *   ?c=geral (atalho para o #Geral, usado pelo tutorial e pelo aviso)  ?tour=<anúncio> (abre o tutorial dele)
  */
 
 const VISOES: Visao[] = ['inicio', 'mencoes', 'salvos', 'arquivos', 'busca'];
@@ -81,6 +84,27 @@ function ComunicacaoConteudo() {
     router.push(`/comunicacao${p.size ? `?${p}` : ''}`, { scroll: false });
   }, [router]);
 
+  const tour = useTour();
+  // ?c=geral: o #Geral desta empresa (o id muda de empresa para empresa; o link do aviso e o tutorial não sabem qual é).
+  useEffect(() => {
+    if (pedida !== 'geral' || lista.length === 0) return;
+    const geral = lista.find((c) => c.kind === 'general');
+    if (!geral) return;
+    const p = new URLSearchParams(params.toString());
+    p.set('c', geral.id);
+    router.replace(`/comunicacao?${p}`, { scroll: false });
+  }, [pedida, lista, params, router]);
+  // ?tour=<anúncio>: veio do aviso no sino. Abre o tutorial e tira o parâmetro (recarregar não reabre).
+  const tourNaUrl = params.get('tour');
+  useEffect(() => {
+    if (!tourNaUrl) return;
+    const t = tourDoAnuncio(tourNaUrl);
+    const p = new URLSearchParams(params.toString());
+    p.delete('tour');
+    router.replace(`/comunicacao${p.size ? `?${p}` : ''}`, { scroll: false });
+    if (t && !tour.ativo) tour.iniciar(t.id);
+  }, [tourNaUrl, params, router, tour]);
+
   // Sem nada na URL (desktop): abre o #Geral, que sempre existe.
   useEffect(() => {
     if (!pedida && !visaoNaUrl && !params.get('lista') && lista.length > 0 && typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
@@ -110,6 +134,7 @@ function ComunicacaoConteudo() {
   else if (visao === 'salvos') principal = <VisaoSalvos onOpen={abrir} />;
   else if (visao === 'arquivos') principal = <VisaoArquivos onOpen={abrir} />;
   else if (visao === 'busca') principal = <VisaoBusca termoInicial={params.get('q') ?? ''} onOpen={abrir} />;
+  else if (pedida === 'geral') principal = <div className="flex h-full items-center justify-center text-sm text-nevoa">Abrindo o #Geral…</div>;
   else if (pedida && meuPerfil) {
     principal = exibida
       ? <PainelDaConversa key={exibida.id} conversa={exibida} me={meuPerfil} membros={membros.data ?? []} focoMensagemId={foco} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?lista=1', { scroll: false })} />
@@ -139,6 +164,7 @@ function ComunicacaoConteudo() {
             onCriarCanal={() => setCriandoCanal(true)}
             onCriarGrupo={() => setCriandoGrupo(true)}
             onProcurarCanais={() => setProcurando(true)}
+            onConhecer={() => tour.iniciar('communication_hub_v1')}
           />
         </div>
         <div className={cn('min-h-0 min-w-0 flex-col', mostraPrincipal ? 'flex' : 'hidden lg:flex')}>

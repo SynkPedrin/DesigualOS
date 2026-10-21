@@ -315,11 +315,11 @@ export const Composer = forwardRef<ComposerHandle, {
           </ul>
         )}
         <div className="relative">
-          <button type="button" onClick={() => setMaisAberto((v) => !v)} aria-label="Mais opções" aria-expanded={maisAberto} title="Anexar ou compartilhar" className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru">
+          <button type="button" onClick={() => setMaisAberto((v) => !v)} aria-label="Mais opções" aria-expanded={maisAberto} title="Anexar ou compartilhar" data-tour-id="comunicacao-anexos" className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru">
             <Plus size={18} />
           </button>
           {maisAberto && (
-            <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-lg border border-grafite-elevado bg-grafite py-1 shadow-2xl" role="menu">
+            <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-lg border border-grafite-elevado bg-grafite py-1 shadow-2xl" role="menu" data-tour-id="comunicacao-compartilhar">
               {([
                 ['Anexar arquivo', Paperclip, () => seletor.current?.click()],
                 ['Compartilhar tarefa', CheckSquare, () => setEscolhendo('task')],
