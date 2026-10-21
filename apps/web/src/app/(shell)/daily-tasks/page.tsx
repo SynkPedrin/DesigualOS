@@ -46,35 +46,48 @@ function NovoNome({ placeholder, onSubmit, busy }: { placeholder: string; onSubm
   );
 }
 
-function Arvore({ spaces, listId, onPick }: { spaces: WorkTreeSpace[]; listId: string | null; onPick: (listId: string | null, spaceId: string) => void }) {
+function ListaBtn({ nome, ativa, onClick }: { nome: string; ativa: boolean; onClick: () => void }) {
+  return (
+    <li>
+      <button type="button" onClick={onClick} title={nome} className={cn('w-full truncate rounded px-2 py-1 text-left text-xs', ativa ? 'bg-grafite-elevado text-branco-cru' : 'text-nevoa hover:text-branco-cru')}>
+        {nome}
+      </button>
+    </li>
+  );
+}
+
+function Arvore({ spaces, listId, spaceId, onPick }: { spaces: WorkTreeSpace[]; listId: string | null; spaceId: string | null; onPick: (listId: string | null, spaceId: string) => void }) {
   const criarEspaco = useCreateSpace();
   const criarLista = useCreateList();
   return (
-    <Surface className="space-y-3 p-3">
+    <Surface className="max-h-[calc(100vh-14rem)] space-y-3 overflow-y-auto p-3">
       <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60">Espaços e listas</p>
-      {spaces.map((s) => (
-        <div key={s.id} className="space-y-1">
-          <button type="button" onClick={() => onPick(null, s.id)} className="w-full truncate text-left text-sm font-semibold text-branco-cru">
-            {s.name}
-          </button>
-          <ul className="space-y-0.5 pl-2">
-            {s.lists.map((l) => (
-              <li key={l.id}>
-                <button
-                  type="button"
-                  onClick={() => onPick(l.id, s.id)}
-                  className={cn('w-full truncate rounded px-2 py-1 text-left text-xs', listId === l.id ? 'bg-grafite-elevado text-branco-cru' : 'text-nevoa hover:text-branco-cru')}
-                >
-                  {l.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <div className="pl-2">
-            <NovoNome placeholder="Nova lista" busy={criarLista.isPending} onSubmit={(name) => criarLista.mutate({ spaceId: s.id, name })} />
+      {spaces.map((s) => {
+        const aberto = s.id === spaceId;
+        const soltas = s.lists.filter((l) => !l.folderId);
+        return (
+          <div key={s.id} className="space-y-1">
+            <button type="button" onClick={() => onPick(null, s.id)} aria-expanded={aberto} className={cn('w-full truncate text-left text-sm font-semibold', aberto ? 'text-branco-cru' : 'text-nevoa')}>
+              {aberto ? '▾' : '▸'} {s.name} <span className="font-normal text-nevoa/50">{s.lists.length}</span>
+            </button>
+            {aberto && (
+              <div className="space-y-2 pl-2">
+                {s.folders.map((f) => {
+                  const dela = s.lists.filter((l) => l.folderId === f.id);
+                  return dela.length === 0 ? null : (
+                    <div key={f.id}>
+                      <p className="truncate px-2 text-[11px] font-medium uppercase tracking-wide text-nevoa/60" title={f.name}>{f.name}</p>
+                      <ul className="space-y-0.5">{dela.map((l) => <ListaBtn key={l.id} nome={l.name} ativa={listId === l.id} onClick={() => onPick(l.id, s.id)} />)}</ul>
+                    </div>
+                  );
+                })}
+                {soltas.length > 0 && <ul className="space-y-0.5">{soltas.map((l) => <ListaBtn key={l.id} nome={l.name} ativa={listId === l.id} onClick={() => onPick(l.id, s.id)} />)}</ul>}
+                <NovoNome placeholder="Nova lista" busy={criarLista.isPending} onSubmit={(name) => criarLista.mutate({ spaceId: s.id, name })} />
+              </div>
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
       <div className="border-t border-grafite-elevado pt-2">
         <NovoNome placeholder="Novo espaço" busy={criarEspaco.isPending} onSubmit={(n) => criarEspaco.mutate(n)} />
       </div>
@@ -88,10 +101,12 @@ export default function DailyTasksPage() {
   const [spaceId, setSpaceId] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [titulo, setTitulo] = useState('');
+  const [limite, setLimite] = useState(200);
+  const [comConcluidas, setComConcluidas] = useState(false);
 
   const spaces = tree.data?.spaces ?? [];
   const spaceAtivo = spaceId ?? spaces[0]?.id ?? null;
-  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined });
+  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, completed: comConcluidas ? undefined : false, limit: limite });
   const statuses = useSpaceStatuses(spaceAtivo);
   const criarTarefa = useCreateTask();
   const atualizar = useUpdateTask();
@@ -107,12 +122,16 @@ export default function DailyTasksPage() {
         <Skeleton className="h-64 w-full" />
       ) : (
         <div className="grid gap-4 md:grid-cols-[240px_1fr]">
-          <Arvore spaces={spaces} listId={listId} onPick={(l, s) => { setListId(l); setSpaceId(s); }} />
+          <Arvore spaces={spaces} listId={listId} spaceId={spaceAtivo} onPick={(l, s) => { setListId(l); setSpaceId(s); setLimite(200); }} />
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-heading text-lg font-semibold text-branco-cru">{listaAtiva?.name ?? 'Todas as tarefas do espaço'}</h2>
               <span className="text-xs text-nevoa">{tasks.data ? `${tasks.data.total} tarefa(s)` : ''}</span>
-              <label className="ml-auto flex items-center gap-1 rounded border border-grafite-elevado px-2 py-1 text-xs text-nevoa">
+              <label className="ml-auto flex items-center gap-1 text-xs text-nevoa">
+                <input type="checkbox" checked={comConcluidas} onChange={(e) => { setComConcluidas(e.target.checked); setLimite(200); }} />
+                Mostrar concluídas
+              </label>
+              <label className="flex items-center gap-1 rounded border border-grafite-elevado px-2 py-1 text-xs text-nevoa">
                 <Search size={12} />
                 <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" className="bg-transparent text-branco-cru outline-none" />
               </label>
@@ -163,6 +182,11 @@ export default function DailyTasksPage() {
                     </select>
                   </div>
                 ))}
+                {tasks.data.total > tasks.data.rows.length && (
+                  <button type="button" onClick={() => setLimite((n) => n + 200)} className="w-full px-3 py-2 text-xs text-nevoa hover:text-branco-cru">
+                    Mostrar mais ({tasks.data.rows.length} de {tasks.data.total})
+                  </button>
+                )}
               </Surface>
             ) : (
               <EmptyState

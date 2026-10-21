@@ -58,6 +58,7 @@ export interface WorkTaskFilters {
   spaceId?: string | null;
   q?: string | undefined;
   completed?: boolean | undefined;
+  limit?: number | undefined;
 }
 
 export function useWorkTasks(f: WorkTaskFilters) {
@@ -67,7 +68,7 @@ export function useWorkTasks(f: WorkTaskFilters) {
   if (f.q) params.set('q', f.q);
   if (f.completed !== undefined) params.set('completed', String(f.completed));
   params.set('sort', 'position');
-  params.set('limit', '200');
+  params.set('limit', String(f.limit ?? 200));
   return useQuery({
     queryKey: ['work', 'tasks', params.toString()],
     queryFn: () => apiFetch<{ total: number; rows: WorkTaskWire[] }>(`/work/tasks?${params.toString()}`),

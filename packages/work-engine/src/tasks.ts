@@ -338,7 +338,7 @@ export async function listTasks(ctx: WorkContext, f: TaskFilter = {}): Promise<{
     const m = /^DT-(\d+)$/i.exec(term);
     where.push(m ? eq(T.number, Number(m[1])) : ilike(T.title, `%${term}%`));
   }
-  const limit = Math.min(Math.max(f.limit ?? 50, 1), 200);
+  const limit = Math.min(Math.max(f.limit ?? 50, 1), 2000);
   const offset = Math.max(f.offset ?? 0, 0);
   const dir = f.dir === 'desc' ? desc : asc;
   const order =

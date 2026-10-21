@@ -208,7 +208,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     q: z.string().max(100).optional(), include_subtasks: z.enum(['true', 'false']).optional(), parent_task_id: uuid.optional(),
     include_archived: z.enum(['true', 'false']).optional(), completed: z.enum(['true', 'false']).optional(),
     sort: z.enum(['position', 'due', 'priority', 'created', 'updated', 'number']).optional(), dir: z.enum(['asc', 'desc']).optional(),
-    limit: z.coerce.number().int().min(1).max(200).optional(), offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
+    limit: z.coerce.number().int().min(1).max(2000).optional(), offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
   });
   app.get('/work/tasks', guard, async (request, reply) => {
     const q = listQuery.safeParse(request.query);

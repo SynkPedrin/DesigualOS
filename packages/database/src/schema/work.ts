@@ -257,3 +257,166 @@ export const workIdempotencyKeys = pgTable(
   },
   (t) => ({ keyUnique: unique('work_idempotency_org_user_key_unique').on(t.organizationId, t.userId, t.key) }),
 );
+
+// ── Incremento 3 · colaboração, e a ponte de importação ───────────────────
+
+/** Comentário da tarefa. `parentCommentId` = resposta (um nível). `mentions` guarda os user ids citados. */
+export const workComments = pgTable(
+  'work_comments',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    parentCommentId: uuid('parent_comment_id').references((): AnyPgColumn => workComments.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Quando o autor não existe como usuário (importação): nome de origem, para o histórico não ficar anônimo. */
+    authorLabel: text('author_label'),
+    body: text('body').notNull(),
+    mentions: jsonb('mentions').$type<string[]>().notNull().default([]),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    ...timestampColumns,
+  },
+  (t) => ({ taskIdx: index('work_comments_task_idx').on(t.organizationId, t.taskId, t.createdAt) }),
+);
+
+export const workChecklists = pgTable(
+  'work_checklists',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    position: doublePrecision('position').notNull().default(0),
+    ...timestampColumns,
+  },
+  (t) => ({ taskIdx: index('work_checklists_task_idx').on(t.organizationId, t.taskId) }),
+);
+
+export const workChecklistItems = pgTable(
+  'work_checklist_items',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    checklistId: uuid('checklist_id').notNull().references(() => workChecklists.id, { onDelete: 'cascade' }),
+    parentItemId: uuid('parent_item_id').references((): AnyPgColumn => workChecklistItems.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    done: boolean('done').notNull().default(false),
+    assigneeId: uuid('assignee_id').references(() => users.id, { onDelete: 'set null' }),
+    position: doublePrecision('position').notNull().default(0),
+    ...timestampColumns,
+  },
+  (t) => ({ checklistIdx: index('work_checklist_items_checklist_idx').on(t.checklistId, t.position) }),
+);
+
+/** `taskId` só começa depois que `dependsOnTaskId` termina (blocking). `kind = related` é link sem ordem. */
+export const workTaskDependencies = pgTable(
+  'work_task_dependencies',
+  {
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    dependsOnTaskId: uuid('depends_on_task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull().default('blocking'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: uniqueIndex('work_task_dependencies_pk').on(t.taskId, t.dependsOnTaskId, t.kind),
+    reverseIdx: index('work_task_dependencies_reverse_idx').on(t.organizationId, t.dependsOnTaskId),
+  }),
+);
+
+/** Anexo: metadado + onde o arquivo está. `url` externa (ClickUp) até o arquivo ser copiado para o storage próprio. */
+export const workAttachments = pgTable(
+  'work_attachments',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    commentId: uuid('comment_id').references(() => workComments.id, { onDelete: 'set null' }),
+    fileName: text('file_name').notNull(),
+    mimeType: text('mime_type'),
+    sizeBytes: integer('size_bytes'),
+    url: text('url').notNull(),
+    /** external = continua no sistema de origem · storage = copiado para o storage próprio. */
+    storage: text('storage').notNull().default('external'),
+    uploadedBy: uuid('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
+    ...timestampColumns,
+  },
+  (t) => ({ taskIdx: index('work_attachments_task_idx').on(t.organizationId, t.taskId) }),
+);
+
+/** Definição de campo personalizado por espaço; o valor mora em `work_custom_field_values`. */
+export const workCustomFields = pgTable(
+  'work_custom_fields',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    spaceId: uuid('space_id').notNull().references(() => workSpaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    /** text | number | date | dropdown | labels | checkbox | url | email | phone | money | users | rating | other */
+    fieldType: text('field_type').notNull(),
+    options: jsonb('options').$type<Array<{ id: string; label: string; color?: string | null }>>().notNull().default([]),
+    position: doublePrecision('position').notNull().default(0),
+    ...timestampColumns,
+  },
+  (t) => ({ spaceNameUnique: unique('work_custom_fields_space_name_type_unique').on(t.spaceId, t.name, t.fieldType) }),
+);
+
+export const workCustomFieldValues = pgTable(
+  'work_custom_field_values',
+  {
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    fieldId: uuid('field_id').notNull().references(() => workCustomFields.id, { onDelete: 'cascade' }),
+    value: jsonb('value').$type<unknown>(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ pk: uniqueIndex('work_custom_field_values_pk').on(t.taskId, t.fieldId) }),
+);
+
+/** Tempo registrado. `endedAt` nulo = cronômetro rodando. */
+export const workTimeEntries = pgTable(
+  'work_time_entries',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    userLabel: text('user_label'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    durationMs: integer('duration_ms').notNull().default(0),
+    billable: boolean('billable').notNull().default(false),
+    note: text('note'),
+    ...timestampColumns,
+  },
+  (t) => ({
+    taskIdx: index('work_time_entries_task_idx').on(t.organizationId, t.taskId),
+    userIdx: index('work_time_entries_user_idx').on(t.organizationId, t.userId, t.startedAt),
+  }),
+);
+
+/**
+ * A ponte com sistemas externos (ClickUp). A tarefa NUNCA usa o id de fora como chave: este mapa é o único
+ * lugar que sabe "id X no ClickUp = entidade Y aqui". É também o que torna a importação repetível:
+ * reimportar atualiza a mesma entidade em vez de criar outra.
+ */
+export const workExternalMappings = pgTable(
+  'work_external_mappings',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    externalType: text('external_type').notNull(),
+    externalId: text('external_id').notNull(),
+    entityType: text('entity_type').notNull(),
+    entityId: uuid('entity_id').notNull(),
+    /** Dado de origem que não cabe em coluna própria (url, custom_id, ids de usuário não casados...). */
+    meta: jsonb('meta').$type<Record<string, unknown>>().notNull().default({}),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    externalUnique: unique('work_external_mappings_unique').on(t.organizationId, t.provider, t.externalType, t.externalId),
+    entityIdx: index('work_external_mappings_entity_idx').on(t.organizationId, t.entityType, t.entityId),
+  }),
+);
