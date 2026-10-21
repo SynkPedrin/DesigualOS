@@ -8,6 +8,7 @@ import {
   Building2,
   Calendar,
   CheckSquare,
+  ListChecks,
   ClipboardCheck,
   ClipboardList,
   Coins,
@@ -98,6 +99,11 @@ export interface NavItem {
    * Configurações → Administração, para quem der suporte.
    */
   contexto?: ContextoDeNavegacao;
+  /**
+   * Daily Tasks (beta): o item só aparece quando `GET /work/access` autoriza
+   * (flag da empresa + papel administrador). Omitido, o filtro não pergunta.
+   */
+  dailyTasks?: boolean;
   /**
    * FERRAMENTA TÉCNICA. Continua existindo, no mesmo endereço, e sai da
    * navegação de quem usa o produto para trabalhar.
@@ -217,6 +223,7 @@ export const NAV_ITEMS: NavItem[] = [
   // o que escondia a "Central de Tasks" exatamente de quem mais usa ela no
   // dia a dia (Design, Tráfego). `requirePermission` já era aberto a
   // colaborador; só a navegação estava fechada.
+  { href: '/daily-tasks', label: 'Daily Tasks — Beta', icon: ListChecks, section: 'dia', dailyTasks: true },
   { href: '/tasks', label: 'Tarefas', icon: CheckSquare, section: 'dia', modulo: 'tarefas' },
   // Duas filas na mesma tela (P1-I/J, 06/10/2026): a de tool-call da IA
   // (budget de Meta Ads, publicação no Instagram, deletar task do ClickUp) -

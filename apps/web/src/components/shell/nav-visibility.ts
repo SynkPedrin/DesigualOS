@@ -37,6 +37,11 @@ export interface FiltroDeNavegacao {
    * restritivo SÓ quando chega um Set de verdade.
    */
   modulosHabilitados?: ReadonlySet<string> | null;
+  /**
+   * Daily Tasks: resposta de `/work/access`. Ausente/false = item escondido
+   * (o oposto de `modulosHabilitados`: beta fechado nasce escondido).
+   */
+  dailyTasksLiberado?: boolean;
 }
 
 /**
@@ -52,6 +57,7 @@ export function itensVisiveisNaNavegacao(items: NavItem[], filtro: FiltroDeNaveg
   return items.filter(
     (item) =>
       !item.administracao &&
+      (!item.dailyTasks || filtro.dailyTasksLiberado === true) &&
       (!item.masterOnly || filtro.isMaster) &&
       (!item.providerOnly || filtro.ehProvider) &&
       (item.contexto !== 'provider' || !filtro.dentroDeTenant) &&

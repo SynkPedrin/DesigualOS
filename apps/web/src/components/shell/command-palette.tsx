@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/ui-store';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
 import { useMyWorkspace } from '@/hooks/use-my-workspace';
+import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { useSearch } from '@/hooks/use-search';
 import { matchesQuery } from '@/lib/search-match';
 import { NAV_ITEMS } from './nav-items';
@@ -21,6 +22,7 @@ export function CommandPalette() {
   const { isMaster } = useIsMaster();
   const { data: me } = useMe();
   const { data: workspace } = useMyWorkspace();
+  const { data: dailyTasksAccess } = useDailyTasksAccess();
   const [query, setQuery] = useState('');
   const { data: results } = useSearch(query);
   // Depende de `query`, então precisa vir DEPOIS do useState: o .filter roda
@@ -41,6 +43,7 @@ export function CommandPalette() {
     ehProvider: me?.eh_provider === true,
     dentroDeTenant: estaDentroDeTenant(me),
     modulosHabilitados: workspace ? new Set(workspace.modules) : null,
+    dailyTasksLiberado: dailyTasksAccess?.allowed === true,
   }).filter((item) => matchesQuery(item.label, query));
 
   useEffect(() => {
