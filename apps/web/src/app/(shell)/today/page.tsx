@@ -603,6 +603,8 @@ export default function TodayPage() {
                 {mesmoDia(diaSelecionado, agora) ? 'Nenhuma reunião marcada pra hoje.' : 'Nenhuma reunião marcada nesse dia.'}
               </p>
             ) : (
+              <div className="max-h-[22rem] overflow-y-auto pl-2 pr-1">
+              {/* Teto de altura: num dia cheio (7+ reuniões) a coluna crescia e empurrava o resto do painel para fora da tela. A lista rola por dentro; o `pl-2` deixa os pontos da linha do tempo fora do corte. */}
               <ul className="relative space-y-4 border-l border-grafite-elevado pl-4">
                 {eventosDoDia.data.map((evento) => (
                   <li key={evento.id} className="relative">
@@ -629,6 +631,7 @@ export default function TodayPage() {
                   </li>
                 ))}
               </ul>
+              </div>
             )}
 
             <Link
