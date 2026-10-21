@@ -63,6 +63,7 @@ import { registerNotificationRoutes } from './notifications/routes';
 import { registerMessageRoutes } from './messages/routes';
 import { registerInternalChatRoutes } from './internal-chat/routes';
 import { registerAnnouncementRoutes } from './announcements/routes';
+import { registerGestaoRoutes } from './gestao/routes';
 import { registerTeamRoutes } from './team/routes';
 import { registerCollaboratorRoutes } from './collaborators/routes';
 import { registerSearchRoutes } from './search/routes';
@@ -295,6 +296,7 @@ async function start(): Promise<void> {
   await app.register(registerOpenwaRoutes);
   await app.register(registerInternalChatRoutes);
   await app.register(registerAnnouncementRoutes);
+  await app.register(registerGestaoRoutes);
   await app.register(registerDemandRoutes);
   await app.register(registerBriefRoutes);
   await app.register(registerApprovalRequestRoutes);
