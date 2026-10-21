@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Hash, Lock, MessagesSquare } from 'lucide-react';
+import { ArrowLeft, Hash, Lock, MessagesSquare } from 'lucide-react';
 import { useChatConversations, useChatMembers, useConversationActions, useConversationDetail, type ChatConversation } from '@/hooks/use-internal-chat';
 import { useMe } from '@/hooks/use-me';
 import { ListaDeConversas, type Visao } from '@/components/comunicacao/lista-de-conversas';
@@ -83,11 +83,11 @@ function ComunicacaoConteudo() {
 
   // Sem nada na URL (desktop): abre o #Geral, que sempre existe.
   useEffect(() => {
-    if (!pedida && !visaoNaUrl && lista.length > 0 && typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
+    if (!pedida && !visaoNaUrl && !params.get('lista') && lista.length > 0 && typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
       const geral = lista.find((c) => c.kind === 'general');
       if (geral) router.replace(`/comunicacao?c=${geral.id}`, { scroll: false });
     }
-  }, [pedida, visaoNaUrl, lista, router]);
+  }, [pedida, visaoNaUrl, lista, router, params]);
   // Trocou de conversa: o painel lateral (arquivos/detalhes) fecha.
   useEffect(() => { setPainelLocal(null); }, [pedida]);
 
@@ -112,9 +112,9 @@ function ComunicacaoConteudo() {
   else if (visao === 'busca') principal = <VisaoBusca termoInicial={params.get('q') ?? ''} onOpen={abrir} />;
   else if (pedida && meuPerfil) {
     principal = exibida
-      ? <PainelDaConversa key={exibida.id} conversa={exibida} me={meuPerfil} membros={membros.data ?? []} focoMensagemId={foco} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?v=inicio', { scroll: false })} />
+      ? <PainelDaConversa key={exibida.id} conversa={exibida} me={meuPerfil} membros={membros.data ?? []} focoMensagemId={foco} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?lista=1', { scroll: false })} />
       : conversas.isSuccess
-        ? <ConversaForaDaLista id={pedida} me={meuPerfil} membros={membros.data} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?v=inicio', { scroll: false })} foco={foco} />
+        ? <ConversaForaDaLista id={pedida} me={meuPerfil} membros={membros.data} painel={painel} onPainel={mudarPainel} onBack={() => router.push('/comunicacao?lista=1', { scroll: false })} foco={foco} />
         : <div className="flex h-full items-center justify-center text-sm text-nevoa">Carregando…</div>;
   } else {
     principal = <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center"><MessagesSquare className="text-nevoa" /><p className="text-sm text-nevoa">Escolha uma conversa.</p></div>;
@@ -141,7 +141,15 @@ function ComunicacaoConteudo() {
             onProcurarCanais={() => setProcurando(true)}
           />
         </div>
-        <div className={cn('min-h-0 min-w-0', mostraPrincipal ? 'block' : 'hidden lg:block')}>{principal}</div>
+        <div className={cn('min-h-0 min-w-0 flex-col', mostraPrincipal ? 'flex' : 'hidden lg:flex')}>
+          {/* No celular a lista some quando uma visão está aberta: sem isto não havia como voltar. */}
+          {visao && (
+            <button type="button" onClick={() => router.push('/comunicacao?lista=1', { scroll: false })} className="flex items-center gap-1.5 border-b border-grafite-elevado px-4 py-2 text-left text-sm text-nevoa hover:text-branco-cru lg:hidden">
+              <ArrowLeft size={15} /> Conversas
+            </button>
+          )}
+          <div className="min-h-0 flex-1">{principal}</div>
+        </div>
         {temPainel && pedida && meuPerfil && (
           <div className="fixed inset-0 z-40 bg-grafite xl:static xl:z-auto xl:min-h-0 xl:border-l xl:border-grafite-elevado">
             {painel?.tipo === 'thread' && (

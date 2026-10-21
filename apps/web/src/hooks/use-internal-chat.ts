@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
-import { apiFetch, apiUploadWithProgress } from '@/lib/api/client';
+import { ApiRequestError, apiFetch, apiUploadWithProgress } from '@/lib/api/client';
 
 /**
  * Comunicação interna — dados da tela. Tudo sob a chave ['internal-chat', …]:
@@ -111,6 +111,10 @@ export interface ChatConversationDetail {
 interface Page { messages: ChatMessage[]; has_more: boolean }
 interface ThreadPage { root: ChatMessage; replies: ChatMessage[]; has_more: boolean }
 
+/** "Não encontrada" (404) e "sem permissão" (403) não mudam com insistência: mostra o aviso na hora. */
+const naoInsistirEm4xx = (tentativas: number, erro: unknown) =>
+  !(erro instanceof ApiRequestError && erro.status >= 400 && erro.status < 500) && tentativas < 2;
+
 export const chatKeys = {
   all: ['internal-chat'] as const,
   conversations: ['internal-chat', 'conversations'] as const,
@@ -165,6 +169,7 @@ export function useConversationDetail(conversationId: string | null) {
     queryKey: keys.detail(conversationId ?? 'none'),
     enabled: Boolean(conversationId),
     queryFn: () => apiFetch<ChatConversationDetail>(`/internal-chat/conversations/${conversationId}`),
+    retry: naoInsistirEm4xx,
     staleTime: 30_000,
   });
 }
@@ -175,6 +180,7 @@ export function useChatMessages(conversationId: string | null) {
     enabled: Boolean(conversationId),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => apiFetch<Page>(`/internal-chat/conversations/${conversationId}/messages?limit=40${pageParam ? `&before=${pageParam}` : ''}`),
+    retry: naoInsistirEm4xx,
     // Páginas vêm da mais nova para a mais velha; "próxima" = mais antiga.
     getNextPageParam: (ultima) => (ultima.has_more && ultima.messages[0] ? ultima.messages[0].id : null),
     staleTime: 30_000,
@@ -515,6 +521,7 @@ export function useObjectState(objectId: string | null, enabled: boolean) {
     queryKey: keys.object(objectId ?? 'none'),
     enabled: Boolean(objectId) && enabled && !objectId?.startsWith('local-'),
     queryFn: () => apiFetch<ObjectState>(`/internal-chat/objects/${objectId}`),
+    retry: naoInsistirEm4xx,
     staleTime: 60_000,
   });
 }

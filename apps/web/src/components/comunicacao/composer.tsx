@@ -248,8 +248,9 @@ export const Composer = forwardRef<ComposerHandle, {
 
   return (
     // pr-20: a bolha do Bento flutua no canto inferior direito da tela e
-    // cobria o botão de enviar (no painel da thread ela não chega).
-    <div className={cn('border-t border-grafite-elevado bg-grafite py-2.5 pl-3', compacto ? 'pr-3' : 'pr-20')}>
+    // cobria o botão de enviar — inclusive no painel da thread, que fica colado
+    // na borda direita.
+    <div className="border-t border-grafite-elevado bg-grafite py-2.5 pl-3 pr-20">
       {replyTo && (
         <div className="mb-2 flex items-center gap-2 rounded-md border-l-2 border-roxo-eletrico bg-grafite-elevado/60 px-3 py-1.5">
           <div className="min-w-0 flex-1">
@@ -298,7 +299,7 @@ export const Composer = forwardRef<ComposerHandle, {
           <button key={f.rotulo} type="button" onClick={() => formatar(f.antes, f.depois)} aria-label={f.rotulo} title={f.rotulo} className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><f.icone size={14} /></button>
         ))}
         <button type="button" onClick={lista} aria-label="Lista" title="Lista" className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><List size={14} /></button>
-        <span className="ml-auto hidden font-mono text-[10px] text-nevoa/60 sm:inline">Enter envia · Shift+Enter quebra linha</span>
+        {!compacto && <span className="ml-auto hidden truncate font-mono text-[10px] text-nevoa/60 2xl:inline">Enter envia · Shift+Enter quebra linha</span>}
       </div>
       <div className="relative flex items-end gap-1.5">
         {sugestao && candidatos.length > 0 && (

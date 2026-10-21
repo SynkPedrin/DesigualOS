@@ -1,7 +1,7 @@
 import { QueryClient, type InfiniteData } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/api/client', () => ({ apiFetch: vi.fn(), apiUploadWithProgress: vi.fn() }));
+vi.mock('@/lib/api/client', () => ({ apiFetch: vi.fn(), apiUploadWithProgress: vi.fn(), ApiRequestError: class extends Error {} }));
 
 import { applyInternalChatEvent, flattenMessages, setOpenConversation, type ChatConversation, type ChatMessage } from './use-internal-chat';
 
