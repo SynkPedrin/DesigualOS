@@ -25,6 +25,8 @@ export async function getTaskDetail(ctx: WorkContext, taskId: string) {
   const items = checklists.length
     ? await db.select().from(schema.workChecklistItems).where(and(inArray(schema.workChecklistItems.checklistId, checklists.map((c) => c.id)), eq(schema.workChecklistItems.organizationId, org))).orderBy(asc(schema.workChecklistItems.position))
     : [];
+  const defs = listRow[0] ? await db.select().from(schema.workCustomFields).where(and(eq(schema.workCustomFields.spaceId, listRow[0].spaceId), eq(schema.workCustomFields.organizationId, org))).orderBy(asc(schema.workCustomFields.position)) : [];
+  const [tempo] = await db.select({ ms: sql<number>`coalesce(sum(${schema.workTimeEntries.durationMs}) filter (where ${schema.workTimeEntries.endedAt} is not null), 0)::bigint` }).from(schema.workTimeEntries).where(and(eq(schema.workTimeEntries.taskId, taskId), eq(schema.workTimeEntries.organizationId, org)));
   const outras = [...new Set(deps.flatMap((d) => [d.taskId, d.dependsOnTaskId]).filter((i) => i !== taskId))];
   const titulos = outras.length ? await db.select({ id: schema.workTasks.id, number: schema.workTasks.number, title: schema.workTasks.title }).from(schema.workTasks).where(and(inArray(schema.workTasks.id, outras), eq(schema.workTasks.organizationId, org))) : [];
   const t = new Map(titulos.map((x) => [x.id, { id: x.id, key: `DT-${x.number}`, title: x.title }]));
@@ -35,6 +37,8 @@ export async function getTaskDetail(ctx: WorkContext, taskId: string) {
     comments: comments.map((r) => ({ id: r.c.id, parentCommentId: r.c.parentCommentId, body: r.c.body, authorId: r.c.authorId, authorName: r.authorName ?? r.c.authorLabel ?? 'Alguém', authorAvatar: r.authorAvatar ?? null, resolvedAt: r.c.resolvedAt?.toISOString() ?? null, createdAt: r.c.createdAt.toISOString() })),
     checklists: checklists.map((c) => ({ id: c.id, name: c.name, items: items.filter((i) => i.checklistId === c.id).map((i) => ({ id: i.id, parentItemId: i.parentItemId, text: i.text, done: i.done })) })),
     attachments: attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes, url: a.url })),
+    fieldDefs: defs.map((d) => ({ id: d.id, name: d.name, type: d.fieldType, options: d.options })),
+    trackedMs: Number(tempo?.ms ?? 0),
     customFields: fieldValues.map((r) => ({ fieldId: r.v.fieldId, name: r.name, type: r.type, value: r.v.value })),
     blockedBy: deps.filter((d) => d.kind === 'blocking' && d.taskId === taskId).map((d) => t.get(d.dependsOnTaskId)).filter(Boolean),
     blocking: deps.filter((d) => d.kind === 'blocking' && d.dependsOnTaskId === taskId).map((d) => t.get(d.taskId)).filter(Boolean),
@@ -47,9 +51,15 @@ export async function addComment(ctx: WorkContext, taskId: string, body: string,
   if (!text) throw invalid('Comentário vazio.');
   if (text.length > 20000) throw invalid('Comentário longo demais.');
   await getTask(ctx, taskId);
+  // Menções no formato @[Nome](uuid). Só vale quem é MEMBRO desta empresa — o resto é ignorado, nunca notificado.
+  const citados = [...new Set([...text.matchAll(/@\[[^\]]+\]\(([0-9a-f-]{36})\)/gi)].map((m) => m[1]!.toLowerCase()))];
+  const validos = citados.length
+    ? (await db.select({ userId: schema.organizationMembers.userId }).from(schema.organizationMembers).where(and(eq(schema.organizationMembers.organizationId, ctx.organizationId), inArray(schema.organizationMembers.userId, citados)))).map((r) => r.userId)
+    : [];
   return db.transaction(async (tx) => {
-    const [c] = await tx.insert(schema.workComments).values({ organizationId: ctx.organizationId, taskId, authorId: ctx.userId, body: text, parentCommentId: parentCommentId ?? null }).returning();
+    const [c] = await tx.insert(schema.workComments).values({ organizationId: ctx.organizationId, taskId, authorId: ctx.userId, body: text, mentions: validos, parentCommentId: parentCommentId ?? null }).returning();
     await recordActivity(tx, ctx, { entityType: 'task', entityId: taskId, taskId, action: 'commented', data: { commentId: c!.id } });
+    for (const userId of validos.filter((u) => u !== ctx.userId)) await recordActivity(tx, ctx, { entityType: 'task', entityId: taskId, taskId, action: 'mentioned', data: { userId, commentId: c!.id } });
     return { id: c!.id };
   });
 }

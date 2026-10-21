@@ -53,6 +53,7 @@ import { registerClickUpMcpOAuthRoutes } from './integrations/clickup-mcp-routes
 import { registerNotionRoutes } from './integrations/notion-routes';
 import { registerMetaIntegrationRoutes } from './integrations/meta-routes';
 import { registerMediaRoutes } from './media/routes';
+import { startWorkScheduler } from './work/scheduler';
 import { registerWorkRoutes } from './work/routes';
 import { registerGoogleAdsIntegrationRoutes } from './integrations/google-ads-routes';
 import { registerAgencyControlCenterRoutes } from './agency-control-center/routes';
@@ -340,6 +341,7 @@ async function start(): Promise<void> {
   // Sem isto `health_checks` cresce pra sempre (medido: +21 mil linhas/dia) e
   // a consulta do painel varre a tabela inteira, ficando mais lenta a cada dia.
   const retentionTimer = startHealthCheckRetention(logger);
+  const pararWorkScheduler = startWorkScheduler(logger);
   logger.info({ port }, 'Orchestrator API listening');
 
   // Sem isso, um restart/redeploy corta requisições em voo com SIGKILL e os
@@ -349,6 +351,7 @@ async function start(): Promise<void> {
     clearInterval(healthSweepTimer);
     clearInterval(agentProbeTimer);
     clearInterval(retentionTimer);
+    pararWorkScheduler();
     pararWatchdog();
     app
       .close()

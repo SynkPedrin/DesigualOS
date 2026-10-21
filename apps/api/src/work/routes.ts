@@ -4,6 +4,35 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
+  addManualEntry,
+  automationTick,
+  createAutomation,
+  createCustomField,
+  createRecurrence,
+  createSavedView,
+  createTemplateFromTask,
+  deleteAutomation,
+  deleteSavedView,
+  deleteTemplate,
+  duplicateTask,
+  inboxUnreadCount,
+  instantiateTemplate,
+  listAutomationRuns,
+  listAutomations,
+  listCustomFields,
+  listInbox,
+  listRecurrences,
+  listSavedViews,
+  listTemplates,
+  listTimeEntries,
+  markInboxRead,
+  runningTimer,
+  setCustomFieldValue,
+  setRecurrenceActive,
+  startTimer,
+  stopTimer,
+  updateAutomation,
+  workReport,
   addChecklistItem,
   addComment,
   createChecklist,
@@ -105,7 +134,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   /** O front pergunta isto para decidir se mostra o item de menu. Responde só "sim/não", sem detalhes de configuração. */
   app.get('/work/access', { preHandler: [requireAuth, requireTenant] }, async (request) => {
     const d = await resolveDailyTasksAccess({ organizationId: request.tenantContext!.organizationId, userId: request.authUser!.id, platformRoles: request.authUser!.roles });
-    return { allowed: d.allowed };
+    return { allowed: d.allowed, userId: request.authUser!.id };
   });
 
   /** Liga/desliga e escolhe quem entra. SÓ administrador de plataforma (`master`), e fora da própria flag (senão ninguém ligaria). */
@@ -303,6 +332,123 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     const b = z.object({ done: z.boolean() }).safeParse(request.body);
     if (!b.success || !uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Dados inválidos.' });
     try { return await setChecklistItemDone(workContext(request), request.params.id, b.data.done); } catch (e) { return fail(reply, e); }
+  });
+
+  // ── Produtividade: caixa de entrada, cronômetro, campos, visões
+  const idOk = (id: string) => uuid.safeParse(id).success;
+  const bad = (reply: FastifyReply, m = 'Dados inválidos.') => reply.code(400).send({ error: m });
+  app.get('/work/inbox', guard, async (request) => ({ items: await listInbox(workContext(request)), unread: await inboxUnreadCount(workContext(request)) }));
+  app.post('/work/inbox/read', guard, async (request) => markInboxRead(workContext(request)));
+
+  app.get('/work/timer', guard, async (request) => ({ running: await runningTimer(workContext(request)) }));
+  app.post('/work/timer/stop', guard, async (request, reply) => { try { return await stopTimer(workContext(request)); } catch (e) { return fail(reply, e); } });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/timer/start', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await startTimer(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.get<{ Params: { id: string } }>('/work/tasks/:id/time', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await listTimeEntries(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/time', guard, async (request, reply) => {
+    const b = z.object({ minutes: z.number().positive().max(1440), note: z.string().max(500).nullable().optional(), billable: z.boolean().optional() }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await addManualEntry(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+
+  app.get<{ Params: { id: string } }>('/work/spaces/:id/custom-fields', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    return { fields: await listCustomFields(workContext(request), request.params.id) };
+  });
+  app.post<{ Params: { id: string } }>('/work/spaces/:id/custom-fields', guard, async (request, reply) => {
+    const b = z.object({ name: z.string().min(1).max(100), fieldType: z.string(), options: z.array(z.string().max(100)).max(50).optional() }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await createCustomField(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.put<{ Params: { id: string; fieldId: string } }>('/work/tasks/:id/custom-fields/:fieldId', guard, async (request, reply) => {
+    const b = z.object({ value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string()), z.null()]) }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id) || !idOk(request.params.fieldId)) return bad(reply);
+    try { return await setCustomFieldValue(workContext(request), request.params.id, request.params.fieldId, b.data.value); } catch (e) { return fail(reply, e); }
+  });
+
+  app.get('/work/views', guard, async (request) => ({ views: await listSavedViews(workContext(request)) }));
+  app.post('/work/views', guard, async (request, reply) => {
+    const b = z.object({ name: z.string().min(1).max(100), config: z.record(z.unknown()), shared: z.boolean().optional() }).safeParse(request.body);
+    if (!b.success) return bad(reply);
+    try { return await createSavedView(workContext(request), defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/views/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteSavedView(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+
+  // ── Modelos, duplicar, recorrência
+  app.get('/work/templates', guard, async (request) => ({ templates: await listTemplates(workContext(request)) }));
+  app.post('/work/templates', guard, async (request, reply) => {
+    const b = z.object({ taskId: uuid, name: z.string().min(1).max(150) }).safeParse(request.body);
+    if (!b.success) return bad(reply);
+    try { return await createTemplateFromTask(workContext(request), b.data.taskId, b.data.name); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/templates/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteTemplate(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/templates/:id/use', guard, async (request, reply) => {
+    const b = z.object({ listId: uuid, title: z.string().max(500).optional(), dueAt: optDate }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await instantiateTemplate(workContext(request), request.params.id, b.data.listId, defined({ title: b.data.title, dueAt: b.data.dueAt }) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/duplicate', guard, async (request, reply) => {
+    const b = z.object({ listId: uuid.optional() }).safeParse(request.body ?? {});
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await duplicateTask(workContext(request), request.params.id, b.data.listId); } catch (e) { return fail(reply, e); }
+  });
+  app.get('/work/recurrences', guard, async (request) => ({ recurrences: await listRecurrences(workContext(request)) }));
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/recurrence', guard, async (request, reply) => {
+    const b = z.object({ freq: z.enum(['daily', 'weekly', 'monthly']), interval: z.number().int().min(1).max(52).optional(), firstRunAt: optDate }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await createRecurrence(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.patch<{ Params: { id: string } }>('/work/recurrences/:id', guard, async (request, reply) => {
+    const b = z.object({ active: z.boolean() }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await setRecurrenceActive(workContext(request), request.params.id, b.data.active); } catch (e) { return fail(reply, e); }
+  });
+
+  // ── Automações
+  const autoBody = z.object({
+    name: z.string().min(1).max(150), enabled: z.boolean().optional(), spaceId: uuid.nullable().optional(), listId: uuid.nullable().optional(),
+    trigger: z.object({ type: z.string(), config: z.record(z.unknown()).optional() }),
+    conditions: z.array(z.object({ field: z.string(), op: z.string(), value: z.unknown().optional() })).max(10).optional(),
+    actions: z.array(z.object({ type: z.string(), config: z.record(z.unknown()).optional() })).min(1).max(10),
+  });
+  app.get('/work/automations', guard, async (request) => ({ automations: await listAutomations(workContext(request)) }));
+  app.post('/work/automations', guard, async (request, reply) => {
+    const b = autoBody.safeParse(request.body);
+    if (!b.success) return bad(reply, b.error.issues.map((i) => i.message).join(' '));
+    try { return await createAutomation(workContext(request), defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.patch<{ Params: { id: string } }>('/work/automations/:id', guard, async (request, reply) => {
+    const b = autoBody.partial().safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await updateAutomation(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/automations/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteAutomation(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.get<{ Params: { id: string } }>('/work/automations/:id/runs', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return { runs: await listAutomationRuns(workContext(request), request.params.id) }; } catch (e) { return fail(reply, e); }
+  });
+  /** Roda um ciclo do motor agora (útil para ver o efeito sem esperar o relógio). Só administrador da plataforma. */
+  app.post('/work/admin/automations/tick', { preHandler: adminOnly }, async () => automationTick());
+
+  // ── Relatórios
+  app.get<{ Querystring: { space_id?: string; weeks?: string } }>('/work/reports', guard, async (request, reply) => {
+    const q = z.object({ space_id: uuid.optional(), weeks: z.coerce.number().int().min(1).max(26).optional() }).safeParse(request.query);
+    if (!q.success) return bad(reply);
+    return workReport(workContext(request), defined({ spaceId: q.data.space_id, weeks: q.data.weeks }) as never);
   });
 
   app.get('/work/members', guard, async (request) => {

@@ -420,3 +420,110 @@ export const workExternalMappings = pgTable(
     entityIdx: index('work_external_mappings_entity_idx').on(t.organizationId, t.entityType, t.entityId),
   }),
 );
+
+// ── Incrementos 5–7 · produtividade, automações, modelos, recorrência ─────
+
+/** Estado por pessoa (hoje: até onde ela leu a caixa de entrada). */
+export const workUserState = pgTable(
+  'work_user_state',
+  {
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    inboxReadAt: timestamp('inbox_read_at', { withTimezone: true }),
+  },
+  (t) => ({ pk: uniqueIndex('work_user_state_pk').on(t.organizationId, t.userId) }),
+);
+
+/** Visões salvas (filtros + visualização). `userId` nulo = compartilhada com a empresa. */
+export const workSavedViews = pgTable(
+  'work_saved_views',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    ...timestampColumns,
+  },
+  (t) => ({ orgIdx: index('work_saved_views_org_idx').on(t.organizationId, t.userId) }),
+);
+
+/**
+ * Automação: QUANDO (gatilho) + SE (condições) + ENTÃO (ações). Escopo opcional por espaço/lista.
+ * Cada execução vira uma linha em `work_automation_runs` — nada acontece sem rastro, e `depth` impede laço.
+ */
+export const workAutomations = pgTable(
+  'work_automations',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    spaceId: uuid('space_id').references(() => workSpaces.id, { onDelete: 'cascade' }),
+    listId: uuid('list_id').references(() => workLists.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    trigger: jsonb('trigger').$type<{ type: string; config?: Record<string, unknown> }>().notNull(),
+    conditions: jsonb('conditions').$type<Array<{ field: string; op: string; value?: unknown }>>().notNull().default([]),
+    actions: jsonb('actions').$type<Array<{ type: string; config?: Record<string, unknown> }>>().notNull().default([]),
+    runCount: integer('run_count').notNull().default(0),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    ...timestampColumns,
+  },
+  (t) => ({ orgIdx: index('work_automations_org_idx').on(t.organizationId, t.enabled) }),
+);
+
+export const workAutomationRuns = pgTable(
+  'work_automation_runs',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    automationId: uuid('automation_id').notNull().references(() => workAutomations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').references(() => workTasks.id, { onDelete: 'set null' }),
+    /** ok | failed | skipped (condição não bateu) */
+    status: text('status').notNull(),
+    detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ autoIdx: index('work_automation_runs_auto_idx').on(t.organizationId, t.automationId, t.createdAt) }),
+);
+
+/** Modelo de tarefa (com subtarefas e checklists no `payload`) ou de lista. */
+export const workTemplates = pgTable(
+  'work_templates',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    name: text('name').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    ...timestampColumns,
+  },
+  (t) => ({ orgIdx: index('work_templates_org_idx').on(t.organizationId, t.kind) }),
+);
+
+/** Recorrência: a cada ocorrência, clona `templateTaskId` na mesma lista. */
+export const workRecurrences = pgTable(
+  'work_recurrences',
+  {
+    ...idColumn,
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    templateTaskId: uuid('template_task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    /** daily | weekly | monthly, a cada `interval`. */
+    freq: text('freq').notNull(),
+    interval: integer('interval').notNull().default(1),
+    active: boolean('active').notNull().default(true),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }).notNull(),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    ...timestampColumns,
+  },
+  (t) => ({ dueIdx: index('work_recurrences_due_idx').on(t.active, t.nextRunAt) }),
+);
+
+/** Até onde o motor de automações já leu a trilha de atividade de cada empresa (saída transacional simples, sem fila externa). */
+export const workAutomationCursor = pgTable('work_automation_cursor', {
+  organizationId: uuid('organization_id').primaryKey().references(() => organizations.id, { onDelete: 'cascade' }),
+  lastEventAt: timestamp('last_event_at', { withTimezone: true }).notNull().defaultNow(),
+  lastEventId: uuid('last_event_id'),
+});
