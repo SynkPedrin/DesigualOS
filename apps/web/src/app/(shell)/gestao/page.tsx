@@ -44,6 +44,8 @@ export default function GestaoPage() {
   const emReuniao = pessoas.filter((p) => p.agenda.agora).length;
   const carregando = painel.isPending;
   const erro = painel.isError;
+  // ClickUp fora: os cartões de tarefa mostram o erro, não "0 · Tudo em dia!" (que seria mentira).
+  const semTarefas = erro || (tarefas !== undefined && !tarefas.disponivel);
 
   return (
     <div className="mx-auto max-w-[1680px]">
@@ -63,12 +65,12 @@ export default function GestaoPage() {
         <p role="status" className="mb-4 rounded-lg border border-grafite-elevado px-3 py-2 text-xs text-nevoa">O ClickUp devolveu só parte das tarefas (limite da consulta): os números podem estar abaixo do real.</p>
       )}
 
-      <section aria-label="Resumo da equipe" className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard icon={CheckSquare} label="Tarefas abertas" value={total((p) => p.tarefas?.abertas ?? 0)} isLoading={carregando} isError={erro} footer={`${total((p) => p.tarefas?.vencem_na_semana ?? 0)} vencem nesta semana`} />
-        <StatCard icon={AlertTriangle} iconClassName="bg-erro/15 text-erro" label="Atrasadas" value={total((p) => p.tarefas?.atrasadas ?? 0)} isLoading={carregando} isError={erro}
+      <section aria-label="Resumo da equipe" className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 min-[1800px]:grid-cols-6">
+        <StatCard icon={CheckSquare} label="Tarefas abertas" value={total((p) => p.tarefas?.abertas ?? 0)} isLoading={carregando} isError={semTarefas} footer={`${total((p) => p.tarefas?.vencem_na_semana ?? 0)} vencem nesta semana`} />
+        <StatCard icon={AlertTriangle} iconClassName="bg-erro/15 text-erro" label="Atrasadas" value={total((p) => p.tarefas?.atrasadas ?? 0)} isLoading={carregando} isError={semTarefas}
           {...(total((p) => p.tarefas?.atrasadas ?? 0) > 0 ? { sublabel: { text: 'olhar hoje', tone: 'urgent' as const } } : {})}
           footer={total((p) => p.tarefas?.atrasadas ?? 0) === 0 ? 'Tudo em dia!' : `${pessoas.filter((p) => (p.tarefas?.atrasadas ?? 0) > 0).length} pessoa(s) com atraso`} />
-        <StatCard icon={CalendarCheck} label="Vencem hoje" value={total((p) => p.tarefas?.vencem_hoje ?? 0)} isLoading={carregando} isError={erro} />
+        <StatCard icon={CalendarCheck} label="Vencem hoje" value={total((p) => p.tarefas?.vencem_hoje ?? 0)} isLoading={carregando} isError={semTarefas} />
         <StatCard icon={Video} label="Em reunião agora" value={emReuniao} isLoading={carregando} isError={erro} footer={`${total((p) => p.agenda.hoje)} compromissos hoje`} />
         <StatCard icon={ClipboardList} label="Quinzenas atrasadas" value={total((p) => p.demandas.atrasadas)} isLoading={carregando} isError={erro} footer={`${total((p) => p.demandas.abertas)} em andamento`} />
         <StatCard icon={Stamp} label="Aprovações esperando" value={total((p) => p.aprovacoes_pendentes)} isLoading={carregando} isError={erro} />

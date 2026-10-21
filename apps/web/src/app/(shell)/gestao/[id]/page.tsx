@@ -13,7 +13,7 @@ import { tituloDoEvento } from '@/components/gestao/cartao-do-colaborador';
 import { cn } from '@/lib/utils';
 
 /**
- * UM COLABORADOR, POR INTEIRO — tudo de trabalho que está com ele: tarefas
+ * UM COLABORADOR, POR INTEIRO — todo o trabalho que está com a pessoa: tarefas
  * agrupadas por urgência (com link para o ClickUp), agenda dos próximos 7 dias,
  * quinzenas, aprovações esperando, clientes e o que andou fazendo.
  */
@@ -62,7 +62,7 @@ export default function ColaboradorPage() {
 
   if (!carregandoPapel && !isMaster) return <EmptyState icon={ShieldAlert} title="Acesso restrito" description="A gestão da equipe é de quem administra a operação." />;
   if (detalhe.isPending) return <div className="mx-auto max-w-[1400px]"><div className="h-40 animate-pulse rounded-xl bg-grafite" /></div>;
-  if (detalhe.isError || !detalhe.data) return <EmptyState icon={AlertTriangle} title="Colaborador não encontrado" description="Ele pode ter saído da equipe ou não ser desta empresa." />;
+  if (detalhe.isError || !detalhe.data) return <EmptyState icon={AlertTriangle} title="Colaborador não encontrado" description="Essa pessoa pode ter saído da equipe ou não ser desta empresa." />;
 
   const d = detalhe.data;
   const agora = Date.now();
@@ -101,7 +101,7 @@ export default function ColaboradorPage() {
       </header>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <Surface level="grafite" className="space-y-5 p-4">
+        <Surface level="grafite" className="space-y-5 self-start p-4">
           {!d.tarefas.disponivel ? (
             <p className="flex items-center gap-2 text-sm text-nevoa"><AlertTriangle size={15} className="text-sinal" /> {d.tarefas.erro}</p>
           ) : lista.length === 0 ? (
@@ -154,7 +154,7 @@ export default function ColaboradorPage() {
               )}
             </Secao>
             <Secao titulo="Aprovações esperando" contagem={d.aprovacoes.length}>
-              {d.aprovacoes.length === 0 ? <p className="text-sm text-nevoa">Nada esperando a aprovação dele.</p> : (
+              {d.aprovacoes.length === 0 ? <p className="text-sm text-nevoa">Nada esperando aprovação.</p> : (
                 <ul className="space-y-1">{d.aprovacoes.map((a) => <li key={a.id} className="text-sm text-branco-cru">{a.resource_type}{a.client_name && <span className="text-nevoa"> · {a.client_name}</span>} <span className="text-[11px] text-nevoa">· {formatRelativeTime(a.created_at).toLowerCase()}</span></li>)}</ul>
               )}
             </Secao>
