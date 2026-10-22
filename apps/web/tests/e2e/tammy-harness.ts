@@ -32,7 +32,7 @@ export async function login(page: Page): Promise<void> {
    * que não existia.
    */
   const email = page.getByLabel('E-mail');
-  const senha = page.getByLabel('Senha');
+  const senha = page.getByLabel('Senha', { exact: true });
   await expect(email).toBeEditable({ timeout: 45_000 });
   await email.fill(EMAIL);
   await expect(senha).toBeEditable({ timeout: 45_000 });

@@ -33,7 +33,7 @@ setup('autentica e dispensa o tutorial', async ({ page }) => {
 
   await page.goto('/login');
   await page.getByLabel('E-mail').fill(EMAIL);
-  await page.getByLabel('Senha').fill(PASSWORD);
+  await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: /entrar/i }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 90_000 });
 

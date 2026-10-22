@@ -92,6 +92,8 @@ export interface PainelDaEquipe {
   tarefas: { disponivel: true; truncado: boolean; sem_responsavel: number; sem_responsavel_atrasadas: number; listas: ListasDaEquipe } | { disponivel: false; erro: string };
   feed: EventoDoFeed[];
   pessoas: PessoaDaGestao[];
+  /** Quem está olhando (o administrador): as coisas DELE que estão pendentes. */
+  eu: (PessoaDaGestao & { minhas: TarefaDaGestao[]; minhas_total: number }) | null;
 }
 
 export interface DetalheDoColaborador {
