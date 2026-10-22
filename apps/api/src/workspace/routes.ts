@@ -82,6 +82,8 @@ export async function registerWorkspaceRoutes(app: FastifyInstance): Promise<voi
     { preHandler: [requireAuth, requirePermission('users', 'write')] },
     async (request, reply) => {
       const { userId } = request.params;
+      // Id malformado é "não encontrado", não erro de banco (era 500, visto em produção em 22/10/2026).
+      if (!z.string().uuid().safeParse(userId).success) { reply.code(404); return { error: 'Pessoa não encontrada.' }; }
       if (!(await exigirAlvoNaEmpresaDeTrabalho(request, reply, userId))) return;
       const body = z.object({ home_path: z.string().regex(/^\/(?!\/)[a-z0-9\-/]{0,60}$/, 'Tela inválida.').nullable() }).safeParse(request.body);
       if (!body.success) {
