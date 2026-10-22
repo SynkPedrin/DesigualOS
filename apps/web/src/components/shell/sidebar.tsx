@@ -12,6 +12,7 @@ import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
 import { useMyWorkspace } from '@/hooks/use-my-workspace';
+import { useGestaoAcesso } from '@/hooks/use-gestao-empresarial';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { useChatUnread } from '@/hooks/use-internal-chat';
@@ -74,6 +75,7 @@ export function Sidebar({
   const { data: me } = useMe();
   const { data: workspace } = useMyWorkspace();
   const { data: dailyTasksAccess } = useDailyTasksAccess();
+  const { data: gestaoAcesso } = useGestaoAcesso();
   const { logoSrc } = useBrandAssets();
   /**
    * `eh_provider` vem do /me e NUNCA é derivado só do papel: exige também
@@ -118,6 +120,7 @@ export function Sidebar({
     dentroDeTenant,
     modulosHabilitados: workspace ? new Set(workspace.modules) : null,
     dailyTasksLiberado: dailyTasksAccess?.allowed === true,
+    gestaoEmpresarialLiberada: gestaoAcesso?.allowed === true,
   });
 
   /**
