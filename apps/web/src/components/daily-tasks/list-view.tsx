@@ -61,20 +61,24 @@ function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: Ctx }) 
         onDragStart={(e) => { e.dataTransfer.setData(TASK_DRAG, t.id); e.dataTransfer.effectAllowed = 'move'; }}
         className={cn('group grid items-center gap-2 border-b border-grafite-elevado/60 px-3 py-3.5 hover:bg-grafite-elevado/40', COLUNAS, nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
       >
-        <div className="relative flex min-w-0 items-center gap-2" style={{ paddingLeft: nivel * 26 }}>
+        <div className="relative min-w-0 space-y-1.5" style={{ paddingLeft: nivel * 26 }}>
           {nivel > 0 && <span aria-hidden className="absolute bottom-1/2 top-[-14px] w-3 rounded-bl border-b border-l border-grafite-elevado" style={{ left: nivel * 26 - 14 }} />}
-          <button type="button" aria-label={aberta ? 'Recolher subtarefas' : 'Expandir subtarefas'} onClick={() => setAberta((v) => !v)} className={cn('shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru', t.subtaskCount === 0 && 'invisible')}>
-            {aberta ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </button>
-          <button type="button" aria-label={feita ? 'Reabrir' : 'Concluir'} onClick={() => { const alvo = feita ? ctx.statuses.find((s) => s.isInitial) : statusFinal; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}>
-            <StatusDot cor={t.status?.color ?? '#6b7280'} feito={feita} />
-          </button>
-          <button type="button" onClick={() => ctx.actions.abrir(t)} title={t.title} className={cn('truncate text-left text-[15px] hover:underline', nivel > 0 ? 'font-normal' : 'font-medium', feita ? 'text-nevoa' : 'text-branco-cru')}>
-            {t.title}
-          </button>
-          {t.subtaskCount > 0 && <ProgressoSubtarefas feitas={t.subtaskDone} total={t.subtaskCount} />}
-          {nivel > 0 && t.status && <StatusPill nome={t.status.name} cor={t.status.color} categoria={t.status.category} tamanho="sm" />}
-          <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex shrink-0 items-center gap-1 rounded-md border border-grafite-elevado px-2 py-0.5 text-[11px] text-nevoa hover:border-sinal/60 hover:text-branco-cru"><Plus size={12} /> Subtarefa</button>
+          <div className="flex min-w-0 items-center gap-2">
+            <button type="button" aria-label={aberta ? 'Recolher subtarefas' : 'Expandir subtarefas'} onClick={() => setAberta((v) => !v)} className={cn('shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru', t.subtaskCount === 0 && 'invisible')}>
+              {aberta ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+            <button type="button" aria-label={feita ? 'Reabrir' : 'Concluir'} title={feita ? 'Reabrir tarefa' : 'Marcar como concluída'} onClick={() => { const alvo = feita ? ctx.statuses.find((s) => s.isInitial) : statusFinal; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}>
+              <StatusDot cor={t.status?.color ?? '#6b7280'} feito={feita} />
+            </button>
+            <button type="button" onClick={() => ctx.actions.abrir(t)} title={t.title} className={cn('line-clamp-2 min-w-0 text-left text-[15px] leading-snug hover:underline', nivel > 0 ? 'font-normal' : 'font-medium', feita ? 'text-nevoa' : 'text-branco-cru')}>
+              {t.title}
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pl-[52px]">
+            {t.subtaskCount > 0 && <ProgressoSubtarefas feitas={t.subtaskDone} total={t.subtaskCount} />}
+            {nivel > 0 && t.status && <StatusPill nome={t.status.name} cor={t.status.color} categoria={t.status.category} tamanho="sm" />}
+            <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex shrink-0 items-center gap-1 rounded-md border border-grafite-elevado px-2 py-0.5 text-[11px] text-nevoa hover:border-sinal/60 hover:text-branco-cru"><Plus size={12} /> Subtarefa</button>
+          </div>
         </div>
         <div><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>
         <div><DuePicker tarefa={t} onChange={(iso) => ctx.actions.atualizar(t, { dueAt: iso })} /></div>
