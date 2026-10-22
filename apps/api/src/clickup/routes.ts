@@ -43,6 +43,7 @@ import { respondAsBento } from '../lib/bento-mention';
 import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 import { detectMentionedAgent, respondAsAgent, respondAsOtto } from '../lib/agent-mention';
 import { esquecerTarefasDaLista } from './cache-de-lista';
+import { criarCacheQuente, emHorarioDeTrabalho } from './cache-quente';
 import { sincronizarCartaoDaTarefa } from '../pipeline/sincronizar-webhook';
 import { organizacaoProvedora } from '@desigual-os/auth';
 
@@ -408,12 +409,15 @@ function wireOperationTask(
  * daquela pessoa. A credencial entra como hash: chave de cache não é lugar de
  * carregar segredo em texto, mesmo em memória.
  */
-const FRESCO_MS = 60_000;
-const VALIDADE_MS = 10 * 60_000;
-const LIMITE_CONSULTAS = 50;
-
 type ResultadoDeConsulta = Awaited<ReturnType<typeof queryOperationTasks>>;
-const consultasEmCache = new Map<string, { em: number; resultado: ResultadoDeConsulta; renovando: boolean }>();
+/**
+ * Regras de frescor, releitura por webhook e aquecimento em horário de trabalho:
+ * ver cache-quente.ts (22/10/2026 — antes o webhook apagava tudo e a próxima
+ * abertura pagava ~40 s).
+ */
+const consultasEmCache = criarCacheQuente<ResultadoDeConsulta>((error) => {
+  logger.warn({ error }, 'Releitura em segundo plano das tarefas do ClickUp falhou; servindo o cache anterior');
+});
 
 export function chaveDaConsulta(consulta: ConsultaDeWorkspace, assigneeId?: number): string {
   const credencial = createHash('sha256').update(consulta.config.apiKey).digest('hex').slice(0, 12);
@@ -443,55 +447,36 @@ async function membroEmCache(config: ConsultaDeWorkspace['config'], email: strin
 }
 
 async function consultarComCache(consulta: ConsultaDeWorkspace, assigneeId?: number): Promise<ResultadoDeConsulta> {
-  const chave = chaveDaConsulta(consulta, assigneeId);
-  const agora = Date.now();
-  const guardado = consultasEmCache.get(chave);
-  const buscar = () =>
+  return consultasEmCache.obter(chaveDaConsulta(consulta, assigneeId), () =>
     queryOperationTasks(consulta.config, {
       ...(consulta.listIds ? { listIds: consulta.listIds } : {}),
       ...(assigneeId !== undefined ? { assigneeIds: [assigneeId] } : {}),
-    });
-
-  if (guardado && agora - guardado.em < VALIDADE_MS) {
-    if (agora - guardado.em >= FRESCO_MS && !guardado.renovando) {
-      guardado.renovando = true;
-      /**
-       * `void` com `.catch` obrigatório: uma releitura que falha em segundo
-       * plano não pode virar unhandled rejection e derrubar o processo. Falhou,
-       * o cache continua com o valor velho e a próxima chamada tenta de novo —
-       * nunca pior do que não ter cache.
-       */
-      void buscar()
-        .then((resultado) => consultasEmCache.set(chave, { em: Date.now(), resultado, renovando: false }))
-        .catch((error) => {
-          guardado.renovando = false;
-          logger.warn({ error }, 'Releitura em segundo plano das tarefas do ClickUp falhou; servindo o cache anterior');
-        });
-    }
-    return guardado.resultado;
-  }
-
-  const resultado = await buscar();
-  // Teto de memória, igual ao cache de resumos de webhook logo abaixo.
-  if (consultasEmCache.size >= LIMITE_CONSULTAS) {
-    const maisAntiga = consultasEmCache.keys().next().value;
-    if (maisAntiga !== undefined) consultasEmCache.delete(maisAntiga);
-  }
-  consultasEmCache.set(chave, { em: Date.now(), resultado, renovando: false });
-  return resultado;
+    }));
 }
 
 /**
- * O webhook de tarefa alterada esvazia o cache: é o que torna "mais rápido" e
- * "mais atualizado" compatíveis de verdade. Sem isto, mexer numa tarefa no
- * ClickUp podia levar até um minuto pra aparecer aqui; com isto, a próxima
- * leitura já vai buscar. Esvazia tudo, não a entrada certa: descobrir quais
- * consultas contêm aquela tarefa custaria mais do que a releitura, e o evento é
- * raro perto do número de leituras.
+ * Tarefa mudou no ClickUp (webhook): as consultas guardadas são relidas por
+ * trás, sem apagar o que está sendo servido — apagar fazia a próxima abertura
+ * de Tarefas ou da Gestão esperar ~40 s, várias vezes por hora. Os membros
+ * (e-mail → id) continuam sendo esquecidos: são baratos de reler.
  */
 export function esquecerTarefasEmCache(): void {
-  consultasEmCache.clear();
+  consultasEmCache.marcarParaReler();
   membrosEmCache.clear();
+}
+
+/** Apaga tudo de verdade — para testes (estado de um cenário não vaza para o próximo). */
+export function limparCacheDeTarefas(): void {
+  consultasEmCache.limpar();
+  membrosEmCache.clear();
+}
+
+/** Aquecimento: a cada 4 min, em horário de trabalho, relê o que foi usado nas últimas 24 h. */
+let aquecimentoLigado = false;
+function ligarAquecimento() {
+  if (aquecimentoLigado || process.env.VITEST) return;
+  aquecimentoLigado = true;
+  setInterval(() => { if (emHorarioDeTrabalho()) consultasEmCache.aquecer(); }, 4 * 60_000).unref();
 }
 
 const TTL_RESUMO_MS = 60_000;
@@ -722,6 +707,7 @@ export async function tarefasDaAgencia(user: AuthenticatedUser): Promise<
 }
 
 export async function registerClickUpRoutes(app: FastifyInstance): Promise<void> {
+  ligarAquecimento();
   app.post('/clickup/tasks', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
     const config = getClickUpConfig();
