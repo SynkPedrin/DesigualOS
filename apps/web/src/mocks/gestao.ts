@@ -44,6 +44,11 @@ export const gestaoHandlers = [
     },
     feed: [{ id: 'f1', user_id: 'user-ana', user_name: 'Ana Ribeiro', summary: 'Moveu "Post de lançamento" para pronto', source: 'clickup', type: 'task.status', client_name: 'Cosentino', at: new Date(agora - 25 * 60_000).toISOString() }],
     pessoas,
+    eu: {
+      ...pessoas[0]!, id: 'user-admin-master', name: 'Pedro Gabriel', job_title: 'Gestão', presenca: 'online',
+      tarefas: { ...pessoas[0]!.tarefas, abertas: 4, atrasadas: 1, vencem_hoje: 1, concluidas_hoje: 0 },
+      minhas: [tarefa('t9', 'Aprovar orçamento de mídia', -6, 'aberto', true, false)], minhas_total: 4,
+    },
   })),
   http.get('/gestao/equipe/:id', ({ params }) => {
     const p = pessoas.find((x) => x.id === params.id);

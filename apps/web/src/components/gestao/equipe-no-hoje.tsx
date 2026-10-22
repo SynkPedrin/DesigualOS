@@ -78,8 +78,8 @@ function statusDaPessoa(p: PessoaDaGestao): { texto: string; reuniao: boolean } 
   return { texto: 'Ainda não entrou', reuniao: false };
 }
 
-/** Faixa 2: o cartão de uma pessoa. */
-function CartaoDaPessoa({ p, maiorCarga }: { p: PessoaDaGestao; maiorCarga: number }) {
+/** Faixa 2: o cartão de uma pessoa. `voce`: o cartão da própria administradora (destacado, leva às tarefas dela). */
+function CartaoDaPessoa({ p, maiorCarga, voce = false }: { p: PessoaDaGestao; maiorCarga: number; voce?: boolean }) {
   const t = p.tarefas;
   const s = statusDaPessoa(p);
   const fazendo = t?.agora[0];
@@ -87,14 +87,17 @@ function CartaoDaPessoa({ p, maiorCarga }: { p: PessoaDaGestao; maiorCarga: numb
   const carga = t && maiorCarga > 0 ? Math.max(4, Math.round((t.abertas / maiorCarga) * 100)) : 0;
   return (
     <Link
-      href={`/gestao/${p.id}`}
-      aria-label={`Abrir ${p.name}`}
-      className="group flex min-w-0 flex-col rounded-xl border border-grafite-elevado bg-grafite p-4 transition-colors hover:border-roxo-eletrico/40"
+      href={voce ? '/tasks' : `/gestao/${p.id}`}
+      aria-label={voce ? 'Abrir minhas tarefas' : `Abrir ${p.name}`}
+      className={cn('group flex min-w-0 flex-col rounded-xl border bg-grafite p-4 transition-colors hover:border-roxo-eletrico/40', voce ? 'border-roxo-eletrico/50 ring-1 ring-roxo-eletrico/20' : 'border-grafite-elevado')}
     >
       <div className="flex items-center gap-3">
         <Avatar p={p} tamanho="lg" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-semibold text-branco-cru">{p.name}</p>
+          <p className="flex min-w-0 items-center gap-2 text-[15px] font-semibold text-branco-cru">
+            <span className="truncate">{p.name}</span>
+            {voce && <span className="shrink-0 rounded-full bg-roxo-eletrico/15 px-2 py-0.5 text-[11px] font-medium text-roxo-eletrico">Você</span>}
+          </p>
           <p className={cn('flex items-center gap-1 truncate text-xs', s.reuniao ? 'text-roxo-eletrico' : p.presenca === 'online' ? 'text-sucesso' : 'text-nevoa')}>
             {s.reuniao && <Video size={12} />}{s.texto}
           </p>
@@ -132,6 +135,15 @@ function CartaoDaPessoa({ p, maiorCarga }: { p: PessoaDaGestao; maiorCarga: numb
             : proximo ? <span className="min-w-0 truncate text-branco-cru">{formatClockTime(proximo.start_at)} · {!proximo.visible && <Lock size={10} className="mr-0.5 inline" />}{tituloDoEvento(proximo)}</span>
             : <span className="text-nevoa">Livre pelo resto do dia</span>}
         </p>
+        {voce && (p.demandas.abertas > 0 || p.aprovacoes_pendentes > 0) && (
+          <p className="flex gap-2">
+            <span className="w-14 shrink-0 text-nevoa">Também</span>
+            <span className="min-w-0 truncate text-branco-cru">
+              {[p.demandas.abertas > 0 ? `${p.demandas.abertas} quinzena${p.demandas.abertas > 1 ? 's' : ''}${p.demandas.atrasadas > 0 ? ` (${p.demandas.atrasadas} atrasada${p.demandas.atrasadas > 1 ? 's' : ''})` : ''}` : null,
+                p.aprovacoes_pendentes > 0 ? `${p.aprovacoes_pendentes} aprovaç${p.aprovacoes_pendentes > 1 ? 'ões' : 'ão'} esperando você` : null].filter(Boolean).join(' · ')}
+            </span>
+          </p>
+        )}
       </div>
     </Link>
   );
@@ -157,8 +169,9 @@ function Abas<T extends string>({ abas, atual, aoTrocar, rotulo }: { abas: Array
   );
 }
 
-type AbaDeTarefas = 'atrasadas' | 'vencem_hoje' | 'entregues_hoje' | 'sem_responsavel_atrasadas';
+type AbaDeTarefas = 'minhas' | 'atrasadas' | 'vencem_hoje' | 'entregues_hoje' | 'sem_responsavel_atrasadas';
 const VAZIO: Record<AbaDeTarefas, string> = {
+  minhas: 'Você não tem tarefa aberta no ClickUp.',
   atrasadas: 'Nenhuma tarefa atrasada na equipe.',
   vencem_hoje: 'Nada da equipe vence hoje.',
   entregues_hoje: 'Nenhuma entrega registrada hoje ainda.',
@@ -166,18 +179,29 @@ const VAZIO: Record<AbaDeTarefas, string> = {
 };
 const VISIVEIS = 8;
 
+/** Prazo que não atrasou: hora se é hoje, data se é outro dia, "sem prazo" se não tem. */
+function prazoCurto(dueMs: number | null): string {
+  if (dueMs === null) return 'sem prazo';
+  const d = new Date(dueMs);
+  const hoje = new Date();
+  if (d.toDateString() === hoje.toDateString()) return formatClockTime(d.toISOString());
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(d);
+}
+
 function LinhaDeTarefa({ t, pessoas, aba }: { t: TarefaDaEquipe; pessoas: Map<string, PessoaDaGestao>; aba: AbaDeTarefas }) {
   const donos = t.donos.map((id) => pessoas.get(id)).filter((p): p is PessoaDaGestao => Boolean(p));
   const selo = aba === 'entregues_hoje'
     ? { texto: t.updated_at ? formatClockTime(new Date(t.updated_at).toISOString()) : 'hoje', cor: 'text-sucesso' }
     : t.atrasada ? { texto: `${t.dias_de_atraso} ${t.dias_de_atraso === 1 ? 'dia' : 'dias'}`, cor: 'text-erro' }
-    : { texto: t.due_date ? formatClockTime(new Date(t.due_date).toISOString()) : 'hoje', cor: 'text-nevoa' };
+    : { texto: prazoCurto(t.due_date), cor: 'text-nevoa' };
+  const minha = aba === 'minhas';
   const conteudo = (
     <>
-      {donos[0] ? <EntityAvatar name={donos[0].name} photoUrl={donos[0].avatar_url} kind="person" size="sm" /> : <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-grafite-elevado text-nevoa" title="Sem responsável"><UserX size={12} /></span>}
+      {minha ? <span className={cn('size-2 shrink-0 rounded-full', t.atrasada ? 'bg-erro' : t.em_andamento ? 'bg-roxo-eletrico' : 'bg-nevoa/40')} aria-hidden />
+        : donos[0] ? <EntityAvatar name={donos[0].name} photoUrl={donos[0].avatar_url} kind="person" size="sm" /> : <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-grafite-elevado text-nevoa" title="Sem responsável"><UserX size={12} /></span>}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-branco-cru" title={t.name}>{t.name}</p>
-        <p className="truncate text-xs text-nevoa">{[donos.map((p) => p.name.split(' ')[0]).join(', ') || 'Sem responsável', t.client?.name].filter(Boolean).join(' · ')}</p>
+        <p className="truncate text-xs text-nevoa">{(minha ? [t.client?.name, t.status] : [donos.map((p) => p.name.split(' ')[0]).join(', ') || 'Sem responsável', t.client?.name]).filter(Boolean).join(' · ')}</p>
       </div>
       <span className={cn('shrink-0 text-xs font-medium tabular-nums', selo.cor)}>{selo.texto}</span>
     </>
@@ -194,12 +218,14 @@ function LinhaDeTarefa({ t, pessoas, aba }: { t: TarefaDaEquipe; pessoas: Map<st
 export function EquipeNoHoje() {
   const painel = usePainelDaEquipe();
   const agora = useAgora();
-  const [abaDeTarefas, setAbaDeTarefas] = useState<AbaDeTarefas>('atrasadas');
+  // Abre nas tarefas da própria pessoa (pedido da Tammy: ver as coisas dela, não só as da equipe).
+  const [abaDeTarefas, setAbaDeTarefas] = useState<AbaDeTarefas>('minhas');
   const [abaDoDia, setAbaDoDia] = useState<'agenda' | 'atividade'>('agenda');
   const [tudo, setTudo] = useState(false);
   const dados = painel.data;
   const pessoas = useMemo(() => dados?.pessoas ?? [], [dados]);
-  const porId = useMemo(() => new Map(pessoas.map((p) => [p.id, p])), [pessoas]);
+  const eu = dados?.eu ?? null;
+  const porId = useMemo(() => new Map([...pessoas, ...(eu ? [eu] : [])].map((p) => [p.id, p])), [pessoas, eu]);
   // Quem precisa de atenção primeiro: mais atrasos; empate, quem está online.
   const ordenadas = useMemo(
     () => [...pessoas].sort((a, b) => (b.tarefas?.atrasadas ?? 0) - (a.tarefas?.atrasadas ?? 0) || Number(b.presenca === 'online') - Number(a.presenca === 'online') || a.name.localeCompare(b.name, 'pt-BR')),
@@ -218,7 +244,11 @@ export function EquipeNoHoje() {
   const segundos = painel.dataUpdatedAt ? Math.max(0, Math.round((agora - painel.dataUpdatedAt) / 1000)) : null;
   const pessoasComAtraso = pessoas.filter((p) => (p.tarefas?.atrasadas ?? 0) > 0).length;
   const emReuniao = pessoas.filter((p) => p.agenda.agora).length;
-  const listaAtual = listas?.[abaDeTarefas] ?? [];
+  // "Minhas" vem no formato da pessoa; vira o formato das listas da equipe (dono = você, dias de atraso).
+  const minhas: TarefaDaEquipe[] = useMemo(() => (eu?.minhas ?? []).map((t) => ({
+    ...t, donos: [eu!.id], dias_de_atraso: t.atrasada && t.due_date ? Math.max(1, Math.floor((Date.now() - t.due_date) / 86_400_000)) : 0,
+  })), [eu]);
+  const listaAtual = abaDeTarefas === 'minhas' ? minhas : listas?.[abaDeTarefas] ?? [];
   const mostradas = tudo ? listaAtual : listaAtual.slice(0, VISIVEIS);
 
   return (
@@ -265,29 +295,32 @@ export function EquipeNoHoje() {
           {carregando ? [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-56 rounded-xl" />)
             : painel.isError ? <p className="col-span-full py-6 text-center text-sm text-nevoa">Não consegui carregar a equipe agora.</p>
             : ordenadas.length === 0 ? <p className="col-span-full py-6 text-center text-sm text-nevoa">Nenhum colaborador ativo.</p>
-            : ordenadas.map((p) => <CartaoDaPessoa key={p.id} p={p} maiorCarga={maiorCarga} />)}
+            : [...(eu ? [<CartaoDaPessoa key="voce" p={eu} maiorCarga={Math.max(maiorCarga, eu.tarefas?.abertas ?? 0)} voce />] : []),
+               ...ordenadas.map((p) => <CartaoDaPessoa key={p.id} p={p} maiorCarga={maiorCarga} />)]}
         </div>
       </div>
 
       {/* Faixa 3 — o que pede ação, e o dia da equipe */}
       <div className="mt-5 grid border-t border-grafite-elevado @min-[1100px]:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <section aria-label="Tarefas da equipe" className="min-w-0 p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-branco-cru">Tarefas da equipe</h3>
+          <div className="mb-3 flex flex-col gap-2">
+            <h3 className="text-sm font-semibold text-branco-cru">Tarefas</h3>
             <Abas
               rotulo="Tarefas da equipe"
               atual={abaDeTarefas}
               aoTrocar={(v) => { setAbaDeTarefas(v); setTudo(false); }}
               abas={[
-                { valor: 'atrasadas', rotulo: 'Atrasadas', contagem: listas?.atrasadas.length, destaque: true },
+                { valor: 'minhas', rotulo: 'Minhas', contagem: eu ? eu.minhas_total : undefined },
+                { valor: 'atrasadas', rotulo: 'Equipe atrasada', contagem: listas?.atrasadas.length, destaque: true },
                 { valor: 'vencem_hoje', rotulo: 'Vencem hoje', contagem: listas?.vencem_hoje.length },
-                { valor: 'entregues_hoje', rotulo: 'Entregues hoje', contagem: listas?.entregues_hoje.length },
-                { valor: 'sem_responsavel_atrasadas', rotulo: 'Sem responsável', contagem: listas?.sem_responsavel_atrasadas.length, destaque: true },
+                { valor: 'entregues_hoje', rotulo: 'Entregues', contagem: listas?.entregues_hoje.length },
+                { valor: 'sem_responsavel_atrasadas', rotulo: 'Sem dono', contagem: listas?.sem_responsavel_atrasadas.length, destaque: true },
               ]}
             />
           </div>
           {carregando ? <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-11 w-full" />)}</div>
-            : !listas ? <p className="py-8 text-center text-sm text-nevoa">Tarefas do ClickUp indisponíveis agora.</p>
+            : !listas && abaDeTarefas !== 'minhas' ? <p className="py-8 text-center text-sm text-nevoa">Tarefas do ClickUp indisponíveis agora.</p>
+            : abaDeTarefas === 'minhas' && !eu?.tarefas ? <p className="py-8 text-center text-sm text-nevoa">Tarefas do ClickUp indisponíveis agora.</p>
             : listaAtual.length === 0 ? <p className="py-8 text-center text-sm text-nevoa">{VAZIO[abaDeTarefas]}</p>
             : (
               <>
@@ -296,6 +329,9 @@ export function EquipeNoHoje() {
                   <button type="button" onClick={() => setTudo((v) => !v)} className="mt-2 text-[13px] text-nevoa transition-colors hover:text-branco-cru">
                     {tudo ? 'Mostrar menos' : `Ver todas as ${listaAtual.length >= 25 ? '25 mais antigas' : listaAtual.length}`}
                   </button>
+                )}
+                {abaDeTarefas === 'minhas' && eu && eu.minhas_total > eu.minhas.length && (
+                  <Link href="/tasks" className="mt-2 block text-[13px] text-nevoa hover:text-branco-cru">Você tem {eu.minhas_total} tarefas abertas — ver todas em Tarefas →</Link>
                 )}
               </>
             )}

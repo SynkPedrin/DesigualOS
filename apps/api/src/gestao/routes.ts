@@ -52,6 +52,14 @@ async function equipe(organizationId: string, apenas?: string): Promise<Pessoa[]
   `);
 }
 
+/** Quem está pedindo (o administrador), no mesmo formato da equipe — para o cartão "Você". */
+async function pessoaPorId(id: string): Promise<Pessoa | null> {
+  const [p] = await db.execute<Pessoa>(sql`
+    select u.id, u.name, u.email, u.clickup_email, u.avatar_url, u.last_seen_at, u.job_title from users u where u.id = ${id}::uuid
+  `);
+  return p ?? null;
+}
+
 async function numerosDoTrabalho(organizationId: string, ids: string[]) {
   if (ids.length === 0) return new Map<string, { demandas_abertas: number; demandas_atrasadas: number; aprovacoes_pendentes: number; clientes: number; agenda_conectada: boolean }>();
   const lista = sql`array[${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)}]`;
@@ -121,16 +129,20 @@ async function feedDaEquipe(organizationId: string, ids: string[], limite: numbe
   `);
 }
 
-async function tarefasDaEquipe(request: FastifyRequest, pessoas: Pessoa[]) {
+/**
+ * `separadas`: pessoas contadas À PARTE da equipe (o administrador que pede, no
+ * cartão "Você"). As listas da equipe (atrasadas, vencem hoje…) continuam só da
+ * equipe — a mesma consulta ao ClickUp, agregada duas vezes em memória.
+ */
+async function tarefasDaEquipe(request: FastifyRequest, pessoas: Pessoa[], separadas: Pessoa[] = []) {
   try {
     const agencia = await tarefasDaAgencia(request.authUser!);
     if (!agencia.ok) return { disponivel: false as const, erro: 'O ClickUp não está conectado para esta empresa.' };
-    const r = tarefasPorPessoa(
-      agencia.tasks,
-      pessoas.map((p) => ({ id: p.id, emails: [p.email, p.clickup_email].filter((e): e is string => Boolean(e)) })),
-      (listId) => { const c = listId ? agencia.clientByListId.get(listId) : undefined; return c ? { id: c.id, name: c.name } : null; },
-    );
-    return { disponivel: true as const, truncado: agencia.truncated, ...r };
+    const comoPessoa = (p: Pessoa) => ({ id: p.id, emails: [p.email, p.clickup_email].filter((e): e is string => Boolean(e)) });
+    const clienteDaLista = (listId: string | null) => { const c = listId ? agencia.clientByListId.get(listId) : undefined; return c ? { id: c.id, name: c.name } : null; };
+    const r = tarefasPorPessoa(agencia.tasks, pessoas.map(comoPessoa), clienteDaLista);
+    const avulsas = separadas.length ? tarefasPorPessoa(agencia.tasks, separadas.map(comoPessoa), clienteDaLista).porPessoa : new Map<string, TarefasDaPessoa>();
+    return { disponivel: true as const, truncado: agencia.truncated, ...r, avulsas };
   } catch (error) {
     logger.warn({ error }, 'Gestão da equipe: tarefas do ClickUp indisponíveis');
     return { disponivel: false as const, erro: 'Não foi possível consultar o ClickUp agora. Tente de novo em instantes.' };
@@ -152,51 +164,51 @@ export async function registerGestaoRoutes(app: FastifyInstance): Promise<void> 
     rotas.get('/gestao/equipe', async (request) => {
       const org = request.tenantContext!.organizationId;
       const viewer = request.authUser!.id;
-      const pessoas = await equipe(org);
+      const [pessoas, eu] = await Promise.all([equipe(org), pessoaPorId(viewer)]);
       const ids = pessoas.map((p) => p.id);
+      // A própria pessoa entra nas contas por pessoa (cartão "Você"), nunca nas listas da equipe nem no feed.
+      const idsComEu = eu ? [...ids, eu.id] : ids;
       const agora = Date.now();
       const hoje = new Date(inicioDoDia(agora));
       const amanha = new Date(hoje.getTime() + 24 * 60 * 60_000);
       const [tarefas, numeros, agenda, atividade, presenca, feed] = await Promise.all([
-        tarefasDaEquipe(request, pessoas),
-        numerosDoTrabalho(org, ids),
-        agendaDaEquipe(org, ids, hoje, amanha, viewer),
-        atividadeRecente(org, ids, 1),
+        tarefasDaEquipe(request, pessoas, eu ? [eu] : []),
+        numerosDoTrabalho(org, idsComEu),
+        agendaDaEquipe(org, idsComEu, hoje, amanha, viewer),
+        atividadeRecente(org, idsComEu, 1),
         // Presença é enfeite: Redis lento ou fora não segura o painel (1 s, depois todo mundo "offline").
-        Promise.race([estadosDePresenca(ids), new Promise<Map<string, 'online' | 'away'>>((ok) => setTimeout(() => ok(new Map()), 1_000).unref())]),
+        Promise.race([estadosDePresenca(idsComEu), new Promise<Map<string, 'online' | 'away'>>((ok) => setTimeout(() => ok(new Map()), 1_000).unref())]),
         feedDaEquipe(org, ids, 20),
       ]);
+      const apresentar = (p: Pessoa, contagem: TarefasDaPessoa | undefined) => {
+        const meus = agenda.filter((e) => e.pessoa_id === p.id);
+        const agoraEvento = meus.find((e) => Date.parse(e.start_at) <= agora && Date.parse(e.end_at) > agora) ?? null;
+        const proximo = meus.find((e) => Date.parse(e.start_at) > agora) ?? null;
+        const n = numeros.get(p.id);
+        const ultima = atividade.find((a) => a.user_id === p.id) ?? null;
+        return {
+          id: p.id, name: p.name, email: p.email, avatar_url: p.avatar_url, job_title: p.job_title,
+          // Presença ao vivo (mesma da Comunicação): 'online' com a tela à vista, 'away' com a aba de lado.
+          presenca: presenca.get(p.id) ?? 'offline',
+          last_seen_at: p.last_seen_at ? new Date(p.last_seen_at).toISOString() : null,
+          tarefas: tarefas.disponivel ? semLista(contagem ?? vazio()) : null,
+          demandas: { abertas: n?.demandas_abertas ?? 0, atrasadas: n?.demandas_atrasadas ?? 0 },
+          aprovacoes_pendentes: n?.aprovacoes_pendentes ?? 0,
+          clientes: n?.clientes ?? 0,
+          agenda: { conectada: n?.agenda_conectada ?? false, hoje: meus.length, agora: agoraEvento, proximo, eventos: meus.map(({ pessoa_id: _p, ...e }) => e) },
+          ultima_atividade: ultima ? { summary: ultima.summary, source: ultima.source, client_name: ultima.client_name, at: new Date(ultima.at).toISOString() } : null,
+        };
+      };
+      const minhas = tarefas.disponivel && eu ? tarefas.avulsas.get(eu.id) : undefined;
       return {
         gerado_em: new Date(agora).toISOString(),
         tarefas: tarefas.disponivel
           ? { disponivel: true, truncado: tarefas.truncado, sem_responsavel: tarefas.semResponsavel, sem_responsavel_atrasadas: tarefas.semResponsavelAtrasadas, listas: tarefas.listas }
           : { disponivel: false, erro: tarefas.erro },
         feed: feed.map((f) => ({ ...f, at: new Date(f.at).toISOString() })),
-        pessoas: pessoas.map((p) => {
-          const meus = agenda.filter((e) => e.pessoa_id === p.id);
-          const agoraEvento = meus.find((e) => Date.parse(e.start_at) <= agora && Date.parse(e.end_at) > agora) ?? null;
-          const proximo = meus.find((e) => Date.parse(e.start_at) > agora) ?? null;
-          const n = numeros.get(p.id);
-          const ultima = atividade.find((a) => a.user_id === p.id) ?? null;
-          return {
-            id: p.id, name: p.name, email: p.email, avatar_url: p.avatar_url, job_title: p.job_title,
-            // Presença ao vivo (mesma da Comunicação): 'online' com a tela à vista, 'away' com a aba de lado.
-            presenca: presenca.get(p.id) ?? 'offline',
-            last_seen_at: p.last_seen_at ? new Date(p.last_seen_at).toISOString() : null,
-            tarefas: tarefas.disponivel ? semLista(tarefas.porPessoa.get(p.id) ?? vazio()) : null,
-            demandas: { abertas: n?.demandas_abertas ?? 0, atrasadas: n?.demandas_atrasadas ?? 0 },
-            aprovacoes_pendentes: n?.aprovacoes_pendentes ?? 0,
-            clientes: n?.clientes ?? 0,
-            agenda: {
-              conectada: n?.agenda_conectada ?? false,
-              hoje: meus.length,
-              agora: agoraEvento,
-              proximo,
-              eventos: meus.map(({ pessoa_id: _p, ...e }) => e),
-            },
-            ultima_atividade: ultima ? { summary: ultima.summary, source: ultima.source, client_name: ultima.client_name, at: new Date(ultima.at).toISOString() } : null,
-          };
-        }),
+        pessoas: pessoas.map((p) => apresentar(p, tarefas.disponivel ? tarefas.porPessoa.get(p.id) : undefined)),
+        // O próprio administrador: as coisas DELE que estão pendentes (cartão "Você" e aba "Minhas").
+        eu: eu ? { ...apresentar(eu, minhas), minhas: (minhas?.lista ?? []).slice(0, 25), minhas_total: minhas?.lista.length ?? 0 } : null,
       };
     });
 

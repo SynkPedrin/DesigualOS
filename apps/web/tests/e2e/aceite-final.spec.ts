@@ -47,7 +47,7 @@ const RECUSA = /(não|nao) (posso|consigo|é possível|e possivel) (gerar|criar|
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/login');
   await page.getByLabel('E-mail').fill(EMAIL);
-  await page.getByLabel('Senha').fill(PASSWORD);
+  await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: /entrar/i }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 60_000 });
   await page.goto('/chat');
@@ -201,7 +201,7 @@ test.describe('Persistência', () => {
     const p2 = await nova.newPage();
     await p2.goto('/login');
     await p2.getByLabel('E-mail').fill(EMAIL);
-    await p2.getByLabel('Senha').fill(PASSWORD);
+    await p2.getByLabel('Senha', { exact: true }).fill(PASSWORD);
     await p2.getByRole('button', { name: /entrar/i }).click();
     await expect(p2).not.toHaveURL(/\/login/, { timeout: 60_000 });
     await p2.goto(url);

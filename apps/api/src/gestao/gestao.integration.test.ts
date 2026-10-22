@@ -81,8 +81,17 @@ describe.skipIf(!enabled)('Gestão da equipe (Postgres real)', () => {
     await connection`insert into operational_events(source, type, summary, organization_id, user_id, occurred_at) values ('clickup', 'task.status', 'Moveu "Post de primavera" para pronto', ${org}, ${alicia}, now() - interval '5 minutes')`;
     clickup.tarefas = [
       { id: 't1', name: 'Post de primavera', status: 'alteração', statusType: 'custom', dueDate: agora - 3_600_000, updatedAt: agora - 60_000, assigneeEmails: [alicia + '@g.invalid'], listId: null, listName: 'L', url: null },
+      { id: 't3', name: 'Planejamento da semana', status: 'aberto', statusType: 'open', dueDate: agora - 7_200_000, updatedAt: agora, assigneeEmails: [tammy + '@g.invalid'], listId: null, listName: 'L', url: null },
       { id: 't2', name: 'Roteiro do Reels', status: 'aberto', statusType: 'open', dueDate: agora + 86_400_000, updatedAt: agora, assigneeEmails: ['clickup-' + matheus + '@g.invalid'], listId: null, listName: 'L', url: null },
     ];
+    // As coisas da própria administradora: uma quinzena atrasada, uma aprovação e um compromisso particular DELA.
+    await connection`insert into demands(organization_id, client_id, created_by, owner_id, title, source, status, due_date) values
+      (${org}, ${cliente}, ${tammy}, ${tammy}, 'Quinzena da gestão', 'manual', 'in_production', now() - interval '1 day')`;
+    await connection`insert into approval_requests(organization_id, client_id, resource_type, resource_id, requested_by, approver_id, status) values
+      (${org}, ${cliente}, 'creative', 'x', ${alicia}, ${tammy}, 'pending')`;
+    const [dela] = await connection`insert into calendar_events(organization_id, title, start_at, end_at, timezone, source, visibility, status, created_by)
+      values (${org}, 'Consulta da Tammy', now() + interval '4 hours', now() + interval '5 hours', 'America/Sao_Paulo', 'manual', 'private', 'confirmed', ${tammy}) returning id`;
+    await connection`insert into calendar_event_participants(event_id, member_id) values (${dela!.id}, ${tammy})`;
     const { registerGestaoRoutes } = await import('./routes');
     await app.register(registerGestaoRoutes);
     await app.ready();
@@ -121,6 +130,18 @@ describe.skipIf(!enabled)('Gestão da equipe (Postgres real)', () => {
     expect(a.presenca).toBe('offline');
     expect(r.tarefas.listas.atrasadas.map((x: { name: string; donos: string[] }) => [x.name, x.donos])).toEqual([['Post de primavera', [alicia]]]);
     expect(r.feed.map((f: { user_name: string; summary: string }) => [f.user_name, f.summary])).toEqual([['Alicia', 'Moveu "Post de primavera" para pronto']]);
+  });
+
+  it('"Você": as coisas da própria administradora — fora das listas da equipe', async () => {
+    const r = (await get(tammy, '/gestao/equipe')).json();
+    expect(r.eu).toMatchObject({ id: tammy, name: 'Tammy', tarefas: { abertas: 1, atrasadas: 1 }, demandas: { abertas: 1, atrasadas: 1 }, aprovacoes_pendentes: 1 });
+    expect(r.eu.minhas.map((t: { name: string }) => t.name)).toEqual(['Planejamento da semana']);
+    expect(r.eu.minhas_total).toBe(1);
+    // o compromisso particular é DELA: ela vê o título
+    expect(r.eu.agenda.proximo).toMatchObject({ title: 'Consulta da Tammy', visible: true });
+    // e nada disso entra na equipe
+    expect(r.pessoas.map((p: { name: string }) => p.name)).toEqual(['Alicia', 'Matheus']);
+    expect(r.tarefas.listas.atrasadas.map((t: { name: string }) => t.name)).not.toContain('Planejamento da semana');
   });
 
   it('compromisso particular aparece só como "ocupado" (sem título, local ou link)', async () => {

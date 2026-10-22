@@ -19,6 +19,8 @@ function sql(q: string): string {
 
 // Agenda de AGORA para o arquivo todo (o seed fixo envelhece de um dia para o outro).
 test.beforeAll(() => {
+  // O modal de novidade (outro spec liga para todos) cobriria a tela: este arquivo testa a gestão, não o anúncio.
+  sql(`update feature_announcements set rollout = 'off' where key = 'communication_hub_launch_v1'`);
   sql(`update calendar_events set start_at = now() - interval '15 minutes', end_at = now() + interval '45 minutes' where source = 'e2e-gestao' and title like 'Reunião de pauta%'`);
   sql(`update calendar_events set start_at = now() + interval '3 hours', end_at = now() + interval '4 hours' where source = 'e2e-gestao' and title = 'Médico'`);
   sql(`update calendar_events set start_at = now() + interval '1 hour', end_at = now() + interval '2 hours' where source = 'e2e-gestao' and title like 'Revisão das peças%'`);
@@ -36,7 +38,7 @@ async function entrar(browser: Browser, email: string, viewport = { width: 1440,
   page.setDefaultTimeout(20_000);
   await page.goto('/login');
   await page.getByLabel('E-mail').fill(email);
-  await page.getByLabel('Senha').fill(SENHA);
+  await page.getByLabel('Senha', { exact: true }).fill(SENHA);
   await page.getByRole('button', { name: /entrar/i }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 45_000 });
   return page;
@@ -114,7 +116,10 @@ test('Hoje da gestão: a equipe ao vivo no Hoje de quem administra', async ({ br
   await expect(secao.getByText('Reunião de pauta com o Café Aurora').first()).toBeVisible();
   await expect(secao.getByText('Médico')).toHaveCount(0);
   await expect(secao.getByText('Ocupado').first()).toBeVisible();
-  await expect(secao.getByRole('tab', { name: /Atrasadas/ })).toBeVisible();
+  await expect(secao.getByRole('tab', { name: /Equipe atrasada/ })).toBeVisible();
+  // As coisas da própria Tammy: o cartão "Você" (primeiro) e a aba "Minhas" (aberta por padrão).
+  await expect(secao.getByRole('link', { name: 'Abrir minhas tarefas' })).toContainText('Você');
+  await expect(secao.getByRole('tab', { name: /Minhas/ })).toHaveAttribute('aria-selected', 'true');
   await tammy.waitForTimeout(500);
   await tammy.screenshot({ path: 'test-results/hoje-gestao.png', fullPage: true });
 

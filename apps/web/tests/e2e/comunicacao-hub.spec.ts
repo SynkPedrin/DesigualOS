@@ -21,7 +21,7 @@ async function entrar(browser: Browser, email: string): Promise<Page> {
   page.setDefaultTimeout(20_000);
   await page.goto('/login');
   await page.getByLabel('E-mail').fill(email);
-  await page.getByLabel('Senha').fill(SENHA);
+  await page.getByLabel('Senha', { exact: true }).fill(SENHA);
   await page.getByRole('button', { name: /entrar/i }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 45_000 });
   await page.goto('/comunicacao');
