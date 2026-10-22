@@ -30,7 +30,32 @@ export interface ContagemDeTarefas {
   em_andamento: number;
   sem_prazo: number;
   concluidas_7d: number;
+  concluidas_hoje: number;
   agora: TarefaDaGestao[];
+}
+
+/** Tarefa numa lista da equipe (Hoje da gestão): com quem é e há quantos dias atrasou. */
+export interface TarefaDaEquipe extends TarefaDaGestao {
+  donos: string[];
+  dias_de_atraso: number;
+}
+
+export interface ListasDaEquipe {
+  atrasadas: TarefaDaEquipe[];
+  vencem_hoje: TarefaDaEquipe[];
+  entregues_hoje: TarefaDaEquipe[];
+  sem_responsavel_atrasadas: TarefaDaEquipe[];
+}
+
+export interface EventoDoFeed {
+  id: string;
+  user_id: string;
+  user_name: string;
+  summary: string | null;
+  source: string;
+  type: string;
+  client_name: string | null;
+  at: string;
 }
 
 export interface EventoDaGestao {
@@ -51,6 +76,8 @@ export interface PessoaDaGestao {
   email: string;
   avatar_url: string | null;
   job_title: string | null;
+  /** Ao vivo (a mesma presença da Comunicação). */
+  presenca: 'online' | 'away' | 'offline';
   last_seen_at: string | null;
   tarefas: ContagemDeTarefas | null;
   demandas: { abertas: number; atrasadas: number };
@@ -62,7 +89,8 @@ export interface PessoaDaGestao {
 
 export interface PainelDaEquipe {
   gerado_em: string;
-  tarefas: { disponivel: true; truncado: boolean; sem_responsavel: number; sem_responsavel_atrasadas: number } | { disponivel: false; erro: string };
+  tarefas: { disponivel: true; truncado: boolean; sem_responsavel: number; sem_responsavel_atrasadas: number; listas: ListasDaEquipe } | { disponivel: false; erro: string };
+  feed: EventoDoFeed[];
   pessoas: PessoaDaGestao[];
 }
 
@@ -76,13 +104,19 @@ export interface DetalheDoColaborador {
   atividade: Array<{ summary: string | null; source: string; type: string; client_name: string | null; at: string }>;
 }
 
-export function usePainelDaEquipe() {
+/**
+ * AO VIVO: o servidor avisa pelo WebSocket quando o trabalho da equipe muda
+ * (`gestao.mudou`, ver use-realtime-events) e esta consulta é refeita na hora.
+ * Os 30 s são a rede de segurança — e o que mantém a presença (online/ausente)
+ * em dia, porque presença não gera aviso.
+ */
+export function usePainelDaEquipe(enabled = true) {
   return useQuery({
     queryKey: ['gestao', 'equipe'],
     queryFn: () => apiFetch<PainelDaEquipe>('/gestao/equipe'),
-    // A tela fica aberta o dia todo: atualiza sozinha a cada 2 min (e ao voltar para a aba).
-    refetchInterval: 2 * 60_000,
-    staleTime: 60_000,
+    enabled,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 }
 

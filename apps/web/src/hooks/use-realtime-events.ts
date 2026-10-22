@@ -89,6 +89,10 @@ export function useRealtimeEvents(): void {
         // (ver handleTaskChanged em apps/api/src/clickup/routes.ts): refaz o
         // GET /clients/:id/clickup/tasks - painel do cliente já aberto
         // atualiza sozinho, sem precisar sair e voltar.
+        // Gestão da equipe (Hoje de quem administra): o trabalho mudou, refaz o painel.
+        case 'gestao.mudou':
+          queryClient.invalidateQueries({ queryKey: ['gestao'] });
+          break;
         case 'clickup.task_changed': {
           const clientId = event.payload.client_id;
           if (typeof clientId === 'string') {

@@ -41,6 +41,8 @@ export interface TarefasDaPessoa {
   em_andamento: number;
   sem_prazo: number;
   concluidas_7d: number;
+  /** Concluídas hoje (pronto/encerrado com última mudança hoje, em Brasília). */
+  concluidas_hoje: number;
   /** Até 3: em andamento primeiro, depois as atrasadas mais antigas. É o "o que está fazendo". */
   agora: TarefaResumida[];
   /** Todas as abertas (a tela do colaborador lista; o resumo da equipe não manda). */
@@ -59,15 +61,34 @@ export function inicioDoDia(agora: number): number {
 const DIA = 24 * 60 * 60_000;
 
 export function vazio(): TarefasDaPessoa {
-  return { abertas: 0, atrasadas: 0, vencem_hoje: 0, vencem_na_semana: 0, em_andamento: 0, sem_prazo: 0, concluidas_7d: 0, agora: [], lista: [] };
+  return { abertas: 0, atrasadas: 0, vencem_hoje: 0, vencem_na_semana: 0, em_andamento: 0, sem_prazo: 0, concluidas_7d: 0, concluidas_hoje: 0, agora: [], lista: [] };
 }
+
+/** Tarefa numa lista da equipe: com quem é (ids das pessoas) e há quantos dias passou do prazo. */
+export interface TarefaDaEquipe extends TarefaResumida {
+  donos: string[];
+  dias_de_atraso: number;
+}
+
+export interface ListasDaEquipe {
+  /** Atrasadas de quem é da equipe, mais antigas primeiro (até 25). */
+  atrasadas: TarefaDaEquipe[];
+  /** Vencem hoje e ainda não foram concluídas (até 25). */
+  vencem_hoje: TarefaDaEquipe[];
+  /** Concluídas hoje pela equipe, mais recentes primeiro (até 25). */
+  entregues_hoje: TarefaDaEquipe[];
+  /** Atrasadas SEM responsável, mais antigas primeiro (até 10). */
+  sem_responsavel_atrasadas: TarefaDaEquipe[];
+}
+
+const TETO_DA_LISTA = 25;
 
 export function tarefasPorPessoa(
   tarefas: OperationTask[],
   pessoas: PessoaDaEquipe[],
   clienteDaLista: (listId: string | null) => { id: string; name: string } | null,
   agora = Date.now(),
-): { porPessoa: Map<string, TarefasDaPessoa>; semResponsavel: number; semResponsavelAtrasadas: number } {
+): { porPessoa: Map<string, TarefasDaPessoa>; semResponsavel: number; semResponsavelAtrasadas: number; listas: ListasDaEquipe } {
   const hoje = inicioDoDia(agora);
   const amanha = hoje + DIA;
   const fimDaSemana = hoje + 7 * DIA;
@@ -77,6 +98,12 @@ export function tarefasPorPessoa(
   const porPessoa = new Map<string, TarefasDaPessoa>(pessoas.map((p) => [p.id, vazio()]));
   let semResponsavel = 0;
   let semResponsavelAtrasadas = 0;
+  const listas: ListasDaEquipe = { atrasadas: [], vencem_hoje: [], entregues_hoje: [], sem_responsavel_atrasadas: [] };
+  const daEquipe = (t: OperationTask, donos: string[], atrasada: boolean, andamento: boolean): TarefaDaEquipe => ({
+    id: t.id, name: t.name, status: t.status, url: t.url, due_date: t.dueDate, updated_at: t.updatedAt,
+    list_name: t.listName, client: clienteDaLista(t.listId), atrasada, em_andamento: andamento, donos,
+    dias_de_atraso: atrasada && t.dueDate !== null ? Math.max(1, Math.floor((hoje - inicioDoDia(t.dueDate)) / DIA)) : 0,
+  });
 
   for (const t of tarefas) {
     const forma = { status: t.status, status_type: t.statusType };
@@ -86,12 +113,22 @@ export function tarefasPorPessoa(
     const donos = [...new Set(emails.map((e) => donoPorEmail.get(e)).filter((id): id is string => Boolean(id)))];
     if (emails.length === 0 && !concluida) {
       semResponsavel++;
-      if (atrasada) semResponsavelAtrasadas++;
+      if (atrasada) {
+        semResponsavelAtrasadas++;
+        listas.sem_responsavel_atrasadas.push(daEquipe(t, [], true, false));
+      }
+    }
+    if (donos.length > 0) {
+      const andamentoDaTarefa = !concluida && tarefaEmAndamento(forma);
+      if (concluida && t.updatedAt !== null && t.updatedAt >= hoje) listas.entregues_hoje.push(daEquipe(t, donos, false, false));
+      else if (atrasada) listas.atrasadas.push(daEquipe(t, donos, true, andamentoDaTarefa));
+      else if (!concluida && t.dueDate !== null && t.dueDate >= hoje && t.dueDate < amanha) listas.vencem_hoje.push(daEquipe(t, donos, false, andamentoDaTarefa));
     }
     for (const dono of donos) {
       const r = porPessoa.get(dono)!;
       if (concluida) {
         if (t.updatedAt !== null && t.updatedAt >= agora - 7 * DIA) r.concluidas_7d++;
+        if (t.updatedAt !== null && t.updatedAt >= hoje) r.concluidas_hoje++;
         continue;
       }
       const andamento = tarefaEmAndamento(forma);
@@ -115,5 +152,10 @@ export function tarefasPorPessoa(
     const atrasadas = r.lista.filter((x) => x.atrasada && !x.em_andamento);
     r.agora = [...emAndamento, ...atrasadas].slice(0, 3);
   }
-  return { porPessoa, semResponsavel, semResponsavelAtrasadas };
+  const porPrazo = (a: TarefaDaEquipe, b: TarefaDaEquipe) => (a.due_date ?? Infinity) - (b.due_date ?? Infinity);
+  listas.atrasadas = listas.atrasadas.sort(porPrazo).slice(0, TETO_DA_LISTA);
+  listas.vencem_hoje = listas.vencem_hoje.sort(porPrazo).slice(0, TETO_DA_LISTA);
+  listas.sem_responsavel_atrasadas = listas.sem_responsavel_atrasadas.sort(porPrazo).slice(0, 10);
+  listas.entregues_hoje = listas.entregues_hoje.sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0)).slice(0, TETO_DA_LISTA);
+  return { porPessoa, semResponsavel, semResponsavelAtrasadas, listas };
 }

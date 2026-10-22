@@ -77,3 +77,26 @@ describe('tarefas por pessoa', () => {
     expect(new Date(inicio).toISOString()).toBe('2026-10-21T03:00:00.000Z');
   });
 });
+
+describe('listas da equipe (Hoje da gestão)', () => {
+  it('atrasadas com dono e dias de atraso; vencem hoje; entregues hoje; sem responsável atrasada', () => {
+    const tarefas = [
+      t({ name: 'atrasada 3 dias', assigneeEmails: ['alicia@agencia.com'], dueDate: agora - 3 * 24 * H }),
+      t({ name: 'atrasada hoje cedo', assigneeEmails: ['matheus.clickup@gmail.com'], dueDate: agora - 2 * H }),
+      t({ name: 'vence hoje', assigneeEmails: ['alicia@agencia.com'], dueDate: agora + 2 * H }),
+      t({ name: 'entregue hoje', assigneeEmails: ['alicia@agencia.com'], status: 'pronto', statusType: 'done', updatedAt: agora - H }),
+      t({ name: 'entregue ontem', assigneeEmails: ['alicia@agencia.com'], status: 'pronto', statusType: 'done', updatedAt: agora - 30 * H }),
+      t({ name: 'órfã atrasada', dueDate: agora - 24 * H }),
+      t({ name: 'de fora', assigneeEmails: ['outra@pessoa.com'], dueDate: agora - 24 * H }),
+    ];
+    const { listas, porPessoa } = tarefasPorPessoa(tarefas, pessoas, cliente, agora);
+    expect(listas.atrasadas.map((x) => [x.name, x.donos, x.dias_de_atraso])).toEqual([
+      ['atrasada 3 dias', ['alicia'], 3],
+      ['atrasada hoje cedo', ['matheus'], 1],
+    ]);
+    expect(listas.vencem_hoje.map((x) => x.name)).toEqual(['vence hoje']);
+    expect(listas.entregues_hoje.map((x) => x.name)).toEqual(['entregue hoje']);
+    expect(listas.sem_responsavel_atrasadas.map((x) => x.name)).toEqual(['órfã atrasada']);
+    expect(porPessoa.get('alicia')!.concluidas_hoje).toBe(1);
+  });
+});

@@ -29,6 +29,8 @@ import { ApiRequestError } from '@/lib/api/client';
 import { TETO_DE_PAGINA, comoPiso, veioCheia } from '@/lib/teto-de-pagina';
 import { cn } from '@/lib/utils';
 import { tarefaConcluida } from '@/lib/tarefa-concluida';
+import { EquipeNoHoje } from '@/components/gestao/equipe-no-hoje';
+import { useIsMaster } from '@/hooks/use-is-master';
 
 /** 409 de "Minhas tarefas" = e-mail do ClickUp ainda não vinculado, estado
  *  esperado (resolve-se em /tasks), nunca uma falha de verdade. */
@@ -159,6 +161,8 @@ function useZoomDoHoje(): number {
 
 export default function TodayPage() {
   const zoomDoHoje = useZoomDoHoje();
+  // Quem administra a operação vê a equipe ao vivo no topo do Hoje (22/10/2026, pedido para a Tammy).
+  const { isMaster } = useIsMaster();
   // Fixado no MOUNT: recalcular a cada render mudaria a queryKey das consultas
   // de calendário (intervalo [from,to] levemente diferente toda vez) e elas
   // nunca estabilizariam. Achado real, não hipotético (travou a aba Calendário
@@ -463,6 +467,8 @@ export default function TodayPage() {
           description={`${new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())} · veja o que precisa da sua atenção hoje.`}
         />
       </div>
+
+      {isMaster && <EquipeNoHoje />}
 
       <div className="grid gap-3 @min-[1900px]:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
       <BentoBriefing

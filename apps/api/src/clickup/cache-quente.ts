@@ -35,7 +35,7 @@ interface Entrada<T> {
   buscar: () => Promise<T>;
 }
 
-export function criarCacheQuente<T>(aoFalhar: (error: unknown) => void = () => undefined) {
+export function criarCacheQuente<T>(aoFalhar: (error: unknown) => void = () => undefined, aoRenovar: () => void = () => undefined) {
   const entradas = new Map<string, Entrada<T>>();
 
   function renovar(chave: string, entrada: Entrada<T>) {
@@ -45,7 +45,10 @@ export function criarCacheQuente<T>(aoFalhar: (error: unknown) => void = () => u
       .then((resultado) => {
         const atual = entradas.get(chave);
         // Se a entrada foi trocada enquanto relia, quem trocou ganha.
-        if (atual === entrada) entradas.set(chave, { ...entrada, em: Date.now(), resultado, renovando: false });
+        if (atual === entrada) {
+          entradas.set(chave, { ...entrada, em: Date.now(), resultado, renovando: false });
+          aoRenovar();
+        }
       })
       .catch((error) => {
         entrada.renovando = false;

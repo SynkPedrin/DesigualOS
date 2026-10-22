@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { expect, test, type Browser, type Page } from '@playwright/test';
 
 /**
@@ -11,6 +12,18 @@ test.skip(!process.env.E2E_COMUNICACAO, 'só com a pilha local (E2E_COMUNICACAO=
 test.describe.configure({ mode: 'serial' });
 
 const SENHA = process.env.E2E_COMUNICACAO_SENHA ?? 'e2e-senha';
+
+function sql(q: string): string {
+  return execFileSync('docker', ['exec', 'chat-qa-pg', 'psql', '-U', 'postgres', '-d', process.env.E2E_DB ?? 'e2e_chat', '-tAc', q], { encoding: 'utf8' }).trim();
+}
+
+// Agenda de AGORA para o arquivo todo (o seed fixo envelhece de um dia para o outro).
+test.beforeAll(() => {
+  sql(`update calendar_events set start_at = now() - interval '15 minutes', end_at = now() + interval '45 minutes' where source = 'e2e-gestao' and title like 'Reunião de pauta%'`);
+  sql(`update calendar_events set start_at = now() + interval '3 hours', end_at = now() + interval '4 hours' where source = 'e2e-gestao' and title = 'Médico'`);
+  sql(`update calendar_events set start_at = now() + interval '1 hour', end_at = now() + interval '2 hours' where source = 'e2e-gestao' and title like 'Revisão das peças%'`);
+  sql(`update calendar_events set start_at = now() + interval '1 day', end_at = now() + interval '1 day 1 hour' where source = 'e2e-gestao' and title like 'Apresentação do relatório%'`);
+});
 
 async function entrar(browser: Browser, email: string, viewport = { width: 1440, height: 900 }): Promise<Page> {
   const contexto = await browser.newContext({ viewport });
@@ -83,5 +96,41 @@ test('colaborador não vê o item no menu nem abre a tela', async ({ browser }) 
   await ana.goto('/gestao');
   await expect(ana.getByText('Acesso restrito')).toBeVisible();
   await expect(ana.getByRole('link', { name: /Abrir / })).toHaveCount(0);
+  await ana.context().close();
+});
+
+test('Hoje da gestão: a equipe ao vivo no Hoje de quem administra', async ({ browser }) => {
+  test.setTimeout(150_000); // espera até dois ciclos do refetch de 30 s
+  // Agenda e atividade de AGORA (o seed fixo de ontem já passou).
+  sql(`update calendar_events set start_at = now() - interval '15 minutes', end_at = now() + interval '45 minutes' where source = 'e2e-gestao' and title like 'Reunião de pauta%'`);
+  sql(`update calendar_events set start_at = now() + interval '3 hours', end_at = now() + interval '4 hours' where source = 'e2e-gestao' and title = 'Médico'`);
+  const tammy = await entrar(browser, 'tammy@e2e.test');
+  await tammy.goto('/today');
+  const secao = tammy.getByRole('region', { name: 'Sua equipe agora' }).or(tammy.locator('[aria-label="Sua equipe agora"]'));
+  await expect(secao).toBeVisible({ timeout: 20_000 });
+  await expect(secao.getByText('ao vivo')).toBeVisible();
+  await expect(secao.getByRole('link', { name: 'Abrir Ana Ribeiro' })).toContainText('Ana Ribeiro');
+  await expect(secao.getByRole('link', { name: 'Abrir Bruno Lima' })).toContainText('Sem Outlook');
+  await expect(secao.getByText('Reunião de pauta com o Café Aurora').first()).toBeVisible();
+  await expect(secao.getByText('Médico')).toHaveCount(0);
+  await expect(secao.getByText('Ocupado').first()).toBeVisible();
+  await expect(secao.getByRole('tab', { name: /Atrasadas/ })).toBeVisible();
+  await tammy.waitForTimeout(500);
+  await tammy.screenshot({ path: 'test-results/hoje-gestao.png', fullPage: true });
+
+  // AO VIVO: atividade nova aparece sem recarregar a página.
+  const marca = `Atividade ao vivo ${Date.now().toString(36)}`;
+  sql(`insert into operational_events (source, type, summary, organization_id, user_id, occurred_at) select 'clickup', 'task.status', '${marca}', organization_id, 'aaaaaaaa-0000-4000-8000-000000000004', now() from organization_members where user_id = 'aaaaaaaa-0000-4000-8000-000000000004' limit 1`);
+  // refetch de 30 s (o aviso pelo WebSocket só vem de webhook do ClickUp, que a pilha local não tem): até 2 ciclos
+  await expect(secao.getByText(marca)).toBeVisible({ timeout: 75_000 });
+  await tammy.context().close();
+});
+
+test('colaborador não vê a equipe no Hoje', async ({ browser }) => {
+  const ana = await entrar(browser, 'ana@e2e.test');
+  await ana.goto('/today');
+  await expect(ana.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 20_000 });
+  await ana.waitForTimeout(2000);
+  await expect(ana.locator('[aria-label="Sua equipe agora"]')).toHaveCount(0);
   await ana.context().close();
 });
