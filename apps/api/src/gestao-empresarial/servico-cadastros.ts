@@ -134,7 +134,7 @@ export interface FiltroDePessoas {
 export async function listarPessoas(organizationId: string, f: FiltroDePessoas) {
   const filtros = [eq(geParties.organizationId, organizationId)];
   if (f.status) filtros.push(eq(geParties.status, f.status));
-  if (f.role) filtros.push(sql`exists (select 1 from ge_party_roles r where r.party_id = ${geParties.id} and r.role = ${f.role})`);
+  if (f.role) filtros.push(sql`exists (select 1 from ge_party_roles r where r.party_id = ge_parties.id and r.role = ${f.role})`);
   if (f.semDocumento) filtros.push(isNull(geParties.document));
   if (f.documentoInvalido) filtros.push(eq(geParties.documentValid, false));
   if (f.q) {

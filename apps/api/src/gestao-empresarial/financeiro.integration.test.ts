@@ -217,6 +217,17 @@ describe.skipIf(!url)('cadastros', () => {
     expect((await B('GET', '/cadastros/pessoas?pageSize=101')).statusCode).toBe(400);
   });
 
+  it('filtra por papel e por documento ausente, sem trazer o que não pertence', async () => {
+    await B('POST', '/cadastros/pessoas', { name: 'Só Cliente Filtro', roles: ['cliente'] });
+    await B('POST', '/cadastros/pessoas', { name: 'Só Fornecedor Filtro', document: '11144477735', roles: ['fornecedor'] });
+    await B('POST', '/cadastros/pessoas', { name: 'Ambos Filtro', roles: ['cliente', 'fornecedor'] });
+    const nomes = async (qs: string) => ((await B('GET', `/cadastros/pessoas?q=Filtro&${qs}`)).json().items as Array<{ name: string }>).map((i) => i.name).sort();
+    expect(await nomes('role=cliente')).toEqual(['Ambos Filtro', 'Só Cliente Filtro']);
+    expect(await nomes('role=fornecedor')).toEqual(['Ambos Filtro', 'Só Fornecedor Filtro']);
+    expect(await nomes('role=veiculo_midia')).toEqual([]);
+    expect(await nomes('semDocumento=true')).toEqual(['Ambos Filtro', 'Só Cliente Filtro']);
+  });
+
   it('vínculo com cliente do Desigual OS: cliente inexistente é 404', async () => {
     const id = (await A('POST', '/cadastros/pessoas', { name: 'Vincular', roles: ['cliente'] })).json().id;
     expect((await A('PUT', `/cadastros/pessoas/${id}/cliente`, { clientId: '11111111-1111-4111-8111-111111111111' })).statusCode).toBe(404);

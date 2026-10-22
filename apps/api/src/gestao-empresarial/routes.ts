@@ -3,6 +3,7 @@ import { requireAuth } from '../auth/middleware';
 import { resolverAcesso } from './acesso';
 import { registrarCadastrosEFinanceiro } from './rotas-cadastros-e-financeiro';
 import { registrarImportador } from './rotas-importador';
+import { registrarComercialProducaoRelatorios } from './rotas-comercial-producao-relatorios';
 
 /**
  * Gestão Empresarial. Todas as rotas ficam atrás de `exigirGestao` (módulo ligado no servidor,
@@ -13,4 +14,5 @@ export async function registerGestaoEmpresarialRoutes(app: FastifyInstance): Pro
   app.get('/gestao-empresarial/access', { preHandler: [requireAuth] }, async (request) => resolverAcesso(request));
   await registrarCadastrosEFinanceiro(app);
   await registrarImportador(app);
+  await registrarComercialProducaoRelatorios(app);
 }

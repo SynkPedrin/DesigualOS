@@ -209,3 +209,75 @@ describe('situação com dado inconsistente', () => {
     expect(() => situacaoDe({ status: 'pago', dueDate: '2026-10-01' }, '2026-10-22')).toThrow(/desconhecido/);
   });
 });
+
+import { margem, podeTransitar, proximoNumero, totalDaProposta, TRANSICOES_PEDIDO_DE_VENDA, TRANSICOES_PROPOSTA } from './comercial';
+import { agruparPorAtraso, centavosParaCsv, faixaDeAtraso, linhaCsv } from './relatorios';
+
+describe('comercial', () => {
+  it('total da proposta: quantidade × preço − desconto, em centavos exatos', () => {
+    expect(totalDaProposta([{ quantity: 3, unitPriceCents: 3333, discountCents: 99 }, { quantity: 1, unitPriceCents: 1, discountCents: 0 }])).toBe(9901);
+    expect(totalDaProposta([])).toBe(0);
+  });
+  it('recusa item que não fecha: desconto maior que a linha, quantidade zero, valor fracionado', () => {
+    expect(() => totalDaProposta([{ quantity: 1, unitPriceCents: 100, discountCents: 101 }])).toThrow(/desconto/);
+    expect(() => totalDaProposta([{ quantity: 0, unitPriceCents: 100, discountCents: 0 }])).toThrow();
+    expect(() => totalDaProposta([{ quantity: 1, unitPriceCents: 10.5, discountCents: 0 }])).toThrow();
+  });
+  it('proposta: aprovada é final, enviada pode voltar a rascunho, rascunho não pula para aprovada', () => {
+    expect(podeTransitar(TRANSICOES_PROPOSTA, 'rascunho', 'enviada')).toBe(true);
+    expect(podeTransitar(TRANSICOES_PROPOSTA, 'rascunho', 'aprovada')).toBe(false);
+    expect(podeTransitar(TRANSICOES_PROPOSTA, 'enviada', 'rascunho')).toBe(true);
+    for (const para of ['rascunho', 'enviada', 'recusada', 'cancelada']) expect(podeTransitar(TRANSICOES_PROPOSTA, 'aprovada', para)).toBe(false);
+    expect(podeTransitar(TRANSICOES_PROPOSTA, 'inexistente', 'enviada')).toBe(false);
+  });
+  it('pedido faturado não volta a aberto nem é cancelado', () => {
+    expect(podeTransitar(TRANSICOES_PEDIDO_DE_VENDA, 'faturado', 'aberto')).toBe(false);
+    expect(podeTransitar(TRANSICOES_PEDIDO_DE_VENDA, 'faturado', 'cancelado')).toBe(false);
+    expect(podeTransitar(TRANSICOES_PEDIDO_DE_VENDA, 'aberto', 'faturado')).toBe(true);
+  });
+  it('numeração sequencial, e lixo é erro em vez de reiniciar a contagem', () => {
+    expect(proximoNumero('P', null)).toBe('P-0001');
+    expect(proximoNumero('P', 'P-0009')).toBe('P-0010');
+    expect(proximoNumero('P', 'P-9999')).toBe('P-10000');
+    expect(() => proximoNumero('P', 'X-1')).toThrow(/padrão/);
+  });
+  it('margem em centavos e %: sem venda não vira 0% nem 100%', () => {
+    expect(margem(10000, 7500)).toEqual({ margemCents: 2500, percentual: 25 });
+    expect(margem(30000, 10000)).toEqual({ margemCents: 20000, percentual: 66.7 });
+    expect(margem(10000, 12000)).toEqual({ margemCents: -2000, percentual: -20 });
+    expect(margem(null, 5000)).toEqual({ margemCents: -5000, percentual: null });
+    expect(margem(0, 0)).toEqual({ margemCents: 0, percentual: null });
+  });
+});
+
+describe('relatórios', () => {
+  const hoje = '2026-10-22';
+  it('faixas de atraso nas bordas', () => {
+    expect(faixaDeAtraso('2026-10-22', hoje)).toBe('a_vencer');
+    expect(faixaDeAtraso('2026-11-30', hoje)).toBe('a_vencer');
+    expect(faixaDeAtraso('2026-10-21', hoje)).toBe('1_30');
+    expect(faixaDeAtraso('2026-09-22', hoje)).toBe('1_30');
+    expect(faixaDeAtraso('2026-09-21', hoje)).toBe('31_60');
+    expect(faixaDeAtraso('2026-08-23', hoje)).toBe('31_60');
+    expect(faixaDeAtraso('2026-08-22', hoje)).toBe('61_90');
+    expect(faixaDeAtraso('2026-07-24', hoje)).toBe('61_90');
+    expect(faixaDeAtraso('2026-07-23', hoje)).toBe('mais_de_90');
+    expect(faixaDeAtraso('2021-06-01', hoje)).toBe('mais_de_90');
+  });
+  it('agrupa e soma por faixa', () => {
+    const r = agruparPorAtraso([{ dueDate: '2026-10-08', amountCents: 100 }, { dueDate: '2026-10-09', amountCents: 50 }, { dueDate: '2026-12-01', amountCents: 7 }], hoje);
+    expect(r['1_30']).toEqual({ quantidade: 2, totalCents: 150 });
+    expect(r['a_vencer']).toEqual({ quantidade: 1, totalCents: 7 });
+    expect(r['mais_de_90']).toEqual({ quantidade: 0, totalCents: 0 });
+  });
+  it('CSV: aspas, separador, quebra de linha e INJEÇÃO DE FÓRMULA', () => {
+    expect(linhaCsv(['a;b', 'diz "oi"', 'l1\nl2', null, 3])).toBe('"a;b";"diz ""oi""";"l1\nl2";;3');
+    expect(linhaCsv(['=HYPERLINK("http://x")', '+1', '-2', '@soma', 'normal'])).toBe('"\'=HYPERLINK(""http://x"")";\'+1;\'-2;\'@soma;normal');
+    expect(linhaCsv([-5])).toBe('-5');
+  });
+  it('centavos em CSV com vírgula decimal', () => {
+    expect(centavosParaCsv(123456)).toBe('1234,56');
+    expect(centavosParaCsv(5)).toBe('0,05');
+    expect(centavosParaCsv(-250)).toBe('-2,50');
+  });
+});
