@@ -12,16 +12,19 @@ export type AccessDecision =
   | { allowed: false; reason: 'flag_off' | 'not_allowlisted' | 'not_admin' };
 
 /**
- * REGRA DE ACESSO DO BETA (Daily Tasks). As DUAS travas valem juntas e nenhuma substitui a outra:
- *   1. a flag da empresa está ligada E a pessoa está na lista de autorizadas (explícita, inclusive master);
- *   2. a pessoa é administradora (papel de plataforma `master` ou papel de empresa de quem responde por ela).
+ * REGRA DE ACESSO (Daily Tasks). As travas valem juntas e nenhuma substitui a outra:
+ *   1. a flag da empresa está ligada;
+ *   2. a pessoa é ADMINISTRADORA (papel de plataforma `master` ou papel de empresa de quem responde por ela) — é
+ *      isso que libera o módulo a todos os administradores da empresa, sem precisar listar um por um;
+ *   3. se a empresa preencheu uma lista de autorizadas, a pessoa precisa estar nela (restrição opcional, mais
+ *      estreita que "todo administrador"). Lista vazia = todos os administradores.
  * O front só ESCONDE o item de menu com base nisto; quem barra de verdade é o backend, em toda rota.
  */
 export function decideAccess(input: { flagEnabled: boolean; allowedUserIds: string[]; userId: string; platformRoles: string[]; orgRole: string | null }): AccessDecision {
   if (!input.flagEnabled) return { allowed: false, reason: 'flag_off' };
-  if (!input.allowedUserIds.includes(input.userId)) return { allowed: false, reason: 'not_allowlisted' };
   const isAdmin = input.platformRoles.includes('master') || (input.orgRole !== null && ADMIN_ORG_ROLES.has(input.orgRole.toLowerCase()));
   if (!isAdmin) return { allowed: false, reason: 'not_admin' };
+  if (input.allowedUserIds.length > 0 && !input.allowedUserIds.includes(input.userId)) return { allowed: false, reason: 'not_allowlisted' };
   return { allowed: true, reason: 'ok' };
 }
 

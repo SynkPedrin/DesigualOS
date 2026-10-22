@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { CalendarDays, ChevronRight, Columns3, GanttChart, List as ListIcon, Search, Table2 } from 'lucide-react';
+import { CalendarDays, ChevronRight, Plus, Columns3, GanttChart, List as ListIcon, Search, Table2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ListChecks } from 'lucide-react';
@@ -61,6 +61,8 @@ export default function DailyTasksPage() {
   const aberta = abertaLocal ?? params.get('task');
   const fechar = () => { setAberta(null); if (params.get('task')) router.replace('/daily-tasks', { scroll: false }); };
   const [erro, setErro] = useState<string | null>(null);
+  const [novaTarefa, setNovaTarefa] = useState('');
+  const quickRef = useRef<HTMLInputElement>(null);
   const views = useSavedViews();
   const { salvar: salvarView } = useSavedViewActions();
 
@@ -93,61 +95,88 @@ export default function DailyTasksPage() {
   const eu = membros.find((m) => m.id === filtroResp);
 
   return (
-    <div className="space-y-3">
-      <div className="grid gap-4 md:grid-cols-[230px_minmax(0,1fr)]">
+    <div className="space-y-4">
+      <div className="grid gap-6 md:grid-cols-[250px_minmax(0,1fr)]">
         <div className="md:sticky md:top-2 md:self-start">
           {tree.isPending ? <Skeleton className="h-64 w-full" /> : <Arvore spaces={spaces} listId={listId} spaceId={spaceAtivo} arquivados={arquivados} onArquivados={setArquivados} onPick={(l, s) => { setListId(l); setSpaceId(s); }} />}
         </div>
-        <div className="min-w-0 space-y-3">
-          <nav aria-label="Caminho" className="flex flex-wrap items-center gap-1 text-sm text-nevoa">
-            {space && <span>{space.name}</span>}
-            {pasta && <><ChevronRight size={13} /><span>{pasta.name}</span></>}
-            {lista && <><ChevronRight size={13} /><LogoDoCliente nome={nomeLimpo(lista.name)} className="!size-6" /><strong className="text-branco-cru">{lista.name}</strong></>}
-          </nav>
-          <div className="flex flex-wrap items-center gap-2 border-b border-grafite-elevado">
-            <div role="tablist" aria-label="Visualização" className="flex">
+        <div className="min-w-0 space-y-5">
+          <header className="space-y-4 rounded-xl border border-grafite-elevado bg-grafite p-5">
+            <div className="flex flex-wrap items-start gap-4">
+              <div className="min-w-0 flex-1 space-y-1">
+                <nav aria-label="Caminho" className="flex flex-wrap items-center gap-1 text-xs text-nevoa">
+                  {space && <span>{space.name}</span>}
+                  {pasta && <><ChevronRight size={12} /><span>{pasta.name}</span></>}
+                </nav>
+                <h1 className="flex items-center gap-3 font-heading text-2xl font-semibold text-branco-cru">
+                  {lista && <LogoDoCliente nome={nomeLimpo(lista.name)} className="!size-8" />}
+                  <span className="truncate">{lista?.name ?? space?.name ?? 'Daily Tasks'}</span>
+                </h1>
+                {tasks.data && <p className="text-sm text-nevoa">{tasks.data.total} tarefa(s) · {rows.filter((t) => !t.completedAt && t.dueAt && new Date(t.dueAt) < new Date()).length} atrasada(s)</p>}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {buscando ? (
+                  <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onBlur={() => !q && setBuscando(false)} placeholder="Digite para buscar tarefas" aria-label="Buscar tarefas" className="w-56 rounded-lg border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru outline-none" />
+                ) : (
+                  <button type="button" onClick={() => setBuscando(true)} className="flex items-center gap-2 rounded-lg border border-grafite-elevado px-3 py-2 text-sm text-nevoa hover:text-branco-cru"><Search size={15} /> Buscar</button>
+                )}
+                <button type="button" onClick={() => { quickRef.current?.focus(); quickRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }} className="flex items-center gap-2 rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite shadow-sinal hover:brightness-110"><Plus size={16} /> Nova tarefa</button>
+              </div>
+            </div>
+            <div role="tablist" aria-label="Como ver as tarefas" className="flex flex-wrap gap-2">
               {VISOES.map((v) => (
-                <button key={v.id} role="tab" aria-selected={visao === v.id} type="button" onClick={() => setVisao(v.id)} className={cn('-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium', visao === v.id ? 'border-sinal text-branco-cru' : 'border-transparent text-nevoa hover:text-branco-cru')}>
-                  <v.icon size={14} /> {v.label}
+                <button key={v.id} role="tab" aria-selected={visao === v.id} type="button" onClick={() => setVisao(v.id)} className={cn('flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors', visao === v.id ? 'bg-sinal text-grafite' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>
+                  <v.icon size={15} /> {v.label}
                 </button>
               ))}
             </div>
-            <div className="ml-auto flex items-center gap-2 pb-1">
-              <select aria-label="Filtrar por responsável" value={filtroResp ?? ''} onChange={(e) => setFiltroResp(e.target.value || null)} className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa">
-                <option value="">Todos os responsáveis</option>
-                {membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-              <select aria-label="Filtrar por prioridade" value={filtroPrio ?? ''} onChange={(e) => setFiltroPrio(e.target.value === '' ? null : Number(e.target.value))} className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa">
-                <option value="">Toda prioridade</option>
-                {[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}
-              </select>
-              <select aria-label="Filtrar por cliente" value={filtroCli ?? ''} onChange={(e) => setFiltroCli(e.target.value || null)} className="max-w-40 rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa">
-                <option value="">Todos os clientes</option>{clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              {visao === 'lista' && <label className="flex items-center gap-1 text-xs text-nevoa"><input type="checkbox" checked={expandir} onChange={(e) => setExpandir(e.target.checked)} /> Expandir subtarefas</label>}
-              {eu && <Avatar nome={eu.name} url={eu.avatarUrl} size={20} />}
-              <select
-                aria-label="Visões salvas"
-                value=""
-                onChange={(e) => {
-                  const v = views.data?.views.find((x) => x.id === e.target.value);
-                  if (!v) return;
-                  setVisao((v.config.visao as Visao) ?? 'lista'); setFiltroResp(v.config.assigneeId ?? null); setFiltroPrio(v.config.priority ?? null);
-                  if (v.config.spaceId) setSpaceId(v.config.spaceId);
-                  setListId(v.config.listId ?? null);
-                }}
-                className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa"
-              >
-                <option value="">Visões…</option>{(views.data?.views ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
-              <button type="button" onClick={() => { const n = window.prompt('Nome da visão (guarda lista, filtros e visualização atuais)'); if (n?.trim()) salvarView.mutate({ name: n.trim(), config: { visao, assigneeId: filtroResp, priority: filtroPrio, listId, spaceId: spaceAtivo } }); }} className="rounded border border-grafite-elevado px-2 py-1 text-xs text-nevoa hover:text-branco-cru">Salvar visão</button>
-              {buscando ? (
-                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onBlur={() => !q && setBuscando(false)} placeholder="Buscar tarefas" className="w-44 rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-branco-cru outline-none" />
-              ) : (
-                <button type="button" aria-label="Buscar" onClick={() => setBuscando(true)} className="rounded p-1 text-nevoa hover:bg-grafite-elevado"><Search size={15} /></button>
-              )}
+            <div className="grid gap-3 border-t border-grafite-elevado pt-4 sm:grid-cols-2 xl:grid-cols-4">
+              <label className="space-y-1 text-xs text-nevoa">Quem faz
+                <select aria-label="Filtrar por responsável" value={filtroResp ?? ''} onChange={(e) => setFiltroResp(e.target.value || null)} className="block w-full rounded-lg border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru">
+                  <option value="">Todos</option>{membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-nevoa">Prioridade
+                <select aria-label="Filtrar por prioridade" value={filtroPrio ?? ''} onChange={(e) => setFiltroPrio(e.target.value === '' ? null : Number(e.target.value))} className="block w-full rounded-lg border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru">
+                  <option value="">Todas</option>{[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-nevoa">Cliente
+                <select aria-label="Filtrar por cliente" value={filtroCli ?? ''} onChange={(e) => setFiltroCli(e.target.value || null)} className="block w-full rounded-lg border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru">
+                  <option value="">Todos</option>{clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-nevoa">Visões salvas
+                <span className="flex gap-2">
+                  <select
+                    aria-label="Visões salvas"
+                    value=""
+                    onChange={(e) => {
+                      const v = views.data?.views.find((x) => x.id === e.target.value);
+                      if (!v) return;
+                      setVisao((v.config.visao as Visao) ?? 'lista'); setFiltroResp(v.config.assigneeId ?? null); setFiltroPrio(v.config.priority ?? null);
+                      if (v.config.spaceId) setSpaceId(v.config.spaceId);
+                      setListId(v.config.listId ?? null);
+                    }}
+                    className="block min-w-0 flex-1 rounded-lg border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru"
+                  >
+                    <option value="">Escolher…</option>{(views.data?.views ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                  <button type="button" onClick={() => { const n = window.prompt('Nome da visão (guarda lista, filtros e visualização atuais)'); if (n?.trim()) salvarView.mutate({ name: n.trim(), config: { visao, assigneeId: filtroResp, priority: filtroPrio, listId, spaceId: spaceAtivo } }); }} className="shrink-0 rounded-lg border border-grafite-elevado px-3 py-2 text-sm text-nevoa hover:text-branco-cru">Salvar</button>
+                </span>
+              </label>
             </div>
-          </div>
+            {visao === 'lista' && <label className="flex w-fit items-center gap-2 text-sm text-nevoa"><input type="checkbox" checked={expandir} onChange={(e) => setExpandir(e.target.checked)} /> Mostrar todas as subtarefas abertas</label>}
+          </header>
+          {lista ? (
+            <form className="flex flex-wrap items-center gap-3 rounded-xl border-2 border-dashed border-grafite-elevado p-3 focus-within:border-sinal/60" onSubmit={(e) => { e.preventDefault(); if (novaTarefa.trim()) { actions.criar({ title: novaTarefa.trim(), listId: lista.id }); setNovaTarefa(''); } }}>
+              <Plus size={18} className="text-sinal" />
+              <input ref={quickRef} value={novaTarefa} onChange={(e) => setNovaTarefa(e.target.value)} placeholder={`Escreva aqui o nome da nova tarefa em "${lista.name}" e aperte Enter`} aria-label="Nome da nova tarefa" className="min-w-0 flex-1 bg-transparent text-base text-branco-cru outline-none placeholder:text-nevoa" />
+              <button type="submit" disabled={!novaTarefa.trim()} className="rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite disabled:opacity-40">Criar tarefa</button>
+            </form>
+          ) : (
+            <p className="rounded-xl border border-dashed border-grafite-elevado p-4 text-sm text-nevoa">Para criar tarefas, <strong className="text-branco-cru">escolha uma lista</strong> no menu à esquerda.</p>
+          )}
           {erro && <p role="alert" className="text-xs text-red-400">{erro}</p>}
           {!pronto ? (
             <Skeleton className="h-64 w-full" />

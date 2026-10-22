@@ -47,9 +47,9 @@ function Flag() {
   const f = flag.data;
   return (
     <Surface className="space-y-3 p-4">
-      <h2 className="text-sm font-semibold text-branco-cru">Acesso ao Daily Tasks (administrador da plataforma)</h2>
-      <label className="flex items-center gap-2 text-sm text-branco-cru"><input type="checkbox" checked={f.enabled} onChange={(e) => salvar.mutate({ enabled: e.target.checked, allowedUserIds: f.allowedUserIds })} /> Módulo ligado para esta empresa</label>
-      <p className="text-xs text-nevoa">Só quem está marcado abaixo (e é administrador da empresa) enxerga o menu. Desligar esconde o módulo para todos sem apagar nenhum dado.</p>
+      <h2 className="text-sm font-semibold text-branco-cru">Quem pode usar o Daily Tasks</h2>
+      <label className="flex items-center gap-2 text-sm text-branco-cru"><input type="checkbox" checked={f.enabled} onChange={(e) => salvar.mutate({ enabled: e.target.checked, allowedUserIds: f.allowedUserIds })} /> Daily Tasks ligado para os administradores desta empresa</label>
+      <p className="text-xs text-nevoa">Ligado = TODOS os administradores da empresa enxergam o Daily Tasks (colaboradores comuns nunca enxergam). Se quiser restringir a algumas pessoas, marque-as abaixo: com alguém marcado, só essas pessoas (que sejam administradoras) entram. Desligar esconde o módulo para todos, sem apagar nenhum dado.</p>
       <ul className="grid gap-1 sm:grid-cols-2">
         {membros.map((m) => {
           const marcado = f.allowedUserIds.includes(m.id);

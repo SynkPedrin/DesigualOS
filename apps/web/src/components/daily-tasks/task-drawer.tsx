@@ -137,19 +137,32 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
           <span className="font-mono">{t?.key}</span>
           {data?.list && <span className="flex items-center gap-1.5">em <LogoDoCliente nome={nomeLimpo(data.list.name)} className="!size-5" />{data.list.name}</span>}
           {t?.archivedAt && <span className="rounded bg-aviso/20 px-1.5 py-0.5 text-aviso">arquivada</span>}
-          <div className="ml-auto flex items-center gap-1">
-            {t && <button type="button" title="Duplicar tarefa" onClick={() => modelos.duplicar.mutate(t.id, { onSuccess: () => toast('Tarefa duplicada na mesma lista.', 'success'), onError: erro })} className="rounded p-1 hover:bg-grafite-elevado"><Copy size={15} /></button>}
-            {t && <button type="button" title="Salvar como modelo" onClick={() => { const n = window.prompt('Nome do modelo', t.title); if (n?.trim()) modelos.salvar.mutate({ taskId: t.id, name: n.trim() }, { onSuccess: () => toast('Modelo salvo — veja na aba Modelos.', 'success'), onError: erro }); }} className="rounded p-1 hover:bg-grafite-elevado"><Save size={15} /></button>}
-            {t && <button type="button" title="Repetir esta tarefa" onClick={() => { const f = window.prompt('Repetir: daily (diária), weekly (semanal) ou monthly (mensal)?', 'weekly'); if (f && ['daily', 'weekly', 'monthly'].includes(f.trim())) recorrencia.criar.mutate({ taskId: t.id, freq: f.trim() }, { onSuccess: () => toast('Recorrência criada — veja na aba Modelos.', 'success'), onError: erro }); }} className="rounded p-1 hover:bg-grafite-elevado"><Repeat size={15} /></button>}
-            {t && <RowMenu t={t} onDone={(a) => { if (a !== 'moved') onClose(); }} />}
-            <button type="button" onClick={onClose} aria-label="Fechar" className="rounded p-1 hover:bg-grafite-elevado"><X size={16} /></button>
-          </div>
+          <button type="button" onClick={onClose} aria-label="Fechar" className="ml-auto flex items-center gap-1 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado"><X size={14} /> Fechar</button>
         </header>
         {isPending && <p className="p-6 text-sm text-nevoa">Carregando…</p>}
         {error && <p role="alert" className="p-6 text-sm text-red-400">Não foi possível abrir a tarefa.</p>}
         {data && t && (
-          <div className="space-y-7 p-6">
+          <div className="space-y-6 p-6">
             <input value={titulo} onChange={(e) => setTitulo(e.target.value)} onBlur={() => { if (titulo.trim() && titulo !== t.title) void salvar({ title: titulo.trim() }); }} aria-label="Título" className="w-full bg-transparent font-heading text-2xl font-semibold text-branco-cru outline-none" />
+            <div role="toolbar" aria-label="Ações da tarefa" className="flex flex-wrap gap-2">
+              {(() => {
+                const feita = t.status?.category === 'done';
+                const alvo = feita ? st.find((x) => x.isInitial) : st.find((x) => x.category === 'done');
+                return alvo ? (
+                  <button type="button" onClick={() => void salvar({ statusId: alvo.id })} className={cn('flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold', feita ? 'bg-grafite-elevado text-branco-cru' : 'bg-sucesso text-carbono')}><Check size={16} /> {feita ? 'Reabrir tarefa' : 'Concluir tarefa'}</button>
+                ) : null;
+              })()}
+              {meuTimerNesta ? (
+                <button type="button" onClick={() => parar.mutate()} className="flex items-center gap-2 rounded-lg bg-red-500/15 px-4 py-2 text-sm font-medium text-red-400"><Square size={14} /> Parar cronômetro</button>
+              ) : (
+                <button type="button" onClick={() => iniciar.mutate(taskId)} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Play size={14} /> Iniciar cronômetro</button>
+              )}
+              <button type="button" onClick={() => document.getElementById('drawer-subtarefa')?.focus()} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Plus size={14} /> Criar subtarefa</button>
+              <button type="button" onClick={() => modelos.duplicar.mutate(t.id, { onSuccess: () => toast('Tarefa duplicada na mesma lista.', 'success'), onError: erro })} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Copy size={14} /> Duplicar</button>
+              <button type="button" onClick={() => { const n = window.prompt('Nome do modelo', t.title); if (n?.trim()) modelos.salvar.mutate({ taskId: t.id, name: n.trim() }, { onSuccess: () => toast('Modelo salvo — veja na aba Modelos.', 'success'), onError: erro }); }} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Save size={14} /> Salvar como modelo</button>
+              <button type="button" onClick={() => { const f = window.prompt('Repetir: daily (todo dia), weekly (toda semana) ou monthly (todo mês)?', 'weekly'); if (f && ['daily', 'weekly', 'monthly'].includes(f.trim())) recorrencia.criar.mutate({ taskId: t.id, freq: f.trim() }, { onSuccess: () => toast('Recorrência criada — veja na aba Modelos.', 'success'), onError: erro }); }} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Repeat size={14} /> Repetir</button>
+              <span className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-2 py-1 text-sm text-nevoa">Mover / arquivar / excluir <RowMenu t={t} onDone={(a) => { if (a !== 'moved') onClose(); }} /></span>
+            </div>
             {msg && <p role="alert" className="text-xs text-red-400">{msg}</p>}
             <dl className="grid grid-cols-[130px_1fr] items-center gap-y-3.5 text-sm">
               <dt className="text-nevoa">Status</dt><dd><StatusPicker tarefa={t} statuses={st} onChange={(statusId) => void salvar({ statusId })} /></dd>
@@ -186,21 +199,21 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               {data.fieldDefs.length > data.customFields.length && (<><dt /><dd><button type="button" onClick={() => setTodosCampos((v) => !v)} className="text-xs text-nevoa hover:text-branco-cru">{todosCampos ? 'Ocultar campos vazios' : `Mostrar ${data.fieldDefs.length - data.customFields.length} campos vazios`}</button></dd></>)}
             </dl>
 
-            <section>
+            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
               <Titulo>Descrição</Titulo>
               <textarea value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={() => { if (desc !== (t.description ?? '')) void salvar({ description: desc || null }); }} rows={6} placeholder="Adicione uma descrição" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
             </section>
 
-            <section>
+            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
               <Titulo extra={data.subtaskIds.length > 0 && <span className="normal-case tabular-nums">{feitas}/{data.subtaskIds.length}</span>}>Subtarefas ({data.subtaskIds.length})</Titulo>
               {data.subtaskIds.length > 0 && <div className="mb-2 h-1.5 overflow-hidden rounded bg-grafite-elevado"><div className="h-full bg-sucesso" style={{ width: `${(feitas / data.subtaskIds.length) * 100}%` }} /></div>}
               <SubtasksList parentId={t.id} onOpen={onOpen} statuses={st} membros={membros} salvar={(sub, patch) => atualizar.mutate({ id: sub.id, expectedVersion: sub.version, ...patch })} />
               <form className="mt-2" onSubmit={(e) => { e.preventDefault(); if (sub.trim()) criar.mutate({ listId: t.listId, title: sub.trim(), parentTaskId: t.id }, { onSuccess: () => setSub('') }); }}>
-                <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="+ Adicionar subtarefa" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
+                <input id="drawer-subtarefa" value={sub} onChange={(e) => setSub(e.target.value)} placeholder="+ Escreva o nome da subtarefa e aperte Enter" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
               </form>
             </section>
 
-            <section className="space-y-2">
+            <section className="space-y-2 rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
               <Titulo>Dependências</Titulo>
               {data.blockedBy.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-red-300 hover:underline"><Link2 size={13} /> Aguardando {x.key} · {x.title}</button><button type="button" aria-label="Remover dependência" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
               {data.blocking.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-aviso hover:underline"><Link2 size={13} /> Bloqueia {x.key} · {x.title}</button><button type="button" aria-label="Remover dependência" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
@@ -208,7 +221,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               <BuscaDeTarefa excluir={t.id} onPick={(o) => crud.dependencia.mutate({ dependsOnId: o.id, kind: 'blocking' }, { onError: erro, onSuccess: () => toast(`Esta tarefa agora aguarda ${o.key}.`, 'success') })} />
             </section>
 
-            <section className="space-y-3">
+            <section className="space-y-3 rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
               {data.checklists.map((c) => {
                 const feitos = c.items.filter((i) => i.done).length;
                 return (
@@ -235,7 +248,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </form>
             </section>
 
-            <section>
+            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
               <Titulo>Anexos ({data.attachments.length})</Titulo>
               <ul className="space-y-1">
                 {data.attachments.map((a) => <li key={a.id} className="group flex items-center gap-2"><a href={a.url} target="_blank" rel="noreferrer noopener" className="flex min-w-0 flex-1 items-center gap-2 text-sm text-branco-cru hover:underline"><Paperclip size={13} className="shrink-0 text-nevoa" /><span className="truncate">{a.fileName}</span></a><button type="button" aria-label={`Remover anexo ${a.fileName}`} onClick={() => crud.apagarAnexo.mutate(a.id, { onError: erro })} className="text-nevoa opacity-40 transition-opacity hover:text-red-400 group-hover:opacity-100 focus:opacity-100"><X size={12} /></button></li>)}
@@ -245,7 +258,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </form>
             </section>
 
-            <section>
+            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
               <Titulo>Comentários ({data.comments.length})</Titulo>
               <ul className="space-y-3">
                 {data.comments.map((c) => (
