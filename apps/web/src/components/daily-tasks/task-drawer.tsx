@@ -16,21 +16,8 @@ import { LogoDoCliente, nomeLimpo } from './cliente';
 import { AssigneePicker, DuePicker, PriorityPicker, StatusPicker } from './pickers';
 import { Avatar, StatusDot } from './primitivas';
 import { RowMenu } from './row-menu';
+import { TextoRico } from './texto-rico';
 import { formatarDuracao, TempoCorrendo } from './tempo';
-
-const MENCAO = /@\[([^\]]+)\]\([0-9a-f-]{36}\)/gi;
-/** Mostra @[Nome](id) como @Nome em destaque; o resto do texto fica como está. */
-function TextoComMencoes({ texto }: { texto: string }) {
-  const partes: React.ReactNode[] = [];
-  let ultimo = 0;
-  for (const m of texto.matchAll(MENCAO)) {
-    partes.push(texto.slice(ultimo, m.index));
-    partes.push(<span key={m.index} className="rounded bg-sinal/15 px-1 text-sinal">@{m[1]}</span>);
-    ultimo = (m.index ?? 0) + m[0].length;
-  }
-  partes.push(texto.slice(ultimo));
-  return <>{partes}</>;
-}
 
 function CampoPersonalizado({ def, valor, taskId }: { def: WorkTaskDetail['fieldDefs'][number]; valor: unknown; taskId: string }) {
   const set = useSetCustomField(taskId);
@@ -107,10 +94,11 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const [link, setLink] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [todosCampos, setTodosCampos] = useState(false);
+  const [editandoDesc, setEditandoDesc] = useState(false);
   const [editandoComent, setEditandoComent] = useState<{ id: string; body: string } | null>(null);
   const comentRef = useRef<HTMLTextAreaElement>(null);
   const t = data?.task;
-  useEffect(() => { if (t) { setTitulo(t.title); setDesc(t.description ?? ''); } }, [t?.id, t?.version]);
+  useEffect(() => { if (t) { setTitulo(t.title); setDesc(t.description ?? ''); setEditandoDesc(false); } }, [t?.id, t?.version]);
   const fecharRef = useRef<() => void>(onClose);
   useEffect(() => { const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') fecharRef.current(); }; document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc); }, []);
 
@@ -209,8 +197,15 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             </dl>
 
             <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
-              <Titulo>Descrição</Titulo>
-              <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={6} placeholder="Adicione uma descrição" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
+              <Titulo extra={desc && !editandoDesc ? <button type="button" onClick={() => setEditandoDesc(true)} className="flex items-center gap-1 normal-case text-nevoa hover:text-branco-cru"><Pencil size={12} /> Editar descrição</button> : undefined}>Descrição</Titulo>
+              {desc && !editandoDesc ? (
+                <TextoRico texto={desc} className="text-branco-cru" />
+              ) : (
+                <>
+                  <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={6} placeholder="Adicione uma descrição (links são clicáveis depois de salvar)" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
+                  {editandoDesc && <button type="button" onClick={() => setEditandoDesc(false)} className="mt-1 text-xs text-nevoa hover:text-branco-cru">Ver como ficou</button>}
+                </>
+              )}
             </section>
 
             <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
@@ -287,7 +282,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                           <textarea autoFocus value={editandoComent.body} onChange={(e) => setEditandoComent({ id: c.id, body: e.target.value })} rows={3} className="w-full rounded border border-sinal/50 bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />
                           <span className="flex gap-2"><button type="submit" className="rounded bg-sinal px-2 py-1 text-xs font-semibold text-grafite">Salvar</button><button type="button" onClick={() => setEditandoComent(null)} className="text-xs text-nevoa">Cancelar</button></span>
                         </form>
-                      ) : <p className="whitespace-pre-wrap break-words text-sm text-branco-cru"><TextoComMencoes texto={c.body} /></p>}
+                      ) : <TextoRico texto={c.body} className="text-branco-cru" />}
                     </div>
                   </li>
                 ))}

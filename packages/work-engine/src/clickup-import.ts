@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { comentarioEmMarkdown } from './clickup-comment';
 import type { WorkContext } from './context';
 
 /**
@@ -237,6 +238,11 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
     const comentarios: Array<typeof schema.workComments.$inferInsert> = [];
     const anexos: Array<typeof schema.workAttachments.$inferInsert> = [];
     const tempos: Array<typeof schema.workTimeEntries.$inferInsert> = [];
+    const atualizacoesDeComentario: Array<{ id: string; body: string }> = [];
+    // número DT-n das tarefas importadas, para as menções de tarefa virarem link para a tarefa daqui
+    const numeroDe = new Map<string, number>();
+    for (const t of novasTarefas) numeroDe.set(t.id as string, t.number as number);
+    for (const m of (await tx.select({ id: schema.workTasks.id, n: schema.workTasks.number }).from(schema.workTasks).where(eq(schema.workTasks.organizationId, org)))) numeroDe.set(m.id, m.n);
     const jaImportadoFilho = (tipo: string, ext: string) => mapa.has(`${tipo}:${ext}`);
 
     for (const t of tasks) {
@@ -274,10 +280,11 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
       }
       const ex = extras[t.id];
       for (const c of ex?.comments ?? []) {
-        if (jaImportadoFilho('comment', String(c.id))) { bump('comentarios', false); continue; }
+        const corpo = comentarioEmMarkdown(c, (ext) => { const u = idDe('task', ext); const n = u ? numeroDe.get(u) : undefined; return u && n ? { href: `/daily-tasks?task=${u}`, chave: `DT-${n}` } : undefined; });
+        const existente = idDe('comment', String(c.id));
+        if (existente) { if (corpo) atualizacoesDeComentario.push({ id: existente, body: corpo }); bump('comentarios', false); continue; }
         const cid = randomUUID(); registrar('comment', String(c.id), 'comment', cid);
         contarNaoCasado(c.user);
-        const corpo = String(c.comment_text ?? '').trim();
         if (!corpo) continue;
         comentarios.push({ id: cid, organizationId: org, taskId: tid, authorId: resolverUsuario(c.user), authorLabel: nomeDe(c.user), body: corpo, resolvedAt: c.resolved ? new Date() : null, createdAt: ms(c.date) ?? new Date(), updatedAt: ms(c.date) ?? new Date() });
         bump('comentarios', true);
@@ -305,6 +312,11 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
     // itens: pais antes dos filhos (parent_item_id é FK) — a ordem de empilhar já garante isso
     for (const c of chunk(itens)) await tx.insert(schema.workChecklistItems).values(c);
     for (const c of chunk(comentarios)) await tx.insert(schema.workComments).values(c);
+    // Comentários já importados antes (sem links): reescreve o corpo com o texto rico, em lotes (uma ida por lote).
+    for (const c of chunk(atualizacoesDeComentario, 500)) {
+      const valores = sql.join(c.map((x) => sql`(${x.id}::uuid, ${x.body}::text)`), sql`, `);
+      await tx.execute(sql`update work_comments w set body = v.body from (values ${valores}) as v(id, body) where w.id = v.id and w.organization_id = ${org} and w.body is distinct from v.body`);
+    }
     for (const c of chunk(anexos)) await tx.insert(schema.workAttachments).values(c);
     for (const c of chunk(tempos)) await tx.insert(schema.workTimeEntries).values(c);
     bump('dependencias', true); report.counts['dependencias'] = { novos: deps.length, atualizados: 0 };

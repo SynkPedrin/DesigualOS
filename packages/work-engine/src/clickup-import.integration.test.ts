@@ -32,7 +32,7 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
       { id: 't2', name: 'Filha', parent: 't1', list: { id: 'l1' }, status: { status: 'feito', type: 'closed' }, date_created: '1700000100000', date_closed: '1700000200000', assignees: [] },
       { id: 't3', name: 'Fora de cliente', list: { id: 'l2' }, status: { status: 'inventado', type: 'custom' }, date_created: '1700000300000', assignees: [] },
     ]);
-    w('extras', { t1: { comments: [{ id: 'c1', comment_text: 'Oi', user: { id: 1, email: `ana-${ana}@cu.invalid`, username: 'Ana' }, date: '1700000050000' }], attachments: [{ id: 'a1', title: 'brief.pdf', url: 'https://x/brief.pdf', size: 10 }] } });
+    w('extras', { t1: { comments: [{ id: 'c1', comment_text: 'Oi link', comment: [{ text: 'Oi ', attributes: {} }, { text: 'link', attributes: { link: 'https://x.com/a' } }], user: { id: 1, email: `ana-${ana}@cu.invalid`, username: 'Ana' }, date: '1700000050000' }], attachments: [{ id: 'a1', title: 'brief.pdf', url: 'https://x/brief.pdf', size: 10 }] } });
   });
 
   afterAll(async () => {
@@ -77,8 +77,19 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
     expect(await db.select().from(schema.workTaskDependencies).where(eq(schema.workTaskDependencies.organizationId, org))).toHaveLength(1);
     const vals = await db.select().from(schema.workCustomFieldValues).where(eq(schema.workCustomFieldValues.organizationId, org));
     expect(vals[0]!.value).toBe('Instagram');
-    expect(await db.select().from(schema.workComments).where(eq(schema.workComments.organizationId, org))).toHaveLength(1);
+    const cms = await db.select().from(schema.workComments).where(eq(schema.workComments.organizationId, org));
+    expect(cms).toHaveLength(1);
+    expect(cms[0]!.body).toBe('Oi [link](https://x.com/a)'); // o link do comentário sobrevive
     expect(await db.select().from(schema.workAttachments).where(eq(schema.workAttachments.organizationId, org))).toHaveLength(1);
+  });
+
+  it('reimportar CORRIGE comentário que tinha sido importado sem o link', async () => {
+    const { importClickUp } = await import('./clickup-import');
+    const { db, schema } = await import('@desigual-os/database');
+    const { eq } = await import('drizzle-orm');
+    await db.update(schema.workComments).set({ body: 'Oi link' }).where(eq(schema.workComments.organizationId, org));
+    await importClickUp({ organizationId: org, userId: admin }, { snapshotDir: dir });
+    expect((await db.select().from(schema.workComments).where(eq(schema.workComments.organizationId, org)))[0]!.body).toBe('Oi [link](https://x.com/a)');
   });
 
   it('é idempotente: reimportar atualiza, não duplica', async () => {
