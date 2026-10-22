@@ -64,6 +64,8 @@ export interface WorkTaskDetail {
   blockedBy: Array<{ id: string; key: string; title: string }>;
   blocking: Array<{ id: string; key: string; title: string }>;
   related: Array<{ id: string; key: string; title: string }>;
+  fieldDefs: Array<{ id: string; name: string; type: string; options: Array<{ id: string; label: string }> }>;
+  trackedMs: number;
 }
 
 /** 0 sem prioridade · 1 urgente · 2 alta · 3 normal · 4 baixa — a mesma convenção do banco. */
@@ -98,9 +100,12 @@ export interface WorkTaskFilters {
   q?: string | undefined;
   assigneeId?: string | null;
   priorities?: number[];
+  dueFrom?: string;
+  dueTo?: string;
   completed?: boolean | undefined;
   limit?: number | undefined;
   sort?: string;
+  includeSubtasks?: boolean;
   enabled?: boolean;
 }
 
@@ -112,6 +117,9 @@ export function useWorkTasks(f: WorkTaskFilters) {
   if (f.q) params.set('q', f.q);
   if (f.assigneeId) params.set('assignee_id', f.assigneeId);
   if (f.priorities?.length) params.set('priorities', f.priorities.join(','));
+  if (f.dueFrom) params.set('due_from', f.dueFrom);
+  if (f.dueTo) params.set('due_to', f.dueTo);
+  if (f.includeSubtasks) params.set('include_subtasks', 'true');
   if (f.completed !== undefined) params.set('completed', String(f.completed));
   params.set('sort', f.sort ?? 'position');
   params.set('limit', String(f.limit ?? 2000));
@@ -174,6 +182,8 @@ export interface TaskPatch {
   dueAt?: string | null;
   startAt?: string | null;
   assigneeIds?: string[];
+  tags?: string[];
+  estimateMinutes?: number | null;
 }
 
 export function useUpdateTask() {
@@ -181,7 +191,7 @@ export function useUpdateTask() {
   return useMutation({
     mutationFn: ({ id, ...rest }: TaskPatch) => apiFetch(`/work/tasks/${id}`, jsonInit('PATCH', rest)),
     // Em conflito (409) a lista recarrega: a pessoa vê o que mudou em vez de sobrescrever em silêncio.
-    onSettled: () => inv('tasks', 'detail'),
+    onSettled: () => inv('tasks', 'detail', 'tree', 'inbox'),
   });
 }
 

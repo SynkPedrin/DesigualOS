@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react';
 import type { WorkMember, WorkStatus, WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
 import type { TaskActions } from './list-view';
+import { LogoDoCliente, nomeLimpo, useListIndex } from './cliente';
 import { AvatarStack, DueDate, PriorityFlag, StatusPill } from './primitivas';
 
 /** Quadro: uma coluna por status; arrastar o cartão muda o status (a regra de transição continua sendo do servidor). */
@@ -13,6 +14,7 @@ export function BoardView({ tarefas, statuses, membros, listId, actions }: { tar
   const [novo, setNovo] = useState<string | null>(null);
   const [txt, setTxt] = useState('');
   const [vazias, setVazias] = useState(false);
+  const listas = useListIndex();
   const mapa = new Map(membros.map((m) => [m.id, m]));
   return (
     <div>
@@ -37,7 +39,7 @@ export function BoardView({ tarefas, statuses, membros, listId, actions }: { tar
             <div className="space-y-2 overflow-y-auto">
               {itens.slice(0, 80).map((t) => (
                 <article key={t.id} draggable onDragStart={(e) => e.dataTransfer.setData('text/plain', t.id)} onClick={() => actions.abrir(t)} className="cursor-pointer rounded-md border border-grafite-elevado bg-carbono p-2.5 hover:border-nevoa/40">
-                  <p className="text-sm text-branco-cru">{t.title}</p>
+                  <p className="flex items-start gap-1.5 text-sm text-branco-cru"><LogoDoCliente nome={nomeLimpo(listas.get(t.listId)?.nome ?? '')} className="mt-0.5" /><span>{t.title}</span></p>
                   <div className="mt-2 flex items-center justify-between gap-2">
                     <AvatarStack ids={t.assigneeIds} membros={mapa} size={20} />
                     <DueDate tarefa={t} />

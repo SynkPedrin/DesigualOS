@@ -3,6 +3,7 @@ import { apiFetch } from '@/lib/api/client';
 
 export interface DailyTasksAccessWire {
   allowed: boolean;
+  userId?: string;
   reason?: string;
 }
 

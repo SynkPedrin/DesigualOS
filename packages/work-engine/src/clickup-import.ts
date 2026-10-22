@@ -75,6 +75,14 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
     membroInfo.set(String(u.id), { nome: u.username ?? u.email ?? String(u.id), email: u.email ?? null });
     userDoClickUp.set(String(u.id), u.email ? (porEmail.get(String(u.email).toLowerCase()) ?? null) : null);
   }
+  // Foto do colaborador: só PREENCHE quando o perfil ainda não tem foto (nunca troca uma que a pessoa já tem).
+  const fotos: Array<{ id: string; url: string }> = [];
+  for (const m of team.members ?? []) {
+    const u = m.user ?? m;
+    const id = userDoClickUp.get(String(u.id));
+    if (id && typeof u.profilePicture === 'string' && /^https:\/\//.test(u.profilePicture)) fotos.push({ id, url: u.profilePicture });
+  }
+  report.counts['fotos_de_colaborador'] = { novos: 0, atualizados: 0 };
   const nomeDe = (u: Raw): string | null => (u ? (u.username ?? u.email ?? null) : null);
   const resolverUsuario = (u: Raw): string | null => (u ? (userDoClickUp.get(String(u.id)) ?? (u.email ? (porEmail.get(String(u.email).toLowerCase()) ?? null) : null)) : null);
   const naoCasadoCount = new Map<string, number>();
@@ -96,6 +104,10 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
   const idDe = (t: string, ext: string) => mapa.get(`${t}:${ext}`);
 
   const run = async (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
+    for (const f of fotos) {
+      const r = await tx.update(schema.users).set({ avatarUrl: f.url }).where(and(eq(schema.users.id, f.id), sql`${schema.users.avatarUrl} is null`)).returning({ id: schema.users.id });
+      if (r.length) bump('fotos_de_colaborador', true);
+    }
     // ── espaços + status
     const statusPorEspaco = new Map<string, Map<string, string>>(); // spaceId(work) -> nome minúsculo -> id
     const espacoDaLista = new Map<string, string>();

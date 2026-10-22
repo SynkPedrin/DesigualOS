@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
 import { useCreateList, useCreateSpace, type WorkTreeSpace } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
+import { LogoDoCliente, nomeLimpo } from './cliente';
 
 function NovoNome({ placeholder, onSubmit, busy }: { placeholder: string; onSubmit: (nome: string) => void; busy?: boolean }) {
   const [nome, setNome] = useState('');
@@ -36,7 +37,7 @@ function ListaBtn({ nome, ativa, onClick, n }: { nome: string; ativa: boolean; o
   return (
     <li>
       <button type="button" onClick={onClick} title={nome} className={cn('w-full truncate rounded px-2 py-1 text-left text-xs', ativa ? 'bg-grafite-elevado text-branco-cru' : 'text-nevoa hover:text-branco-cru')}>
-        <span className="flex items-center justify-between gap-2"><span className="truncate">{nome}</span>{n > 0 && <span className="shrink-0 text-[10px] text-nevoa/60">{n}</span>}</span>
+        <span className="flex items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-1.5"><LogoDoCliente nome={nomeLimpo(nome)} className="!size-4" /><span className="truncate">{nome}</span></span>{n > 0 && <span className="shrink-0 text-[10px] text-nevoa/60">{n}</span>}</span>
       </button>
     </li>
   );

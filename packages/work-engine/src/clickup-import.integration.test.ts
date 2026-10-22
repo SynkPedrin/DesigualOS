@@ -22,7 +22,7 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
     await db.insert(schema.clients).values({ id: clienteId, name: 'Abitte Urbanismo', slug: clienteId, organizationId: org });
     dir = mkdtempSync(join(tmpdir(), 'cu-'));
     const w = (n: string, v: unknown) => writeFileSync(join(dir, `${n}.json`), JSON.stringify(v));
-    w('team', { members: [{ user: { id: 1, username: 'Ana', email: `ana-${ana}@cu.invalid` } }, { user: { id: 2, username: 'Fantasma', email: 'fantasma@x.invalid' } }] });
+    w('team', { members: [{ user: { id: 1, username: 'Ana', email: `ana-${ana}@cu.invalid`, profilePicture: 'https://cdn.invalid/ana.png' } }, { user: { id: 2, username: 'Fantasma', email: 'fantasma@x.invalid' } }] });
     w('spaces', [{ id: 's1', name: 'Agência', color: '#fff', statuses: [{ status: 'aberto', type: 'open', color: '#111' }, { status: 'feito', type: 'closed', color: '#222' }], _folders: [{ id: 'f1', name: 'Clientes' }] }]);
     w('lists', [{ id: 'l1', name: '[EX-CLIENTE] Abitte Urbanismo', _space: 's1', _folder: 'f1', _fields: [{ id: 'cf1', name: 'Canal', type: 'drop_down', type_config: { options: [{ id: 'o1', name: 'Instagram', orderindex: 0 }] } }] }, { id: 'l2', name: 'Abitte Urbanismo Interno', _space: 's1', _folder: null, _fields: [] }]);
     w('tasks', [
@@ -67,6 +67,8 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
     const asg = await db.select().from(schema.workTaskAssignees).where(eq(schema.workTaskAssignees.organizationId, org));
     expect(asg.map((a) => a.userId)).toEqual([ana]); // o "Fantasma" não vira usuário
     expect(r.usuariosNaoCasados.map((u) => u.nome)).toContain('Fantasma');
+    const [ua] = await db.select({ a: schema.users.avatarUrl }).from(schema.users).where(eq(schema.users.id, ana));
+    expect(ua!.a).toBe('https://cdn.invalid/ana.png');
     expect((await db.select().from(schema.workChecklistItems).where(eq(schema.workChecklistItems.organizationId, org))).map((i) => i.done)).toEqual([true]);
     expect(await db.select().from(schema.workTaskDependencies).where(eq(schema.workTaskDependencies.organizationId, org))).toHaveLength(1);
     const vals = await db.select().from(schema.workCustomFieldValues).where(eq(schema.workCustomFieldValues.organizationId, org));

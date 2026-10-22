@@ -32,26 +32,46 @@ export function AvatarStack({ ids, membros, size = 24 }: { ids: string[]; membro
   );
 }
 
-/** Menu que abre sob o gatilho e fecha ao clicar fora ou apertar Esc. */
+/**
+ * Menu que abre junto ao gatilho e fecha ao clicar fora ou apertar Esc.
+ * Posição FIXA calculada pelo retângulo do gatilho: dentro da gaveta (que rola) ou de uma tabela com
+ * overflow, um menu "absolute" era cortado ou ficava fora da tela. Vira para cima quando falta espaço embaixo.
+ */
 export function Popover({ trigger, children, align = 'left', label }: { trigger: React.ReactNode; children: (fechar: () => void) => React.ReactNode; align?: 'left' | 'right'; label: string }) {
-  const [aberto, setAberto] = useState(false);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number; maxH: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const aberto = pos !== null;
   useEffect(() => {
     if (!aberto) return;
-    const fora = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setAberto(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setAberto(false); };
+    const fora = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setPos(null); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setPos(null); } };
+    const rola = (e: Event) => { if (!ref.current?.contains(e.target as Node)) setPos(null); };
     document.addEventListener('mousedown', fora);
-    document.addEventListener('keydown', esc);
-    return () => { document.removeEventListener('mousedown', fora); document.removeEventListener('keydown', esc); };
+    document.addEventListener('keydown', esc, true);
+    window.addEventListener('wheel', rola, true);
+    return () => { document.removeEventListener('mousedown', fora); document.removeEventListener('keydown', esc, true); window.removeEventListener('wheel', rola, true); };
   }, [aberto]);
+  const abrir = () => {
+    if (aberto) { setPos(null); return; }
+    const r = btn.current!.getBoundingClientRect();
+    const abaixo = window.innerHeight - r.bottom - 8;
+    const acima = r.top - 8;
+    const emBaixo = abaixo >= 220 || abaixo >= acima;
+    setPos({
+      ...(emBaixo ? { top: r.bottom + 4 } : { bottom: window.innerHeight - r.top + 4 }),
+      ...(align === 'right' ? { right: Math.max(8, window.innerWidth - r.right) } : { left: Math.min(r.left, window.innerWidth - 200) }),
+      maxH: Math.max(160, Math.min(320, emBaixo ? abaixo : acima)),
+    });
+  };
   return (
     <div ref={ref} className="relative inline-block">
-      <button type="button" aria-label={label} aria-expanded={aberto} onClick={(e) => { e.stopPropagation(); setAberto((v) => !v); }} className="rounded px-1 py-0.5 hover:bg-grafite-elevado">
+      <button ref={btn} type="button" aria-label={label} aria-expanded={aberto} onClick={(e) => { e.stopPropagation(); abrir(); }} className="rounded px-1 py-0.5 hover:bg-grafite-elevado">
         {trigger}
       </button>
-      {aberto && (
-        <div onClick={(e) => e.stopPropagation()} className={cn('absolute z-40 mt-1 min-w-44 rounded-md border border-grafite-elevado bg-carbono p-1 shadow-elevated', align === 'right' ? 'right-0' : 'left-0')}>
-          {children(() => setAberto(false))}
+      {pos && (
+        <div onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, right: pos.right, maxHeight: pos.maxH }} className="z-[60] min-w-44 overflow-y-auto rounded-md border border-grafite-elevado bg-carbono p-1 shadow-elevated">
+          {children(() => setPos(null))}
         </div>
       )}
     </div>

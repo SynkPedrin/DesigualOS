@@ -1,16 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronRight, Columns3, List as ListIcon, Search, Table2 } from 'lucide-react';
+import { CalendarDays, ChevronRight, Columns3, GanttChart, List as ListIcon, Search, Table2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ListChecks } from 'lucide-react';
 import { Arvore } from '@/components/daily-tasks/tree';
 import { BoardView } from '@/components/daily-tasks/board-view';
+import { GanttView } from '@/components/daily-tasks/gantt-view';
 import { CalendarView } from '@/components/daily-tasks/calendar-view';
 import { ListView, type TaskActions } from '@/components/daily-tasks/list-view';
 import { TableView } from '@/components/daily-tasks/table-view';
 import { TaskDrawer } from '@/components/daily-tasks/task-drawer';
+import { LogoDoCliente, nomeLimpo } from '@/components/daily-tasks/cliente';
 import { Avatar } from '@/components/daily-tasks/primitivas';
 import {
   PRIORIDADES,
@@ -21,18 +23,19 @@ import {
   useWorkMembers,
   useWorkTasks,
   useWorkTree,
-  type TaskPatch,
   type WorkTaskWire,
 } from '@/hooks/use-work';
+import { useSavedViewActions, useSavedViews } from '@/hooks/use-work-extra';
 import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 
-type Visao = 'lista' | 'quadro' | 'calendario' | 'tabela';
+type Visao = 'lista' | 'quadro' | 'calendario' | 'tabela' | 'gantt';
 const VISOES: Array<{ id: Visao; label: string; icon: typeof ListIcon }> = [
   { id: 'lista', label: 'Lista', icon: ListIcon },
   { id: 'quadro', label: 'Quadro', icon: Columns3 },
   { id: 'calendario', label: 'Calendário', icon: CalendarDays },
   { id: 'tabela', label: 'Tabela', icon: Table2 },
+  { id: 'gantt', label: 'Gantt', icon: GanttChart },
 ];
 
 export default function DailyTasksPage() {
@@ -47,6 +50,8 @@ export default function DailyTasksPage() {
   const [filtroPrio, setFiltroPrio] = useState<number | null>(null);
   const [aberta, setAberta] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const views = useSavedViews();
+  const { salvar: salvarView } = useSavedViewActions();
 
   const spaces = tree.data?.spaces ?? [];
   const spaceAtivo = spaceId ?? spaces.find((s) => s.lists.length > 0)?.id ?? spaces[0]?.id ?? null;
@@ -86,7 +91,7 @@ export default function DailyTasksPage() {
           <nav aria-label="Caminho" className="flex flex-wrap items-center gap-1 text-sm text-nevoa">
             {space && <span>{space.name}</span>}
             {pasta && <><ChevronRight size={13} /><span>{pasta.name}</span></>}
-            {lista && <><ChevronRight size={13} /><strong className="text-branco-cru">{lista.name}</strong></>}
+            {lista && <><ChevronRight size={13} /><LogoDoCliente nome={nomeLimpo(lista.name)} className="!size-6" /><strong className="text-branco-cru">{lista.name}</strong></>}
           </nav>
           <div className="flex flex-wrap items-center gap-2 border-b border-grafite-elevado">
             <div role="tablist" aria-label="Visualização" className="flex">
@@ -95,7 +100,6 @@ export default function DailyTasksPage() {
                   <v.icon size={14} /> {v.label}
                 </button>
               ))}
-              <span title="Em breve" className="flex cursor-not-allowed items-center gap-1.5 px-3 py-2 text-sm text-nevoa/40">Gantt</span>
             </div>
             <div className="ml-auto flex items-center gap-2 pb-1">
               <select aria-label="Filtrar por responsável" value={filtroResp ?? ''} onChange={(e) => setFiltroResp(e.target.value || null)} className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa">
@@ -107,6 +111,21 @@ export default function DailyTasksPage() {
                 {[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}
               </select>
               {eu && <Avatar nome={eu.name} url={eu.avatarUrl} size={20} />}
+              <select
+                aria-label="Visões salvas"
+                value=""
+                onChange={(e) => {
+                  const v = views.data?.views.find((x) => x.id === e.target.value);
+                  if (!v) return;
+                  setVisao((v.config.visao as Visao) ?? 'lista'); setFiltroResp(v.config.assigneeId ?? null); setFiltroPrio(v.config.priority ?? null);
+                  if (v.config.spaceId) setSpaceId(v.config.spaceId);
+                  setListId(v.config.listId ?? null);
+                }}
+                className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa"
+              >
+                <option value="">Visões…</option>{(views.data?.views ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+              <button type="button" onClick={() => { const n = window.prompt('Nome da visão (guarda lista, filtros e visualização atuais)'); if (n?.trim()) salvarView.mutate({ name: n.trim(), config: { visao, assigneeId: filtroResp, priority: filtroPrio, listId, spaceId: spaceAtivo } }); }} className="rounded border border-grafite-elevado px-2 py-1 text-xs text-nevoa hover:text-branco-cru">Salvar visão</button>
               {buscando ? (
                 <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onBlur={() => !q && setBuscando(false)} placeholder="Buscar tarefas" className="w-44 rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-branco-cru outline-none" />
               ) : (
@@ -125,6 +144,8 @@ export default function DailyTasksPage() {
             <ListView tarefas={rows} statuses={st} membros={membros} listId={listId} actions={actions} onNovoStatus={(n) => criarStatus.mutate(n)} />
           ) : visao === 'quadro' ? (
             <BoardView tarefas={rows} statuses={st} membros={membros} listId={listId} actions={actions} />
+          ) : visao === 'gantt' ? (
+            <GanttView tarefas={rows} actions={actions} />
           ) : visao === 'calendario' ? (
             <CalendarView tarefas={rows} actions={actions} />
           ) : (
@@ -133,16 +154,7 @@ export default function DailyTasksPage() {
           {pronto && tasks.data && tasks.data.total > rows.length && <p className="text-xs text-nevoa">Mostrando {rows.length} de {tasks.data.total} tarefas.</p>}
         </div>
       </div>
-      {aberta && (
-        <TaskDrawer
-          taskId={aberta}
-          onClose={() => setAberta(null)}
-          onOpen={setAberta}
-          statuses={st}
-          membros={membros}
-          atualizar={(id, v, patch: Omit<TaskPatch, 'id' | 'expectedVersion'>) => atualizar.mutateAsync({ id, expectedVersion: v, ...patch })}
-        />
-      )}
+      {aberta && <TaskDrawer taskId={aberta} onClose={() => setAberta(null)} onOpen={setAberta} />}
     </div>
   );
 }
