@@ -135,7 +135,7 @@ describe('sidebar final por contexto — NAV_ITEMS de verdade', () => {
    * bastava o template "Gestão" para um colaborador ver a lista.
    */
   const BARRA_BASE = ['/today', '/calendar', '/', '/clients', '/inbox', '/comunicacao', '/demands', '/midias', '/pipeline'];
-  const BARRA_DO_TENANT_MASTER = [...BARRA_BASE, '/people', '/tasks', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
+  const BARRA_DO_TENANT_MASTER = [...BARRA_BASE, '/people', '/gestao', '/tasks', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
   const BARRA_DO_TENANT_COLABORADOR = [...BARRA_BASE, '/tasks', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
 
   it('master do tenant: operação + ajustes + Equipe, sem Empresas/Conhecimento/admin', () => {
@@ -159,6 +159,8 @@ describe('sidebar final por contexto — NAV_ITEMS de verdade', () => {
       modulosHabilitados: new Set(['hoje', 'clientes', 'inbox', 'demandas', 'tarefas', 'aprovacoes', 'operacao', 'integracoes', 'calendario', 'studio', 'bento', 'automations', 'meta_ads']),
     });
     expect(comTudoLigado).not.toContain('/people');
+    // A gestão da equipe também é de administrador: nenhum módulo a devolve a um colaborador.
+    expect(comTudoLigado).not.toContain('/gestao');
   });
 
   it('provider DENTRO de um tenant vê a barra do tenant, não a da plataforma', () => {
@@ -178,6 +180,7 @@ describe('sidebar final por contexto — NAV_ITEMS de verdade', () => {
       '/midias',
       '/pipeline',
       '/people',
+      '/gestao',
       '/tasks',
       '/approvals',
       '/memory',

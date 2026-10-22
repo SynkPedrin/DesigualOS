@@ -17,6 +17,7 @@ import { BentoBolha } from '@/components/chat/bento-bolha';
 import { useRealtimeEvents } from '@/hooks/use-realtime-events';
 import { TourProvider } from '@/components/tour/tour-provider';
 import { AnnouncementHost } from '@/components/announcements/announcement-host';
+import { TelaInicial } from './tela-inicial';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -85,6 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <BentoBolha />
       {/* Novidades: abre sozinho uma vez por pessoa, depois que perfil e permissões chegaram. */}
       <AnnouncementHost />
+      <TelaInicial />
     </div>
     </TourProvider>
   );

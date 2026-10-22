@@ -15,3 +15,4 @@ export * from './studio';
 export * from './text';
 export * from './today';
 export * from './workspace';
+export * from './tarefa';

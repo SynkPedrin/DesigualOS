@@ -694,6 +694,33 @@ async function handleTaskChanged(
  * API REAL ainda: aguardando o usuário gerar e enviar CLICKUP_API_KEY e
  * CLICKUP_TEAM_ID.
  */
+/**
+ * TODAS AS TAREFAS QUE ESTA PESSOA ENXERGA (a mesma consulta de
+ * `/clickup/tasks/agency`, com o mesmo cache), para quem precisa agregar no
+ * servidor — o painel da gestão da equipe conta tarefas e atrasos por
+ * colaborador. Devolve a tarefa crua (com `assigneeEmails`/`assigneeIds`), que o
+ * fio da rota da agência não carrega.
+ */
+export async function tarefasDaAgencia(user: AuthenticatedUser): Promise<
+  | { ok: true; tasks: OperationTask[]; truncated: boolean; clientByListId: Awaited<ReturnType<typeof clientsByClickUpListId>>; clientesIndisponiveis: string[] }
+  | { ok: false; motivo: 'sem_acesso' }
+> {
+  const escopo = await escopoDeOrganizacao(user);
+  const proprias = new Set(escopo.organizationIds);
+  const clientByListId = await clientsByClickUpListId(user, escopo);
+  const { configPorOrganizacao, clientesIndisponiveis } = await resolverCredenciaisPorOrganizacao(clientByListId, escopo.organizationIds);
+  if (configPorOrganizacao.size === 0) return { ok: false, motivo: 'sem_acesso' };
+  const consultas = planejarConsultas(configPorOrganizacao, agruparListIdsPorOrganizacao(clientByListId), proprias);
+  const resultados = await Promise.all(consultas.map((consulta) => consultarComCache(consulta)));
+  return {
+    ok: true,
+    tasks: semDuplicatas(resultados.flatMap((r) => r.tasks)),
+    truncated: resultados.some((r) => r.truncated),
+    clientByListId,
+    clientesIndisponiveis,
+  };
+}
+
 export async function registerClickUpRoutes(app: FastifyInstance): Promise<void> {
   app.post('/clickup/tasks', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
@@ -1022,15 +1049,16 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
       return { error: 'Not authenticated' };
     }
 
-    const escopo = await escopoDeOrganizacao(user);
-    const proprias = new Set(escopo.organizationIds);
-    const clientByListId = await clientsByClickUpListId(user, escopo);
-
-    const { configPorOrganizacao, clientesIndisponiveis } = await resolverCredenciaisPorOrganizacao(
-      clientByListId,
-      escopo.organizationIds,
-    );
-    if (configPorOrganizacao.size === 0) {
+    let agencia: Awaited<ReturnType<typeof tarefasDaAgencia>>;
+    try {
+      agencia = await tarefasDaAgencia(user);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ error }, 'Falha ao buscar tarefas da agência no ClickUp');
+      reply.code(502);
+      return { error: message };
+    }
+    if (!agencia.ok) {
       /**
        * Lista vazia AQUI seria mentira: "nenhuma tarefa" e "não consegui
        * perguntar" são coisas diferentes, e só a segunda tem conserto. A tela
@@ -1040,22 +1068,11 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
       return { error: 'No ClickUp access available for any organization visible to this user' };
     }
 
-    try {
-      const consultas = planejarConsultas(configPorOrganizacao, agruparListIdsPorOrganizacao(clientByListId), proprias);
-      const resultados = await Promise.all(consultas.map((consulta) => consultarComCache(consulta)));
-      const tasks = semDuplicatas(resultados.flatMap((r) => r.tasks));
-      const truncated = resultados.some((r) => r.truncated);
-      return {
-        tasks: tasks.map((task) => wireOperationTask(task, clientByListId)),
-        truncated,
-        ...(clientesIndisponiveis.length > 0 ? { unavailable_clients: clientesIndisponiveis } : {}),
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error({ error }, 'Falha ao buscar tarefas da agência no ClickUp');
-      reply.code(502);
-      return { error: message };
-    }
+    return {
+      tasks: agencia.tasks.map((task) => wireOperationTask(task, agencia.clientByListId)),
+      truncated: agencia.truncated,
+      ...(agencia.clientesIndisponiveis.length > 0 ? { unavailable_clients: agencia.clientesIndisponiveis } : {}),
+    };
   });
 
   /**

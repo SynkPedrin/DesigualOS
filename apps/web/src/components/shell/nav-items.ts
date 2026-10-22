@@ -34,6 +34,7 @@ import {
   Users,
   Wrench,
   type LucideIcon,
+  UsersRound,
 } from 'lucide-react';
 import type { WorkspaceModule } from '@desigual-os/types';
 
@@ -212,6 +213,9 @@ export const NAV_ITEMS: NavItem[] = [
   // conta. Com o módulo, bastava o template "Gestão" para um colaborador ver
   // a lista — o que é defensável e não é o que se quis. Papel é a régua.
   { href: '/people', label: 'Equipe', icon: ContactRound, section: 'dia', masterOnly: true },
+  // Gestão da equipe (21/10/2026, para a Tammy): tarefas, atrasos e agenda de
+  // cada colaborador. Papel é a régua, como na Equipe: só administrador.
+  { href: '/gestao', label: 'Gestão da equipe', icon: UsersRound, section: 'dia', masterOnly: true },
   // Fila pessoal de trabalho sobre o TaskProvider (P1-H, 06/10/2026) — antes
   // só alcançável via Configurações → Administração (`administracao: true`),
   // o que escondia a "Central de Tasks" exatamente de quem mais usa ela no
