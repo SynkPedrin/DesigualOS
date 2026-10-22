@@ -110,7 +110,7 @@ test('Hoje da gestão: a equipe ao vivo no Hoje de quem administra', async ({ br
   await expect(secao).toBeVisible({ timeout: 20_000 });
   await expect(secao.getByText('ao vivo')).toBeVisible();
   await expect(secao.getByRole('link', { name: 'Abrir Ana Ribeiro' })).toContainText('Ana Ribeiro');
-  await expect(secao.getByRole('link', { name: 'Abrir Bruno Lima' })).toContainText('Sem Outlook');
+  await expect(secao.getByRole('link', { name: 'Abrir Bruno Lima' })).toContainText('Outlook não conectado');
   await expect(secao.getByText('Reunião de pauta com o Café Aurora').first()).toBeVisible();
   await expect(secao.getByText('Médico')).toHaveCount(0);
   await expect(secao.getByText('Ocupado').first()).toBeVisible();
@@ -118,7 +118,8 @@ test('Hoje da gestão: a equipe ao vivo no Hoje de quem administra', async ({ br
   await tammy.waitForTimeout(500);
   await tammy.screenshot({ path: 'test-results/hoje-gestao.png', fullPage: true });
 
-  // AO VIVO: atividade nova aparece sem recarregar a página.
+  // AO VIVO: atividade nova aparece sem recarregar a página (aba "Atividade" do dia da equipe).
+  await secao.getByRole('tab', { name: /Atividade/ }).click();
   const marca = `Atividade ao vivo ${Date.now().toString(36)}`;
   sql(`insert into operational_events (source, type, summary, organization_id, user_id, occurred_at) select 'clickup', 'task.status', '${marca}', organization_id, 'aaaaaaaa-0000-4000-8000-000000000004', now() from organization_members where user_id = 'aaaaaaaa-0000-4000-8000-000000000004' limit 1`);
   // refetch de 30 s (o aviso pelo WebSocket só vem de webhook do ClickUp, que a pilha local não tem): até 2 ciclos
