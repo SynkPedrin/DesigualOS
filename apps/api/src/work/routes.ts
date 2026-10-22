@@ -4,7 +4,23 @@ import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
+  addAttachmentLink,
+  addDependency,
   addManualEntry,
+  deleteAttachment,
+  deleteChecklist,
+  deleteChecklistItem,
+  deleteComment,
+  deleteContainerPermanently,
+  deleteTaskPermanently,
+  editChecklistItem,
+  editComment,
+  listInboxUnified,
+  markInboxReadAll,
+  removeDependency,
+  renameChecklist,
+  renameFolder,
+  testAutomation,
   clientWorkSummary,
   createTaskFromSource,
   findTasksBySource,
@@ -332,16 +348,19 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     try { return await addChecklistItem(workContext(request), request.params.id, b.data.text); } catch (e) { return fail(reply, e); }
   });
   app.patch<{ Params: { id: string } }>('/work/checklist-items/:id', guard, async (request, reply) => {
-    const b = z.object({ done: z.boolean() }).safeParse(request.body);
-    if (!b.success || !uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Dados inválidos.' });
-    try { return await setChecklistItemDone(workContext(request), request.params.id, b.data.done); } catch (e) { return fail(reply, e); }
+    const b = z.object({ done: z.boolean().optional(), text: z.string().min(1).max(500).optional(), assigneeId: uuid.nullable().optional() }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await editChecklistItem(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
   });
 
   // ── Produtividade: caixa de entrada, cronômetro, campos, visões
   const idOk = (id: string) => uuid.safeParse(id).success;
   const bad = (reply: FastifyReply, m = 'Dados inválidos.') => reply.code(400).send({ error: m });
-  app.get('/work/inbox', guard, async (request) => ({ items: await listInbox(workContext(request)), unread: await inboxUnreadCount(workContext(request)) }));
-  app.post('/work/inbox/read', guard, async (request) => markInboxRead(workContext(request)));
+  app.get('/work/inbox', guard, async (request) => {
+    const r = await listInboxUnified(workContext(request));
+    return { items: r.items, unreadByKind: r.unread, unread: r.unread.task + r.unread.communication + r.unread.system };
+  });
+  app.post('/work/inbox/read', guard, async (request) => markInboxReadAll(workContext(request)));
 
   app.get('/work/timer', guard, async (request) => ({ running: await runningTimer(workContext(request)) }));
   app.post('/work/timer/stop', guard, async (request, reply) => { try { return await stopTimer(workContext(request)); } catch (e) { return fail(reply, e); } });
@@ -468,6 +487,67 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/work/clients/:id/summary', guard, async (request, reply) => {
     if (!idOk(request.params.id)) return bad(reply);
     try { return await clientWorkSummary(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+
+  // ── Editar e excluir (comentário, checklist, anexo, dependência, tarefa/contêiner arquivado)
+  app.patch<{ Params: { id: string } }>('/work/comments/:id', guard, async (request, reply) => {
+    const b = z.object({ body: z.string().min(1).max(20000) }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await editComment(workContext(request), request.params.id, b.data.body); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/comments/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteComment(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.patch<{ Params: { id: string } }>('/work/checklists/:id', guard, async (request, reply) => {
+    const b = z.object({ name: z.string().min(1).max(200) }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await renameChecklist(workContext(request), request.params.id, b.data.name); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/checklists/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteChecklist(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/checklist-items/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteChecklistItem(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/attachments', guard, async (request, reply) => {
+    const b = z.object({ url: z.string().url().max(2000), fileName: z.string().max(300).optional() }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await addAttachmentLink(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/attachments/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteAttachment(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/dependencies', guard, async (request, reply) => {
+    const b = z.object({ dependsOnId: uuid, kind: z.enum(['blocking', 'related']).optional() }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await addDependency(workContext(request), request.params.id, b.data.dependsOnId, b.data.kind); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string; other: string } }>('/work/tasks/:id/dependencies/:other', guard, async (request, reply) => {
+    if (!idOk(request.params.id) || !idOk(request.params.other)) return bad(reply);
+    try { return await removeDependency(workContext(request), request.params.id, request.params.other); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/work/tasks/:id', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await deleteTaskPermanently(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { kind: string; id: string } }>('/work/:kind/:id', guard, async (request, reply) => {
+    const k = z.enum(['space', 'folder', 'project', 'list']).safeParse(request.params.kind.replace(/s$/, ''));
+    if (!k.success || !idOk(request.params.id)) return bad(reply);
+    try { return await deleteContainerPermanently(workContext(request), k.data, request.params.id); } catch (e) { return fail(reply, e); }
+  });
+  app.patch<{ Params: { id: string } }>('/work/folders/:id', guard, async (request, reply) => {
+    const b = z.object({ name: z.string().min(1).max(150) }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await renameFolder(workContext(request), request.params.id, b.data.name); } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/automations/:id/test', guard, async (request, reply) => {
+    const b = z.object({ taskId: uuid }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await testAutomation(workContext(request), request.params.id, b.data.taskId); } catch (e) { return fail(reply, e); }
   });
 
   app.get('/work/members', guard, async (request) => {

@@ -1,4 +1,4 @@
-import { automationTick, runDueRecurrences } from '@desigual-os/work-engine';
+import { automationTick, runDueRecurrences, runDueReminders } from '@desigual-os/work-engine';
 
 /**
  * Relógio do Daily Tasks: automações a cada poucos segundos, recorrências a cada minuto.
@@ -16,7 +16,7 @@ export function startWorkScheduler(log: { warn: (o: object, m: string) => void }
     void (async () => {
       try {
         await automationTick();
-        if (ciclo % 12 === 0) await runDueRecurrences();
+        if (ciclo % 12 === 0) { await runDueRecurrences(); await runDueReminders(); }
       } catch (error) {
         log.warn({ error: error instanceof Error ? error.message : String(error) }, 'Daily Tasks: ciclo do relógio falhou');
       } finally {

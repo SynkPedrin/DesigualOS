@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, ne, notLike, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { WorkContext } from './context';
 
@@ -50,9 +50,71 @@ export async function markInboxRead(ctx: WorkContext) {
 }
 
 export async function inboxUnreadCount(ctx: WorkContext): Promise<number> {
-  const itens = await listInbox(ctx, 200);
-  return itens.filter((i) => i.unread).length;
+  const u = (await listInboxUnified(ctx, 200)).unread;
+  return u.task + u.communication + u.system;
 }
 
-// evita warnings de import não usado em builds estritos
-void gt; void ne;
+export interface InboxEntry {
+  id: string;
+  kind: 'task' | 'communication' | 'system';
+  /** Quem fez (ou o canal). */
+  actorName: string;
+  actorAvatar: string | null;
+  /** Frase pronta: "comentou em", "mencionou você em"... */
+  verb: string;
+  /** O objeto: "DT-12 título", "#geral", "Notificação". */
+  subject: string;
+  snippet: string | null;
+  link: string;
+  taskId: string | null;
+  mention: boolean;
+  unread: boolean;
+  createdAt: string;
+}
+
+const VERBOS: Record<string, string> = { mentioned: 'mencionou você em', commented: 'comentou em', status_changed: 'mudou o status de', assigned: 'atribuiu uma pessoa em', updated: 'atualizou', completed: 'concluiu' };
+
+/**
+ * CAIXA DE ENTRADA UNIFICADA: tarefas (o que outras pessoas fizeram nas suas), Comunicação (mensagens que você ainda
+ * não leu e menções) e avisos do sistema (o sino). Tudo sempre da SUA empresa e das SUAS conversas.
+ */
+export async function listInboxUnified(ctx: WorkContext, limit = 80): Promise<{ items: InboxEntry[]; unread: { task: number; communication: number; system: number } }> {
+  const org = ctx.organizationId;
+  const [tarefas, com, sistema] = await Promise.all([
+    listInbox(ctx, limit),
+    db.select({
+      m: schema.internalMessages, conv: schema.internalConversations, sender: schema.users.name, avatar: schema.users.avatarUrl,
+      lastReadAt: schema.internalConversationMembers.lastReadAt, mutedAt: schema.internalConversationMembers.mutedAt,
+    })
+      .from(schema.internalMessages)
+      .innerJoin(schema.internalConversationMembers, and(eq(schema.internalConversationMembers.conversationId, schema.internalMessages.conversationId), eq(schema.internalConversationMembers.userId, ctx.userId)))
+      .innerJoin(schema.internalConversations, eq(schema.internalConversations.id, schema.internalMessages.conversationId))
+      .innerJoin(schema.users, eq(schema.users.id, schema.internalMessages.senderId))
+      .where(and(
+        eq(schema.internalMessages.organizationId, org), ne(schema.internalMessages.senderId, ctx.userId), isNull(schema.internalMessages.deletedAt), eq(schema.internalMessages.kind, 'user'),
+        isNull(schema.internalConversations.archivedAt),
+        sql`${schema.internalMessages.createdAt} > now() - interval '14 days'`,
+        or(isNull(schema.internalConversationMembers.lastReadAt), gt(schema.internalMessages.createdAt, schema.internalConversationMembers.lastReadAt)),
+      ))
+      .orderBy(desc(schema.internalMessages.createdAt)).limit(limit),
+    db.select().from(schema.notifications).where(and(eq(schema.notifications.userId, ctx.userId), notLike(schema.notifications.type, 'work.%'))).orderBy(desc(schema.notifications.createdAt)).limit(30),
+  ]);
+  const items: InboxEntry[] = [
+    ...tarefas.map((t): InboxEntry => ({ id: `t:${t.id}`, kind: 'task', actorName: t.actorName, actorAvatar: t.actorAvatar, verb: VERBOS[t.action] ?? 'atualizou', subject: `${t.taskKey} ${t.taskTitle}`, snippet: null, link: `/daily-tasks?task=${t.taskId}`, taskId: t.taskId, mention: t.action === 'mentioned', unread: t.unread, createdAt: t.createdAt })),
+    ...com.filter((r) => !r.mutedAt || r.m.mentions.includes(ctx.userId)).map((r): InboxEntry => {
+      const canal = r.conv.kind === 'direct' ? r.sender : r.conv.kind === 'general' ? '#geral' : `#${r.conv.title ?? 'conversa'}`;
+      const mention = r.m.mentions.includes(ctx.userId);
+      return { id: `c:${r.m.id}`, kind: 'communication', actorName: r.sender, actorAvatar: r.avatar ?? null, verb: mention ? 'mencionou você em' : r.conv.kind === 'direct' ? 'enviou mensagem' : 'escreveu em', subject: canal, snippet: (r.m.content ?? '').slice(0, 160) || null, link: `/comunicacao?c=${r.conv.id}&m=${r.m.id}`, taskId: null, mention, unread: true, createdAt: r.m.createdAt.toISOString() };
+    }),
+    ...sistema.map((n): InboxEntry => ({ id: `s:${n.id}`, kind: 'system', actorName: 'Sistema', actorAvatar: null, verb: '', subject: n.title, snippet: n.body, link: n.link ?? '/', taskId: null, mention: false, unread: n.readAt === null, createdAt: n.createdAt.toISOString() })),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+  const conta = (k: InboxEntry['kind']) => items.filter((i) => i.kind === k && i.unread).length;
+  return { items, unread: { task: conta('task'), communication: conta('communication'), system: conta('system') } };
+}
+
+/** Marca como lido o que é DESTA tela (tarefas e avisos). Conversas só leem na própria Comunicação, onde a leitura é real. */
+export async function markInboxReadAll(ctx: WorkContext) {
+  await markInboxRead(ctx);
+  await db.update(schema.notifications).set({ readAt: new Date() }).where(and(eq(schema.notifications.userId, ctx.userId), isNull(schema.notifications.readAt)));
+  return { ok: true };
+}

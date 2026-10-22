@@ -15,3 +15,5 @@ export * from './automations';
 export * from './templates';
 export * from './reports';
 export * from './integrations';
+export * from './crud';
+export * from './reminders';

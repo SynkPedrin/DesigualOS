@@ -3,7 +3,7 @@ import { db, schema } from '@desigual-os/database';
 import { addComment } from './collab';
 import type { WorkContext } from './context';
 import { invalid, notFound } from './errors';
-import { createTask, getTask, updateTask, type WorkTask } from './tasks';
+import { createTask, getTask, moveTask, updateTask, type WorkTask } from './tasks';
 
 /**
  * MOTOR DE AUTOMAÇÕES — QUANDO (gatilho) + SE (condições) + ENTÃO (ações).
@@ -14,9 +14,9 @@ import { createTask, getTask, updateTask, type WorkTask } from './tasks';
  * nunca derruba o motor nem as outras automações.
  */
 
-export const TRIGGERS = ['task_created', 'status_changed', 'assigned', 'priority_changed', 'comment_added', 'task_completed', 'due_date_passed'] as const;
-export const ACTIONS = ['set_status', 'set_priority', 'assign', 'unassign', 'set_due_in_days', 'add_comment', 'add_tag', 'create_subtask'] as const;
-const CAMPOS = ['priority', 'statusId', 'listId', 'assignee', 'tag', 'clientId'] as const;
+export const TRIGGERS = ['task_created', 'status_changed', 'assigned', 'priority_changed', 'comment_added', 'task_completed', 'due_date_passed', 'due_soon', 'task_moved'] as const;
+export const ACTIONS = ['set_status', 'set_priority', 'assign', 'unassign', 'set_due_in_days', 'add_comment', 'add_tag', 'create_subtask', 'notify', 'move_to_list'] as const;
+const CAMPOS = ['priority', 'statusId', 'listId', 'assignee', 'tag', 'clientId', 'hasAssignee', 'hasDue'] as const;
 const OPS = ['eq', 'neq', 'in', 'contains'] as const;
 
 export interface AutomationInput {
@@ -64,7 +64,11 @@ export async function updateAutomation(ctx: WorkContext, id: string, patch: Part
   if (!cur) throw notFound('Automação');
   const merged: AutomationInput = { name: patch.name ?? cur.name, trigger: patch.trigger ?? cur.trigger, conditions: patch.conditions ?? cur.conditions, actions: patch.actions ?? cur.actions };
   validar(merged);
-  const [a] = await db.update(schema.workAutomations).set({ name: merged.name.trim(), trigger: merged.trigger, conditions: merged.conditions ?? [], actions: merged.actions, ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}) }).where(eq(schema.workAutomations.id, id)).returning();
+  if (patch.listId) {
+    const [l] = await db.select({ id: schema.workLists.id }).from(schema.workLists).where(and(eq(schema.workLists.id, patch.listId), eq(schema.workLists.organizationId, ctx.organizationId)));
+    if (!l) throw notFound('Lista');
+  }
+  const [a] = await db.update(schema.workAutomations).set({ name: merged.name.trim(), trigger: merged.trigger, conditions: merged.conditions ?? [], actions: merged.actions, ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}), ...(patch.listId !== undefined ? { listId: patch.listId } : {}) }).where(eq(schema.workAutomations.id, id)).returning();
   return a!;
 }
 
@@ -83,7 +87,7 @@ export async function listAutomationRuns(ctx: WorkContext, automationId: string,
 type Automation = typeof schema.workAutomations.$inferSelect;
 
 function condicaoOk(c: { field: string; op: string; value?: unknown }, t: WorkTask): boolean {
-  const atual: unknown = c.field === 'priority' ? t.priority : c.field === 'statusId' ? t.statusId : c.field === 'listId' ? t.listId : c.field === 'clientId' ? t.clientId : c.field === 'assignee' ? t.assigneeIds : t.tags;
+  const atual: unknown = c.field === 'priority' ? t.priority : c.field === 'statusId' ? t.statusId : c.field === 'listId' ? t.listId : c.field === 'clientId' ? t.clientId : c.field === 'assignee' ? t.assigneeIds : c.field === 'hasAssignee' ? t.assigneeIds.length > 0 : c.field === 'hasDue' ? t.dueAt !== null : t.tags;
   const alvo = c.value;
   const contem = (v: unknown) => (Array.isArray(atual) ? atual.includes(v) : atual === v);
   if (c.op === 'eq') return contem(alvo);
@@ -104,12 +108,26 @@ async function executarAcao(ctx: WorkContext, a: { type: string; config?: Record
     case 'add_comment': await addComment(ctx, t.id, String(c.text ?? '')); return 'comentário adicionado';
     case 'add_tag': { const cur = await getTask(ctx, t.id); await updateTask(ctx, t.id, { tags: [...new Set([...cur.tags, String(c.tag)])] }); return 'tag adicionada'; }
     case 'create_subtask': await createTask(ctx, { listId: t.listId, title: String(c.title ?? 'Subtarefa'), parentTaskId: t.id }); return 'subtarefa criada';
+    case 'move_to_list': await moveTask(ctx, t.id, { listId: String(c.listId) }); return 'movida para outra lista';
+    case 'notify': {
+      const cur = await getTask(ctx, t.id);
+      const alvo = c.target === 'creator' ? (cur.createdBy ? [cur.createdBy] : []) : c.target === 'user' ? [String(c.userId)] : cur.assigneeIds;
+      const membros = alvo.length ? await db.select({ u: schema.organizationMembers.userId }).from(schema.organizationMembers).where(and(eq(schema.organizationMembers.organizationId, ctx.organizationId), inArray(schema.organizationMembers.userId, alvo))) : [];
+      if (!membros.length) return 'ninguém para avisar';
+      const texto = String(c.message ?? '').trim() || 'Automação disparada';
+      await db.insert(schema.notifications).values(membros.map((m) => ({ userId: m.u, type: 'work.automation', title: `${texto} — DT-${cur.number} ${cur.title}`.slice(0, 240), body: null, link: `/daily-tasks?task=${t.id}` })));
+      return `${membros.length} aviso(s) enviado(s)`;
+    }
     default: throw invalid(`Ação desconhecida: ${a.type}`);
   }
 }
 
 /** Roda UMA automação para UMA tarefa e registra o resultado. Nunca lança. */
 export async function runAutomation(a: Automation, taskId: string, why: Record<string, unknown>): Promise<'ok' | 'failed' | 'skipped'> {
+  return (await runAutomationDetailed(a, taskId, why)).status;
+}
+
+export async function runAutomationDetailed(a: Automation, taskId: string, why: Record<string, unknown>): Promise<{ status: 'ok' | 'failed' | 'skipped'; detail: Record<string, unknown> }> {
   const owner = a.createdBy;
   const org = a.organizationId;
   const registrar = async (status: string, detail: Record<string, unknown>) => {
@@ -117,17 +135,18 @@ export async function runAutomation(a: Automation, taskId: string, why: Record<s
     if (status !== 'skipped') await db.update(schema.workAutomations).set({ runCount: sql`${schema.workAutomations.runCount} + 1`, lastRunAt: new Date() }).where(eq(schema.workAutomations.id, a.id));
   };
   try {
-    if (!owner) { await registrar('failed', { erro: 'Automação sem dono ativo.' }); return 'failed'; }
+    if (!owner) { await registrar('failed', { erro: 'Automação sem dono ativo.' }); return { status: 'failed', detail: { erro: 'Automação sem dono ativo.' } }; }
     const ctx: WorkContext = { organizationId: org, userId: owner, actorKind: 'automation' };
     const t = await getTask(ctx, taskId);
-    if (!a.conditions.every((c) => condicaoOk(c, t))) { await registrar('skipped', { motivo: 'condições não bateram' }); return 'skipped'; }
+    if (!a.conditions.every((c) => condicaoOk(c, t))) { await registrar('skipped', { motivo: 'condições não bateram' }); return { status: 'skipped', detail: { motivo: 'condições não bateram' } }; }
     const feitos: string[] = [];
     for (const ac of a.actions) feitos.push(await executarAcao(ctx, ac, t));
     await registrar('ok', { acoes: feitos });
-    return 'ok';
+    return { status: 'ok', detail: { acoes: feitos } };
   } catch (e) {
-    await registrar('failed', { erro: e instanceof Error ? e.message : String(e) }).catch(() => undefined);
-    return 'failed';
+    const erro = e instanceof Error ? e.message : String(e);
+    await registrar('failed', { erro }).catch(() => undefined);
+    return { status: 'failed', detail: { erro } };
   }
 }
 
@@ -136,6 +155,7 @@ function gatilhoDoEvento(e: typeof schema.workActivityEvents.$inferSelect, final
   if (e.action === 'created' && e.entityType === 'task') return ['task_created'];
   if (e.action === 'commented') return ['comment_added'];
   if (e.action === 'assigned') return ['assigned'];
+  if (e.action === 'moved') return ['task_moved'];
   if (e.action === 'status_changed') return finalIds.has(String(d.to)) ? ['status_changed', 'task_completed'] : ['status_changed'];
   if (e.action === 'updated' && d.changes?.priority) return ['priority_changed'];
   return [];
@@ -202,6 +222,32 @@ export async function processOverdueTriggers(organizationId: string): Promise<nu
   return n;
 }
 
+/** Gatilho por tempo: faltam até N dias para o prazo (config.days, padrão 1). Dispara UMA vez por tarefa e automação. */
+export async function processDueSoonTriggers(organizationId: string): Promise<number> {
+  const autos = (await db.select().from(schema.workAutomations).where(and(eq(schema.workAutomations.organizationId, organizationId), eq(schema.workAutomations.enabled, true)))).filter((a) => a.trigger.type === 'due_soon');
+  let n = 0;
+  for (const a of autos) {
+    const dias = Math.min(Math.max(Number(a.trigger.config?.days ?? 1), 0), 60);
+    const T = schema.workTasks;
+    const alvo = await db.select({ id: T.id }).from(T)
+      .innerJoin(schema.workLists, eq(schema.workLists.id, T.listId))
+      .where(and(eq(T.organizationId, organizationId), isNull(T.archivedAt), isNull(T.completedAt), gt(T.dueAt, new Date()), lt(T.dueAt, new Date(Date.now() + (dias + 1) * 86_400_000)),
+        a.listId ? eq(T.listId, a.listId) : undefined, a.spaceId ? eq(schema.workLists.spaceId, a.spaceId) : undefined,
+        sql`not exists (select 1 from work_automation_runs r where r.automation_id = ${a.id} and r.task_id = ${T.id})`))
+      .limit(100);
+    for (const t of alvo) { await runAutomation(a, t.id, { evento: 'due_soon', dias }); n++; }
+  }
+  return n;
+}
+
+/** "Executar agora": roda a automação numa tarefa escolhida, sem esperar o gatilho. As condições continuam valendo. */
+export async function testAutomation(ctx: WorkContext, id: string, taskId: string) {
+  const [a] = await db.select().from(schema.workAutomations).where(and(eq(schema.workAutomations.id, id), eq(schema.workAutomations.organizationId, ctx.organizationId)));
+  if (!a) throw notFound('Automação');
+  await getTask(ctx, taskId); // 404 se a tarefa não é desta empresa
+  return runAutomationDetailed(a, taskId, { evento: 'execucao_manual', por: ctx.userId });
+}
+
 /** Um ciclo do motor para todas as empresas com automação ligada. Protegido por lock: só uma instância roda por vez. */
 export async function automationTick(): Promise<{ eventos: number; atrasos: number }> {
   // Lock de TRANSAÇÃO (some sozinho no commit/rollback — o de sessão vazaria numa conexão do pool).
@@ -210,7 +256,7 @@ export async function automationTick(): Promise<{ eventos: number; atrasos: numb
     if (!lock?.ok) return { eventos: 0, atrasos: 0 };
     const orgs = await tx.selectDistinct({ id: schema.workAutomations.organizationId }).from(schema.workAutomations).where(eq(schema.workAutomations.enabled, true));
     let eventos = 0; let atrasos = 0;
-    for (const o of orgs) { eventos += await processAutomationEvents(o.id); atrasos += await processOverdueTriggers(o.id); }
+    for (const o of orgs) { eventos += await processAutomationEvents(o.id); atrasos += await processOverdueTriggers(o.id) + await processDueSoonTriggers(o.id); }
     return { eventos, atrasos };
   });
 }

@@ -34,6 +34,7 @@ export interface WorkTask {
   version: number;
   assigneeIds: string[];
   subtaskCount: number;
+  subtaskDone: number;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -140,7 +141,7 @@ async function hydrate(tx: Db, ctx: WorkContext, rows: WorkTaskRow[]): Promise<W
     tx.select({ taskId: schema.workTaskAssignees.taskId, userId: schema.workTaskAssignees.userId }).from(schema.workTaskAssignees).where(inArray(schema.workTaskAssignees.taskId, ids)),
     tx.select().from(schema.workTaskStatuses).where(and(eq(schema.workTaskStatuses.organizationId, ctx.organizationId), inArray(schema.workTaskStatuses.id, statusIds))),
     tx
-      .select({ parentTaskId: schema.workTasks.parentTaskId, n: sql<number>`count(*)::int` })
+      .select({ parentTaskId: schema.workTasks.parentTaskId, n: sql<number>`count(*)::int`, feitas: sql<number>`count(*) filter (where ${schema.workTasks.completedAt} is not null)::int` })
       .from(schema.workTasks)
       .where(and(eq(schema.workTasks.organizationId, ctx.organizationId), inArray(schema.workTasks.parentTaskId, ids), isNull(schema.workTasks.archivedAt)))
       .groupBy(schema.workTasks.parentTaskId),
@@ -149,6 +150,7 @@ async function hydrate(tx: Db, ctx: WorkContext, rows: WorkTaskRow[]): Promise<W
   for (const a of assignees) byTask.set(a.taskId, [...(byTask.get(a.taskId) ?? []), a.userId]);
   const statusById = new Map(statuses.map((s) => [s.id, s]));
   const subCount = new Map(subs.map((s) => [s.parentTaskId as string, s.n]));
+  const subDone = new Map(subs.map((s) => [s.parentTaskId as string, s.feitas]));
   return rows.map((r) => {
     const st = statusById.get(r.statusId);
     return {
@@ -174,6 +176,7 @@ async function hydrate(tx: Db, ctx: WorkContext, rows: WorkTaskRow[]): Promise<W
       version: r.version,
       assigneeIds: byTask.get(r.id) ?? [],
       subtaskCount: subCount.get(r.id) ?? 0,
+      subtaskDone: subDone.get(r.id) ?? 0,
       createdBy: r.createdBy,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -273,6 +276,8 @@ export async function createTask(ctx: WorkContext, input: CreateTaskInput): Prom
       await tx.insert(schema.workIdempotencyKeys).values({ organizationId: ctx.organizationId, userId: ctx.userId, key: input.idempotencyKey, entityType: 'task', entityId: row!.id });
     }
     await recordActivity(tx, ctx, { entityType: 'task', entityId: row!.id, taskId: row!.id, action: 'created', data: { key: taskKey(number), listId: list.id, parentTaskId: input.parentTaskId ?? null, assignees } });
+    // Quem já nasce com responsável também é "atribuída": avisa a pessoa e dispara automações de atribuição.
+    if (assignees.length) await recordActivity(tx, ctx, { entityType: 'task', entityId: row!.id, taskId: row!.id, action: 'assigned', data: { userIds: assignees } });
     return (await hydrate(tx, ctx, [row!]))[0]!;
   });
 }
