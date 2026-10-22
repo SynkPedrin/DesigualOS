@@ -137,7 +137,7 @@ vi.mock('../lib/agent-mention', () => ({
   respondAsOtto: vi.fn(),
 }));
 
-const { registerClickUpRoutes, esquecerTarefasEmCache } = await import('./routes');
+const { registerClickUpRoutes, limparCacheDeTarefas } = await import('./routes');
 
 const OWNER_CLIENT = { id: 'client-1', name: 'Cliente Um', clickupListId: 'list-1' };
 
@@ -150,7 +150,7 @@ async function buildApp() {
 describe('autorização de escopo nas rotas ClickUp', () => {
   beforeEach(() => {
     // Caches de tarefas/membros são do módulo: um cenário não pode herdar o anterior.
-    esquecerTarefasEmCache();
+    limparCacheDeTarefas();
     vi.clearAllMocks();
     process.env.CLICKUP_API_KEY = 'pk_teste';
     process.env.CLICKUP_TEAM_ID = 'team-1';
@@ -304,7 +304,7 @@ describe('POST /clickup/webhook como produtor canônico de eventos', () => {
 
   beforeEach(() => {
     // Caches de tarefas/membros são do módulo: um cenário não pode herdar o anterior.
-    esquecerTarefasEmCache();
+    limparCacheDeTarefas();
     vi.clearAllMocks();
     process.env.CLICKUP_API_KEY = 'pk_teste';
     process.env.CLICKUP_TEAM_ID = 'team-1';
@@ -505,7 +505,7 @@ describe('POST /clickup/webhook como produtor canônico de eventos', () => {
 describe('GET /clickup/members — resolução por organização', () => {
   beforeEach(() => {
     // Caches de tarefas/membros são do módulo: um cenário não pode herdar o anterior.
-    esquecerTarefasEmCache();
+    limparCacheDeTarefas();
     vi.clearAllMocks();
     process.env.CLICKUP_API_KEY = 'pk_global';
     process.env.CLICKUP_TEAM_ID = 'team-global';
