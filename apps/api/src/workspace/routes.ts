@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { forgetEnabledModules, resolveEnabledModulesCached } from '../auth/require-module';
 import { z } from 'zod';
+import { eq } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { WORKSPACE_MODULES, WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS, isWorkspaceModule } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
@@ -67,8 +68,37 @@ export async function registerWorkspaceRoutes(app: FastifyInstance): Promise<voi
   }));
 
   app.get('/me/workspace', { preHandler: requireAuth }, async (request) => {
-    return apresentacaoDe(await resolveEnabledModulesCached(request.authUser!.id));
+    const [eu] = await db.select({ homePath: schema.users.homePath }).from(schema.users).where(eq(schema.users.id, request.authUser!.id));
+    return { ...apresentacaoDe(await resolveEnabledModulesCached(request.authUser!.id)), home_path: eu?.homePath ?? null };
   });
+
+  /**
+   * TELA INICIAL de uma pessoa (ex.: '/gestao' para quem gerencia a equipe).
+   * Só um caminho interno do app (começa com '/', sem domínio, sem '//'): o
+   * valor vira destino de navegação depois do login e não pode levar para fora.
+   */
+  app.put<{ Params: { userId: string } }>(
+    '/team/members/:userId/home',
+    { preHandler: [requireAuth, requirePermission('users', 'write')] },
+    async (request, reply) => {
+      const { userId } = request.params;
+      // Id malformado é "não encontrado", não erro de banco (era 500, visto em produção em 22/10/2026).
+      if (!z.string().uuid().safeParse(userId).success) { reply.code(404); return { error: 'Pessoa não encontrada.' }; }
+      if (!(await exigirAlvoNaEmpresaDeTrabalho(request, reply, userId))) return;
+      const body = z.object({ home_path: z.string().regex(/^\/(?!\/)[a-z0-9\-/]{0,60}$/, 'Tela inválida.').nullable() }).safeParse(request.body);
+      if (!body.success) {
+        reply.code(400);
+        return { error: body.error.issues.map((i) => i.message).join(' ') };
+      }
+      const [antes] = await db.select({ homePath: schema.users.homePath }).from(schema.users).where(eq(schema.users.id, userId));
+      await db.update(schema.users).set({ homePath: body.data.home_path }).where(eq(schema.users.id, userId));
+      await auditarAcao(request, {
+        action: 'workspace.home_set', resourceType: 'user', resourceId: userId,
+        oldValue: { home_path: antes?.homePath ?? null }, newValue: { home_path: body.data.home_path },
+      });
+      return { home_path: body.data.home_path };
+    },
+  );
 
   app.get<{ Params: { userId: string } }>(
     '/team/members/:userId/workspace',

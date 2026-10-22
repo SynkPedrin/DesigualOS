@@ -136,7 +136,7 @@ export async function registerWsRoutes(app: FastifyInstance): Promise<void> {
       if ((event.type === 'inbox.updated' || event.type === 'inbox.message') && (event.payload as { owner_user_id?: string }).owner_user_id !== userId) continue;
       // Comunicação interna: só quem pode ler a conversa recebe (lista montada
       // pela API a cada evento: participantes da privada / membros ativos no #Geral).
-      if (event.type === 'chat.event') {
+      if (event.type === 'chat.event' || event.type === 'gestao.mudou') {
         const recipients = (event.payload as { recipient_ids?: unknown }).recipient_ids;
         if (!Array.isArray(recipients) || !recipients.includes(userId)) continue;
       }

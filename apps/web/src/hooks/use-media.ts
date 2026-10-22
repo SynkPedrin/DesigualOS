@@ -97,6 +97,18 @@ export function useSetMediaSetting() {
   });
 }
 
+export interface InternalDeliveryTestResult {
+  results: Array<{ name: string; ok: true } | { name: string; ok: false; reason: string; error: string }>;
+}
+
+/** Manda uma mensagem de teste aos destinatários dos avisos internos, pelo número do Bento. */
+export function useTestInternalDelivery() {
+  return useMutation({
+    mutationFn: (b: { clientId?: string | null }) =>
+      apiFetch<InternalDeliveryTestResult>('/media/settings/internal-delivery/test', { method: 'POST', body: JSON.stringify({ client_id: b.clientId ?? null }) }),
+  });
+}
+
 export function useMediaAlertRules(clientId: string | null) {
   return useQuery({
     queryKey: ['media', 'alert-rules', clientId],

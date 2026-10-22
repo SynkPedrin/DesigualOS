@@ -1,10 +1,12 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gte, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { resolveCommunicationProvider } from './communication-provider-resolver';
 import { deriveMetrics, pctChange, previousRange, resolvePeriod, type DateRange } from './media-metrics';
 import { accountTotals, listLinkedAccounts, type LinkedMediaAccount } from './media-queries';
 import { getMediaSettings } from './media-settings';
 import { DEFAULT_TEMPLATES, formatMoney, renderTemplate, type TemplateValues } from './media-templates';
+import { enviarPeloBento } from './bento-channel';
+import { expirarSeVelho, novoEstadoInterno, tentarEntregas, type EnviadorInterno, type EstadoInterno, type PayloadDoAviso } from './media-internal-delivery';
 
 /**
  * media-alerts.ts — motor de alertas de Mídia.
@@ -159,15 +161,68 @@ export interface AlertRunSummary {
   deduped: number;
   skipped: Record<string, number>;
   delivery: Record<string, number>;
+  /** Avisos internos pelo número do Bento: enviado, falhou, adiado (fora do horário) ou expirado. */
+  internal: Record<string, number>;
+}
+
+/** Link da tela de Mídia do cliente, a partir da primeira entrada de FRONTEND_URL. Sem URL conhecida, sem link. */
+function linkDaMidia(clientId: string): string | null {
+  const base = process.env.FRONTEND_URL?.split(',').map((u) => u.trim()).find((u) => u.startsWith('https://'));
+  return base ? `${base.replace(/\/$/, '')}/midias/${clientId}` : null;
+}
+
+const ACCOUNT_KEY = (provider: string, accountId: string) => `${provider}:${accountId}`;
+
+/**
+ * Reenvia os avisos internos que ficaram pendentes (Bento desconectado, fora do
+ * horário, limite de envio). O motor deduplica o ALERTA por 24 h, então sem esta
+ * rodada uma falha de entrega seria perda silenciosa do aviso.
+ */
+export async function reenviarAvisosInternos(now: Date, sender: EnviadorInterno, summary: AlertRunSummary): Promise<void> {
+  const bump = (k: string, n = 1) => (summary.internal[k] = (summary.internal[k] ?? 0) + n);
+  const abertos = await db
+    .select({ id: schema.mediaAlertEvents.id, organizationId: schema.mediaAlertEvents.organizationId, clientId: schema.mediaAlertEvents.clientId, detail: schema.mediaAlertEvents.detail, firedAt: schema.mediaAlertEvents.firedAt })
+    .from(schema.mediaAlertEvents)
+    .where(and(gte(schema.mediaAlertEvents.firedAt, new Date(now.getTime() - 24 * 3_600_000)), sql`${schema.mediaAlertEvents.detail} -> 'internal' ->> 'open' = 'true'`));
+
+  for (const ev of abertos) {
+    const atual = (ev.detail as { internal?: EstadoInterno }).internal;
+    if (!atual) continue;
+    const salvar = (estado: EstadoInterno) => db.update(schema.mediaAlertEvents).set({ detail: { ...ev.detail, internal: estado } }).where(eq(schema.mediaAlertEvents.id, ev.id));
+
+    const velho = expirarSeVelho(atual, ev.firedAt, now);
+    if (velho.expired) {
+      await salvar(velho);
+      bump('expirado');
+      continue;
+    }
+    const accountId = (ev.detail as { accountId?: string }).accountId;
+    const settings = await getMediaSettings(ev.organizationId, ev.clientId, accountId ? ACCOUNT_KEY(atual.payload.platform, accountId) : null);
+    const config = settings.values['alerts.internalDelivery'];
+    if (!config.enabled) {
+      await salvar({ ...atual, open: false });
+      bump('cancelado_desligado');
+      continue;
+    }
+    const rodada = await tentarEntregas(atual, { eventId: ev.id, now, sender, dentroDaJanela: withinSendWindow(settings.values['whatsapp.sendWindow'], now) });
+    await salvar(rodada.estado);
+    bump('enviado', rodada.enviadas);
+    bump('falhou', rodada.falhas);
+    bump('adiado', rodada.adiadas);
+  }
 }
 
 const TEMPLATE_FOR: Record<string, string> = { low_balance: 'low_balance', budget_limit: 'budget_limit', leads_drop: 'results_drop', cpl_above: 'results_drop', cpa_above: 'results_drop', campaign_paused: 'campaign_stopped' };
 
-export async function runAlertEvaluation(options: { now?: Date; sender?: MessageSender; organizationId?: string } = {}): Promise<AlertRunSummary> {
+export async function runAlertEvaluation(options: { now?: Date; sender?: MessageSender; internalSender?: EnviadorInterno; organizationId?: string } = {}): Promise<AlertRunSummary> {
   const now = options.now ?? new Date();
   const sender = options.sender ?? defaultMessageSender;
-  const summary: AlertRunSummary = { rulesEvaluated: 0, fired: 0, deduped: 0, skipped: {}, delivery: {} };
+  const internalSender = options.internalSender ?? enviarPeloBento;
+  const summary: AlertRunSummary = { rulesEvaluated: 0, fired: 0, deduped: 0, skipped: {}, delivery: {}, internal: {} };
   const bump = (m: Record<string, number>, k: string) => (m[k] = (m[k] ?? 0) + 1);
+
+  // Primeiro o que ficou pendente de rodadas anteriores; falha aqui nunca derruba a avaliação das regras.
+  await reenviarAvisosInternos(now, internalSender, summary).catch(() => bump(summary.internal, 'erro_no_reenvio'));
 
   const rules = await db
     .select()
@@ -212,6 +267,47 @@ export async function runAlertEvaluation(options: { now?: Date; sender?: Message
     summary.fired += 1;
     await db.update(schema.mediaAlertRules).set({ lastFiredAt: now }).where(eq(schema.mediaAlertRules.id, rule.id));
 
+    const settings = await getMediaSettings(rule.organizationId, rule.clientId, `${rule.provider}:${rule.accountExternalId}`);
+    const [client] = await db.select({ name: schema.clients.name }).from(schema.clients).where(eq(schema.clients.id, rule.clientId));
+
+    // AVISO INTERNO pelo número do Bento, independente do envio ao cliente: o destinatário é gente da equipe.
+    const interno = settings.values['alerts.internalDelivery'];
+    if (interno.enabled && interno.recipients.length > 0) {
+      try {
+        const payload: PayloadDoAviso = {
+          type: rule.type,
+          severity: result.severity,
+          title: result.title,
+          clientName: client?.name ?? null,
+          platform: account.provider,
+          accountName: account.name ?? account.accountId,
+          currency: account.currency,
+          spend: facts.window.current.spend ?? null,
+          results: facts.window.current.results ?? null,
+          ...(rule.type === 'campaign_paused' ? { campaigns: facts.stoppedCampaigns } : rule.type === 'campaign_rejected' ? { campaigns: facts.rejectedCampaigns } : {}),
+          detail: result.detail,
+          link: linkDaMidia(rule.clientId),
+        };
+        const rodada = await tentarEntregas(novoEstadoInterno(payload, interno.recipients), {
+          eventId: event.id,
+          now,
+          sender: internalSender,
+          dentroDaJanela: withinSendWindow(settings.values['whatsapp.sendWindow'], now),
+        });
+        await db
+          .update(schema.mediaAlertEvents)
+          .set({ detail: { ...result.detail, accountId: rule.accountExternalId, accountName: account.name, internal: rodada.estado } })
+          .where(eq(schema.mediaAlertEvents.id, event.id));
+        summary.internal['enviado'] = (summary.internal['enviado'] ?? 0) + rodada.enviadas;
+        summary.internal['falhou'] = (summary.internal['falhou'] ?? 0) + rodada.falhas;
+        summary.internal['adiado'] = (summary.internal['adiado'] ?? 0) + rodada.adiadas;
+      } catch (error) {
+        // Aviso interno nunca derruba a avaliação nem o envio ao cliente.
+        bump(summary.internal, 'erro');
+        void error;
+      }
+    }
+
     const settle = async (delivery: string, error?: string) => {
       bump(summary.delivery, delivery);
       await db.update(schema.mediaAlertEvents).set({ delivery, deliveryError: error ?? null }).where(eq(schema.mediaAlertEvents.id, event.id));
@@ -221,14 +317,12 @@ export async function runAlertEvaluation(options: { now?: Date; sender?: Message
       await settle('not_requested');
       continue;
     }
-    const settings = await getMediaSettings(rule.organizationId, rule.clientId, `${rule.provider}:${rule.accountExternalId}`);
     if (!settings.values['whatsapp.sendEnabled']) { await settle('suppressed', 'envio desligado na configuração do workspace'); continue; }
     if (!rule.destination) { await settle('suppressed', 'regra sem destino'); continue; }
     if (!withinSendWindow(rule.sendWindow ?? settings.values['whatsapp.sendWindow'], now)) { await settle('suppressed', 'fora do horário permitido'); continue; }
 
     const [custom] = rule.templateId ? await db.select().from(schema.mediaMessageTemplates).where(eq(schema.mediaMessageTemplates.id, rule.templateId)) : [];
     const body = custom?.enabled ? custom.body : DEFAULT_TEMPLATES.find((t) => t.code === (TEMPLATE_FOR[rule.type] ?? 'executive_summary'))!.body;
-    const [client] = await db.select({ name: schema.clients.name }).from(schema.clients).where(eq(schema.clients.id, rule.clientId));
     const values: TemplateValues = {
       cliente: client?.name ?? null,
       plataforma: account.provider === 'meta' ? 'Meta Ads' : 'Google Ads',

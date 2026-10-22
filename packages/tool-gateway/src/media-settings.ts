@@ -23,6 +23,17 @@ const destination = z
   .object({ kind: z.enum(['group', 'contact']), externalId: z.string().min(1), label: z.string().min(1) })
   .nullable();
 
+/**
+ * Pessoa da EQUIPE que recebe os avisos internos pelo número do Bento. O
+ * telefone fica na configuração (banco), nunca no código: o repositório é
+ * público e este é o número pessoal de alguém.
+ */
+const internalRecipient = z.object({
+  name: z.string().trim().min(1).max(60),
+  /** Só dígitos, com DDI 55 e DDD (ex.: 5518...): celular (9 + 8 dígitos) ou fixo. A agência é toda no Brasil, e número estranho aqui manda aviso de mídia para a pessoa errada. */
+  phone: z.string().regex(/^55[1-9][1-9](?:9\d{8}|[2-5]\d{7})$/, 'telefone brasileiro só com dígitos, incluindo 55 e DDD'),
+});
+
 const period = z.enum(['today', 'yesterday', 'last_7d', 'last_14d', 'last_30d', 'this_month', 'last_month']);
 
 /** Registro de chaves: o que existe, o formato aceito e o padrão. Chave fora daqui é recusada na escrita. */
@@ -40,6 +51,17 @@ export const MEDIA_SETTING_DEFS = {
   'whatsapp.sendEnabled': { schema: z.boolean(), default: false },
   'whatsapp.defaultDestination': { schema: destination, default: null as z.infer<typeof destination> },
   'whatsapp.sendWindow': { schema: z.object({ start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/) }), default: { start: '08:00', end: '20:00' } },
+  /**
+   * AVISOS INTERNOS PELO NÚMERO DO BENTO. Quando ligado, todo alerta de mídia
+   * que dispara também vira uma mensagem para estas pessoas da equipe, enviada
+   * pelo WhatsApp do Bento. É um canal SEPARADO do envio ao cliente
+   * (`whatsapp.sendEnabled`, que continua desligado por padrão): aqui o
+   * destinatário é gente da agência, nunca cliente. Desligado por padrão.
+   */
+  'alerts.internalDelivery': {
+    schema: z.object({ enabled: z.boolean(), recipients: z.array(internalRecipient).max(5) }),
+    default: { enabled: false, recipients: [] as Array<{ name: string; phone: string }> },
+  },
   /** O que um agente de IA pode fazer neste escopo. Ação de escrita na plataforma é sempre uma proposta que uma pessoa aprova. */
   'agent.permissions': {
     schema: z.object({ analyze: z.boolean(), generateReports: z.boolean(), prepareMessages: z.boolean(), proposeActions: z.boolean() }),

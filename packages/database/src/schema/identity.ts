@@ -17,6 +17,13 @@ export const users = pgTable('users', {
   // Bento cria uma (via API key única, seção Tool Gateway). Pode ser
   // diferente do e-mail de login se o colaborador usa outro no ClickUp.
   clickupEmail: text('clickup_email'),
+  /**
+   * Tela em que a pessoa cai ao entrar no sistema (ex.: '/gestao' para quem
+   * gerencia a equipe). Null = a tela inicial de todo mundo. Coluna própria, e
+   * não em workspace_configs: lá, criar a linha só para guardar isto marcaria a
+   * pessoa como "configurada" sem módulo nenhum.
+   */
+  homePath: text('home_path'),
   // Idioma de preferência da UI (central de configuração da conta).
   language: text('language').notNull().default('pt-BR'),
   // Tema de preferência da UI (central de configuração da conta): claro,

@@ -50,7 +50,9 @@ export interface WsEvent {
     // a tela encaixa na conversa sem buscar nada. Conteúdo: entregue só ao dono.
     | 'inbox.message'
     // Comunicação interna: entregue só aos ids em payload.recipient_ids (filtro no servidor de WS).
-    | 'chat.event';
+    | 'chat.event'
+    // Painel da gestão (Hoje de quem administra): só o aviso, sem dado; filtrado por recipient_ids.
+    | 'gestao.mudou';
   payload: Record<string, unknown>;
 }
 

@@ -195,6 +195,7 @@ export function Sidebar({
             type="button"
             onClick={toggleSidebar}
             aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
+            title={collapsed ? 'Expandir menu (⌘B)' : 'Recolher menu (⌘B)'}
             className="flex size-8 shrink-0 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite hover:text-branco-cru"
           >
             {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
@@ -394,7 +395,7 @@ export function Sidebar({
           }
 
           return (
-            <Link key={item.href} href={item.href} className={itemClassName} onClick={() => onNavigate?.()}>
+            <Link key={item.href} href={item.href} className={itemClassName} onClick={() => onNavigate?.()} data-tour-id={`nav-${item.href.slice(1) || 'inicio'}`}>
               {itemContent}
             </Link>
           );

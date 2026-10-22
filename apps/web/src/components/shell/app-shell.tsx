@@ -2,6 +2,8 @@
 
 import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect } from 'react';
+import { useUiStore } from '@/stores/ui-store';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 import { ContextoDaEmpresa } from './contexto-da-empresa';
@@ -13,6 +15,9 @@ import { MobileNavDrawer } from './mobile-nav-drawer';
 import { StudioModal } from '@/components/studio/studio-modal';
 import { BentoBolha } from '@/components/chat/bento-bolha';
 import { useRealtimeEvents } from '@/hooks/use-realtime-events';
+import { TourProvider } from '@/components/tour/tour-provider';
+import { AnnouncementHost } from '@/components/announcements/announcement-host';
+import { TelaInicial } from './tela-inicial';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -21,7 +26,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // hora em vez de esperar o próximo poll (10s/20s antes disso).
   useRealtimeEvents();
 
+  // Lembra se a barra lateral estava recolhida e dá o atalho ⌘/Ctrl+B.
+  useEffect(() => {
+    useUiStore.getState().hidratarSidebar();
+    function aoTeclar(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        useUiStore.getState().toggleSidebar();
+      }
+    }
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  }, []);
+
   return (
+    <TourProvider>
     <div className="flex h-screen justify-center overflow-hidden bg-carbono">
       <NoiseOverlay />
       {/* Sidebar + content together, capped and centered as a unit - on an ultra-wide
@@ -65,6 +84,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         * transição de rota (AnimatePresence lá em cima troca o filho a cada
         * navegação), ou a conversa aberta se perderia a cada clique no menu. */}
       <BentoBolha />
+      {/* Novidades: abre sozinho uma vez por pessoa, depois que perfil e permissões chegaram. */}
+      <AnnouncementHost />
+      <TelaInicial />
     </div>
+    </TourProvider>
   );
 }

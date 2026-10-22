@@ -72,6 +72,16 @@ vi.mock('../auth/middleware', () => ({
 
 vi.mock('../lib/auditoria', () => ({ auditarAcao: async () => undefined }));
 
+/** O evento ao vivo sai logo DEPOIS da resposta do envio (Hub 2.1): espera até ele aparecer (ou desiste em 2 s). */
+async function esperarEvento(eventos: Array<{ type: string; payload: Record<string, unknown> }>, nome: string) {
+  for (let i = 0; i < 40; i++) {
+    const e = eventos.find((x) => x.payload.event === nome);
+    if (e) return e;
+    await new Promise((ok) => setTimeout(ok, 50));
+  }
+  return undefined;
+}
+
 describe.skipIf(!enabled)('Communication Hub 2.0 (Postgres real)', () => {
   const orgA = randomUUID();
   const orgB = randomUUID();
@@ -282,7 +292,7 @@ describe.skipIf(!enabled)('Communication Hub 2.0 (Postgres real)', () => {
     // quem não lê a conversa onde o card está não consulta o card
     expect((await get(intruso, `/internal-chat/objects/${cli.id}`)).statusCode).toBe(404);
     // o evento ao vivo não leva o resumo: cada leitor busca com a própria permissão
-    const ev = eventos.find((e) => e.payload.event === 'message.created');
+    const ev = await esperarEvento(eventos, 'message.created');
     expect((ev!.payload.message as { objects: Array<{ snapshot: unknown }> }).objects[0]!.snapshot).toBeNull();
   });
 

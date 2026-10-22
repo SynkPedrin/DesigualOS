@@ -7,6 +7,7 @@ import {
   organizacaoProvedora,
   type EscopoDeOrganizacao,
 } from '../lib/escopo-de-organizacao';
+import { LIMITE_DO_VALOR_VELHO_MS, renovarEmSegundoPlano } from '../lib/renovacao';
 
 /**
  * contexto.ts — entrar numa empresa e sair dela.
@@ -133,7 +134,15 @@ const ATIVA_TTL_MS = 20_000;
 type OrgAtiva = { id: string; name: string; slug: string };
 const ativaCache = new Map<string, { ativa: string | null; org: OrgAtiva | null; at: number }>();
 
+/**
+ * Sobe a cada troca de empresa. Uma releitura em segundo plano que começou ANTES
+ * da troca podia gravar a empresa antiga por cima — e a pessoa veria a empresa
+ * errada por 20 s. Se a geração mudou durante a releitura, ela descarta o que leu.
+ */
+let geracaoDaAtiva = 0;
+
 export function esquecerOrganizacaoAtiva(userId?: string): void {
+  geracaoDaAtiva++;
   if (userId) ativaCache.delete(userId);
   else ativaCache.clear();
 }
@@ -143,7 +152,16 @@ export async function organizacaoAtivaDe(
   escopoJaLido?: EscopoDeOrganizacao,
 ): Promise<{ id: string; name: string; slug: string } | null> {
   const hit = ativaCache.get(user.id);
-  if (hit && Date.now() - hit.at < ATIVA_TTL_MS) {
+  const idade = hit ? Date.now() - hit.at : Infinity;
+  if (hit && idade >= ATIVA_TTL_MS && idade < LIMITE_DO_VALOR_VELHO_MS) {
+    const geracao = geracaoDaAtiva;
+    renovarEmSegundoPlano(`ativa:${user.id}`, async () => {
+      await organizacaoAtivaSemCache(user, escopoJaLido);
+      if (geracaoDaAtiva !== geracao) ativaCache.delete(user.id);
+    });
+  }
+  // Valor velho só enquanto a releitura corre — e o vínculo é conferido de novo logo abaixo, a cada chamada.
+  if (hit && idade < LIMITE_DO_VALOR_VELHO_MS) {
     if (!hit.ativa) return null;
     const escopo = escopoJaLido ?? (await escopoDeOrganizacao(user));
     if (!escopo.ehProvider && !escopo.organizationIds.includes(hit.ativa)) {

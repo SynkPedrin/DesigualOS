@@ -7,7 +7,7 @@ import rateLimitPlugin from '@fastify/rate-limit';
 import helmetPlugin from '@fastify/helmet';
 import { z } from 'zod';
 import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/logging';
-import { getSchemaVersion, queryStats, startDatabaseWatchdog, warmDatabasePool } from '@desigual-os/database';
+import { getSchemaVersion, manterPoolAquecido, queryStats, startDatabaseWatchdog, warmDatabasePool } from '@desigual-os/database';
 import { registerNodeRoutes } from './nodes/routes';
 import { registerHealthRoutes } from './health/routes';
 import { registerReadyRoutes } from './health/ready-routes';
@@ -64,6 +64,8 @@ import { registerMicrosoftCalendarIntegrationRoutes } from './integrations/micro
 import { registerNotificationRoutes } from './notifications/routes';
 import { registerMessageRoutes } from './messages/routes';
 import { registerInternalChatRoutes } from './internal-chat/routes';
+import { registerAnnouncementRoutes } from './announcements/routes';
+import { registerGestaoRoutes } from './gestao/routes';
 import { registerTeamRoutes } from './team/routes';
 import { registerCollaboratorRoutes } from './collaborators/routes';
 import { registerSearchRoutes } from './search/routes';
@@ -295,6 +297,8 @@ async function start(): Promise<void> {
   await app.register(registerCommunicationRoutes);
   await app.register(registerOpenwaRoutes);
   await app.register(registerInternalChatRoutes);
+  await app.register(registerAnnouncementRoutes);
+  await app.register(registerGestaoRoutes);
   await app.register(registerDemandRoutes);
   await app.register(registerBriefRoutes);
   await app.register(registerApprovalRequestRoutes);
@@ -331,6 +335,8 @@ async function start(): Promise<void> {
     app.log.fatal({ falhas }, 'Banco sem resposta pelo pool deste processo; encerrando para o Docker reiniciar limpo');
     process.exit(1);
   });
+  // Sem isto, depois de 45 s sem uso a primeira consulta pagava ~1,3 s reabrindo conexão (ver manterPoolAquecido).
+  if (process.env.DATABASE_MANTER_AQUECIDO !== '0') manterPoolAquecido();
   await app.listen({ port, host: '0.0.0.0' });
   const healthSweepTimer = startHealthSweep(logger);
   // Sem isto o sweep acima derruba tudo pra offline em 60s: nossos agentes

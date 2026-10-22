@@ -120,7 +120,7 @@ vi.mock('../lib/idempotency', () => ({
 vi.mock('../lib/bento-mention', () => ({ respondAsBento: vi.fn() }));
 vi.mock('../lib/agent-mention', () => ({ detectMentionedAgent: vi.fn(), respondAsAgent: vi.fn(), respondAsOtto: vi.fn() }));
 
-const { registerClickUpRoutes, esquecerTarefasEmCache } = await import('./routes');
+const { registerClickUpRoutes, limparCacheDeTarefas } = await import('./routes');
 
 async function buildApp() {
   const app = Fastify();
@@ -153,7 +153,7 @@ beforeEach(() => {
    * testes é estado escondido, e estado escondido faz um teste depender da
    * ordem em que os outros rodaram.
    */
-  esquecerTarefasEmCache();
+  limparCacheDeTarefas();
   clientsRows = [CLIENT_A, CLIENT_B];
   usersRows = [{ id: 'user-1', clickupEmail: 'chefe@desigual.com' }];
   escopoDeOrganizacao.mockResolvedValue({ organizationIds: [ORG_A, ORG_B], ehProvider: false });

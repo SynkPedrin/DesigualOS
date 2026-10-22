@@ -16,7 +16,7 @@ test.skip(!EMAIL || !PASSWORD, 'QA_USER_EMAIL/QA_USER_PASSWORD ausentes');
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/login');
   await page.getByLabel('E-mail').fill(EMAIL);
-  await page.getByLabel('Senha').fill(PASSWORD);
+  await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: /entrar/i }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 30_000 });
 }

@@ -9,6 +9,8 @@ import {
   DEFAULT_TEMPLATES,
   MEDIA_SETTING_DEFS,
   MediaSettingError,
+  buildInternalTestMessage,
+  enviarPeloBento,
   getAccountSummary,
   getAgencyOverview,
   getHub,
@@ -222,6 +224,35 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
       throw error;
     }
     return getMediaSettings(scope.organizationId, body.data.client_id ?? null, body.data.account_id ? `${providerOfAccount(body.data.account_id)}:${body.data.account_id}` : null);
+  });
+
+  /**
+   * ENVIA UMA MENSAGEM DE TESTE aos destinatários dos avisos internos, pelo número do Bento.
+   * Só vai para quem está na lista cadastrada (gente da equipe), exige escrita e fica na
+   * auditoria. Passa pelas mesmas travas do envio real (sessão pronta, limite por janela).
+   */
+  app.post<{ Body: { client_id?: string | null } }>('/media/settings/internal-delivery/test', { preHandler: write }, async (request, reply) => {
+    const scope = scopeOf(request);
+    const clientId = request.body?.client_id ?? null;
+    if (clientId) {
+      const ok = await db.select({ id: schema.clients.id }).from(schema.clients).where(and(eq(schema.clients.id, clientId), eq(schema.clients.organizationId, scope.organizationId)));
+      if (ok.length === 0) return fail(reply, 404, 'Cliente não encontrado nesta empresa.');
+    }
+    const config = (await getMediaSettings(scope.organizationId, clientId, null)).values['alerts.internalDelivery'];
+    if (config.recipients.length === 0) return fail(reply, 409, 'Cadastre quem vai receber os avisos antes de testar.');
+    const now = new Date();
+    const stamp = now.getTime();
+    const results = [];
+    for (const r of config.recipients) {
+      const sent = await enviarPeloBento({
+        phone: r.phone,
+        text: buildInternalTestMessage({ recipientName: r.name, now }),
+        idempotencyKey: `media-internal-test:${request.authUser!.id}:${r.phone}:${stamp}`,
+      });
+      results.push(sent.ok ? { name: r.name, ok: true as const } : { name: r.name, ok: false as const, reason: sent.motivo, error: sent.erro });
+    }
+    await auditarAcao(request, { action: 'media.internal_delivery.tested', organizationId: scope.organizationId, metadata: { recipients: config.recipients.length, delivered: results.filter((x) => x.ok).length } });
+    return { results };
   });
 
   // ── Regras de alerta ───────────────────────────────────────────────────

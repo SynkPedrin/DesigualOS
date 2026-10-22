@@ -22,7 +22,7 @@ test.skip(!PASSWORD, 'QA_USER_PASSWORD não definida — rode via scripts/qa');
 async function login(page: Page): Promise<void> {
   await page.goto('/login');
   await page.getByLabel('E-mail').fill(EMAIL);
-  await page.getByLabel('Senha').fill(PASSWORD);
+  await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: /entrar/i }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
 }

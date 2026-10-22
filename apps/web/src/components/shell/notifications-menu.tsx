@@ -48,7 +48,11 @@ function NotificationRow({
         {!notification.read && <span className="mt-1 size-1.5 shrink-0 rounded-full bg-sinal" />}
       </div>
       {notification.body && <p className="text-xs text-nevoa">{notification.body}</p>}
-      <p className="font-mono text-[10px] uppercase tracking-wider text-nevoa/70">{timeAgo(notification.createdAt)}</p>
+      <p className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-nevoa/70">
+        <span>{timeAgo(notification.createdAt)}</span>
+        {/* Novidade do sistema: o aviso leva ao tutorial dela. */}
+        {notification.type === 'feature.announcement' && <span className="font-sans text-xs font-medium normal-case tracking-normal text-roxo-eletrico">Conhecer →</span>}
+      </p>
     </button>
   );
 }

@@ -5,6 +5,8 @@ export interface MyWorkspaceWire {
   template_id: string | null;
   modules: string[];
   configured: boolean;
+  /** Tela em que a pessoa cai ao entrar (ex.: '/gestao'). Null = a inicial de todo mundo. */
+  home_path?: string | null;
 }
 
 /**

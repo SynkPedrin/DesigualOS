@@ -23,10 +23,11 @@ import {
   useSaveAlertRule,
   useSaveTemplate,
   useSetAlertStatus,
-  useSetMediaSetting,
+  useSetMediaSetting, useTestInternalDelivery,
 } from '@/hooks/use-media';
 import { ALERT_TYPE_LABEL, ALERT_TYPE_UNIT, MEDIA_PERIODS, type MediaAlertRule, type MediaDestination, type MediaLinkedAccount } from '@/lib/api/media';
 import { cn } from '@/lib/utils';
+import { normalizarTelefoneBr, telefoneBrLegivel } from '@/lib/telefone-br';
 import { dash, when } from './format';
 import { CompartilharNaComunicacao } from '@/components/comunicacao/compartilhar-na-comunicacao';
 
@@ -221,11 +222,22 @@ function RuleRow({ rule, accounts, onDelete, save }: { rule: MediaAlertRule; acc
 
 // ── Configurações ────────────────────────────────────────────────────────
 
+/** O que cada falha de envio do Bento quer dizer, em português de gente. */
+const MOTIVO_DO_ENVIO: Record<string, string> = {
+  sessao_nao_pronta: 'o WhatsApp do Bento não está conectado agora. Conecte o número em Integrações e tente de novo.',
+  sem_sessao: 'o número do Bento ainda não foi conectado (Integrações > Bento no WhatsApp).',
+  canal_desligado: 'o canal do Bento está desligado.',
+  limite_de_envio: 'limite de envio por janela atingido. Espere alguns minutos.',
+  numero_invalido: 'o telefone cadastrado é inválido.',
+  falha_de_envio: 'o WhatsApp recusou o envio. Confira o número.',
+};
+
 const SOURCE_LABEL = { default: 'padrão do sistema', organization: 'empresa', client: 'este cliente', account: 'esta conta' } as const;
 
 export function SettingsTab({ clientId, accountId }: { clientId: string | null; accountId: string | null }) {
   const settings = useMediaSettings(clientId, accountId);
   const set = useSetMediaSetting();
+  const teste = useTestInternalDelivery();
   const [scope, setScope] = useState<'client' | 'organization' | 'account'>(clientId ? 'client' : 'organization');
 
   if (settings.isPending) return <Skeleton className="h-48 w-full" />;
@@ -235,6 +247,7 @@ export function SettingsTab({ clientId, accountId }: { clientId: string | null; 
   const target = { clientId: scope === 'organization' ? null : clientId, accountId: scope === 'account' ? accountId : null };
   const put = (key: string, value: unknown) => set.mutate({ key, value, ...target });
   const reset = (key: string) => set.mutate({ key, reset: true, ...target });
+  const internalDelivery = v['alerts.internalDelivery'] as { enabled: boolean; recipients: Array<{ name: string; phone: string }> };
   const perms = v['agent.permissions'] as { analyze: boolean; generateReports: boolean; prepareMessages: boolean; proposeActions: boolean };
 
   const Row = ({ k, label, children }: { k: string; label: string; children: React.ReactNode }) => (
@@ -304,6 +317,42 @@ export function SettingsTab({ clientId, accountId }: { clientId: string | null; 
       </Surface>
 
       <Surface className="p-4">
+        <h3 className="mb-1 font-heading text-base font-semibold text-branco-cru">Avisos internos pelo Bento</h3>
+        <p className="mb-2 text-xs text-nevoa">
+          Quando um alerta de mídia dispara (saldo baixo, campanha parada, custo alto...), o Bento manda uma mensagem pessoal para quem estiver na lista, pelo número dele. É um canal da equipe: nunca vai para cliente. Fora do horário permitido, o aviso espera.
+        </p>
+        <Row k="alerts.internalDelivery" label="Enviar avisos para a equipe">
+          <label className="flex items-center gap-2 text-xs text-nevoa">
+            <input type="checkbox" checked={internalDelivery.enabled} onChange={(e) => put('alerts.internalDelivery', { ...internalDelivery, enabled: e.target.checked })} />
+            {internalDelivery.enabled ? 'Ligado: alertas novos viram mensagem' : 'Desligado: alertas só ficam registrados'}
+          </label>
+        </Row>
+        <RecipientsEditor recipients={internalDelivery.recipients} onChange={(recipients) => put('alerts.internalDelivery', { ...internalDelivery, recipients })} />
+        {internalDelivery.enabled && internalDelivery.recipients.length === 0 && (
+          <p className="mt-2 text-xs text-aviso">Está ligado, mas ninguém na lista: nada será enviado.</p>
+        )}
+        <div className="mt-3 space-y-1.5 border-t border-grafite-elevado/50 pt-3">
+          <button
+            type="button"
+            onClick={() => teste.mutate({ clientId })}
+            disabled={teste.isPending || internalDelivery.recipients.length === 0}
+            className="rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru hover:bg-grafite-elevado disabled:opacity-50"
+          >
+            {teste.isPending ? 'Enviando…' : 'Enviar mensagem de teste'}
+          </button>
+          <p className="text-[11px] text-nevoa">Manda um exemplo (claramente marcado como teste) para quem está na lista, pelo WhatsApp do Bento.</p>
+          {teste.isError && <p className="text-xs text-erro">{errMsg(teste.error, 'Não consegui enviar o teste.')}</p>}
+          {teste.data?.results.map((r) =>
+            r.ok ? (
+              <p key={r.name} className="text-xs text-sucesso">Enviado para {r.name}.</p>
+            ) : (
+              <p key={r.name} className="text-xs text-aviso">{r.name}: {MOTIVO_DO_ENVIO[r.reason] ?? r.error}</p>
+            ),
+          )}
+        </div>
+      </Surface>
+
+      <Surface className="p-4">
         <h3 className="mb-1 font-heading text-base font-semibold text-branco-cru">Agentes de IA</h3>
         <p className="mb-2 text-xs text-nevoa">O que um agente pode fazer com a mídia deste escopo. Alterar campanha na plataforma nunca é automático: um agente só propõe, e uma pessoa aprova.</p>
         {(['analyze', 'generateReports', 'prepareMessages', 'proposeActions'] as const).map((k) => (
@@ -318,6 +367,52 @@ export function SettingsTab({ clientId, accountId }: { clientId: string | null; 
       {set.isError && <p className="text-sm text-erro">{errMsg(set.error, 'Não consegui salvar a configuração.')}</p>}
 
       <TemplatesSection />
+    </div>
+  );
+}
+
+/** Quem recebe os avisos internos. O telefone é normalizado antes de ir ao servidor; número duvidoso é recusado na tela. */
+function RecipientsEditor({ recipients, onChange }: { recipients: Array<{ name: string; phone: string }>; onChange: (r: Array<{ name: string; phone: string }>) => void }) {
+  const [nome, setNome] = useState('');
+  const [telefone, setTelefone] = useState('');
+  const [erro, setErro] = useState<string | null>(null);
+
+  function adicionar() {
+    const phone = normalizarTelefoneBr(telefone);
+    if (!nome.trim()) return setErro('Diga o nome de quem vai receber.');
+    if (!phone) return setErro('Telefone inválido. Use DDD e número, como (18) 99999-9999.');
+    if (recipients.some((r) => r.phone === phone)) return setErro('Esse número já está na lista.');
+    if (recipients.length >= 5) return setErro('No máximo 5 pessoas.');
+    setErro(null);
+    onChange([...recipients, { name: nome.trim(), phone }]);
+    setNome('');
+    setTelefone('');
+  }
+
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-xs font-medium text-branco-cru">Quem recebe</p>
+      {recipients.length === 0 ? (
+        <p className="text-xs text-nevoa">Ninguém ainda.</p>
+      ) : (
+        <ul className="divide-y divide-grafite-elevado/50 rounded-md border border-grafite-elevado">
+          {recipients.map((r) => (
+            <li key={r.phone} className="flex items-center gap-3 px-3 py-2">
+              <span className="min-w-0 flex-1 truncate text-sm text-branco-cru">{r.name}</span>
+              <span className="font-mono text-[11px] text-nevoa">{telefoneBrLegivel(r.phone)}</span>
+              <button type="button" aria-label={`Remover ${r.name}`} onClick={() => onChange(recipients.filter((x) => x.phone !== r.phone))} className="text-nevoa hover:text-erro">
+                <Trash2 size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome" aria-label="Nome de quem recebe" className="w-40 rounded-md border border-grafite-elevado bg-carbono px-2 py-1.5 text-sm text-branco-cru" />
+        <input value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="(18) 99999-9999" aria-label="Telefone de quem recebe" inputMode="tel" className="w-44 rounded-md border border-grafite-elevado bg-carbono px-2 py-1.5 text-sm text-branco-cru" />
+        <button type="button" onClick={adicionar} className="rounded-md border border-grafite-elevado px-3 py-1.5 text-xs text-branco-cru hover:bg-grafite-elevado">Adicionar</button>
+      </div>
+      {erro && <p className="text-xs text-erro">{erro}</p>}
     </div>
   );
 }

@@ -14,7 +14,7 @@ test.skip(!PASSWORD, 'QA_ACEITE_PASSWORD não definida — rode via scripts/qa')
 
 async function login(page: import('@playwright/test').Page) {
   await page.getByLabel('E-mail').fill(EMAIL);
-  await page.getByLabel('Senha').fill(PASSWORD);
+  await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: /entrar/i }).click();
 }
 

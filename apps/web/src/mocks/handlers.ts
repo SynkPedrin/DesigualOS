@@ -43,6 +43,8 @@ import { modulosPadrao } from '@desigual-os/types';
 import { bentoWhatsappHandlers } from './bento-whatsapp';
 import { openwaHandlers } from './openwa';
 import { internalChatHandlers } from './internal-chat';
+import { announcementHandlers } from './announcements';
+import { gestaoHandlers } from './gestao';
 
 /** Chunked to avoid blowing the call stack on `String.fromCharCode(...bytes)` for large files
  * (avatar/attachment uploads allow up to 25MB). */
@@ -134,6 +136,8 @@ export const handlers = [
   ...bentoWhatsappHandlers,
   ...openwaHandlers,
   ...internalChatHandlers,
+  ...announcementHandlers,
+  ...gestaoHandlers,
   http.get('/health/infrastructure', () => {
     return HttpResponse.json(mockInfrastructureHealthWire);
   }),

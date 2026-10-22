@@ -130,4 +130,26 @@ export async function warmDatabasePool(): Promise<number> {
   return Date.now() - started;
 }
 
+/**
+ * MANTÉM AS CONEXÕES ABERTAS (Hub 2.1, 21/10/2026).
+ *
+ * `idle_timeout: 45` fecha a conexão parada para não cair na que é cortada em
+ * silêncio. O efeito colateral: depois de 45 s sem uso — o normal numa equipe
+ * pequena — a próxima consulta pagava ~1,3 s só para reabrir (TLS + autenticação
+ * até us-east-1). Isso aparecia como "às vezes o envio demora um segundo".
+ *
+ * A cada `intervaloMs`, `quantas` consultas `select 1` em paralelo: cada uma ocupa
+ * uma conexão diferente, que assim nunca fica parada nem 45 s nem minutos. É o
+ * mesmo tráfego que uma pessoa usando o sistema gera, não um modo novo de usar o
+ * pooler. Falha é ignorada: o vigia (`startDatabaseWatchdog`) é quem decide se o
+ * pool travou.
+ */
+export function manterPoolAquecido(quantas = Math.min(poolMax, 8), intervaloMs = 20_000): () => void {
+  const timer = setInterval(() => {
+    void Promise.all(Array.from({ length: quantas }, () => client`select 1`.catch(() => undefined)));
+  }, intervaloMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 export type Database = typeof db;

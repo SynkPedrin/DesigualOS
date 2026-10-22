@@ -29,6 +29,8 @@ import { ApiRequestError } from '@/lib/api/client';
 import { TETO_DE_PAGINA, comoPiso, veioCheia } from '@/lib/teto-de-pagina';
 import { cn } from '@/lib/utils';
 import { tarefaConcluida } from '@/lib/tarefa-concluida';
+import { EquipeNoHoje } from '@/components/gestao/equipe-no-hoje';
+import { useIsMaster } from '@/hooks/use-is-master';
 
 /** 409 de "Minhas tarefas" = e-mail do ClickUp ainda não vinculado, estado
  *  esperado (resolve-se em /tasks), nunca uma falha de verdade. */
@@ -146,19 +148,26 @@ interface ItemDePrioridade {
  * app porque aqui o objetivo é panorama. Acompanha a ALTURA da janela: monitor de 27" fica em ~0,72 e o
  * notebook (janela baixa) em 0,68, que é onde mais precisa de espaço.
  */
-function useZoomDoHoje(): number {
-  const [z, setZ] = useState(0.72);
+function useZoomDoHoje(confortavel = false): number {
+  const [z, setZ] = useState(confortavel ? 0.9 : 0.72);
   useEffect(() => {
-    const calc = () => setZ(Math.min(0.8, Math.max(0.68, window.innerHeight / 1800)));
+    /**
+     * `confortavel`: quem administra tem o painel da equipe no topo — muito texto
+     * por cartão, e a escala de panorama deixava tudo pequeno demais para ler
+     * (pedido de 22/10/2026: "melhore a visualização do conteúdo e leitura").
+     */
+    const calc = () => setZ(confortavel ? Math.min(0.95, Math.max(0.85, window.innerHeight / 1150)) : Math.min(0.8, Math.max(0.68, window.innerHeight / 1800)));
     calc();
     window.addEventListener('resize', calc);
     return () => window.removeEventListener('resize', calc);
-  }, []);
+  }, [confortavel]);
   return z;
 }
 
 export default function TodayPage() {
-  const zoomDoHoje = useZoomDoHoje();
+  // Quem administra a operação vê a equipe ao vivo no topo do Hoje (22/10/2026, pedido para a Tammy).
+  const { isMaster } = useIsMaster();
+  const zoomDoHoje = useZoomDoHoje(isMaster);
   // Fixado no MOUNT: recalcular a cada render mudaria a queryKey das consultas
   // de calendário (intervalo [from,to] levemente diferente toda vez) e elas
   // nunca estabilizariam. Achado real, não hipotético (travou a aba Calendário
@@ -463,6 +472,8 @@ export default function TodayPage() {
           description={`${new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())} · veja o que precisa da sua atenção hoje.`}
         />
       </div>
+
+      {isMaster && <EquipeNoHoje />}
 
       <div className="grid gap-3 @min-[1900px]:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
       <BentoBriefing

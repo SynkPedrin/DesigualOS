@@ -3,9 +3,10 @@
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { LogIn } from 'lucide-react';
+import { Eye, EyeOff, LogIn } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/auth-layout';
 import { supabase } from '@/lib/supabase/client';
+import { mensagemDeErroDoLogin } from '@/lib/auth/mensagem-de-erro-do-login';
 
 /**
  * Destino pós-login: o proxy (src/proxy.ts) manda o usuário barrado pra
@@ -25,15 +26,27 @@ function LoginPageContent() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [mostrarSenha, setMostrarSenha] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+    /**
+     * ESPAÇO QUE VEIO JUNTO NA CÓPIA. Senha colada do WhatsApp ou do e-mail
+     * costuma trazer um espaço ou quebra de linha no fim, e o login falhava com
+     * a senha certa (visto em 22/10/2026: 27 caracteres no campo, senha de 25).
+     * Tenta primeiro EXATAMENTE como digitado — quem escolheu uma senha com
+     * espaço nas pontas continua entrando — e só então sem os espaços das pontas.
+     */
+    const emailLimpo = email.trim();
+    let { error: authError } = await supabase.auth.signInWithPassword({ email: emailLimpo, password });
+    if (authError && password.trim() !== password && /invalid login credentials/i.test(authError.message)) {
+      ({ error: authError } = await supabase.auth.signInWithPassword({ email: emailLimpo, password: password.trim() }));
+    }
     setIsSubmitting(false);
     if (authError) {
-      setError(authError.message);
+      setError(mensagemDeErroDoLogin(authError.message));
       return;
     }
     // Navegação DURA, não router.push: uma troca de conta dentro da mesma aba
@@ -62,6 +75,7 @@ function LoginPageContent() {
             id="email"
             type="email"
             required
+            autoComplete="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             className="w-full rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
@@ -79,14 +93,27 @@ function LoginPageContent() {
               Esqueceu a senha?
             </Link>
           </div>
-          <input
-            id="password"
-            type="password"
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
-          />
+          <div className="relative">
+            <input
+              id="password"
+              type={mostrarSenha ? 'text' : 'password'}
+              required
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="w-full rounded-md border border-grafite-elevado bg-grafite py-2 pl-3 pr-10 text-sm text-branco-cru focus:border-roxo-eletrico/60 focus:outline-none"
+            />
+            {/* Ver o que foi digitado resolve a maior parte dos "a senha não funciona". */}
+            <button
+              type="button"
+              onClick={() => setMostrarSenha((v) => !v)}
+              aria-label={mostrarSenha ? 'Esconder senha' : 'Mostrar senha'}
+              aria-pressed={mostrarSenha}
+              className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-nevoa transition-colors hover:text-branco-cru"
+            >
+              {mostrarSenha ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
         </div>
 
         {error && <p className="text-sm text-erro">{error}</p>}

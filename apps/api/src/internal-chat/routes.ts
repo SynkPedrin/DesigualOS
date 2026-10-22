@@ -166,8 +166,38 @@ async function notificarAlvos(conversa: svc.Conversa, alvos: Map<string, Alvo>, 
   if (linhas.length) await db.insert(schema.notifications).values(linhas).onConflictDoNothing();
 }
 
-async function notificarMensagem(conversa: svc.Conversa, r: Awaited<ReturnType<typeof svc.enviarMensagem>>) {
+type Envio = Pick<Awaited<ReturnType<typeof svc.enviarMensagem>>, 'mensagem' | 'mencionados' | 'autorRespondido' | 'raiz'> & { participantesDaThread?: string[] };
+
+/**
+ * O que acontece DEPOIS de gravar: evento ao vivo para quem lê a conversa (e a
+ * thread atualizada) e as notificações do sino. Fica fora da resposta de quem
+ * enviou — era metade do tempo do envio (medido no Hub 2.1).
+ */
+async function depoisDoEnvio(conversa: svc.Conversa, r: Envio) {
+  const quem = await svc.destinatarios(conversa);
+  await avisar(quem, 'message.created', { conversation_id: conversa.id, conversation_kind: conversa.kind, message: apresentarMensagem(r.mensagem, null) });
+  if (r.raiz) {
+    const [raiz] = await svc.completar([r.raiz]);
+    await avisar(quem, 'message.updated', { conversation_id: conversa.id, message: apresentarMensagem(raiz!, null) });
+  }
+  await notificarMensagem(conversa, r);
+}
+
+/** Tempo por etapa de uma requisição, devolvido no cabeçalho Server-Timing (aparece no DevTools). */
+function cronometro() {
+  const inicio = performance.now();
+  let anterior = inicio;
+  const etapas: Array<[string, number]> = [];
+  const api = {
+    marca(nome: string) { const agora = performance.now(); etapas.push([nome, agora - anterior]); anterior = agora; return api; },
+    cabecalho() { return [...etapas, ['total', performance.now() - inicio] as [string, number]].map(([n, d]) => `${n};dur=${d.toFixed(1)}`).join(', '); },
+  };
+  return api;
+}
+
+async function notificarMensagem(conversa: svc.Conversa, r: Envio) {
   const m = r.mensagem;
+  const participantesDaThread = r.participantesDaThread ?? (r.raiz ? await svc.participantesDaThread(r.raiz, m.message.senderId) : []);
   const remetente = m.message.senderId;
   const nome = m.sender?.name ?? 'Alguém';
   const trecho = m.message.content ?? (m.objects.length ? 'Compartilhou um item' : m.attachments.length ? 'Enviou um arquivo' : '');
@@ -180,7 +210,7 @@ async function notificarMensagem(conversa: svc.Conversa, r: Awaited<ReturnType<t
     if (conversa.kind === 'group') for (const id of todos) alvos.set(id, { type: compartilhou ? 'chat.shared' : 'chat.group', title: `${nome} em ${onde}` });
     if (conversa.kind === 'channel' || conversa.kind === 'discussion') for (const id of todos) alvos.set(id, { type: 'chat.channel', title: `${nome} em ${onde}` });
   }
-  for (const id of r.participantesDaThread) alvos.set(id, { type: 'chat.thread', title: `${nome} respondeu numa thread${onde ? ` em ${onde}` : ''}` });
+  for (const id of participantesDaThread) alvos.set(id, { type: 'chat.thread', title: `${nome} respondeu numa thread${onde ? ` em ${onde}` : ''}` });
   if (r.autorRespondido && r.autorRespondido !== remetente) alvos.set(r.autorRespondido, { type: 'chat.reply', title: `${nome} respondeu sua mensagem` });
   for (const id of r.mencionados) alvos.set(id, { type: 'chat.mention', title: `${nome} mencionou você${onde && conversa.kind !== 'direct' ? ` em ${onde}` : ''}` });
   const alvoDoLink = r.raiz ? `&t=${r.raiz.id}` : '';
@@ -524,23 +554,33 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
 
     rotas.post<{ Params: { id: string } }>('/internal-chat/conversations/:id/messages', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
       const ctx = contexto(request);
+      const tempo = cronometro();
       try {
         const body = enviarSchema.parse(request.body);
+        // Item compartilhado: a permissão de quem envia sobre o ITEM é conferida antes de qualquer gravação.
+        const objetos = body.objects?.length ? await validarObjetos(ctx, body.objects as PedidoDeObjeto[]) : [];
+        tempo.marca('itens');
+        const rapido = await svc.enviarRapido(ctx.organizationId, request.params.id, ctx.userId, body, objetos);
+        tempo.marca('gravacao');
+        if (rapido) {
+          // Gravou: a resposta sai agora. Eventos ao vivo e notificações vêm logo depois, fora do caminho
+          // de quem enviou (a mensagem já está no banco; quem perder o evento recupera pelo refetch).
+          void depoisDoEnvio(rapido.conversa, rapido).catch((error) => logger.warn({ error }, 'Falha ao avisar do envio na Comunicação'));
+          reply.code(201);
+          reply.header('server-timing', tempo.cabecalho());
+          // Quem envia acabou de ter cada item validado com a própria permissão: vê o resumo de todos.
+          return apresentarMensagem(rapido.mensagem, new Set(rapido.mensagem.objects.map((o) => o.id)));
+        }
+        // Caminho completo: anexo, discussão, repetição do mesmo clientMessageId — ou o erro certo (404/403/400).
         const conversa = await svc.conversaAcessivel(ctx.organizationId, ctx.userId, request.params.id);
         await svc.garantirEscrita(conversa, ctx.userId);
-        const objetos = body.objects?.length ? await validarObjetos(ctx, body.objects as PedidoDeObjeto[]) : [];
         const resultado = await svc.enviarMensagem(conversa, ctx.userId, body, objetos);
-        if (resultado.criada) {
-          const quem = await svc.destinatarios(conversa);
-          await avisar(quem, 'message.created', { conversation_id: conversa.id, conversation_kind: conversa.kind, message: apresentarMensagem(resultado.mensagem, null) });
-          if (resultado.raiz) {
-            const [raiz] = await svc.completar([{ ...resultado.raiz, replyCount: resultado.raiz.replyCount + 1, lastReplyAt: resultado.mensagem.message.createdAt }]);
-            await avisar(quem, 'message.updated', { conversation_id: conversa.id, message: apresentarMensagem(raiz!, null) });
-          }
-          void notificarMensagem(conversa, resultado).catch((error) => logger.warn({ error }, 'Falha ao criar notificação da Comunicação'));
-        }
+        // A raiz que este caminho devolve é a de ANTES da resposta: o evento leva o contador já somado.
+        const raizAtual = resultado.raiz ? { ...resultado.raiz, replyCount: resultado.raiz.replyCount + 1, lastReplyAt: resultado.mensagem.message.createdAt } : null;
+        if (resultado.criada) void depoisDoEnvio(conversa, { ...resultado, raiz: raizAtual }).catch((error) => logger.warn({ error }, 'Falha ao avisar do envio na Comunicação'));
         reply.code(resultado.criada ? 201 : 200);
         const [apresentada] = await apresentarParaLeitor([resultado.mensagem], ctx);
+        reply.header('server-timing', tempo.marca('completo').cabecalho());
         return apresentada;
       } catch (erro) { return falha(reply, erro); }
     });
