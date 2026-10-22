@@ -29,7 +29,7 @@ export default function GestaoEmpresarialLayout({ children }: { children: React.
     return <EmptyState icon={Lock} title="Gestão Empresarial não está disponível" description="Este módulo está desligado neste ambiente ou é restrito a administradores. Se você deveria vê-lo, fale com quem administra a plataforma." />;
   }
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pt-6">
       <header>
         <p className="font-mono text-xs uppercase tracking-wider text-sinal">Restrito a administradores</p>
         <h1 className="font-display text-2xl font-black uppercase tracking-tight text-branco-cru">Gestão Empresarial</h1>

@@ -49,8 +49,8 @@ export function hojeIso(agora: Date = new Date()): string {
 }
 
 export const SITUACAO: Record<string, { rotulo: string; classe: string }> = {
-  aberto: { rotulo: 'Em aberto', classe: 'bg-sky-500/15 text-sky-300' },
-  vencido: { rotulo: 'Vencido', classe: 'bg-red-500/15 text-red-400' },
+  aberto: { rotulo: 'Em aberto', classe: 'bg-roxo-eletrico/15 text-roxo-eletrico' },
+  vencido: { rotulo: 'Vencido', classe: 'bg-red-500/15 text-red-500' },
   quitado: { rotulo: 'Quitado', classe: 'bg-sucesso/15 text-sucesso' },
   cancelado: { rotulo: 'Cancelado', classe: 'bg-grafite-elevado text-nevoa line-through' },
 };

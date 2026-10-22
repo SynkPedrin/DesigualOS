@@ -20,14 +20,16 @@ export const BOTAO_PERIGO = 'inline-flex items-center justify-center gap-1.5 rou
 
 /** Aviso fixo na tela. `erro` fala de algo que falhou; `aviso` de algo que o usuário precisa ler antes de confiar no número. */
 export function Aviso({ tom = 'info', titulo, children }: { tom?: 'info' | 'aviso' | 'erro'; titulo?: string; children?: React.ReactNode }) {
-  const estilo = { info: 'border-sky-500/30 bg-sky-500/10 text-sky-200', aviso: 'border-aviso/40 bg-aviso/10 text-aviso', erro: 'border-red-500/40 bg-red-500/10 text-red-300' }[tom];
+  // Texto SEMPRE na cor principal do tema (legível no claro e no escuro); só a borda, o fundo e o ícone carregam o tom.
+  const estilo = { info: 'border-roxo-eletrico/40 bg-roxo-eletrico/10', aviso: 'border-aviso/50 bg-aviso/15', erro: 'border-red-500/50 bg-red-500/10' }[tom];
+  const iconeCor = { info: 'text-roxo-eletrico', aviso: 'text-aviso', erro: 'text-red-500' }[tom];
   const Icone = tom === 'info' ? Info : AlertTriangle;
   return (
-    <div role={tom === 'erro' ? 'alert' : 'note'} className={cn('flex gap-2 rounded-lg border px-3 py-2.5 text-sm', estilo)}>
-      <Icone size={16} className="mt-0.5 shrink-0" aria-hidden />
+    <div role={tom === 'erro' ? 'alert' : 'note'} className={cn('flex gap-2 rounded-lg border px-3 py-2.5 text-sm text-branco-cru', estilo)}>
+      <Icone size={16} className={cn('mt-0.5 shrink-0', iconeCor)} aria-hidden />
       <div className="min-w-0">
         {titulo && <p className="font-medium">{titulo}</p>}
-        {children && <div className={cn(titulo && 'mt-0.5 text-[13px] opacity-90')}>{children}</div>}
+        {children && <div className={cn(titulo && 'mt-0.5 text-[13px]', '[&_a]:font-medium [&_a]:underline')}>{children}</div>}
       </div>
     </div>
   );
@@ -70,7 +72,7 @@ export function SeloDeSituacao({ situacao }: { situacao: string }) {
 /** Valor em reais, alinhado para somar de cabeça. Negativo em vermelho. */
 export function Dinheiro({ centavos, className }: { centavos: number | null | undefined; className?: string }) {
   if (centavos === null || centavos === undefined) return <span className={cn('text-nevoa/60', className)}>—</span>;
-  return <span className={cn('tabular-nums', centavos < 0 && 'text-red-400', className)}>{formatarCentavos(centavos)}</span>;
+  return <span className={cn('tabular-nums', centavos < 0 && 'text-red-500', className)}>{formatarCentavos(centavos)}</span>;
 }
 
 export const TH = 'px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-nevoa';

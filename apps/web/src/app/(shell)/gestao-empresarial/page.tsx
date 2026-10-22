@@ -9,14 +9,14 @@ import { formatarCentavos } from '@/lib/gestao-empresarial/formato';
 import { cn } from '@/lib/utils';
 
 function Cartao({ icone: Icone, rotulo, valor, detalhe, tom = 'neutro', href }: { icone: typeof Landmark; rotulo: string; valor: React.ReactNode; detalhe?: React.ReactNode; tom?: 'neutro' | 'verde' | 'vermelho' | 'amarelo'; href?: string }) {
-  const cor = { neutro: 'bg-grafite-elevado text-nevoa', verde: 'bg-sucesso/15 text-sucesso', vermelho: 'bg-red-500/15 text-red-400', amarelo: 'bg-aviso/15 text-aviso' }[tom];
+  const cor = { neutro: 'bg-grafite-elevado text-nevoa', verde: 'bg-sucesso/15 text-sucesso', vermelho: 'bg-red-500/15 text-red-500', amarelo: 'bg-aviso/15 text-aviso' }[tom];
   const corpo = (
     <>
       <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-lg', cor)}><Icone size={20} aria-hidden /></span>
       <span className="min-w-0">
         <span className="block text-xs text-nevoa">{rotulo}</span>
         <span className="block font-heading text-2xl font-semibold leading-tight text-branco-cru">{valor}</span>
-        {detalhe && <span className="block truncate text-[11px] text-nevoa">{detalhe}</span>}
+        {detalhe && <span className="block line-clamp-2 text-[11px] text-nevoa">{detalhe}</span>}
       </span>
     </>
   );
