@@ -79,7 +79,7 @@ describe.skipIf(!enabled)('Daily Tasks — rotas de produtividade × PostgreSQL 
     expect((await call('admin', 'PATCH', `/work/checklist-items/${it1.id}`, { done: true })).statusCode).toBe(200);
     expect((await call('bAdmin', 'PATCH', `/work/checklist-items/${it1.id}`, { done: false })).statusCode).toBe(404);
     const d = (await call('admin', 'GET', `/work/tasks/${taskA}/detail`)).json();
-    expect(d.comments).toHaveLength(1);
+    expect(d.comments.map((c: { body: string }) => c.body)).toContain('oi');
     expect(d.checklists[0].items[0].done).toBe(true);
   });
 
