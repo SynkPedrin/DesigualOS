@@ -117,3 +117,6 @@ packages/otto-motion/runtime/
 .agentsroom/handoff-summary-*.md
 .agentsroom/fork-context-*.txt
 .agentsroom/transfer-context-*.txt
+
+# Gestão Empresarial: estado do ambiente local (pids e logs)
+.gestao-local/
