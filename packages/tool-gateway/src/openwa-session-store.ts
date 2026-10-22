@@ -18,6 +18,21 @@ export function openwaAdminClient(): OpenwaGatewayClient {
   return new OpenwaGatewayClient({ baseUrl: openwaBaseUrl(), apiKey });
 }
 
+/**
+ * Reinicia o motor (Chromium) de uma sessão com a chave administrativa: para e
+ * sobe de novo, o que faz o WhatsApp Web emitir um QR novo. O "start" sozinho
+ * não basta, porque num motor já carregado o OpenWA responde "já iniciado" e
+ * nada acontece — foi assim que o QR da Jamile ficou parado por 25 minutos.
+ * Não apaga credenciais: sessão já vinculada volta pelo que está guardado.
+ */
+export async function restartOpenwaEngine(externalSessionId: string): Promise<void> {
+  const apiKey = process.env.OPENWA_ADMIN_API_KEY?.trim();
+  if (!apiKey) throw new Error('OPENWA_ADMIN_API_KEY não configurada');
+  const session = new OpenwaGatewayClient({ baseUrl: openwaBaseUrl(), apiKey, sessionId: externalSessionId });
+  await session.stopSession();
+  await session.requestStart();
+}
+
 export async function whatsappSessionById(id: string): Promise<WhatsappSessionRow | null> {
   const [row] = await db.select().from(schema.whatsappSessions).where(eq(schema.whatsappSessions.id, id)).limit(1);
   return row ?? null;

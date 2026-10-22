@@ -10,6 +10,7 @@ import {
   normalizeOpenwaMessage,
   OpenwaGatewayError,
   openwaAdminClient,
+  restartOpenwaEngine,
   recoverWhatsappWebhookEvent,
   registerOpenwaWebhookEvent,
   whatsappSessionForOwner,
@@ -50,6 +51,12 @@ function webhookUrl(): string {
   if (!value) throw new Error('OPENWA_WEBHOOK_URL ou API_PUBLIC_URL precisa estar configurada');
   return value;
 }
+
+// QR que não muda por mais que isto, numa sessão aguardando leitura, é motor
+// travado (o WhatsApp renova o código a cada ~20 s): reinicia em vez de
+// entregar à pessoa um código vencido que o celular recusa.
+const QR_PARADO_MS = 75_000;
+const qrVisto = new Map<string, { qr: string; desde: number; reiniciadoEm: number }>();
 
 function errorResponse(reply: FastifyReply, error: unknown) {
   if (error instanceof OpenwaGatewayError) {
@@ -289,6 +296,16 @@ export async function registerOpenwaRoutes(app: FastifyInstance): Promise<void> 
       if (!session) { reply.code(404); return { error: 'Sessão não encontrada.' }; }
       try {
         const qr = await gatewayForWhatsappSession(session).getQr();
+        const agora = Date.now();
+        const visto = qrVisto.get(session.id);
+        if (!visto || visto.qr !== qr.qrCode) {
+          qrVisto.set(session.id, { qr: qr.qrCode, desde: agora, reiniciadoEm: visto?.reiniciadoEm ?? 0 });
+        } else if (qr.status === 'qr_ready' && agora - visto.desde > QR_PARADO_MS && agora - visto.reiniciadoEm > QR_PARADO_MS) {
+          qrVisto.set(session.id, { ...visto, desde: agora, reiniciadoEm: agora });
+          await restartOpenwaEngine(session.externalSessionId);
+          reply.code(503);
+          return { error: 'O código parou de renovar e a conexão foi reiniciada. Um QR novo aparece em instantes.', code: 'QR_PARADO', retryable: true };
+        }
         await auditarAcao(request, { action: 'whatsapp.session_qr_viewed', resourceType: 'whatsapp_session', resourceId: session.id, newValue: { status: qr.status } });
         return { qr_code: qr.qrCode, status: qr.status, fetched_at: new Date().toISOString() };
       } catch (error) {
@@ -300,7 +317,12 @@ export async function registerOpenwaRoutes(app: FastifyInstance): Promise<void> 
       const session = await ownedSession(request, request.params.id);
       if (!session) { reply.code(404); return { error: 'Sessão não encontrada.' }; }
       try {
-        if (!session.engineLoaded || session.status !== 'ready') await gatewayForWhatsappSession(session).requestStart();
+        if (session.engineLoaded && session.status !== 'ready') {
+          qrVisto.delete(session.id);
+          await restartOpenwaEngine(session.externalSessionId);
+        } else if (!session.engineLoaded || session.status !== 'ready') {
+          await gatewayForWhatsappSession(session).requestStart();
+        }
         return presentSession(await refreshSession(session));
       } catch (error) {
         return errorResponse(reply, error);

@@ -26,12 +26,14 @@ const gateway = {
 const enqueueSync = vi.fn(async (..._args: unknown[]) => undefined);
 const enqueueWebhook = vi.fn(async (..._args: unknown[]) => undefined);
 const registerEvent = vi.fn();
+const restartEngine = vi.fn(async (..._args: unknown[]) => undefined);
 
 vi.mock('@desigual-os/tool-gateway', () => ({
   OpenwaGatewayError: class OpenwaGatewayError extends Error {
     constructor(message: string, readonly status: number | null, readonly code: string | null = null, readonly retryable = false) { super(message); }
   },
   openwaAdminClient: () => admin,
+  restartOpenwaEngine: (...args: unknown[]) => restartEngine(...args),
   gatewayForWhatsappSession: () => gateway,
   encryptToken: (value: string) => `encrypted:${value}`,
   normalizeOpenwaMessage: (raw: Record<string, unknown>) => ({ id: String(raw.id ?? ''), chatId: String(raw.chatId ?? ''), body: null, type: 'chat', direction: 'incoming', timestamp: null }),
@@ -168,6 +170,25 @@ describe('sessões OpenWA', () => {
     const response = await app.inject({ method: 'GET', url: `/openwa/sessions/${SESSION}/qr` });
     expect(response.statusCode).toBe(200);
     expect(response.json().qr_code).toBe('data:image/png;base64,real-provider-payload');
+  });
+
+  it('QR que não renova por mais de 75 s reinicia o motor em vez de entregar código vencido', async () => {
+    vi.useFakeTimers();
+    try {
+      const app = await buildApp();
+      await app.inject({ method: 'POST', url: '/openwa/sessions' });
+      expect((await app.inject({ method: 'GET', url: `/openwa/sessions/${SESSION}/qr` })).statusCode).toBe(200);
+      vi.setSystemTime(Date.now() + 40_000);
+      expect((await app.inject({ method: 'GET', url: `/openwa/sessions/${SESSION}/qr` })).statusCode).toBe(200);
+      expect(restartEngine).not.toHaveBeenCalled();
+      vi.setSystemTime(Date.now() + 40_000);
+      const parado = await app.inject({ method: 'GET', url: `/openwa/sessions/${SESSION}/qr` });
+      expect(parado.statusCode).toBe(503);
+      expect(parado.json().code).toBe('QR_PARADO');
+      expect(restartEngine).toHaveBeenCalledWith(EXTERNAL);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('bloqueia acesso à sessão de outro colaborador', async () => {
