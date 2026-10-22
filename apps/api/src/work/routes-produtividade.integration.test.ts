@@ -80,7 +80,7 @@ describe.skipIf(!enabled)('Daily Tasks — rotas de produtividade × PostgreSQL 
     expect((await call('bAdmin', 'PATCH', `/work/checklist-items/${it1.id}`, { done: false })).statusCode).toBe(404);
     const d = (await call('admin', 'GET', `/work/tasks/${taskA}/detail`)).json();
     expect(d.comments.map((c: { body: string }) => c.body)).toContain('oi');
-    expect(d.checklists[0].items[0].done).toBe(true);
+    expect(d.checklists.find((c: { name: string }) => c.name === 'Passos').items[0].done).toBe(true);
   });
 
   it('automação por API: valida, cria, lista só da empresa, e outra empresa não apaga', async () => {
