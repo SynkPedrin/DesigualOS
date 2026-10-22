@@ -14,3 +14,4 @@ export * from './saved-views';
 export * from './automations';
 export * from './templates';
 export * from './reports';
+export * from './integrations';

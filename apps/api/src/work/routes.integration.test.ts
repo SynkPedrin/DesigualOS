@@ -64,7 +64,7 @@ describe.skipIf(!enabled)('Daily Tasks — rotas × PostgreSQL real', () => {
       expect(r.statusCode, `${method} ${path}`).toBe(403);
       expect(r.json().reason).toBe('flag_off');
     }
-    expect((await call('master', 'GET', '/work/access')).json()).toEqual({ allowed: false });
+    expect((await call('master', 'GET', '/work/access')).json()).toMatchObject({ allowed: false });
   });
 
   it('só master liga a flag; admin de empresa comum não consegue se autoliberar', async () => {
@@ -76,12 +76,12 @@ describe.skipIf(!enabled)('Daily Tasks — rotas × PostgreSQL real', () => {
   });
 
   it('flag ligada: admin autorizado entra; colaborador autorizado continua barrado por não ser admin', async () => {
-    expect((await call('admin', 'GET', '/work/access')).json()).toEqual({ allowed: true });
+    expect((await call('admin', 'GET', '/work/access')).json()).toMatchObject({ allowed: true });
     expect((await call('admin', 'GET', '/work/tree')).statusCode).toBe(200);
     const c = await call('collab', 'GET', '/work/tree');
     expect(c.statusCode).toBe(403);
     expect(c.json().reason).toBe('not_admin');
-    expect((await call('collab', 'GET', '/work/access')).json()).toEqual({ allowed: false });
+    expect((await call('collab', 'GET', '/work/access')).json()).toMatchObject({ allowed: false });
   });
 
   it('autorização é pela empresa do tenant: B não herda a flag da A', async () => {

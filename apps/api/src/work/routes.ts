@@ -5,6 +5,9 @@ import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
   addManualEntry,
+  clientWorkSummary,
+  createTaskFromSource,
+  findTasksBySource,
   automationTick,
   createAutomation,
   createCustomField,
@@ -449,6 +452,22 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     const q = z.object({ space_id: uuid.optional(), weeks: z.coerce.number().int().min(1).max(26).optional() }).safeParse(request.query);
     if (!q.success) return bad(reply);
     return workReport(workContext(request), defined({ spaceId: q.data.space_id, weeks: q.data.weeks }) as never);
+  });
+
+  // ── Integrações: tarefa nascida de outra parte do sistema (idempotente por origem) e resumo por cliente
+  app.post('/work/tasks/from-source', guard, async (request, reply) => {
+    const b = z.object({ provider: z.string(), externalType: z.string().min(1).max(60), externalId: z.string().min(1).max(200), listId: uuid, title: z.string().min(1).max(500), description: z.string().max(50_000).nullable().optional(), clientId: uuid.nullable().optional(), priority: z.number().int().min(0).max(4).optional(), meta: z.record(z.unknown()).optional() }).safeParse(request.body);
+    if (!b.success) return bad(reply, b.error.issues.map((i) => i.message).join(' '));
+    try { return await createTaskFromSource(workContext(request), defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
+  app.get<{ Querystring: { provider?: string; type?: string; id?: string } }>('/work/tasks/by-source', guard, async (request, reply) => {
+    const q = z.object({ provider: z.string().min(1), type: z.string().min(1), id: z.string().min(1) }).safeParse(request.query);
+    if (!q.success) return bad(reply);
+    try { return { tasks: await findTasksBySource(workContext(request), q.data.provider, q.data.type, q.data.id) }; } catch (e) { return fail(reply, e); }
+  });
+  app.get<{ Params: { id: string } }>('/work/clients/:id/summary', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return await clientWorkSummary(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
   });
 
   app.get('/work/members', guard, async (request) => {
