@@ -40,14 +40,14 @@ Sem `DATABASE_URL` local, esses arquivos são PULADOS (não falham).
 |---|---|---|
 | 1 | Fundação: flag, schema, domínio, APIs, permissões | **IMPLEMENTED + testes reais** (back-end). Menu "Daily Tasks — Beta" só aparece com `/work/access` allowed (sidebar e ⌘K); layout com abas (só as prontas são links) |
 | 2 | Gestão básica: espaços, pastas, projetos, listas, tarefas, subtarefas, status, responsáveis, prioridade, prazos | **IMPLEMENTED + testes reais** (back-end); UI básica: árvore Espaço→Lista, criar espaço/lista/tarefa, mudar status (typecheck + 80 testes web; **não validada em navegador** com flag ligada) |
-| 3 | Colaboração: comentários, anexos, menções, checklists, dependências | NOT_IMPLEMENTED |
-| 4 | Visualizações: lista, kanban, calendário, gantt/timeline | NOT_IMPLEMENTED |
-| 5 | Produtividade: Meu Trabalho, caixa, time tracking, aprovações, workload, views salvas | NOT_IMPLEMENTED |
-| 6 | Configuração: campos personalizados, templates, recorrência | NOT_IMPLEMENTED |
-| 7 | Automações | NOT_IMPLEMENTED |
-| 8 | Integrações (Comunicação, Clientes, Mídia, agentes, adaptador ClickUp) | NOT_IMPLEMENTED |
-| 9 | Analytics | NOT_IMPLEMENTED |
-| 10 | Hardening | NOT_IMPLEMENTED |
+| 3 | Colaboração: comentários, anexos, menções, checklists, dependências | **IMPLEMENTED + testes reais** (motor, rotas, gaveta da tarefa). Menções `@[Nome](id)` validadas por empresa; anexos são links (importados do ClickUp); **upload de arquivo novo: NOT_IMPLEMENTED** |
+| 4 | Visualizações: lista, kanban, calendário, gantt/timeline | **IMPLEMENTED** Lista, Quadro (arrastar muda status), Calendário, Tabela, Gantt. Validadas no Chromium com dados importados; sem teste automatizado de UI |
+| 5 | Produtividade: Meu Trabalho, caixa, time tracking, aprovações, workload, views salvas | **IMPLEMENTED + testes reais**: Meu Trabalho, Caixa de Entrada (não lidas, menções), cronômetro/lançamento manual, visões salvas, carga por pessoa nos relatórios. **Aprovações: NOT_IMPLEMENTED** (a tela de Aprovações do sistema continua a antiga) |
+| 6 | Configuração: campos personalizados, templates, recorrência | **IMPLEMENTED + testes reais**: campos (texto, número, data, lista, caixa...), status por espaço, modelos de tarefa (com subtarefas/checklists), duplicar, recorrência diária/semanal/mensal |
+| 7 | Automações | **IMPLEMENTED + testes reais**: 7 gatilhos, condições, 8 ações, log de execuções, sem encadeamento (mutação comprova), lock entre instâncias. Relógio no processo da API (`WORK_SCHEDULER=off` desliga) |
+| 8 | Integrações (Comunicação, Clientes, Mídia, agentes, adaptador ClickUp) | **IMPLEMENTED (API + motor, testes reais)**: tarefa por origem externa idempotente (`POST /work/tasks/from-source`), resumo por cliente, ferramentas de agente (`workTools`) com o mesmo portão. **Botões na UI de Comunicação/Mídia/Clientes: NOT_IMPLEMENTED** (telas de outras sessões não foram tocadas). **Adaptador ClickUp contínuo/bidirecional: NOT_IMPLEMENTED** (só importação por snapshot; nada é escrito no ClickUp) |
+| 9 | Analytics | **IMPLEMENTED + teste real**: totais, por status, por pessoa, prioridade, fluxo semanal, ciclo médio, tempo por pessoa |
+| 10 | Hardening | **PARCIAL**: portão (flag + administrador) e isolamento por empresa testados em todas as rotas novas; idempotência; sem transação longa com pool pequeno (deadlock achado e corrigido); mutações provando guardas. **Falta**: teste de carga, limite de taxa por rota, UI automatizada, revisão de permissões por papel mais fino que "administrador" |
 
 ## Decisões arquiteturais
 - **Flag no banco** (`work_feature_flags`, por empresa), não em env: dá para ligar/desligar sem redeploy. Nasce **desligada**. Quem liga é o administrador de plataforma (`master`) via `PUT /work/admin/flag`; estar na lista é obrigatório até para `master`.
@@ -84,3 +84,9 @@ Sem `DATABASE_URL` local, esses arquivos são PULADOS (não falham).
 - Medido no ClickUp da Desigual: 4 espaços, 12 pastas, 78 listas, 8.599 tarefas (1.147 abertas, 7.452 concluídas/fechadas; 6.991 subtarefas), 60 checklists, 70 dependências, 13 campos personalizados.
 - Importado só no banco LOCAL de QA. Produção: NÃO aplicado (migrações 0079/0080 e importação aguardam autorização).
 - Não importado: Docs, Goals, Views, automações e templates do ClickUp; tempo registrado (a API respondeu 403 — o token não tem esse escopo); comentários/anexos de tarefas fechadas ainda sendo baixados (detalhe por tarefa, ~100 req/min).
+
+## Estado em 22/10/2026
+
+- Importação do ClickUp (banco local de QA): 4 espaços, 12 pastas, 78 listas, 8.599 tarefas, ~5,8 mil comentários, ~1,3 mil anexos (links), 60 checklists, 70 dependências, 13 campos, 15 fotos de colaborador. Tempo registrado: o ClickUp devolveu 403 (token sem escopo).
+- Migrações 0079, 0080, 0081 (só criam tabelas). **Nenhuma aplicada em produção.** Atenção: outra sessão também usa o número 0079 (anúncios) — resolver o journal na hora de integrar à main.
+- Logos de cliente e fotos de colaborador: o front usa `client-logos.ts` (mesmo mapa do app, por nome IGUAL) e `users.avatar_url`.
