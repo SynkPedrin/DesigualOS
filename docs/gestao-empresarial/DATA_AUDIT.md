@@ -84,9 +84,9 @@ Particularidades que o importador precisa tratar:
 - O campo Situação só tem `Ativo` e `Inativo`.
 - Nome mais longo: 74 caracteres. Não há problema de tamanho de campo.
 
-## 4. "Veículos" provavelmente são veículos de mídia, não carros
+## 4. "Veículos" são veículos de mídia, não carros
 
-Hipótese, a confirmar com a equipe antes de modelar:
+**Decisão confirmada por Pedro em 22/10/2026:** modelar como veículo de mídia. A análise que levou a isso:
 
 - A planilha tem CNPJ e razão social, não placa, modelo ou ano.
 - Para uma agência, "veículo" é quem exibe a campanha (outdoor, rádio, jornal).
@@ -187,7 +187,6 @@ mostrar, enquanto o histórico for parcial:
 
 ## 7. Pendências que dependem de uma pessoa
 
-- Confirmar se "Veículos" são veículos de mídia.
 - Fornecer os dados bancários dos 117 fornecedores, se forem necessários (não estão nos
   arquivos).
 - Fornecer despesas/contas a pagar, propostas, produção e anexos, se existirem em outro export.

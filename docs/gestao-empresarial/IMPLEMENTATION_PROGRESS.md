@@ -53,7 +53,7 @@ Monorepo pnpm + turbo. O que o módulo precisa respeitar:
 
 ## C. Decisões e achados que afetam o desenho
 
-1. "Veículos" provavelmente são **veículos de mídia**, não frota (hipótese, `DATA_AUDIT.md` §4).
+1. "Veículos" são **veículos de mídia**, não frota (confirmado por Pedro em 22/10/2026, `DATA_AUDIT.md` §4).
 2. Cliente e fornecedor podem ser a mesma empresa (7 documentos em comum): um cadastro de
    entidade com papéis, não duas tabelas sem ligação.
 3. 22 dos 31 cedentes dos lançamentos casam com **fornecedor**, só 8 com cliente: vínculo
