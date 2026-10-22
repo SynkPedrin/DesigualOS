@@ -52,7 +52,7 @@ function ler(dir: string, nome: string): Raw {
   return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
 }
 
-export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: string; dryRun?: boolean }): Promise<ImportReport> {
+export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: string; dryRun?: boolean; semAtualizarTarefas?: boolean }): Promise<ImportReport> {
   const dryRun = opts.dryRun ?? false;
   const team = ler(opts.snapshotDir, 'team');
   const spaces: Raw[] = ler(opts.snapshotDir, 'spaces') ?? [];
@@ -216,7 +216,8 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
         tags: ((t.tags ?? []) as Raw[]).map((x) => String(x.name)), position: Number(t.orderindex) || 0, archivedAt: t.archived ? new Date() : null,
       };
       const existente = idDe('task', t.id);
-      if (existente) { await tx.update(schema.workTasks).set({ ...base, version: sql`${schema.workTasks.version} + 1` }).where(eq(schema.workTasks.id, existente)); bump('tarefas', false); continue; }
+      // `semAtualizarTarefas`: passada rápida só para os filhos (comentários, anexos...) — não regrava as 8,6 mil tarefas.
+      if (existente) { if (!opts.semAtualizarTarefas) await tx.update(schema.workTasks).set({ ...base, version: sql`${schema.workTasks.version} + 1` }).where(eq(schema.workTasks.id, existente)); bump('tarefas', false); continue; }
       const nid = randomUUID();
       proximo += 1;
       novasTarefas.push({ id: nid, organizationId: org, number: proximo, ...base, createdBy: resolverUsuario(t.creator), createdAt: ms(t.date_created) ?? new Date(), updatedAt: ms(t.date_updated) ?? new Date() });

@@ -11,6 +11,6 @@ if (!snapshot || !org || !user) { console.error('Faltam --snapshot, --org e --us
 const aplicar = process.argv.includes('--aplicar');
 const host = (process.env.DATABASE_URL ?? '').match(/@([^:/]+)/)?.[1] ?? '?';
 console.log(`${aplicar ? 'APLICANDO' : 'ENSAIO'} em ${host} · org ${org}`);
-importClickUp({ organizationId: org, userId: user, actorKind: 'system' }, { snapshotDir: snapshot, dryRun: !aplicar })
+importClickUp({ organizationId: org, userId: user, actorKind: 'system' }, { snapshotDir: snapshot, dryRun: !aplicar, semAtualizarTarefas: process.argv.includes('--sem-atualizar-tarefas') })
   .then((r) => { console.log(JSON.stringify(r, null, 2)); process.exit(0); })
   .catch((e) => { console.error('FALHOU:', e instanceof Error ? e.message : e); process.exit(1); });
