@@ -47,14 +47,31 @@ afterAll(async () => {
 });
 
 describe.skipIf(!sql)('constraints do módulo Gestão Empresarial', () => {
-  it('as 37 CHECKs existem no banco', async () => {
+  it('as 38 CHECKs existem no banco', async () => {
     const [linha] = await sql!`select count(*)::int as n from pg_constraint where contype = 'c' and conrelid::regclass::text like 'ge\_%'`;
-    expect(linha?.n).toBe(37);
+    expect(linha?.n).toBe(38);
   });
 
   it('valor de lançamento zero ou negativo é recusado', async () => {
     await recusa(async (tx, { org }) => void (await tx`insert into ge_entries (organization_id, kind, description, amount_cents, due_date) values (${org}, 'receita', 'x', -5, '2026-10-22')`), '23514');
     await recusa(async (tx, { org }) => void (await tx`insert into ge_entries (organization_id, kind, description, amount_cents, due_date) values (${org}, 'receita', 'x', 0, '2026-10-22')`), '23514');
+  });
+
+  it('quitado sem data só passa se a data for marcada como DESCONHECIDA (nunca silenciosamente)', async () => {
+    await emTransacao(async (tx, { org }) => void (await tx`insert into ge_entries (organization_id, kind, description, amount_cents, due_date, status, paid_at_unknown) values (${org}, 'receita', 'x', 100, '2026-10-22', 'quitado', true)`));
+    await recusa(async (tx, { org }) => void (await tx`insert into ge_entries (organization_id, kind, description, amount_cents, due_date, status, paid_at, paid_at_unknown) values (${org}, 'receita', 'x', 100, '2026-10-22', 'quitado', '2026-10-22', true)`), '23514');
+    await recusa(async (tx, { org }) => void (await tx`insert into ge_entries (organization_id, kind, description, amount_cents, due_date, status, paid_at_unknown) values (${org}, 'receita', 'x', 100, '2026-10-22', 'aberto', true)`), '23514');
+  });
+
+  it('o mesmo documento não existe duas vezes na mesma organização (mas pode em outra)', async () => {
+    await recusa(async (tx, { org }) => {
+      await tx`insert into ge_parties (organization_id, name, document) values (${org}, 'a', '11222333000181')`;
+      await tx`insert into ge_parties (organization_id, name, document) values (${org}, 'b', '11222333000181')`;
+    }, '23505');
+    await emTransacao(async (tx, { org }) => {
+      await tx`insert into ge_parties (organization_id, name) values (${org}, 'sem doc 1')`;
+      await tx`insert into ge_parties (organization_id, name) values (${org}, 'sem doc 2')`;
+    });
   });
 
   it('quitado exige data de pagamento, e data de pagamento exige quitado', async () => {

@@ -63,6 +63,7 @@ export const geParties = pgTable(
     orgIdx: index('ge_parties_org_idx').on(t.organizationId, t.status),
     docIdx: index('ge_parties_doc_idx').on(t.organizationId, t.document),
     nameIdx: index('ge_parties_name_idx').on(t.organizationId, t.name),
+    documentUq: uniqueIndex('ge_parties_document_uq').on(t.organizationId, t.document).where(sql`${t.document} is not null`),
     sourceUq: uniqueIndex('ge_parties_source_uq').on(t.organizationId, t.source, t.sourceKey).where(sql`${t.sourceKey} is not null`),
   }),
 );
@@ -208,6 +209,8 @@ export const geEntries = pgTable(
     dueDate: date('due_date').notNull(),
     status: text('status').notNull().default('aberto'),
     paidAt: date('paid_at'),
+    /** Quitado, mas a data real do pagamento não existe na origem (ex.: importado do Operand). Nunca se usa o vencimento no lugar. */
+    paidAtUnknown: boolean('paid_at_unknown').notNull().default(false),
     paidAmountCents: centavos('paid_amount_cents'),
     accountId: uuid('account_id').references(() => geFinancialAccounts.id, { onDelete: 'set null' }),
     categoryId: uuid('category_id').references(() => geCategories.id, { onDelete: 'set null' }),

@@ -22,6 +22,7 @@
     "@desigual-os/openai-provider": "workspace:*",
     "@desigual-os/orchestrator": "workspace:*",
     "@desigual-os/otto": "workspace:*",
+    "@desigual-os/otto-motion": "workspace:*",
     "@desigual-os/router": "workspace:*",
     "@desigual-os/tool-gateway": "workspace:*",
     "@desigual-os/types": "workspace:*",
@@ -34,8 +35,8 @@
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.33.0",
     "fastify": "^4.28.0",
-    "zod": "^3.23.8",
-    "@desigual-os/otto-motion": "workspace:*"
+    "jszip": "^3.10.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",
