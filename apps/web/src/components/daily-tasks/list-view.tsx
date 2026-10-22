@@ -15,16 +15,16 @@ export interface TaskActions {
   criar: (b: { title: string; statusId?: string; parentTaskId?: string; listId: string }) => void;
 }
 
-const COLUNAS = 'grid-cols-[minmax(0,1fr)_120px_110px_130px_120px] md:grid-cols-[minmax(0,1fr)_170px_150px_150px_130px]';
+const COLUNAS = 'grid-cols-[minmax(0,1fr)_96px_96px_110px_92px] md:grid-cols-[minmax(0,1fr)_130px_120px_130px_96px]';
 
 function InlineAdd({ rotulo, onSubmit, recuo = 0, abrir = false }: { rotulo: string; onSubmit: (t: string) => void; recuo?: number; abrir?: boolean }) {
   const [aberto, setAberto] = useState(abrir);
   const [txt, setTxt] = useState('');
   if (!aberto) {
     return (
-      <div className="px-3 py-3" style={{ paddingLeft: 40 + recuo }}>
-        <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-2 rounded-lg border border-dashed border-grafite-elevado px-3 py-1.5 text-sm text-nevoa hover:border-sinal/60 hover:text-branco-cru">
-          <Plus size={14} /> {rotulo}
+      <div className="px-3 py-1.5" style={{ paddingLeft: 36 + recuo }}>
+        <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-2 rounded-lg border border-dashed border-grafite-elevado px-2.5 py-1 text-xs text-nevoa hover:border-sinal/60 hover:text-branco-cru">
+          <Plus size={12} /> {rotulo}
         </button>
       </div>
     );
@@ -59,37 +59,33 @@ function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: Ctx }) 
       <div
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(TASK_DRAG, t.id); e.dataTransfer.effectAllowed = 'move'; }}
-        className={cn('group grid items-center gap-2 border-b border-grafite-elevado/60 px-3 py-3.5 hover:bg-grafite-elevado/40', COLUNAS, nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
+        className={cn('group grid items-center gap-2 border-b border-grafite-elevado/60 px-3 py-1.5 hover:bg-grafite-elevado/40', COLUNAS, nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
       >
-        <div className="relative min-w-0 space-y-1.5" style={{ paddingLeft: nivel * 26 }}>
-          {nivel > 0 && <span aria-hidden className="absolute bottom-1/2 top-[-14px] w-3 rounded-bl border-b border-l border-grafite-elevado" style={{ left: nivel * 26 - 14 }} />}
-          <div className="flex min-w-0 items-center gap-2">
-            <button type="button" aria-label={aberta ? 'Recolher subtarefas' : 'Expandir subtarefas'} onClick={() => setAberta((v) => !v)} className={cn('shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru', t.subtaskCount === 0 && 'invisible')}>
-              {aberta ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </button>
-            <button type="button" aria-label={feita ? 'Reabrir' : 'Concluir'} title={feita ? 'Reabrir tarefa' : 'Marcar como concluída'} onClick={() => { const alvo = feita ? ctx.statuses.find((s) => s.isInitial) : statusFinal; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}>
-              <StatusDot cor={t.status?.color ?? '#6b7280'} feito={feita} />
-            </button>
-            <button type="button" onClick={() => ctx.actions.abrir(t)} title={t.title} className={cn('line-clamp-2 min-w-0 text-left text-[15px] leading-snug hover:underline', nivel > 0 ? 'font-normal' : 'font-medium', feita ? 'text-nevoa' : 'text-branco-cru')}>
-              {t.title}
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 pl-[52px]">
-            {t.subtaskCount > 0 && <ProgressoSubtarefas feitas={t.subtaskDone} total={t.subtaskCount} />}
-            {nivel > 0 && t.status && <StatusPill nome={t.status.name} cor={t.status.color} categoria={t.status.category} tamanho="sm" />}
-            <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex shrink-0 items-center gap-1 rounded-md border border-grafite-elevado px-2 py-0.5 text-[11px] text-nevoa hover:border-sinal/60 hover:text-branco-cru"><Plus size={12} /> Subtarefa</button>
-          </div>
+        <div className="relative flex min-w-0 items-center gap-2" style={{ paddingLeft: nivel * 22 }}>
+          {nivel > 0 && <span aria-hidden className="absolute bottom-1/2 top-[-12px] w-3 rounded-bl border-b border-l border-grafite-elevado" style={{ left: nivel * 22 - 12 }} />}
+          <button type="button" aria-label={aberta ? 'Recolher subtarefas' : 'Expandir subtarefas'} onClick={() => setAberta((v) => !v)} className={cn('shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru', t.subtaskCount === 0 && 'invisible')}>
+            {aberta ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+          <button type="button" aria-label={feita ? 'Reabrir' : 'Concluir'} title={feita ? 'Reabrir tarefa' : 'Marcar como concluída'} onClick={() => { const alvo = feita ? ctx.statuses.find((s) => s.isInitial) : statusFinal; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}>
+            <StatusDot cor={t.status?.color ?? '#6b7280'} feito={feita} />
+          </button>
+          <button type="button" onClick={() => ctx.actions.abrir(t)} title={t.title} className={cn('min-w-0 truncate text-left text-sm hover:underline', nivel > 0 ? 'font-normal' : 'font-medium', feita ? 'text-nevoa' : 'text-branco-cru')}>
+            {t.title}
+          </button>
+          {t.subtaskCount > 0 && <ProgressoSubtarefas feitas={t.subtaskDone} total={t.subtaskCount} />}
+          {nivel > 0 && t.status && <StatusPill nome={t.status.name} cor={t.status.color} categoria={t.status.category} tamanho="sm" />}
+          <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex size-5 shrink-0 items-center justify-center rounded border border-grafite-elevado text-nevoa hover:border-sinal/60 hover:text-branco-cru"><Plus size={12} /></button>
         </div>
         <div><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>
         <div><DuePicker tarefa={t} onChange={(iso) => ctx.actions.atualizar(t, { dueAt: iso })} /></div>
         <div><PriorityPicker tarefa={t} onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>
-        <div className="flex items-center justify-end gap-2"><button type="button" onClick={() => ctx.actions.abrir(t)} className="rounded-md bg-grafite-elevado px-3 py-1 text-xs font-medium text-branco-cru hover:bg-sinal hover:text-grafite">Abrir</button><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></div>
+        <div className="flex items-center justify-end gap-2"><button type="button" onClick={() => ctx.actions.abrir(t)} className="rounded bg-grafite-elevado px-2 py-0.5 text-xs font-medium text-branco-cru hover:bg-sinal hover:text-grafite">Abrir</button><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></div>
       </div>
       {aberta && (
         <>
           {subs.data?.rows.map((s) => <Linha key={s.id} t={s} nivel={nivel + 1} ctx={ctx} />)}
-          {subs.isPending && <div className="px-3 py-1 text-xs text-nevoa" style={{ paddingLeft: 40 + (nivel + 1) * 26 }}>Carregando…</div>}
-          <InlineAdd key={criandoSub ? 'aberto' : 'fechado'} abrir={criandoSub} rotulo="Adicionar subtarefa" recuo={(nivel + 1) * 26} onSubmit={(title) => ctx.actions.criar({ title, parentTaskId: t.id, listId: t.listId, statusId: statusInicial(ctx.statuses) })} />
+          {subs.isPending && <div className="px-3 py-1 text-xs text-nevoa" style={{ paddingLeft: 36 + (nivel + 1) * 22 }}>Carregando…</div>}
+          <InlineAdd key={criandoSub ? 'aberto' : 'fechado'} abrir={criandoSub} rotulo="Adicionar subtarefa" recuo={(nivel + 1) * 22} onSubmit={(title) => ctx.actions.criar({ title, parentTaskId: t.id, listId: t.listId, statusId: statusInicial(ctx.statuses) })} />
         </>
       )}
     </>
@@ -113,13 +109,13 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
   });
   const [novoStatus, setNovoStatus] = useState('');
   return (
-    <div className="space-y-10">
+    <div className="space-y-5">
       {grupos.filter(({ itens }) => itens.length > 0 || tarefas.length === 0).map(({ s, itens }) => {
         const fechado = recolhido(s.id, itens.length, s.category);
         const limite = visiveis[s.id] ?? 100;
         return (
           <section key={s.id} aria-label={`Status ${s.name}`}>
-            <div className="mb-2 flex items-center gap-3">
+            <div className="mb-1 flex items-center gap-2">
               <button type="button" onClick={() => alternar(s.id, itens.length, s.category)} aria-expanded={!fechado} className="text-nevoa hover:text-branco-cru">
                 {fechado ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
               </button>
@@ -127,7 +123,7 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
             </div>
             {!fechado && (
               <div>
-                <div className={cn('grid gap-2 border-b border-grafite-elevado px-3 py-1 text-xs uppercase tracking-wide text-nevoa', COLUNAS)} style={{ paddingLeft: 40 }}>
+                <div className={cn('grid gap-2 border-b border-grafite-elevado px-3 py-1 text-[11px] uppercase tracking-wide text-nevoa', COLUNAS)} style={{ paddingLeft: 40 }}>
                   <span>Tarefa</span><span>Quem faz</span><span className="whitespace-nowrap">Prazo</span><span>Prioridade</span><span className="text-right">Ações</span>
                 </div>
                 {itens.slice(0, limite).map((t) => <Linha key={t.id} t={t} nivel={0} ctx={ctx} />)}
@@ -136,7 +132,7 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
                     Mostrar mais ({limite} de {itens.length})
                   </button>
                 )}
-                {listId && <InlineAdd rotulo="Adicionar tarefa neste status" onSubmit={(title) => actions.criar({ title, statusId: s.id, listId })} />}
+                {listId && <InlineAdd rotulo="Adicionar tarefa" onSubmit={(title) => actions.criar({ title, statusId: s.id, listId })} />}
               </div>
             )}
           </section>
