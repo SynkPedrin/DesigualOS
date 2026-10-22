@@ -203,3 +203,9 @@ describe('indicadores', () => {
     expect(historicoParcial([{ kind: 'receita', status: 'cancelado', amountCents: 1 }])).toBe(false);
   });
 });
+
+describe('situação com dado inconsistente', () => {
+  it('status fora da lista é erro, nunca "aberto" em silêncio', () => {
+    expect(() => situacaoDe({ status: 'pago', dueDate: '2026-10-01' }, '2026-10-22')).toThrow(/desconhecido/);
+  });
+});

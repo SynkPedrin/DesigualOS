@@ -7,11 +7,11 @@ const MESES: Record<Exclude<Frequencia, 'semanal'>, number> = { mensal: 1, bimes
 export interface ModeloRecorrente {
   frequencia: Frequencia;
   inicio: string;
-  fim?: string | null;
+  fim?: string | null | undefined;
   /** Dia do vencimento; nulo usa o dia do início. */
-  diaDoMes?: number | null;
+  diaDoMes?: number | null | undefined;
   /** Até onde já foi gerado: a próxima ocorrência é a seguinte a esta. */
-  geradoAte?: string | null;
+  geradoAte?: string | null | undefined;
 }
 
 /**
