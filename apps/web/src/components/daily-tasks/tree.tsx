@@ -64,7 +64,7 @@ function ListaBtn({ l, ativa, onClick }: { l: WorkTreeSpace['lists'][number]; at
           {l.openTaskCount > 0 && <span className="shrink-0 text-[10px] text-nevoa/60">{l.openTaskCount}</span>}
         </span>
       </button>
-      <span className="invisible shrink-0 group-hover:visible"><MenuDoItem kind="list" id={l.id} nome={l.name} arquivado={l.archived} /></span>
+      <span className="shrink-0 opacity-40 transition-opacity group-hover:opacity-100 focus-within:opacity-100"><MenuDoItem kind="list" id={l.id} nome={l.name} arquivado={l.archived} /></span>
     </li>
   );
 }
@@ -88,7 +88,7 @@ export function Arvore({ spaces, listId, spaceId, onPick, arquivados, onArquivad
               <button type="button" onClick={() => onPick(null, s.id)} aria-expanded={aberto} className={cn('min-w-0 flex-1 truncate text-left text-sm font-semibold', aberto ? 'text-branco-cru' : 'text-nevoa')}>
                 {aberto ? '▾' : '▸'} {s.name} <span className="font-normal text-nevoa/50">{s.lists.length}</span>
               </button>
-              <span className="invisible shrink-0 group-hover:visible"><MenuDoItem kind="space" id={s.id} nome={s.name} arquivado={s.archived} /></span>
+              <span className="shrink-0 opacity-40 transition-opacity group-hover:opacity-100 focus-within:opacity-100"><MenuDoItem kind="space" id={s.id} nome={s.name} arquivado={s.archived} /></span>
             </div>
             {aberto && (
               <div className="space-y-2 pl-2">
@@ -99,7 +99,7 @@ export function Arvore({ spaces, listId, spaceId, onPick, arquivados, onArquivad
                     <div key={f.id} className={cn(f.archived && 'opacity-60')}>
                       <div className="group flex items-center">
                         <p className="min-w-0 flex-1 truncate px-2 text-[11px] font-medium uppercase tracking-wide text-nevoa/60" title={f.name}>{f.name}</p>
-                        <span className="invisible shrink-0 group-hover:visible"><MenuDoItem kind="folder" id={f.id} nome={f.name} arquivado={f.archived} /></span>
+                        <span className="shrink-0 opacity-40 transition-opacity group-hover:opacity-100 focus-within:opacity-100"><MenuDoItem kind="folder" id={f.id} nome={f.name} arquivado={f.archived} /></span>
                       </div>
                       <ul className="space-y-0.5">{dela.map((l) => <ListaBtn key={l.id} l={l} ativa={listId === l.id} onClick={() => onPick(l.id, s.id)} />)}</ul>
                     </div>

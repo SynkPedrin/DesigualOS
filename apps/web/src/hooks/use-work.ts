@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api/client';
+import { apiFetch, ApiRequestError } from '@/lib/api/client';
+import { toast } from '@/stores/toast-store';
 
 export interface WorkTreeSpace {
   id: string;
@@ -199,9 +200,19 @@ export interface TaskPatch {
 export function useUpdateTask() {
   const inv = useInvalidate();
   return useMutation({
-    mutationFn: ({ id, ...rest }: TaskPatch) => apiFetch(`/work/tasks/${id}`, jsonInit('PATCH', rest)),
-    // Em conflito (409) a lista recarrega: a pessoa vê o que mudou em vez de sobrescrever em silêncio.
+    mutationFn: async ({ id, expectedVersion, ...rest }: TaskPatch) => {
+      try {
+        return await apiFetch(`/work/tasks/${id}`, jsonInit('PATCH', { ...rest, expectedVersion }));
+      } catch (e) {
+        // Conflito (409): outra pessoa — ou uma AUTOMAÇÃO logo após criar a tarefa — mexeu antes. Em vez de falhar em
+        // silêncio, busca a versão atual e reaplica UMA vez a mudança que a pessoa acabou de pedir.
+        if (!(e instanceof ApiRequestError) || e.status !== 409) throw e;
+        const atual = await apiFetch<WorkTaskWire>(`/work/tasks/${id}`);
+        return apiFetch(`/work/tasks/${id}`, jsonInit('PATCH', { ...rest, expectedVersion: atual.version }));
+      }
+    },
     onSettled: () => inv('tasks', 'detail', 'tree', 'inbox'),
+    onError: (e) => toast(e instanceof ApiRequestError ? e.message : 'Não foi possível salvar a alteração.', 'error'),
   });
 }
 

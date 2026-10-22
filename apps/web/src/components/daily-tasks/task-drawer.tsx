@@ -222,7 +222,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                         <li key={i.id} className="group flex items-center gap-2" style={{ paddingLeft: i.parentItemId ? 20 : 0 }}>
                           <input type="checkbox" checked={i.done} aria-label={i.text} onChange={(e) => cl.marcar.mutate({ itemId: i.id, done: e.target.checked })} />
                           <EditaNoLugar valor={i.text} onSalvar={(text) => crud.editarItem.mutate({ id: i.id, text }, { onError: erro })} className={cn('flex-1 py-0.5 text-sm', i.done ? 'text-nevoa line-through' : 'text-branco-cru')} />
-                          <button type="button" aria-label={`Apagar item ${i.text}`} onClick={() => crud.apagarItem.mutate(i.id, { onError: erro })} className="invisible text-nevoa hover:text-red-400 group-hover:visible"><X size={12} /></button>
+                          <button type="button" aria-label={`Apagar item ${i.text}`} onClick={() => crud.apagarItem.mutate(i.id, { onError: erro })} className="text-nevoa opacity-40 transition-opacity hover:text-red-400 group-hover:opacity-100 focus:opacity-100"><X size={12} /></button>
                         </li>
                       ))}
                     </ul>
@@ -238,7 +238,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             <section>
               <Titulo>Anexos ({data.attachments.length})</Titulo>
               <ul className="space-y-1">
-                {data.attachments.map((a) => <li key={a.id} className="group flex items-center gap-2"><a href={a.url} target="_blank" rel="noreferrer noopener" className="flex min-w-0 flex-1 items-center gap-2 text-sm text-branco-cru hover:underline"><Paperclip size={13} className="shrink-0 text-nevoa" /><span className="truncate">{a.fileName}</span></a><button type="button" aria-label={`Remover anexo ${a.fileName}`} onClick={() => crud.apagarAnexo.mutate(a.id, { onError: erro })} className="invisible text-nevoa hover:text-red-400 group-hover:visible"><X size={12} /></button></li>)}
+                {data.attachments.map((a) => <li key={a.id} className="group flex items-center gap-2"><a href={a.url} target="_blank" rel="noreferrer noopener" className="flex min-w-0 flex-1 items-center gap-2 text-sm text-branco-cru hover:underline"><Paperclip size={13} className="shrink-0 text-nevoa" /><span className="truncate">{a.fileName}</span></a><button type="button" aria-label={`Remover anexo ${a.fileName}`} onClick={() => crud.apagarAnexo.mutate(a.id, { onError: erro })} className="text-nevoa opacity-40 transition-opacity hover:text-red-400 group-hover:opacity-100 focus:opacity-100"><X size={12} /></button></li>)}
               </ul>
               <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (link.trim()) crud.anexar.mutate({ url: link.trim() }, { onSuccess: () => setLink(''), onError: erro }); }}>
                 <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="+ Colar link (Drive, Figma, PDF…)" aria-label="Link do anexo" className="flex-1 rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
@@ -254,7 +254,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-2 text-xs text-nevoa"><strong className="text-branco-cru">{c.authorName}</strong> · {new Date(c.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                         {c.authorId === eu && (
-                          <span className="invisible ml-auto flex gap-2 group-hover:visible">
+                          <span className="ml-auto flex gap-2 opacity-40 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                             <button type="button" aria-label="Editar comentário" onClick={() => setEditandoComent({ id: c.id, body: c.body })} className="hover:text-branco-cru"><Pencil size={12} /></button>
                             <button type="button" aria-label="Apagar comentário" onClick={() => { if (window.confirm('Apagar este comentário?')) crud.apagarComentario.mutate(c.id, { onError: erro }); }} className="hover:text-red-400"><Trash2 size={12} /></button>
                           </span>

@@ -17,8 +17,8 @@ export interface TaskActions {
 
 const COLUNAS = 'grid-cols-[minmax(0,1fr)_120px_110px_130px_32px] md:grid-cols-[minmax(0,1fr)_160px_150px_150px_36px]';
 
-function InlineAdd({ rotulo, onSubmit, recuo = 0 }: { rotulo: string; onSubmit: (t: string) => void; recuo?: number }) {
-  const [aberto, setAberto] = useState(false);
+function InlineAdd({ rotulo, onSubmit, recuo = 0, abrir = false }: { rotulo: string; onSubmit: (t: string) => void; recuo?: number; abrir?: boolean }) {
+  const [aberto, setAberto] = useState(abrir);
   const [txt, setTxt] = useState('');
   if (!aberto) {
     return (
@@ -47,6 +47,7 @@ function ProgressoSubtarefas({ feitas, total }: { feitas: number; total: number 
 
 function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: Ctx }) {
   const [aberta, setAberta] = useState(ctx.expandirTudo);
+  const [criandoSub, setCriandoSub] = useState(false);
   useEffect(() => { setAberta(ctx.expandirTudo); }, [ctx.expandirTudo]);
   const subs = useWorkTasks({ parentTaskId: t.id, enabled: aberta, includeArchived: ctx.arquivadas });
   const statusFinal = ctx.statuses.find((s) => s.category === 'done');
@@ -71,18 +72,18 @@ function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: Ctx }) 
           </button>
           {t.subtaskCount > 0 && <ProgressoSubtarefas feitas={t.subtaskDone} total={t.subtaskCount} />}
           {nivel > 0 && t.status && <StatusPill nome={t.status.name} cor={t.status.color} categoria={t.status.category} tamanho="sm" />}
-          <button type="button" aria-label="Adicionar subtarefa" title="Adicionar subtarefa" onClick={() => setAberta(true)} className="invisible shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru group-hover:visible"><Plus size={14} /></button>
+          <button type="button" aria-label="Adicionar subtarefa" title="Adicionar subtarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="shrink-0 rounded p-0.5 text-nevoa opacity-40 transition-opacity hover:text-branco-cru group-hover:opacity-100 focus:opacity-100"><Plus size={14} /></button>
         </div>
         <div><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>
         <div><DuePicker tarefa={t} onChange={(iso) => ctx.actions.atualizar(t, { dueAt: iso })} /></div>
         <div><PriorityPicker tarefa={t} onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>
-        <div className="invisible group-hover:visible"><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></div>
+        <div className="opacity-40 transition-opacity group-hover:opacity-100 focus-within:opacity-100"><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></div>
       </div>
       {aberta && (
         <>
           {subs.data?.rows.map((s) => <Linha key={s.id} t={s} nivel={nivel + 1} ctx={ctx} />)}
           {subs.isPending && <div className="px-3 py-1 text-xs text-nevoa" style={{ paddingLeft: 40 + (nivel + 1) * 26 }}>Carregando…</div>}
-          <InlineAdd rotulo="Adicionar subtarefa" recuo={(nivel + 1) * 26} onSubmit={(title) => ctx.actions.criar({ title, parentTaskId: t.id, listId: t.listId, statusId: statusInicial(ctx.statuses) })} />
+          <InlineAdd key={criandoSub ? 'aberto' : 'fechado'} abrir={criandoSub} rotulo="Adicionar subtarefa" recuo={(nivel + 1) * 26} onSubmit={(title) => ctx.actions.criar({ title, parentTaskId: t.id, listId: t.listId, statusId: statusInicial(ctx.statuses) })} />
         </>
       )}
     </>

@@ -90,3 +90,13 @@ Sem `DATABASE_URL` local, esses arquivos são PULADOS (não falham).
 - Importação do ClickUp (banco local de QA): 4 espaços, 12 pastas, 78 listas, 8.599 tarefas, ~5,8 mil comentários, ~1,3 mil anexos (links), 60 checklists, 70 dependências, 13 campos, 15 fotos de colaborador. Tempo registrado: o ClickUp devolveu 403 (token sem escopo).
 - Migrações 0079, 0080, 0081 (só criam tabelas). **Nenhuma aplicada em produção.** Atenção: outra sessão também usa o número 0079 (anúncios) — resolver o journal na hora de integrar à main.
 - Logos de cliente e fotos de colaborador: o front usa `client-logos.ts` (mesmo mapa do app, por nome IGUAL) e `users.avatar_url`.
+
+## Atualização 22/10/2026 — operação completa e integrações
+
+- **Notificações**: cada evento relevante (atribuição, menção, comentário, mudança de status, prazo próximo/vencido, automação "avisar") vira aviso no sino do sistema (`notifications`, link `/daily-tasks?task=<id>`), só para a pessoa certa e só de empresa com o módulo ligado. Lembretes de prazo rodam no relógio da API.
+- **Caixa de Entrada unificada**: tarefas + mensagens não lidas e menções da Comunicação + avisos do sistema (abas Tudo/Tarefas/Comunicação/Menções/Sistema). Badge no menu lateral.
+- **CRUD completo**: editar/apagar comentário (só o autor), checklist e itens, anexos por link, dependências (sem ciclo), arquivar/restaurar/excluir definitivamente (só arquivado), renomear/arquivar/excluir espaço-pasta-lista, mover tarefa entre listas (menu ou arrastar para a lista na árvore).
+- **Calendário**: painel do dia, criar tarefa no dia, arrastar reagenda. **Meu Trabalho**: seletor de pessoa. **Automações**: receitas, edição, resumo ao vivo, "executar agora", gatilhos novos (prazo próximo, mudança de lista) e ações (avisar, mover).
+- **Integração com a Comunicação**: na ação "criar tarefa" de uma mensagem, quem tem o Daily Tasks liberado ganha a opção de criar a tarefa lá (idempotente por mensagem). Mudança mínima em `components/comunicacao/modais.tsx` (conflito possível com a sessão do Hub ao integrar).
+- **Conflito de edição**: ao receber 409 o front busca a versão atual e reaplica UMA vez a mudança pedida (uma automação logo após criar a tarefa causava falha silenciosa).
+- Não feito: aprovações; upload de arquivo novo; botões equivalentes na Mídia e na ficha de Clientes (a API `from-source`/resumo por cliente existe); preferências de notificação por pessoa.
