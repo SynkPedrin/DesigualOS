@@ -8,6 +8,7 @@ import { requireTenant } from '../lib/tenant-context';
 import { tarefasDaAgencia } from '../clickup/routes';
 import { redactForViewer, type CalendarEventRow } from '../calendar/access';
 import { inicioDoDia, tarefasPorPessoa, vazio, type TarefasDaPessoa } from './tarefas';
+import { estadosDePresenca } from '../internal-chat/presenca';
 
 const logger = createLogger({ service: 'api:gestao' });
 
@@ -107,6 +108,19 @@ async function atividadeRecente(organizationId: string, ids: string[], porPessoa
   `);
 }
 
+/** O que a equipe fez por último (a fila "acontecendo agora" do Hoje da gestão). */
+async function feedDaEquipe(organizationId: string, ids: string[], limite: number) {
+  if (ids.length === 0) return [] as Array<{ id: string; user_id: string; user_name: string; summary: string | null; source: string; type: string; client_name: string | null; at: string }>;
+  const lista = sql`array[${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)}]`;
+  return db.execute<{ id: string; user_id: string; user_name: string; summary: string | null; source: string; type: string; client_name: string | null; at: string }>(sql`
+    select e.id, e.user_id, u.name as user_name, e.summary, e.source, e.type, c.name as client_name, coalesce(e.occurred_at, e.created_at) as at
+    from operational_events e join users u on u.id = e.user_id left join clients c on c.id = e.client_id
+    where e.organization_id = ${organizationId}::uuid and e.user_id = any(${lista})
+      and coalesce(e.occurred_at, e.created_at) > now() - interval '7 days'
+    order by coalesce(e.occurred_at, e.created_at) desc limit ${limite}
+  `);
+}
+
 async function tarefasDaEquipe(request: FastifyRequest, pessoas: Pessoa[]) {
   try {
     const agencia = await tarefasDaAgencia(request.authUser!);
@@ -143,17 +157,21 @@ export async function registerGestaoRoutes(app: FastifyInstance): Promise<void> 
       const agora = Date.now();
       const hoje = new Date(inicioDoDia(agora));
       const amanha = new Date(hoje.getTime() + 24 * 60 * 60_000);
-      const [tarefas, numeros, agenda, atividade] = await Promise.all([
+      const [tarefas, numeros, agenda, atividade, presenca, feed] = await Promise.all([
         tarefasDaEquipe(request, pessoas),
         numerosDoTrabalho(org, ids),
         agendaDaEquipe(org, ids, hoje, amanha, viewer),
         atividadeRecente(org, ids, 1),
+        // Presença é enfeite: Redis lento ou fora não segura o painel (1 s, depois todo mundo "offline").
+        Promise.race([estadosDePresenca(ids), new Promise<Map<string, 'online' | 'away'>>((ok) => setTimeout(() => ok(new Map()), 1_000).unref())]),
+        feedDaEquipe(org, ids, 20),
       ]);
       return {
         gerado_em: new Date(agora).toISOString(),
         tarefas: tarefas.disponivel
-          ? { disponivel: true, truncado: tarefas.truncado, sem_responsavel: tarefas.semResponsavel, sem_responsavel_atrasadas: tarefas.semResponsavelAtrasadas }
+          ? { disponivel: true, truncado: tarefas.truncado, sem_responsavel: tarefas.semResponsavel, sem_responsavel_atrasadas: tarefas.semResponsavelAtrasadas, listas: tarefas.listas }
           : { disponivel: false, erro: tarefas.erro },
+        feed: feed.map((f) => ({ ...f, at: new Date(f.at).toISOString() })),
         pessoas: pessoas.map((p) => {
           const meus = agenda.filter((e) => e.pessoa_id === p.id);
           const agoraEvento = meus.find((e) => Date.parse(e.start_at) <= agora && Date.parse(e.end_at) > agora) ?? null;
@@ -162,6 +180,8 @@ export async function registerGestaoRoutes(app: FastifyInstance): Promise<void> 
           const ultima = atividade.find((a) => a.user_id === p.id) ?? null;
           return {
             id: p.id, name: p.name, email: p.email, avatar_url: p.avatar_url, job_title: p.job_title,
+            // Presença ao vivo (mesma da Comunicação): 'online' com a tela à vista, 'away' com a aba de lado.
+            presenca: presenca.get(p.id) ?? 'offline',
             last_seen_at: p.last_seen_at ? new Date(p.last_seen_at).toISOString() : null,
             tarefas: tarefas.disponivel ? semLista(tarefas.porPessoa.get(p.id) ?? vazio()) : null,
             demandas: { abertas: n?.demandas_abertas ?? 0, atrasadas: n?.demandas_atrasadas ?? 0 },

@@ -44,6 +44,7 @@ import { garantirEmailDoClickUp } from '../lib/vinculo-clickup';
 import { detectMentionedAgent, respondAsAgent, respondAsOtto } from '../lib/agent-mention';
 import { esquecerTarefasDaLista } from './cache-de-lista';
 import { criarCacheQuente, emHorarioDeTrabalho } from './cache-quente';
+import { avisarGestao } from '../gestao/avisar';
 import { sincronizarCartaoDaTarefa } from '../pipeline/sincronizar-webhook';
 import { organizacaoProvedora } from '@desigual-os/auth';
 
@@ -415,9 +416,11 @@ type ResultadoDeConsulta = Awaited<ReturnType<typeof queryOperationTasks>>;
  * ver cache-quente.ts (22/10/2026 — antes o webhook apagava tudo e a próxima
  * abertura pagava ~40 s).
  */
-const consultasEmCache = criarCacheQuente<ResultadoDeConsulta>((error) => {
-  logger.warn({ error }, 'Releitura em segundo plano das tarefas do ClickUp falhou; servindo o cache anterior');
-});
+const consultasEmCache = criarCacheQuente<ResultadoDeConsulta>(
+  (error) => { logger.warn({ error }, 'Releitura em segundo plano das tarefas do ClickUp falhou; servindo o cache anterior'); },
+  // Tarefas relidas: o painel da gestão (Hoje de quem administra) atualiza ao vivo.
+  () => avisarGestao('tarefas'),
+);
 
 export function chaveDaConsulta(consulta: ConsultaDeWorkspace, assigneeId?: number): string {
   const credencial = createHash('sha256').update(consulta.config.apiKey).digest('hex').slice(0, 12);
@@ -463,6 +466,8 @@ async function consultarComCache(consulta: ConsultaDeWorkspace, assigneeId?: num
 export function esquecerTarefasEmCache(): void {
   consultasEmCache.marcarParaReler();
   membrosEmCache.clear();
+  // Já avisa (a atividade nova aparece na hora); a releitura das tarefas avisa de novo quando terminar.
+  avisarGestao('webhook');
 }
 
 /** Apaga tudo de verdade — para testes (estado de um cenário não vaza para o próximo). */

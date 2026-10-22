@@ -117,6 +117,10 @@ describe.skipIf(!enabled)('Gestão da equipe (Postgres real)', () => {
     expect(a.clientes).toBe(1);
     expect(a.agenda.agora).toMatchObject({ title: 'Reunião com o Café Aurora', visible: true });
     expect(a.ultima_atividade).toMatchObject({ summary: 'Moveu "Post de primavera" para pronto' });
+    // Hoje da gestão: presença (sem Redis no teste = offline), listas da equipe e o feed
+    expect(a.presenca).toBe('offline');
+    expect(r.tarefas.listas.atrasadas.map((x: { name: string; donos: string[] }) => [x.name, x.donos])).toEqual([['Post de primavera', [alicia]]]);
+    expect(r.feed.map((f: { user_name: string; summary: string }) => [f.user_name, f.summary])).toEqual([['Alicia', 'Moveu "Post de primavera" para pronto']]);
   });
 
   it('compromisso particular aparece só como "ocupado" (sem título, local ou link)', async () => {
