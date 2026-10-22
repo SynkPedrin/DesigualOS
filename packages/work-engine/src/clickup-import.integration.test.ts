@@ -12,21 +12,23 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
   const outraOrg = randomUUID();
   const admin = randomUUID();
   const ana = randomUUID();
+  const bia = randomUUID();
+  const bia2 = randomUUID();
   const clienteId = randomUUID();
   let dir = '';
 
   beforeAll(async () => {
     const { db, schema } = await import('@desigual-os/database');
     for (const o of [org, outraOrg]) await db.insert(schema.organizations).values({ id: o, name: `CU ${o.slice(0, 6)}`, slug: `cu-${o}` });
-    await db.insert(schema.users).values([{ id: admin, name: 'Admin', email: `${admin}@cu.invalid` }, { id: ana, name: 'Ana', email: `ana-${ana}@cu.invalid` }]);
+    await db.insert(schema.users).values([{ id: admin, name: 'Admin', email: `${admin}@cu.invalid` }, { id: ana, name: 'Ana', email: `ana-${ana}@cu.invalid` }, { id: bia, name: 'Bia', email: `bia-sistema-${bia}@cu.invalid`, clickupEmail: `bia-${bia}@clickup.invalid` }, { id: bia2, name: 'Bia2', email: `bia2-${bia}@cu.invalid`, clickupEmail: `dupla-${bia}@clickup.invalid` }, { id: randomUUID(), name: 'Bia3', email: `bia3-${bia}@cu.invalid`, clickupEmail: `dupla-${bia}@clickup.invalid` }]);
     await db.insert(schema.clients).values({ id: clienteId, name: 'Abitte Urbanismo', slug: clienteId, organizationId: org });
     dir = mkdtempSync(join(tmpdir(), 'cu-'));
     const w = (n: string, v: unknown) => writeFileSync(join(dir, `${n}.json`), JSON.stringify(v));
-    w('team', { members: [{ user: { id: 1, username: 'Ana', email: `ana-${ana}@cu.invalid`, profilePicture: 'https://cdn.invalid/ana.png' } }, { user: { id: 2, username: 'Fantasma', email: 'fantasma@x.invalid' } }] });
+    w('team', { members: [{ user: { id: 1, username: 'Ana', email: `ana-${ana}@cu.invalid`, profilePicture: 'https://cdn.invalid/ana.png' } }, { user: { id: 2, username: 'Fantasma', email: 'fantasma@x.invalid' } }, { user: { id: 3, username: 'Bia', email: `bia-${bia}@clickup.invalid` } }, { user: { id: 4, username: 'Dupla', email: `dupla-${bia}@clickup.invalid` } }] });
     w('spaces', [{ id: 's1', name: 'Agência', color: '#fff', statuses: [{ status: 'aberto', type: 'open', color: '#111' }, { status: 'feito', type: 'closed', color: '#222' }], _folders: [{ id: 'f1', name: 'Clientes' }] }]);
     w('lists', [{ id: 'l1', name: '[EX-CLIENTE] Abitte Urbanismo', _space: 's1', _folder: 'f1', _fields: [{ id: 'cf1', name: 'Canal', type: 'drop_down', type_config: { options: [{ id: 'o1', name: 'Instagram', orderindex: 0 }] } }] }, { id: 'l2', name: 'Abitte Urbanismo Interno', _space: 's1', _folder: null, _fields: [] }]);
     w('tasks', [
-      { id: 't1', name: 'Pai', list: { id: 'l1' }, status: { status: 'aberto', type: 'open' }, priority: { id: '2' }, date_created: '1700000000000', assignees: [{ id: 1, email: `ana-${ana}@cu.invalid` }, { id: 2, email: 'fantasma@x.invalid', username: 'Fantasma' }], custom_fields: [{ id: 'cf1', value: 0 }], checklists: [{ id: 'ck1', name: 'Roteiro', items: [{ id: 'i1', name: 'Gravar', resolved: true }] }], dependencies: [{ task_id: 't2', depends_on: 't1' }], tags: [{ name: 'vip' }] },
+      { id: 't1', name: 'Pai', list: { id: 'l1' }, status: { status: 'aberto', type: 'open' }, priority: { id: '2' }, date_created: '1700000000000', assignees: [{ id: 1, email: `ana-${ana}@cu.invalid` }, { id: 2, email: 'fantasma@x.invalid', username: 'Fantasma' }, { id: 3, email: `bia-${bia}@clickup.invalid`, username: 'Bia' }, { id: 4, email: `dupla-${bia}@clickup.invalid`, username: 'Dupla' }], custom_fields: [{ id: 'cf1', value: 0 }], checklists: [{ id: 'ck1', name: 'Roteiro', items: [{ id: 'i1', name: 'Gravar', resolved: true }] }], dependencies: [{ task_id: 't2', depends_on: 't1' }], tags: [{ name: 'vip' }] },
       { id: 't2', name: 'Filha', parent: 't1', list: { id: 'l1' }, status: { status: 'feito', type: 'closed' }, date_created: '1700000100000', date_closed: '1700000200000', assignees: [] },
       { id: 't3', name: 'Fora de cliente', list: { id: 'l2' }, status: { status: 'inventado', type: 'custom' }, date_created: '1700000300000', assignees: [] },
     ]);
@@ -37,7 +39,9 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
     const { db, schema } = await import('@desigual-os/database');
     const { inArray } = await import('drizzle-orm');
     await db.delete(schema.organizations).where(inArray(schema.organizations.id, [org, outraOrg]));
-    await db.delete(schema.users).where(inArray(schema.users.id, [admin, ana]));
+    const { like } = await import('drizzle-orm');
+    await db.delete(schema.users).where(inArray(schema.users.id, [admin, ana, bia, bia2]));
+    await db.delete(schema.users).where(like(schema.users.email, `bia3-${bia}%`));
   });
 
   it('ensaio não grava nada', async () => {
@@ -65,7 +69,7 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
     expect(byTitle['Pai']!.priority).toBe(2);
     expect(byTitle['Pai']!.number).toBeLessThan(byTitle['Filha']!.number);
     const asg = await db.select().from(schema.workTaskAssignees).where(eq(schema.workTaskAssignees.organizationId, org));
-    expect(asg.map((a) => a.userId)).toEqual([ana]); // o "Fantasma" não vira usuário
+    expect(asg.map((a) => a.userId).sort()).toEqual([ana, bia].sort()); // Fantasma (sem conta) e Dupla (e-mail ambíguo) não são vinculados; Bia casa pelo clickup_email
     expect(r.usuariosNaoCasados.map((u) => u.nome)).toContain('Fantasma');
     const [ua] = await db.select({ a: schema.users.avatarUrl }).from(schema.users).where(eq(schema.users.id, ana));
     expect(ua!.a).toBe('https://cdn.invalid/ana.png');

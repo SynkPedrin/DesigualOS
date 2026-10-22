@@ -66,8 +66,13 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
   const bump = (k: string, novo: boolean) => { (report.counts[k] ??= { novos: 0, atualizados: 0 })[novo ? 'novos' : 'atualizados']++; };
 
   // ── usuários por e-mail IGUAL
-  const dbUsers = await db.select({ id: schema.users.id, email: schema.users.email }).from(schema.users);
-  const porEmail = new Map(dbUsers.map((u) => [u.email.toLowerCase(), u.id]));
+  // Casa por e-mail IGUAL no e-mail do sistema OU no `clickup_email` (o vínculo oficial da pessoa com o ClickUp).
+  // E-mail que aponta para MAIS DE UMA conta é ambíguo: não vincula a nenhuma (melhor sem responsável que na pessoa errada).
+  const dbUsers = await db.select({ id: schema.users.id, email: schema.users.email, clickupEmail: schema.users.clickupEmail }).from(schema.users);
+  const candidatos = new Map<string, Set<string>>();
+  for (const u of dbUsers) for (const e of [u.email, u.clickupEmail]) { if (e) { const k = e.trim().toLowerCase(); candidatos.set(k, (candidatos.get(k) ?? new Set()).add(u.id)); } }
+  const porEmail = new Map<string, string>();
+  for (const [e, ids] of candidatos) if (ids.size === 1) porEmail.set(e, [...ids][0]!);
   const userDoClickUp = new Map<string, string | null>();
   const membroInfo = new Map<string, { nome: string; email: string | null }>();
   for (const m of team.members ?? []) {
