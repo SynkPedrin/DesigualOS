@@ -6,6 +6,7 @@ import { AtSign, Bell, Inbox, ListChecks, MessagesSquare } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar } from '@/components/daily-tasks/primitivas';
+import { StatCard } from '@/components/daily-tasks/ui';
 import { TaskDrawer } from '@/components/daily-tasks/task-drawer';
 import { useInbox, useMarkInboxRead, type InboxEntry } from '@/hooks/use-work-extra';
 import { cn } from '@/lib/utils';
@@ -41,17 +42,25 @@ export default function CaixaDeEntradaPage() {
   ];
   const abrir = (i: InboxEntry) => { if (i.kind === 'task' && i.taskId) setAberta(i.taskId); else router.push(i.link); };
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div role="tablist" aria-label="Filtro da caixa" className="flex flex-wrap gap-1">
-          {abas.map((a) => (
-            <button key={a.id} role="tab" aria-selected={filtro === a.id} type="button" onClick={() => setFiltro(a.id)} className={cn('flex items-center gap-1.5 rounded-full px-3 py-1 text-xs', filtro === a.id ? 'bg-sinal text-grafite' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>
-              {a.id === 'mention' && <AtSign size={11} />}{a.rotulo}
-              {a.naoLidas > 0 && <span className={cn('rounded-full px-1.5 text-[10px] font-semibold', filtro === a.id ? 'bg-grafite text-sinal' : 'bg-sinal text-grafite')}>{a.naoLidas}</span>}
-            </button>
-          ))}
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="font-heading text-3xl font-semibold text-branco-cru">Caixa de Entrada</h1>
+          <p className="text-sm text-nevoa">Tudo que chegou para você: tarefas, mensagens da Comunicação, menções e avisos do sistema.</p>
         </div>
-        <button type="button" disabled={(data?.unreadByKind.task ?? 0) + (data?.unreadByKind.system ?? 0) === 0 || lido.isPending} onClick={() => lido.mutate()} className="ml-auto rounded border border-grafite-elevado px-2 py-1 text-xs text-nevoa hover:text-branco-cru disabled:opacity-40" title="Marca como lidos os avisos de tarefas e do sistema. Mensagens são lidas na própria Comunicação.">Marcar avisos como lidos</button>
+        <button type="button" disabled={(data?.unreadByKind.task ?? 0) + (data?.unreadByKind.system ?? 0) === 0 || lido.isPending} onClick={() => lido.mutate()} className="rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite disabled:opacity-40" title="Marca como lidos os avisos de tarefas e do sistema. Mensagens são lidas na própria Comunicação.">Marcar avisos como lidos</button>
+      </header>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {abas.filter((a) => a.id !== 'tudo').map((a) => (
+          <StatCard key={a.id} icone={a.id === 'task' ? ListChecks : a.id === 'communication' ? MessagesSquare : a.id === 'mention' ? AtSign : Bell} rotulo={a.rotulo} valor={a.naoLidas} detalhe={`${a.n} no total · clique para filtrar`} tom={a.id === 'mention' ? 'roxo' : a.id === 'task' ? 'verde' : a.id === 'communication' ? 'amarelo' : 'neutro'} onClick={() => setFiltro(filtro === a.id ? 'tudo' : a.id)} ativo={filtro === a.id} />
+        ))}
+      </div>
+      <div role="tablist" aria-label="Filtro da caixa" className="flex flex-wrap gap-1">
+        {abas.map((a) => (
+          <button key={a.id} role="tab" aria-selected={filtro === a.id} type="button" onClick={() => setFiltro(a.id)} className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm', filtro === a.id ? 'bg-sinal font-medium text-grafite' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>
+            {a.rotulo}{a.naoLidas > 0 && <span className={cn('rounded-full px-1.5 text-[10px] font-semibold', filtro === a.id ? 'bg-grafite text-sinal' : 'bg-sinal text-grafite')}>{a.naoLidas}</span>}
+          </button>
+        ))}
       </div>
       {lista.length === 0 ? (
         <EmptyState icon={Inbox} title={filtro === 'tudo' ? 'Caixa de entrada vazia' : 'Nada neste filtro'} description="Aqui chegam mudanças nas suas tarefas, mensagens da Comunicação que você ainda não leu, menções e avisos do sistema." />

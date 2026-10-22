@@ -178,12 +178,13 @@ export async function updateProject(ctx: WorkContext, id: string, patch: Partial
 
 export type WorkList = typeof schema.workLists.$inferSelect;
 
-export async function createList(ctx: WorkContext, input: { spaceId: string; folderId?: string | null; projectId?: string | null; name: string; description?: string | null }): Promise<WorkList> {
+export async function createList(ctx: WorkContext, input: { spaceId: string; folderId?: string | null; projectId?: string | null; clientId?: string | null; name: string; description?: string | null }): Promise<WorkList> {
   const n = name(input.name, 'a lista');
   return db.transaction(async (raw) => {
     const tx = raw as unknown as Db;
     await getSpace(tx, ctx, input.spaceId);
     await assertFolderInSpace(tx, ctx, input.folderId, input.spaceId);
+    await assertClient(tx, ctx, input.clientId);
     if (input.projectId) {
       const [p] = await tx
         .select({ id: schema.workProjects.id })
@@ -198,6 +199,7 @@ export async function createList(ctx: WorkContext, input: { spaceId: string; fol
         spaceId: input.spaceId,
         folderId: input.folderId ?? null,
         projectId: input.projectId ?? null,
+        clientId: input.clientId ?? null,
         name: n,
         description: input.description ?? null,
         position: await nextPosition(tx, 'lists', ctx, eq(schema.workLists.spaceId, input.spaceId)),
@@ -209,13 +211,14 @@ export async function createList(ctx: WorkContext, input: { spaceId: string; fol
   });
 }
 
-export async function renameList(ctx: WorkContext, id: string, patch: { name?: string; description?: string | null; position?: number }): Promise<WorkList> {
+export async function renameList(ctx: WorkContext, id: string, patch: { name?: string; description?: string | null; position?: number; clientId?: string | null }): Promise<WorkList> {
   return db.transaction(async (raw) => {
     const tx = raw as unknown as Db;
     const set: Partial<typeof schema.workLists.$inferInsert> = { updatedAt: new Date() };
     if (patch.name !== undefined) set.name = name(patch.name, 'a lista');
     if (patch.description !== undefined) set.description = patch.description;
     if (patch.position !== undefined) set.position = patch.position;
+    if (patch.clientId !== undefined) { await assertClient(tx, ctx, patch.clientId); set.clientId = patch.clientId; }
     const [row] = await tx.update(schema.workLists).set(set).where(and(eq(schema.workLists.id, id), eq(schema.workLists.organizationId, ctx.organizationId))).returning();
     if (!row) throw notFound('Lista');
     await recordActivity(tx, ctx, { entityType: 'list', entityId: id, action: 'updated', data: { fields: Object.keys(patch) } });
@@ -244,7 +247,7 @@ export async function setArchived(ctx: WorkContext, kind: ContainerKind, id: str
 
 // ── Árvore (para o menu lateral) ─────────────────────────────────────────
 
-export interface TreeList { id: string; name: string; folderId: string | null; projectId: string | null; archived: boolean; openTaskCount: number }
+export interface TreeList { id: string; name: string; folderId: string | null; projectId: string | null; clientId: string | null; archived: boolean; openTaskCount: number }
 export interface TreeProject { id: string; name: string; folderId: string | null; clientId: string | null; status: string; archived: boolean }
 export interface TreeFolder { id: string; name: string; archived: boolean }
 export interface TreeSpace { id: string; name: string; color: string | null; icon: string | null; archived: boolean; folders: TreeFolder[]; projects: TreeProject[]; lists: TreeList[] }
@@ -271,6 +274,6 @@ export async function getTree(ctx: WorkContext, opts: { includeArchived?: boolea
     archived: s.archivedAt !== null,
     folders: folders.filter((f) => f.spaceId === s.id && visible(f)).map((f) => ({ id: f.id, name: f.name, archived: f.archivedAt !== null })),
     projects: projects.filter((p) => p.spaceId === s.id && visible(p)).map((p) => ({ id: p.id, name: p.name, folderId: p.folderId, clientId: p.clientId, status: p.status, archived: p.archivedAt !== null })),
-    lists: lists.filter((l) => l.spaceId === s.id && visible(l)).map((l) => ({ id: l.id, name: l.name, folderId: l.folderId, projectId: l.projectId, archived: l.archivedAt !== null, openTaskCount: abertas.get(l.id) ?? 0 })),
+    lists: lists.filter((l) => l.spaceId === s.id && visible(l)).map((l) => ({ id: l.id, name: l.name, folderId: l.folderId, projectId: l.projectId, clientId: l.clientId, archived: l.archivedAt !== null, openTaskCount: abertas.get(l.id) ?? 0 })),
   }));
 }

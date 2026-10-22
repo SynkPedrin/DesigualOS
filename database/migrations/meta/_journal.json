@@ -589,6 +589,13 @@
       "when": 1792611395268,
       "tag": "0083_daily_tasks_produtividade_automacoes",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792696695349,
+      "tag": "0084_work_lists_client",
+      "breakpoints": true
     }
   ]
 }

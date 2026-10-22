@@ -31,7 +31,7 @@ export function CriarTarefaDaily({ conversationId, messageId, senderName, texto,
       body: JSON.stringify({
         provider: 'communication', externalType: 'message', externalId: messageId, listId, title: titulo.trim(),
         description: `Origem: mensagem de ${senderName ?? 'alguém'} na Comunicação.\n\n> ${texto.slice(0, 1500)}\n\nAbrir a conversa: /comunicacao?c=${conversationId}&m=${messageId}`,
-        clientId: cliente || null, priority: Number(prio), ...(resp ? { assigneeIds: [resp] } : {}), ...(prazo ? { dueAt: new Date(`${prazo}T18:00:00`).toISOString() } : {}),
+        ...(cliente ? { clientId: cliente } : {}), priority: Number(prio), ...(resp ? { assigneeIds: [resp] } : {}), ...(prazo ? { dueAt: new Date(`${prazo}T18:00:00`).toISOString() } : {}),
         meta: { conversationId },
       }),
     }),

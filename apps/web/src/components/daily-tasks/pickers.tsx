@@ -3,6 +3,7 @@
 import { Check } from 'lucide-react';
 import { PRIORIDADES, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
 import { Avatar, AvatarStack, DueDate, Popover, PriorityFlag, StatusPill } from './primitivas';
+import { EmblemaDePrioridade } from './ui';
 
 const item = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-branco-cru hover:bg-grafite-elevado';
 
@@ -20,9 +21,9 @@ export function StatusPicker({ tarefa, statuses, onChange }: { tarefa: WorkTaskW
   );
 }
 
-export function PriorityPicker({ tarefa, onChange, comTexto }: { tarefa: WorkTaskWire; onChange: (p: number) => void; comTexto?: boolean }) {
+export function PriorityPicker({ tarefa, onChange, comTexto, badge }: { tarefa: WorkTaskWire; onChange: (p: number) => void; comTexto?: boolean; badge?: boolean }) {
   return (
-    <Popover label={`Prioridade de ${tarefa.key}`} trigger={<PriorityFlag valor={tarefa.priority} {...(comTexto !== undefined ? { comTexto } : {})} />}>
+    <Popover label={`Prioridade de ${tarefa.key}`} trigger={badge ? <EmblemaDePrioridade valor={tarefa.priority} /> : <PriorityFlag valor={tarefa.priority} {...(comTexto !== undefined ? { comTexto } : {})} />}>
       {(fechar) => [1, 2, 3, 4, 0].map((p) => (
         <button key={p} type="button" className={item} onClick={() => { fechar(); if (p !== tarefa.priority) onChange(p); }}>
           <PriorityFlag valor={p} comTexto />

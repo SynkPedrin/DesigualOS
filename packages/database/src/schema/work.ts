@@ -104,6 +104,8 @@ export const workLists = pgTable(
     /** Lista pode viver direto no espaço, numa pasta ou num projeto. */
     folderId: uuid('folder_id').references(() => workFolders.id, { onDelete: 'set null' }),
     projectId: uuid('project_id').references(() => workProjects.id, { onDelete: 'set null' }),
+    /** A lista é de um cliente: toda tarefa e subtarefa criada nela já nasce com este cliente. */
+    clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     description: text('description'),
     position: doublePrecision('position').notNull().default(0),

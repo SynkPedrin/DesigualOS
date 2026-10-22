@@ -26,7 +26,7 @@ export async function createTaskFromSource(
     eq(schema.workExternalMappings.externalType, src.externalType), eq(schema.workExternalMappings.externalId, src.externalId));
   const [ja] = await db.select().from(schema.workExternalMappings).where(chave);
   if (ja) return { task: await getTask(ctx, ja.entityId), created: false };
-  const task = await createTask(ctx, { listId: src.listId, title: src.title, description: src.description ?? null, clientId: src.clientId ?? null, ...(src.priority !== undefined ? { priority: src.priority } : {}), ...(src.assigneeIds ? { assigneeIds: src.assigneeIds } : {}), ...(src.dueAt !== undefined ? { dueAt: src.dueAt } : {}) });
+  const task = await createTask(ctx, { listId: src.listId, title: src.title, description: src.description ?? null, ...(src.clientId !== undefined ? { clientId: src.clientId } : {}), ...(src.priority !== undefined ? { priority: src.priority } : {}), ...(src.assigneeIds ? { assigneeIds: src.assigneeIds } : {}), ...(src.dueAt !== undefined ? { dueAt: src.dueAt } : {}) });
   const gravou = await db.insert(schema.workExternalMappings)
     .values({ organizationId: ctx.organizationId, provider: src.provider, externalType: src.externalType, externalId: src.externalId, entityType: 'task', entityId: task.id, meta: src.meta ?? {} })
     .onConflictDoNothing().returning({ id: schema.workExternalMappings.id });

@@ -149,8 +149,8 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
       const cli = clientePorNome.get(normalizar(l.name));
       if (cli) { clienteDaLista.set(l.id, cli.id); report.clientesCasados.push({ lista: l.name, cliente: cli.name }); } else report.listasSemCliente.push(l.name);
       const lid = idDe('list', l.id);
-      if (lid) { await tx.update(schema.workLists).set({ name: l.name, description: l.content ?? null, folderId, archivedAt: larq }).where(eq(schema.workLists.id, lid)); bump('listas', false); }
-      else { const nid = randomUUID(); await tx.insert(schema.workLists).values({ id: nid, organizationId: org, spaceId, folderId, name: l.name, description: l.content ?? null, position: (i + 1) * 1000, archivedAt: larq, createdBy: ctx.userId }); registrar('list', l.id, 'list', nid); bump('listas', true); }
+      if (lid) { await tx.update(schema.workLists).set({ name: l.name, description: l.content ?? null, folderId, ...(cli ? { clientId: cli.id } : {}), archivedAt: larq }).where(eq(schema.workLists.id, lid)); bump('listas', false); }
+      else { const nid = randomUUID(); await tx.insert(schema.workLists).values({ id: nid, organizationId: org, spaceId, folderId, clientId: cli?.id ?? null, name: l.name, description: l.content ?? null, position: (i + 1) * 1000, archivedAt: larq, createdBy: ctx.userId }); registrar('list', l.id, 'list', nid); bump('listas', true); }
     }
 
     // ── campos personalizados (definição por espaço)

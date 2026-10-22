@@ -51,6 +51,7 @@ import {
   startTimer,
   stopTimer,
   updateAutomation,
+  workOverview,
   workReport,
   addChecklistItem,
   addComment,
@@ -209,12 +210,12 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post('/work/lists', guard, async (request, reply) => {
-    const b = z.object({ spaceId: uuid, folderId: uuid.nullable().optional(), projectId: uuid.nullable().optional(), name: z.string(), description: z.string().max(5000).nullable().optional() }).safeParse(request.body);
+    const b = z.object({ spaceId: uuid, folderId: uuid.nullable().optional(), projectId: uuid.nullable().optional(), clientId: uuid.nullable().optional(), name: z.string(), description: z.string().max(5000).nullable().optional() }).safeParse(request.body);
     if (!b.success) return reply.code(400).send({ error: b.error.issues.map((i) => i.message).join(' ') });
     try { return await createList(workContext(request), defined(b.data) as never); } catch (e) { return fail(reply, e); }
   });
   app.patch<{ Params: { id: string } }>('/work/lists/:id', guard, async (request, reply) => {
-    const b = z.object({ name: z.string().optional(), description: z.string().max(5000).nullable().optional(), position: z.number().optional() }).safeParse(request.body);
+    const b = z.object({ name: z.string().optional(), description: z.string().max(5000).nullable().optional(), position: z.number().optional(), clientId: uuid.nullable().optional() }).safeParse(request.body);
     if (!b.success || !uuid.safeParse(request.params.id).success) return reply.code(400).send({ error: 'Dados inválidos.' });
     try { return await renameList(workContext(request), request.params.id, defined(b.data)); } catch (e) { return fail(reply, e); }
   });
@@ -465,6 +466,13 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   });
   /** Roda um ciclo do motor agora (útil para ver o efeito sem esperar o relógio). Só administrador da plataforma. */
   app.post('/work/admin/automations/tick', { preHandler: adminOnly }, async () => automationTick());
+
+  // ── Painel do topo (cartões + lateral)
+  app.get<{ Querystring: { space_id?: string; list_id?: string; client_id?: string } }>('/work/overview', guard, async (request, reply) => {
+    const q = z.object({ space_id: uuid.optional(), list_id: uuid.optional(), client_id: uuid.optional() }).safeParse(request.query);
+    if (!q.success) return bad(reply);
+    return workOverview(workContext(request), defined({ spaceId: q.data.space_id, listId: q.data.list_id, clientId: q.data.client_id }) as never);
+  });
 
   // ── Relatórios
   app.get<{ Querystring: { space_id?: string; weeks?: string } }>('/work/reports', guard, async (request, reply) => {

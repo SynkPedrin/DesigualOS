@@ -11,13 +11,15 @@ import { cn } from '@/lib/utils';
 import { TempoCorrendo } from '@/components/daily-tasks/tempo';
 
 const ABAS: Array<{ href: string; label: string }> = [
-  { href: '/daily-tasks', label: 'Todas as Tarefas' },
+  { href: '/daily-tasks', label: 'Tarefas' },
   { href: '/daily-tasks/meu-trabalho', label: 'Meu Trabalho' },
   { href: '/daily-tasks/caixa-de-entrada', label: 'Caixa de Entrada' },
   { href: '/daily-tasks/calendario', label: 'Calendário' },
-  { href: '/daily-tasks/automacoes', label: 'Automações' },
   { href: '/daily-tasks/relatorios', label: 'Relatórios' },
+];
+const GERENCIAMENTO: Array<{ href: string; label: string }> = [
   { href: '/daily-tasks/modelos', label: 'Modelos' },
+  { href: '/daily-tasks/automacoes', label: 'Automações' },
   { href: '/daily-tasks/configuracoes', label: 'Configurações' },
 ];
 
@@ -44,6 +46,11 @@ export default function DailyTasksLayout({ children }: { children: React.ReactNo
             {a.label}
             {a.href.endsWith('caixa-de-entrada') && naoLidas > 0 && <span className="rounded-full bg-sinal px-1.5 text-[10px] font-semibold text-grafite">{naoLidas > 99 ? '99+' : naoLidas}</span>}
           </Link>
+        ))}
+        <span aria-hidden className="mx-2 hidden h-5 w-px bg-grafite-elevado md:block" />
+        <span className="hidden text-[10px] uppercase tracking-[0.14em] text-nevoa/60 md:block">Gerenciamento</span>
+        {GERENCIAMENTO.map((a) => (
+          <Link key={a.href} href={a.href} className={cn('-mb-px border-b-2 px-3 py-2 text-sm', pathname === a.href ? 'border-sinal font-medium text-branco-cru' : 'border-transparent text-nevoa hover:text-branco-cru')}>{a.label}</Link>
         ))}
         {rodando && (
           <div className="ml-auto flex items-center gap-2 rounded-md bg-grafite px-2 py-1 text-xs text-branco-cru" role="status" aria-label="Cronômetro em andamento">

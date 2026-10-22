@@ -10,7 +10,7 @@ export interface WorkTreeSpace {
   archived: boolean;
   folders: Array<{ id: string; name: string; archived: boolean }>;
   projects: Array<{ id: string; name: string; folderId: string | null; clientId: string | null; status: string; archived: boolean }>;
-  lists: Array<{ id: string; name: string; folderId: string | null; projectId: string | null; archived: boolean; openTaskCount: number }>;
+  lists: Array<{ id: string; name: string; folderId: string | null; projectId: string | null; clientId: string | null; archived: boolean; openTaskCount: number }>;
 }
 
 export interface WorkStatus {
@@ -105,6 +105,7 @@ export interface WorkTaskFilters {
   q?: string | undefined;
   assigneeId?: string | null;
   priorities?: number[];
+  statusIds?: string[];
   dueFrom?: string;
   dueTo?: string;
   completed?: boolean | undefined;
@@ -125,6 +126,7 @@ export function useWorkTasks(f: WorkTaskFilters) {
   if (f.q) params.set('q', f.q);
   if (f.assigneeId) params.set('assignee_id', f.assigneeId);
   if (f.priorities?.length) params.set('priorities', f.priorities.join(','));
+  if (f.statusIds?.length) params.set('status_ids', f.statusIds.join(','));
   if (f.dueFrom) params.set('due_from', f.dueFrom);
   if (f.dueTo) params.set('due_to', f.dueTo);
   if (f.includeSubtasks) params.set('include_subtasks', 'true');
@@ -178,7 +180,7 @@ export function useCreateTask() {
     mutationFn: (b: { listId: string; title: string; statusId?: string; parentTaskId?: string; priority?: number; dueAt?: string | null; assigneeIds?: string[] }) =>
       // Uma chave por tentativa: o duplo clique reenvia a mesma chave da mutação, nunca cria duas tarefas.
       apiFetch('/work/tasks', jsonInit('POST', b, { 'Idempotency-Key': crypto.randomUUID() })),
-    onSuccess: () => inv('tasks', 'detail'),
+    onSuccess: () => inv('tasks', 'detail', 'tree', 'overview'),
   });
 }
 
@@ -211,7 +213,7 @@ export function useUpdateTask() {
         return apiFetch(`/work/tasks/${id}`, jsonInit('PATCH', { ...rest, expectedVersion: atual.version }));
       }
     },
-    onSettled: () => inv('tasks', 'detail', 'tree', 'inbox'),
+    onSettled: () => inv('tasks', 'detail', 'tree', 'inbox', 'overview'),
     onError: (e) => toast(e instanceof ApiRequestError ? e.message : 'Não foi possível salvar a alteração.', 'error'),
   });
 }

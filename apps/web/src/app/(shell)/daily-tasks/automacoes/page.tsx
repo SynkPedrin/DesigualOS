@@ -1,7 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Pencil, Play, Plus, Sparkles, Trash2, X, Zap } from 'lucide-react';
+import { Pencil, PauseCircle, Play, Plus, Sparkles, Trash2, X, Zap } from 'lucide-react';
+import { StatCard } from '@/components/daily-tasks/ui';
+import { LogoDoCliente, nomeLimpo } from '@/components/daily-tasks/cliente';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Surface } from '@/components/ui/surface';
@@ -147,6 +149,19 @@ export default function AutomacoesPage() {
 
   return (
     <div className="space-y-6">
+      <header className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="font-heading text-3xl font-semibold text-branco-cru">Automações</h1>
+          <p className="text-sm text-nevoa">Regras que trabalham sozinhas: quando algo acontece numa tarefa, o sistema faz o resto e registra cada execução.</p>
+        </div>
+        <button type="button" onClick={() => { setForm(vazio()); setEditando(null); setAberto(true); }} className="flex items-center gap-2 rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite hover:brightness-110"><Plus size={16} /> Nova automação</button>
+      </header>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatCard icone={Zap} rotulo="Automações ativas" valor={(lista.data?.automations ?? []).filter((a) => a.enabled).length} tom="verde" />
+        <StatCard icone={PauseCircle} rotulo="Pausadas" valor={(lista.data?.automations ?? []).filter((a) => !a.enabled).length} tom="amarelo" />
+        <StatCard icone={Play} rotulo="Execuções no total" valor={(lista.data?.automations ?? []).reduce((n, a) => n + a.runCount, 0)} tom="roxo" />
+        <StatCard icone={Sparkles} rotulo="Receitas prontas" valor={RECEITAS.length} detalhe="clique numa para começar" />
+      </div>
       <section aria-label="Receitas prontas" className="space-y-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-branco-cru"><Sparkles size={15} /> Comece por uma receita</h2>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -158,9 +173,7 @@ export default function AutomacoesPage() {
         </div>
       </section>
 
-      {!aberto ? (
-        <button type="button" onClick={() => { setForm(vazio()); setEditando(null); setAberto(true); }} className="flex items-center gap-2 rounded bg-sinal px-3 py-2 text-sm font-semibold text-grafite"><Plus size={14} /> Nova automação do zero</button>
-      ) : (
+      {!aberto ? null : (
         <Surface className="space-y-4 p-4">
           <div className="flex items-center justify-between"><h2 className="flex items-center gap-2 text-sm font-semibold text-branco-cru"><Zap size={15} /> {editando ? 'Editar automação' : 'Nova automação'}</h2><button type="button" aria-label="Fechar editor" onClick={() => { setAberto(false); setEditando(null); setForm(vazio()); }} className="text-nevoa hover:text-branco-cru"><X size={15} /></button></div>
           <input value={form.nome} onChange={(e) => set('nome', e.target.value)} placeholder="Nome (ex.: Avisar ao concluir)" aria-label="Nome da automação" className={cn(sel, 'w-full')} />
@@ -219,24 +232,34 @@ export default function AutomacoesPage() {
       )}
 
       {lista.isPending ? <Skeleton className="h-32 w-full" /> : (lista.data?.automations.length ?? 0) === 0 ? (
-        <EmptyState icon={Zap} title="Nenhuma automação ainda" description="Escolha uma receita acima ou crie do zero. Cada execução fica registrada aqui." />
+        <EmptyState icon={Zap} title="Nenhuma automação ainda" description="Escolha uma receita acima ou clique em Nova automação. Cada execução fica registrada aqui." />
       ) : (
-        <ul className="space-y-2" aria-label="Automações criadas">
-          {lista.data!.automations.map((a) => (
-            <li key={a.id} className="rounded-lg border border-grafite-elevado">
-              <div className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-                <label className="flex items-center gap-2 text-sm font-medium text-branco-cru"><input type="checkbox" checked={a.enabled} onChange={(e) => alternar.mutate({ id: a.id, enabled: e.target.checked })} aria-label={`Ativar ${a.name}`} />{a.name}</label>
-                <span className="min-w-0 flex-1 truncate text-xs text-nevoa">Quando {GATILHOS[a.trigger.type] ?? a.trigger.type} → {a.actions.map((x) => ACOES[x.type] ?? x.type).join(', ')}{a.listId ? ` · ${todasListas.find((l) => l.id === a.listId)?.rotulo ?? ''}` : ' · toda a empresa'}</span>
-                <button type="button" onClick={() => setExecutar(executar === a.id ? null : a.id)} className="flex items-center gap-1 rounded border border-grafite-elevado px-2 py-1 text-xs text-nevoa hover:text-branco-cru"><Play size={11} /> Executar agora</button>
-                <button type="button" onClick={() => { setForm(deAutomacao(a)); setEditando(a.id); setAberto(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }} aria-label={`Editar ${a.name}`} className="text-nevoa hover:text-branco-cru"><Pencil size={14} /></button>
-                <button type="button" onClick={() => setVerRuns(verRuns === a.id ? null : a.id)} className="text-xs text-nevoa hover:text-branco-cru">{a.runCount} execuções</button>
-                <button type="button" aria-label={`Apagar ${a.name}`} onClick={() => { if (window.confirm(`Apagar a automação "${a.name}"?`)) apagar.mutate(a.id); }} className="text-nevoa hover:text-red-400"><Trash2 size={14} /></button>
-              </div>
-              {executar === a.id && <ExecutarAgora auto={a} onClose={() => setExecutar(null)} />}
-              {verRuns === a.id && <div className="border-t border-grafite-elevado"><Execucoes id={a.id} /></div>}
-            </li>
-          ))}
-        </ul>
+        <div className="overflow-hidden rounded-xl border border-grafite-elevado" aria-label="Automações criadas">
+          <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_90px_80px_auto] items-center gap-3 border-b border-grafite-elevado px-4 py-2 text-[11px] uppercase tracking-wide text-nevoa"><span>Automação</span><span>Onde vale</span><span>Quando → então</span><span>Execuções</span><span>Ativa</span><span className="text-right">Ações</span></div>
+          <ul>
+            {lista.data!.automations.map((a) => {
+              const onde = todasListas.find((l) => l.id === a.listId)?.rotulo.split(' › ')[1];
+              return (
+                <li key={a.id} className="border-b border-grafite-elevado/60 last:border-0">
+                  <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_90px_80px_auto] items-center gap-3 px-4 py-3">
+                    <span className="truncate text-sm font-medium text-branco-cru">{a.name}</span>
+                    <span className="flex min-w-0 items-center gap-2 text-sm text-nevoa">{onde && <LogoDoCliente nome={nomeLimpo(onde)} className="!size-5" />}<span className="truncate">{onde ?? 'Toda a empresa'}</span></span>
+                    <span className="truncate text-xs text-nevoa" title={`Quando ${GATILHOS[a.trigger.type] ?? a.trigger.type} → ${a.actions.map((x) => ACOES[x.type] ?? x.type).join(", ")}`}>Quando {GATILHOS[a.trigger.type] ?? a.trigger.type} → {a.actions.map((x) => ACOES[x.type] ?? x.type).join(', ')}</span>
+                    <button type="button" onClick={() => setVerRuns(verRuns === a.id ? null : a.id)} className="text-left text-sm text-branco-cru hover:underline" title="Ver o histórico">{a.runCount}</button>
+                    <label className="flex items-center gap-1.5 text-xs text-nevoa"><input type="checkbox" checked={a.enabled} onChange={(e) => alternar.mutate({ id: a.id, enabled: e.target.checked })} aria-label={`Ativar ${a.name}`} />{a.enabled ? 'Ativa' : 'Pausada'}</label>
+                    <span className="flex items-center justify-end gap-1.5">
+                      <button type="button" onClick={() => setExecutar(executar === a.id ? null : a.id)} className="flex items-center gap-1 rounded-md bg-grafite-elevado px-2.5 py-1 text-xs font-medium text-branco-cru hover:bg-sinal hover:text-grafite"><Play size={11} /> Executar agora</button>
+                      <button type="button" onClick={() => { setForm(deAutomacao(a)); setEditando(a.id); setAberto(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }} aria-label={`Editar ${a.name}`} className="flex items-center gap-1 rounded-md border border-grafite-elevado px-2.5 py-1 text-xs text-branco-cru hover:bg-grafite-elevado"><Pencil size={11} /> Editar</button>
+                      <button type="button" aria-label={`Apagar ${a.name}`} onClick={() => { if (window.confirm(`Apagar a automação "${a.name}"?`)) apagar.mutate(a.id); }} className="rounded-md p-1.5 text-nevoa hover:bg-red-500/10 hover:text-red-400"><Trash2 size={14} /></button>
+                    </span>
+                  </div>
+                  {executar === a.id && <ExecutarAgora auto={a} onClose={() => setExecutar(null)} />}
+                  {verRuns === a.id && <div className="border-t border-grafite-elevado"><Execucoes id={a.id} /></div>}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </div>
   );

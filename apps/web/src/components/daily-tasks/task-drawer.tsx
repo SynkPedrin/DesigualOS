@@ -111,7 +111,8 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const comentRef = useRef<HTMLTextAreaElement>(null);
   const t = data?.task;
   useEffect(() => { if (t) { setTitulo(t.title); setDesc(t.description ?? ''); } }, [t?.id, t?.version]);
-  useEffect(() => { const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc); }, [onClose]);
+  const fecharRef = useRef<() => void>(onClose);
+  useEffect(() => { const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') fecharRef.current(); }; document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc); }, []);
 
   const st = statuses.data?.statuses ?? [];
   const erro = (e: unknown) => toast(e instanceof ApiRequestError ? e.message : 'Não foi possível concluir.', 'error');
@@ -126,24 +127,32 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
     setComent((c) => `${c}${c && !c.endsWith(' ') ? ' ' : ''}@[${m.name}](${m.id}) `);
     comentRef.current?.focus();
   };
+  const alterado = Boolean(t) && (titulo !== t!.title || desc !== (t!.description ?? ''));
+  const salvarRascunho = async () => {
+    if (!t || !titulo.trim()) return;
+    await salvar({ ...(titulo.trim() !== t.title ? { title: titulo.trim() } : {}), ...(desc !== (t.description ?? '') ? { description: desc || null } : {}) });
+    toast('Alterações salvas.', 'success');
+  };
+  const tentarFechar = () => { if (alterado && !window.confirm('Há alterações NÃO salvas nesta tarefa. Fechar e perder o que você escreveu?')) return; onClose(); };
+  fecharRef.current = tentarFechar;
   const meuTimerNesta = timer.data?.running?.taskId === taskId;
   const cliente = useMemo(() => clientes.find((c) => c.id === t?.clientId) ?? null, [clientes, t?.clientId]);
   const feitas = data?.subtaskIds.length ? data.task.subtaskDone : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={tentarFechar}>
       <aside role="dialog" aria-label="Detalhes da tarefa" onClick={(e) => e.stopPropagation()} className="flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-grafite-elevado bg-carbono shadow-elevated">
         <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-grafite-elevado bg-carbono px-4 py-2 text-xs text-nevoa">
           <span className="font-mono">{t?.key}</span>
           {data?.list && <span className="flex items-center gap-1.5">em <LogoDoCliente nome={nomeLimpo(data.list.name)} className="!size-5" />{data.list.name}</span>}
           {t?.archivedAt && <span className="rounded bg-aviso/20 px-1.5 py-0.5 text-aviso">arquivada</span>}
-          <button type="button" onClick={onClose} aria-label="Fechar" className="ml-auto flex items-center gap-1 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado"><X size={14} /> Fechar</button>
+          <button type="button" onClick={tentarFechar} aria-label="Fechar" className="ml-auto flex items-center gap-1 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado"><X size={14} /> Fechar</button>
         </header>
         {isPending && <p className="p-6 text-sm text-nevoa">Carregando…</p>}
         {error && <p role="alert" className="p-6 text-sm text-red-400">Não foi possível abrir a tarefa.</p>}
         {data && t && (
           <div className="space-y-6 p-6">
-            <input value={titulo} onChange={(e) => setTitulo(e.target.value)} onBlur={() => { if (titulo.trim() && titulo !== t.title) void salvar({ title: titulo.trim() }); }} aria-label="Título" className="w-full bg-transparent font-heading text-2xl font-semibold text-branco-cru outline-none" />
+            <input value={titulo} onChange={(e) => setTitulo(e.target.value)} aria-label="Título" className="w-full bg-transparent font-heading text-2xl font-semibold text-branco-cru outline-none" />
             <div role="toolbar" aria-label="Ações da tarefa" className="flex flex-wrap gap-2">
               {(() => {
                 const feita = t.status?.category === 'done';
@@ -201,7 +210,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
 
             <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
               <Titulo>Descrição</Titulo>
-              <textarea value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={() => { if (desc !== (t.description ?? '')) void salvar({ description: desc || null }); }} rows={6} placeholder="Adicione uma descrição" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
+              <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={6} placeholder="Adicione uma descrição" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
             </section>
 
             <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
@@ -294,6 +303,13 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </form>
             </section>
           </div>
+        )}
+        {t && (
+          <footer className={cn('sticky bottom-0 z-10 flex items-center gap-3 border-t px-6 py-3', alterado ? 'border-sinal/60 bg-grafite' : 'border-grafite-elevado bg-carbono')}>
+            <span className={cn('text-sm', alterado ? 'font-medium text-aviso' : 'text-nevoa')}>{alterado ? 'Você tem alterações não salvas' : 'Tudo salvo — status, responsáveis, prazo, prioridade e cliente salvam na hora'}</span>
+            <button type="button" disabled={!alterado} onClick={() => { setTitulo(t.title); setDesc(t.description ?? ''); }} className="ml-auto rounded-lg border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa hover:text-branco-cru disabled:opacity-40">Descartar</button>
+            <button type="button" disabled={!alterado || !titulo.trim() || atualizar.isPending} onClick={() => void salvarRascunho()} className="rounded-lg bg-sinal px-4 py-1.5 text-sm font-semibold text-grafite disabled:opacity-40">{atualizar.isPending ? 'Salvando…' : 'Salvar alterações'}</button>
+          </footer>
         )}
       </aside>
     </div>

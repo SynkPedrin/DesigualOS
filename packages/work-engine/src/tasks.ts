@@ -229,6 +229,7 @@ export async function createTask(ctx: WorkContext, input: CreateTaskInput): Prom
 
     const list = await loadList(tx, ctx, input.listId);
     let depth = 0;
+    let clientePai: string | null = null;
     if (input.parentTaskId) {
       const [parent] = await tx
         .select()
@@ -236,12 +237,15 @@ export async function createTask(ctx: WorkContext, input: CreateTaskInput): Prom
         .where(and(eq(schema.workTasks.id, input.parentTaskId), eq(schema.workTasks.organizationId, ctx.organizationId), isNull(schema.workTasks.archivedAt)));
       if (!parent) throw invalid('Tarefa-mãe não encontrada.');
       if (parent.listId !== list.id) throw invalid('A subtarefa precisa ficar na mesma lista da tarefa-mãe.');
+      clientePai = parent.clientId;
       depth = parent.depth + 1;
       if (depth > MAX_SUBTASK_DEPTH) throw conflict(`Profundidade máxima de subtarefas (${MAX_SUBTASK_DEPTH}) atingida.`);
     }
 
     const status = input.statusId ? await statusInSpace(tx, ctx, input.statusId, list.spaceId) : await initialStatusOf(tx, ctx, list.spaceId);
-    await assertClient(tx, ctx, input.clientId);
+    // O cliente NÃO se pede de novo: vem de quem já o tem — a tarefa-mãe, ou a própria lista do cliente.
+    const clienteFinal = input.clientId !== undefined ? input.clientId : (clientePai ?? list.clientId ?? null);
+    await assertClient(tx, ctx, clienteFinal);
     const assignees = await validateAssignees(tx, ctx, input.assigneeIds);
     const number = await nextNumber(tx, ctx);
     const position = await nextPosition(tx, ctx, list.id, input.parentTaskId ?? null);
@@ -254,7 +258,7 @@ export async function createTask(ctx: WorkContext, input: CreateTaskInput): Prom
         listId: list.id,
         parentTaskId: input.parentTaskId ?? null,
         depth,
-        clientId: input.clientId ?? null,
+        clientId: clienteFinal,
         title,
         description: input.description ?? null,
         statusId: status.id,
@@ -420,6 +424,13 @@ export async function updateTask(ctx: WorkContext, id: string, patch: UpdateTask
 
     const [row] = await tx.update(schema.workTasks).set(set).where(and(eq(schema.workTasks.id, id), eq(schema.workTasks.version, cur.version))).returning();
     if (!row) throw conflict('A tarefa foi alterada por outra pessoa. Recarregue antes de salvar.');
+    // Trocar o cliente da tarefa troca o das subtarefas junto (uma tarefa e suas subtarefas são sempre do mesmo cliente).
+    if (patch.clientId !== undefined && patch.clientId !== cur.clientId) {
+      await tx.execute(sql`with recursive d as (
+          select id from work_tasks where parent_task_id = ${id} and organization_id = ${ctx.organizationId}
+          union select t.id from work_tasks t join d on t.parent_task_id = d.id where t.organization_id = ${ctx.organizationId})
+        update work_tasks set client_id = ${patch.clientId}::uuid, updated_at = now() where id in (select id from d)`);
+    }
 
     if (patch.assigneeIds !== undefined) {
       const next = await validateAssignees(tx, ctx, patch.assigneeIds);
@@ -480,7 +491,7 @@ export async function moveTask(ctx: WorkContext, id: string, to: { listId?: stri
     const position = to.position ?? (await nextPosition(tx, ctx, targetListId, newParent ?? null));
     const [row] = await tx
       .update(schema.workTasks)
-      .set({ listId: targetListId, parentTaskId: newParent ?? null, depth, position, version: cur.version + 1, updatedAt: new Date() })
+      .set({ listId: targetListId, parentTaskId: newParent ?? null, depth, position, ...(cur.clientId === null && list.clientId ? { clientId: list.clientId } : {}), version: cur.version + 1, updatedAt: new Date() })
       .where(eq(schema.workTasks.id, id))
       .returning();
     const descendants = sub.filter((s) => s.id !== id).map((s) => s.id);
