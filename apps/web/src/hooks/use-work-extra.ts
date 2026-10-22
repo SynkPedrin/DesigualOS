@@ -4,9 +4,10 @@ import { apiFetch } from '@/lib/api/client';
 const init = (method: string, body?: unknown): RequestInit => (body === undefined ? { method } : { method, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
 const useInv = () => { const qc = useQueryClient(); return (...k: string[]) => Promise.all(k.map((x) => qc.invalidateQueries({ queryKey: ['work', x] }))); };
 
-export interface InboxItem { id: string; taskId: string; taskKey: string; taskTitle: string; action: string; actorName: string; actorAvatar: string | null; data: Record<string, unknown>; createdAt: string; unread: boolean }
-export function useInbox() {
-  return useQuery({ queryKey: ['work', 'inbox'], queryFn: () => apiFetch<{ items: InboxItem[]; unread: number }>('/work/inbox'), refetchInterval: 30_000 });
+export interface InboxEntry { id: string; kind: 'task' | 'communication' | 'system'; actorName: string; actorAvatar: string | null; verb: string; subject: string; snippet: string | null; link: string; taskId: string | null; mention: boolean; unread: boolean; createdAt: string }
+export interface InboxData { items: InboxEntry[]; unread: number; unreadByKind: { task: number; communication: number; system: number } }
+export function useInbox(enabled = true) {
+  return useQuery({ queryKey: ['work', 'inbox'], enabled, queryFn: () => apiFetch<InboxData>('/work/inbox'), refetchInterval: 30_000 });
 }
 export function useMarkInboxRead() {
   const inv = useInv();
@@ -106,4 +107,60 @@ export function useSavedViewActions() {
     salvar: useMutation({ mutationFn: (b: { name: string; config: SavedView['config']; shared?: boolean }) => apiFetch('/work/views', init('POST', b)), onSuccess: () => inv('views') }),
     apagar: useMutation({ mutationFn: (id: string) => apiFetch(`/work/views/${id}`, init('DELETE')), onSuccess: () => inv('views') }),
   };
+}
+
+// ── Editar / excluir tudo da tarefa
+export function useTaskCrud(taskId: string) {
+  const inv = useInv();
+  const ok = () => inv('detail', 'tasks', 'tree', 'inbox');
+  return {
+    editarComentario: useMutation({ mutationFn: (b: { id: string; body: string }) => apiFetch(`/work/comments/${b.id}`, init('PATCH', { body: b.body })), onSuccess: ok }),
+    apagarComentario: useMutation({ mutationFn: (id: string) => apiFetch(`/work/comments/${id}`, init('DELETE')), onSuccess: ok }),
+    renomearChecklist: useMutation({ mutationFn: (b: { id: string; name: string }) => apiFetch(`/work/checklists/${b.id}`, init('PATCH', { name: b.name })), onSuccess: ok }),
+    apagarChecklist: useMutation({ mutationFn: (id: string) => apiFetch(`/work/checklists/${id}`, init('DELETE')), onSuccess: ok }),
+    editarItem: useMutation({ mutationFn: (b: { id: string; text?: string; done?: boolean; assigneeId?: string | null }) => { const { id, ...rest } = b; return apiFetch(`/work/checklist-items/${id}`, init('PATCH', rest)); }, onSuccess: ok }),
+    apagarItem: useMutation({ mutationFn: (id: string) => apiFetch(`/work/checklist-items/${id}`, init('DELETE')), onSuccess: ok }),
+    anexar: useMutation({ mutationFn: (b: { url: string; fileName?: string }) => apiFetch(`/work/tasks/${taskId}/attachments`, init('POST', b)), onSuccess: ok }),
+    apagarAnexo: useMutation({ mutationFn: (id: string) => apiFetch(`/work/attachments/${id}`, init('DELETE')), onSuccess: ok }),
+    dependencia: useMutation({ mutationFn: (b: { dependsOnId: string; kind: 'blocking' | 'related' }) => apiFetch(`/work/tasks/${taskId}/dependencies`, init('POST', b)), onSuccess: ok }),
+    removerDependencia: useMutation({ mutationFn: (other: string) => apiFetch(`/work/tasks/${taskId}/dependencies/${other}`, init('DELETE')), onSuccess: ok }),
+    arquivar: useMutation({ mutationFn: (arquivar: boolean) => apiFetch(`/work/tasks/${taskId}/${arquivar ? 'archive' : 'restore'}`, init('POST')), onSuccess: ok }),
+    excluir: useMutation({ mutationFn: () => apiFetch(`/work/tasks/${taskId}`, init('DELETE')), onSuccess: ok }),
+    mover: useMutation({ mutationFn: (listId: string) => apiFetch(`/work/tasks/${taskId}/move`, init('POST', { listId })), onSuccess: ok }),
+  };
+}
+export function useMoveTask() {
+  const inv = useInv();
+  return useMutation({ mutationFn: (b: { id: string; listId: string }) => apiFetch(`/work/tasks/${b.id}/move`, init('POST', { listId: b.listId })), onSuccess: () => inv('tasks', 'detail', 'tree') });
+}
+export function useTaskArchiveActions() {
+  const inv = useInv();
+  return {
+    arquivar: useMutation({ mutationFn: (b: { id: string; arquivar: boolean }) => apiFetch(`/work/tasks/${b.id}/${b.arquivar ? 'archive' : 'restore'}`, init('POST')), onSuccess: () => inv('tasks', 'detail', 'tree') }),
+    excluir: useMutation({ mutationFn: (id: string) => apiFetch(`/work/tasks/${id}`, init('DELETE')), onSuccess: () => inv('tasks', 'detail', 'tree') }),
+  };
+}
+
+// ── Árvore: renomear / arquivar / excluir espaço, pasta, lista
+export function useContainerActions() {
+  const inv = useInv();
+  const ok = () => inv('tree', 'tasks', 'statuses');
+  return {
+    renomear: useMutation({
+      mutationFn: (b: { kind: 'space' | 'folder' | 'list'; id: string; name: string }) => apiFetch(`/work/${b.kind === 'space' ? 'spaces' : b.kind === 'folder' ? 'folders' : 'lists'}/${b.id}`, init('PATCH', { name: b.name })),
+      onSuccess: ok,
+    }),
+    arquivar: useMutation({ mutationFn: (b: { kind: 'space' | 'folder' | 'list'; id: string; arquivar: boolean }) => apiFetch(`/work/${b.kind === 'space' ? 'spaces' : b.kind === 'folder' ? 'folders' : 'lists'}/${b.id}/${b.arquivar ? 'archive' : 'restore'}`, init('POST')), onSuccess: ok }),
+    excluir: useMutation({ mutationFn: (b: { kind: 'space' | 'folder' | 'list'; id: string }) => apiFetch(`/work/${b.kind}/${b.id}`, init('DELETE')), onSuccess: ok }),
+    criarPasta: useMutation({ mutationFn: (b: { spaceId: string; name: string }) => apiFetch('/work/folders', init('POST', b)), onSuccess: ok }),
+  };
+}
+
+export function useTestAutomation() {
+  const inv = useInv();
+  return useMutation({ mutationFn: (b: { id: string; taskId: string }) => apiFetch<{ status: 'ok' | 'failed' | 'skipped'; detail: Record<string, unknown> }>(`/work/automations/${b.id}/test`, init('POST', { taskId: b.taskId })), onSuccess: () => inv('automations', 'automation-runs', 'tasks', 'detail') });
+}
+export function useUpdateAutomation() {
+  const inv = useInv();
+  return useMutation({ mutationFn: (b: { id: string } & Partial<Omit<WorkAutomation, 'id' | 'runCount' | 'lastRunAt'>>) => { const { id, ...rest } = b; return apiFetch(`/work/automations/${id}`, init('PATCH', rest)); }, onSuccess: () => inv('automations') });
 }

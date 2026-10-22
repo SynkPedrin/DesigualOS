@@ -15,6 +15,7 @@ import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { useChatUnread } from '@/hooks/use-internal-chat';
+import { useInbox } from '@/hooks/use-work-extra';
 import { supabase } from '@/lib/supabase/client';
 import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
 import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
@@ -133,7 +134,9 @@ export function Sidebar({
   // Contador da Comunicação: só pergunta se o item está na barra.
   const comunicacaoVisivel = visibleNavItems.some((i) => i.href === '/comunicacao');
   const { data: chatNaoLidas = 0 } = useChatUnread(comunicacaoVisivel);
-  const badgeDe = (href: string) => (href === '/comunicacao' ? chatNaoLidas : 0);
+  // Daily Tasks: só pergunta quando o módulo está liberado para esta pessoa (o item nem existe senão).
+  const { data: dailyInbox } = useInbox(dailyTasksAccess?.allowed === true);
+  const badgeDe = (href: string) => (href === '/comunicacao' ? chatNaoLidas : href === '/daily-tasks' ? (dailyInbox?.unreadByKind.task ?? 0) + (dailyInbox?.unreadByKind.system ?? 0) : 0);
 
   const [abertas, setAbertas] = useState<Set<string>>(
     () =>

@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, GitFork, Plus } from 'lucide-react';
 import { useWorkTasks, type TaskPatch, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
 import { AssigneePicker, DuePicker, PriorityPicker } from './pickers';
+import { RowMenu } from './row-menu';
+import { TASK_DRAG } from './tree';
 import { StatusDot, StatusPill } from './primitivas';
 
 export interface TaskActions {
@@ -13,88 +15,89 @@ export interface TaskActions {
   criar: (b: { title: string; statusId?: string; parentTaskId?: string; listId: string }) => void;
 }
 
-const COLUNAS = 'grid-cols-[minmax(0,1fr)_110px_130px_120px] md:grid-cols-[minmax(0,1fr)_150px_150px_150px]';
+const COLUNAS = 'grid-cols-[minmax(0,1fr)_120px_110px_130px_32px] md:grid-cols-[minmax(0,1fr)_160px_150px_150px_36px]';
 
 function InlineAdd({ rotulo, onSubmit, recuo = 0 }: { rotulo: string; onSubmit: (t: string) => void; recuo?: number }) {
   const [aberto, setAberto] = useState(false);
   const [txt, setTxt] = useState('');
   if (!aberto) {
     return (
-      <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-2 px-3 py-1.5 text-xs text-nevoa hover:text-branco-cru" style={{ paddingLeft: 36 + recuo }}>
+      <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-2 px-3 py-2 text-xs text-nevoa hover:text-branco-cru" style={{ paddingLeft: 40 + recuo }}>
         <Plus size={13} /> {rotulo}
       </button>
     );
   }
   return (
-    <form
-      className="px-3 py-1.5"
-      style={{ paddingLeft: 36 + recuo }}
-      onSubmit={(e) => { e.preventDefault(); if (txt.trim()) { onSubmit(txt.trim()); setTxt(''); } }}
-    >
-      <input
-        autoFocus
-        value={txt}
-        onChange={(e) => setTxt(e.target.value)}
-        onBlur={() => { if (!txt.trim()) setAberto(false); }}
-        onKeyDown={(e) => { if (e.key === 'Escape') { setTxt(''); setAberto(false); } }}
-        placeholder={`${rotulo} — Enter para criar, Esc para sair`}
-        className="w-full rounded border border-sinal/50 bg-carbono px-2 py-1 text-sm text-branco-cru outline-none"
-      />
+    <form className="px-3 py-2" style={{ paddingLeft: 40 + recuo }} onSubmit={(e) => { e.preventDefault(); if (txt.trim()) { onSubmit(txt.trim()); setTxt(''); } }}>
+      <input autoFocus value={txt} onChange={(e) => setTxt(e.target.value)} onBlur={() => { if (!txt.trim()) setAberto(false); }} onKeyDown={(e) => { if (e.key === 'Escape') { setTxt(''); setAberto(false); } }} placeholder={`${rotulo} — Enter para criar, Esc para sair`} className="w-full rounded border border-sinal/50 bg-carbono px-2 py-1.5 text-sm text-branco-cru outline-none" />
     </form>
   );
 }
 
+/** Progresso das subtarefas: "3/7" + barra. É o que diz de relance quanto falta dentro de uma tarefa. */
+function ProgressoSubtarefas({ feitas, total }: { feitas: number; total: number }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-nevoa" title={`${feitas} de ${total} subtarefas concluídas`}>
+      <GitFork size={12} className="rotate-90" />
+      <span className="tabular-nums">{feitas}/{total}</span>
+      <span className="h-1 w-10 overflow-hidden rounded bg-grafite-elevado"><span className="block h-full bg-sucesso" style={{ width: `${(feitas / Math.max(total, 1)) * 100}%` }} /></span>
+    </span>
+  );
+}
+
 function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: Ctx }) {
-  const [aberta, setAberta] = useState(false);
-  const subs = useWorkTasks({ parentTaskId: t.id, enabled: aberta });
+  const [aberta, setAberta] = useState(ctx.expandirTudo);
+  useEffect(() => { setAberta(ctx.expandirTudo); }, [ctx.expandirTudo]);
+  const subs = useWorkTasks({ parentTaskId: t.id, enabled: aberta, includeArchived: ctx.arquivadas });
   const statusFinal = ctx.statuses.find((s) => s.category === 'done');
   const feita = t.status?.category === 'done';
   return (
     <>
-      <div className={cn('group grid items-center gap-2 border-b border-grafite-elevado/60 px-3 py-1.5 hover:bg-grafite-elevado/40', COLUNAS)}>
-        <div className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: nivel * 22 }}>
+      <div
+        draggable
+        onDragStart={(e) => { e.dataTransfer.setData(TASK_DRAG, t.id); e.dataTransfer.effectAllowed = 'move'; }}
+        className={cn('group grid items-center gap-2 border-b border-grafite-elevado/60 px-3 py-2.5 hover:bg-grafite-elevado/40', COLUNAS, nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
+      >
+        <div className="relative flex min-w-0 items-center gap-2" style={{ paddingLeft: nivel * 26 }}>
+          {nivel > 0 && <span aria-hidden className="absolute bottom-1/2 top-[-14px] w-3 rounded-bl border-b border-l border-grafite-elevado" style={{ left: nivel * 26 - 14 }} />}
           <button type="button" aria-label={aberta ? 'Recolher subtarefas' : 'Expandir subtarefas'} onClick={() => setAberta((v) => !v)} className={cn('shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru', t.subtaskCount === 0 && 'invisible')}>
-            {aberta ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {aberta ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </button>
-          <button
-            type="button"
-            aria-label={feita ? 'Reabrir' : 'Concluir'}
-            onClick={() => { const alvo = feita ? ctx.statuses.find((s) => s.isInitial) : statusFinal; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}
-          >
+          <button type="button" aria-label={feita ? 'Reabrir' : 'Concluir'} onClick={() => { const alvo = feita ? ctx.statuses.find((s) => s.isInitial) : statusFinal; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}>
             <StatusDot cor={t.status?.color ?? '#6b7280'} feito={feita} />
           </button>
-          <button type="button" onClick={() => ctx.actions.abrir(t)} title={t.title} className={cn('truncate text-left text-sm hover:underline', feita ? 'text-nevoa' : 'text-branco-cru')}>
+          <button type="button" onClick={() => ctx.actions.abrir(t)} title={t.title} className={cn('truncate text-left text-[15px] hover:underline', nivel > 0 ? 'font-normal' : 'font-medium', feita ? 'text-nevoa' : 'text-branco-cru')}>
             {t.title}
           </button>
-          {t.subtaskCount > 0 && (
-            <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-nevoa" title={`${t.subtaskCount} subtarefa(s)`}><GitFork size={11} className="rotate-90" />{t.subtaskCount}</span>
-          )}
-          <button type="button" aria-label="Adicionar subtarefa" onClick={() => setAberta(true)} className="invisible shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru group-hover:visible"><Plus size={13} /></button>
+          {t.subtaskCount > 0 && <ProgressoSubtarefas feitas={t.subtaskDone} total={t.subtaskCount} />}
+          {nivel > 0 && t.status && <StatusPill nome={t.status.name} cor={t.status.color} categoria={t.status.category} tamanho="sm" />}
+          <button type="button" aria-label="Adicionar subtarefa" title="Adicionar subtarefa" onClick={() => setAberta(true)} className="invisible shrink-0 rounded p-0.5 text-nevoa hover:text-branco-cru group-hover:visible"><Plus size={14} /></button>
         </div>
         <div><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>
         <div><DuePicker tarefa={t} onChange={(iso) => ctx.actions.atualizar(t, { dueAt: iso })} /></div>
         <div><PriorityPicker tarefa={t} onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>
+        <div className="invisible group-hover:visible"><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></div>
       </div>
       {aberta && (
         <>
           {subs.data?.rows.map((s) => <Linha key={s.id} t={s} nivel={nivel + 1} ctx={ctx} />)}
-          {subs.isPending && <div className="px-3 py-1 text-xs text-nevoa" style={{ paddingLeft: 36 + (nivel + 1) * 22 }}>Carregando…</div>}
-          <InlineAdd rotulo="Adicionar subtarefa" recuo={(nivel + 1) * 22} onSubmit={(title) => ctx.actions.criar({ title, parentTaskId: t.id, listId: t.listId, statusId: statusInicial(ctx.statuses) })} />
+          {subs.isPending && <div className="px-3 py-1 text-xs text-nevoa" style={{ paddingLeft: 40 + (nivel + 1) * 26 }}>Carregando…</div>}
+          <InlineAdd rotulo="Adicionar subtarefa" recuo={(nivel + 1) * 26} onSubmit={(title) => ctx.actions.criar({ title, parentTaskId: t.id, listId: t.listId, statusId: statusInicial(ctx.statuses) })} />
         </>
       )}
     </>
   );
 }
 
-interface Ctx { statuses: WorkStatus[]; membros: WorkMember[]; actions: TaskActions }
+interface Ctx { statuses: WorkStatus[]; membros: WorkMember[]; actions: TaskActions; expandirTudo: boolean; arquivadas: boolean }
 const statusInicial = (s: WorkStatus[]): string => (s.find((x) => x.isInitial) ?? s[0])!.id;
 
-export function ListView({ tarefas, statuses, membros, listId, actions, onNovoStatus }: { tarefas: WorkTaskWire[]; statuses: WorkStatus[]; membros: WorkMember[]; listId: string | null; actions: TaskActions; onNovoStatus: (nome: string) => void }) {
+export function ListView({ tarefas, statuses, membros, listId, actions, onNovoStatus, expandirTudo = false, arquivadas = false }: { tarefas: WorkTaskWire[]; statuses: WorkStatus[]; membros: WorkMember[]; listId: string | null; actions: TaskActions; onNovoStatus: (nome: string) => void; expandirTudo?: boolean; arquivadas?: boolean }) {
   const [fechados, setFechados] = useState<Set<string>>(new Set());
   const [abertosPorPadrao] = useState(true);
   const [visiveis, setVisiveis] = useState<Record<string, number>>({});
   const grupos = useMemo(() => [...statuses].sort((a, b) => a.position - b.position).map((s) => ({ s, itens: tarefas.filter((t) => t.statusId === s.id) })), [statuses, tarefas]);
-  const ctx: Ctx = { statuses, membros, actions };
+  const ctx: Ctx = { statuses, membros, actions, expandirTudo, arquivadas };
   const recolhido = (id: string, n: number, cat: string) => (fechados.has(id) ? true : abertosPorPadrao && cat === 'done' && n > 25 && !fechados.has(`+${id}`));
   const alternar = (id: string, n: number, cat: string) => setFechados((prev) => {
     const novo = new Set(prev);
@@ -117,8 +120,8 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
             </div>
             {!fechado && (
               <div>
-                <div className={cn('grid gap-2 border-b border-grafite-elevado px-3 py-1 text-[11px] text-nevoa', COLUNAS)} style={{ paddingLeft: 36 }}>
-                  <span>Nome</span><span>Responsável</span><span className="whitespace-nowrap">Data de vencimento</span><span>Prioridade</span>
+                <div className={cn('grid gap-2 border-b border-grafite-elevado px-3 py-1 text-[11px] text-nevoa', COLUNAS)} style={{ paddingLeft: 40 }}>
+                  <span>Nome</span><span>Responsável</span><span className="whitespace-nowrap">Data de vencimento</span><span>Prioridade</span><span />
                 </div>
                 {itens.slice(0, limite).map((t) => <Linha key={t.id} t={t} nivel={0} ctx={ctx} />)}
                 {itens.length > limite && (

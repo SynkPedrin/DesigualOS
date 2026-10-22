@@ -475,7 +475,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
 
   // ── Integrações: tarefa nascida de outra parte do sistema (idempotente por origem) e resumo por cliente
   app.post('/work/tasks/from-source', guard, async (request, reply) => {
-    const b = z.object({ provider: z.string(), externalType: z.string().min(1).max(60), externalId: z.string().min(1).max(200), listId: uuid, title: z.string().min(1).max(500), description: z.string().max(50_000).nullable().optional(), clientId: uuid.nullable().optional(), priority: z.number().int().min(0).max(4).optional(), meta: z.record(z.unknown()).optional() }).safeParse(request.body);
+    const b = z.object({ provider: z.string(), externalType: z.string().min(1).max(60), externalId: z.string().min(1).max(200), listId: uuid, title: z.string().min(1).max(500), description: z.string().max(50_000).nullable().optional(), clientId: uuid.nullable().optional(), priority: z.number().int().min(0).max(4).optional(), assigneeIds: z.array(uuid).max(20).optional(), dueAt: optDate, meta: z.record(z.unknown()).optional() }).safeParse(request.body);
     if (!b.success) return bad(reply, b.error.issues.map((i) => i.message).join(' '));
     try { return await createTaskFromSource(workContext(request), defined(b.data) as never); } catch (e) { return fail(reply, e); }
   });

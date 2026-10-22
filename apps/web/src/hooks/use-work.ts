@@ -43,6 +43,10 @@ export interface WorkTaskWire {
   archivedAt: string | null;
   assigneeIds: string[];
   subtaskCount: number;
+  subtaskDone: number;
+  clientId: string | null;
+  createdBy: string | null;
+  createdAt: string;
 }
 
 export interface WorkMember {
@@ -77,8 +81,8 @@ export const PRIORIDADES: Record<number, { label: string; color: string }> = {
   4: { label: 'Baixa', color: '#9ca3af' },
 };
 
-export function useWorkTree() {
-  return useQuery({ queryKey: ['work', 'tree'], queryFn: () => apiFetch<{ spaces: WorkTreeSpace[] }>('/work/tree') });
+export function useWorkTree(incluirArquivados = false) {
+  return useQuery({ queryKey: ['work', 'tree', incluirArquivados], queryFn: () => apiFetch<{ spaces: WorkTreeSpace[] }>(`/work/tree${incluirArquivados ? '?include_archived=true' : ''}`) });
 }
 
 export function useWorkMembers() {
@@ -106,6 +110,9 @@ export interface WorkTaskFilters {
   limit?: number | undefined;
   sort?: string;
   includeSubtasks?: boolean;
+  includeArchived?: boolean;
+  clientId?: string | null;
+  createdBy?: string | null;
   enabled?: boolean;
 }
 
@@ -120,6 +127,8 @@ export function useWorkTasks(f: WorkTaskFilters) {
   if (f.dueFrom) params.set('due_from', f.dueFrom);
   if (f.dueTo) params.set('due_to', f.dueTo);
   if (f.includeSubtasks) params.set('include_subtasks', 'true');
+  if (f.includeArchived) params.set('include_archived', 'true');
+  if (f.clientId) params.set('client_id', f.clientId);
   if (f.completed !== undefined) params.set('completed', String(f.completed));
   params.set('sort', f.sort ?? 'position');
   params.set('limit', String(f.limit ?? 2000));
@@ -184,6 +193,7 @@ export interface TaskPatch {
   assigneeIds?: string[];
   tags?: string[];
   estimateMinutes?: number | null;
+  clientId?: string | null;
 }
 
 export function useUpdateTask() {

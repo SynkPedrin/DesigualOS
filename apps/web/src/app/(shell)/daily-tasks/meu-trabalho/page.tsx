@@ -9,7 +9,8 @@ import { LogoDoCliente, nomeLimpo, useListIndex } from '@/components/daily-tasks
 import { StatusPill } from '@/components/daily-tasks/primitivas';
 import { TaskDrawer } from '@/components/daily-tasks/task-drawer';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
-import { useUpdateTask, useWorkTasks, type WorkTaskWire } from '@/hooks/use-work';
+import { Avatar } from '@/components/daily-tasks/primitivas';
+import { useUpdateTask, useWorkMembers, useWorkTasks, type WorkTaskWire } from '@/hooks/use-work';
 
 const GRUPOS = [
   { id: 'atrasadas', titulo: 'Atrasadas', cor: 'text-red-400' },
@@ -32,7 +33,12 @@ function grupoDa(t: WorkTaskWire, agora: Date): (typeof GRUPOS)[number]['id'] {
 
 export default function MeuTrabalhoPage() {
   const eu = useDailyTasksAccess().data?.userId ?? null;
-  const tasks = useWorkTasks({ assigneeId: eu, completed: false, includeSubtasks: true, sort: 'due', enabled: Boolean(eu) });
+  const membros = useWorkMembers().data?.members ?? [];
+  const [pessoa, setPessoa] = useState<string | null>(null);
+  const [concluidas, setConcluidas] = useState(false);
+  const alvo = pessoa ?? eu;
+  const quem = membros.find((m) => m.id === alvo);
+  const tasks = useWorkTasks({ assigneeId: alvo, completed: concluidas ? undefined : false, includeSubtasks: true, sort: 'due', enabled: Boolean(alvo) });
   const atualizar = useUpdateTask();
   const listas = useListIndex();
   const [aberta, setAberta] = useState<string | null>(null);
@@ -42,9 +48,22 @@ export default function MeuTrabalhoPage() {
   }, [tasks.data]);
 
   if (!eu || tasks.isPending) return <Skeleton className="h-64 w-full" />;
-  if ((tasks.data?.rows.length ?? 0) === 0) return <EmptyState icon={CheckCircle2} title="Nada pendente para você" description="Quando alguém atribuir uma tarefa a você, ela aparece aqui, agrupada por prazo." />;
+  const cabecalho = (
+    <div className="flex flex-wrap items-center gap-3">
+      {quem && <Avatar nome={quem.name} url={quem.avatarUrl} size={32} />}
+      <label className="flex items-center gap-2 text-xs text-nevoa">Tarefas de
+        <select aria-label="Pessoa" value={alvo ?? ''} onChange={(e) => setPessoa(e.target.value === eu ? null : e.target.value)} className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-sm text-branco-cru">
+          {membros.map((m) => <option key={m.id} value={m.id}>{m.id === eu ? `${m.name} (eu)` : m.name}</option>)}
+        </select>
+      </label>
+      <label className="flex items-center gap-1 text-xs text-nevoa"><input type="checkbox" checked={concluidas} onChange={(e) => setConcluidas(e.target.checked)} /> Incluir concluídas</label>
+      <span className="ml-auto text-xs text-nevoa">{tasks.data?.total ?? 0} tarefa(s)</span>
+    </div>
+  );
+  if ((tasks.data?.rows.length ?? 0) === 0) return <div className="space-y-4">{cabecalho}<EmptyState icon={CheckCircle2} title={alvo === eu ? 'Nada pendente para você' : `Nada pendente para ${quem?.name ?? 'esta pessoa'}`} description="Quando uma tarefa for atribuída, ela aparece aqui, agrupada por prazo. Use o seletor para ver o trabalho de outra pessoa." /></div>;
   return (
     <div className="space-y-6">
+      {cabecalho}
       {grupos.filter((g) => g.itens.length > 0).map((g) => (
         <section key={g.id} aria-label={g.titulo}>
           <h2 className={`mb-1 text-sm font-semibold ${g.cor}`}>{g.titulo} <span className="font-normal text-nevoa">{g.itens.length}</span></h2>

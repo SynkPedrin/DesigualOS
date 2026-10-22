@@ -22,6 +22,8 @@ import {
 } from '@/hooks/use-internal-chat';
 import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { toast } from '@/stores/toast-store';
+import { CriarTarefaDaily } from '@/components/daily-tasks/criar-tarefa-da-mensagem';
+import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { cn } from '@/lib/utils';
 
 /** Moldura comum dos modais da Comunicação: Esc fecha, clique fora fecha. */
@@ -252,6 +254,19 @@ export function CriarTarefa({ conversationId, mensagem, onClose }: { conversatio
   const [prazo, setPrazo] = useState('');
   const [prioridade, setPrioridade] = useState('3');
   const comLista = (clientes.data ?? []).filter((c) => c.clickupListId);
+  // Destino: só oferece o Daily Tasks (beta) a quem o módulo está liberado; sem ele, nada muda para ninguém.
+  const daily = useDailyTasksAccess().data?.allowed === true;
+  const [destino, setDestino] = useState<'clickup' | 'daily'>('clickup');
+  if (daily && destino === 'daily') {
+    return (
+      <Modal titulo="Criar tarefa no Daily Tasks" onClose={onClose} largura="max-w-lg">
+        <div className="space-y-3 p-4">
+          <button type="button" onClick={() => setDestino('clickup')} className="text-xs text-nevoa hover:text-branco-cru">← criar no ClickUp em vez disso</button>
+          <CriarTarefaDaily conversationId={conversationId} messageId={mensagem.id} senderName={mensagem.sender_name} texto={mensagem.content ?? ''} onClose={onClose} />
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal titulo="Criar tarefa no ClickUp" onClose={onClose} largura="max-w-lg">
       <form className="space-y-3 p-4" onSubmit={(e) => {
@@ -266,6 +281,7 @@ export function CriarTarefa({ conversationId, mensagem, onClose }: { conversatio
           onError: (err) => toast(err.message, 'error'),
         });
       }}>
+        {daily && <button type="button" onClick={() => setDestino('daily')} className="text-xs text-roxo-eletrico hover:underline">Criar no Daily Tasks (beta) →</button>}
         <blockquote className="rounded-md border-l-2 border-nevoa/40 bg-grafite-elevado/40 px-3 py-2 text-xs text-nevoa">
           <span className="font-semibold">{mensagem.sender_name}:</span> {(mensagem.content ?? '').slice(0, 300) || 'mensagem com anexo'}
         </blockquote>

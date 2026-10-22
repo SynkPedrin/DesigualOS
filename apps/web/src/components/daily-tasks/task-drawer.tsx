@@ -1,17 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Copy, Link2, Paperclip, Play, Repeat, Save, Square, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Copy, Link2, Paperclip, Pencil, Play, Plus, Repeat, Save, Square, Trash2, X } from 'lucide-react';
 import {
   useAddComment, useChecklistActions, useCreateTask, useSpaceStatuses, useTaskDetail, useUpdateTask, useWorkMembers, useWorkTasks,
-  type TaskPatch, type WorkTaskDetail,
+  type TaskPatch, type WorkTaskDetail, type WorkTaskWire,
 } from '@/hooks/use-work';
-import { useRecurrenceActions, useSetCustomField, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
+import { useClients } from '@/hooks/use-clients';
+import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
+import { useRecurrenceActions, useSetCustomField, useTaskCrud, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
 import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
-import { AssigneePicker, DuePicker, PriorityPicker, StatusPicker } from './pickers';
+import { toast } from '@/stores/toast-store';
 import { LogoDoCliente, nomeLimpo } from './cliente';
-import { Avatar } from './primitivas';
+import { AssigneePicker, DuePicker, PriorityPicker, StatusPicker } from './pickers';
+import { Avatar, StatusDot } from './primitivas';
+import { RowMenu } from './row-menu';
 import { formatarDuracao, TempoCorrendo } from './tempo';
 
 const MENCAO = /@\[([^\]]+)\]\([0-9a-f-]{36}\)/gi;
@@ -43,17 +47,36 @@ function CampoPersonalizado({ def, valor, taskId }: { def: WorkTaskDetail['field
   }
   const numerico = def.type === 'number' || def.type === 'currency';
   return (
-    <input
-      aria-label={def.name}
-      type={numerico ? 'number' : def.type === 'date' ? 'date' : 'text'}
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => {
-        if (v === (valor === undefined || valor === null ? '' : String(valor))) return;
-        set.mutate({ fieldId: def.id, value: v === '' ? null : numerico ? Number(v) : v });
-      }}
-      className={cls}
-    />
+    <input aria-label={def.name} type={numerico ? 'number' : def.type === 'date' ? 'date' : 'text'} value={v} onChange={(e) => setV(e.target.value)}
+      onBlur={() => { if (v === (valor === undefined || valor === null ? '' : String(valor))) return; set.mutate({ fieldId: def.id, value: v === '' ? null : numerico ? Number(v) : v }); }} className={cls} />
+  );
+}
+
+const Titulo = ({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) => (
+  <h3 className="mb-1.5 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-nevoa"><span>{children}</span>{extra}</h3>
+);
+
+/** Edição de uma linha de texto no lugar (checklist, item): Enter salva, Esc cancela. */
+function EditaNoLugar({ valor, onSalvar, className }: { valor: string; onSalvar: (v: string) => void; className?: string }) {
+  const [edit, setEdit] = useState(false);
+  const [v, setV] = useState(valor);
+  if (!edit) return <button type="button" onDoubleClick={() => { setV(valor); setEdit(true); }} title="Duplo clique para editar" className={cn('text-left', className)}>{valor}</button>;
+  return <input autoFocus value={v} onChange={(e) => setV(e.target.value)} onBlur={() => setEdit(false)} onKeyDown={(e) => { if (e.key === 'Escape') setEdit(false); if (e.key === 'Enter' && v.trim()) { if (v.trim() !== valor) onSalvar(v.trim()); setEdit(false); } }} className="rounded border border-sinal/50 bg-carbono px-1 text-sm text-branco-cru outline-none" />;
+}
+
+function BuscaDeTarefa({ onPick, excluir }: { onPick: (t: WorkTaskWire) => void; excluir: string }) {
+  const [q, setQ] = useState('');
+  const r = useWorkTasks({ q: q.trim() || undefined, limit: 8, includeSubtasks: true, enabled: q.trim().length >= 2 });
+  return (
+    <div className="relative">
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="+ Dependência: busque por DT-123 ou título" aria-label="Buscar tarefa para vincular" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
+      {q.trim().length >= 2 && (
+        <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-grafite-elevado bg-carbono p-1 shadow-elevated">
+          {(r.data?.rows ?? []).filter((t) => t.id !== excluir).map((t) => <li key={t.id}><button type="button" onClick={() => { onPick(t); setQ(''); }} className="flex w-full gap-2 rounded px-2 py-1 text-left text-xs text-branco-cru hover:bg-grafite-elevado"><span className="font-mono text-nevoa">{t.key}</span><span className="truncate">{t.title}</span></button></li>)}
+          {r.data && r.data.rows.length === 0 && <li className="px-2 py-1 text-xs text-nevoa">Nada encontrado.</li>}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -62,9 +85,12 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const { data, isPending, error } = useTaskDetail(taskId);
   const statuses = useSpaceStatuses(data?.list?.spaceId ?? null);
   const membros = useWorkMembers().data?.members ?? [];
+  const eu = useDailyTasksAccess().data?.userId ?? null;
+  const clientes = useClients().data ?? [];
   const atualizar = useUpdateTask();
   const comentar = useAddComment(taskId);
   const cl = useChecklistActions(taskId);
+  const crud = useTaskCrud(taskId);
   const criar = useCreateTask();
   const tempo = useTimeEntries(taskId);
   const timer = useTimer();
@@ -78,18 +104,21 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const [novoCl, setNovoCl] = useState('');
   const [tag, setTag] = useState('');
   const [min, setMin] = useState('');
+  const [link, setLink] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [todosCampos, setTodosCampos] = useState(false);
-  const [aviso, setAviso] = useState<string | null>(null);
+  const [editandoComent, setEditandoComent] = useState<{ id: string; body: string } | null>(null);
   const comentRef = useRef<HTMLTextAreaElement>(null);
   const t = data?.task;
   useEffect(() => { if (t) { setTitulo(t.title); setDesc(t.description ?? ''); } }, [t?.id, t?.version]);
   useEffect(() => { const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc); }, [onClose]);
 
+  const st = statuses.data?.statuses ?? [];
+  const erro = (e: unknown) => toast(e instanceof ApiRequestError ? e.message : 'Não foi possível concluir.', 'error');
   const salvar = async (patch: Omit<TaskPatch, 'id' | 'expectedVersion'>) => {
     if (!t) return;
     setMsg(null);
-    try { await atualizar.mutateAsync({ id: t.id, expectedVersion: t.version, ...patch }); } catch (e) { setMsg(e instanceof ApiRequestError && e.status === 409 ? 'Outra pessoa alterou esta tarefa. Recarreguei os dados — tente de novo.' : 'Não foi possível salvar.'); }
+    try { await atualizar.mutateAsync({ id: t.id, expectedVersion: t.version, ...patch }); } catch (e) { setMsg(e instanceof ApiRequestError && e.status === 409 ? 'Outra pessoa (ou uma automação) alterou esta tarefa. Recarreguei os dados — tente de novo.' : 'Não foi possível salvar.'); }
   };
   const mencionar = (id: string) => {
     const m = membros.find((x) => x.id === id);
@@ -98,7 +127,8 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
     comentRef.current?.focus();
   };
   const meuTimerNesta = timer.data?.running?.taskId === taskId;
-  const st = statuses.data?.statuses ?? [];
+  const cliente = useMemo(() => clientes.find((c) => c.id === t?.clientId) ?? null, [clientes, t?.clientId]);
+  const feitas = data?.subtaskIds.length ? data.task.subtaskDone : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
@@ -106,23 +136,31 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
         <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-grafite-elevado bg-carbono px-4 py-2 text-xs text-nevoa">
           <span className="font-mono">{t?.key}</span>
           {data?.list && <span className="flex items-center gap-1.5">em <LogoDoCliente nome={nomeLimpo(data.list.name)} className="!size-5" />{data.list.name}</span>}
+          {t?.archivedAt && <span className="rounded bg-aviso/20 px-1.5 py-0.5 text-aviso">arquivada</span>}
           <div className="ml-auto flex items-center gap-1">
-            {t && <button type="button" title="Duplicar tarefa" onClick={() => modelos.duplicar.mutate(t.id, { onSuccess: () => setAviso('Tarefa duplicada na mesma lista.') })} className="rounded p-1 hover:bg-grafite-elevado"><Copy size={15} /></button>}
-            {t && <button type="button" title="Salvar como modelo" onClick={() => { const n = window.prompt('Nome do modelo', t.title); if (n?.trim()) modelos.salvar.mutate({ taskId: t.id, name: n.trim() }, { onSuccess: () => setAviso('Modelo salvo — veja na aba Modelos.') }); }} className="rounded p-1 hover:bg-grafite-elevado"><Save size={15} /></button>}
-            {t && <button type="button" title="Repetir esta tarefa" onClick={() => { const f = window.prompt('Repetir: daily (diária), weekly (semanal) ou monthly (mensal)?', 'weekly'); if (f && ['daily', 'weekly', 'monthly'].includes(f.trim())) recorrencia.criar.mutate({ taskId: t.id, freq: f.trim() }, { onSuccess: () => setAviso('Recorrência criada — veja na aba Modelos.') }); }} className="rounded p-1 hover:bg-grafite-elevado"><Repeat size={15} /></button>}
+            {t && <button type="button" title="Duplicar tarefa" onClick={() => modelos.duplicar.mutate(t.id, { onSuccess: () => toast('Tarefa duplicada na mesma lista.', 'success'), onError: erro })} className="rounded p-1 hover:bg-grafite-elevado"><Copy size={15} /></button>}
+            {t && <button type="button" title="Salvar como modelo" onClick={() => { const n = window.prompt('Nome do modelo', t.title); if (n?.trim()) modelos.salvar.mutate({ taskId: t.id, name: n.trim() }, { onSuccess: () => toast('Modelo salvo — veja na aba Modelos.', 'success'), onError: erro }); }} className="rounded p-1 hover:bg-grafite-elevado"><Save size={15} /></button>}
+            {t && <button type="button" title="Repetir esta tarefa" onClick={() => { const f = window.prompt('Repetir: daily (diária), weekly (semanal) ou monthly (mensal)?', 'weekly'); if (f && ['daily', 'weekly', 'monthly'].includes(f.trim())) recorrencia.criar.mutate({ taskId: t.id, freq: f.trim() }, { onSuccess: () => toast('Recorrência criada — veja na aba Modelos.', 'success'), onError: erro }); }} className="rounded p-1 hover:bg-grafite-elevado"><Repeat size={15} /></button>}
+            {t && <RowMenu t={t} onDone={(a) => { if (a !== 'moved') onClose(); }} />}
             <button type="button" onClick={onClose} aria-label="Fechar" className="rounded p-1 hover:bg-grafite-elevado"><X size={16} /></button>
           </div>
         </header>
         {isPending && <p className="p-6 text-sm text-nevoa">Carregando…</p>}
         {error && <p role="alert" className="p-6 text-sm text-red-400">Não foi possível abrir a tarefa.</p>}
         {data && t && (
-          <div className="space-y-6 p-5">
+          <div className="space-y-7 p-6">
             <input value={titulo} onChange={(e) => setTitulo(e.target.value)} onBlur={() => { if (titulo.trim() && titulo !== t.title) void salvar({ title: titulo.trim() }); }} aria-label="Título" className="w-full bg-transparent font-heading text-2xl font-semibold text-branco-cru outline-none" />
             {msg && <p role="alert" className="text-xs text-red-400">{msg}</p>}
-            {aviso && <p role="status" className="text-xs text-sucesso">{aviso}</p>}
-            <dl className="grid grid-cols-[130px_1fr] items-center gap-y-3 text-sm">
+            <dl className="grid grid-cols-[130px_1fr] items-center gap-y-3.5 text-sm">
               <dt className="text-nevoa">Status</dt><dd><StatusPicker tarefa={t} statuses={st} onChange={(statusId) => void salvar({ statusId })} /></dd>
               <dt className="text-nevoa">Responsáveis</dt><dd><AssigneePicker tarefa={t} membros={membros} onChange={(ids) => void salvar({ assigneeIds: ids })} /></dd>
+              <dt className="text-nevoa">Cliente</dt>
+              <dd className="flex items-center gap-2">
+                {cliente && <LogoDoCliente nome={cliente.name} className="!size-6" />}
+                <select aria-label="Cliente da tarefa" value={t.clientId ?? ''} onChange={(e) => void salvar({ clientId: e.target.value || null })} className="max-w-64 rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none">
+                  <option value="">Sem cliente</option>{clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </dd>
               <dt className="text-nevoa">Vencimento</dt><dd><DuePicker tarefa={t} onChange={(iso) => void salvar({ dueAt: iso })} /></dd>
               <dt className="text-nevoa">Prioridade</dt><dd><PriorityPicker tarefa={t} comTexto onChange={(priority) => void salvar({ priority })} /></dd>
               <dt className="text-nevoa">Estimativa</dt>
@@ -149,25 +187,25 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             </dl>
 
             <section>
-              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-nevoa">Descrição</h3>
+              <Titulo>Descrição</Titulo>
               <textarea value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={() => { if (desc !== (t.description ?? '')) void salvar({ description: desc || null }); }} rows={6} placeholder="Adicione uma descrição" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
             </section>
 
-            {(data.blockedBy.length > 0 || data.blocking.length > 0 || data.related.length > 0) && (
-              <section className="space-y-1 text-sm">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-nevoa">Dependências</h3>
-                {data.blockedBy.map((x) => <button key={x.id} type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-red-300 hover:underline"><Link2 size={13} /> Aguardando {x.key} · {x.title}</button>)}
-                {data.blocking.map((x) => <button key={x.id} type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-aviso hover:underline"><Link2 size={13} /> Bloqueia {x.key} · {x.title}</button>)}
-                {data.related.map((x) => <button key={x.id} type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-nevoa hover:underline"><Link2 size={13} /> Relacionada {x.key} · {x.title}</button>)}
-              </section>
-            )}
-
             <section>
-              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-nevoa">Subtarefas ({data.subtaskIds.length})</h3>
-              <SubtasksList parentId={t.id} onOpen={onOpen} />
+              <Titulo extra={data.subtaskIds.length > 0 && <span className="normal-case tabular-nums">{feitas}/{data.subtaskIds.length}</span>}>Subtarefas ({data.subtaskIds.length})</Titulo>
+              {data.subtaskIds.length > 0 && <div className="mb-2 h-1.5 overflow-hidden rounded bg-grafite-elevado"><div className="h-full bg-sucesso" style={{ width: `${(feitas / data.subtaskIds.length) * 100}%` }} /></div>}
+              <SubtasksList parentId={t.id} onOpen={onOpen} statuses={st} membros={membros} salvar={(sub, patch) => atualizar.mutate({ id: sub.id, expectedVersion: sub.version, ...patch })} />
               <form className="mt-2" onSubmit={(e) => { e.preventDefault(); if (sub.trim()) criar.mutate({ listId: t.listId, title: sub.trim(), parentTaskId: t.id }, { onSuccess: () => setSub('') }); }}>
-                <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="+ Adicionar subtarefa" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
+                <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="+ Adicionar subtarefa" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
               </form>
+            </section>
+
+            <section className="space-y-2">
+              <Titulo>Dependências</Titulo>
+              {data.blockedBy.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-red-300 hover:underline"><Link2 size={13} /> Aguardando {x.key} · {x.title}</button><button type="button" aria-label="Remover dependência" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
+              {data.blocking.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-aviso hover:underline"><Link2 size={13} /> Bloqueia {x.key} · {x.title}</button><button type="button" aria-label="Remover dependência" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
+              {data.related.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-nevoa hover:underline"><Link2 size={13} /> Relacionada {x.key} · {x.title}</button><button type="button" aria-label="Remover vínculo" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
+              <BuscaDeTarefa excluir={t.id} onPick={(o) => crud.dependencia.mutate({ dependsOnId: o.id, kind: 'blocking' }, { onError: erro, onSuccess: () => toast(`Esta tarefa agora aguarda ${o.key}.`, 'success') })} />
             </section>
 
             <section className="space-y-3">
@@ -175,34 +213,60 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 const feitos = c.items.filter((i) => i.done).length;
                 return (
                   <div key={c.id}>
-                    <h3 className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-nevoa"><span>{c.name}</span><span>{feitos}/{c.items.length}</span></h3>
+                    <Titulo extra={<span className="flex items-center gap-2 normal-case"><span className="tabular-nums">{feitos}/{c.items.length}</span><button type="button" aria-label={`Apagar checklist ${c.name}`} onClick={() => { if (window.confirm(`Apagar o checklist "${c.name}" e seus itens?`)) crud.apagarChecklist.mutate(c.id, { onError: erro }); }} className="hover:text-red-400"><Trash2 size={12} /></button></span>}>
+                      <EditaNoLugar valor={c.name} onSalvar={(name) => crud.renomearChecklist.mutate({ id: c.id, name }, { onError: erro })} />
+                    </Titulo>
                     <div className="mb-1 h-1 overflow-hidden rounded bg-grafite-elevado"><div className="h-full bg-sucesso" style={{ width: `${c.items.length ? (feitos / c.items.length) * 100 : 0}%` }} /></div>
                     <ul className="space-y-0.5">
-                      {c.items.map((i) => (<li key={i.id}><label className={cn('flex items-center gap-2 py-0.5 text-sm', i.done ? 'text-nevoa line-through' : 'text-branco-cru')} style={{ paddingLeft: i.parentItemId ? 20 : 0 }}><input type="checkbox" checked={i.done} onChange={(e) => cl.marcar.mutate({ itemId: i.id, done: e.target.checked })} />{i.text}</label></li>))}
+                      {c.items.map((i) => (
+                        <li key={i.id} className="group flex items-center gap-2" style={{ paddingLeft: i.parentItemId ? 20 : 0 }}>
+                          <input type="checkbox" checked={i.done} aria-label={i.text} onChange={(e) => cl.marcar.mutate({ itemId: i.id, done: e.target.checked })} />
+                          <EditaNoLugar valor={i.text} onSalvar={(text) => crud.editarItem.mutate({ id: i.id, text }, { onError: erro })} className={cn('flex-1 py-0.5 text-sm', i.done ? 'text-nevoa line-through' : 'text-branco-cru')} />
+                          <button type="button" aria-label={`Apagar item ${i.text}`} onClick={() => crud.apagarItem.mutate(i.id, { onError: erro })} className="invisible text-nevoa hover:text-red-400 group-hover:visible"><X size={12} /></button>
+                        </li>
+                      ))}
                     </ul>
                     <ItemAdd onAdd={(text) => cl.item.mutate({ checklistId: c.id, text })} />
                   </div>
                 );
               })}
               <form onSubmit={(e) => { e.preventDefault(); if (novoCl.trim()) cl.criar.mutate(novoCl.trim(), { onSuccess: () => setNovoCl('') }); }}>
-                <input value={novoCl} onChange={(e) => setNovoCl(e.target.value)} placeholder="+ Novo checklist" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
+                <input value={novoCl} onChange={(e) => setNovoCl(e.target.value)} placeholder="+ Novo checklist" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
               </form>
             </section>
 
-            {data.attachments.length > 0 && (
-              <section>
-                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-nevoa">Anexos ({data.attachments.length})</h3>
-                <ul className="space-y-1">{data.attachments.map((a) => <li key={a.id}><a href={a.url} target="_blank" rel="noreferrer noopener" className="flex items-center gap-2 text-sm text-branco-cru hover:underline"><Paperclip size={13} className="text-nevoa" />{a.fileName}</a></li>)}</ul>
-              </section>
-            )}
+            <section>
+              <Titulo>Anexos ({data.attachments.length})</Titulo>
+              <ul className="space-y-1">
+                {data.attachments.map((a) => <li key={a.id} className="group flex items-center gap-2"><a href={a.url} target="_blank" rel="noreferrer noopener" className="flex min-w-0 flex-1 items-center gap-2 text-sm text-branco-cru hover:underline"><Paperclip size={13} className="shrink-0 text-nevoa" /><span className="truncate">{a.fileName}</span></a><button type="button" aria-label={`Remover anexo ${a.fileName}`} onClick={() => crud.apagarAnexo.mutate(a.id, { onError: erro })} className="invisible text-nevoa hover:text-red-400 group-hover:visible"><X size={12} /></button></li>)}
+              </ul>
+              <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (link.trim()) crud.anexar.mutate({ url: link.trim() }, { onSuccess: () => setLink(''), onError: erro }); }}>
+                <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="+ Colar link (Drive, Figma, PDF…)" aria-label="Link do anexo" className="flex-1 rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
+              </form>
+            </section>
 
             <section>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-nevoa">Comentários ({data.comments.length})</h3>
+              <Titulo>Comentários ({data.comments.length})</Titulo>
               <ul className="space-y-3">
                 {data.comments.map((c) => (
-                  <li key={c.id} className="flex gap-2">
-                    <Avatar nome={c.authorName} url={c.authorAvatar} size={26} />
-                    <div className="min-w-0"><p className="text-xs text-nevoa"><strong className="text-branco-cru">{c.authorName}</strong> · {new Date(c.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</p><p className="whitespace-pre-wrap break-words text-sm text-branco-cru"><TextoComMencoes texto={c.body} /></p></div>
+                  <li key={c.id} className="group flex gap-2">
+                    <Avatar nome={c.authorName} url={c.authorAvatar} size={28} />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-2 text-xs text-nevoa"><strong className="text-branco-cru">{c.authorName}</strong> · {new Date(c.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                        {c.authorId === eu && (
+                          <span className="invisible ml-auto flex gap-2 group-hover:visible">
+                            <button type="button" aria-label="Editar comentário" onClick={() => setEditandoComent({ id: c.id, body: c.body })} className="hover:text-branco-cru"><Pencil size={12} /></button>
+                            <button type="button" aria-label="Apagar comentário" onClick={() => { if (window.confirm('Apagar este comentário?')) crud.apagarComentario.mutate(c.id, { onError: erro }); }} className="hover:text-red-400"><Trash2 size={12} /></button>
+                          </span>
+                        )}
+                      </p>
+                      {editandoComent?.id === c.id ? (
+                        <form className="mt-1 space-y-1" onSubmit={(e) => { e.preventDefault(); crud.editarComentario.mutate({ id: c.id, body: editandoComent.body }, { onSuccess: () => setEditandoComent(null), onError: erro }); }}>
+                          <textarea autoFocus value={editandoComent.body} onChange={(e) => setEditandoComent({ id: c.id, body: e.target.value })} rows={3} className="w-full rounded border border-sinal/50 bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />
+                          <span className="flex gap-2"><button type="submit" className="rounded bg-sinal px-2 py-1 text-xs font-semibold text-grafite">Salvar</button><button type="button" onClick={() => setEditandoComent(null)} className="text-xs text-nevoa">Cancelar</button></span>
+                        </form>
+                      ) : <p className="whitespace-pre-wrap break-words text-sm text-branco-cru"><TextoComMencoes texto={c.body} /></p>}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -228,14 +292,26 @@ function ItemAdd({ onAdd }: { onAdd: (t: string) => void }) {
   return <form onSubmit={(e) => { e.preventDefault(); if (v.trim()) { onAdd(v.trim()); setV(''); } }}><input value={v} onChange={(e) => setV(e.target.value)} placeholder="+ Adicionar item" className="mt-1 w-full bg-transparent px-1 py-0.5 text-xs text-nevoa outline-none placeholder:text-nevoa/70 focus:text-branco-cru" /></form>;
 }
 
-function SubtasksList({ parentId, onOpen }: { parentId: string; onOpen: (id: string) => void }) {
+/** Subtarefas com concluir, responsável e prazo no lugar — não só uma lista de títulos. */
+function SubtasksList({ parentId, onOpen, statuses, membros, salvar }: { parentId: string; onOpen: (id: string) => void; statuses: Array<{ id: string; category: string; isInitial: boolean }>; membros: Parameters<typeof AssigneePicker>[0]['membros']; salvar: (t: WorkTaskWire, p: Omit<TaskPatch, 'id' | 'expectedVersion'>) => void }) {
   const { data } = useWorkTasks({ parentTaskId: parentId });
   if (!data?.rows.length) return null;
+  const final = statuses.find((s) => s.category === 'done');
   return (
-    <ul className="space-y-0.5">
-      {data.rows.map((s) => (
-        <li key={s.id}><button type="button" onClick={() => onOpen(s.id)} className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-sm hover:bg-grafite-elevado/60"><span className="size-2 shrink-0 rounded-full" style={{ background: s.status?.color ?? '#6b7280' }} /><span className={cn('truncate', s.status?.category === 'done' ? 'text-nevoa line-through' : 'text-branco-cru')}>{s.title}</span></button></li>
-      ))}
+    <ul className="divide-y divide-grafite-elevado/50 rounded-lg border border-grafite-elevado">
+      {data.rows.map((s) => {
+        const feita = s.status?.category === 'done';
+        return (
+          <li key={s.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-grafite-elevado/40">
+            <button type="button" aria-label={feita ? 'Reabrir subtarefa' : 'Concluir subtarefa'} onClick={() => { const alvo = feita ? statuses.find((x) => x.isInitial) : final; if (alvo) salvar(s, { statusId: alvo.id }); }}><StatusDot cor={s.status?.color ?? '#6b7280'} feito={feita} /></button>
+            <button type="button" onClick={() => onOpen(s.id)} className={cn('min-w-0 flex-1 truncate text-left text-sm hover:underline', feita ? 'text-nevoa line-through' : 'text-branco-cru')}>{s.title}</button>
+            <AssigneePicker tarefa={s} membros={membros} onChange={(ids) => salvar(s, { assigneeIds: ids })} />
+            <DuePicker tarefa={s} onChange={(iso) => salvar(s, { dueAt: iso })} />
+          </li>
+        );
+      })}
     </ul>
   );
 }
+
+void Check; void Plus;

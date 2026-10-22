@@ -102,4 +102,19 @@ describe.skipIf(!enabled)('Daily Tasks — rotas de produtividade × PostgreSQL 
     expect(q.tasks).toHaveLength(1);
     expect((await call('bAdmin', 'GET', '/work/tasks/by-source?provider=media&type=alert&id=alerta-9')).json().tasks).toHaveLength(0);
   });
+
+  it('edição/exclusão: colaborador barrado (403), outra empresa 404, autor edita o próprio comentário e exclusão definitiva exige arquivar', async () => {
+    const c = (await call('admin', 'POST', `/work/tasks/${taskA}/comments`, { body: 'meu' })).json();
+    for (const [m, p, b] of [['PATCH', `/work/comments/${c.id}`, { body: 'x' }], ['DELETE', `/work/comments/${c.id}`], ['DELETE', `/work/tasks/${taskA}`], ['POST', `/work/tasks/${taskA}/attachments`, { url: 'https://a.com/x' }], ['POST', `/work/tasks/${taskA}/dependencies`, { dependsOnId: taskA }]] as const) {
+      expect((await call('collab', m, p, b)).statusCode, `colab ${m} ${p}`).toBe(403);
+    }
+    expect((await call('bAdmin', 'PATCH', `/work/comments/${c.id}`, { body: 'invasão' })).statusCode).toBe(404);
+    expect((await call('bAdmin', 'DELETE', `/work/tasks/${taskA}`)).statusCode).toBe(404);
+    expect((await call('admin', 'PATCH', `/work/comments/${c.id}`, { body: 'editado' })).statusCode).toBe(200);
+    expect((await call('admin', 'DELETE', `/work/tasks/${taskA}`)).statusCode).toBe(400); // não arquivada
+    expect((await call('admin', 'POST', `/work/tasks/${taskA}/attachments`, { url: 'javascript:alert(1)' })).statusCode).toBe(400);
+    expect((await call('admin', 'DELETE', `/work/comments/${c.id}`)).statusCode).toBe(200);
+    const inbox = (await call('admin', 'GET', '/work/inbox')).json();
+    expect(inbox).toHaveProperty('unreadByKind');
+  });
 });

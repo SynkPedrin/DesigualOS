@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { CalendarDays, ChevronRight, Columns3, GanttChart, List as ListIcon, Search, Table2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -26,6 +27,7 @@ import {
   type WorkTaskWire,
 } from '@/hooks/use-work';
 import { useSavedViewActions, useSavedViews } from '@/hooks/use-work-extra';
+import { useClients } from '@/hooks/use-clients';
 import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 
@@ -39,7 +41,13 @@ const VISOES: Array<{ id: Visao; label: string; icon: typeof ListIcon }> = [
 ];
 
 export default function DailyTasksPage() {
-  const tree = useWorkTree();
+  const router = useRouter();
+  const params = useSearchParams();
+  const [arquivados, setArquivados] = useState(false);
+  const [expandir, setExpandir] = useState(false);
+  const [filtroCli, setFiltroCli] = useState<string | null>(null);
+  const clientes = useClients().data ?? [];
+  const tree = useWorkTree(arquivados);
   const membrosQ = useWorkMembers();
   const [listId, setListId] = useState<string | null>(null);
   const [spaceId, setSpaceId] = useState<string | null>(null);
@@ -48,7 +56,10 @@ export default function DailyTasksPage() {
   const [buscando, setBuscando] = useState(false);
   const [filtroResp, setFiltroResp] = useState<string | null>(null);
   const [filtroPrio, setFiltroPrio] = useState<number | null>(null);
-  const [aberta, setAberta] = useState<string | null>(null);
+  const [abertaLocal, setAberta] = useState<string | null>(null);
+  // `?task=<id>` abre a gaveta direto (links de notificação, Comunicação, Mídia).
+  const aberta = abertaLocal ?? params.get('task');
+  const fechar = () => { setAberta(null); if (params.get('task')) router.replace('/daily-tasks', { scroll: false }); };
   const [erro, setErro] = useState<string | null>(null);
   const views = useSavedViews();
   const { salvar: salvarView } = useSavedViewActions();
@@ -62,7 +73,7 @@ export default function DailyTasksPage() {
   // Entrar numa lista de verdade ao abrir: um espaço sozinho não tem tarefas para criar.
   useEffect(() => { if (!listId && space) { const alvo = [...space.lists].sort((a, b) => b.openTaskCount - a.openTaskCount)[0]; if (alvo) setListId(alvo.id); } }, [space, listId]);
 
-  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio] });
+  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], includeArchived: arquivados, clientId: filtroCli });
   const statuses = useSpaceStatuses(spaceAtivo);
   const membros = membrosQ.data?.members ?? [];
   const criarStatus = useCreateStatus(spaceAtivo);
@@ -85,7 +96,7 @@ export default function DailyTasksPage() {
     <div className="space-y-3">
       <div className="grid gap-4 md:grid-cols-[230px_minmax(0,1fr)]">
         <div className="md:sticky md:top-2 md:self-start">
-          {tree.isPending ? <Skeleton className="h-64 w-full" /> : <Arvore spaces={spaces} listId={listId} spaceId={spaceAtivo} onPick={(l, s) => { setListId(l); setSpaceId(s); }} />}
+          {tree.isPending ? <Skeleton className="h-64 w-full" /> : <Arvore spaces={spaces} listId={listId} spaceId={spaceAtivo} arquivados={arquivados} onArquivados={setArquivados} onPick={(l, s) => { setListId(l); setSpaceId(s); }} />}
         </div>
         <div className="min-w-0 space-y-3">
           <nav aria-label="Caminho" className="flex flex-wrap items-center gap-1 text-sm text-nevoa">
@@ -110,6 +121,10 @@ export default function DailyTasksPage() {
                 <option value="">Toda prioridade</option>
                 {[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}
               </select>
+              <select aria-label="Filtrar por cliente" value={filtroCli ?? ''} onChange={(e) => setFiltroCli(e.target.value || null)} className="max-w-40 rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa">
+                <option value="">Todos os clientes</option>{clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {visao === 'lista' && <label className="flex items-center gap-1 text-xs text-nevoa"><input type="checkbox" checked={expandir} onChange={(e) => setExpandir(e.target.checked)} /> Expandir subtarefas</label>}
               {eu && <Avatar nome={eu.name} url={eu.avatarUrl} size={20} />}
               <select
                 aria-label="Visões salvas"
@@ -141,20 +156,20 @@ export default function DailyTasksPage() {
           ) : st.length === 0 ? (
             <EmptyState icon={ListChecks} title="Este espaço ainda não tem status" description="Crie o primeiro status em Novo status." />
           ) : visao === 'lista' ? (
-            <ListView tarefas={rows} statuses={st} membros={membros} listId={listId} actions={actions} onNovoStatus={(n) => criarStatus.mutate(n)} />
+            <ListView tarefas={rows} statuses={st} membros={membros} listId={listId} actions={actions} onNovoStatus={(n) => criarStatus.mutate(n)} expandirTudo={expandir} arquivadas={arquivados} />
           ) : visao === 'quadro' ? (
             <BoardView tarefas={rows} statuses={st} membros={membros} listId={listId} actions={actions} />
           ) : visao === 'gantt' ? (
             <GanttView tarefas={rows} actions={actions} />
           ) : visao === 'calendario' ? (
-            <CalendarView tarefas={rows} actions={actions} />
+            <CalendarView tarefas={rows} actions={actions} membros={membros} />
           ) : (
             <TableView tarefas={rows} statuses={st} membros={membros} actions={actions} />
           )}
           {pronto && tasks.data && tasks.data.total > rows.length && <p className="text-xs text-nevoa">Mostrando {rows.length} de {tasks.data.total} tarefas.</p>}
         </div>
       </div>
-      {aberta && <TaskDrawer taskId={aberta} onClose={() => setAberta(null)} onOpen={setAberta} />}
+      {aberta && <TaskDrawer taskId={aberta} onClose={fechar} onOpen={setAberta} />}
     </div>
   );
 }

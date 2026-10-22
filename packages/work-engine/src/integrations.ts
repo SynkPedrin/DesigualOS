@@ -15,7 +15,7 @@ const ORIGENS = ['communication', 'media', 'agent', 'client'] as const;
 
 export async function createTaskFromSource(
   ctx: WorkContext,
-  src: { provider: string; externalType: string; externalId: string; listId: string; title: string; description?: string | null; clientId?: string | null; priority?: number; meta?: Record<string, unknown> },
+  src: { provider: string; externalType: string; externalId: string; listId: string; title: string; description?: string | null; clientId?: string | null; priority?: number; assigneeIds?: string[]; dueAt?: Date | null; meta?: Record<string, unknown> },
 ) {
   if (!(ORIGENS as readonly string[]).includes(src.provider)) throw invalid(`Origem inválida. Use: ${ORIGENS.join(', ')}.`);
   if (!src.externalId.trim() || src.externalId.length > 200) throw invalid('Identificador de origem inválido.');
@@ -26,7 +26,7 @@ export async function createTaskFromSource(
     eq(schema.workExternalMappings.externalType, src.externalType), eq(schema.workExternalMappings.externalId, src.externalId));
   const [ja] = await db.select().from(schema.workExternalMappings).where(chave);
   if (ja) return { task: await getTask(ctx, ja.entityId), created: false };
-  const task = await createTask(ctx, { listId: src.listId, title: src.title, description: src.description ?? null, clientId: src.clientId ?? null, ...(src.priority !== undefined ? { priority: src.priority } : {}) });
+  const task = await createTask(ctx, { listId: src.listId, title: src.title, description: src.description ?? null, clientId: src.clientId ?? null, ...(src.priority !== undefined ? { priority: src.priority } : {}), ...(src.assigneeIds ? { assigneeIds: src.assigneeIds } : {}), ...(src.dueAt !== undefined ? { dueAt: src.dueAt } : {}) });
   const gravou = await db.insert(schema.workExternalMappings)
     .values({ organizationId: ctx.organizationId, provider: src.provider, externalType: src.externalType, externalId: src.externalId, entityType: 'task', entityId: task.id, meta: src.meta ?? {} })
     .onConflictDoNothing().returning({ id: schema.workExternalMappings.id });
