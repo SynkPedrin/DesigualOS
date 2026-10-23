@@ -72,7 +72,7 @@ export function SeloDeSituacao({ situacao }: { situacao: string }) {
 /** Valor em reais, alinhado para somar de cabeça. Negativo em vermelho. */
 export function Dinheiro({ centavos, className }: { centavos: number | null | undefined; className?: string }) {
   if (centavos === null || centavos === undefined) return <span className={cn('text-nevoa/60', className)}>—</span>;
-  return <span className={cn('tabular-nums', centavos < 0 && 'text-red-500', className)}>{formatarCentavos(centavos)}</span>;
+  return <span className={cn('whitespace-nowrap tabular-nums', centavos < 0 && 'text-red-500', className)}>{formatarCentavos(centavos)}</span>;
 }
 
 export const TH = 'px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-nevoa';

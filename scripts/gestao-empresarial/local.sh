@@ -63,7 +63,7 @@ cmd_up() {
   subir_processo api "$PORTA_API" env -i PATH="$PATH" HOME="$HOME" NODE_ENV=development PORT="$PORTA_API" \
     DATABASE_URL="$DB_URL" REDIS_URL="redis://127.0.0.1:${PORTA_REDIS}" SUPABASE_URL="http://localhost:${PORTA_AUTH}" \
     MASTER_USER_EMAILS=admin@local.test PROVIDER_ORGANIZATION_ID="$ORG_ID" FRONTEND_URL="http://localhost:${PORTA_WEB}" \
-    GESTAO_EMPRESARIAL_ENABLED=true pnpm --dir "$RAIZ/apps/api" exec tsx src/server.ts
+    GESTAO_EMPRESARIAL_ENABLED=true pnpm --dir "$RAIZ/apps/api" exec tsx watch src/server.ts
   subir_processo web "$PORTA_WEB" env -i PATH="$PATH" HOME="$HOME" NODE_ENV=development \
     NEXT_PUBLIC_API_MODE=live NEXT_PUBLIC_API_URL="http://localhost:${PORTA_API}" \
     NEXT_PUBLIC_SUPABASE_URL="http://localhost:${PORTA_AUTH}" NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=dev-local-nao-e-segredo \
@@ -75,6 +75,7 @@ cmd_up() {
 Pronto. Abra http://localhost:${PORTA_WEB}/login
   administrador:  admin@local.test        senha: gestao-local-admin
   colaborador:    colaborador@local.test  senha: gestao-local-colab   (não deve ver a Gestão Empresarial)
+  testes E2E:     e2e@local.test          senha: gestao-local-e2e     (empresa separada, para os testes não sujarem os dados)
 Módulo: http://localhost:${PORTA_WEB}/gestao-empresarial
 Para desligar: scripts/gestao-empresarial/local.sh down
 FIM

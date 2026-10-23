@@ -25,6 +25,8 @@ const BASE = `http://localhost:${PORTA}`;
 export const USUARIOS = {
   'admin@local.test': { id: '00000000-0000-4000-8000-0000000000a1', senha: 'gestao-local-admin', nome: 'Admin Local' },
   'colaborador@local.test': { id: '00000000-0000-4000-8000-0000000000b2', senha: 'gestao-local-colab', nome: 'Colaborador Local' },
+  // Só os testes E2E entram com ele: empresa própria, para não misturar dado de teste com os dados importados.
+  'e2e@local.test': { id: '00000000-0000-4000-8000-0000000000e3', senha: 'gestao-local-e2e', nome: 'Testes E2E' },
 };
 
 const { publicKey, privateKey } = await generateKeyPair('ES256');

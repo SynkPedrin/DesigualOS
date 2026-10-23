@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 
 /** Entradas do login FALSO local (scripts/gestao-empresarial/auth-local.mjs). Não são contas reais. */
-export const ADMIN = { email: 'admin@local.test', senha: 'gestao-local-admin' };
+export const ADMIN = { email: 'e2e@local.test', senha: 'gestao-local-e2e' };
 export const COLABORADOR = { email: 'colaborador@local.test', senha: 'gestao-local-colab' };
 
 /** Sufixo da execução: cada rodada cria dados com nomes próprios e não esbarra na anterior. */
