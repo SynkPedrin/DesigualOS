@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import { Flag } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { PRIORIDADES } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
 
@@ -60,4 +61,43 @@ export function andamento(t: { subtaskCount: number; subtaskDone: number; status
   if (t.completedAt || t.status?.category === 'done') return 100;
   if (t.subtaskCount > 0) return Math.round((t.subtaskDone / t.subtaskCount) * 100);
   return ({ todo: 0, active: 40, review: 75, blocked: 20, cancelled: 0 } as Record<string, number>)[t.status?.category ?? 'todo'] ?? 0;
+}
+
+/**
+ * Região que rola sozinha enquanto o resto da tela fica parado. As bordas
+ * esmaecem (fade) só do lado em que ainda há conteúdo escondido, para quem
+ * olha saber que a lista continua. Abaixo de md não prende altura: no celular
+ * a tela inteira rola.
+ */
+export function AreaRolavel({ children, className }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [borda, setBorda] = useState({ topo: false, base: false });
+  const medir = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const topo = el.scrollTop > 4;
+    const base = el.scrollHeight - el.scrollTop - el.clientHeight > 4;
+    setBorda((b) => (b.topo === topo && b.base === base ? b : { topo, base }));
+  }, []);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [medir]);
+  const mascara = `linear-gradient(to bottom, ${borda.topo ? 'transparent 0, #000 36px' : '#000 0'}, ${borda.base ? '#000 calc(100% - 44px), transparent 100%' : '#000 100%'})`;
+  return (
+    <div
+      ref={ref}
+      onScroll={medir}
+      data-area-rolavel
+      style={{ WebkitMaskImage: mascara, maskImage: mascara }}
+      className={cn('md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1', className)}
+    >
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
 }

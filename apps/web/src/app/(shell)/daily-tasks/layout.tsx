@@ -40,7 +40,7 @@ export default function DailyTasksLayout({ children }: { children: React.ReactNo
   const naoLidas = inbox.data?.unread ?? 0;
   const rodando = timer.data?.running ?? null;
   return (
-    <div className="space-y-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       <nav aria-label="Daily Tasks" className="flex flex-wrap items-center gap-1 border-b border-grafite-elevado">
         {ABAS.map((a) => (
           <Link key={a.href} href={a.href} className={cn('-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium', pathname === a.href ? 'border-sinal text-branco-cru' : 'border-transparent text-nevoa hover:text-branco-cru')}>
@@ -65,7 +65,7 @@ export default function DailyTasksLayout({ children }: { children: React.ReactNo
           </div>
         )}
       </nav>
-      {children}
+      <div className="flex min-h-0 flex-1 flex-col md:overflow-y-auto">{children}</div>
     </div>
   );
 }

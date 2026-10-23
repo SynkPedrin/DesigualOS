@@ -129,7 +129,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
 }
 
 export type ColunaOrdenavel = 'tarefa' | 'prazo' | 'prioridade' | 'andamento';
-export function CabecalhoDaTabela({ ordem, onOrdenar, todasMarcadas, onMarcarTodas }: { ordem?: { col: ColunaOrdenavel; dir: 'asc' | 'desc' } | undefined; onOrdenar?: ((c: ColunaOrdenavel) => void) | undefined; todasMarcadas?: boolean; onMarcarTodas?: (() => void) | undefined }) {
+export function CabecalhoDaTabela({ fixo, ordem, onOrdenar, todasMarcadas, onMarcarTodas }: { fixo?: boolean; ordem?: { col: ColunaOrdenavel; dir: 'asc' | 'desc' } | undefined; onOrdenar?: ((c: ColunaOrdenavel) => void) | undefined; todasMarcadas?: boolean; onMarcarTodas?: (() => void) | undefined }) {
   const { colunas, grade } = useColunas();
   const col = (c: ColunaOrdenavel, nome: string) => (
     <button type="button" disabled={!onOrdenar} onClick={() => onOrdenar?.(c)} className="flex items-center gap-1 text-left uppercase tracking-wide hover:text-branco-cru">
@@ -141,7 +141,7 @@ export function CabecalhoDaTabela({ ordem, onOrdenar, todasMarcadas, onMarcarTod
     prazo: col('prazo', 'Prazo'), prioridade: col('prioridade', 'Prioridade'), status: <span className="uppercase tracking-wide">Status</span>, tags: <span className="uppercase tracking-wide">Tags</span>,
   };
   return (
-    <div style={{ gridTemplateColumns: grade }} className="grid items-center gap-3 border-b border-grafite-elevado px-3 py-2 text-[11px] text-nevoa">
+    <div style={{ gridTemplateColumns: grade }} className={cn('grid items-center gap-3 border-b border-grafite-elevado px-3 py-2 text-[11px] text-nevoa', fixo && 'sticky top-0 z-10 bg-carbono')}>
       <input type="checkbox" aria-label="Selecionar todas" checked={Boolean(todasMarcadas)} onChange={() => onMarcarTodas?.()} disabled={!onMarcarTodas} />
       {col('tarefa', 'Tarefa')}
       {ORDEM.filter((c) => colunas.includes(c)).map((c) => <Fragment key={c}>{rotulo[c]}</Fragment>)}
@@ -180,8 +180,8 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
     const mostradas = ordenadas.slice(0, limiteFlat);
     return (
       <div className="space-y-2">
-        <div className="overflow-x-auto rounded-xl border border-grafite-elevado">
-          <CabecalhoDaTabela ordem={ordem} onOrdenar={mudarOrdem} todasMarcadas={mostradas.length > 0 && mostradas.every((t) => selecionadas.has(t.id))} onMarcarTodas={() => onSelecionadas(mostradas.every((t) => selecionadas.has(t.id)) ? new Set() : new Set(mostradas.map((t) => t.id)))} />
+        <div className="overflow-x-clip rounded-xl border border-grafite-elevado">
+          <CabecalhoDaTabela fixo ordem={ordem} onOrdenar={mudarOrdem} todasMarcadas={mostradas.length > 0 && mostradas.every((t) => selecionadas.has(t.id))} onMarcarTodas={() => onSelecionadas(mostradas.every((t) => selecionadas.has(t.id)) ? new Set() : new Set(mostradas.map((t) => t.id)))} />
           {mostradas.map((t) => <Linha key={t.id} t={t} nivel={0} ctx={ctx} />)}
           {ordenadas.length === 0 && <p className="px-4 py-8 text-center text-sm text-nevoa">Nenhuma tarefa com esses filtros.</p>}
           {listId && <InlineAdd rotulo="Adicionar tarefa" onSubmit={(title) => actions.criar({ title, listId })} />}

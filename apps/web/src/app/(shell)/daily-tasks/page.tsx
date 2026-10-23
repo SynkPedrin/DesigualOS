@@ -16,7 +16,7 @@ import type { FiltroRapido} from '@/components/daily-tasks/painel-lateral';
 import { PainelLateral } from '@/components/daily-tasks/painel-lateral';
 import { LogoDoCliente, nomeLimpo } from '@/components/daily-tasks/cliente';
 import { Popover } from '@/components/daily-tasks/primitivas';
-import { StatCard } from '@/components/daily-tasks/ui';
+import { AreaRolavel, StatCard } from '@/components/daily-tasks/ui';
 import {
   PRIORIDADES,
   useCreateStatus,
@@ -193,13 +193,13 @@ export default function DailyTasksPage() {
   const painel = <PainelLateral overview={overview.data} aoAbrir={setAberta} aoFiltrar={(f) => { setRapido(f); setVisao('lista'); }} />;
 
   return (
-    <div className="space-y-3">
-      <div className={cn('grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]', painelAberto ? '2xl:grid-cols-[210px_minmax(0,1fr)_280px]' : '2xl:grid-cols-[210px_minmax(0,1fr)]')}>
-        <div className="md:sticky md:top-2 md:self-start">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className={cn('grid gap-4 md:min-h-0 md:flex-1 md:grid-cols-[220px_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]', painelAberto ? '2xl:grid-cols-[210px_minmax(0,1fr)_280px]' : '2xl:grid-cols-[210px_minmax(0,1fr)]')}>
+        <div className="md:min-h-0 md:overflow-y-auto">
           {tree.isPending ? <Skeleton className="h-64 w-full" /> : <Arvore spaces={spaces} listId={listId} spaceId={spaceAtivo} arquivados={arquivados} onArquivados={setArquivados} onPick={(l, s) => { setListId(l); setSpaceId(s); }} />}
         </div>
 
-        <div className="min-w-0 space-y-3">
+        <div className="flex min-w-0 flex-col gap-3 md:min-h-0">
           <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div className="min-w-0 flex-1">
               <nav aria-label="Caminho" className="flex flex-wrap items-center gap-1 text-xs text-nevoa">
@@ -312,6 +312,7 @@ export default function DailyTasksPage() {
           )}
 
           {erro && <p role="alert" className="text-xs text-red-400">{erro}</p>}
+          <AreaRolavel>
           {!pronto ? (
             <Skeleton className="h-64 w-full" />
           ) : spaces.length === 0 || !space ? (
@@ -330,8 +331,9 @@ export default function DailyTasksPage() {
             <TableView tarefas={rows} statuses={st} membros={membros} actions={actions} />
           )}
           {pronto && tasks.data && tasks.data.total > todas.length && <p className="text-xs text-nevoa">Mostrando {todas.length} de {tasks.data.total} tarefas.</p>}
+          </AreaRolavel>
         </div>
-        {painelAberto && <div className="hidden 2xl:block">{painel}</div>}
+        {painelAberto && <div className="hidden md:min-h-0 md:overflow-y-auto 2xl:block">{painel}</div>}
       </div>
       {aberta && <TaskDrawer taskId={aberta} onClose={fechar} onOpen={setAberta} />}
     </div>
