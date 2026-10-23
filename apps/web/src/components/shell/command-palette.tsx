@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/ui-store';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
 import { useMyWorkspace } from '@/hooks/use-my-workspace';
+import { useGestaoAcesso } from '@/hooks/use-gestao-empresarial';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { useSearch } from '@/hooks/use-search';
 import { matchesQuery } from '@/lib/search-match';
@@ -23,6 +24,7 @@ export function CommandPalette() {
   const { data: me } = useMe();
   const { data: workspace } = useMyWorkspace();
   const { data: dailyTasksAccess } = useDailyTasksAccess();
+  const { data: gestaoAcesso } = useGestaoAcesso();
   const [query, setQuery] = useState('');
   const { data: results } = useSearch(query);
   // Depende de `query`, então precisa vir DEPOIS do useState: o .filter roda
@@ -44,6 +46,7 @@ export function CommandPalette() {
     dentroDeTenant: estaDentroDeTenant(me),
     modulosHabilitados: workspace ? new Set(workspace.modules) : null,
     dailyTasksLiberado: dailyTasksAccess?.allowed === true,
+    gestaoEmpresarialLiberada: gestaoAcesso?.allowed === true,
   }).filter((item) => matchesQuery(item.label, query));
 
   useEffect(() => {

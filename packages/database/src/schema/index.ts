@@ -42,3 +42,4 @@ export * from './media';
 export * from './internal-chat';
 export * from './work';
 export * from './announcements';
+export * from './gestao-empresarial';

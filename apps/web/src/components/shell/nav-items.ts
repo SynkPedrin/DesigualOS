@@ -16,6 +16,7 @@ import {
   Gauge,
   GitBranch,
   Heart,
+  Landmark,
   History,
   KeyRound,
   LayoutDashboard,
@@ -105,6 +106,12 @@ export interface NavItem {
    * (flag da empresa + papel administrador). Omitido, o filtro não pergunta.
    */
   dailyTasks?: boolean;
+  /**
+   * Gestão Empresarial (financeiro, comercial, produção): o item só aparece quando
+   * `GET /gestao-empresarial/access` autoriza (módulo ligado no servidor + administrador). Nasce
+   * escondido, como o Daily Tasks: sem resposta do servidor, ninguém vê.
+   */
+  gestaoEmpresarial?: boolean;
   /**
    * FERRAMENTA TÉCNICA. Continua existindo, no mesmo endereço, e sai da
    * navegação de quem usa o produto para trabalhar.
@@ -228,6 +235,8 @@ export const NAV_ITEMS: NavItem[] = [
   // dia a dia (Design, Tráfego). `requirePermission` já era aberto a
   // colaborador; só a navegação estava fechada.
   { href: '/daily-tasks', label: 'Daily Tasks — Beta', icon: ListChecks, section: 'dia', dailyTasks: true },
+  // O dado financeiro da agência. Só aparece com o módulo ligado no servidor E para administrador.
+  { href: '/gestao-empresarial', label: 'Gestão Empresarial', icon: Landmark, section: 'dia', masterOnly: true, gestaoEmpresarial: true },
   { href: '/tasks', label: 'Tarefas', icon: CheckSquare, section: 'dia', modulo: 'tarefas' },
   // Duas filas na mesma tela (P1-I/J, 06/10/2026): a de tool-call da IA
   // (budget de Meta Ads, publicação no Instagram, deletar task do ClickUp) -

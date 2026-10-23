@@ -55,6 +55,7 @@ import { registerMetaIntegrationRoutes } from './integrations/meta-routes';
 import { registerMediaRoutes } from './media/routes';
 import { startWorkScheduler } from './work/scheduler';
 import { registerWorkRoutes } from './work/routes';
+import { registerGestaoEmpresarialRoutes } from './gestao-empresarial/routes';
 import { registerGoogleAdsIntegrationRoutes } from './integrations/google-ads-routes';
 import { registerAgencyControlCenterRoutes } from './agency-control-center/routes';
 import { registerWorkspaceRoutes } from './workspace/routes';
@@ -312,6 +313,7 @@ async function start(): Promise<void> {
   await app.register(registerMetaIntegrationRoutes);
   await app.register(registerMediaRoutes);
   await app.register(registerWorkRoutes);
+  await app.register(registerGestaoEmpresarialRoutes);
   await app.register(registerGoogleAdsIntegrationRoutes);
   await app.register(registerAgencyControlCenterRoutes);
   await app.register(registerWorkspaceRoutes);
