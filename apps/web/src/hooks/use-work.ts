@@ -64,7 +64,7 @@ export interface WorkTaskDetail {
   subtaskIds: string[];
   comments: Array<{ id: string; parentCommentId: string | null; body: string; authorId: string | null; authorName: string; authorAvatar: string | null; resolvedAt: string | null; createdAt: string }>;
   checklists: Array<{ id: string; name: string; items: Array<{ id: string; parentItemId: string | null; text: string; done: boolean }> }>;
-  attachments: Array<{ id: string; fileName: string; mimeType: string | null; sizeBytes: number | null; url: string }>;
+  attachments: Array<{ id: string; fileName: string; mimeType: string | null; sizeBytes: number | null; url: string; storage?: 'external' | 'storage' }>;
   customFields: Array<{ fieldId: string; name: string; type: string; value: unknown }>;
   blockedBy: Array<{ id: string; key: string; title: string }>;
   blocking: Array<{ id: string; key: string; title: string }>;

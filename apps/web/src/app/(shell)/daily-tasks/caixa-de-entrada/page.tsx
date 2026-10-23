@@ -2,16 +2,16 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AtSign, Bell, Inbox, ListChecks, MessagesSquare } from 'lucide-react';
+import { AtSign, Bell, Inbox, ListChecks, MessagesSquare, UserCheck } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar } from '@/components/daily-tasks/primitivas';
-import { StatCard } from '@/components/daily-tasks/ui';
+import { EmblemaDePrioridade, prazoRelativo, StatCard } from '@/components/daily-tasks/ui';
 import { TaskDrawer } from '@/components/daily-tasks/task-drawer';
 import { useInbox, useMarkInboxRead, type InboxEntry } from '@/hooks/use-work-extra';
 import { cn } from '@/lib/utils';
 
-type Filtro = 'tudo' | 'task' | 'communication' | 'mention' | 'system';
+type Filtro = 'tudo' | 'assigned' | 'task' | 'communication' | 'mention' | 'system';
 
 function quando(iso: string): string {
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
@@ -32,10 +32,12 @@ export default function CaixaDeEntradaPage() {
   const [aberta, setAberta] = useState<string | null>(null);
   if (isPending) return <Skeleton className="h-64 w-full" />;
   const todos = data?.items ?? [];
+  const atribuidas = data?.assigned ?? [];
   const lista = todos.filter((i) => (filtro === 'tudo' ? true : filtro === 'mention' ? i.mention : i.kind === filtro));
   const abas: Array<{ id: Filtro; rotulo: string; n: number; naoLidas: number }> = [
     { id: 'tudo', rotulo: 'Tudo', n: todos.length, naoLidas: data?.unread ?? 0 },
-    { id: 'task', rotulo: 'Tarefas', n: todos.filter((i) => i.kind === 'task').length, naoLidas: data?.unreadByKind.task ?? 0 },
+    { id: 'assigned', rotulo: 'Atribuídas a mim', n: atribuidas.length, naoLidas: atribuidas.filter((a) => a.dueAt && new Date(a.dueAt) < new Date()).length },
+    { id: 'task', rotulo: 'Atividade', n: todos.filter((i) => i.kind === 'task').length, naoLidas: data?.unreadByKind.task ?? 0 },
     { id: 'communication', rotulo: 'Comunicação', n: todos.filter((i) => i.kind === 'communication').length, naoLidas: data?.unreadByKind.communication ?? 0 },
     { id: 'mention', rotulo: 'Menções', n: todos.filter((i) => i.mention).length, naoLidas: todos.filter((i) => i.mention && i.unread).length },
     { id: 'system', rotulo: 'Sistema', n: todos.filter((i) => i.kind === 'system').length, naoLidas: data?.unreadByKind.system ?? 0 },
@@ -50,9 +52,9 @@ export default function CaixaDeEntradaPage() {
         </div>
         <button type="button" disabled={(data?.unreadByKind.task ?? 0) + (data?.unreadByKind.system ?? 0) === 0 || lido.isPending} onClick={() => lido.mutate()} className="rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite disabled:opacity-40" title="Marca como lidos os avisos de tarefas e do sistema. Mensagens são lidas na própria Comunicação.">Marcar avisos como lidos</button>
       </header>
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         {abas.filter((a) => a.id !== 'tudo').map((a) => (
-          <StatCard key={a.id} icone={a.id === 'task' ? ListChecks : a.id === 'communication' ? MessagesSquare : a.id === 'mention' ? AtSign : Bell} rotulo={a.rotulo} valor={a.naoLidas} detalhe={`${a.n} no total · clique para filtrar`} tom={a.id === 'mention' ? 'roxo' : a.id === 'task' ? 'verde' : a.id === 'communication' ? 'amarelo' : 'neutro'} onClick={() => setFiltro(filtro === a.id ? 'tudo' : a.id)} ativo={filtro === a.id} />
+          <StatCard key={a.id} icone={a.id === 'assigned' ? UserCheck : a.id === 'task' ? ListChecks : a.id === 'communication' ? MessagesSquare : a.id === 'mention' ? AtSign : Bell} rotulo={a.rotulo} valor={a.naoLidas} detalhe={a.id === 'assigned' ? `${a.n} abertas · ${a.naoLidas} atrasadas` : `${a.n} no total · clique para filtrar`} tom={a.id === 'assigned' ? (a.naoLidas > 0 ? 'vermelho' : 'verde') : a.id === 'mention' ? 'roxo' : a.id === 'task' ? 'verde' : a.id === 'communication' ? 'amarelo' : 'neutro'} onClick={() => setFiltro(filtro === a.id ? 'tudo' : a.id)} ativo={filtro === a.id} />
         ))}
       </div>
       <div role="tablist" aria-label="Filtro da caixa" className="flex flex-wrap gap-1">
@@ -62,7 +64,30 @@ export default function CaixaDeEntradaPage() {
           </button>
         ))}
       </div>
-      {lista.length === 0 ? (
+      {filtro === 'assigned' ? (
+        atribuidas.length === 0 ? (
+          <EmptyState icon={UserCheck} title="Nada atribuído a você" description="Quando alguém colocar você como responsável por uma tarefa, ela aparece aqui até ser concluída." />
+        ) : (
+          <ul className="divide-y divide-grafite-elevado/60 rounded-lg border border-grafite-elevado">
+            {atribuidas.map((a) => {
+              const prazo = prazoRelativo(a.dueAt, false);
+              return (
+                <li key={a.taskId}>
+                  <button type="button" onClick={() => setAberta(a.taskId)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-grafite-elevado/40">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-branco-cru">{a.title}</span>
+                      <span className="block truncate text-xs text-nevoa">{[a.key, a.clientName].filter(Boolean).join(' · ')}</span>
+                    </span>
+                    {a.priority > 0 && <EmblemaDePrioridade valor={a.priority} />}
+                    <span className="rounded bg-grafite-elevado px-2 py-0.5 text-[11px] font-semibold uppercase text-branco-cru">{a.statusName}</span>
+                    <span className={cn('w-24 shrink-0 text-right text-xs', prazo?.cor)}>{prazo ? <>{prazo.data}<br />{prazo.texto}</> : <span className="text-nevoa">sem prazo</span>}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )
+      ) : lista.length === 0 ? (
         <EmptyState icon={Inbox} title={filtro === 'tudo' ? 'Caixa de entrada vazia' : 'Nada neste filtro'} description="Aqui chegam mudanças nas suas tarefas, mensagens da Comunicação que você ainda não leu, menções e avisos do sistema." />
       ) : (
         <ul className="divide-y divide-grafite-elevado/60 rounded-lg border border-grafite-elevado">

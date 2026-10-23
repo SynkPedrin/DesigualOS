@@ -256,13 +256,14 @@ export function CriarTarefa({ conversationId, mensagem, onClose }: { conversatio
   const comLista = (clientes.data ?? []).filter((c) => c.clickupListId);
   // Destino: só oferece o Daily Tasks (beta) a quem o módulo está liberado; sem ele, nada muda para ninguém.
   const daily = useDailyTasksAccess().data?.allowed === true;
-  const [destino, setDestino] = useState<'clickup' | 'daily'>('clickup');
+  const [escolhido, setDestino] = useState<'clickup' | 'daily' | null>(null);
+  const destino = escolhido ?? (daily ? 'daily' : 'clickup');
   if (daily && destino === 'daily') {
     return (
       <Modal titulo="Criar tarefa no Daily Tasks" onClose={onClose} largura="max-w-lg">
         <div className="space-y-3 p-4">
           <button type="button" onClick={() => setDestino('clickup')} className="text-xs text-nevoa hover:text-branco-cru">← criar no ClickUp em vez disso</button>
-          <CriarTarefaDaily conversationId={conversationId} messageId={mensagem.id} senderName={mensagem.sender_name} texto={mensagem.content ?? ''} onClose={onClose} />
+          <CriarTarefaDaily conversationId={conversationId} messageId={mensagem.id} senderName={mensagem.sender_name} texto={mensagem.content ?? ''} anexos={mensagem.attachments.map((a) => ({ id: a.id, filename: a.filename }))} onClose={onClose} />
         </div>
       </Modal>
     );

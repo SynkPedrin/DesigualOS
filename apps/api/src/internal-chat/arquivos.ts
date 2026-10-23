@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -254,4 +254,14 @@ export async function existeNoDisco(storageKey: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Copia um arquivo já guardado para outra pasta lógica (ex.: da conversa para a tarefa). Devolve a nova chave. */
+export async function copiarAnexo(storageKeyOrigem: string, organizationId: string, pasta: string): Promise<string> {
+  const extensao = extname(storageKeyOrigem).slice(1).toLowerCase();
+  const nova = `${organizationId}/${pasta}/${randomUUID()}.${extensao}`;
+  const destino = dentroDaRaiz(nova);
+  await mkdir(resolve(destino, '..'), { recursive: true, mode: 0o700 });
+  await copyFile(dentroDaRaiz(storageKeyOrigem), destino);
+  return nova;
 }

@@ -414,7 +414,7 @@ export function useCreateGroup() {
 export function useOpenDiscussion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { entity_type: 'client' | 'demand'; entity_id: string; title: string }) =>
+    mutationFn: (input: { entity_type: 'client' | 'demand' | 'work_task'; entity_id: string; title: string }) =>
       apiFetch<{ id: string }>('/internal-chat/discussions', { method: 'POST', body: JSON.stringify(input) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.conversations }),
   });

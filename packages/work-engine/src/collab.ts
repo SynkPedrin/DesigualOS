@@ -37,7 +37,8 @@ export async function getTaskDetail(ctx: WorkContext, taskId: string) {
     subtaskIds: subtasks.map((s) => s.id),
     comments: comments.map((r) => ({ id: r.c.id, parentCommentId: r.c.parentCommentId, body: r.c.body, authorId: r.c.authorId, authorName: r.authorName ?? r.c.authorLabel ?? 'Alguém', authorAvatar: r.authorAvatar ?? null, resolvedAt: r.c.resolvedAt?.toISOString() ?? null, createdAt: r.c.createdAt.toISOString() })),
     checklists: checklists.map((c) => ({ id: c.id, name: c.name, items: items.filter((i) => i.checklistId === c.id).map((i) => ({ id: i.id, parentItemId: i.parentItemId, text: i.text, done: i.done })) })),
-    attachments: attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes, url: a.url })),
+    // Arquivo guardado no servidor não tem URL pública: a tela baixa pela rota autenticada /work/attachments/:id/file.
+    attachments: attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes, storage: a.storage, url: a.storage === 'storage' ? `/work/attachments/${a.id}/file` : a.url })),
     fieldDefs: defs.map((d) => ({ id: d.id, name: d.name, type: d.fieldType, options: d.options })),
     trackedMs: Number(tempo?.ms ?? 0),
     followers: seguidores,

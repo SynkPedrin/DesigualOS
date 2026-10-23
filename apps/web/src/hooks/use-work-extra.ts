@@ -5,7 +5,8 @@ const init = (method: string, body?: unknown): RequestInit => (body === undefine
 const useInv = () => { const qc = useQueryClient(); return (...k: string[]) => Promise.all(k.map((x) => qc.invalidateQueries({ queryKey: ['work', x] }))); };
 
 export interface InboxEntry { id: string; kind: 'task' | 'communication' | 'system'; actorName: string; actorAvatar: string | null; verb: string; subject: string; snippet: string | null; link: string; taskId: string | null; mention: boolean; unread: boolean; createdAt: string }
-export interface InboxData { items: InboxEntry[]; unread: number; unreadByKind: { task: number; communication: number; system: number } }
+export interface AtribuidaAMim { taskId: string; key: string; title: string; dueAt: string | null; priority: number; statusName: string; statusColor: string | null; clientName: string | null }
+export interface InboxData { items: InboxEntry[]; assigned: AtribuidaAMim[]; unread: number; unreadByKind: { task: number; communication: number; system: number } }
 export function useInbox(enabled = true) {
   return useQuery({ queryKey: ['work', 'inbox'], enabled, queryFn: () => apiFetch<InboxData>('/work/inbox'), refetchInterval: 30_000 });
 }

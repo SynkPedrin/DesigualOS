@@ -78,9 +78,25 @@ const VERBOS: Record<string, string> = { mentioned: 'mencionou você em', commen
  * CAIXA DE ENTRADA UNIFICADA: tarefas (o que outras pessoas fizeram nas suas), Comunicação (mensagens que você ainda
  * não leu e menções) e avisos do sistema (o sino). Tudo sempre da SUA empresa e das SUAS conversas.
  */
-export async function listInboxUnified(ctx: WorkContext, limit = 80): Promise<{ items: InboxEntry[]; unread: { task: number; communication: number; system: number } }> {
+export interface AtribuidaAMim { taskId: string; key: string; title: string; dueAt: string | null; priority: number; statusName: string; statusColor: string | null; clientName: string | null; atribuidaEm: string | null }
+
+/** Tudo que está aberto e é DA pessoa: o que vence primeiro vem antes; sem prazo por último. */
+async function atribuidasAMim(ctx: WorkContext, limite = 60): Promise<AtribuidaAMim[]> {
+  const T = schema.workTasks;
+  const rows = await db.select({ t: T, status: schema.workTaskStatuses.name, cor: schema.workTaskStatuses.color, cliente: schema.clients.name })
+    .from(T)
+    .innerJoin(schema.workTaskAssignees, and(eq(schema.workTaskAssignees.taskId, T.id), eq(schema.workTaskAssignees.userId, ctx.userId)))
+    .innerJoin(schema.workTaskStatuses, eq(schema.workTaskStatuses.id, T.statusId))
+    .leftJoin(schema.clients, eq(schema.clients.id, T.clientId))
+    .where(and(eq(T.organizationId, ctx.organizationId), isNull(T.completedAt), isNull(T.archivedAt)))
+    .orderBy(sql`${T.dueAt} asc nulls last`, desc(T.updatedAt))
+    .limit(limite);
+  return rows.map((r) => ({ taskId: r.t.id, key: `DT-${r.t.number}`, title: r.t.title, dueAt: r.t.dueAt?.toISOString() ?? null, priority: r.t.priority, statusName: r.status, statusColor: r.cor ?? null, clientName: r.cliente ?? null, atribuidaEm: null }));
+}
+
+export async function listInboxUnified(ctx: WorkContext, limit = 80): Promise<{ items: InboxEntry[]; unread: { task: number; communication: number; system: number }; assigned: AtribuidaAMim[] }> {
   const org = ctx.organizationId;
-  const [tarefas, com, sistema] = await Promise.all([
+  const [tarefas, com, sistema, atribuidas] = await Promise.all([
     listInbox(ctx, limit),
     db.select({
       m: schema.internalMessages, conv: schema.internalConversations, sender: schema.users.name, avatar: schema.users.avatarUrl,
@@ -98,6 +114,7 @@ export async function listInboxUnified(ctx: WorkContext, limit = 80): Promise<{ 
       ))
       .orderBy(desc(schema.internalMessages.createdAt)).limit(limit),
     db.select().from(schema.notifications).where(and(eq(schema.notifications.userId, ctx.userId), notLike(schema.notifications.type, 'work.%'))).orderBy(desc(schema.notifications.createdAt)).limit(30),
+    atribuidasAMim(ctx),
   ]);
   const items: InboxEntry[] = [
     ...tarefas.map((t): InboxEntry => ({ id: `t:${t.id}`, kind: 'task', actorName: t.actorName, actorAvatar: t.actorAvatar, verb: VERBOS[t.action] ?? 'atualizou', subject: `${t.taskKey} ${t.taskTitle}`, snippet: null, link: `/daily-tasks?task=${t.taskId}`, taskId: t.taskId, mention: t.action === 'mentioned', unread: t.unread, createdAt: t.createdAt })),
@@ -109,7 +126,7 @@ export async function listInboxUnified(ctx: WorkContext, limit = 80): Promise<{ 
     ...sistema.map((n): InboxEntry => ({ id: `s:${n.id}`, kind: 'system', actorName: 'Sistema', actorAvatar: null, verb: '', subject: n.title, snippet: n.body, link: n.link ?? '/', taskId: null, mention: false, unread: n.readAt === null, createdAt: n.createdAt.toISOString() })),
   ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
   const conta = (k: InboxEntry['kind']) => items.filter((i) => i.kind === k && i.unread).length;
-  return { items, unread: { task: conta('task'), communication: conta('communication'), system: conta('system') } };
+  return { items, unread: { task: conta('task'), communication: conta('communication'), system: conta('system') }, assigned: atribuidas };
 }
 
 /** Marca como lido o que é DESTA tela (tarefas e avisos). Conversas só leem na própria Comunicação, onde a leitura é real. */

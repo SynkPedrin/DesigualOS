@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, Bookmark, PanelRight, Building2, CalendarClock, X, CalendarDays, ChevronRight, Columns3, Filter, GanttChart, List as ListIcon, ListChecks, Plus, Search, Settings2, SlidersHorizontal, Table2, Ban } from 'lucide-react';
+import { AlertTriangle, Bookmark, PanelRight, Building2, CalendarClock, X, CalendarDays, ChevronRight, Columns3, GanttChart, List as ListIcon, ListChecks, Plus, Search, Settings2, SlidersHorizontal, Table2, Ban } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Arvore } from '@/components/daily-tasks/tree';
@@ -16,7 +16,7 @@ import type { FiltroRapido} from '@/components/daily-tasks/painel-lateral';
 import { PainelLateral } from '@/components/daily-tasks/painel-lateral';
 import { LogoDoCliente, nomeLimpo } from '@/components/daily-tasks/cliente';
 import { Popover } from '@/components/daily-tasks/primitivas';
-import { AreaRolavel, StatCard } from '@/components/daily-tasks/ui';
+import { AreaRolavel } from '@/components/daily-tasks/ui';
 import {
   PRIORIDADES,
   useCreateStatus,

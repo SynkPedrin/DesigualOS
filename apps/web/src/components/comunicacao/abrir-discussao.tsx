@@ -10,7 +10,7 @@ import { toast } from '@/stores/toast-store';
  * A discussão de um cliente ou quinzena: UMA conversa por item, a mesma para
  * toda a equipe (não um chat novo por tela). Quem pode ver o item participa.
  */
-export function AbrirDiscussao({ entityType, entityId, titulo }: { entityType: 'client' | 'demand'; entityId: string; titulo: string }) {
+export function AbrirDiscussao({ entityType, entityId, titulo, rotulo }: { rotulo?: string; entityType: 'client' | 'demand' | 'work_task'; entityId: string; titulo: string }) {
   const router = useRouter();
   const workspace = useMyWorkspace();
   const abrir = useOpenDiscussion();
@@ -26,7 +26,7 @@ export function AbrirDiscussao({ entityType, entityId, titulo }: { entityType: '
       title="Conversa da equipe sobre este item, na Comunicação"
       className="flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-2 text-sm text-branco-cru transition-colors hover:border-roxo-eletrico/60 disabled:opacity-50"
     >
-      <MessagesSquare size={14} /> Discussão
+      <MessagesSquare size={14} /> {rotulo ?? 'Discussão'}
     </button>
   );
 }

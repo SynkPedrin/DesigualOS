@@ -409,7 +409,7 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
     rotas.post('/internal-chat/discussions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
       const { organizationId, userId } = contexto(request);
       try {
-        const body = z.object({ entity_type: z.enum(['client', 'demand']), entity_id: z.string().uuid(), title: z.string().min(1).max(120) }).parse(request.body);
+        const body = z.object({ entity_type: z.enum(['client', 'demand', 'work_task']), entity_id: z.string().uuid(), title: z.string().min(1).max(120) }).parse(request.body);
         const conversa = await svc.abrirDiscussao(organizationId, userId, body.entity_type, body.entity_id, body.title);
         return { id: conversa.id };
       } catch (erro) { return falha(reply, erro); }

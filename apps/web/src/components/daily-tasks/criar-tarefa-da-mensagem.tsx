@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useClients } from '@/hooks/use-clients';
 import { useWorkMembers, useWorkTree } from '@/hooks/use-work';
@@ -13,7 +13,10 @@ const campo = 'w-full rounded-md border border-grafite-elevado bg-carbono/40 px-
  * Criar tarefa do Daily Tasks a partir de uma mensagem da Comunicação. O par (mensagem → tarefa) é idempotente no
  * servidor: clicar duas vezes devolve a MESMA tarefa. A tarefa guarda de onde veio (conversa e mensagem).
  */
-export function CriarTarefaDaily({ conversationId, messageId, senderName, texto, onClose }: { conversationId: string; messageId: string; senderName: string | null; texto: string; onClose: () => void }) {
+export function CriarTarefaDaily({ conversationId, messageId, senderName, texto, anexos = [], onClose }: { conversationId: string; messageId?: string | undefined; senderName: string | null; texto: string; anexos?: Array<{ id: string; filename: string }>; onClose: () => void }) {
+  // Sem mensagem (rascunho do campo de escrever): a chave é desta abertura, então clicar duas vezes não duplica.
+  const chaveRascunho = useRef(`rascunho:${crypto.randomUUID()}`);
+  const [levar, setLevar] = useState(true);
   const arvore = useWorkTree().data?.spaces ?? [];
   const membros = useWorkMembers().data?.members ?? [];
   const clientes = useClients().data ?? [];
@@ -29,8 +32,9 @@ export function CriarTarefaDaily({ conversationId, messageId, senderName, texto,
     mutationFn: () => apiFetch<{ task: { key: string; id: string }; created: boolean }>('/work/tasks/from-source', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        provider: 'communication', externalType: 'message', externalId: messageId, listId, title: titulo.trim(),
-        description: `Origem: mensagem de ${senderName ?? 'alguém'} na Comunicação.\n\n> ${texto.slice(0, 1500)}\n\nAbrir a conversa: /comunicacao?c=${conversationId}&m=${messageId}`,
+        provider: 'communication', externalType: messageId ? 'message' : 'draft', externalId: messageId ?? chaveRascunho.current, listId, title: titulo.trim(),
+        description: messageId ? `Origem: mensagem de ${senderName ?? 'alguém'} na Comunicação.\n\n> ${texto.slice(0, 1500)}\n\nAbrir a conversa: /comunicacao?c=${conversationId}&m=${messageId}` : `Criada na Comunicação.\n\nConversa: /comunicacao?c=${conversationId}`,
+        ...(levar && anexos.length ? { chatAttachmentIds: anexos.map((a) => a.id) } : {}),
         ...(cliente ? { clientId: cliente } : {}), priority: Number(prio), ...(resp ? { assigneeIds: [resp] } : {}), ...(prazo ? { dueAt: new Date(`${prazo}T18:00:00`).toISOString() } : {}),
         meta: { conversationId },
       }),
@@ -40,7 +44,8 @@ export function CriarTarefaDaily({ conversationId, messageId, senderName, texto,
   });
   return (
     <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); criar.mutate(); }}>
-      <blockquote className="rounded-md border-l-2 border-nevoa/40 bg-grafite-elevado/40 px-3 py-2 text-xs text-nevoa"><span className="font-semibold">{senderName ?? 'Alguém'}:</span> {texto.slice(0, 300) || 'mensagem com anexo'}</blockquote>
+      {messageId && <blockquote className="rounded-md border-l-2 border-nevoa/40 bg-grafite-elevado/40 px-3 py-2 text-xs text-nevoa"><span className="font-semibold">{senderName ?? 'Alguém'}:</span> {texto.slice(0, 300) || 'mensagem com anexo'}</blockquote>}
+      {anexos.length > 0 && <label className="flex items-center gap-2 text-xs text-nevoa"><input type="checkbox" checked={levar} onChange={(e) => setLevar(e.target.checked)} /> Levar {anexos.length === 1 ? 'o arquivo' : `os ${anexos.length} arquivos`} da mensagem para a tarefa ({anexos.map((a) => a.filename).join(', ').slice(0, 80)})</label>}
       <label className="block text-xs text-nevoa">Título<input autoFocus required minLength={3} maxLength={200} value={titulo} onChange={(e) => setTitulo(e.target.value)} className={`${campo} mt-1`} /></label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block text-xs text-nevoa">Lista do Daily Tasks

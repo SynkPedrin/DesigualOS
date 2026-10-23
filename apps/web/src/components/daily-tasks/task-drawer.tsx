@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, Link2, Paperclip, Pencil, Play, Plus, Repeat, Save, Square, Trash2, X } from 'lucide-react';
+import { Check, Link2, Pencil, Play, Plus, Repeat, Save, Square, Trash2, X } from 'lucide-react';
 import {
   useAddComment, useChecklistActions, useCreateTask, useSpaceStatuses, useTaskDetail, useUpdateTask, useWorkMembers, useWorkTasks,
   type TaskPatch, type WorkTaskDetail, type WorkTaskWire,
@@ -13,6 +13,8 @@ import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toast-store';
 import { LogoDoCliente, nomeLimpo } from './cliente';
+import { AbrirDiscussao } from '@/components/comunicacao/abrir-discussao';
+import { AnexosDaTarefa } from './anexos-da-tarefa';
 import { AssigneePicker, DuePicker, PriorityPicker, StatusPicker } from './pickers';
 import { Avatar, StatusDot } from './primitivas';
 import { RowMenu } from './row-menu';
@@ -107,7 +109,6 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const [novoCl, setNovoCl] = useState('');
   const [tag, setTag] = useState('');
   const [min, setMin] = useState('');
-  const [link, setLink] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [todosCampos, setTodosCampos] = useState(false);
   const [editandoDesc, setEditandoDesc] = useState(false);
@@ -171,6 +172,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 <button type="button" onClick={() => iniciar.mutate(taskId)} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Play size={14} /> Iniciar cronômetro</button>
               )}
               <button type="button" onClick={() => document.getElementById('drawer-subtarefa')?.focus()} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Plus size={14} /> Criar subtarefa</button>
+              <AbrirDiscussao entityType="work_task" entityId={t.id} titulo={`${t.key ?? 'Tarefa'} · ${t.title}`.slice(0, 120)} rotulo="Conversar" />
               <span className="rounded-lg bg-grafite-elevado text-branco-cru hover:bg-grafite">
                 <RowMenu t={t} rotulo="Mais ações" onDone={(a) => { if (a !== 'moved') onClose(); }} extras={[
                   { rotulo: 'Salvar como modelo', icone: <Save size={12} />, onClick: () => { const n = window.prompt('Nome do modelo', t.title); if (n?.trim()) modelos.salvar.mutate({ taskId: t.id, name: n.trim() }, { onSuccess: () => toast('Modelo salvo — veja em Gerenciar › Modelos.', 'success'), onError: erro }); } },
@@ -283,12 +285,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             </Recolhivel>
 
             <Recolhivel titulo="Anexos" contagem={data.attachments.length} abertaAoInicio={data.attachments.length > 0}>
-              <ul className="space-y-1">
-                {data.attachments.map((a) => <li key={a.id} className="group flex items-center gap-2"><a href={a.url} target="_blank" rel="noreferrer noopener" className="flex min-w-0 flex-1 items-center gap-2 text-sm text-branco-cru hover:underline"><Paperclip size={13} className="shrink-0 text-nevoa" /><span className="truncate">{a.fileName}</span></a><button type="button" aria-label={`Remover anexo ${a.fileName}`} onClick={() => crud.apagarAnexo.mutate(a.id, { onError: erro })} className="text-nevoa opacity-40 transition-opacity hover:text-red-400 group-hover:opacity-100 focus:opacity-100"><X size={12} /></button></li>)}
-              </ul>
-              <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (link.trim()) crud.anexar.mutate({ url: link.trim() }, { onSuccess: () => setLink(''), onError: erro }); }}>
-                <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="+ Colar link (Drive, Figma, PDF…)" aria-label="Link do anexo" className="flex-1 rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
-              </form>
+              <AnexosDaTarefa taskId={taskId} anexos={data.attachments} erro={erro} />
             </Recolhivel>
 
             <section className="border-t border-grafite-elevado pt-4">

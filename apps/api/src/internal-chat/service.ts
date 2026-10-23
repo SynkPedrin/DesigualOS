@@ -164,6 +164,10 @@ export async function podeVerEntidade(organizationId: string, userId: string, en
     const [d] = await db.execute<{ id: string }>(sql`select d.id from demands d where d.id = ${entityId} and d.organization_id = ${organizationId} limit 1`);
     return Boolean(d);
   }
+  if (entityType === 'work_task') {
+    const [t] = await db.select({ id: schema.workTasks.id }).from(schema.workTasks).where(and(eq(schema.workTasks.id, entityId), eq(schema.workTasks.organizationId, organizationId))).limit(1);
+    return Boolean(t);
+  }
   return false;
 }
 

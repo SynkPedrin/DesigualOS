@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
+import { gravarAnexo, abrirAnexo, apagarAnexo, copiarAnexo, tipoParaServir, politicaDeAnexos, AnexoRecusado } from '../internal-chat/arquivos';
+import { anexoAcessivel } from '../internal-chat/service';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
@@ -364,7 +366,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   const bad = (reply: FastifyReply, m = 'Dados inválidos.') => reply.code(400).send({ error: m });
   app.get('/work/inbox', guard, async (request) => {
     const r = await listInboxUnified(workContext(request));
-    return { items: r.items, unreadByKind: r.unread, unread: r.unread.task + r.unread.communication + r.unread.system };
+    return { items: r.items, assigned: r.assigned, unreadByKind: r.unread, unread: r.unread.task + r.unread.communication + r.unread.system };
   });
   app.post('/work/inbox/read', guard, async (request) => markInboxReadAll(workContext(request)));
 
@@ -513,9 +515,24 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
 
   // ── Integrações: tarefa nascida de outra parte do sistema (idempotente por origem) e resumo por cliente
   app.post('/work/tasks/from-source', guard, async (request, reply) => {
-    const b = z.object({ provider: z.string(), externalType: z.string().min(1).max(60), externalId: z.string().min(1).max(200), listId: uuid, title: z.string().min(1).max(500), description: z.string().max(50_000).nullable().optional(), clientId: uuid.nullable().optional(), priority: z.number().int().min(0).max(4).optional(), assigneeIds: z.array(uuid).max(20).optional(), dueAt: optDate, meta: z.record(z.unknown()).optional() }).safeParse(request.body);
+    const b = z.object({ provider: z.string(), externalType: z.string().min(1).max(60), externalId: z.string().min(1).max(200), listId: uuid, title: z.string().min(1).max(500), description: z.string().max(50_000).nullable().optional(), clientId: uuid.nullable().optional(), priority: z.number().int().min(0).max(4).optional(), assigneeIds: z.array(uuid).max(20).optional(), dueAt: optDate, meta: z.record(z.unknown()).optional(), chatAttachmentIds: z.array(uuid).max(10).optional() }).safeParse(request.body);
     if (!b.success) return bad(reply, b.error.issues.map((i) => i.message).join(' '));
-    try { return await createTaskFromSource(workContext(request), defined(b.data) as never); } catch (e) { return fail(reply, e); }
+    try {
+      const ctx = workContext(request);
+      const { chatAttachmentIds, ...origem } = b.data;
+      const r = await createTaskFromSource(ctx, defined(origem) as never);
+      // Arquivos da mensagem viajam junto: cópia para a tarefa, só dos que a pessoa PODE ver na Comunicação.
+      if (r.created && chatAttachmentIds?.length) {
+        for (const id of chatAttachmentIds) {
+          try {
+            const anexo = await anexoAcessivel(ctx.organizationId, ctx.userId, id);
+            const chave = await copiarAnexo(anexo.storageKey, ctx.organizationId, `tarefa-${r.task.id}`);
+            await db.insert(schema.workAttachments).values({ organizationId: ctx.organizationId, taskId: r.task.id, fileName: anexo.filename, mimeType: tipoParaServir(chave), sizeBytes: anexo.sizeBytes, url: `storage:${chave}`, storage: 'storage', uploadedBy: ctx.userId });
+          } catch { /* arquivo inacessível ou sumido: a tarefa já existe, só não leva esse anexo */ }
+        }
+      }
+      return r;
+    } catch (e) { return fail(reply, e); }
   });
   app.get<{ Querystring: { provider?: string; type?: string; id?: string } }>('/work/tasks/by-source', guard, async (request, reply) => {
     const q = z.object({ provider: z.string().min(1), type: z.string().min(1), id: z.string().min(1) }).safeParse(request.query);
@@ -555,9 +572,56 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     if (!b.success || !idOk(request.params.id)) return bad(reply);
     try { return await addAttachmentLink(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
   });
+  // Arquivo de verdade na tarefa: mesmo armazenamento privado e mesma validação (extensão, tipo e assinatura) da Comunicação.
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/attachments/upload', { ...guard, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    const ctx = workContext(request);
+    try {
+      await getTask(ctx, request.params.id);
+      const [uso] = await db.select({ total: sql<string>`coalesce(sum(${schema.workAttachments.sizeBytes}), 0)` }).from(schema.workAttachments).where(and(eq(schema.workAttachments.organizationId, ctx.organizationId), eq(schema.workAttachments.storage, 'storage')));
+      const politica = politicaDeAnexos();
+      const file = await request.file({ limits: { fileSize: Math.max(...Object.values(politica.limites)) + 1 } });
+      if (!file) return bad(reply, 'Nenhum arquivo enviado.');
+      const g = await gravarAnexo({ organizationId: ctx.organizationId, conversationId: `tarefa-${request.params.id}`, filename: file.filename, mimetype: file.mimetype, stream: file.file, usadoPelaOrganizacao: Number(uso?.total ?? 0) });
+      if (file.file.truncated) { await apagarAnexo(g.storageKey); throw new AnexoRecusado('Arquivo acima do limite.', 413); }
+      const [a] = await db.insert(schema.workAttachments).values({ organizationId: ctx.organizationId, taskId: request.params.id, fileName: g.filename, mimeType: g.servirComo, sizeBytes: g.sizeBytes, url: `storage:${g.storageKey}`, storage: 'storage', uploadedBy: ctx.userId }).returning();
+      reply.code(201);
+      return { id: a!.id, fileName: a!.fileName, mimeType: a!.mimeType, sizeBytes: a!.sizeBytes, storage: 'storage', url: `/work/attachments/${a!.id}/file` };
+    } catch (e) {
+      if (e instanceof AnexoRecusado) return reply.code(e.status).send({ error: e.message });
+      return fail(reply, e);
+    }
+  });
+  app.get<{ Params: { id: string } }>('/work/attachments/:id/file', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    const ctx = workContext(request);
+    const [a] = await db.select().from(schema.workAttachments).where(and(eq(schema.workAttachments.id, request.params.id), eq(schema.workAttachments.organizationId, ctx.organizationId)));
+    if (!a || a.storage !== 'storage' || !a.url.startsWith('storage:')) return reply.code(404).send({ error: 'Arquivo não encontrado.' });
+    const chave = a.url.slice('storage:'.length);
+    try {
+      const aberto = await abrirAnexo(chave, request.headers.range);
+      const tipo = tipoParaServir(chave);
+      const inline = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|quicktime|webm)|application\/pdf)$/.test(tipo) && (request.query as { download?: string }).download !== '1';
+      reply.header('Content-Type', tipo).header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'").header('Cache-Control', 'private, max-age=3600').header('Accept-Ranges', 'bytes')
+        .header('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(a.fileName)}`);
+      if (aberto.status === 416) return reply.code(416).header('Content-Range', `bytes */${aberto.size}`).send();
+      if (aberto.status === 206) reply.code(206).header('Content-Range', `bytes ${aberto.inicio}-${aberto.fim}/${aberto.size}`).header('Content-Length', aberto.fim - aberto.inicio + 1);
+      else reply.header('Content-Length', aberto.size);
+      return reply.send(aberto.stream);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return reply.code(404).send({ error: 'Arquivo não encontrado.' });
+      throw e;
+    }
+  });
   app.delete<{ Params: { id: string } }>('/work/attachments/:id', guard, async (request, reply) => {
     if (!idOk(request.params.id)) return bad(reply);
-    try { return await deleteAttachment(workContext(request), request.params.id); } catch (e) { return fail(reply, e); }
+    try {
+      const ctx = workContext(request);
+      const [a] = await db.select({ url: schema.workAttachments.url, storage: schema.workAttachments.storage }).from(schema.workAttachments).where(and(eq(schema.workAttachments.id, request.params.id), eq(schema.workAttachments.organizationId, ctx.organizationId)));
+      const r = await deleteAttachment(ctx, request.params.id);
+      if (a?.storage === 'storage' && a.url.startsWith('storage:')) await apagarAnexo(a.url.slice('storage:'.length)).catch(() => undefined);
+      return r;
+    } catch (e) { return fail(reply, e); }
   });
   app.post<{ Params: { id: string } }>('/work/tasks/:id/dependencies', guard, async (request, reply) => {
     const b = z.object({ dependsOnId: uuid, kind: z.enum(['blocking', 'related']).optional() }).safeParse(request.body);

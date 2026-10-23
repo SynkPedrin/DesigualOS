@@ -74,7 +74,6 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
   const feita = t.status?.category === 'done';
   const final = statuses.find((s) => s.category === 'done');
   const prazo = prazoRelativo(t.dueAt, feita);
-  const atrasada = !feita && prazo?.cor === 'text-red-400';
   const nomeCliente = (t.clientId && clientes.get(t.clientId)) || null;
   const pct = andamento(t);
   return (

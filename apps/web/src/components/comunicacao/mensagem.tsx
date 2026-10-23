@@ -192,7 +192,7 @@ export function Mensagem({ m, agrupada, me, membros, destacada, podeEscrever, ac
                 {acoes.onPin && podeEscrever && !m.thread_root_id && (
                   <ItemDoMenu icone={m.pinned ? PinOff : Pin} rotulo={m.pinned ? 'Desafixar' : 'Fixar na conversa'} onClick={() => { setMenu(false); acoes.onPin!(m); }} />
                 )}
-                {acoes.onCreateTask && podeEscrever && <ItemDoMenu icone={CheckSquare} rotulo="Criar tarefa no ClickUp" onClick={() => { setMenu(false); acoes.onCreateTask!(m); }} />}
+                {acoes.onCreateTask && podeEscrever && <ItemDoMenu icone={CheckSquare} rotulo="Criar tarefa" onClick={() => { setMenu(false); acoes.onCreateTask!(m); }} />}
                 {m.content && <ItemDoMenu icone={Copy} rotulo="Copiar texto" onClick={() => { setMenu(false); void navigator.clipboard?.writeText(m.content ?? '').then(() => toast('Texto copiado.', 'success')).catch(() => undefined); }} />}
                 {souEu && podeEscrever && (
                   <>
