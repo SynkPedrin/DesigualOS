@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { InlineSectionError } from '@/components/ui/inline-section-error';
-import { CAMPO, Carregando, Dinheiro, TD, TH, TH_DIREITA, Tabela, Vazio } from '@/components/gestao-empresarial/kit';
+import { Carregando, Dinheiro, TD, TH, TH_DIREITA, Tabela, Vazio } from '@/components/gestao-empresarial/kit';
 import { ExportarCsv } from '@/components/gestao-empresarial/relatorios/exportar-csv';
 import { ORDEM_DAS_FAIXAS, ROTULO_DA_FAIXA, useAtraso } from '@/hooks/use-gestao-relatorios';
 import { cn } from '@/lib/utils';

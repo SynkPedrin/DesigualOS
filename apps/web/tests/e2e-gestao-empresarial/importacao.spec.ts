@@ -1,8 +1,9 @@
 import { createRequire } from 'node:module';
 import { expect, test } from '@playwright/test';
+import type JSZipTipo from 'jszip';
 import { abrir, api, entrar, RODADA, tokenDaApi, vigiarErros } from './ajuda';
 
-const JSZip = createRequire(import.meta.url)('jszip') as typeof import('jszip');
+const JSZip = createRequire(import.meta.url)('jszip') as typeof JSZipTipo;
 
 test.describe.configure({ mode: 'serial' });
 

@@ -62,7 +62,7 @@ test('financeiro: parcelar, receber, estornar e transferir pela interface', asyn
   const linhas = page.getByRole('row', { name: new RegExp(`Mensalidade E2E ${RODADA}`) });
   await expect(linhas).toHaveCount(3);
   await expect(page.getByText('R$ 100,00').first()).toBeVisible();
-  for (const [venc, valor] of [['31/01/2099', 'R$ 33,34'], ['28/02/2099', 'R$ 33,33'], ['31/03/2099', 'R$ 33,33']]) {
+  for (const [venc, valor] of [['31/01/2099', 'R$ 33,34'], ['28/02/2099', 'R$ 33,33'], ['31/03/2099', 'R$ 33,33']] as const) {
     await expect(page.getByRole('row', { name: new RegExp(venc) })).toContainText(valor);
   }
 

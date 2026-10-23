@@ -13,15 +13,15 @@ A coluna "Prova" diz como cada item foi verificado; o que não foi verificado es
 | 1 | Auditoria (repositório e dados Operand) | Concluída | `DATA_AUDIT.md`; números reproduzidos por duas implementações independentes |
 | 2 | Arquitetura | Concluída | §B |
 | 3 | Banco de dados | Concluída | migrations 0085 e 0086, 21 tabelas `ge_*`, 38 CHECKs em SQL, 14 testes contra Postgres real |
-| 4 | Layout e navegação interna | Concluída | 1 item no menu, 7 seções, gate no servidor; capturas com login real local |
-| 5 | Cadastros | API concluída; tela em construção | testes de integração na API |
-| 6 | Financeiro | API concluída; telas em construção | 40 testes de integração (razão, estorno, parcelas, conciliação) |
-| 7 | Comercial | API concluída; telas em construção | 29 testes de integração (inclui faturamento) |
-| 8 | Produção | API concluída; telas em construção | idem |
-| 9 | Importador | API e tela concluídas | 27 testes unitários e 17 de integração, incluindo os arquivos reais |
+| 4 | Layout e navegação interna | Concluída | 1 item no menu, 7 seções, gate no servidor; E2E com login local |
+| 5 | Cadastros | Concluída | integração na API + E2E (criar, duplicado, filtros, papéis, arquivar) |
+| 6 | Financeiro | Concluída | 42 testes de integração + E2E (parcelar, receber, estornar, transferir, saldos) |
+| 7 | Comercial | Concluída | integração + E2E (proposta, aprovação, pedido, faturamento) |
+| 8 | Produção | Concluída | integração + E2E (cotações, escolha, pedido, custo, despesa) |
+| 9 | Importador | Concluída | 27 unitários, 17 de integração (arquivos reais) e E2E pela tela |
 | 10 | Integrações | Concluída dentro do módulo | pedido de venda gera contas a receber; custo de produção gera despesa |
-| 11 | Relatórios | API concluída; telas em construção | visão geral, atraso, resultado, rentabilidade, funil, CSV seguro |
-| 12 | QA e E2E | Em andamento | §D |
+| 11 | Relatórios | Concluída | integração + E2E (abrem sem erro; CSV baixa) |
+| 12 | QA e E2E | Concluída | 154 testes de API, 14 de banco, 45 de front, 10 E2E pela interface |
 
 ## A. Auditoria do repositório
 
@@ -74,10 +74,29 @@ GESTAO_DADOS_OPERAND_DIR="<pasta DADOS OPERAND>" \
 
 O ambiente recusa rodar se houver `.env` no checkout e sobe os processos com `env -i`.
 
+## E2E pela interface
+
+```bash
+scripts/gestao-empresarial/local.sh up
+pnpm --filter @desigual-os/web exec playwright test -c playwright.gestao-empresarial.config.ts
+```
+
+Os testes entram com `e2e@local.test`, numa empresa separada ("E2E (local)"), para não misturar dado de teste com
+os dados importados que a pessoa vê em `admin@local.test`.
+
+## F. Dados do Operand no ambiente local
+
+Importados pela própria API do importador na empresa "Desigual (local)" em 23/10/2026:
+1.024 cadastros (748 com papel de cliente, 249 de fornecedor, 73 de veículo de mídia; quem aparece em mais de um
+arquivo virou um cadastro só, ligado pelo documento) e 171 lançamentos (quitado R$ 125.658,49, em aberto
+R$ 1.698,00, cancelado R$ 192.095,10). Os 31 cedentes entraram **sem vínculo** de cadastro, com o nome
+preservado, porque ligar por nome é proibido; ligar cada um a um cadastro é decisão humana.
+
 ## E. O que NÃO foi verificado ou não existe
 
-- Telas de Financeiro, Comercial, Produção, Cadastros e Relatórios: em construção; só valem como prontas depois da
-  verificação no navegador descrita em cada entrega.
+- Vínculo do cadastro com o cliente do Desigual OS: a API existe (`PUT /cadastros/pessoas/:id/cliente`), a tela não.
+- Lançamento quitado importado (sem data real) não pode ser estornado nem editado: não há movimento no razão para
+  reverter. Ligar o cedente depois da aplicação também não tem tela.
 - Nenhum teste rodou contra Supabase de produção, nem deve rodar.
 - Despesas, propostas, produção, anexos, prestadores e dados bancários **não existem** nos arquivos do Operand: o
   módulo tem as telas e o banco para eles, sem dado histórico.

@@ -35,7 +35,10 @@ export function Lancamentos({ kind }: { kind: Kind }) {
 
   function mudar(novo: Record<string, string>) {
     const p = new URLSearchParams(params.toString());
-    for (const [k, v] of Object.entries(novo)) (v ? p.set(k, v) : p.delete(k));
+    for (const [k, v] of Object.entries(novo)) {
+      if (v) p.set(k, v);
+      else p.delete(k);
+    }
     if (!('page' in novo)) p.delete('page');
     router.replace(`${pathname}${p.size ? `?${p}` : ''}`);
   }

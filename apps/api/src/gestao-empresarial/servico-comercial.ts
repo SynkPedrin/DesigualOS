@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, ilike, inArray, ne, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { ErroDeNegocio, semUndefined, type Parcial } from './http';
-import { podeTransitar, proximoNumero, totalDaProposta, TRANSICOES_CONTRATO, TRANSICOES_PEDIDO_DE_VENDA, TRANSICOES_PROPOSTA, type ItemDeProposta } from './dominio/comercial';
+import { podeTransitar, proximoNumero, totalDaProposta, TRANSICOES_CONTRATO, TRANSICOES_PEDIDO_DE_VENDA, TRANSICOES_PROPOSTA } from './dominio/comercial';
 import { gerarParcelas } from './dominio/parcelas';
 import type { Ator } from './servico-financeiro';
 

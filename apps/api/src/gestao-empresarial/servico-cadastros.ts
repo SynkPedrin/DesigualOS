@@ -1,6 +1,6 @@
 import { and, asc, count, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
-import { ErroDeNegocio, semUndefined, type Parcial } from './http';
+import { ErroDeNegocio, type Parcial } from './http';
 import { emailValido, lerDocumento, textoOuNulo } from './dominio/documentos';
 import type { Ator } from './servico-financeiro';
 
