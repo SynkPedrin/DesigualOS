@@ -323,6 +323,8 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
     bump('dependencias', true); report.counts['dependencias'] = { novos: deps.length, atualizados: 0 };
     report.counts['responsaveis_vinculados'] = { novos: assignees.length, atualizados: 0 };
     report.counts['valores_de_campo'] = { novos: valoresCampo.length, atualizados: 0 };
+    // Tarefas sem cliente herdam o da lista (uma instrução só, vale também na passada rápida).
+    await tx.execute(sql`update work_tasks t set client_id = l.client_id from work_lists l where l.id = t.list_id and t.organization_id = ${org} and t.client_id is null and l.client_id is not null`);
     for (const c of chunk(novosMapas)) await tx.insert(schema.workExternalMappings).values(c).onConflictDoUpdate({ target: [schema.workExternalMappings.organizationId, schema.workExternalMappings.provider, schema.workExternalMappings.externalType, schema.workExternalMappings.externalId], set: { syncedAt: new Date() } });
     if (dryRun) throw new DryRunRollback();
   };
