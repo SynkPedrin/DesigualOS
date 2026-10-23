@@ -18,3 +18,6 @@ export * from './integrations';
 export * from './crud';
 export * from './reminders';
 export * from './overview';
+export * from './history';
+export * from './preferences';
+export * from './followers';

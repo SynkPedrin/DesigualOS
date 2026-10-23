@@ -25,6 +25,7 @@ export async function getTaskDetail(ctx: WorkContext, taskId: string) {
   const items = checklists.length
     ? await db.select().from(schema.workChecklistItems).where(and(inArray(schema.workChecklistItems.checklistId, checklists.map((c) => c.id)), eq(schema.workChecklistItems.organizationId, org))).orderBy(asc(schema.workChecklistItems.position))
     : [];
+  const seguidores = await db.select({ id: schema.users.id, name: schema.users.name, avatar: schema.users.avatarUrl }).from(schema.workTaskFollowers).innerJoin(schema.users, eq(schema.users.id, schema.workTaskFollowers.userId)).where(and(eq(schema.workTaskFollowers.taskId, taskId), eq(schema.workTaskFollowers.organizationId, org)));
   const defs = listRow[0] ? await db.select().from(schema.workCustomFields).where(and(eq(schema.workCustomFields.spaceId, listRow[0].spaceId), eq(schema.workCustomFields.organizationId, org))).orderBy(asc(schema.workCustomFields.position)) : [];
   const [tempo] = await db.select({ ms: sql<number>`coalesce(sum(${schema.workTimeEntries.durationMs}) filter (where ${schema.workTimeEntries.endedAt} is not null), 0)::bigint` }).from(schema.workTimeEntries).where(and(eq(schema.workTimeEntries.taskId, taskId), eq(schema.workTimeEntries.organizationId, org)));
   const outras = [...new Set(deps.flatMap((d) => [d.taskId, d.dependsOnTaskId]).filter((i) => i !== taskId))];
@@ -39,6 +40,8 @@ export async function getTaskDetail(ctx: WorkContext, taskId: string) {
     attachments: attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes, url: a.url })),
     fieldDefs: defs.map((d) => ({ id: d.id, name: d.name, type: d.fieldType, options: d.options })),
     trackedMs: Number(tempo?.ms ?? 0),
+    followers: seguidores,
+    following: seguidores.some((f) => f.id === ctx.userId),
     customFields: fieldValues.map((r) => ({ fieldId: r.v.fieldId, name: r.name, type: r.type, value: r.v.value })),
     blockedBy: deps.filter((d) => d.kind === 'blocking' && d.taskId === taskId).map((d) => t.get(d.dependsOnTaskId)).filter(Boolean),
     blocking: deps.filter((d) => d.kind === 'blocking' && d.dependsOnTaskId === taskId).map((d) => t.get(d.taskId)).filter(Boolean),
@@ -59,6 +62,8 @@ export async function addComment(ctx: WorkContext, taskId: string, body: string,
   return db.transaction(async (tx) => {
     const [c] = await tx.insert(schema.workComments).values({ organizationId: ctx.organizationId, taskId, authorId: ctx.userId, body: text, mentions: validos, parentCommentId: parentCommentId ?? null }).returning();
     await recordActivity(tx, ctx, { entityType: 'task', entityId: taskId, taskId, action: 'commented', data: { commentId: c!.id } });
+    // Quem comenta e quem é citado passa a acompanhar a conversa da tarefa.
+    await tx.insert(schema.workTaskFollowers).values([ctx.userId, ...validos].map((userId) => ({ organizationId: ctx.organizationId, taskId, userId }))).onConflictDoNothing();
     for (const userId of validos.filter((u) => u !== ctx.userId)) await recordActivity(tx, ctx, { entityType: 'task', entityId: taskId, taskId, action: 'mentioned', data: { userId, commentId: c!.id } });
     return { id: c!.id };
   });

@@ -432,6 +432,8 @@ export const workUserState = pgTable(
     organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     inboxReadAt: timestamp('inbox_read_at', { withTimezone: true }),
+    /** Visualização individual: colunas, densidade, agrupamento e visão padrão. Cada pessoa vê do SEU jeito. */
+    preferences: jsonb('preferences').$type<Record<string, unknown>>().notNull().default({}),
   },
   (t) => ({ pk: uniqueIndex('work_user_state_pk').on(t.organizationId, t.userId) }),
 );
@@ -529,3 +531,18 @@ export const workAutomationCursor = pgTable('work_automation_cursor', {
   lastEventAt: timestamp('last_event_at', { withTimezone: true }).notNull().defaultNow(),
   lastEventId: uuid('last_event_id'),
 });
+
+/** Quem acompanha a tarefa: recebe aviso de comentário e mudança de status, mesmo sem ser responsável. */
+export const workTaskFollowers = pgTable(
+  'work_task_followers',
+  {
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').notNull().references(() => workTasks.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: uniqueIndex('work_task_followers_pk').on(t.taskId, t.userId),
+    userIdx: index('work_task_followers_user_idx').on(t.organizationId, t.userId),
+  }),
+);

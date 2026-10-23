@@ -309,6 +309,14 @@ export interface TaskFilter {
   clientId?: string;
   statusIds?: string[];
   assigneeId?: string;
+  /** Quem criou a tarefa. */
+  createdBy?: string;
+  /** Tarefas que esta pessoa acompanha. */
+  followerId?: string;
+  tag?: string;
+  /** Só as sem prazo / só as sem responsável. */
+  dueNone?: boolean;
+  unassigned?: boolean;
   priorities?: number[];
   dueFrom?: Date;
   dueTo?: Date;
@@ -339,6 +347,11 @@ export async function listTasks(ctx: WorkContext, f: TaskFilter = {}): Promise<{
   if (f.statusIds?.length) where.push(inArray(T.statusId, f.statusIds));
   if (f.priorities?.length) where.push(inArray(T.priority, f.priorities));
   if (f.assigneeId) where.push(sql`exists (select 1 from work_task_assignees a where a.task_id = ${T.id} and a.user_id = ${f.assigneeId})`);
+  if (f.createdBy) where.push(eq(T.createdBy, f.createdBy));
+  if (f.followerId) where.push(sql`exists (select 1 from work_task_followers w where w.task_id = ${T.id} and w.user_id = ${f.followerId})`);
+  if (f.tag) where.push(sql`${T.tags} @> ${JSON.stringify([f.tag])}::jsonb`);
+  if (f.dueNone) where.push(isNull(T.dueAt));
+  if (f.unassigned) where.push(sql`not exists (select 1 from work_task_assignees a where a.task_id = ${T.id})`);
   if (f.dueFrom) where.push(gte(T.dueAt, f.dueFrom));
   if (f.dueTo) where.push(lte(T.dueAt, f.dueTo));
   if (f.completed !== undefined) where.push(f.completed ? sql`${T.completedAt} is not null` : isNull(T.completedAt));

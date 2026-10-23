@@ -7,6 +7,11 @@ import {
   addAttachmentLink,
   addDependency,
   addManualEntry,
+  followTask,
+  getPreferences,
+  getTaskHistory,
+  setPreferences,
+  unfollowTask,
   deleteAttachment,
   deleteChecklist,
   deleteChecklistItem,
@@ -257,7 +262,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   // ── Tarefas ────────────────────────────────────────────────────────────
   const listQuery = z.object({
     list_id: uuid.optional(), project_id: uuid.optional(), space_id: uuid.optional(), client_id: uuid.optional(),
-    status_ids: z.string().optional(), assignee_id: uuid.optional(), priorities: z.string().optional(),
+    status_ids: z.string().optional(), assignee_id: uuid.optional(), created_by: uuid.optional(), follower_id: uuid.optional(), tag: z.string().max(60).optional(), due_none: z.enum(['true', 'false']).optional(), unassigned: z.enum(['true', 'false']).optional(), priorities: z.string().optional(),
     due_from: z.string().datetime({ offset: true }).optional(), due_to: z.string().datetime({ offset: true }).optional(),
     q: z.string().max(100).optional(), include_subtasks: z.enum(['true', 'false']).optional(), parent_task_id: uuid.optional(),
     include_archived: z.enum(['true', 'false']).optional(), completed: z.enum(['true', 'false']).optional(),
@@ -273,7 +278,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     const pr = csv(q.data.priorities)?.map(Number);
     if (pr?.some((n) => !Number.isInteger(n) || n < 0 || n > 4)) return reply.code(400).send({ error: 'priorities inválido.' });
     return listTasks(workContext(request), defined({
-      listId: q.data.list_id, projectId: q.data.project_id, spaceId: q.data.space_id, clientId: q.data.client_id, statusIds: ids, assigneeId: q.data.assignee_id, priorities: pr,
+      listId: q.data.list_id, projectId: q.data.project_id, spaceId: q.data.space_id, clientId: q.data.client_id, statusIds: ids, assigneeId: q.data.assignee_id, createdBy: q.data.created_by, followerId: q.data.follower_id, tag: q.data.tag, dueNone: q.data.due_none === 'true' ? true : undefined, unassigned: q.data.unassigned === 'true' ? true : undefined, priorities: pr,
       dueFrom: q.data.due_from ? new Date(q.data.due_from) : undefined, dueTo: q.data.due_to ? new Date(q.data.due_to) : undefined, q: q.data.q,
       includeSubtasks: q.data.include_subtasks === 'true' ? true : undefined, parentTaskId: q.data.parent_task_id, includeArchived: q.data.include_archived === 'true' ? true : undefined,
       completed: q.data.completed === undefined ? undefined : q.data.completed === 'true', sort: q.data.sort, dir: q.data.dir, limit: q.data.limit, offset: q.data.offset,
@@ -466,6 +471,31 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   });
   /** Roda um ciclo do motor agora (útil para ver o efeito sem esperar o relógio). Só administrador da plataforma. */
   app.post('/work/admin/automations/tick', { preHandler: adminOnly }, async () => automationTick());
+
+  // ── Histórico, seguidores e preferências individuais
+  app.get<{ Params: { id: string } }>('/work/tasks/:id/history', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return { events: await getTaskHistory(workContext(request), request.params.id) }; } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/follow', guard, async (request, reply) => {
+    const b = z.object({ userId: uuid.optional() }).safeParse(request.body ?? {});
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await followTask(workContext(request), request.params.id, b.data.userId); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string }; Querystring: { user_id?: string } }>('/work/tasks/:id/follow', guard, async (request, reply) => {
+    const q = z.object({ user_id: uuid.optional() }).safeParse(request.query);
+    if (!q.success || !idOk(request.params.id)) return bad(reply);
+    try { return await unfollowTask(workContext(request), request.params.id, q.data.user_id); } catch (e) { return fail(reply, e); }
+  });
+  app.get('/work/preferences', guard, async (request) => getPreferences(workContext(request)));
+  app.put('/work/preferences', guard, async (request, reply) => {
+    const b = z.object({
+      colunas: z.array(z.string()).max(10).optional(), densidade: z.enum(['compacta', 'confortavel']).optional(), agrupar: z.boolean().optional(),
+      visaoPadrao: z.enum(['lista', 'quadro', 'calendario', 'tabela', 'gantt']).optional(), mostrarConcluidas: z.boolean().optional(), subtarefasAbertas: z.boolean().optional(),
+    }).safeParse(request.body);
+    if (!b.success) return bad(reply);
+    try { return await setPreferences(workContext(request), defined(b.data) as never); } catch (e) { return fail(reply, e); }
+  });
 
   // ── Painel do topo (cartões + lateral)
   app.get<{ Querystring: { space_id?: string; list_id?: string; client_id?: string } }>('/work/overview', guard, async (request, reply) => {

@@ -52,7 +52,8 @@ export async function notificarEvento(tx: Db, ctx: WorkContext, e: ActivityInput
   else if (e.action === 'mentioned') { alvo = typeof d.userId === 'string' ? [d.userId] : []; titulo = `${quem} mencionou você em ${ref}`; }
   else {
     const resp = await tx.select({ userId: schema.workTaskAssignees.userId }).from(schema.workTaskAssignees).where(eq(schema.workTaskAssignees.taskId, t.id));
-    alvo = [...new Set([...resp.map((r) => r.userId), ...(t.createdBy ? [t.createdBy] : [])])];
+    const seg = await tx.select({ userId: schema.workTaskFollowers.userId }).from(schema.workTaskFollowers).where(eq(schema.workTaskFollowers.taskId, t.id));
+    alvo = [...new Set([...resp.map((r) => r.userId), ...seg.map((r) => r.userId), ...(t.createdBy ? [t.createdBy] : [])])];
     titulo = e.action === 'commented' ? `${quem} comentou em ${ref}` : `${quem} mudou o status de ${ref}`;
   }
   const ctxActorUser = ctx.actorKind === 'automation' || ctx.actorKind === 'agent' ? null : ctx.userId;
