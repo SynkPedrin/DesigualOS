@@ -105,7 +105,7 @@ export default function MeuTrabalhoPage() {
       ) : grupos.map((g) => (
         <section key={g.titulo} aria-label={g.titulo} className="space-y-1.5">
           <h2 className={cn('flex items-center gap-2 text-sm font-semibold', g.cor ?? 'text-branco-cru')}>{g.clienteNome && <LogoDoCliente nome={g.clienteNome} className="!size-5" />}{g.titulo} <span className="font-normal text-nevoa">{g.itens.length}</span></h2>
-          <div className="overflow-hidden rounded-xl border border-grafite-elevado">
+          <div className="overflow-x-auto rounded-xl border border-grafite-elevado">
             <CabecalhoDaTabela />
             {g.itens.map((t) => <Linha key={t.id} t={t} nivel={0} ctx={ctx} />)}
           </div>

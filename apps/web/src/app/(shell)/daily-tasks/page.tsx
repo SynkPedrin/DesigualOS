@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, Building2, CalendarClock, CalendarDays, ChevronRight, Columns3, Filter, GanttChart, List as ListIcon, ListChecks, Plus, Search, SlidersHorizontal, Table2, Ban } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarClock, CalendarDays, ChevronRight, Columns3, Filter, GanttChart, List as ListIcon, ListChecks, Plus, Search, Settings2, SlidersHorizontal, Table2, Ban } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Arvore } from '@/components/daily-tasks/tree';
@@ -28,13 +28,18 @@ import {
   useWorkTree,
   type WorkTaskWire,
 } from '@/hooks/use-work';
-import { useBulkUpdate, useSavedViewActions, useSavedViews, useTaskArchiveActions, useWorkOverview } from '@/hooks/use-work-extra';
+import { COLUNAS_DA_LISTA, PREFERENCIAS_PADRAO, useBulkUpdate, usePreferences, useSavePreferences, useSavedViewActions, useSavedViews, useTaskArchiveActions, useWorkOverview, type ColunaDaLista } from '@/hooks/use-work-extra';
+import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { useClients } from '@/hooks/use-clients';
 import { ApiRequestError } from '@/lib/api/client';
 import { toast } from '@/stores/toast-store';
 import { cn } from '@/lib/utils';
 
 type Visao = 'lista' | 'quadro' | 'calendario' | 'tabela' | 'gantt';
+type Escopo = 'todas' | 'minhas' | 'criadas' | 'sigo' | 'sem_resp' | 'sem_prazo';
+type Prazo = '' | 'hoje' | 'semana' | 'mes';
+const ESCOPOS: Array<{ id: Escopo; rotulo: string }> = [{ id: 'todas', rotulo: 'Todas' }, { id: 'minhas', rotulo: 'Atribuídas a mim' }, { id: 'criadas', rotulo: 'Criadas por mim' }, { id: 'sigo', rotulo: 'Que eu sigo' }, { id: 'sem_resp', rotulo: 'Sem responsável' }, { id: 'sem_prazo', rotulo: 'Sem prazo' }];
+const ROTULO_COLUNA: Record<ColunaDaLista, string> = { cliente: 'Cliente', andamento: 'Andamento', responsavel: 'Responsável', prazo: 'Prazo', prioridade: 'Prioridade', status: 'Status', tags: 'Tags' };
 const VISOES: Array<{ id: Visao; label: string; icon: typeof ListIcon }> = [
   { id: 'lista', label: 'Lista', icon: ListIcon },
   { id: 'quadro', label: 'Quadro', icon: Columns3 },
@@ -48,22 +53,30 @@ export default function DailyTasksPage() {
   const router = useRouter();
   const params = useSearchParams();
   const [arquivados, setArquivados] = useState(false);
-  const [expandir, setExpandir] = useState(false);
-  const [agrupar, setAgrupar] = useState(false);
-  const [concluidas, setConcluidas] = useState(false);
-  const [filtroCli, setFiltroCli] = useState<string | null>(null);
-  const [filtroStatus, setFiltroStatus] = useState<string | null>(null);
+  const eu = useDailyTasksAccess().data?.userId ?? null;
+  const prefsQ = usePreferences();
+  const prefs = prefsQ.data ?? PREFERENCIAS_PADRAO;
+  const salvarPrefs = useSavePreferences();
+  const expandir = prefs.subtarefasAbertas;
+  const agrupar = prefs.agrupar;
+  const concluidas = prefs.mostrarConcluidas;
+  const [escopo, setEscopo] = useState<Escopo>((params.get('escopo') as Escopo | null) ?? 'todas');
+  const [tag, setTag] = useState(params.get('tag') ?? '');
+  const [prazo, setPrazo] = useState<Prazo>((params.get('prazo') as Prazo | null) ?? '');
+  const [filtroCli, setFiltroCli] = useState<string | null>(params.get('cli'));
+  const [filtroStatus, setFiltroStatus] = useState<string | null>(params.get('status'));
   const [rapido, setRapido] = useState<FiltroRapido>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const clientes = useClients().data ?? [];
   const tree = useWorkTree(arquivados);
   const membrosQ = useWorkMembers();
-  const [listId, setListId] = useState<string | null>(null);
-  const [spaceId, setSpaceId] = useState<string | null>(null);
-  const [visao, setVisao] = useState<Visao>('lista');
-  const [q, setQ] = useState('');
-  const [filtroResp, setFiltroResp] = useState<string | null>(null);
-  const [filtroPrio, setFiltroPrio] = useState<number | null>(null);
+  const [listId, setListId] = useState<string | null>(params.get('lista'));
+  const [spaceId, setSpaceId] = useState<string | null>(params.get('espaco'));
+  const [visaoLocal, setVisao] = useState<Visao | null>((params.get('visao') as Visao | null) ?? null);
+  const visao: Visao = visaoLocal ?? prefs.visaoPadrao;
+  const [q, setQ] = useState(params.get('q') ?? '');
+  const [filtroResp, setFiltroResp] = useState<string | null>(params.get('resp'));
+  const [filtroPrio, setFiltroPrio] = useState<number | null>(params.get('prio') ? Number(params.get('prio')) : null);
   const [abertaLocal, setAberta] = useState<string | null>(null);
   // `?task=<id>` abre a gaveta direto (links de notificação, Comunicação, Mídia).
   const aberta = abertaLocal ?? params.get('task');
@@ -73,6 +86,19 @@ export default function DailyTasksPage() {
   const quickRef = useRef<HTMLInputElement>(null);
   const views = useSavedViews();
   const { salvar: salvarView } = useSavedViewActions();
+  // Os filtros ficam no endereço: dá para copiar o link da tela filtrada e mandar para alguém.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const u = new URLSearchParams();
+      const set = (k: string, v: string | number | null | undefined) => { if (v !== null && v !== undefined && v !== '' && v !== 'todas') u.set(k, String(v)); };
+      set('espaco', spaceId); set('lista', listId); set('visao', visaoLocal); set('resp', filtroResp); set('prio', filtroPrio); set('cli', filtroCli); set('status', filtroStatus);
+      set('q', q.trim()); set('escopo', escopo); set('tag', tag.trim()); set('prazo', prazo);
+      const tarefa = new URLSearchParams(window.location.search).get('task'); if (tarefa) u.set('task', tarefa);
+      const novo = u.toString();
+      if (novo !== window.location.search.replace(/^\?/, '')) router.replace(`/daily-tasks${novo ? `?${novo}` : ''}`, { scroll: false });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [spaceId, listId, visaoLocal, filtroResp, filtroPrio, filtroCli, filtroStatus, q, escopo, tag, prazo, router]);
 
   const spaces = tree.data?.spaces ?? [];
   const spaceAtivo = spaceId ?? spaces.find((s) => s.lists.length > 0)?.id ?? spaces[0]?.id ?? null;
@@ -86,8 +112,18 @@ export default function DailyTasksPage() {
   // Trocar de lista limpa a seleção e o atalho do dia: o que estava marcado não está mais na tela.
   useEffect(() => { setSelecionadas(new Set()); setRapido(null); setFiltroStatus(null); }, [listId, spaceId]);
 
+  const janela = useMemo(() => {
+    if (!prazo) return {};
+    const ini = new Date(); ini.setHours(0, 0, 0, 0);
+    const fim = new Date(ini);
+    if (prazo === 'hoje') fim.setDate(fim.getDate() + 1);
+    else if (prazo === 'semana') fim.setDate(fim.getDate() + 7);
+    else { ini.setDate(1); fim.setTime(new Date(ini.getFullYear(), ini.getMonth() + 1, 1).getTime()); }
+    return { dueFrom: ini.toISOString(), dueTo: fim.toISOString() };
+  }, [prazo]);
   const soAbertas = (visao === 'lista' || visao === 'tabela' || visao === 'gantt') && !concluidas;
-  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], statusIds: filtroStatus ? [filtroStatus] : [], includeArchived: arquivados, clientId: filtroCli, completed: soAbertas ? false : undefined });
+  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: escopo === 'minhas' ? eu : filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], statusIds: filtroStatus ? [filtroStatus] : [], includeArchived: arquivados, clientId: filtroCli, completed: soAbertas ? false : undefined, tag: tag.trim() || null, ...janela,
+    ...(escopo === 'minhas' ? { assigneeId: eu } : {}), ...(escopo === 'criadas' ? { createdBy: eu } : {}), ...(escopo === 'sigo' ? { followerId: eu } : {}), ...(escopo === 'sem_resp' ? { unassigned: true } : {}), ...(escopo === 'sem_prazo' ? { dueNone: true } : {}) });
   const statuses = useSpaceStatuses(spaceAtivo);
   const overview = useWorkOverview({ spaceId: spaceAtivo, listId, clientId: filtroCli });
   const membros = membrosQ.data?.members ?? [];
@@ -117,8 +153,8 @@ export default function DailyTasksPage() {
   }, [todas, rapido]);
   const pronto = !tree.isPending && !tasks.isPending && !statuses.isPending;
   const c = overview.data?.contagens;
-  const filtrosAtivos = [filtroResp, filtroPrio !== null ? 1 : null, filtroCli, filtroStatus, q.trim() || null, rapido].filter(Boolean).length;
-  const limparFiltros = () => { setFiltroResp(null); setFiltroPrio(null); setFiltroCli(null); setFiltroStatus(null); setQ(''); setRapido(null); };
+  const filtrosAtivos = [filtroResp, filtroPrio !== null ? 1 : null, filtroCli, filtroStatus, q.trim() || null, rapido, escopo !== 'todas' ? 1 : null, tag.trim() || null, prazo || null].filter(Boolean).length;
+  const limparFiltros = () => { setFiltroResp(null); setFiltroPrio(null); setFiltroCli(null); setFiltroStatus(null); setQ(''); setRapido(null); setEscopo('todas'); setTag(''); setPrazo(''); };
 
   const paraSelecionadas = (fn: (ids: string[]) => void) => { const ids = [...selecionadas]; if (ids.length) fn(ids); };
   const concluirSelecionadas = () => paraSelecionadas((ids) => {
@@ -178,19 +214,39 @@ export default function DailyTasksPage() {
               </div>
             </div>
 
+            <div role="group" aria-label="Quais tarefas" className="flex flex-wrap gap-1.5">
+              {ESCOPOS.map((x) => (
+                <button key={x.id} type="button" aria-pressed={escopo === x.id} onClick={() => setEscopo(x.id)} className={cn('rounded-full px-3 py-1 text-xs font-medium transition-colors', escopo === x.id ? 'bg-sinal text-grafite' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>{x.rotulo}</button>
+              ))}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex min-w-48 flex-1 items-center gap-2 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1.5 focus-within:border-sinal/60 xl:max-w-xs"><Search size={14} className="text-nevoa" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar tarefas…" aria-label="Buscar tarefas" className="w-full bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" /></label>
               <select aria-label="Filtrar por responsável" value={filtroResp ?? ''} onChange={(e) => setFiltroResp(e.target.value || null)} className={campo}><option value="">Responsável: todos</option>{membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
               <select aria-label="Filtrar por prioridade" value={filtroPrio ?? ''} onChange={(e) => setFiltroPrio(e.target.value === '' ? null : Number(e.target.value))} className={campo}><option value="">Prioridade: todas</option>{[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}</select>
               <select aria-label="Filtrar por cliente" value={filtroCli ?? ''} onChange={(e) => setFiltroCli(e.target.value || null)} className={cn(campo, 'max-w-44')}><option value="">Cliente: todos</option>{clientes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
               <select aria-label="Filtrar por status" value={filtroStatus ?? ''} onChange={(e) => setFiltroStatus(e.target.value || null)} className={campo}><option value="">Status: todos</option>{st.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
-              <Popover label="Mais opções de exibição" trigger={<span className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1.5 text-sm text-branco-cru"><SlidersHorizontal size={14} /> Filtros{filtrosAtivos > 0 && <span className="rounded-full bg-sinal px-1.5 text-[10px] font-semibold text-grafite">{filtrosAtivos}</span>}</span>}>
+              <select aria-label="Filtrar por prazo" value={prazo} onChange={(e) => setPrazo(e.target.value as Prazo)} className={campo}><option value="">Prazo: qualquer</option><option value="hoje">Vence hoje</option><option value="semana">Próximos 7 dias</option><option value="mes">Este mês</option></select>
+              <label className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1.5 focus-within:border-sinal/60"><span className="text-xs text-nevoa">tag</span><input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="ex.: urgente" aria-label="Filtrar por tag" className="w-24 bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa/60" /></label>
+              <Popover label="Personalizar visualização" trigger={<span className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1.5 text-sm text-branco-cru"><Settings2 size={14} /> Personalizar</span>}>
                 {() => (
-                  <div className="w-64 space-y-2 p-2 text-sm text-branco-cru">
-                    <label className="flex items-center gap-2"><input type="checkbox" checked={concluidas} onChange={(e) => setConcluidas(e.target.checked)} /> Mostrar tarefas concluídas</label>
-                    <label className="flex items-center gap-2"><input type="checkbox" checked={arquivados} onChange={(e) => setArquivados(e.target.checked)} /> Mostrar arquivadas</label>
-                    <label className="flex items-center gap-2"><input type="checkbox" checked={agrupar} onChange={(e) => setAgrupar(e.target.checked)} /> Agrupar por status</label>
-                    <label className="flex items-center gap-2"><input type="checkbox" checked={expandir} onChange={(e) => setExpandir(e.target.checked)} /> Subtarefas sempre abertas</label>
+                  <div className="w-72 space-y-3 p-2 text-sm text-branco-cru">
+                    <p className="text-[11px] uppercase tracking-wide text-nevoa">Só para você — salva automaticamente</p>
+                    <fieldset className="space-y-1.5"><legend className="mb-1 text-xs text-nevoa">Colunas da tabela</legend>
+                      {COLUNAS_DA_LISTA.map((c) => (
+                        <label key={c} className="flex items-center gap-2"><input type="checkbox" checked={prefs.colunas.includes(c)} onChange={(e) => salvarPrefs.mutate({ colunas: e.target.checked ? COLUNAS_DA_LISTA.filter((x) => x === c || prefs.colunas.includes(x)) : prefs.colunas.filter((x) => x !== c) })} /> {ROTULO_COLUNA[c]}</label>
+                      ))}
+                    </fieldset>
+                    <label className="flex items-center justify-between gap-2 text-xs text-nevoa">Tamanho das linhas
+                      <select aria-label="Tamanho das linhas" value={prefs.densidade} onChange={(e) => salvarPrefs.mutate({ densidade: e.target.value as 'compacta' | 'confortavel' })} className={campo}><option value="confortavel">Confortável</option><option value="compacta">Compacta (cabe mais)</option></select>
+                    </label>
+                    <label className="flex items-center justify-between gap-2 text-xs text-nevoa">Abrir sempre em
+                      <select aria-label="Visão padrão" value={prefs.visaoPadrao} onChange={(e) => salvarPrefs.mutate({ visaoPadrao: e.target.value as Visao })} className={campo}>{VISOES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}</select>
+                    </label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={concluidas} onChange={(e) => salvarPrefs.mutate({ mostrarConcluidas: e.target.checked })} /> Mostrar tarefas concluídas</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={agrupar} onChange={(e) => salvarPrefs.mutate({ agrupar: e.target.checked })} /> Agrupar por status</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={expandir} onChange={(e) => salvarPrefs.mutate({ subtarefasAbertas: e.target.checked })} /> Subtarefas sempre abertas</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={arquivados} onChange={(e) => setArquivados(e.target.checked)} /> Mostrar arquivadas (só nesta sessão)</label>
+                    <button type="button" onClick={() => salvarPrefs.mutate(PREFERENCIAS_PADRAO)} className="w-full rounded-lg border border-grafite-elevado px-2 py-1.5 text-xs text-nevoa hover:text-branco-cru">Voltar ao padrão</button>
                     <button type="button" onClick={limparFiltros} className="w-full rounded-lg border border-grafite-elevado px-2 py-1.5 text-xs text-nevoa hover:text-branco-cru">Limpar todos os filtros</button>
                   </div>
                 )}

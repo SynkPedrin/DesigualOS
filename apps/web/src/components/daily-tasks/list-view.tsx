@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GitFork, Plus } from 'lucide-react';
 import { useSpaceStatuses, useWorkTasks, type TaskPatch, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
@@ -9,7 +9,8 @@ import { AssigneePicker, PriorityPicker, StatusPicker } from './pickers';
 import { StatusDot, StatusPill } from './primitivas';
 import { RowMenu } from './row-menu';
 import { TASK_DRAG } from './tree';
-import { andamento, BarraDeProgresso, EmblemaDePrioridade, prazoRelativo } from './ui';
+import { andamento, BarraDeProgresso, prazoRelativo } from './ui';
+import { PREFERENCIAS_PADRAO, usePreferences, type ColunaDaLista } from '@/hooks/use-work-extra';
 import { DuePicker } from './pickers';
 
 export interface TaskActions {
@@ -18,10 +19,16 @@ export interface TaskActions {
   criar: (b: { title: string; statusId?: string; parentTaskId?: string; listId: string }) => void;
 }
 
-/** checkbox · tarefa · progresso · responsável · prazo · prioridade · status · ações. Colunas finas somem em tela estreita. */
-export const COLUNAS = 'grid-cols-[24px_minmax(0,1fr)_72px_96px_124px] xl:grid-cols-[24px_minmax(220px,1fr)_104px_72px_100px_104px_124px_96px]';
-const so = 'hidden xl:flex';
-// colunas de telas estreitas: tarefa · responsável · prazo · status (prioridade e progresso aparecem em tela larga)
+/** Colunas da tabela, na ordem. A pessoa escolhe quais aparecem (Personalizar visualização); tarefa e ações são sempre fixas. */
+const LARGURA: Record<ColunaDaLista, string> = { andamento: '112px', responsavel: '84px', prazo: '108px', prioridade: '112px', status: '128px', cliente: '150px', tags: '140px' };
+const ORDEM: ColunaDaLista[] = ['cliente', 'andamento', 'responsavel', 'prazo', 'prioridade', 'status', 'tags'];
+export function gradeDeColunas(colunas: readonly ColunaDaLista[]): string {
+  return ['24px', 'minmax(240px,1fr)', ...ORDEM.filter((c) => colunas.includes(c)).map((c) => LARGURA[c]), '96px'].join(' ');
+}
+export function useColunas() {
+  const p = usePreferences().data ?? PREFERENCIAS_PADRAO;
+  return { colunas: p.colunas, compacta: p.densidade === 'compacta', grade: gradeDeColunas(p.colunas) };
+}
 
 function InlineAdd({ rotulo, onSubmit, recuo = 0, abrir = false }: { rotulo: string; onSubmit: (t: string) => void; recuo?: number; abrir?: boolean }) {
   const [aberto, setAberto] = useState(abrir);
@@ -56,6 +63,8 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
   const [aberta, setAberta] = useState(ctx.expandirTudo && !ctx.semSubtarefas);
   const [criandoSub, setCriandoSub] = useState(false);
   useEffect(() => { if (!ctx.semSubtarefas) setAberta(ctx.expandirTudo); }, [ctx.expandirTudo, ctx.semSubtarefas]);
+  const { colunas, compacta, grade } = useColunas();
+  const tem = (c: ColunaDaLista) => colunas.includes(c);
   const listas = useListIndex();
   const clientes = useClientIndex();
   const info = listas.get(t.listId);
@@ -73,7 +82,8 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
       <div
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(TASK_DRAG, t.id); e.dataTransfer.effectAllowed = 'move'; }}
-        className={cn('group grid items-center gap-3 border-b border-grafite-elevado/60 px-3 py-2 hover:bg-grafite-elevado/40', COLUNAS, nivel > 0 && 'bg-grafite/30', atrasada && nivel === 0 && 'bg-red-500/[0.06]', t.archivedAt && 'opacity-60')}
+        style={{ gridTemplateColumns: grade }}
+        className={cn('group grid items-center gap-3 border-b border-grafite-elevado/60 px-3 hover:bg-grafite-elevado/40', compacta ? 'py-1' : 'py-2.5', nivel > 0 && 'bg-grafite/30', atrasada && nivel === 0 && 'bg-red-500/[0.06]', t.archivedAt && 'opacity-60')}
       >
         <input type="checkbox" aria-label={`Selecionar ${t.key}`} checked={ctx.selecionadas.has(t.id)} onChange={() => ctx.alternarSelecao(t.id)} />
         <div className="relative flex min-w-0 items-center gap-2" style={{ paddingLeft: nivel * 22 }}>
@@ -95,14 +105,16 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
           </div>
           {!ctx.semSubtarefas && <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex size-5 shrink-0 items-center justify-center rounded border border-grafite-elevado text-nevoa hover:border-sinal/60 hover:text-branco-cru"><Plus size={12} /></button>}
         </div>
-        <div className={cn(so, 'items-center')}><BarraDeProgresso pct={pct} /></div>
-        <div className="flex items-center"><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>
-        <div className="flex flex-col justify-center leading-tight">
+        {tem('cliente') && <div className="flex min-w-0 items-center gap-1.5 text-xs text-nevoa">{nomeCliente ? <><LogoDoCliente nome={nomeCliente} className="!size-4" /><span className="truncate">{nomeCliente}</span></> : <span className="text-nevoa/50">sem cliente</span>}</div>}
+        {tem('andamento') && <div className="flex items-center"><BarraDeProgresso pct={pct} /></div>}
+        {tem('responsavel') && <div className="flex items-center"><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>}
+        {tem('prazo') && <div className="flex flex-col justify-center leading-tight">
           <DuePicker tarefa={t} onChange={(iso) => ctx.actions.atualizar(t, { dueAt: iso })} />
           {prazo && <span className={cn('px-1 text-[11px]', prazo.cor)}>{prazo.texto}</span>}
-        </div>
-        <div className={cn(so, 'items-center')}><PriorityPicker tarefa={t} badge onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>
-        <div className="flex items-center"><StatusPicker tarefa={t} statuses={statuses} onChange={(statusId) => ctx.actions.atualizar(t, { statusId })} /></div>
+        </div>}
+        {tem('prioridade') && <div className="flex items-center"><PriorityPicker tarefa={t} badge onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>}
+        {tem('status') && <div className="flex items-center"><StatusPicker tarefa={t} statuses={statuses} onChange={(statusId) => ctx.actions.atualizar(t, { statusId })} /></div>}
+        {tem('tags') && <div className="flex min-w-0 flex-wrap gap-1">{t.tags.slice(0, 2).map((x) => <span key={x} className="truncate rounded bg-grafite-elevado px-1.5 py-0.5 text-[11px] text-nevoa">{x}</span>)}{t.tags.length > 2 && <span className="text-[11px] text-nevoa">+{t.tags.length - 2}</span>}</div>}
         <div className="flex items-center justify-end gap-1"><button type="button" onClick={() => ctx.actions.abrir(t)} className="rounded-md bg-grafite-elevado px-2 py-1 text-xs font-medium text-branco-cru hover:bg-sinal hover:text-grafite">Abrir</button><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></div>
       </div>
       {aberta && !ctx.semSubtarefas && (
@@ -118,20 +130,21 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
 
 export type ColunaOrdenavel = 'tarefa' | 'prazo' | 'prioridade' | 'andamento';
 export function CabecalhoDaTabela({ ordem, onOrdenar, todasMarcadas, onMarcarTodas }: { ordem?: { col: ColunaOrdenavel; dir: 'asc' | 'desc' } | undefined; onOrdenar?: ((c: ColunaOrdenavel) => void) | undefined; todasMarcadas?: boolean; onMarcarTodas?: (() => void) | undefined }) {
-  const col = (c: ColunaOrdenavel, nome: string, extra = '') => (
-    <button type="button" disabled={!onOrdenar} onClick={() => onOrdenar?.(c)} className={cn('flex items-center gap-1 text-left uppercase tracking-wide hover:text-branco-cru', extra)}>
+  const { colunas, grade } = useColunas();
+  const col = (c: ColunaOrdenavel, nome: string) => (
+    <button type="button" disabled={!onOrdenar} onClick={() => onOrdenar?.(c)} className="flex items-center gap-1 text-left uppercase tracking-wide hover:text-branco-cru">
       {nome}{ordem?.col === c && (ordem.dir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
     </button>
   );
+  const rotulo: Record<ColunaDaLista, React.ReactNode> = {
+    cliente: <span className="uppercase tracking-wide">Cliente</span>, andamento: col('andamento', 'Andamento'), responsavel: <span className="uppercase tracking-wide">Quem</span>,
+    prazo: col('prazo', 'Prazo'), prioridade: col('prioridade', 'Prioridade'), status: <span className="uppercase tracking-wide">Status</span>, tags: <span className="uppercase tracking-wide">Tags</span>,
+  };
   return (
-    <div className={cn('grid items-center gap-3 border-b border-grafite-elevado px-3 py-2 text-[11px] text-nevoa', COLUNAS)}>
+    <div style={{ gridTemplateColumns: grade }} className="grid items-center gap-3 border-b border-grafite-elevado px-3 py-2 text-[11px] text-nevoa">
       <input type="checkbox" aria-label="Selecionar todas" checked={Boolean(todasMarcadas)} onChange={() => onMarcarTodas?.()} disabled={!onMarcarTodas} />
       {col('tarefa', 'Tarefa')}
-      {col('andamento', 'Andamento', so)}
-      <span className="uppercase tracking-wide">Quem</span>
-      {col('prazo', 'Prazo')}
-      {col('prioridade', 'Prioridade', so)}
-      <span className="uppercase tracking-wide">Status</span>
+      {ORDEM.filter((c) => colunas.includes(c)).map((c) => <Fragment key={c}>{rotulo[c]}</Fragment>)}
       <span className="text-right uppercase tracking-wide">Ações</span>
     </div>
   );
@@ -167,7 +180,7 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
     const mostradas = ordenadas.slice(0, limiteFlat);
     return (
       <div className="space-y-2">
-        <div className="overflow-hidden rounded-xl border border-grafite-elevado">
+        <div className="overflow-x-auto rounded-xl border border-grafite-elevado">
           <CabecalhoDaTabela ordem={ordem} onOrdenar={mudarOrdem} todasMarcadas={mostradas.length > 0 && mostradas.every((t) => selecionadas.has(t.id))} onMarcarTodas={() => onSelecionadas(mostradas.every((t) => selecionadas.has(t.id)) ? new Set() : new Set(mostradas.map((t) => t.id)))} />
           {mostradas.map((t) => <Linha key={t.id} t={t} nivel={0} ctx={ctx} />)}
           {ordenadas.length === 0 && <p className="px-4 py-8 text-center text-sm text-nevoa">Nenhuma tarefa com esses filtros.</p>}
@@ -196,7 +209,7 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
               <StatusPill nome={s.name} cor={s.color} categoria={s.category} contagem={itens.length} />
             </div>
             {!fechado && (
-              <div className="overflow-hidden rounded-xl border border-grafite-elevado">
+              <div className="overflow-x-auto rounded-xl border border-grafite-elevado">
                 <CabecalhoDaTabela />
                 {itens.slice(0, limite).map((t) => <Linha key={t.id} t={t} nivel={0} ctx={ctx} />)}
                 {itens.length > limite && <button type="button" onClick={() => setVisiveis((v) => ({ ...v, [s.id]: limite + 100 }))} className="px-9 py-1.5 text-xs text-nevoa hover:text-branco-cru">Mostrar mais ({limite} de {itens.length})</button>}

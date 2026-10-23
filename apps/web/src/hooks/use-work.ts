@@ -69,6 +69,8 @@ export interface WorkTaskDetail {
   blockedBy: Array<{ id: string; key: string; title: string }>;
   blocking: Array<{ id: string; key: string; title: string }>;
   related: Array<{ id: string; key: string; title: string }>;
+  followers: Array<{ id: string; name: string; avatar: string | null }>;
+  following: boolean;
   fieldDefs: Array<{ id: string; name: string; type: string; options: Array<{ id: string; label: string }> }>;
   trackedMs: number;
 }
@@ -104,6 +106,11 @@ export interface WorkTaskFilters {
   parentTaskId?: string | null;
   q?: string | undefined;
   assigneeId?: string | null;
+  createdBy?: string | null;
+  followerId?: string | null;
+  tag?: string | null;
+  dueNone?: boolean;
+  unassigned?: boolean;
   priorities?: number[];
   statusIds?: string[];
   dueFrom?: string;
@@ -114,7 +121,6 @@ export interface WorkTaskFilters {
   includeSubtasks?: boolean;
   includeArchived?: boolean;
   clientId?: string | null;
-  createdBy?: string | null;
   enabled?: boolean;
 }
 
@@ -125,6 +131,11 @@ export function useWorkTasks(f: WorkTaskFilters) {
   else if (f.spaceId) params.set('space_id', f.spaceId);
   if (f.q) params.set('q', f.q);
   if (f.assigneeId) params.set('assignee_id', f.assigneeId);
+  if (f.createdBy) params.set('created_by', f.createdBy);
+  if (f.followerId) params.set('follower_id', f.followerId);
+  if (f.tag) params.set('tag', f.tag);
+  if (f.dueNone) params.set('due_none', 'true');
+  if (f.unassigned) params.set('unassigned', 'true');
   if (f.priorities?.length) params.set('priorities', f.priorities.join(','));
   if (f.statusIds?.length) params.set('status_ids', f.statusIds.join(','));
   if (f.dueFrom) params.set('due_from', f.dueFrom);
@@ -213,14 +224,14 @@ export function useUpdateTask() {
         return apiFetch(`/work/tasks/${id}`, jsonInit('PATCH', { ...rest, expectedVersion: atual.version }));
       }
     },
-    onSettled: () => inv('tasks', 'detail', 'tree', 'inbox', 'overview'),
+    onSettled: () => inv('tasks', 'detail', 'tree', 'inbox', 'overview', 'history'),
     onError: (e) => toast(e instanceof ApiRequestError ? e.message : 'Não foi possível salvar a alteração.', 'error'),
   });
 }
 
 export function useAddComment(taskId: string) {
   const inv = useInvalidate();
-  return useMutation({ mutationFn: (body: string) => apiFetch(`/work/tasks/${taskId}/comments`, jsonInit('POST', { body })), onSuccess: () => inv('detail') });
+  return useMutation({ mutationFn: (body: string) => apiFetch(`/work/tasks/${taskId}/comments`, jsonInit('POST', { body })), onSuccess: () => inv('detail', 'history') });
 }
 
 export function useChecklistActions(taskId: string) {

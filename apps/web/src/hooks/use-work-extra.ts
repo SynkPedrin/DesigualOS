@@ -112,7 +112,7 @@ export function useSavedViewActions() {
 // ── Editar / excluir tudo da tarefa
 export function useTaskCrud(taskId: string) {
   const inv = useInv();
-  const ok = () => inv('detail', 'tasks', 'tree', 'inbox');
+  const ok = () => inv('detail', 'tasks', 'tree', 'inbox', 'history');
   return {
     editarComentario: useMutation({ mutationFn: (b: { id: string; body: string }) => apiFetch(`/work/comments/${b.id}`, init('PATCH', { body: b.body })), onSuccess: ok }),
     apagarComentario: useMutation({ mutationFn: (id: string) => apiFetch(`/work/comments/${id}`, init('DELETE')), onSuccess: ok }),
@@ -189,4 +189,35 @@ export function useBulkUpdate() {
 export function useLinkListToClient() {
   const inv = useInv();
   return useMutation({ mutationFn: (b: { listId: string; clientId: string | null }) => apiFetch(`/work/lists/${b.listId}`, init('PATCH', { clientId: b.clientId })), onSuccess: () => inv('tree', 'tasks', 'overview') });
+}
+
+// ── Histórico, seguidores e preferências individuais
+export interface HistoryEvent { id: string; createdAt: string; action: string; actorName: string; actorAvatar: string | null; actorKind: string; texto: string }
+export function useTaskHistory(taskId: string) {
+  return useQuery({ queryKey: ['work', 'history', taskId], queryFn: () => apiFetch<{ events: HistoryEvent[] }>(`/work/tasks/${taskId}/history`) });
+}
+export function useFollowTask(taskId: string) {
+  const inv = useInv();
+  return {
+    seguir: useMutation({ mutationFn: () => apiFetch(`/work/tasks/${taskId}/follow`, init('POST', {})), onSuccess: () => inv('detail', 'history') }),
+    deixar: useMutation({ mutationFn: () => apiFetch(`/work/tasks/${taskId}/follow`, init('DELETE')), onSuccess: () => inv('detail', 'history') }),
+  };
+}
+
+export const COLUNAS_DA_LISTA = ['andamento', 'responsavel', 'prazo', 'prioridade', 'status', 'cliente', 'tags'] as const;
+export type ColunaDaLista = (typeof COLUNAS_DA_LISTA)[number];
+export interface WorkPreferences { colunas: ColunaDaLista[]; densidade: 'compacta' | 'confortavel'; agrupar: boolean; visaoPadrao: 'lista' | 'quadro' | 'calendario' | 'tabela' | 'gantt'; mostrarConcluidas: boolean; subtarefasAbertas: boolean }
+export const PREFERENCIAS_PADRAO: WorkPreferences = { colunas: ['andamento', 'responsavel', 'prazo', 'prioridade', 'status'], densidade: 'confortavel', agrupar: false, visaoPadrao: 'lista', mostrarConcluidas: false, subtarefasAbertas: false };
+export function usePreferences() {
+  return useQuery({ queryKey: ['work', 'preferences'], queryFn: () => apiFetch<WorkPreferences>('/work/preferences'), staleTime: 5 * 60_000 });
+}
+export function useSavePreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: Partial<WorkPreferences>) => apiFetch<WorkPreferences>('/work/preferences', init('PUT', p)),
+    // Atualiza na hora (sem esperar a rede): mexer numa coluna tem que parecer instantâneo.
+    onMutate: async (p) => { const antes = qc.getQueryData<WorkPreferences>(['work', 'preferences']); qc.setQueryData<WorkPreferences>(['work', 'preferences'], { ...(antes ?? PREFERENCIAS_PADRAO), ...p }); return { antes }; },
+    onError: (_e, _p, ctx) => { if (ctx?.antes) qc.setQueryData(['work', 'preferences'], ctx.antes); },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['work', 'preferences'] }),
+  });
 }

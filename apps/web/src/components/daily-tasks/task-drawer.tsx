@@ -8,7 +8,7 @@ import {
 } from '@/hooks/use-work';
 import { useClients } from '@/hooks/use-clients';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
-import { useRecurrenceActions, useSetCustomField, useTaskCrud, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
+import { useFollowTask, useRecurrenceActions, useSetCustomField, useTaskCrud, useTaskHistory, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
 import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toast-store';
@@ -83,6 +83,9 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const timer = useTimer();
   const { iniciar, parar, manual } = useTimerActions();
   const modelos = useTemplateActions();
+  const historico = useTaskHistory(taskId);
+  const { seguir, deixar } = useFollowTask(taskId);
+  const [historicoTodo, setHistoricoTodo] = useState(false);
   const recorrencia = useRecurrenceActions();
   const [titulo, setTitulo] = useState('');
   const [desc, setDesc] = useState('');
@@ -161,7 +164,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               <span className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-2 py-1 text-sm text-nevoa">Mover / arquivar / excluir <RowMenu t={t} onDone={(a) => { if (a !== 'moved') onClose(); }} /></span>
             </div>
             {msg && <p role="alert" className="text-xs text-red-400">{msg}</p>}
-            <dl className="grid grid-cols-[130px_1fr] items-center gap-y-3.5 text-sm">
+            <dl className="grid grid-cols-[150px_1fr] items-center gap-y-3.5 text-sm">
               <dt className="text-nevoa">Status</dt><dd><StatusPicker tarefa={t} statuses={st} onChange={(statusId) => void salvar({ statusId })} /></dd>
               <dt className="text-nevoa">Responsáveis</dt><dd><AssigneePicker tarefa={t} membros={membros} onChange={(ids) => void salvar({ assigneeIds: ids })} /></dd>
               <dt className="text-nevoa">Cliente</dt>
@@ -171,6 +174,8 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                   <option value="">Sem cliente</option>{clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </dd>
+              <dt className="text-nevoa">Início</dt>
+              <dd className="flex items-center gap-2"><input type="date" aria-label="Data de início" value={t.startAt ? t.startAt.slice(0, 10) : ''} onChange={(e) => void salvar({ startAt: e.target.value ? new Date(`${e.target.value}T12:00:00`).toISOString() : null })} className="rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />{t.startAt && <button type="button" onClick={() => void salvar({ startAt: null })} className="text-xs text-nevoa hover:text-branco-cru">limpar</button>}</dd>
               <dt className="text-nevoa">Vencimento</dt><dd><DuePicker tarefa={t} onChange={(iso) => void salvar({ dueAt: iso })} /></dd>
               <dt className="text-nevoa">Prioridade</dt><dd><PriorityPicker tarefa={t} comTexto onChange={(priority) => void salvar({ priority })} /></dd>
               <dt className="text-nevoa">Estimativa</dt>
@@ -186,6 +191,12 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 <form className="flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); const n = Number(min); if (n > 0) manual.mutate({ taskId, minutes: n }, { onSuccess: () => setMin('') }); }}>
                   <input value={min} onChange={(e) => setMin(e.target.value)} inputMode="numeric" placeholder="+ min" aria-label="Minutos a lançar" className="w-16 rounded border border-grafite-elevado bg-grafite px-2 py-1 text-xs text-branco-cru outline-none" />
                 </form>
+              </dd>
+              <dt className="text-nevoa">Acompanhando</dt>
+              <dd className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => (data.following ? deixar : seguir).mutate(undefined, { onSuccess: () => toast(data.following ? 'Você deixou de seguir esta tarefa.' : 'Você segue esta tarefa: recebe aviso de comentário e mudança de status.', 'success'), onError: erro })} className={cn('rounded-lg px-3 py-1 text-sm font-medium', data.following ? 'bg-sinal/20 text-sinal' : 'border border-grafite-elevado text-branco-cru hover:bg-grafite-elevado')}>{data.following ? '✓ Seguindo' : '+ Seguir'}</button>
+                <span className="flex items-center -space-x-1.5">{data.followers.slice(0, 6).map((f) => <span key={f.id} className="rounded-full ring-2 ring-carbono"><Avatar nome={f.name} url={f.avatar} size={22} /></span>)}</span>
+                {data.followers.length > 0 && <span className="text-xs text-nevoa">{data.followers.length} acompanhando</span>}
               </dd>
               <dt className="text-nevoa">Tags</dt>
               <dd className="flex flex-wrap items-center gap-1">
@@ -296,6 +307,21 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                   <button type="submit" disabled={comentar.isPending || !coment.trim()} className="rounded bg-sinal px-3 py-1.5 text-sm font-semibold text-grafite disabled:opacity-40">Comentar</button>
                 </div>
               </form>
+            </section>
+
+            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
+              <Titulo extra={historico.data && historico.data.events.length > 8 ? <button type="button" onClick={() => setHistoricoTodo((v) => !v)} className="normal-case text-nevoa hover:text-branco-cru">{historicoTodo ? 'Mostrar menos' : `Ver tudo (${historico.data.events.length})`}</button> : undefined}>Histórico da tarefa</Titulo>
+              {historico.isPending ? <p className="text-xs text-nevoa">Carregando…</p> : (
+                <ol className="space-y-2.5" aria-label="Histórico da tarefa">
+                  {(historico.data?.events ?? []).slice(0, historicoTodo ? 500 : 8).map((h) => (
+                    <li key={h.id} className="flex items-start gap-2.5 text-sm">
+                      <Avatar nome={h.actorName} url={h.actorAvatar} size={22} />
+                      <span className="min-w-0 flex-1 text-branco-cru"><strong className="font-semibold">{h.actorName}</strong> <span className="text-nevoa">{h.texto}</span></span>
+                      <time dateTime={h.createdAt} title={new Date(h.createdAt).toLocaleString('pt-BR')} className="shrink-0 text-[11px] text-nevoa/80">{new Date(h.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</time>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </section>
           </div>
         )}
