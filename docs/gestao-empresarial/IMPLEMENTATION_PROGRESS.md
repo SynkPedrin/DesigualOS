@@ -84,7 +84,7 @@ pnpm --filter @desigual-os/web exec playwright test -c playwright.gestao-empresa
 Os testes entram com `e2e@local.test`, numa empresa separada ("E2E (local)"), para não misturar dado de teste com
 os dados importados que a pessoa vê em `admin@local.test`.
 
-## F. Dados do Operand no ambiente local
+## E. Dados do Operand no ambiente local
 
 Importados pela própria API do importador na empresa "Desigual (local)" em 23/10/2026:
 1.024 cadastros (748 com papel de cliente, 249 de fornecedor, 73 de veículo de mídia; quem aparece em mais de um
@@ -92,7 +92,7 @@ arquivo virou um cadastro só, ligado pelo documento) e 171 lançamentos (quitad
 R$ 1.698,00, cancelado R$ 192.095,10). Os 31 cedentes entraram **sem vínculo** de cadastro, com o nome
 preservado, porque ligar por nome é proibido; ligar cada um a um cadastro é decisão humana.
 
-## E. O que NÃO foi verificado ou não existe
+## F. O que NÃO foi verificado ou não existe
 
 - Vínculo do cadastro com o cliente do Desigual OS: a API existe (`PUT /cadastros/pessoas/:id/cliente`), a tela não.
 - Lançamento quitado importado (sem data real) não pode ser estornado nem editado: não há movimento no razão para
