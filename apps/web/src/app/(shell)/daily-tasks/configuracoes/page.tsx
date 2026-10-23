@@ -133,7 +133,7 @@ export default function ConfiguracoesPage() {
   return (
     <div className="space-y-5">
       <header>
-        <h1 className="font-heading text-3xl font-semibold text-branco-cru">Configurações</h1>
+        <h1 className="font-heading text-2xl font-semibold text-branco-cru">Configurações</h1>
         <p className="text-sm text-nevoa">Como o Daily Tasks se organiza: clientes e listas, status, campos, visões e acesso.</p>
       </header>
       <div className="grid gap-6 lg:grid-cols-[210px_minmax(0,1fr)]">

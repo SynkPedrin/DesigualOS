@@ -74,7 +74,7 @@ export default function MeuTrabalhoPage() {
       <header className="flex flex-wrap items-center gap-4">
         {quem && <Avatar nome={quem.name} url={quem.avatarUrl} size={48} />}
         <div className="min-w-0 flex-1">
-          <h1 className="font-heading text-3xl font-semibold text-branco-cru">{alvo === eu ? 'Meu Trabalho' : `Trabalho de ${quem?.name ?? ''}`}</h1>
+          <h1 className="font-heading text-2xl font-semibold text-branco-cru">{alvo === eu ? 'Meu Trabalho' : `Trabalho de ${quem?.name ?? ''}`}</h1>
           <p className="text-sm text-nevoa">Tudo que está atribuído {alvo === eu ? 'a você' : 'a esta pessoa'}, de todos os clientes e listas.</p>
         </div>
         <label className="flex items-center gap-2 text-xs text-nevoa">Ver o trabalho de

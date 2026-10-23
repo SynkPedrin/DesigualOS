@@ -39,6 +39,19 @@ function CampoPersonalizado({ def, valor, taskId }: { def: WorkTaskDetail['field
   );
 }
 
+/** Seção que fecha quando está vazia: a gaveta mostra o que existe e deixa o resto a um clique, em vez de uma parede de campos. */
+function Recolhivel({ titulo, contagem, abertaAoInicio, className, children }: { titulo: string; contagem?: number; abertaAoInicio: boolean; className?: string; children: React.ReactNode }) {
+  return (
+    <details open={abertaAoInicio} className={cn('group/d border-t border-grafite-elevado pt-3', className)}>
+      <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold uppercase tracking-wide text-nevoa hover:text-branco-cru">
+        <span>{titulo}{contagem !== undefined && contagem > 0 ? ` · ${contagem}` : ''}</span>
+        <span aria-hidden className="text-base leading-none group-open/d:rotate-45">+</span>
+      </summary>
+      <div className="mt-3">{children}</div>
+    </details>
+  );
+}
+
 const Titulo = ({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) => (
   <h3 className="mb-1.5 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-nevoa"><span>{children}</span>{extra}</h3>
 );
@@ -142,7 +155,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
         {isPending && <p className="p-6 text-sm text-nevoa">Carregando…</p>}
         {error && <p role="alert" className="p-6 text-sm text-red-400">Não foi possível abrir a tarefa.</p>}
         {data && t && (
-          <div className="space-y-6 p-6">
+          <div className="space-y-5 p-6">
             <input value={titulo} onChange={(e) => setTitulo(e.target.value)} aria-label="Título" className="w-full bg-transparent font-heading text-2xl font-semibold text-branco-cru outline-none" />
             <div role="toolbar" aria-label="Ações da tarefa" className="flex flex-wrap gap-2">
               {(() => {
@@ -158,15 +171,19 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 <button type="button" onClick={() => iniciar.mutate(taskId)} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Play size={14} /> Iniciar cronômetro</button>
               )}
               <button type="button" onClick={() => document.getElementById('drawer-subtarefa')?.focus()} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Plus size={14} /> Criar subtarefa</button>
-              <button type="button" onClick={() => modelos.duplicar.mutate(t.id, { onSuccess: () => toast('Tarefa duplicada na mesma lista.', 'success'), onError: erro })} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Copy size={14} /> Duplicar</button>
-              <button type="button" onClick={() => { const n = window.prompt('Nome do modelo', t.title); if (n?.trim()) modelos.salvar.mutate({ taskId: t.id, name: n.trim() }, { onSuccess: () => toast('Modelo salvo — veja na aba Modelos.', 'success'), onError: erro }); }} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Save size={14} /> Salvar como modelo</button>
-              <button type="button" onClick={() => { const f = window.prompt('Repetir: daily (todo dia), weekly (toda semana) ou monthly (todo mês)?', 'weekly'); if (f && ['daily', 'weekly', 'monthly'].includes(f.trim())) recorrencia.criar.mutate({ taskId: t.id, freq: f.trim() }, { onSuccess: () => toast('Recorrência criada — veja na aba Modelos.', 'success'), onError: erro }); }} className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-4 py-2 text-sm font-medium text-branco-cru hover:bg-grafite"><Repeat size={14} /> Repetir</button>
-              <span className="flex items-center gap-2 rounded-lg bg-grafite-elevado px-2 py-1 text-sm text-nevoa">Mover / arquivar / excluir <RowMenu t={t} onDone={(a) => { if (a !== 'moved') onClose(); }} /></span>
+              <span className="rounded-lg bg-grafite-elevado text-branco-cru hover:bg-grafite">
+                <RowMenu t={t} rotulo="Mais ações" onDone={(a) => { if (a !== 'moved') onClose(); }} extras={[
+                  { rotulo: 'Salvar como modelo', icone: <Save size={12} />, onClick: () => { const n = window.prompt('Nome do modelo', t.title); if (n?.trim()) modelos.salvar.mutate({ taskId: t.id, name: n.trim() }, { onSuccess: () => toast('Modelo salvo — veja em Gerenciar › Modelos.', 'success'), onError: erro }); } },
+                  { rotulo: 'Repetir esta tarefa…', icone: <Repeat size={12} />, onClick: () => { const f = window.prompt('Repetir: daily (todo dia), weekly (toda semana) ou monthly (todo mês)?', 'weekly'); if (f && ['daily', 'weekly', 'monthly'].includes(f.trim())) recorrencia.criar.mutate({ taskId: t.id, freq: f.trim() }, { onSuccess: () => toast('Recorrência criada — veja em Gerenciar › Modelos.', 'success'), onError: erro }); } },
+                ]} />
+              </span>
             </div>
             {msg && <p role="alert" className="text-xs text-red-400">{msg}</p>}
             <dl className="grid grid-cols-[150px_1fr] items-center gap-y-3.5 text-sm">
               <dt className="text-nevoa">Status</dt><dd><StatusPicker tarefa={t} statuses={st} onChange={(statusId) => void salvar({ statusId })} /></dd>
               <dt className="text-nevoa">Responsáveis</dt><dd><AssigneePicker tarefa={t} membros={membros} onChange={(ids) => void salvar({ assigneeIds: ids })} /></dd>
+              <dt className="text-nevoa">Vencimento</dt><dd><DuePicker tarefa={t} onChange={(iso) => void salvar({ dueAt: iso })} /></dd>
+              <dt className="text-nevoa">Prioridade</dt><dd><PriorityPicker tarefa={t} comTexto onChange={(priority) => void salvar({ priority })} /></dd>
               <dt className="text-nevoa">Cliente</dt>
               <dd className="flex items-center gap-2">
                 {cliente && <LogoDoCliente nome={cliente.name} className="!size-6" />}
@@ -174,10 +191,12 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                   <option value="">Sem cliente</option>{clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </dd>
+            </dl>
+            <details className="group/d">
+              <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-nevoa hover:text-branco-cru"><span aria-hidden className="inline-block transition-transform group-open/d:rotate-90">›</span> Mais detalhes <span className="text-nevoa/60">(início, estimativa, tempo, quem acompanha, tags e campos)</span></summary>
+            <dl className="mt-3 grid grid-cols-[150px_1fr] items-center gap-y-3.5 text-sm">
               <dt className="text-nevoa">Início</dt>
               <dd className="flex items-center gap-2"><input type="date" aria-label="Data de início" value={t.startAt ? t.startAt.slice(0, 10) : ''} onChange={(e) => void salvar({ startAt: e.target.value ? new Date(`${e.target.value}T12:00:00`).toISOString() : null })} className="rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />{t.startAt && <button type="button" onClick={() => void salvar({ startAt: null })} className="text-xs text-nevoa hover:text-branco-cru">limpar</button>}</dd>
-              <dt className="text-nevoa">Vencimento</dt><dd><DuePicker tarefa={t} onChange={(iso) => void salvar({ dueAt: iso })} /></dd>
-              <dt className="text-nevoa">Prioridade</dt><dd><PriorityPicker tarefa={t} comTexto onChange={(priority) => void salvar({ priority })} /></dd>
               <dt className="text-nevoa">Estimativa</dt>
               <dd><input type="number" min={0} aria-label="Estimativa em minutos" defaultValue={t.estimateMinutes ?? ''} key={`est${t.version}`} onBlur={(e) => { const n = e.target.value === '' ? null : Number(e.target.value); if (n !== t.estimateMinutes) void salvar({ estimateMinutes: n }); }} className="w-24 rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" /> <span className="text-xs text-nevoa">min</span></dd>
               <dt className="text-nevoa">Tempo</dt>
@@ -206,20 +225,21 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               {data.fieldDefs.filter((f) => todosCampos || data.customFields.some((x) => x.fieldId === f.id)).map((f) => (<div key={f.id} className="contents"><dt className="text-nevoa">{f.name}</dt><dd><CampoPersonalizado def={f} valor={data.customFields.find((x) => x.fieldId === f.id)?.value} taskId={taskId} /></dd></div>))}
               {data.fieldDefs.length > data.customFields.length && (<><dt /><dd><button type="button" onClick={() => setTodosCampos((v) => !v)} className="text-xs text-nevoa hover:text-branco-cru">{todosCampos ? 'Ocultar campos vazios' : `Mostrar ${data.fieldDefs.length - data.customFields.length} campos vazios`}</button></dd></>)}
             </dl>
+            </details>
 
-            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
+            <section className="border-t border-grafite-elevado pt-4">
               <Titulo extra={desc && !editandoDesc ? <button type="button" onClick={() => setEditandoDesc(true)} className="flex items-center gap-1 normal-case text-nevoa hover:text-branco-cru"><Pencil size={12} /> Editar descrição</button> : undefined}>Descrição</Titulo>
               {desc && !editandoDesc ? (
                 <TextoRico texto={desc} className="text-branco-cru" />
               ) : (
                 <>
-                  <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={6} placeholder="Adicione uma descrição (links são clicáveis depois de salvar)" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
+                  <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={4} placeholder="Adicione uma descrição (links ficam clicáveis depois de salvar)" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
                   {editandoDesc && <button type="button" onClick={() => setEditandoDesc(false)} className="mt-1 text-xs text-nevoa hover:text-branco-cru">Ver como ficou</button>}
                 </>
               )}
             </section>
 
-            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
+            <section className="border-t border-grafite-elevado pt-4">
               <Titulo extra={data.subtaskIds.length > 0 && <span className="normal-case tabular-nums">{feitas}/{data.subtaskIds.length}</span>}>Subtarefas ({data.subtaskIds.length})</Titulo>
               {data.subtaskIds.length > 0 && <div className="mb-2 h-1.5 overflow-hidden rounded bg-grafite-elevado"><div className="h-full bg-sucesso" style={{ width: `${(feitas / data.subtaskIds.length) * 100}%` }} /></div>}
               <SubtasksList parentId={t.id} onOpen={onOpen} statuses={st} membros={membros} salvar={(sub, patch) => atualizar.mutate({ id: sub.id, expectedVersion: sub.version, ...patch })} />
@@ -228,15 +248,14 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </form>
             </section>
 
-            <section className="space-y-2 rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
-              <Titulo>Dependências</Titulo>
+            <Recolhivel titulo="Dependências" contagem={data.blockedBy.length + data.blocking.length + data.related.length} abertaAoInicio={data.blockedBy.length + data.blocking.length + data.related.length > 0} className="space-y-2">
               {data.blockedBy.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-red-300 hover:underline"><Link2 size={13} /> Aguardando {x.key} · {x.title}</button><button type="button" aria-label="Remover dependência" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
               {data.blocking.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-aviso hover:underline"><Link2 size={13} /> Bloqueia {x.key} · {x.title}</button><button type="button" aria-label="Remover dependência" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
               {data.related.map((x) => <div key={x.id} className="flex items-center gap-2 text-sm"><button type="button" onClick={() => onOpen(x.id)} className="flex items-center gap-2 text-left text-nevoa hover:underline"><Link2 size={13} /> Relacionada {x.key} · {x.title}</button><button type="button" aria-label="Remover vínculo" onClick={() => crud.removerDependencia.mutate(x.id, { onError: erro })} className="text-nevoa hover:text-red-400"><X size={12} /></button></div>)}
               <BuscaDeTarefa excluir={t.id} onPick={(o) => crud.dependencia.mutate({ dependsOnId: o.id, kind: 'blocking' }, { onError: erro, onSuccess: () => toast(`Esta tarefa agora aguarda ${o.key}.`, 'success') })} />
-            </section>
+            </Recolhivel>
 
-            <section className="space-y-3 rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
+            <Recolhivel titulo="Checklists" contagem={data.checklists.length} abertaAoInicio={data.checklists.length > 0} className="space-y-3">
               {data.checklists.map((c) => {
                 const feitos = c.items.filter((i) => i.done).length;
                 return (
@@ -261,19 +280,18 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               <form onSubmit={(e) => { e.preventDefault(); if (novoCl.trim()) cl.criar.mutate(novoCl.trim(), { onSuccess: () => setNovoCl('') }); }}>
                 <input value={novoCl} onChange={(e) => setNovoCl(e.target.value)} placeholder="+ Novo checklist" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
               </form>
-            </section>
+            </Recolhivel>
 
-            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
-              <Titulo>Anexos ({data.attachments.length})</Titulo>
+            <Recolhivel titulo="Anexos" contagem={data.attachments.length} abertaAoInicio={data.attachments.length > 0}>
               <ul className="space-y-1">
                 {data.attachments.map((a) => <li key={a.id} className="group flex items-center gap-2"><a href={a.url} target="_blank" rel="noreferrer noopener" className="flex min-w-0 flex-1 items-center gap-2 text-sm text-branco-cru hover:underline"><Paperclip size={13} className="shrink-0 text-nevoa" /><span className="truncate">{a.fileName}</span></a><button type="button" aria-label={`Remover anexo ${a.fileName}`} onClick={() => crud.apagarAnexo.mutate(a.id, { onError: erro })} className="text-nevoa opacity-40 transition-opacity hover:text-red-400 group-hover:opacity-100 focus:opacity-100"><X size={12} /></button></li>)}
               </ul>
               <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (link.trim()) crud.anexar.mutate({ url: link.trim() }, { onSuccess: () => setLink(''), onError: erro }); }}>
                 <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="+ Colar link (Drive, Figma, PDF…)" aria-label="Link do anexo" className="flex-1 rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
               </form>
-            </section>
+            </Recolhivel>
 
-            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
+            <section className="border-t border-grafite-elevado pt-4">
               <Titulo>Comentários ({data.comments.length})</Titulo>
               <ul className="space-y-3">
                 {data.comments.map((c) => (
@@ -309,7 +327,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </form>
             </section>
 
-            <section className="rounded-xl border border-grafite-elevado bg-grafite/50 p-4">
+            <section className="border-t border-grafite-elevado pt-4">
               <Titulo extra={historico.data && historico.data.events.length > 8 ? <button type="button" onClick={() => setHistoricoTodo((v) => !v)} className="normal-case text-nevoa hover:text-branco-cru">{historicoTodo ? 'Mostrar menos' : `Ver tudo (${historico.data.events.length})`}</button> : undefined}>Histórico da tarefa</Titulo>
               {historico.isPending ? <p className="text-xs text-nevoa">Carregando…</p> : (
                 <ol className="space-y-2.5" aria-label="Histórico da tarefa">

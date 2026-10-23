@@ -151,7 +151,7 @@ export default function AutomacoesPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
-          <h1 className="font-heading text-3xl font-semibold text-branco-cru">Automações</h1>
+          <h1 className="font-heading text-2xl font-semibold text-branco-cru">Automações</h1>
           <p className="text-sm text-nevoa">Regras que trabalham sozinhas: quando algo acontece numa tarefa, o sistema faz o resto e registra cada execução.</p>
         </div>
         <button type="button" onClick={() => { setForm(vazio()); setEditando(null); setAberto(true); }} className="flex items-center gap-2 rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite hover:brightness-110"><Plus size={16} /> Nova automação</button>

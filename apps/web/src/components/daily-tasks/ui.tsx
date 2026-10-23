@@ -10,11 +10,11 @@ export function StatCard({ icone: Icone, rotulo, valor, detalhe, tom = 'neutro',
   const cor = { neutro: 'bg-grafite-elevado text-nevoa', verde: 'bg-sucesso/15 text-sucesso', vermelho: 'bg-red-500/15 text-red-400', amarelo: 'bg-aviso/15 text-aviso', roxo: 'bg-roxo-eletrico/15 text-roxo-eletrico' }[tom];
   const Tag = onClick ? 'button' : 'div';
   return (
-    <Tag type={onClick ? 'button' : undefined} onClick={onClick} aria-pressed={onClick ? ativo : undefined} className={cn('flex items-center gap-3 rounded-xl border bg-grafite p-3 text-left', ativo ? 'border-sinal' : 'border-grafite-elevado', onClick && 'transition-colors hover:border-sinal/60')}>
-      <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-lg', cor)}><Icone size={20} /></span>
+    <Tag type={onClick ? 'button' : undefined} onClick={onClick} aria-pressed={onClick ? ativo : undefined} className={cn('flex items-center gap-3 rounded-xl border bg-grafite px-3 py-2 text-left', ativo ? 'border-sinal' : 'border-grafite-elevado', onClick && 'transition-colors hover:border-sinal/60')}>
+      <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', cor)}><Icone size={17} /></span>
       <span className="min-w-0">
         <span className="block text-xs text-nevoa">{rotulo}</span>
-        <span className="block font-heading text-2xl font-semibold leading-tight text-branco-cru">{valor}</span>
+        <span className="block font-heading text-xl font-semibold leading-tight text-branco-cru">{valor}</span>
         {detalhe && <span className="block truncate text-[11px] text-nevoa">{detalhe}</span>}
       </span>
     </Tag>

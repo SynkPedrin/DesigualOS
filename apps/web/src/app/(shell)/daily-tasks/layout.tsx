@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Lock, Square } from 'lucide-react';
+import { Lock, Settings, Square } from 'lucide-react';
+import { Popover } from '@/components/daily-tasks/primitivas';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
@@ -47,13 +48,16 @@ export default function DailyTasksLayout({ children }: { children: React.ReactNo
             {a.href.endsWith('caixa-de-entrada') && naoLidas > 0 && <span className="rounded-full bg-sinal px-1.5 text-[10px] font-semibold text-grafite">{naoLidas > 99 ? '99+' : naoLidas}</span>}
           </Link>
         ))}
-        <span aria-hidden className="mx-2 hidden h-5 w-px bg-grafite-elevado md:block" />
-        <span className="hidden text-[10px] uppercase tracking-[0.14em] text-nevoa/60 md:block">Gerenciamento</span>
-        {GERENCIAMENTO.map((a) => (
-          <Link key={a.href} href={a.href} className={cn('-mb-px border-b-2 px-3 py-2 text-sm', pathname === a.href ? 'border-sinal font-medium text-branco-cru' : 'border-transparent text-nevoa hover:text-branco-cru')}>{a.label}</Link>
-        ))}
+        <span className="ml-auto" />
+        <Popover label="Gerenciar" align="right" trigger={<span className={cn('flex items-center gap-1.5 px-2 py-2 text-sm', GERENCIAMENTO.some((g) => g.href === pathname) ? 'font-medium text-branco-cru' : 'text-nevoa')}><Settings size={15} /> Gerenciar</span>}>
+          {(fechar) => (
+            <nav aria-label="Gerenciamento" className="w-52 p-1">
+              {GERENCIAMENTO.map((a) => <Link key={a.href} href={a.href} onClick={fechar} className={cn('block rounded px-3 py-2 text-sm hover:bg-grafite-elevado', pathname === a.href ? 'font-medium text-branco-cru' : 'text-nevoa')}>{a.label}</Link>)}
+            </nav>
+          )}
+        </Popover>
         {rodando && (
-          <div className="ml-auto flex items-center gap-2 rounded-md bg-grafite px-2 py-1 text-xs text-branco-cru" role="status" aria-label="Cronômetro em andamento">
+          <div className="flex items-center gap-2 rounded-md bg-grafite px-2 py-1 text-xs text-branco-cru" role="status" aria-label="Cronômetro em andamento">
             <span className="size-2 animate-pulse rounded-full bg-red-500" />
             <span className="max-w-48 truncate" title={rodando.taskTitle}>{rodando.taskKey} · {rodando.taskTitle}</span>
             <TempoCorrendo desde={rodando.startedAt} />

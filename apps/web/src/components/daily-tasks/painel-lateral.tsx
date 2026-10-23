@@ -11,8 +11,8 @@ import { prazoRelativo } from './ui';
 export type FiltroRapido = 'hoje' | 'atrasadas' | 'bloqueadas' | null;
 
 const Cartao = ({ titulo, icone, acao, children }: { titulo: string; icone?: React.ReactNode; acao?: React.ReactNode; children: React.ReactNode }) => (
-  <section className="space-y-3 rounded-xl border border-grafite-elevado bg-grafite p-4">
-    <div className="flex items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-sm font-semibold text-branco-cru">{icone}{titulo}</h2>{acao}</div>
+  <section className="space-y-2.5 rounded-xl border border-grafite-elevado/70 bg-grafite/60 p-3.5">
+    <div className="flex items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-nevoa">{icone}{titulo}</h2>{acao}</div>
     {children}
   </section>
 );
@@ -40,7 +40,7 @@ export function PainelLateral({ overview, aoAbrir, aoFiltrar }: { overview: Work
     <aside aria-label="Resumo do dia" className="space-y-4">
       <Cartao titulo="Hoje" icone={<CalendarDays size={15} />}>
         <div>
-          <p className="font-heading text-xl font-semibold capitalize text-branco-cru">{hoje.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+          <p className="font-heading text-lg font-semibold capitalize text-branco-cru">{hoje.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
           <p className="text-sm capitalize text-nevoa">{hoje.toLocaleDateString('pt-BR', { weekday: 'long' })}</p>
         </div>
         <Link href="/daily-tasks/calendario" className="flex w-fit items-center gap-2 rounded-lg border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado">Abrir calendário <ArrowRight size={14} /></Link>

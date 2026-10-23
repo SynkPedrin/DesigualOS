@@ -83,7 +83,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(TASK_DRAG, t.id); e.dataTransfer.effectAllowed = 'move'; }}
         style={{ gridTemplateColumns: grade }}
-        className={cn('group grid items-center gap-3 border-b border-grafite-elevado/60 px-3 hover:bg-grafite-elevado/40', compacta ? 'py-1' : 'py-2.5', nivel > 0 && 'bg-grafite/30', atrasada && nivel === 0 && 'bg-red-500/[0.06]', t.archivedAt && 'opacity-60')}
+        className={cn('group grid items-center gap-3 border-b border-grafite-elevado/40 px-3 hover:bg-grafite-elevado/30', compacta ? 'py-1' : 'py-2.5', nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
       >
         <input type="checkbox" aria-label={`Selecionar ${t.key}`} checked={ctx.selecionadas.has(t.id)} onChange={() => ctx.alternarSelecao(t.id)} />
         <div className="relative flex min-w-0 items-center gap-2" style={{ paddingLeft: nivel * 22 }}>
@@ -103,9 +103,9 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
               {t.subtaskCount > 0 && <span className="flex shrink-0 items-center gap-1" title={`${t.subtaskDone} de ${t.subtaskCount} subtarefas concluídas`}><GitFork size={10} className="rotate-90" />{t.subtaskDone}/{t.subtaskCount}</span>}
             </span>
           </div>
-          {!ctx.semSubtarefas && <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex size-5 shrink-0 items-center justify-center rounded border border-grafite-elevado text-nevoa hover:border-sinal/60 hover:text-branco-cru"><Plus size={12} /></button>}
+          {!ctx.semSubtarefas && <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex size-5 shrink-0 items-center justify-center rounded border border-grafite-elevado text-nevoa opacity-0 transition-opacity hover:border-sinal/60 hover:text-branco-cru focus:opacity-100 group-hover:opacity-100"><Plus size={12} /></button>}
         </div>
-        {tem('cliente') && <div className="flex min-w-0 items-center gap-1.5 text-xs text-nevoa">{nomeCliente ? <><LogoDoCliente nome={nomeCliente} className="!size-4" /><span className="truncate">{nomeCliente}</span></> : <span className="text-nevoa/50">sem cliente</span>}</div>}
+        {tem('cliente') && <div className="flex min-w-0 items-center gap-1.5 text-xs text-nevoa">{nomeCliente ? <><LogoDoCliente nome={nomeCliente} className="!size-4" /><span className="truncate">{nomeCliente}</span></> : <span className="text-nevoa/40">—</span>}</div>}
         {tem('andamento') && <div className="flex items-center"><BarraDeProgresso pct={pct} /></div>}
         {tem('responsavel') && <div className="flex items-center"><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>}
         {tem('prazo') && <div className="flex flex-col justify-center leading-tight">
@@ -115,7 +115,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
         {tem('prioridade') && <div className="flex items-center"><PriorityPicker tarefa={t} badge onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>}
         {tem('status') && <div className="flex items-center"><StatusPicker tarefa={t} statuses={statuses} onChange={(statusId) => ctx.actions.atualizar(t, { statusId })} /></div>}
         {tem('tags') && <div className="flex min-w-0 flex-wrap gap-1">{t.tags.slice(0, 2).map((x) => <span key={x} className="truncate rounded bg-grafite-elevado px-1.5 py-0.5 text-[11px] text-nevoa">{x}</span>)}{t.tags.length > 2 && <span className="text-[11px] text-nevoa">+{t.tags.length - 2}</span>}</div>}
-        <div className="flex items-center justify-end gap-1"><button type="button" onClick={() => ctx.actions.abrir(t)} className="rounded-md bg-grafite-elevado px-2 py-1 text-xs font-medium text-branco-cru hover:bg-sinal hover:text-grafite">Abrir</button><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></div>
+        <div className="flex items-center justify-end gap-1"><button type="button" onClick={() => ctx.actions.abrir(t)} className="rounded-md bg-grafite-elevado px-2 py-1 text-xs font-medium text-branco-cru opacity-0 transition-opacity hover:bg-sinal hover:text-grafite focus:opacity-100 group-hover:opacity-100">Abrir</button><span className="opacity-60 transition-opacity focus-within:opacity-100 group-hover:opacity-100"><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></span></div>
       </div>
       {aberta && !ctx.semSubtarefas && (
         <>

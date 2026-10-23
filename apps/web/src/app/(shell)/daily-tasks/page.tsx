@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, Building2, CalendarClock, CalendarDays, ChevronRight, Columns3, Filter, GanttChart, List as ListIcon, ListChecks, Plus, Search, Settings2, SlidersHorizontal, Table2, Ban } from 'lucide-react';
+import { AlertTriangle, Bookmark, PanelRight, Building2, CalendarClock, X, CalendarDays, ChevronRight, Columns3, Filter, GanttChart, List as ListIcon, ListChecks, Plus, Search, Settings2, SlidersHorizontal, Table2, Ban } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Arvore } from '@/components/daily-tasks/tree';
@@ -47,6 +47,14 @@ const VISOES: Array<{ id: Visao; label: string; icon: typeof ListIcon }> = [
   { id: 'tabela', label: 'Tabela', icon: Table2 },
   { id: 'gantt', label: 'Gantt', icon: GanttChart },
 ];
+function Numero({ icone: Icone, rotulo, valor, alerta, ativo, onClick }: { icone: typeof ListIcon; rotulo: string; valor: number | undefined; alerta?: boolean; ativo?: boolean; onClick?: () => void }) {
+  const Tag = onClick ? 'button' : 'span';
+  return (
+    <Tag {...(onClick ? { type: 'button' as const, onClick, 'aria-pressed': ativo } : {})} className={cn('flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs', ativo ? 'border-sinal bg-sinal/15 text-branco-cru' : 'border-grafite-elevado text-nevoa', onClick && 'hover:border-sinal/60 hover:text-branco-cru')}>
+      <Icone size={13} className={alerta ? 'text-red-400' : ''} />{rotulo}<strong className={cn('tabular-nums', alerta ? 'text-red-400' : 'text-branco-cru')}>{valor ?? '—'}</strong>
+    </Tag>
+  );
+}
 const campo = 'rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1.5 text-sm text-branco-cru outline-none focus:border-sinal/60';
 
 export default function DailyTasksPage() {
@@ -84,8 +92,11 @@ export default function DailyTasksPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [novaTarefa, setNovaTarefa] = useState('');
   const quickRef = useRef<HTMLInputElement>(null);
+  const [painelAberto, setPainelAberto] = useState(true);
+  useEffect(() => { try { setPainelAberto(localStorage.getItem('dt:painel') !== 'fechado'); } catch { /* sem storage: fica aberto */ } }, []);
+  const alternarPainel = () => setPainelAberto((v) => { try { localStorage.setItem('dt:painel', v ? 'fechado' : 'aberto'); } catch { /* ignora */ } return !v; });
   const views = useSavedViews();
-  const { salvar: salvarView } = useSavedViewActions();
+  const { salvar: salvarView, apagar: apagarView } = useSavedViewActions();
   // Os filtros ficam no endereço: dá para copiar o link da tela filtrada e mandar para alguém.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -153,9 +164,19 @@ export default function DailyTasksPage() {
   }, [todas, rapido]);
   const pronto = !tree.isPending && !tasks.isPending && !statuses.isPending;
   const c = overview.data?.contagens;
-  const filtrosAtivos = [filtroResp, filtroPrio !== null ? 1 : null, filtroCli, filtroStatus, q.trim() || null, rapido, escopo !== 'todas' ? 1 : null, tag.trim() || null, prazo || null].filter(Boolean).length;
+  const filtrosAtivos = [filtroResp, filtroPrio !== null ? 1 : null, filtroCli, filtroStatus, tag.trim() || null, prazo || null].filter(Boolean).length;
   const limparFiltros = () => { setFiltroResp(null); setFiltroPrio(null); setFiltroCli(null); setFiltroStatus(null); setQ(''); setRapido(null); setEscopo('todas'); setTag(''); setPrazo(''); };
 
+  const chipsAtivos: Array<{ rotulo: string; limpar: () => void }> = [
+    ...(q.trim() ? [{ rotulo: `busca “${q.trim()}”`, limpar: () => setQ('') }] : []),
+    ...(filtroResp ? [{ rotulo: `responsável: ${membros.find((m) => m.id === filtroResp)?.name ?? '…'}`, limpar: () => setFiltroResp(null) }] : []),
+    ...(filtroPrio !== null ? [{ rotulo: `prioridade: ${PRIORIDADES[filtroPrio]?.label ?? ''}`, limpar: () => setFiltroPrio(null) }] : []),
+    ...(filtroCli ? [{ rotulo: `cliente: ${clientes.find((x) => x.id === filtroCli)?.name ?? '…'}`, limpar: () => setFiltroCli(null) }] : []),
+    ...(filtroStatus ? [{ rotulo: `status: ${st.find((x) => x.id === filtroStatus)?.name ?? '…'}`, limpar: () => setFiltroStatus(null) }] : []),
+    ...(prazo ? [{ rotulo: `prazo: ${prazo === 'hoje' ? 'hoje' : prazo === 'semana' ? '7 dias' : 'este mês'}`, limpar: () => setPrazo('') }] : []),
+    ...(tag.trim() ? [{ rotulo: `tag: ${tag.trim()}`, limpar: () => setTag('') }] : []),
+    ...(rapido ? [{ rotulo: rapido === 'hoje' ? 'vencem hoje' : rapido === 'atrasadas' ? 'atrasadas' : 'bloqueadas', limpar: () => setRapido(null) }] : []),
+  ];
   const paraSelecionadas = (fn: (ids: string[]) => void) => { const ids = [...selecionadas]; if (ids.length) fn(ids); };
   const concluirSelecionadas = () => paraSelecionadas((ids) => {
     const final = st.find((s) => s.category === 'done');
@@ -173,61 +194,71 @@ export default function DailyTasksPage() {
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)] 2xl:grid-cols-[210px_minmax(0,1fr)_290px]">
+      <div className={cn('grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]', painelAberto ? '2xl:grid-cols-[210px_minmax(0,1fr)_280px]' : '2xl:grid-cols-[210px_minmax(0,1fr)]')}>
         <div className="md:sticky md:top-2 md:self-start">
           {tree.isPending ? <Skeleton className="h-64 w-full" /> : <Arvore spaces={spaces} listId={listId} spaceId={spaceAtivo} arquivados={arquivados} onArquivados={setArquivados} onPick={(l, s) => { setListId(l); setSpaceId(s); }} />}
         </div>
 
-        <div className="min-w-0 space-y-4">
-          <header className="space-y-3">
-            <div className="flex flex-wrap items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <nav aria-label="Caminho" className="flex flex-wrap items-center gap-1 text-xs text-nevoa">
-                  {space && <span>{space.name}</span>}{pasta && <><ChevronRight size={11} /><span>{pasta.name}</span></>}
-                </nav>
-                <h1 className="flex items-center gap-3 font-heading text-3xl font-semibold text-branco-cru">
-                  {lista && <LogoDoCliente nome={nomeLimpo(nomeCliente ?? lista.name)} className="!size-9" />}
-                  <span className="truncate">{lista?.name ?? space?.name ?? 'Daily Tasks'}</span>
-                </h1>
-                <p className="text-sm text-nevoa">
-                  {tasks.data ? `${tasks.data.total} tarefa(s)` : '…'} · {c?.atrasadas ?? 0} atrasada(s) · {membros.length} membros
-                  {nomeCliente && <> · cliente <strong className="text-branco-cru">{nomeCliente}</strong></>}
-                </p>
-              </div>
+        <div className="min-w-0 space-y-3">
+          <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="min-w-0 flex-1">
+              <nav aria-label="Caminho" className="flex flex-wrap items-center gap-1 text-xs text-nevoa">
+                {space && <span>{space.name}</span>}{pasta && <><ChevronRight size={11} /><span>{pasta.name}</span></>}
+              </nav>
+              <h1 className="flex items-center gap-2.5 font-heading text-2xl font-semibold text-branco-cru">
+                {lista && <LogoDoCliente nome={nomeLimpo(nomeCliente ?? lista.name)} className="!size-7" />}
+                <span className="truncate">{lista?.name ?? space?.name ?? 'Daily Tasks'}</span>
+                {tasks.data && <span className="text-sm font-normal text-nevoa">{tasks.data.total}</span>}
+              </h1>
             </div>
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-              <StatCard icone={CalendarClock} rotulo="Tarefas hoje" valor={c?.hoje ?? '—'} tom="verde" detalhe={c ? `ontem: ${c.ontem}` : undefined} onClick={() => { setRapido(rapido === 'hoje' ? null : 'hoje'); setVisao('lista'); }} ativo={rapido === 'hoje'} />
-              <StatCard icone={AlertTriangle} rotulo="Atrasadas" valor={c?.atrasadas ?? '—'} tom="vermelho" detalhe="clique para ver só elas" onClick={() => { setRapido(rapido === 'atrasadas' ? null : 'atrasadas'); setVisao('lista'); }} ativo={rapido === 'atrasadas'} />
-              <StatCard icone={Ban} rotulo="Bloqueadas" valor={c?.bloqueadas ?? '—'} tom="amarelo" detalhe="aguardando resolução" onClick={() => { setRapido(rapido === 'bloqueadas' ? null : 'bloqueadas'); setVisao('lista'); }} ativo={rapido === 'bloqueadas'} />
-              <StatCard icone={Building2} rotulo="Clientes ativos" valor={c?.clientesAtivos ?? '—'} tom="roxo" detalhe="com tarefa aberta" />
+            <div role="group" aria-label="Resumo" className="flex flex-wrap items-center gap-1.5">
+              <Numero icone={CalendarClock} rotulo="Hoje" valor={c?.hoje} ativo={rapido === 'hoje'} onClick={() => { setRapido(rapido === 'hoje' ? null : 'hoje'); setVisao('lista'); }} />
+              <Numero icone={AlertTriangle} rotulo="Atrasadas" valor={c?.atrasadas} alerta={(c?.atrasadas ?? 0) > 0} ativo={rapido === 'atrasadas'} onClick={() => { setRapido(rapido === 'atrasadas' ? null : 'atrasadas'); setVisao('lista'); }} />
+              <Numero icone={Ban} rotulo="Bloqueadas" valor={c?.bloqueadas} ativo={rapido === 'bloqueadas'} onClick={() => { setRapido(rapido === 'bloqueadas' ? null : 'bloqueadas'); setVisao('lista'); }} />
+              <Numero icone={Building2} rotulo="Clientes" valor={c?.clientesAtivos} />
+              <button type="button" onClick={() => { quickRef.current?.focus(); quickRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }} className="flex items-center gap-1.5 rounded-lg bg-sinal px-3.5 py-1.5 text-sm font-semibold text-grafite hover:brightness-110"><Plus size={15} /> Nova tarefa</button>
+              <button type="button" onClick={alternarPainel} aria-pressed={painelAberto} title={painelAberto ? 'Esconder o painel do dia' : 'Mostrar o painel do dia'} className="hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-nevoa hover:text-branco-cru 2xl:flex"><PanelRight size={13} /> Painel do dia</button>
             </div>
           </header>
 
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-1 border-b border-grafite-elevado">
-              <div role="tablist" aria-label="Como ver as tarefas" className="flex flex-wrap">
-                {VISOES.map((v) => (
-                  <button key={v.id} role="tab" aria-selected={visao === v.id} type="button" onClick={() => setVisao(v.id)} className={cn('-mb-px flex items-center gap-1.5 border-b-2 px-3.5 py-2 text-sm font-medium transition-colors', visao === v.id ? 'border-sinal text-branco-cru' : 'border-transparent text-nevoa hover:text-branco-cru')}>
-                    <v.icon size={15} /> {v.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div role="group" aria-label="Quais tarefas" className="flex flex-wrap gap-1.5">
-              {ESCOPOS.map((x) => (
-                <button key={x.id} type="button" aria-pressed={escopo === x.id} onClick={() => setEscopo(x.id)} className={cn('rounded-full px-3 py-1 text-xs font-medium transition-colors', escopo === x.id ? 'bg-sinal text-grafite' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>{x.rotulo}</button>
+          <div className="flex flex-wrap items-center gap-2 border-b border-grafite-elevado pb-3">
+            <div role="tablist" aria-label="Como ver as tarefas" className="flex rounded-lg bg-grafite-elevado/60 p-0.5">
+              {VISOES.map((v) => (
+                <button key={v.id} role="tab" aria-selected={visao === v.id} type="button" onClick={() => setVisao(v.id)} title={v.label} className={cn('flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors', visao === v.id ? 'bg-carbono font-medium text-branco-cru shadow-card' : 'text-nevoa hover:text-branco-cru')}>
+                  <v.icon size={14} /><span className="hidden xl:inline">{v.label}</span>
+                </button>
               ))}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex min-w-48 flex-1 items-center gap-2 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1.5 focus-within:border-sinal/60 xl:max-w-xs"><Search size={14} className="text-nevoa" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar tarefas…" aria-label="Buscar tarefas" className="w-full bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" /></label>
-              <select aria-label="Filtrar por responsável" value={filtroResp ?? ''} onChange={(e) => setFiltroResp(e.target.value || null)} className={campo}><option value="">Responsável: todos</option>{membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
-              <select aria-label="Filtrar por prioridade" value={filtroPrio ?? ''} onChange={(e) => setFiltroPrio(e.target.value === '' ? null : Number(e.target.value))} className={campo}><option value="">Prioridade: todas</option>{[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}</select>
-              <select aria-label="Filtrar por cliente" value={filtroCli ?? ''} onChange={(e) => setFiltroCli(e.target.value || null)} className={cn(campo, 'max-w-44')}><option value="">Cliente: todos</option>{clientes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
-              <select aria-label="Filtrar por status" value={filtroStatus ?? ''} onChange={(e) => setFiltroStatus(e.target.value || null)} className={campo}><option value="">Status: todos</option>{st.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
-              <select aria-label="Filtrar por prazo" value={prazo} onChange={(e) => setPrazo(e.target.value as Prazo)} className={campo}><option value="">Prazo: qualquer</option><option value="hoje">Vence hoje</option><option value="semana">Próximos 7 dias</option><option value="mes">Este mês</option></select>
-              <label className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1.5 focus-within:border-sinal/60"><span className="text-xs text-nevoa">tag</span><input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="ex.: urgente" aria-label="Filtrar por tag" className="w-24 bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa/60" /></label>
-              <Popover label="Personalizar visualização" trigger={<span className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1.5 text-sm text-branco-cru"><Settings2 size={14} /> Personalizar</span>}>
+            <label className="flex min-w-40 max-w-xs flex-1 items-center gap-2 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1 focus-within:border-sinal/60"><Search size={14} className="text-nevoa" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" aria-label="Buscar tarefas" className="w-full bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" /></label>
+            <select aria-label="Quais tarefas" value={escopo} onChange={(e) => setEscopo(e.target.value as Escopo)} className="rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1 text-sm text-branco-cru outline-none">{ESCOPOS.map((x) => <option key={x.id} value={x.id}>{x.id === 'todas' ? 'Todas as tarefas' : x.rotulo}</option>)}</select>
+            <Popover label="Filtros" trigger={<span className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1 text-sm text-branco-cru"><SlidersHorizontal size={14} /> Filtros{filtrosAtivos > 0 && <span className="rounded-full bg-sinal px-1.5 text-[10px] font-semibold text-grafite">{filtrosAtivos}</span>}</span>}>
+              {() => (
+                <div className="grid w-80 gap-3 p-2.5 text-xs text-nevoa">
+                  <label className="space-y-1">Responsável<select aria-label="Filtrar por responsável" value={filtroResp ?? ''} onChange={(e) => setFiltroResp(e.target.value || null)} className={cn(campo, 'block w-full')}><option value="">Todos</option>{membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
+                  <label className="space-y-1">Prioridade<select aria-label="Filtrar por prioridade" value={filtroPrio ?? ''} onChange={(e) => setFiltroPrio(e.target.value === '' ? null : Number(e.target.value))} className={cn(campo, 'block w-full')}><option value="">Todas</option>{[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}</select></label>
+                  <label className="space-y-1">Cliente<select aria-label="Filtrar por cliente" value={filtroCli ?? ''} onChange={(e) => setFiltroCli(e.target.value || null)} className={cn(campo, 'block w-full')}><option value="">Todos</option>{clientes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+                  <label className="space-y-1">Status<select aria-label="Filtrar por status" value={filtroStatus ?? ''} onChange={(e) => setFiltroStatus(e.target.value || null)} className={cn(campo, 'block w-full')}><option value="">Todos</option>{st.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+                  <label className="space-y-1">Prazo<select aria-label="Filtrar por prazo" value={prazo} onChange={(e) => setPrazo(e.target.value as Prazo)} className={cn(campo, 'block w-full')}><option value="">Qualquer</option><option value="hoje">Vence hoje</option><option value="semana">Próximos 7 dias</option><option value="mes">Este mês</option></select></label>
+                  <label className="space-y-1">Tag<input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="ex.: urgente" aria-label="Filtrar por tag" className={cn(campo, 'block w-full')} /></label>
+                  <button type="button" onClick={limparFiltros} disabled={filtrosAtivos === 0} className="rounded-lg border border-grafite-elevado px-2 py-1.5 text-nevoa hover:text-branco-cru disabled:opacity-40">Limpar filtros</button>
+                </div>
+              )}
+            </Popover>
+            <Popover label="Visões salvas" align="right" trigger={<span className="flex items-center rounded-lg p-1.5 text-nevoa hover:text-branco-cru" title="Visões salvas"><Bookmark size={16} /></span>}>
+              {(fechar) => (
+                <div className="w-64 space-y-1 p-1.5 text-sm">
+                  {(views.data?.views ?? []).length === 0 && <p className="px-2 py-1 text-xs text-nevoa">Nenhuma visão salva ainda.</p>}
+                  {(views.data?.views ?? []).map((v) => (
+                    <div key={v.id} className="group/v flex items-center gap-1 rounded hover:bg-grafite-elevado">
+                      <button type="button" onClick={() => { setVisao((v.config.visao as Visao) ?? 'lista'); setFiltroResp(v.config.assigneeId ?? null); setFiltroPrio(v.config.priority ?? null); if (v.config.spaceId) setSpaceId(v.config.spaceId); setListId(v.config.listId ?? null); fechar(); }} className="min-w-0 flex-1 truncate px-2 py-1.5 text-left text-branco-cru">{v.name}</button>
+                      <button type="button" aria-label={`Apagar visão ${v.name}`} onClick={() => apagarView.mutate(v.id)} className="px-2 text-nevoa opacity-0 hover:text-red-400 group-hover/v:opacity-100"><X size={12} /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => { fechar(); const n = window.prompt('Nome da visão (guarda lista, filtros e visualização atuais)'); if (n?.trim()) salvarView.mutate({ name: n.trim(), config: { visao, assigneeId: filtroResp, priority: filtroPrio, listId, spaceId: spaceAtivo } }, { onSuccess: () => toast('Visão salva.', 'success') }); }} className="mt-1 w-full rounded border border-dashed border-grafite-elevado px-2 py-1.5 text-left text-xs text-nevoa hover:text-branco-cru">+ Salvar a tela atual como visão</button>
+                </div>
+              )}
+            </Popover>
+            <Popover label="Personalizar visualização" align="right" trigger={<span className="flex items-center rounded-lg p-1.5 text-nevoa hover:text-branco-cru" title="Personalizar a exibição (colunas, tamanho, agrupar)"><Settings2 size={16} /></span>}>
                 {() => (
                   <div className="w-72 space-y-3 p-2 text-sm text-branco-cru">
                     <p className="text-[11px] uppercase tracking-wide text-nevoa">Só para você — salva automaticamente</p>
@@ -251,12 +282,14 @@ export default function DailyTasksPage() {
                   </div>
                 )}
               </Popover>
-              <select aria-label="Visões salvas" value="" onChange={(e) => { const v = views.data?.views.find((x) => x.id === e.target.value); if (!v) return; setVisao((v.config.visao as Visao) ?? 'lista'); setFiltroResp(v.config.assigneeId ?? null); setFiltroPrio(v.config.priority ?? null); if (v.config.spaceId) setSpaceId(v.config.spaceId); setListId(v.config.listId ?? null); }} className={campo}><option value="">Visões salvas…</option>{(views.data?.views ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select>
-              <button type="button" title="Guarda lista, filtros e visualização atuais" onClick={() => { const n = window.prompt('Nome da visão'); if (n?.trim()) salvarView.mutate({ name: n.trim(), config: { visao, assigneeId: filtroResp, priority: filtroPrio, listId, spaceId: spaceAtivo } }, { onSuccess: () => toast('Visão salva.', 'success') }); }} className="rounded-lg border border-grafite-elevado px-2.5 py-1.5 text-sm text-nevoa hover:text-branco-cru">Salvar visão</button>
-              <button type="button" onClick={() => { quickRef.current?.focus(); quickRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }} className="ml-auto flex items-center gap-1.5 rounded-lg bg-sinal px-4 py-1.5 text-sm font-semibold text-grafite hover:brightness-110"><Plus size={15} /> Nova tarefa</button>
-            </div>
-            {rapido && <p className="flex items-center gap-2 text-xs text-nevoa"><Filter size={12} /> Mostrando só: <strong className="text-branco-cru">{rapido === 'hoje' ? 'vencem hoje' : rapido === 'atrasadas' ? 'atrasadas' : 'bloqueadas'}</strong><button type="button" onClick={() => setRapido(null)} className="text-sinal hover:underline">tirar filtro</button></p>}
           </div>
+
+          {chipsAtivos.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5" aria-label="Filtros ativos">
+              {chipsAtivos.map((x) => <button key={x.rotulo} type="button" onClick={x.limpar} className="flex items-center gap-1 rounded-full bg-grafite-elevado px-2.5 py-0.5 text-xs text-branco-cru hover:bg-red-500/15" title="Tirar este filtro">{x.rotulo}<X size={11} /></button>)}
+              <button type="button" onClick={limparFiltros} className="text-xs text-sinal hover:underline">limpar tudo</button>
+            </div>
+          )}
 
           {selecionadas.size > 0 && (
             <div role="toolbar" aria-label="Ações em lote" className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-sinal/60 bg-grafite p-2 shadow-elevated">
@@ -269,13 +302,13 @@ export default function DailyTasksPage() {
           )}
 
           {lista ? (
-            <form className="flex items-center gap-2 rounded-xl border border-dashed border-grafite-elevado px-3 py-2 focus-within:border-sinal/60" onSubmit={(e) => { e.preventDefault(); if (novaTarefa.trim()) { actions.criar({ title: novaTarefa.trim(), listId: lista.id }); setNovaTarefa(''); } }}>
-              <Plus size={16} className="text-sinal" />
-              <input ref={quickRef} value={novaTarefa} onChange={(e) => setNovaTarefa(e.target.value)} placeholder={`Nova tarefa em "${lista.name}"${nomeCliente ? ` (cliente ${nomeCliente} já vem preenchido)` : ''} — escreva e aperte Enter`} aria-label="Nome da nova tarefa" className="min-w-0 flex-1 bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" />
-              <button type="submit" disabled={!novaTarefa.trim()} className="rounded-lg bg-sinal px-3 py-1 text-xs font-semibold text-grafite disabled:opacity-40">Criar tarefa</button>
+            <form className="flex items-center gap-2 rounded-lg bg-grafite-elevado/40 px-3 py-1.5 focus-within:bg-grafite-elevado/70 focus-within:ring-1 focus-within:ring-sinal/50" onSubmit={(e) => { e.preventDefault(); if (novaTarefa.trim()) { actions.criar({ title: novaTarefa.trim(), listId: lista.id }); setNovaTarefa(''); } }}>
+              <Plus size={15} className="text-sinal" />
+              <input ref={quickRef} value={novaTarefa} onChange={(e) => setNovaTarefa(e.target.value)} placeholder={`Adicionar tarefa em ${lista.name}${nomeCliente ? ` · ${nomeCliente}` : ''}…`} aria-label="Nome da nova tarefa" className="min-w-0 flex-1 bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" />
+              {novaTarefa.trim() && <button type="submit" className="rounded-md bg-sinal px-2.5 py-0.5 text-xs font-semibold text-grafite">Criar</button>}
             </form>
           ) : (
-            <p className="rounded-xl border border-dashed border-grafite-elevado px-3 py-2 text-sm text-nevoa">Para criar tarefas, <strong className="text-branco-cru">escolha uma lista</strong> no menu à esquerda.</p>
+            <p className="rounded-lg bg-grafite-elevado/40 px-3 py-2 text-sm text-nevoa">Para criar tarefas, escolha uma lista no menu à esquerda.</p>
           )}
 
           {erro && <p role="alert" className="text-xs text-red-400">{erro}</p>}
@@ -297,9 +330,8 @@ export default function DailyTasksPage() {
             <TableView tarefas={rows} statuses={st} membros={membros} actions={actions} />
           )}
           {pronto && tasks.data && tasks.data.total > todas.length && <p className="text-xs text-nevoa">Mostrando {todas.length} de {tasks.data.total} tarefas.</p>}
-          <div className="2xl:hidden">{painel}</div>
         </div>
-        <div className="hidden 2xl:block">{painel}</div>
+        {painelAberto && <div className="hidden 2xl:block">{painel}</div>}
       </div>
       {aberta && <TaskDrawer taskId={aberta} onClose={fechar} onOpen={setAberta} />}
     </div>

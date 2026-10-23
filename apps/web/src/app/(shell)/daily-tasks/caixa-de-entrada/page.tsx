@@ -45,7 +45,7 @@ export default function CaixaDeEntradaPage() {
     <div className="space-y-5">
       <header className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
-          <h1 className="font-heading text-3xl font-semibold text-branco-cru">Caixa de Entrada</h1>
+          <h1 className="font-heading text-2xl font-semibold text-branco-cru">Caixa de Entrada</h1>
           <p className="text-sm text-nevoa">Tudo que chegou para você: tarefas, mensagens da Comunicação, menções e avisos do sistema.</p>
         </div>
         <button type="button" disabled={(data?.unreadByKind.task ?? 0) + (data?.unreadByKind.system ?? 0) === 0 || lido.isPending} onClick={() => lido.mutate()} className="rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite disabled:opacity-40" title="Marca como lidos os avisos de tarefas e do sistema. Mensagens são lidas na própria Comunicação.">Marcar avisos como lidos</button>

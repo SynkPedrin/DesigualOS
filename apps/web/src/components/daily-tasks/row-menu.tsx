@@ -11,7 +11,7 @@ import { Popover } from './primitivas';
 const item = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-branco-cru hover:bg-grafite-elevado';
 
 /** Menu ⋯ da tarefa: abrir, duplicar, mover de lista (mudar de pipeline), arquivar/restaurar e excluir de vez (só arquivada). */
-export function RowMenu({ t, onOpen, onDone }: { t: Pick<WorkTaskWire, 'id' | 'key' | 'title' | 'listId' | 'archivedAt'>; onOpen?: () => void; onDone?: (acao: 'moved' | 'archived' | 'deleted') => void }) {
+export function RowMenu({ t, onOpen, onDone, rotulo, extras }: { t: Pick<WorkTaskWire, 'id' | 'key' | 'title' | 'listId' | 'archivedAt'>; onOpen?: () => void; onDone?: (acao: 'moved' | 'archived' | 'deleted') => void; rotulo?: string; extras?: Array<{ rotulo: string; icone: React.ReactNode; onClick: () => void }> }) {
   const arvore = useWorkTree();
   const mover = useMoveTask();
   const { duplicar } = useTemplateActions();
@@ -19,11 +19,12 @@ export function RowMenu({ t, onOpen, onDone }: { t: Pick<WorkTaskWire, 'id' | 'k
   const erro = (e: unknown) => toast(e instanceof ApiRequestError ? e.message : 'Não foi possível concluir.', 'error');
   const arquivada = t.archivedAt !== null;
   return (
-    <Popover label={`Opções de ${t.key}`} align="right" trigger={<MoreHorizontal size={15} className="text-nevoa" />}>
+    <Popover label={rotulo ?? `Opções de ${t.key}`} align="right" trigger={rotulo ? <span className="flex items-center gap-1.5 px-1.5 py-1 text-sm text-branco-cru"><MoreHorizontal size={15} /> {rotulo}</span> : <MoreHorizontal size={15} className="text-nevoa" />}>
       {(fechar) => (
         <div className="min-w-56">
           {onOpen && <button type="button" className={item} onClick={() => { fechar(); onOpen(); }}><ExternalLink size={12} /> Abrir</button>}
           <button type="button" className={item} onClick={() => { fechar(); duplicar.mutate(t.id, { onSuccess: () => toast('Tarefa duplicada.', 'success'), onError: erro }); }}><Copy size={12} /> Duplicar</button>
+          {extras?.map((x) => <button key={x.rotulo} type="button" className={item} onClick={() => { fechar(); x.onClick(); }}>{x.icone} {x.rotulo}</button>)}
           <div className="px-2 pb-1 pt-2 text-[10px] uppercase tracking-wide text-nevoa/60"><ArrowRightLeft size={10} className="mr-1 inline" />Mover para a lista</div>
           <div className="max-h-48 overflow-y-auto">
             {(arvore.data?.spaces ?? []).map((s) => (
