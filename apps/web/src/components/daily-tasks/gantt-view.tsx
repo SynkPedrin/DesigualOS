@@ -2,8 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import type { WorkTaskWire } from '@/hooks/use-work';
-import type { TaskActions } from './list-view';
+import type { WorkMember, WorkTaskWire } from '@/hooks/use-work';
+import { useColunas, type TaskActions } from './list-view';
+import { AvatarStack, PriorityFlag } from './primitivas';
+import { andamento } from './ui';
 
 const DIA = 28;
 const DIAS_VISIVEIS = 90;
@@ -11,7 +13,9 @@ const MS_DIA = 86_400_000;
 const inicioDoDia = (d: Date) => { const c = new Date(d); c.setHours(0, 0, 0, 0); return c; };
 
 /** Linha do tempo: cada tarefa com data vira uma barra do início ao vencimento; a linha vermelha é hoje. Sem data = fica de fora (e é avisado). */
-export function GanttView({ tarefas, actions }: { tarefas: WorkTaskWire[]; actions: TaskActions }) {
+export function GanttView({ tarefas, actions, membros = [] }: { tarefas: WorkTaskWire[]; actions: TaskActions; membros?: WorkMember[] }) {
+  const { colunas } = useColunas();
+  const mapa = useMemo(() => new Map(membros.map((m) => [m.id, m])), [membros]);
   const [deslocamento, setDeslocamento] = useState(0);
   const inicio = useMemo(() => new Date(inicioDoDia(new Date()).getTime() + (deslocamento - 14) * MS_DIA), [deslocamento]);
   const comData = useMemo(() => tarefas.filter((t) => t.dueAt || t.startAt).sort((a, b) => new Date(a.startAt ?? a.dueAt!).getTime() - new Date(b.startAt ?? b.dueAt!).getTime()).slice(0, 300), [tarefas]);
@@ -44,7 +48,11 @@ export function GanttView({ tarefas, actions }: { tarefas: WorkTaskWire[]; actio
             const largura = Math.max(1, Math.floor((fim.getTime() - ini.getTime()) / MS_DIA) + 1);
             return (
               <div key={t.id} className="relative flex h-8 items-center border-b border-grafite-elevado/40 hover:bg-grafite-elevado/30">
-                <button type="button" onClick={() => actions.abrir(t)} title={t.title} className="sticky left-0 z-[5] w-[220px] shrink-0 truncate bg-carbono px-2 text-left text-xs text-branco-cru hover:underline">{t.title}</button>
+                <div className="sticky left-0 z-[5] flex w-[220px] shrink-0 items-center gap-1.5 bg-carbono px-2">
+                  {colunas.includes('responsavel') && t.assigneeIds.length > 0 && <AvatarStack ids={t.assigneeIds} membros={mapa} size={16} />}
+                  <button type="button" onClick={() => actions.abrir(t)} title={t.title} className="min-w-0 flex-1 truncate text-left text-xs text-branco-cru hover:underline">{t.title}</button>
+                  {colunas.includes('prioridade') && t.priority > 0 && <PriorityFlag valor={t.priority} />}
+                </div>
                 <button
                   type="button"
                   onClick={() => actions.abrir(t)}
@@ -52,7 +60,7 @@ export function GanttView({ tarefas, actions }: { tarefas: WorkTaskWire[]; actio
                   className="absolute top-1.5 h-5 truncate rounded px-1 text-left text-[10px] text-white"
                   style={{ left: 220 + x * DIA, width: largura * DIA - 2, background: t.status?.color ?? '#6b7280', opacity: x + largura < 0 || x > DIAS_VISIVEIS ? 0 : 1 }}
                 >
-                  {largura > 2 ? t.title : ''}
+                  {colunas.includes('andamento') && t.subtaskCount > 0 ? `${andamento(t)}% ` : ''}{largura > 2 ? t.title : ''}
                 </button>
               </div>
             );

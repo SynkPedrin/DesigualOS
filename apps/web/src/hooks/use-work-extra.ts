@@ -222,3 +222,16 @@ export function useSavePreferences() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['work', 'preferences'] }),
   });
 }
+
+export interface TaskApproval { id: string; status: 'pending' | 'approved' | 'rejected' | 'changes_requested'; comment: string | null; requestedBy: string; requestedByName: string; approverId: string | null; approverName: string | null; createdAt: string; resolvedAt: string | null }
+export function useTaskApprovals(taskId: string) {
+  return useQuery({ queryKey: ['work', 'approvals', taskId], queryFn: () => apiFetch<{ approvals: TaskApproval[] }>(`/work/tasks/${taskId}/approvals`) });
+}
+export function useApprovalActions(taskId: string) {
+  const qc = useQueryClient();
+  const ok = () => Promise.all(['approvals', 'history', 'inbox', 'detail'].map((k) => qc.invalidateQueries({ queryKey: ['work', k] })));
+  return {
+    pedir: useMutation({ mutationFn: (b: { approverId?: string | null; note?: string | null }) => apiFetch(`/work/tasks/${taskId}/approvals`, init('POST', b)), onSuccess: ok }),
+    responder: useMutation({ mutationFn: (b: { id: string; status: 'approved' | 'rejected' | 'changes_requested'; comment?: string | null }) => { const { id, ...rest } = b; return apiFetch(`/work/approvals/${id}`, init('PATCH', rest)); }, onSuccess: ok }),
+  };
+}

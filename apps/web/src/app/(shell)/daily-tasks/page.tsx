@@ -324,7 +324,7 @@ export default function DailyTasksPage() {
           ) : visao === 'quadro' ? (
             <BoardView tarefas={rows} statuses={st} membros={membros} listId={listId} actions={actions} />
           ) : visao === 'gantt' ? (
-            <GanttView tarefas={rows} actions={actions} />
+            <GanttView tarefas={rows} actions={actions} membros={membros} />
           ) : visao === 'calendario' ? (
             <CalendarView tarefas={rows} actions={actions} membros={membros} />
           ) : (

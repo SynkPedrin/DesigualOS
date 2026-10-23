@@ -8,12 +8,13 @@ import {
 } from '@/hooks/use-work';
 import { useClients } from '@/hooks/use-clients';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
-import { useFollowTask, useRecurrenceActions, useSetCustomField, useTaskCrud, useTaskHistory, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
+import { useFollowTask, useRecurrenceActions, useSetCustomField, useTaskApprovals, useTaskCrud, useTaskHistory, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
 import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toast-store';
 import { LogoDoCliente, nomeLimpo } from './cliente';
 import { AbrirDiscussao } from '@/components/comunicacao/abrir-discussao';
+import { AprovacaoDaTarefa } from './aprovacao-da-tarefa';
 import { AnexosDaTarefa } from './anexos-da-tarefa';
 import { AssigneePicker, DuePicker, PriorityPicker, StatusPicker } from './pickers';
 import { Avatar, StatusDot } from './primitivas';
@@ -88,6 +89,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const statuses = useSpaceStatuses(data?.list?.spaceId ?? null);
   const membros = useWorkMembers().data?.members ?? [];
   const eu = useDailyTasksAccess().data?.userId ?? null;
+  const pendentes = (useTaskApprovals(taskId).data?.approvals ?? []).filter((a) => a.status === 'pending').length;
   const clientes = useClients().data ?? [];
   const atualizar = useUpdateTask();
   const comentar = useAddComment(taskId);
@@ -282,6 +284,10 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               <form onSubmit={(e) => { e.preventDefault(); if (novoCl.trim()) cl.criar.mutate(novoCl.trim(), { onSuccess: () => setNovoCl('') }); }}>
                 <input value={novoCl} onChange={(e) => setNovoCl(e.target.value)} placeholder="+ Novo checklist" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
               </form>
+            </Recolhivel>
+
+            <Recolhivel titulo="Aprovação" contagem={pendentes} abertaAoInicio={pendentes > 0}>
+              <AprovacaoDaTarefa taskId={taskId} membros={membros} eu={eu} />
             </Recolhivel>
 
             <Recolhivel titulo="Anexos" contagem={data.attachments.length} abertaAoInicio={data.attachments.length > 0}>

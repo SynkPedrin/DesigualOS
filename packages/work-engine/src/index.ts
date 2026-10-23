@@ -21,3 +21,4 @@ export * from './overview';
 export * from './history';
 export * from './preferences';
 export * from './followers';
+export * from './approvals';

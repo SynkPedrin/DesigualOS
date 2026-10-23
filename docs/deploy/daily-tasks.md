@@ -17,3 +17,15 @@ Estado: tudo pronto e testado na branch `feat/daily-tasks` (já contém `origin/
 5. **Importar o ClickUp (opcional, depois de 1–4):** `clickup-import-cli.ts --snapshot <dir> --org <uuid da Desigual> --user <uuid> [--aplicar]`
    (sem `--aplicar` é ensaio). Vincula pessoas por e-mail e clientes por nome IGUAL; preenche foto só de quem não tem.
 6. **Verificar:** `GET /work/access` com conta administradora → `allowed: true`; conta de colaborador → 403.
+
+## Depois de publicar a rodada de 23/10/2026 (arquivos, aprovação, Comunicação)
+
+Sem migração nova. A API ganhou rotas; o front, componentes. Publicar API primeiro, front depois.
+
+- **Copiar anexos antigos do ClickUp para o servidor** (hoje são só link e expiram): como `master`, em lotes e repetível:
+  `POST /work/admin/copy-clickup-attachments {"dryRun": true}` (conta) e depois `{"limit": 50}` até `restantes` zerar.
+  Só baixa de servidores do ClickUp, passa pela mesma validação da Comunicação e deixa como link o que for recusado.
+  Roda DENTRO do container da API (o volume `internal_chat_files` é de lá).
+- **Tempo registrado do ClickUp:** continua fora. O ClickUp responde `TIMEENTRY_059` (sem acesso) para a conta do token ao
+  ler o tempo de outras pessoas; precisa de um dono/admin do ClickUp liberar, ou de um token dele.
+- **Aprovação de tarefa** usa a fila do módulo Aprovações (`approval_requests`, tipo `task`): sem tabela nova.

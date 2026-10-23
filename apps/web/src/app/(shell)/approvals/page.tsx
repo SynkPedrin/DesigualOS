@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2, Loader2, Megaphone, ShieldAlert, Trash2, Wallet } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -137,6 +138,7 @@ function BusinessApprovalCard({ approval, clientName }: { approval: ApprovalRequ
           <span className="text-sm font-semibold text-branco-cru">{RESOURCE_TYPE_LABEL[approval.resource_type] ?? approval.resource_type}</span>
           <span className="text-nevoa">·</span>
           <span className="text-sm text-nevoa">{clientName}{approval.version ? ` · ${approval.version}` : ''}</span>
+          {approval.resource_type === 'task' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(approval.resource_id) && <Link href={`/daily-tasks?task=${approval.resource_id}`} className="text-xs text-sinal hover:underline">abrir a tarefa no Daily Tasks</Link>}
         </div>
         <span className="shrink-0 font-mono text-[11px] text-nevoa" title={new Date(approval.created_at).toLocaleString('pt-BR')}>
           {formatRelativeTime(approval.created_at)}
