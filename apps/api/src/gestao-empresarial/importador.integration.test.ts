@@ -77,6 +77,13 @@ describe.skipIf(!url)('upload e validação', () => {
     // outra organização pode importar o mesmo arquivo
     expect((await enviar(orgB, 'clientes', 'c.xlsx', arq)).statusCode).toBe(201);
   });
+  it('dois envios SIMULTÂNEOS do mesmo arquivo: um lote só, e o outro recebe a mensagem certa', async () => {
+    const arq = await xlsxDe([CAB_CADASTRO, linhaCadastro({ Nome: `Simultâneo ${Math.random()}`, Situação: 'Ativo' })]);
+    const rs = await Promise.all([1, 2, 3].map(() => enviar(orgA, 'clientes', 'sim.xlsx', arq)));
+    expect(rs.map((r) => r.statusCode).sort()).toEqual([201, 409, 409]);
+    for (const r of rs.filter((x) => x.statusCode === 409)) expect(r.json().error).toMatch(/já foi importado/);
+  });
+
   it('arquivo errado: extensão, colunas e conteúdo ilegível são 422 explicados', async () => {
     expect((await enviar(orgA, 'clientes', 'c.csv', Buffer.from('a,b'))).statusCode).toBe(422);
     expect((await enviar(orgA, 'clientes', 'c.xlsx', await xlsxDe([['Foo', 'Bar'], ['1', '2']]))).json().error).toMatch(/faltam as colunas/);
