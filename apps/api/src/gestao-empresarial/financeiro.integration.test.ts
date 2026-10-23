@@ -359,6 +359,15 @@ describe.skipIf(!url)('lançamentos', () => {
     expect(r.items).toHaveLength(3);
   });
 
+  it('a soma da lista nunca inclui cancelado, salvo quando o filtro é cancelado', async () => {
+    const [ok] = await lancamento({ description: 'Soma sem cancelado A', amountCents: 300 }, orgB);
+    const [canc] = await lancamento({ description: 'Soma sem cancelado B', amountCents: 9000 }, orgB);
+    await B('POST', `/financeiro/lancamentos/${canc!.id}/cancelar`, { motivo: 'x' });
+    expect((await B('GET', '/financeiro/lancamentos?q=Soma sem cancelado')).json()).toMatchObject({ total: 2, somaCentavos: 300 });
+    expect((await B('GET', '/financeiro/lancamentos?q=Soma sem cancelado&situacao=cancelado')).json()).toMatchObject({ total: 1, somaCentavos: 9000 });
+    void ok;
+  });
+
   it('busca com % e _ é literal, não curinga', async () => {
     await lancamento({ description: 'Desconto de 10% aplicado' }, orgB);
     expect((await B('GET', '/financeiro/lancamentos?q=10%25')).json().total).toBeGreaterThanOrEqual(1);

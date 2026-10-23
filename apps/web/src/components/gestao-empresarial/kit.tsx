@@ -82,7 +82,7 @@ export const TD = 'px-3 py-2.5 align-middle';
 /** Moldura de tabela: rola na horizontal em tela estreita em vez de espremer as colunas. */
 export function Tabela({ children, legenda }: { children: React.ReactNode; legenda: string }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-grafite-elevado bg-grafite">
+    <div className="relative overflow-x-auto rounded-lg border border-grafite-elevado bg-grafite">
       <table className="w-full min-w-[640px] text-sm text-branco-cru">
         <caption className="sr-only">{legenda}</caption>
         {children}

@@ -223,7 +223,11 @@ export async function listarLancamentos(organizationId: string, f: FiltroDeLanca
   if (f.q) filtros.push(ilike(geEntries.description, `%${f.q.replace(/[%_\\]/g, '\\$&')}%`));
   const onde = and(...filtros);
   const [[tot], linhas] = await Promise.all([
-    db.select({ n: count(), soma: sum(geEntries.amountCents) }).from(geEntries).where(onde),
+    // A soma nunca mistura cancelado com valor de verdade: só entra cancelado quando é ele o filtro.
+    db
+      .select({ n: count(), soma: sql<string>`coalesce(sum(${geEntries.amountCents}) filter (where ${f.situacao === 'cancelado' ? sql`true` : sql`${geEntries.status} <> 'cancelado'`}), 0)` })
+      .from(geEntries)
+      .where(onde),
     db.select().from(geEntries).where(onde).orderBy(desc(geEntries.dueDate), asc(geEntries.id)).limit(f.pageSize).offset((f.page - 1) * f.pageSize),
   ]);
   return {
