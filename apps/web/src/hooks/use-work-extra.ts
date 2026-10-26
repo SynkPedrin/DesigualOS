@@ -168,7 +168,7 @@ export function useUpdateAutomation() {
 
 // ── Painel do topo (cartões e lateral)
 export interface WorkOverview {
-  contagens: { hoje: number; ontem: number; atrasadas: number; bloqueadas: number; clientesAtivos: number; semResponsavel: number; clientesSemAtividade: number };
+  contagens: { hoje: number; ontem: number; atrasadas: number; bloqueadas: number; clientesAtivos: number; semResponsavel: number; clientesSemAtividade: number; prontasSemEncerrar: number; concluidasComSubtarefaAberta: number };
   proximasEntregas: Array<{ id: string; key: string; title: string; dueAt: string; priority: number; lista: string; clientId: string | null; status: string; color: string }>;
   focoDoDia: Array<{ id: string; key: string; title: string; version: number; feita: boolean; finalId: string | null; initialId: string | null }>;
 }

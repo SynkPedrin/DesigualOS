@@ -16,6 +16,7 @@ import type { FiltroRapido} from '@/components/daily-tasks/painel-lateral';
 import { PainelLateral } from '@/components/daily-tasks/painel-lateral';
 import { LogoDoCliente, nomeLimpo } from '@/components/daily-tasks/cliente';
 import { Popover } from '@/components/daily-tasks/primitivas';
+import { statusDeConclusao } from '@/components/daily-tasks/status-final';
 import { AreaRolavel } from '@/components/daily-tasks/ui';
 import {
   PRIORIDADES,
@@ -132,7 +133,7 @@ export default function DailyTasksPage() {
     else { ini.setDate(1); fim.setTime(new Date(ini.getFullYear(), ini.getMonth() + 1, 1).getTime()); }
     return { dueFrom: ini.toISOString(), dueTo: fim.toISOString() };
   }, [prazo]);
-  const soAbertas = (visao === 'lista' || visao === 'tabela' || visao === 'gantt') && !concluidas;
+  const soAbertas = (visao === 'lista' || visao === 'tabela' || visao === 'gantt') && !concluidas && rapido !== 'prontas';
   const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: escopo === 'minhas' ? eu : filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], statusIds: filtroStatus ? [filtroStatus] : [], includeArchived: arquivados, clientId: filtroCli, completed: soAbertas ? false : undefined, tag: tag.trim() || null, ...janela,
     ...(escopo === 'minhas' ? { assigneeId: eu } : {}), ...(escopo === 'criadas' ? { createdBy: eu } : {}), ...(escopo === 'sigo' ? { followerId: eu } : {}), ...(escopo === 'sem_resp' ? { unassigned: true } : {}), ...(escopo === 'sem_prazo' ? { dueNone: true } : {}) });
   const statuses = useSpaceStatuses(spaceAtivo);
@@ -159,6 +160,7 @@ export default function DailyTasksPage() {
     return todas.filter((t) => {
       if (rapido === 'hoje') return !t.completedAt && t.dueAt !== null && new Date(t.dueAt).toDateString() === hoje.toDateString();
       if (rapido === 'atrasadas') return !t.completedAt && t.dueAt !== null && new Date(t.dueAt) < hoje && new Date(t.dueAt).toDateString() !== hoje.toDateString();
+      if (rapido === 'prontas') return t.status?.category === 'done' && /^pronto/i.test(t.status.name);
       return !t.completedAt && t.status?.category === 'blocked';
     });
   }, [todas, rapido]);
@@ -175,11 +177,11 @@ export default function DailyTasksPage() {
     ...(filtroStatus ? [{ rotulo: `status: ${st.find((x) => x.id === filtroStatus)?.name ?? '…'}`, limpar: () => setFiltroStatus(null) }] : []),
     ...(prazo ? [{ rotulo: `prazo: ${prazo === 'hoje' ? 'hoje' : prazo === 'semana' ? '7 dias' : 'este mês'}`, limpar: () => setPrazo('') }] : []),
     ...(tag.trim() ? [{ rotulo: `tag: ${tag.trim()}`, limpar: () => setTag('') }] : []),
-    ...(rapido ? [{ rotulo: rapido === 'hoje' ? 'vencem hoje' : rapido === 'atrasadas' ? 'atrasadas' : 'bloqueadas', limpar: () => setRapido(null) }] : []),
+    ...(rapido ? [{ rotulo: rapido === 'hoje' ? 'vencem hoje' : rapido === 'atrasadas' ? 'atrasadas' : rapido === 'prontas' ? 'prontas, não encerradas' : 'bloqueadas', limpar: () => setRapido(null) }] : []),
   ];
   const paraSelecionadas = (fn: (ids: string[]) => void) => { const ids = [...selecionadas]; if (ids.length) fn(ids); };
   const concluirSelecionadas = () => paraSelecionadas((ids) => {
-    const final = st.find((s) => s.category === 'done');
+    const final = statusDeConclusao(st);
     if (!final) return toast('Este espaço não tem um status de concluído.', 'error');
     bulk.mutate({ ids, patch: { statusId: final.id } }, { onSuccess: (r) => { toast(`${r.okCount} tarefa(s) concluída(s).`, 'success'); setSelecionadas(new Set()); }, onError: mostrarErro });
   });
