@@ -7,10 +7,10 @@ vi.mock('@desigual-os/database', () => {
 });
 vi.mock('drizzle-orm', () => ({ and: vi.fn(), eq: vi.fn(), isNotNull: vi.fn(), isNull: vi.fn() }));
 vi.mock('@desigual-os/orchestrator', () => ({ dispatchChatMessage: vi.fn(), touchConversation: vi.fn() }));
-vi.mock('@desigual-os/tool-gateway', async () => ({
-  enviarPeloBento: vi.fn(),
-  ...(await import('../../../../packages/tool-gateway/src/whatsapp-format')),
-}));
+vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
+  const { formatarParaWhatsapp } = await importOriginal<typeof import('@desigual-os/tool-gateway')>();
+  return { enviarPeloBento: vi.fn(), formatarParaWhatsapp };
+});
 
 describe('mensagemDaAutomacao', () => {
   const CONTEXTO = 'Usuário: Pedro\nHistórico: Bento: qual delas você quer que eu mova pra sexta?';
