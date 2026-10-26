@@ -43,7 +43,7 @@ export function comentarioEmMarkdown(c: { comment?: Bloco[]; comment_text?: stri
       if (url) { linha += `[${url}](${url})`; continue; }
     }
     if (tipo === 'chat_comment_embed' || tipo === 'table-embed') { linha += tipo === 'table-embed' ? '[tabela do ClickUp]' : ''; continue; }
-    let txt = limpar(String(b.text ?? ''));
+    const txt = limpar(String(b.text ?? ''));
     if (txt === '') continue;
     if (txt === '\n') { fecha((at.list as any)?.list); continue; }
     const partes = txt.split('\n');
