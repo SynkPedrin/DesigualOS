@@ -64,7 +64,7 @@ import type { WorkspaceModule } from '@desigual-os/types';
  * Seis itens de saída, contra vinte e nove. O resto continua a um clique.
  */
 
-export type NavSection = 'dia' | 'conhecimento' | 'sistema' | 'interno';
+export type NavSection = 'hoje' | 'clientes' | 'trabalho' | 'equipe' | 'assistente' | 'sistema' | 'interno';
 
 /**
  * EM QUAL CONTEXTO o item aparece.
@@ -135,40 +135,36 @@ export interface NavItem {
 export interface NavSectionDef {
   id: NavSection;
   label: string;
-  /**
-   * Nasce recolhida. É o que separa "o que eu uso" de "o que existe": as duas
-   * seções de baixo somam vinte e três itens e servem a quem foi caçar uma
-   * coisa específica, não a quem abriu o sistema para trabalhar.
-   */
-  recolhida?: boolean;
+  /** Sem seta, sempre aberta: a pasta de entrada, que nunca se esconde. */
+  fixa?: boolean;
   /** Uma linha dizendo para que serve. Rótulo sozinho não ensina ninguém. */
   ajuda?: string;
 }
 
+/**
+ * AS PASTAS DA BARRA (26/10/2026). Antes, vinte itens moravam numa seção só
+ * ("Operação") e a pessoa lia a lista inteira para achar um. Agora cada pasta
+ * responde uma pergunta do dia, e a pessoa abre a que precisa:
+ *
+ *   Dia a dia           o que olhar primeiro (fica sempre aberta)
+ *   Clientes e vendas   carteira, pipeline, mídia, pedidos do cliente
+ *   Trabalho            o que está na mão da equipe e o que espera decisão
+ *   Equipe e empresa    conversa, pessoas, gestão da equipe, financeiro
+ *   Assistente          o Chat e o conhecimento que ele usa
+ *   Ajustes             integrações, automações e configurações
+ *
+ * Nenhuma rota mudou de endereço: só o agrupamento.
+ */
 export const NAV_SECTIONS: NavSectionDef[] = [
-  { id: 'dia', label: 'Operação', ajuda: 'O que precisa de você hoje.' },
-  /**
-   * AJUSTES ficam à vista, e isso é correção de um defeito medido em
-   * 02/10/2026: com a navegação reduzida a nove itens, "Integrações" e
-   * "Configurações" continuavam dentro de uma seção que NASCIA RECOLHIDA. O
-   * teste de navegador não achou o link de Integrações — e o usuário também
-   * não acharia. Seção recolhida fazia sentido com vinte e três itens
-   * técnicos; com dois itens de ajuste, ela só esconde.
-   */
-  {
-    id: 'sistema',
-    label: 'Ajustes',
-    ajuda: 'Conecte ferramentas e configure a conta.',
-  },
-  /**
-   * Vazia na navegação comercial — tudo que vivia aqui virou `administracao` e
-   * mora em Configurações → Administração. A seção fica declarada porque as
-   * rotas continuam existindo e o tipo as referencia.
-   */
+  { id: 'hoje', label: 'Dia a dia', fixa: true },
+  { id: 'clientes', label: 'Clientes e vendas', ajuda: 'Carteira, pipeline, mídia e pedidos do cliente.' },
+  { id: 'trabalho', label: 'Trabalho', ajuda: 'Tarefas da equipe e o que espera aprovação.' },
+  { id: 'equipe', label: 'Equipe e empresa', ajuda: 'Conversa interna, pessoas e gestão.' },
+  { id: 'assistente', label: 'Assistente', ajuda: 'O chat com os agentes e o conhecimento da empresa.' },
+  { id: 'sistema', label: 'Ajustes', ajuda: 'Conecte ferramentas e configure a conta.' },
   {
     id: 'interno',
     label: 'Ferramentas internas',
-    recolhida: true,
     ajuda: 'O motor: chat, agentes, Studio e automações.',
   },
 ];
@@ -181,22 +177,22 @@ export const NAV_ITEMS: NavItem[] = [
   // "o que eu preciso fazer agora?" (P1-L, 06/10/2026) — pessoal, não
   // confundir com "Visão geral" logo abaixo (essa é da operação inteira,
   // pra quem supervisiona; "Hoje" é a fila de quem produz).
-  { href: '/today', label: 'Hoje', icon: Sun, section: 'dia', modulo: 'hoje' },
+  { href: '/today', label: 'Hoje', icon: Sun, section: 'hoje', modulo: 'hoje' },
   // "qual é a minha semana?" (Calendar Core, 06/10/2026).
-  { href: '/calendar', label: 'Calendário', icon: Calendar, section: 'dia', modulo: 'calendario' },
+  { href: '/calendar', label: 'Calendário', icon: Calendar, section: 'hoje', modulo: 'calendario' },
   // "como estamos agora?"
-  { href: '/', label: 'Visão geral', icon: LayoutDashboard, section: 'dia' },
+  { href: '/', label: 'Visão geral', icon: LayoutDashboard, section: 'hoje' },
   // "tem algo pegando fogo?"
-  { href: '/signals', label: 'Sinais', icon: Radar, section: 'dia', administracao: true },
+  { href: '/signals', label: 'Sinais', icon: Radar, section: 'hoje', administracao: true },
   // Só o provedor: some da barra para quem é de uma empresa cliente.
-  { href: '/organizations', label: 'Empresas', icon: Building2, section: 'dia', providerOnly: true, contexto: 'provider' },
+  { href: '/organizations', label: 'Empresas', icon: Building2, section: 'clientes', providerOnly: true, contexto: 'provider' },
   // "como está a conta do cliente X?"
-  { href: '/clients', label: 'Clientes', icon: Users, section: 'dia', modulo: 'clientes' },
+  { href: '/clients', label: 'Clientes', icon: Users, section: 'clientes', modulo: 'clientes' },
   // "o cliente mandou mensagem, alguém já viu?" (P1-A/C, 06/10/2026)
-  { href: '/inbox', label: 'Inbox', icon: MessageSquare, section: 'dia', modulo: 'inbox' },
+  { href: '/inbox', label: 'Inbox', icon: MessageSquare, section: 'clientes', modulo: 'inbox' },
   // "preciso falar com alguém da equipe" (20/10/2026): #Geral + privadas
   // entre colaboradores. NÃO é a Inbox — ali é cliente no WhatsApp.
-  { href: '/comunicacao', label: 'Comunicação', icon: MessagesSquare, section: 'dia', modulo: 'comunicacao' },
+  { href: '/comunicacao', label: 'Comunicação', icon: MessagesSquare, section: 'equipe', modulo: 'comunicacao' },
   // "o que o cliente pediu, e em que pé está?" (P1-D/E/F/G, 06/10/2026)
   // Continua em /demands e na tabela `demands` por baixo — renomear a rota/
   // schema seria mexer num dado de produção já estável só por rótulo, risco
@@ -204,15 +200,15 @@ export const NAV_ITEMS: NavItem[] = [
   // lê. 08/10: cada "demanda" virou o espaço de uma campanha. 13/10 (pedido
   // do Pedro): o espaço agora é a QUINZENA — o ciclo de trabalho da agência —
   // e a tela passa a se chamar "Quinzenas" em tudo que o colaborador lê.
-  { href: '/demands', label: 'Quinzenas', icon: ClipboardList, section: 'dia', modulo: 'demandas' },
+  { href: '/demands', label: 'Quinzenas', icon: ClipboardList, section: 'clientes', modulo: 'demandas' },
   // Mídia paga (Meta/Google Ads) — módulo 'meta_ads' já existia e já gateava
   // 15 rotas sem item de navegação próprio (vivia só na aba Mídia da ficha do
   // cliente). Ganha página própria em 08/10/2026 (desigualos-4a) — "Mídias",
   // nunca "Quinzenas"/"Campanhas", porque esse nome já é a tela acima.
-  { href: '/midias', label: 'Mídias', icon: Megaphone, section: 'dia', modulo: 'meta_ads' },
+  { href: '/midias', label: 'Mídias', icon: Megaphone, section: 'clientes', modulo: 'meta_ads' },
   // Pipeline comercial (demo "dia real de operação", 07/10/2026): lead →
   // proposta → onboarding → ativo/pausado, quadro Kanban em /pipeline.
-  { href: '/pipeline', label: 'Pipeline', icon: SquareKanban, section: 'dia' },
+  { href: '/pipeline', label: 'Pipeline', icon: SquareKanban, section: 'clientes' },
   // "quem tem acesso a isto, e com que poder?" (07/10/2026) — DESFAZ a troca
   // feita de manhã, que pôs "Contatos" (a aba de contatos de WhatsApp da
   // Inbox) nesta vaga e tirou a Equipe da barra. Contatos de WhatsApp
@@ -225,26 +221,26 @@ export const NAV_ITEMS: NavItem[] = [
   // tela de ADMINISTRAÇÃO: é lá que se convida gente, troca papel e desativa
   // conta. Com o módulo, bastava o template "Gestão" para um colaborador ver
   // a lista — o que é defensável e não é o que se quis. Papel é a régua.
-  { href: '/people', label: 'Equipe', icon: ContactRound, section: 'dia', masterOnly: true },
+  { href: '/people', label: 'Equipe', icon: ContactRound, section: 'equipe', masterOnly: true },
   // Gestão da equipe (21/10/2026, para a Tammy): tarefas, atrasos e agenda de
   // cada colaborador. Papel é a régua, como na Equipe: só administrador.
-  { href: '/gestao', label: 'Gestão da equipe', icon: UsersRound, section: 'dia', masterOnly: true },
+  { href: '/gestao', label: 'Gestão da equipe', icon: UsersRound, section: 'equipe', masterOnly: true },
   // Fila pessoal de trabalho sobre o TaskProvider (P1-H, 06/10/2026) — antes
   // só alcançável via Configurações → Administração (`administracao: true`),
   // o que escondia a "Central de Tasks" exatamente de quem mais usa ela no
   // dia a dia (Design, Tráfego). `requirePermission` já era aberto a
   // colaborador; só a navegação estava fechada.
-  { href: '/daily-tasks', label: 'Daily Tasks — Beta', icon: ListChecks, section: 'dia', dailyTasks: true },
+  { href: '/daily-tasks', label: 'Daily Tasks — Beta', icon: ListChecks, section: 'trabalho', dailyTasks: true },
   // O dado financeiro da agência. Só aparece com o módulo ligado no servidor E para administrador.
-  { href: '/gestao-empresarial', label: 'Gestão Empresarial', icon: Landmark, section: 'dia', masterOnly: true, gestaoEmpresarial: true },
-  { href: '/tasks', label: 'Tarefas', icon: CheckSquare, section: 'dia', modulo: 'tarefas' },
+  { href: '/gestao-empresarial', label: 'Gestão Empresarial', icon: Landmark, section: 'equipe', masterOnly: true, gestaoEmpresarial: true },
+  { href: '/tasks', label: 'Tarefas', icon: CheckSquare, section: 'trabalho', modulo: 'tarefas' },
   // Duas filas na mesma tela (P1-I/J, 06/10/2026): a de tool-call da IA
   // (budget de Meta Ads, publicação no Instagram, deletar task do ClickUp) -
   // só master vê, `requirePermission('tool_calls','approve')` - e a de
   // recurso de negócio (brief, peça, campanha), que colaborador também usa
   // (`requirePermission('approvals','read'|'write')`). masterOnly saiu daqui
   // porque esconderia a segunda fila de quem precisa aprovar um brief.
-  { href: '/approvals', label: 'Aprovações', icon: ClipboardCheck, section: 'dia', modulo: 'aprovacoes' },
+  { href: '/approvals', label: 'Aprovações', icon: ClipboardCheck, section: 'trabalho', modulo: 'aprovacoes' },
 
   // O QUE O SISTEMA SABE. Dois itens: o acervo e o que já foi fechado.
     /**
@@ -259,15 +255,15 @@ export const NAV_ITEMS: NavItem[] = [
    * parte dela. Mesmo par de gates de "Empresas": providerOnly tira quem não
    * é provedor, contexto 'provider' tira o provedor que está dentro de tenant.
    */
-  { href: '/memory', label: 'Conhecimento', icon: Brain, section: 'dia', providerOnly: true, contexto: 'provider' },
-  { href: '/decisions', label: 'Decisões', icon: ScrollText, section: 'conhecimento', administracao: true },
+  { href: '/memory', label: 'Conhecimento', icon: Brain, section: 'assistente', providerOnly: true, contexto: 'provider' },
+  { href: '/decisions', label: 'Decisões', icon: ScrollText, section: 'sistema', administracao: true },
 
   /**
    * SISTEMA — recolhido. Nada aqui é urgente num dia normal, e tudo aqui é
    * essencial no dia em que algo quebra.
    */
   { href: '/health', label: 'Saúde', icon: Heart, section: 'sistema', administracao: true },
-  { href: '/activity', label: 'Atividade', icon: Activity, section: 'dia' },
+  { href: '/activity', label: 'Atividade', icon: Activity, section: 'trabalho' },
   // "MCP" é sigla de protocolo. Quem supervisiona quer saber quais Claudes
   // estão plugados no sistema — então é esse o nome.
   { href: '/mcp', label: 'Claudes conectados', icon: Plug, section: 'sistema', administracao: true },
@@ -294,7 +290,7 @@ export const NAV_ITEMS: NavItem[] = [
   // onde se conversa com QUALQUER agente — o roteador escolhe entre Bento,
   // Jarbas, Suzy, Studio e Otto. Nomear o destino pelo nome de um deles
   // descrevia errado o que há do outro lado.
-  { href: '/chat', label: 'Chat', icon: MessageSquare, section: 'dia', modulo: 'bento' },
+  { href: '/chat', label: 'Chat', icon: MessageSquare, section: 'assistente', modulo: 'bento' },
   { href: '/agents', label: 'Agentes', icon: Bot, section: 'interno', administracao: true },
   { href: '/studio', label: 'Studio', icon: Sparkles, section: 'interno', administracao: true },
   /**

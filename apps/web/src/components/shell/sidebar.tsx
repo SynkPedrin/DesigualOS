@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, LogOut, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronsLeft, ChevronsRight, Folder, FolderOpen, LogOut, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui-store';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
@@ -21,6 +21,8 @@ import { supabase } from '@/lib/supabase/client';
 import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
 import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
 import { saudeEmCor } from '@/lib/saude-em-cor';
+
+const CHAVE_DAS_PASTAS = 'desigual:sidebar:pastas-abertas';
 
 function formatBackupTime(iso: string | null) {
   if (!iso) return 'Sem registro';
@@ -141,22 +143,41 @@ export function Sidebar({
   const { data: dailyInbox } = useInbox(dailyTasksAccess?.allowed === true);
   const badgeDe = (href: string) => (href === '/comunicacao' ? chatNaoLidas : href === '/daily-tasks' ? (dailyInbox?.unreadByKind.task ?? 0) + (dailyInbox?.unreadByKind.system ?? 0) : 0);
 
+  /**
+   * QUAIS PASTAS ESTÃO ABERTAS.
+   *
+   * Todas se abrem e fecham, menos a de entrada ("Dia a dia"). O que a pessoa
+   * deixou aberto é lembrado neste navegador. A pasta da tela em que ela está
+   * SEMPRE abre, para quem chega por link ou pelo ⌘K ver a barra dizendo onde
+   * está, em vez de uma lista inteira fechada.
+   */
+  const pastaDaRota = NAV_ITEMS.find((i) => i.href !== '/' && pathname.startsWith(i.href.split('?')[0]!))?.section;
   const [abertas, setAbertas] = useState<Set<string>>(
-    () =>
-      new Set(
-        NAV_SECTIONS.filter(
-          (s) =>
-            !s.recolhida ||
-            NAV_ITEMS.some((i) => i.section === s.id && i.href !== '/' && pathname.startsWith(i.href)),
-        ).map((s) => s.id),
-      ),
+    () => new Set([...NAV_SECTIONS.filter((s) => s.fixa).map((s) => s.id), ...(pastaDaRota ? [pastaDaRota] : [])]),
   );
+  useEffect(() => {
+    try {
+      const salvas = JSON.parse(localStorage.getItem(CHAVE_DAS_PASTAS) ?? 'null') as string[] | null;
+      if (Array.isArray(salvas)) setAbertas((atual) => new Set([...atual, ...salvas]));
+    } catch {
+      // Sem armazenamento (janela privada): as pastas só não são lembradas.
+    }
+  }, []);
+  useEffect(() => {
+    if (!pastaDaRota) return;
+    setAbertas((atual) => (atual.has(pastaDaRota) ? atual : new Set(atual).add(pastaDaRota)));
+  }, [pastaDaRota]);
 
   function alternarSecao(id: string) {
     setAbertas((atual) => {
       const proxima = new Set(atual);
       if (proxima.has(id)) proxima.delete(id);
       else proxima.add(id);
+      try {
+        localStorage.setItem(CHAVE_DAS_PASTAS, JSON.stringify([...proxima]));
+      } catch {
+        // idem: lembrar é conveniência, não requisito.
+      }
       return proxima;
     });
   }
@@ -308,9 +329,11 @@ export function Sidebar({
           * sem nenhuma pista do que existe.
           */
         const aberta = collapsed || abertas.has(secao.id);
-        const podeRecolher = !collapsed && Boolean(secao.recolhida);
+        const podeRecolher = !collapsed && !secao.fixa;
+        // Pasta fechada não pode esconder um aviso: soma os badges de dentro no cabeçalho.
+        const avisosEscondidos = aberta ? 0 : itensDaSecao.reduce((n, i) => n + badgeDe(i.href), 0);
         return (
-        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-3')}>
+        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-2')}>
           {/*
             * O rótulo da seção some quando a sidebar está colapsada — ali só
             * cabe ícone, e um texto truncado em 3 letras não agrupa nada.
@@ -323,13 +346,18 @@ export function Sidebar({
                 onClick={() => alternarSecao(secao.id)}
                 aria-expanded={aberta}
                 title={secao.ajuda}
-                className="flex w-full items-center gap-1.5 rounded px-3 pb-1.5 pt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60 transition-colors hover:text-branco-cru"
+                className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-nevoa transition-colors hover:bg-grafite/60 hover:text-branco-cru"
               >
-                {aberta ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                {aberta ? <FolderOpen size={15} className="shrink-0 text-sinal" /> : <Folder size={15} className="shrink-0" />}
                 <span>{secao.label}</span>
                 {/* Quantos itens tem lá dentro: sem isso, uma seção fechada
                   * não diz se esconde dois itens ou vinte. */}
-                {!aberta && <span className="text-nevoa/40">{itensDaSecao.length}</span>}
+                {!aberta && <span className="font-normal text-nevoa/50">{itensDaSecao.length}</span>}
+                {avisosEscondidos > 0 && (
+                  <span aria-label={`${avisosEscondidos} não lidas`} className="ml-auto rounded-full bg-sinal px-1.5 font-mono text-[10px] font-semibold leading-4 text-grafite">
+                    {avisosEscondidos > 99 ? '99+' : avisosEscondidos}
+                  </span>
+                )}
               </button>
             ) : (
               <p

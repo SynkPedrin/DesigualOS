@@ -22,7 +22,7 @@ const ICONE = (() => null) as unknown as LucideIcon;
 const item = (parcial: Partial<NavItem> & { href: string }): NavItem => ({
   label: parcial.href,
   icon: ICONE,
-  section: 'dia',
+  section: 'hoje',
   ...parcial,
 });
 
