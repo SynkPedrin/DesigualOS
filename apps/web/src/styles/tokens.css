@@ -140,8 +140,16 @@ body {
   font-family: var(--font-body);
 }
 
-* {
-  border-color: var(--color-grafite-elevado);
+/*
+ * Cor padrão de borda DENTRO da camada base. Fora de camada (como estava até 26/10/2026), esta regra vencia toda
+ * classe de cor de borda do Tailwind, que mora na camada utilities: `border-sinal`, `border-l-erro`,
+ * `hover:border-roxo-eletrico/40` e até `border-transparent` eram ignoradas, e tudo saía cinza. Na camada base ela
+ * continua sendo o padrão, e as classes voltam a mandar.
+ */
+@layer base {
+  * {
+    border-color: var(--color-grafite-elevado);
+  }
 }
 
 ::selection {
