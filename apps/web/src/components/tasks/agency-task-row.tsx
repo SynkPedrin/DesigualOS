@@ -68,10 +68,14 @@ export function AgencyTaskRow({ task, showClient }: { task: AgencyTaskWire; show
         )}
 
         {due && (
-          <span className="inline-flex items-center gap-1.5 text-[13px] text-nevoa">
+          <span className={cn('inline-flex items-center gap-1.5 text-[13px]', due.concluida ? 'text-sucesso' : 'text-nevoa')}>
             <CalendarDays size={13} />
-            {due.text}
-            <Prazo prazo={task.due_date} feito={due.concluida} />
+            {due.concluida ? `concluída · prazo ${due.text}` : (
+              <>
+                {due.text}
+                <Prazo prazo={task.due_date} />
+              </>
+            )}
           </span>
         )}
       </div>

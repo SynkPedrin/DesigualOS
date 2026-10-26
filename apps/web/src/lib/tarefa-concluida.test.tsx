@@ -37,14 +37,14 @@ describe('tarefa concluída (status reais do ClickUp da agência)', () => {
     expect(estagioConcluido({})).toBe(false);
   });
 
-  it('linha de tarefa pronta com prazo vencido diz "concluída", nunca "atrasada"', () => {
+  it('linha de tarefa pronta com prazo vencido diz "concluída", nunca "atrasada"; a aberta mostra o selo ATRASADA com os dias', () => {
     const base = { id: 't1', name: 'Post', status: 'pronto', status_type: 'done', due_date: Date.now() - 10 * 86_400_000, assignees: ['Ana'], tags: [], priority: null, url: null, client: null } as unknown as AgencyTaskWire;
     const div = document.createElement('div');
     act(() => createRoot(div).render(<AgencyTaskRow task={base} showClient={false} />));
     expect(div.textContent).toContain('concluída');
-    expect(div.textContent).not.toContain('atrasada');
+    expect(div.textContent).not.toMatch(/atrasad/i);
     const aberta = document.createElement('div');
     act(() => createRoot(aberta).render(<AgencyTaskRow task={{ ...base, status: 'aberto', status_type: 'open' }} showClient={false} />));
-    expect(aberta.textContent).toContain('atrasada desde');
+    expect(aberta.textContent).toContain('ATRASADA · 10 DIAS');
   });
 });

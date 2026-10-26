@@ -69,9 +69,9 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar }: { tare
                 onDragOver={(e) => { if (e.dataTransfer.types.includes(DRAG)) { e.preventDefault(); setSobre(chave(d)); } }}
                 onDragLeave={() => setSobre((v) => (v === chave(d) ? null : v))}
                 onDrop={(e) => { e.preventDefault(); setSobre(null); const id = e.dataTransfer.getData(DRAG); if (id) reagendar(id, d); }}
-                className={cn('min-h-28 cursor-pointer border-b border-r border-grafite-elevado/60 p-1 hover:bg-grafite-elevado/30', d.getMonth() !== ref.getMonth() && 'bg-grafite/40 text-nevoa/50', ehHoje && 'bg-sinal/5', sobre === chave(d) && 'ring-1 ring-inset ring-sinal', dia && chave(dia) === chave(d) && 'outline outline-1 -outline-offset-1 outline-sinal/60')}
+                className={cn('min-h-28 cursor-pointer border-b border-r border-grafite-elevado/60 p-1 hover:bg-grafite-elevado/30', d.getMonth() !== ref.getMonth() && 'bg-grafite/40 text-nevoa/50', ehHoje && 'bg-sinal/10', sobre === chave(d) && 'ring-1 ring-inset ring-sinal', dia && chave(dia) === chave(d) && 'outline outline-1 -outline-offset-1 outline-sinal/60')}
               >
-                <p className={cn('mb-1 flex items-center justify-between px-0.5 text-[11px]', ehHoje ? 'font-semibold text-sinal' : 'text-nevoa')}>{itens.length > 0 && <span className="rounded-full bg-grafite-elevado px-1.5 text-[10px] text-branco-cru">{itens.length}</span>}<span className="ml-auto">{d.getDate()}</span></p>
+                <p className={cn('mb-1 flex items-center justify-between px-0.5 text-[11px]', ehHoje ? 'font-semibold text-sinal' : 'text-nevoa')}>{itens.length > 0 && <span className="rounded-full bg-grafite-elevado px-1.5 text-[10px] text-branco-cru">{itens.length}</span>}{ehHoje ? <span className="ml-auto rounded bg-sinal px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none tracking-wide text-carbono">Hoje · {d.getDate()}</span> : <span className="ml-auto">{d.getDate()}</span>}</p>
                 {itens.slice(0, 4).map((t) => {
                   const atrasada = !t.completedAt && new Date(t.dueAt!) < hoje && chave(d) !== chave(hoje);
                   return (

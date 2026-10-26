@@ -20,14 +20,14 @@ export function diaEmSaoPaulo(valor: Date | string | number): string {
 const diasEntre = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 
 /**
- * Quão perto está o prazo. Nulo quando não há prazo. Com hora (`temHora`), passar da hora no próprio dia já é
- * atraso; sem hora (prazo só de dia), o dia inteiro conta como "hoje".
+ * Quão perto está o prazo. Nulo quando não há prazo. Prazo é DIA: o dia inteiro conta como "hoje", mesmo que o valor
+ * guardado traga um horário (o Daily Tasks grava a data escolhida ao meio-dia, o ClickUp à meia-noite). Só quem passa
+ * `temHora: true` (um compromisso de verdade, com hora marcada) vê passar da hora virar atraso no próprio dia.
  */
 export function urgenciaDoPrazo(prazo: Date | string | number | null | undefined, opcoes: { agora?: Date; temHora?: boolean } = {}): Urgencia | null {
   if (prazo === null || prazo === undefined || prazo === '') return null;
   const agora = opcoes.agora ?? new Date();
-  const soDia = typeof prazo === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(prazo);
-  const temHora = opcoes.temHora ?? !soDia;
+  const temHora = opcoes.temHora ?? false;
   const dias = diasEntre(diaEmSaoPaulo(agora), diaEmSaoPaulo(prazo));
   if (dias < 0) return 'atrasado';
   if (dias === 0) return temHora && new Date(prazo).getTime() < agora.getTime() ? 'atrasado' : 'hoje';

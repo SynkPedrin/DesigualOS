@@ -7,6 +7,7 @@ import { ArrowRight, Calendar, ClipboardList, FileText, Plus, Search, Users } fr
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Prazo } from '@/components/ui/prazo';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { useClients } from '@/hooks/use-clients';
 import { logoDoCliente } from '@/lib/client-logos';
@@ -478,7 +479,7 @@ function ClientSidePanel({ client }: { client: ClientSummary }) {
               <li key={d.id}>
                 <Link href={`/demands/${d.id}`} className="block rounded-md border border-grafite-elevado bg-carbono px-3 py-2 hover:border-roxo-eletrico/40">
                   <p className="truncate text-sm font-medium text-branco-cru">{d.title}</p>
-                  <p className="text-xs text-nevoa">{d.dueDate ? formatRelativeTime(d.dueDate) : 'Sem prazo'}</p>
+                  <Prazo prazo={d.dueDate} className="mt-1" />
                 </Link>
               </li>
             ))}

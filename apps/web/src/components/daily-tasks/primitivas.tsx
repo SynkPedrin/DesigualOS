@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Calendar, CheckCircle2, Circle, Flag } from 'lucide-react';
 import { PRIORIDADES, type WorkMember, type WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
+import { Prazo } from '@/components/ui/prazo';
 
 const CORES = ['#7c3aed', '#0ea5e9', '#f97316', '#10b981', '#ec4899', '#eab308', '#6366f1', '#14b8a6'];
 
@@ -111,12 +112,13 @@ export function formatarData(iso: string | null): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-/** Vencida e aberta = vermelho · feita = verde · hoje = laranja, como no ClickUp. */
+/** A data e, ao lado, o que ela significa: HOJE, ATRASADA · 3 DIAS, Amanhã, Feito (ver components/ui/prazo.tsx). */
 export function DueDate({ tarefa }: { tarefa: Pick<WorkTaskWire, 'dueAt' | 'completedAt'> }) {
   if (!tarefa.dueAt) return <Calendar size={15} className="text-nevoa/50" aria-label="Sem data" />;
-  const venc = new Date(tarefa.dueAt);
-  const hoje = new Date();
-  const mesmoDia = venc.toDateString() === hoje.toDateString();
-  const cor = tarefa.completedAt ? 'text-sucesso' : venc < hoje && !mesmoDia ? 'text-red-400' : mesmoDia ? 'text-aviso' : 'text-nevoa';
-  return <span className={cn('text-xs', cor)}>{formatarData(tarefa.dueAt)}</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="text-nevoa">{formatarData(tarefa.dueAt)}</span>
+      <Prazo prazo={tarefa.dueAt} feito={Boolean(tarefa.completedAt)} />
+    </span>
+  );
 }

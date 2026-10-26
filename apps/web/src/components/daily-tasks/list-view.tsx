@@ -1,6 +1,7 @@
 'use client';
 
-import { Prazo } from '@/components/ui/prazo';
+import { faixaDaLinha } from '@/components/ui/prazo';
+import { urgenciaDoPrazo } from '@/lib/prazo';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GitFork, Plus } from 'lucide-react';
 import { useSpaceStatuses, useWorkTasks, type TaskPatch, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
@@ -10,7 +11,7 @@ import { AssigneePicker, PriorityPicker, StatusPicker } from './pickers';
 import { StatusDot, StatusPill } from './primitivas';
 import { RowMenu } from './row-menu';
 import { TASK_DRAG } from './tree';
-import { andamento, BarraDeProgresso, prazoRelativo } from './ui';
+import { andamento, BarraDeProgresso } from './ui';
 import { PREFERENCIAS_PADRAO, usePreferences, type ColunaDaLista } from '@/hooks/use-work-extra';
 import { DuePicker } from './pickers';
 
@@ -21,7 +22,7 @@ export interface TaskActions {
 }
 
 /** Colunas da tabela, na ordem. A pessoa escolhe quais aparecem (Personalizar visualização); tarefa e ações são sempre fixas. */
-const LARGURA: Record<ColunaDaLista, string> = { andamento: '112px', responsavel: '84px', prazo: '108px', prioridade: '112px', status: '128px', cliente: '150px', tags: '140px' };
+const LARGURA: Record<ColunaDaLista, string> = { andamento: '112px', responsavel: '84px', prazo: '150px', prioridade: '112px', status: '128px', cliente: '150px', tags: '140px' };
 const ORDEM: ColunaDaLista[] = ['cliente', 'andamento', 'responsavel', 'prazo', 'prioridade', 'status', 'tags'];
 export function gradeDeColunas(colunas: readonly ColunaDaLista[]): string {
   return ['24px', 'minmax(240px,1fr)', ...ORDEM.filter((c) => colunas.includes(c)).map((c) => LARGURA[c]), '96px'].join(' ');
@@ -74,7 +75,6 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
   const subs = useWorkTasks({ parentTaskId: t.id, enabled: aberta && !ctx.semSubtarefas, includeArchived: ctx.arquivadas });
   const feita = t.status?.category === 'done';
   const final = statuses.find((s) => s.category === 'done');
-  const prazo = prazoRelativo(t.dueAt, feita);
   const nomeCliente = (t.clientId && clientes.get(t.clientId)) || null;
   const pct = andamento(t);
   return (
@@ -83,7 +83,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(TASK_DRAG, t.id); e.dataTransfer.effectAllowed = 'move'; }}
         style={{ gridTemplateColumns: grade }}
-        className={cn('group grid items-center gap-3 border-b border-grafite-elevado/40 px-3 hover:bg-grafite-elevado/30', compacta ? 'py-1' : 'py-2.5', nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
+        className={cn('group grid items-center gap-3 border-b border-grafite-elevado/40 px-3 hover:bg-grafite-elevado/30', faixaDaLinha(feita ? null : urgenciaDoPrazo(t.dueAt)), compacta ? 'py-1' : 'py-2.5', nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
       >
         <input type="checkbox" aria-label={`Selecionar ${t.key}`} checked={ctx.selecionadas.has(t.id)} onChange={() => ctx.alternarSelecao(t.id)} />
         <div className="relative flex min-w-0 items-center gap-2" style={{ paddingLeft: nivel * 22 }}>
@@ -110,7 +110,6 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
         {tem('responsavel') && <div className="flex items-center"><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>}
         {tem('prazo') && <div className="flex flex-col justify-center leading-tight">
           <DuePicker tarefa={t} onChange={(iso) => ctx.actions.atualizar(t, { dueAt: iso })} />
-          {prazo && t.dueAt && <Prazo prazo={t.dueAt} feito={feita} className="mt-0.5 self-start" />}
         </div>}
         {tem('prioridade') && <div className="flex items-center"><PriorityPicker tarefa={t} badge onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>}
         {tem('status') && <div className="flex items-center"><StatusPicker tarefa={t} statuses={statuses} onChange={(statusId) => ctx.actions.atualizar(t, { statusId })} /></div>}

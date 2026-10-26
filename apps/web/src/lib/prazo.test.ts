@@ -10,9 +10,15 @@ describe('em que dia cai o prazo (fuso de São Paulo)', () => {
     expect(diaEmSaoPaulo('2026-10-26')).toBe('2026-10-26');
   });
 
-  it('prazo hoje mais tarde é HOJE; hoje mais cedo, já passou, é ATRASADA', () => {
+  it('prazo é DIA: um horário de hoje que já passou continua sendo HOJE (o Daily Tasks grava ao meio-dia)', () => {
     expect(urgenciaDoPrazo(new Date('2026-10-27T02:59:00Z'), { agora })).toBe('hoje');
-    expect(urgenciaDoPrazo(new Date('2026-10-26T12:00:00Z'), { agora })).toBe('atrasado');
+    expect(urgenciaDoPrazo(new Date('2026-10-26T12:00:00Z'), { agora })).toBe('hoje');
+    expect(urgenciaDoPrazo(new Date('2026-10-25T20:00:00Z'), { agora })).toBe('atrasado');
+  });
+
+  it('compromisso com hora marcada (temHora): passou da hora hoje já é ATRASADA', () => {
+    expect(urgenciaDoPrazo(new Date('2026-10-27T02:59:00Z'), { agora, temHora: true })).toBe('hoje');
+    expect(urgenciaDoPrazo(new Date('2026-10-26T12:00:00Z'), { agora, temHora: true })).toBe('atrasado');
   });
 
   it('prazo SÓ DE DIA vale o dia inteiro: hoje é HOJE mesmo às 15h', () => {
