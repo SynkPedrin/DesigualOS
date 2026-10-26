@@ -13,7 +13,7 @@ import type { BentoWhatsappTransport, OpenwaWebhookEnvelope } from './openwa/con
 import type { ArmazemDoCanal, AtualizacaoDoRecebido, RegistroRecebido, ResultadoDoCodigo, Vinculo } from './store';
 
 export const SESSAO = '6f1c2b8e-0000-4000-8000-00000000b3e7';
-export const BOT = '5518997987295';
+export const BOT = '5518996326160';
 
 export function configDeTeste(extra: Partial<BentoWhatsappConfig> = {}): BentoWhatsappConfig {
   return {

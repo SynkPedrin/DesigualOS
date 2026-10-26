@@ -17,6 +17,7 @@ const createAutomationSchema = z.object({
   client_id: z.string().uuid().nullable().optional(),
   schedule: z.string().min(1),
   schedule_label: z.string().min(1),
+  whatsapp_phone: z.string().nullable().optional(),
 });
 
 const updateAutomationSchema = z.object({
@@ -28,7 +29,31 @@ const updateAutomationSchema = z.object({
   enabled: z.boolean().optional(),
   schedule: z.string().min(1).optional(),
   schedule_label: z.string().min(1).optional(),
+  whatsapp_phone: z.string().nullable().optional(),
 });
+
+/**
+ * O número que a pessoa digitou para receber a automação no WhatsApp, do jeito
+ * que o Bento envia: só dígitos, 55 + DDD + número. Aceita "(18) 99165-2039"
+ * e "18991652039" (sem DDI vira 55). A regra é a mesma dos avisos de mídia
+ * (media-settings.ts): número fora dela manda mensagem para a pessoa errada.
+ * `null` = desligar; `undefined` = não mexer; `false` = inválido.
+ */
+export function telefoneDaAutomacao(valor: string | null | undefined): string | null | undefined | false {
+  if (valor === undefined) return undefined;
+  if (valor === null || !valor.trim()) return null;
+  let digitos = valor.replace(/\D/g, '');
+  if (digitos.length === 10 || digitos.length === 11) digitos = `55${digitos}`;
+  return /^55[1-9][1-9](?:9\d{8}|[2-5]\d{7})$/.test(digitos) ? digitos : false;
+}
+
+const TELEFONE_INVALIDO = 'WhatsApp inválido: use DDD e número, ex.: (18) 99165-2039.';
+
+/** Guarda o número na pessoa, para a próxima automação já vir preenchida. */
+async function lembrarWhatsappDaPessoa(userId: string, phone: string | null | undefined): Promise<void> {
+  if (!phone) return;
+  await db.update(schema.users).set({ whatsappPhone: phone }).where(eq(schema.users.id, userId));
+}
 
 /**
  * `proximaExecucao` em ms vem de FORA: é o `next` do repeatable job do BullMQ,
@@ -49,6 +74,7 @@ function serializeAutomation(row: typeof schema.automations.$inferSelect, proxim
     schedule: row.schedule,
     schedule_label: row.scheduleLabel,
     enabled: row.enabled,
+    whatsapp_phone: row.whatsappPhone,
     estimated_minutes_saved: row.estimatedMinutesSaved,
     last_run_at: row.lastRunAt?.toISOString() ?? null,
     next_run_at: proximaExecucaoMs !== undefined ? new Date(proximaExecucaoMs).toISOString() : null,
@@ -100,6 +126,20 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
   // Registrada antes das rotas com :id para não disputar matching com
   // /automations/:id/... (Fastify dá prioridade a rota estática, mas assim
   // a intenção fica explícita).
+  /**
+   * O WhatsApp que a pessoa já usou numa automação; sem isso, o número do
+   * vínculo dela com o Bento. Só preenche o formulário: quem decide enviar é ela.
+   */
+  app.get('/automations/whatsapp-phone', { preHandler: requireModule('automations') }, async (request, reply) => {
+    if (!request.authUser) { reply.code(401); return { error: 'Not authenticated' }; }
+    const [pessoa] = await db.select({ phone: schema.users.whatsappPhone }).from(schema.users)
+      .where(eq(schema.users.id, request.authUser.id));
+    if (pessoa?.phone) return { phone: pessoa.phone };
+    const [vinculo] = await db.select({ phone: schema.bentoWhatsappLinks.phone }).from(schema.bentoWhatsappLinks)
+      .where(and(eq(schema.bentoWhatsappLinks.userId, request.authUser.id), eq(schema.bentoWhatsappLinks.status, 'active')));
+    return { phone: vinculo?.phone ?? null };
+  });
+
   app.get('/automations/metrics', { preHandler: requireModule('automations') }, async (request) => {
     const tenantFilter = eq(schema.automations.organizationId, request.tenantContext!.organizationId);
     const runFilter = inArray(schema.automationRuns.automationId,
@@ -237,6 +277,8 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (body.client_id && !(await clientBelongsToTenant(body.client_id, tenant.organizationId))) {
         reply.code(403); return { error: 'Client is outside your organization' };
       }
+      const whatsappPhone = telefoneDaAutomacao(body.whatsapp_phone);
+      if (whatsappPhone === false) { reply.code(400); return { error: TELEFONE_INVALIDO }; }
 
       const [conversation] = await db
         .insert(schema.conversations)
@@ -255,6 +297,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
           conversationId: conversation?.id ?? null,
           schedule: body.schedule,
           scheduleLabel: body.schedule_label,
+          whatsappPhone: whatsappPhone ?? null,
         })
         .returning();
 
@@ -273,6 +316,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         return { error: `Agenda inválida: ${error instanceof Error ? error.message : String(error)}` };
       }
 
+      await lembrarWhatsappDaPessoa(user.id, whatsappPhone);
       reply.code(201);
       return serializeAutomation(automation);
     },
@@ -294,6 +338,8 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (body.client_id && !(await clientBelongsToTenant(body.client_id, request.tenantContext!.organizationId))) {
         reply.code(403); return { error: 'Client is outside your organization' };
       }
+      const whatsappPhone = telefoneDaAutomacao(body.whatsapp_phone);
+      if (whatsappPhone === false) { reply.code(400); return { error: TELEFONE_INVALIDO }; }
 
       const nextEnabled = body.enabled ?? existing.enabled;
       const nextSchedule = body.schedule ?? existing.schedule;
@@ -325,11 +371,13 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
           enabled: nextEnabled,
           schedule: nextSchedule,
           scheduleLabel: body.schedule_label ?? existing.scheduleLabel,
+          whatsappPhone: whatsappPhone !== undefined ? whatsappPhone : existing.whatsappPhone,
           updatedAt: new Date(),
         })
         .where(eq(schema.automations.id, existing.id))
         .returning();
 
+      if (request.authUser) await lembrarWhatsappDaPessoa(request.authUser.id, whatsappPhone);
       return serializeAutomation(updated!);
     },
   );

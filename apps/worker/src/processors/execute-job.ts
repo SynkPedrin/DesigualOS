@@ -67,6 +67,7 @@ import {
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
 import { lerComGptPrimeiro, montarPromptDeLeitura, type CamadaDeLeitura } from './bento-leitura-gpt';
 import { jarbasLocalLigado, responderJarbasLocal } from './jarbas-local';
+import { entregarAutomacaoNoWhatsapp } from './run-automation';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { blocoMultifonte, multifonteParaPanorama } from './contexto-multifonte.js';
 import { montarDialogoRecente, ORCAMENTO_DIALOGO, type TurnoDeDialogo } from './recent-dialogue';
@@ -3005,6 +3006,10 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       result.status === 'failed' ? 'failed' : 'completed',
       result.answer ?? failureAnswer,
     );
+    await entregarAutomacaoNoWhatsapp(
+      { conversationId, executionId, answer: result.answer ?? failureAnswer, falhou: result.status === 'failed' },
+      logger,
+    );
   }
 
   if (vaiReprocessar) {
@@ -3296,6 +3301,7 @@ async function processWorkflowStep(data: AgentJobData, logger: Logger): Promise<
       'completed',
       consolidated,
     );
+    await entregarAutomacaoNoWhatsapp({ conversationId, executionId, answer: consolidated, falhou: false }, logger);
     logger.info({ executionId, totalInput, totalOutput, steps: definition.length }, 'Workflow completed');
   }
 }

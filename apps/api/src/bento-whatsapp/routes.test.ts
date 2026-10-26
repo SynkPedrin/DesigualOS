@@ -219,7 +219,7 @@ describe('vínculo do colaborador', () => {
     expect(r.statusCode).toBe(200);
     const corpo = r.json();
     expect(corpo.code).toMatch(/^BENTO-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
-    expect(corpo.wa_link).toBe(`https://wa.me/5518997987295?text=${encodeURIComponent(corpo.code)}`);
+    expect(corpo.wa_link).toBe(`https://wa.me/5518996326160?text=${encodeURIComponent(corpo.code)}`);
     expect(mocks.criarCodigo).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u-colaborador', codigo: corpo.code }));
     expect(mocks.auditar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'bento_whatsapp.link_code_created' }));
     await app.close();
@@ -384,15 +384,15 @@ describe('conectar por código (sem QR)', () => {
       payload: { phoneNumber: '5511999999999' },
     });
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ pairing_code: 'ABCD1234', phone: '+55 18 99798-7295' });
-    expect(transporte.pedidosDeCodigo).toEqual(['5518997987295']);
+    expect(r.json()).toEqual({ pairing_code: 'ABCD1234', phone: '+55 18 99632-6160' });
+    expect(transporte.pedidosDeCodigo).toEqual(['5518996326160']);
     expect(mocks.auditar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'bento_whatsapp.session_pairing_code_requested' }));
     await app.close();
   });
 
   it('sessão que não espera conexão não gera código (não arrisca derrubar sessão ativa)', async () => {
     const { app, transporte } = await servidor();
-    transporte.getSession = async () => ({ id: 's', name: 'bento', status: 'ready', phone: '5518997987295' });
+    transporte.getSession = async () => ({ id: 's', name: 'bento', status: 'ready', phone: '5518996326160' });
     const pronta = await app.inject({ method: 'POST', url: '/bento-whatsapp/admin/session/pairing-code', headers: { 'x-papel': 'master' } });
     expect(pronta.statusCode).toBe(409);
     expect(pronta.json().error).toMatch(/já está conectado/);

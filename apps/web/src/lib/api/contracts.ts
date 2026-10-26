@@ -2144,6 +2144,8 @@ export interface AutomationWire {
   enabled: boolean;
   /** Estimativa de minutos economizados por execução; null quando nunca informada. */
   estimated_minutes_saved: number | null;
+  /** Número (só dígitos, 55 + DDD) que recebe a resposta no WhatsApp; null = só no chat. */
+  whatsapp_phone: string | null;
   last_run_at: ISODateString | null;
   /**
    * Quando o AGENDADOR vai disparar de novo — o `next` do repeatable job do
@@ -2166,6 +2168,7 @@ export interface Automation {
   scheduleLabel: string;
   enabled: boolean;
   estimatedMinutesSaved: number | null;
+  whatsappPhone: string | null;
   lastRunAt: ISODateString | null;
   nextRunAt: ISODateString | null;
   createdAt: ISODateString;
@@ -2183,6 +2186,7 @@ export function mapAutomation(wire: AutomationWire): Automation {
     scheduleLabel: wire.schedule_label,
     enabled: wire.enabled,
     estimatedMinutesSaved: wire.estimated_minutes_saved,
+    whatsappPhone: wire.whatsapp_phone ?? null,
     lastRunAt: wire.last_run_at,
     nextRunAt: wire.next_run_at,
     createdAt: wire.created_at,
@@ -2197,6 +2201,8 @@ export interface CreateAutomationRequestWire {
   schedule: string;
   schedule_label: string;
   estimated_minutes_saved?: number | null;
+  /** null ou vazio = só no chat. */
+  whatsapp_phone?: string | null;
 }
 
 /** PATCH /automations/:id - edição parcial da automação (2026-09-04). Antes aceitava só
@@ -2210,6 +2216,7 @@ export interface UpdateAutomationRequestWire {
   schedule_label?: string;
   enabled?: boolean;
   estimated_minutes_saved?: number | null;
+  whatsapp_phone?: string | null;
 }
 
 /** POST /automations/:id/run - dispara a automação na hora, fora do agendamento.
