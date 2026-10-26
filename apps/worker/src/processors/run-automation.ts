@@ -1,8 +1,9 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import { hasPermission, loadUserAccess, organizacaoDaConversa, organizacaoDaEscrita } from '@desigual-os/auth';
 import type { Job } from 'bullmq';
 import { db, schema } from '@desigual-os/database';
 import { buildContext, formatContextForPrompt } from '@desigual-os/context-engine';
+import { enviarPeloBento, formatarParaWhatsapp } from '@desigual-os/tool-gateway';
 import { dispatchChatMessage, touchConversation, type AutomationJobData } from '@desigual-os/orchestrator';
 import { resolveEnvironment } from './environment';
 import type { RouterDecision } from '@desigual-os/router';
@@ -200,4 +201,67 @@ export async function processAutomationJob(
 export function mensagemDaAutomacao(prompt: string, agent: AgentName, contextBlock: string): string {
   if (agent !== 'studio' || !contextBlock) return prompt;
   return `${prompt}\n\n---\nContexto:\n${contextBlock}`;
+}
+
+/**
+ * A RESPOSTA DA AUTOMAÇÃO TAMBÉM VAI PARA O WHATSAPP de quem pediu (pedido do
+ * Pedro, 23/10/2026), quando a automação tem `whatsappPhone`.
+ *
+ * É a única vez que o Bento escreve primeiro, e por isso é estreita:
+ *  - só a execução que É um disparo da automação (tem `automation_runs` com
+ *    este executionCode). Alguém conversando à mão na conversa da automação
+ *    não recebe eco no celular;
+ *  - só para o número gravado NA automação, que a própria pessoa digitou;
+ *  - pelo `enviarPeloBento`, com as travas dele (canal ligado, sessão pronta,
+ *    limite por janela). Sem canal, a resposta fica só no chat, como antes.
+ *
+ * O run é gravado DEPOIS do despacho (processAutomationJob), então uma
+ * resposta muito rápida pode chegar antes dele: uma segunda olhada resolve.
+ */
+export async function entregarAutomacaoNoWhatsapp(
+  input: { conversationId: string | null; executionId: string; answer: string | null; falhou: boolean },
+  logger: Logger,
+  deps: { enviar?: typeof enviarPeloBento; esperar?: (ms: number) => Promise<void> } = {},
+): Promise<void> {
+  const enviar = deps.enviar ?? enviarPeloBento;
+  const esperar = deps.esperar ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const answer = input.answer?.trim();
+  if (!input.conversationId || !answer) return;
+  try {
+    const [automation] = await db
+      .select({ id: schema.automations.id, name: schema.automations.name, whatsappPhone: schema.automations.whatsappPhone })
+      .from(schema.automations)
+      .where(and(eq(schema.automations.conversationId, input.conversationId), isNotNull(schema.automations.whatsappPhone)));
+    if (!automation?.whatsappPhone) return;
+
+    const ehDisparo = async () => {
+      const [run] = await db
+        .select({ id: schema.automationRuns.id })
+        .from(schema.automationRuns)
+        .where(and(eq(schema.automationRuns.automationId, automation.id), eq(schema.automationRuns.executionCode, input.executionId)));
+      return Boolean(run);
+    };
+    if (!(await ehDisparo())) {
+      await esperar(3_000);
+      if (!(await ehDisparo())) return;
+    }
+
+    const titulo = input.falhou ? `*Automação “${automation.name}” não rodou*` : `*Automação “${automation.name}”*`;
+    const partes = formatarParaWhatsapp(`${titulo}\n\n${answer}`);
+    for (const [indice, parte] of partes.entries()) {
+      const resultado = await enviar({
+        phone: automation.whatsappPhone,
+        text: parte,
+        idempotencyKey: `automacao:${input.executionId}:${indice}`,
+      });
+      if (!resultado.ok) {
+        logger.warn({ automationId: automation.id, motivo: resultado.motivo, erro: resultado.erro }, 'automação: não entreguei no WhatsApp; a resposta continua no chat');
+        return;
+      }
+    }
+    logger.info({ automationId: automation.id, partes: partes.length }, 'automação: resposta entregue no WhatsApp');
+  } catch (error) {
+    // Entrega no celular é acessório: a resposta já está gravada no chat.
+    logger.warn({ error, executionId: input.executionId }, 'automação: falha ao entregar no WhatsApp');
+  }
 }

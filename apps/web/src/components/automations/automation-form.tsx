@@ -5,6 +5,7 @@ import type { AgentName } from '@desigual-os/types';
 import { AGENT_META, FEATURED_AGENTS } from '@/lib/agent-meta';
 import { AgentAvatar } from '@/components/ui/agent-avatar';
 import { ClientSelector } from '@/components/chat/client-selector';
+import { useMyAutomationWhatsapp } from '@/hooks/use-automations';
 import { ApiRequestError } from '@/lib/api/client';
 import type { Automation } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
@@ -35,6 +36,15 @@ export interface AutomationFormValues {
   schedule: string;
   scheduleLabel: string;
   estimatedMinutesSaved: number | null;
+  /** null = só no chat. */
+  whatsappPhone: string | null;
+}
+
+/** 5518991652039 → (18) 99165-2039. Só para mostrar; o servidor normaliza o que vier. */
+function telefoneLegivel(digitos: string): string {
+  const local = digitos.startsWith('55') && digitos.length >= 12 ? digitos.slice(2) : digitos;
+  const m = local.match(/^(\d{2})(\d{4,5})(\d{4})$/);
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : digitos;
 }
 
 /** Form compartilhado entre criar e editar: com `initial` vem pré-preenchido
@@ -73,6 +83,14 @@ export function AutomationForm({
   const [estimatedMinutes, setEstimatedMinutes] = useState(
     initial?.estimatedMinutesSaved?.toString() ?? '',
   );
+  const [enviarNoWhatsapp, setEnviarNoWhatsapp] = useState(Boolean(initial?.whatsappPhone));
+  // null = a pessoa ainda não mexeu: vale o número da automação ou o guardado.
+  const [telefoneDigitado, setTelefoneDigitado] = useState<string | null>(
+    initial?.whatsappPhone ? telefoneLegivel(initial.whatsappPhone) : null,
+  );
+  const guardado = useMyAutomationWhatsapp();
+  const telefone = telefoneDigitado ?? (guardado.data ? telefoneLegivel(guardado.data) : '');
+  const digitosDoTelefone = telefone.replace(/\D/g, '');
 
   const isCustom = presetSchedule === 'custom';
   const schedule = isCustom ? customSchedule.trim() : presetSchedule;
@@ -81,7 +99,8 @@ export function AutomationForm({
     : SCHEDULE_PRESETS.find((preset) => preset.schedule === presetSchedule)?.label ?? presetSchedule;
   const estimatedMinutesSaved = estimatedMinutes.trim() === '' ? null : Math.max(0, Number(estimatedMinutes));
 
-  const canSubmit = name.trim() && prompt.trim() && schedule;
+  const telefoneOk = !enviarNoWhatsapp || digitosDoTelefone.length >= 10;
+  const canSubmit = name.trim() && prompt.trim() && schedule && telefoneOk;
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -94,6 +113,7 @@ export function AutomationForm({
       schedule,
       scheduleLabel,
       estimatedMinutesSaved,
+      whatsappPhone: enviarNoWhatsapp ? digitosDoTelefone : null,
     });
   }
 
@@ -238,6 +258,38 @@ export function AutomationForm({
           className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru placeholder:text-nevoa focus:border-roxo-eletrico/60 focus:outline-none"
         />
         <p className="mt-1 text-xs text-nevoa">Usado no cálculo de economia de tempo.</p>
+      </div>
+
+      <div className="rounded-md border border-grafite-elevado bg-carbono px-3 py-2">
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-branco-cru">
+          <input
+            type="checkbox"
+            checked={enviarNoWhatsapp}
+            onChange={(event) => setEnviarNoWhatsapp(event.target.checked)}
+            className="accent-roxo-eletrico"
+          />
+          Enviar a resposta também no meu WhatsApp
+        </label>
+        {enviarNoWhatsapp && (
+          <div className="mt-2">
+            <label htmlFor="automation-whatsapp" className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-nevoa">
+              Meu WhatsApp
+            </label>
+            <input
+              id="automation-whatsapp"
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              value={telefone}
+              onChange={(event) => setTelefoneDigitado(event.target.value)}
+              placeholder="(18) 99165-2039"
+              className="w-full rounded-md border border-grafite-elevado bg-carbono px-3 py-2 text-sm text-branco-cru placeholder:text-nevoa focus:border-roxo-eletrico/60 focus:outline-none"
+            />
+            <p className="mt-1 text-xs text-nevoa">
+              O Bento manda pelo número dele a cada disparo. O número fica guardado para as próximas automações.
+            </p>
+          </div>
+        )}
       </div>
 
       {Boolean(error) && (

@@ -568,6 +568,13 @@
       "when": 1792602000000,
       "tag": "0080_tela_inicial_por_pessoa",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792765093604,
+      "tag": "0081_automacao_no_whatsapp",
+      "breakpoints": true
     }
   ]
 }

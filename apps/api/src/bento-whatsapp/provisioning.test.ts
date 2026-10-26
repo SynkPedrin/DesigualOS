@@ -99,7 +99,7 @@ describe('configuração que vale agora', () => {
     const r = await prov.resolverConfiguracao({} as NodeJS.ProcessEnv);
     expect(r.origem).toBe('nenhuma');
     expect(r.config.enabled).toBe(false);
-    expect(r.config.botPhone).toBe('5518997987295');
+    expect(r.config.botPhone).toBe('5518996326160');
   });
 
   it('linha do painel ativa liga o canal com a sessão e as credenciais dela (decifradas)', async () => {
@@ -251,7 +251,7 @@ describe('número do Bento conectou', () => {
 
   it('liga o canal e o atendimento aberto pelo prazo máximo, em nome de quem conectou', async () => {
     estado.conectores = [linhaComResponsavel({ responsavelId: 'u-pedro' })];
-    const r = await prov.aoConectarOBento('+55 18 99798-7295');
+    const r = await prov.aoConectarOBento('+55 18 99632-6160');
     expect(r.modoAbertoAte).toBeInstanceOf(Date);
     const minutos = (r.modoAbertoAte!.getTime() - Date.now()) / 60_000;
     expect(minutos).toBeGreaterThan(235);
@@ -260,11 +260,11 @@ describe('número do Bento conectou', () => {
 
   it('sem saber quem conectou, não abre o atendimento (só garante o canal ligado)', async () => {
     estado.conectores = [linhaComResponsavel()];
-    expect(await prov.aoConectarOBento('5518997987295')).toEqual({ modoAbertoAte: null });
+    expect(await prov.aoConectarOBento('5518996326160')).toEqual({ modoAbertoAte: null });
   });
 
   it('sem sessão do Bento provisionada, não faz nada', async () => {
     estado.conectores = [];
-    expect(await prov.aoConectarOBento('5518997987295')).toEqual({ modoAbertoAte: null });
+    expect(await prov.aoConectarOBento('5518996326160')).toEqual({ modoAbertoAte: null });
   });
 });

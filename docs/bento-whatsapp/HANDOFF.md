@@ -15,7 +15,7 @@ Pré-requisito (já usado pelo Inbox): `OPENWA_BASE_URL`, `OPENWA_ADMIN_API_KEY`
 1. Integrações > **Bento no WhatsApp** (conta master) > **Conectar número do Bento**.
    Cria a sessão no OpenWA, chave escopada só a ela, webhook com segredo
    próprio; tudo cifrado em `organization_connectors` (provider `bento_whatsapp`).
-2. **Mostrar QR** e escanear com o celular do número +55 18 99798-7295
+2. **Mostrar QR** e escanear com o celular do número +55 18 99632-6160
    (WhatsApp Business). Só quem está com o celular faz isto.
 3. Cada colaborador: Integrações > Bento no WhatsApp > **Vincular meu WhatsApp**,
    envia o código ao Bento, confirma o número na tela.

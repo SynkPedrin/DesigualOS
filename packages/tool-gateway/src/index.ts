@@ -43,6 +43,7 @@ export * from './media-alerts';
 export * from './media-internal-messages';
 export * from './media-internal-delivery';
 export * from './bento-channel';
+export * from './whatsapp-format';
 export * from './media-agent-tools';
 export * from './media-actions';
 export * from './media-report-schedules';

@@ -68,13 +68,13 @@ describe('Bento no WhatsApp — vínculo', () => {
   });
 
   it('gera o código, espera o WhatsApp e só vincula depois do "Sim, é meu"', async () => {
-    let me: Record<string, unknown> = { enabled: true, bot_phone: '+55 18 99798-7295', link: null, pending_code: null };
+    let me: Record<string, unknown> = { enabled: true, bot_phone: '+55 18 99632-6160', link: null, pending_code: null };
     const expira = new Date(Date.now() + 600_000).toISOString();
     apiFetchMock.mockImplementation(async (rota: string, init?: RequestInit) => {
       if (rota === '/bento-whatsapp/me') return me;
       if (rota === '/bento-whatsapp/me/link-code' && init?.method === 'POST') {
         me = { ...me, pending_code: { id: 'c1', status: 'pending', expires_at: expira, claimed_phone: null } };
-        return { id: 'c1', code: 'BENTO-AB3K-9XQP', expires_at: expira, bot_phone: '+55 18 99798-7295', wa_link: 'https://wa.me/5518997987295?text=BENTO-AB3K-9XQP' };
+        return { id: 'c1', code: 'BENTO-AB3K-9XQP', expires_at: expira, bot_phone: '+55 18 99632-6160', wa_link: 'https://wa.me/5518996326160?text=BENTO-AB3K-9XQP' };
       }
       if (rota === '/bento-whatsapp/me/link-code/c1/confirm') {
         me = { ...me, pending_code: null, link: { id: 'l1', phone: '+55 18 99111-0001', linked_at: new Date().toISOString() } };
@@ -87,7 +87,7 @@ describe('Bento no WhatsApp — vínculo', () => {
     await act(async () => botao(tela, 'Vincular meu WhatsApp').click());
     await assentar();
     expect(tela.textContent).toContain('BENTO-AB3K-9XQP');
-    expect(tela.querySelector('a[href^="https://wa.me/5518997987295?text="]')).not.toBeNull();
+    expect(tela.querySelector('a[href^="https://wa.me/5518996326160?text="]')).not.toBeNull();
     // Ainda não vinculou: só gerar o código não cria vínculo.
     expect(apiFetchMock).not.toHaveBeenCalledWith('/bento-whatsapp/me/link-code/c1/confirm', expect.anything());
 
@@ -136,7 +136,7 @@ describe('Bento no WhatsApp — vínculo', () => {
     papel.master = true;
     let provisionou = false;
     apiFetchMock.mockImplementation(async (rota: string, init?: RequestInit) => {
-      if (rota === '/bento-whatsapp/me') return { enabled: false, bot_phone: '+55 18 99798-7295', link: null, pending_code: null };
+      if (rota === '/bento-whatsapp/me') return { enabled: false, bot_phone: '+55 18 99632-6160', link: null, pending_code: null };
       if (rota === '/bento-whatsapp/admin/links') return { links: [] };
       if (rota === '/bento-whatsapp/admin/session/provision' && init?.method === 'POST') {
         provisionou = true;
@@ -145,7 +145,7 @@ describe('Bento no WhatsApp — vínculo', () => {
       if (rota === '/bento-whatsapp/admin/status')
         return {
           enabled: false, source: provisionou ? 'painel' : 'nenhuma', can_provision: true, kill_switch: false, webhook_url: null,
-          agent_hint: 'AUTO', open_mode: null, missing_config: [], bot_phone: '+55 18 99798-7295', transcription: 'none', documents: false,
+          agent_hint: 'AUTO', open_mode: null, missing_config: [], bot_phone: '+55 18 99632-6160', transcription: 'none', documents: false,
           allowed_groups: 0, session: { status: provisionou ? 'qr_ready' : 'not_configured' }, gateway: { ready: false },
           brain: { last_reply_at: null }, last_24h: { by_status: {}, latency_ms: { p50: null, p95: null, samples: 0 } },
           recent_failures: [], linked_users: 0,
@@ -205,7 +205,7 @@ describe('Bento no WhatsApp — vínculo', () => {
         return { qr_code: `data:image/png;base64,QR${qrs}`, status: 'qr_ready' };
       }
       if (rota === '/bento-whatsapp/admin/session/pairing-code' && init?.method === 'POST')
-        return { pairing_code: 'ABCD1234', phone: '+55 18 99798-7295' };
+        return { pairing_code: 'ABCD1234', phone: '+55 18 99632-6160' };
       if (rota === '/bento-whatsapp/admin/status')
         return {
           enabled: true, source: 'painel', can_provision: true, kill_switch: false, webhook_url: null, agent_hint: 'AUTO', open_mode: null,

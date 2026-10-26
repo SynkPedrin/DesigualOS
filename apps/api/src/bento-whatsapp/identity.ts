@@ -23,7 +23,7 @@ export function chatIdDoTelefone(telefone: string): string {
   return `${telefone}@c.us`;
 }
 
-/** `5518997987295` → `+55 18 99798-7295`. Para exibir; nunca para comparar. */
+/** `5518996326160` → `+55 18 99632-6160`. Para exibir; nunca para comparar. */
 export function telefoneLegivel(telefone: string): string {
   const d = telefone.replace(/\D/g, '');
   if (d.startsWith('55') && (d.length === 12 || d.length === 13)) {
@@ -35,7 +35,7 @@ export function telefoneLegivel(telefone: string): string {
   return `+${d}`;
 }
 
-/** Mascara para o painel administrativo: `+55 18 9****-7295`. */
+/** Mascara para o painel administrativo: `+55 18 9****-6160`. */
 export function telefoneMascarado(telefone: string): string {
   const legivel = telefoneLegivel(telefone);
   return legivel.replace(/(\d)(\d{3,4})(-\d{4})$/, (_m, primeiro: string, meio: string, fim: string) => `${primeiro}${'*'.repeat(meio.length)}${fim}`);

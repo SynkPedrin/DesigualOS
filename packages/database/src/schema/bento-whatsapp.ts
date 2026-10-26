@@ -41,7 +41,7 @@ export const bentoWhatsappLinks = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    /** Só dígitos, com DDI: `5518997987295`. É a chave de identidade do canal. */
+    /** Só dígitos, com DDI: `5518996326160`. É a chave de identidade do canal. */
     phone: text('phone').notNull(),
     /** O chatId que o OpenWA usa para responder (`<digits>@c.us`). */
     chatId: text('chat_id').notNull(),

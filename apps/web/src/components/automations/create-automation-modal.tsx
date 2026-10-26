@@ -18,6 +18,7 @@ export function CreateAutomationModal({ onClose }: { onClose: () => void }) {
         schedule: values.schedule,
         schedule_label: values.scheduleLabel,
         estimated_minutes_saved: values.estimatedMinutesSaved,
+        whatsapp_phone: values.whatsappPhone,
       },
       { onSuccess: onClose },
     );

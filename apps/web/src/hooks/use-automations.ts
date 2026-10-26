@@ -23,6 +23,15 @@ export function useAutomations() {
   });
 }
 
+/** O WhatsApp que a pessoa já usou (ou o do vínculo com o Bento), para pré-preencher. */
+export function useMyAutomationWhatsapp() {
+  return useQuery({
+    queryKey: ['automations', 'whatsapp-phone'],
+    queryFn: async () => (await apiFetch<{ phone: string | null }>('/automations/whatsapp-phone')).phone,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useAutomationMetrics() {
   return useQuery({
     queryKey: ['automations', 'metrics'],
@@ -65,6 +74,7 @@ export function useUpdateAutomation() {
       return apiFetch<AutomationWire>(`/automations/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
     },
     onSuccess: () => {
+      // Também refaz o número guardado ('automations', 'whatsapp-phone').
       queryClient.invalidateQueries({ queryKey: ['automations'] });
     },
   });
@@ -96,6 +106,7 @@ export function useDuplicateAutomation() {
         schedule: automation.schedule,
         schedule_label: automation.scheduleLabel,
         estimated_minutes_saved: automation.estimatedMinutesSaved,
+        whatsapp_phone: automation.whatsappPhone,
       };
       return apiFetch<AutomationWire>('/automations', { method: 'POST', body: JSON.stringify(body) });
     },
