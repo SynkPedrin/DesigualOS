@@ -1,8 +1,8 @@
 'use client';
 
+import { Prazo } from '@/components/ui/prazo';
 import { CalendarDays, ExternalLink } from 'lucide-react';
 import type { ClickUpPersonWire, ClickUpTaskWire } from '@/lib/api/contracts';
-import { cn } from '@/lib/utils';
 import { tarefaConcluida } from '@/lib/tarefa-concluida';
 
 
@@ -105,10 +105,10 @@ export function ClickUpTaskRow({ task, fallbackUrl }: { task: ClickUpTaskWire; f
           </span>
         ))}
         {due && (
-          <span className={cn('inline-flex items-center gap-1 font-mono text-[10px]', due.late ? 'text-erro' : 'text-nevoa')}>
+          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-nevoa">
             <CalendarDays size={10} />
             {due.text}
-            {due.late && ' · atrasada'}
+            <Prazo prazo={task.due_date} feito={tarefaConcluida(task)} className="font-sans" />
           </span>
         )}
       </div>

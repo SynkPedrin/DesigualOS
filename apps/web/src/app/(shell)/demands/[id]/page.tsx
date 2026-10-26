@@ -1,5 +1,6 @@
 'use client';
 
+import { AguardandoAprovacao, Prazo } from '@/components/ui/prazo';
 import { use, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check, ExternalLink, FileArchive, FileText, Image as ImageIcon, Loader2, Paperclip, Send, Sparkles, Trash2 } from 'lucide-react';
@@ -107,6 +108,7 @@ export default function DemandDetailPage({ params }: { params: Promise<{ id: str
         <Info label="Origem" value={SOURCE_LABEL[demand.source] ?? demand.source} />
         <Info label="Pedida" value={formatRelativeTime(demand.requestedAt)} />
         {demand.dueDate && <Info label="Prazo" value={new Date(demand.dueDate).toLocaleDateString('pt-BR')} />}
+        {demand.dueDate && demand.status !== 'done' && demand.status !== 'cancelled' && <Prazo prazo={demand.dueDate} className="self-center" />}
         {demand.clickupTaskUrl && (
           <a
             href={demand.clickupTaskUrl}
@@ -589,7 +591,7 @@ function ApprovalSection({ briefId, clientId }: { briefId: string; clientId: str
         </button>
       ) : approval.status === 'pending' ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-nevoa">Aguardando aprovação.</span>
+          <AguardandoAprovacao desde={approval.created_at} />
           {(['approved', 'changes_requested', 'rejected'] as const).map((status) => (
             <button
               key={status}

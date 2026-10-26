@@ -30,6 +30,8 @@ import { TETO_DE_PAGINA, comoPiso, veioCheia } from '@/lib/teto-de-pagina';
 import { cn } from '@/lib/utils';
 import { tarefaConcluida } from '@/lib/tarefa-concluida';
 import { EquipeNoHoje } from '@/components/gestao/equipe-no-hoje';
+import { AguardandoAprovacao, faixaDaLinha, Prazo } from '@/components/ui/prazo';
+import { urgenciaDoPrazo } from '@/lib/prazo';
 import { useIsMaster } from '@/hooks/use-is-master';
 
 /** 409 de "Minhas tarefas" = e-mail do ClickUp ainda não vinculado, estado
@@ -132,6 +134,11 @@ interface ItemDePrioridade {
   cliente: string;
   badge: { label: string; tom: Tom };
   quando: string;
+  /**
+   * O prazo de verdade, quando o item tem um (tarefa, demanda). Com ele a coluna Prazo vira o selo de bater o olho
+   * (HOJE, ATRASADA · 3 DIAS, Amanhã); sem ele (conversa, reunião) fica o `quando` em texto.
+   */
+  prazo?: string | number | null;
   href: string;
   /** `true` manda a linha pro recorte "Atrasadas". */
   atrasada: boolean;
@@ -272,6 +279,7 @@ export default function TodayPage() {
       cliente: d.clientName ?? 'Cliente',
       badge: { label: 'Nova quinzena', tom: 'neutral' },
       quando: formatRelativeTime(d.requestedAt),
+      prazo: d.dueDate,
       href: `/demands/${d.id}`,
       atrasada: false,
       venceHoje: d.dueDate !== null && new Date(d.dueDate).getTime() <= fimHoje,
@@ -290,6 +298,7 @@ export default function TodayPage() {
       cliente: d.clientName ?? 'Cliente',
       badge: { label: 'Vence hoje', tom: 'urgent' },
       quando: formatRelativeTime(d.dueDate!),
+      prazo: d.dueDate,
       href: `/demands/${d.id}`,
       atrasada: new Date(d.dueDate!).getTime() < Date.now(),
       venceHoje: true,
@@ -306,9 +315,28 @@ export default function TodayPage() {
       cliente: t.client?.name ?? 'Sem cliente',
       badge: { label: 'Atrasada', tom: 'urgent' },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
+      prazo: t.due_date,
       href: t.url ?? '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
+      bloqueada: pareceBloqueada(t.status),
+      daEquipe: false,
+      externo: Boolean(t.url),
+    });
+  }
+  // Tarefa que vence HOJE e ainda não passou da hora: antes só a atrasada entrava, e a aba "Hoje" deixava de fora
+  // justamente o que é para hoje.
+  for (const t of tarefasAbertas.filter((t) => t.due_date !== null && t.due_date >= Date.now() && urgenciaDoPrazo(t.due_date) === 'hoje')) {
+    prioridades.push({
+      id: `tarefa-hoje-${t.id}`,
+      titulo: t.name,
+      cliente: t.client?.name ?? 'Sem cliente',
+      badge: { label: 'Vence hoje', tom: 'warning' },
+      quando: formatClockTime(new Date(t.due_date!).toISOString()),
+      prazo: t.due_date,
+      href: t.url ?? '/tasks',
+      atrasada: false,
+      venceHoje: true,
       bloqueada: pareceBloqueada(t.status),
       daEquipe: false,
       externo: Boolean(t.url),
@@ -341,6 +369,7 @@ export default function TodayPage() {
       cliente: t.client?.name ?? 'Sem cliente',
       badge: { label: 'Atrasada', tom: 'urgent' as Tom },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
+      prazo: t.due_date,
       href: t.url ?? '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
@@ -752,7 +781,7 @@ function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
         <tbody className="divide-y divide-grafite-elevado">
           {itens.map((item) => (
             <tr key={item.id} className="group transition-colors hover:bg-grafite-elevado/40">
-              <td className="min-w-0 px-2 py-3 align-middle">
+              <td className={cn('min-w-0 px-2 py-3 align-middle', faixaDaLinha(item.prazo !== undefined ? urgenciaDoPrazo(item.prazo) : item.atrasada ? 'atrasado' : null))}>
                 <LinhaDeItem item={item}>
                   <span className={cn('size-2 shrink-0 rounded-full', PONTO_CLASS[item.badge.tom])} />
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-branco-cru">{item.titulo}</span>
@@ -762,7 +791,7 @@ function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-4 md:hidden">
                   <span className="text-xs text-nevoa">{item.cliente}</span>
                   <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
-                  {item.quando && <span className="text-xs text-nevoa">{item.quando}</span>}
+                  {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : item.quando && <span className="text-xs text-nevoa">{item.quando}</span>}
                 </div>
               </td>
               <td className="hidden px-2 py-3 align-middle md:table-cell">
@@ -775,7 +804,7 @@ function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
                 <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
               </td>
               <td className="hidden whitespace-nowrap px-2 py-3 text-right align-middle text-sm md:table-cell">
-                <span className={item.atrasada ? 'text-erro' : 'text-nevoa'}>{item.quando}</span>
+                {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : <span className={item.atrasada ? 'text-erro' : 'text-nevoa'}>{item.quando}</span>}
               </td>
             </tr>
           ))}
@@ -1192,7 +1221,7 @@ function AprovacoesPendentesPanel({ aprovacoes, clientes }: { aprovacoes: SecaoA
                 <p className="truncate text-sm text-branco-cru">{RESOURCE_TYPE_LABEL[a.resource_type] ?? a.resource_type}</p>
                 <p className="truncate text-xs text-nevoa">{nomeDoCliente(a.client_id)}{a.version ? ` · ${a.version}` : ''}</p>
               </div>
-              <span className="shrink-0 text-[11px] text-nevoa">{formatRelativeTime(a.created_at)}</span>
+              <AguardandoAprovacao desde={a.created_at} rotulo="Aprovar" className="shrink-0" />
             </Link>
           </li>
         ))}

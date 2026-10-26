@@ -1,5 +1,7 @@
 'use client';
 
+import { urgenciaDoPrazo } from '@/lib/prazo';
+import { faixaDaLinha, Prazo } from '@/components/ui/prazo';
 import { CalendarDays, UserRound } from 'lucide-react';
 import type { AgencyTaskWire } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
@@ -24,7 +26,7 @@ function TaskKanbanCard({ task, showClient }: { task: AgencyTaskWire; showClient
       href={task.url ?? '#'}
       target="_blank"
       rel="noreferrer"
-      className="flex flex-col gap-2 rounded-lg border border-grafite-elevado bg-carbono p-3 transition-colors hover:border-roxo-eletrico/60"
+      className={cn('flex flex-col gap-2 rounded-lg border border-grafite-elevado bg-carbono p-3 transition-colors hover:border-roxo-eletrico/60', !due?.concluida && faixaDaLinha(urgenciaDoPrazo(task.due_date)))}
     >
       <p className="text-[13px] font-medium leading-snug text-branco-cru">{task.name}</p>
       {showClient && task.client && <p className="text-[11px] text-nevoa">{task.client.name}</p>}
@@ -35,9 +37,10 @@ function TaskKanbanCard({ task, showClient }: { task: AgencyTaskWire; showClient
         </span>
       </div>
       {due && (
-        <span className={cn('flex items-center gap-1 text-[11px]', due.late ? 'font-medium text-erro' : due.concluida ? 'text-sucesso' : 'text-nevoa')}>
+        <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-nevoa">
           <CalendarDays size={12} />
-          {due.concluida ? `concluída · ${due.text}` : due.late ? `atrasada desde ${due.text}` : due.text}
+          {due.text}
+          <Prazo prazo={task.due_date} feito={due.concluida} />
         </span>
       )}
     </a>

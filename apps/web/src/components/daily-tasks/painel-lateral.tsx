@@ -1,5 +1,6 @@
 'use client';
 
+import { Prazo } from '@/components/ui/prazo';
 import Link from 'next/link';
 import { AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, Circle, Clock, Users } from 'lucide-react';
 import { useUpdateTask } from '@/hooks/use-work';
@@ -86,7 +87,7 @@ export function PainelLateral({ overview, aoAbrir, aoFiltrar }: { overview: Work
                 <li key={e.id}><button type="button" onClick={() => aoAbrir(e.id)} className="flex w-full items-center gap-3 rounded-lg px-1.5 py-1.5 text-left hover:bg-grafite-elevado/60">
                   <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-grafite-elevado"><LogoDoCliente nome={nome} className="!size-7" /></span>
                   <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-branco-cru">{e.title}</span><span className="block truncate text-xs text-nevoa">{nome}</span></span>
-                  <span className="shrink-0 text-right text-xs"><span className="block text-branco-cru">{p?.data.slice(0, 5)}</span><span className="block text-nevoa">{p?.texto}</span></span>
+                  <span className="shrink-0 text-right text-xs"><span className="block text-branco-cru">{p?.data.slice(0, 5)}</span><Prazo prazo={e.dueAt} className="mt-0.5" /></span>
                 </button></li>
               );
             })}

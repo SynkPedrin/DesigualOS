@@ -1,5 +1,6 @@
 'use client';
 
+import { Prazo } from '@/components/ui/prazo';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AtSign, Bell, Inbox, ListChecks, MessagesSquare, UserCheck } from 'lucide-react';
@@ -80,7 +81,7 @@ export default function CaixaDeEntradaPage() {
                     </span>
                     {a.priority > 0 && <EmblemaDePrioridade valor={a.priority} />}
                     <span className="rounded bg-grafite-elevado px-2 py-0.5 text-[11px] font-semibold uppercase text-branco-cru">{a.statusName}</span>
-                    <span className={cn('w-24 shrink-0 text-right text-xs', prazo?.cor)}>{prazo ? <>{prazo.data}<br />{prazo.texto}</> : <span className="text-nevoa">sem prazo</span>}</span>
+                    <span className="flex w-28 shrink-0 flex-col items-end gap-0.5 text-right text-xs">{prazo ? <><span className="text-nevoa">{prazo.data}</span><Prazo prazo={a.dueAt} /></> : <span className="text-nevoa">sem prazo</span>}</span>
                   </button>
                 </li>
               );

@@ -1,5 +1,6 @@
 'use client';
 
+import { Prazo } from '@/components/ui/prazo';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GitFork, Plus } from 'lucide-react';
 import { useSpaceStatuses, useWorkTasks, type TaskPatch, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
@@ -109,7 +110,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
         {tem('responsavel') && <div className="flex items-center"><AssigneePicker tarefa={t} membros={ctx.membros} onChange={(ids) => ctx.actions.atualizar(t, { assigneeIds: ids })} /></div>}
         {tem('prazo') && <div className="flex flex-col justify-center leading-tight">
           <DuePicker tarefa={t} onChange={(iso) => ctx.actions.atualizar(t, { dueAt: iso })} />
-          {prazo && <span className={cn('px-1 text-[11px]', prazo.cor)}>{prazo.texto}</span>}
+          {prazo && t.dueAt && <Prazo prazo={t.dueAt} feito={feita} className="mt-0.5 self-start" />}
         </div>}
         {tem('prioridade') && <div className="flex items-center"><PriorityPicker tarefa={t} badge onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>}
         {tem('status') && <div className="flex items-center"><StatusPicker tarefa={t} statuses={statuses} onChange={(statusId) => ctx.actions.atualizar(t, { statusId })} /></div>}

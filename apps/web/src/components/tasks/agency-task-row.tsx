@@ -1,5 +1,7 @@
 'use client';
 
+import { urgenciaDoPrazo } from '@/lib/prazo';
+import { faixaDaLinha, Prazo } from '@/components/ui/prazo';
 import { CalendarDays, ExternalLink, UserRound } from 'lucide-react';
 import type { AgencyTaskWire } from '@/lib/api/contracts';
 import { CLASSE_DE_PRIORIDADE, classificarPrioridade } from '@/lib/prioridade-de-tarefa';
@@ -39,12 +41,12 @@ export function AgencyTaskRow({ task, showClient }: { task: AgencyTaskWire; show
       href={task.url ?? '#'}
       target="_blank"
       rel="noreferrer"
-      className="group flex flex-col gap-2 rounded-lg border border-transparent px-3 py-3 transition-colors hover:border-grafite-elevado hover:bg-carbono"
+      className={cn('group flex flex-col gap-2 rounded-lg border border-transparent px-3 py-3 transition-colors hover:border-grafite-elevado hover:bg-carbono', !due?.concluida && faixaDaLinha(urgenciaDoPrazo(task.due_date)))}
     >
       <div className="flex items-start gap-3">
         <span
           aria-hidden
-          className={cn('mt-1.5 size-2 shrink-0 rounded-full', due?.late ? 'bg-erro' : 'bg-nevoa/50')}
+          className={cn('mt-1.5 size-2 shrink-0 rounded-full', due?.late ? 'bg-erro' : !due?.concluida && urgenciaDoPrazo(task.due_date) === 'hoje' ? 'bg-sinal' : 'bg-nevoa/50')}
         />
         {/* 15px e peso normal: é o texto que a pessoa realmente lê. */}
         <span className="min-w-0 flex-1 text-[15px] font-normal leading-snug text-branco-cru">{task.name}</span>
@@ -66,14 +68,10 @@ export function AgencyTaskRow({ task, showClient }: { task: AgencyTaskWire; show
         )}
 
         {due && (
-          <span
-            className={cn(
-              'inline-flex items-center gap-1 text-[13px]',
-              due.late ? 'font-medium text-erro' : due.concluida ? 'text-sucesso' : 'text-nevoa',
-            )}
-          >
+          <span className="inline-flex items-center gap-1.5 text-[13px] text-nevoa">
             <CalendarDays size={13} />
-            {due.concluida ? `concluída · prazo ${due.text}` : due.late ? `atrasada desde ${due.text}` : `vence ${due.text}`}
+            {due.text}
+            <Prazo prazo={task.due_date} feito={due.concluida} />
           </span>
         )}
       </div>

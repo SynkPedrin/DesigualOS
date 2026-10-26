@@ -1,5 +1,6 @@
 'use client';
 
+import { AguardandoAprovacao } from '@/components/ui/prazo';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2, Loader2, Megaphone, ShieldAlert, Trash2, Wallet } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -138,8 +139,9 @@ function BusinessApprovalCard({ approval, clientName }: { approval: ApprovalRequ
           <span className="text-nevoa">·</span>
           <span className="text-sm text-nevoa">{clientName}{approval.version ? ` · ${approval.version}` : ''}</span>
         </div>
-        <span className="shrink-0 font-mono text-[11px] text-nevoa" title={new Date(approval.created_at).toLocaleString('pt-BR')}>
-          {formatRelativeTime(approval.created_at)}
+        <span className="flex shrink-0 items-center gap-2" title={new Date(approval.created_at).toLocaleString('pt-BR')}>
+          <AguardandoAprovacao desde={approval.created_at} />
+          <span className="font-mono text-[11px] text-nevoa">{formatRelativeTime(approval.created_at)}</span>
         </span>
       </div>
       <div className="flex justify-end gap-2">
