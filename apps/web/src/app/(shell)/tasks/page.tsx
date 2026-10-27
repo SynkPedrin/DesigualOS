@@ -10,6 +10,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { BentoBriefing, type InsightDoBento } from '@/components/bento/painel-de-insights';
 import { AgencyTaskRow } from '@/components/tasks/agency-task-row';
+import { BotaoNovaTarefa } from '@/components/tasks/nova-tarefa';
 import { TaskKanbanBoard } from '@/components/tasks/task-kanban-board';
 import { useAgencyTasks, useMyTasks } from '@/hooks/use-tasks';
 import { useMe } from '@/hooks/use-me';
@@ -240,6 +241,7 @@ export default function TasksPage() {
         eyebrow="ClickUp"
         title="Tarefas"
         description="Tudo que está no ClickUp da agência, ou só o que está atribuído a você."
+        actions={<BotaoNovaTarefa />}
       />
 
       {!notLinkedYet && (

@@ -20,6 +20,7 @@ import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard } from '@/components/ui/stat-card';
 import { MidiaHojePanel } from '@/components/media/hub/midia-hoje';
+import { BotaoNovaTarefa } from '@/components/tasks/nova-tarefa';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { BentoBriefing, type InsightDoBento } from '@/components/bento/painel-de-insights';
 import { useCalendarEvents } from '@/hooks/use-calendar';
@@ -499,6 +500,7 @@ export default function TodayPage() {
           eyebrow="Hoje"
           title={`${saudacao(agora.getHours())}, ${me ? primeiroNome(me.name) : '...'}.`}
           description={`${new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())} · veja o que precisa da sua atenção hoje.`}
+          actions={<BotaoNovaTarefa />}
         />
       </div>
 
