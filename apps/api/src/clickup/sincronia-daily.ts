@@ -1,6 +1,6 @@
 import { createLogger } from '@desigual-os/logging';
 import { getRedisConnection, publishWsEvent } from '@desigual-os/orchestrator';
-import { escritaNoClickUpLigada } from './escrita-daily';
+import { comPrazo, escritaNoClickUpLigada } from './escrita-daily';
 import { db, schema } from '@desigual-os/database';
 import { and, eq, isNull } from 'drizzle-orm';
 import { ClickUpHttpError, lerClickUpCru, type ClickUpConfig } from '@desigual-os/tool-gateway';
@@ -205,6 +205,17 @@ export function avisarDailyMudou(organizationId: string): void {
 // ── fila: uma sincronia por vez, e eventos da mesma tarefa em rajada viram uma só ─────────────────────────────────
 
 const ESPERA_DA_RAJADA_MS = 1_500;
+
+/**
+ * Prazo de cada passo da fila. A fila é uma corrente de promessas: um passo que nunca termina (consulta pendurada numa
+ * conexão que o pooler derrubou sem avisar) trancava TODA a entrada, webhook e varredura, até a API reiniciar, sem
+ * erro nem log. Medido em produção em 28/10/2026: a entrada parou às 17:29 com a API saudável. Estourado o prazo, o
+ * passo vira erro registrado e a fila segue; o que não foi aplicado volta na próxima varredura, porque o marco não
+ * avança sobre ele.
+ */
+const PRAZO_DA_TAREFA_MS = Number(process.env.DAILY_SYNC_PRAZO_TAREFA_MS) || 120_000;
+const PRAZO_DA_VARREDURA_MS = Number(process.env.DAILY_SYNC_PRAZO_VARREDURA_MS) || 300_000;
+
 const pendentes = new Map<string, { timer: ReturnType<typeof setTimeout>; apagada: boolean }>();
 let fila: Promise<unknown> = Promise.resolve();
 const resultadosRecentes: Array<{ em: number; taskId: string; acao: string; motivo?: string; erro?: string }> = [];
@@ -232,7 +243,7 @@ export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes:
   const timer = setTimeout(() => {
     pendentes.delete(taskId);
     fila = fila
-      .then(() => sincronizarTarefaNoDaily(taskId, { apagada: apagadaFinal }))
+      .then(() => comPrazo(sincronizarTarefaNoDaily(taskId, { apagada: apagadaFinal }), PRAZO_DA_TAREFA_MS, `a tarefa ${taskId}`))
       .then((r) => { registrar(r); if (r.acao === 'ignorada') logger.debug({ ...r }, 'Daily sync: ignorada'); })
       .catch((error: unknown) => {
         const tentativa = opcoes.tentativa ?? 0;
@@ -289,7 +300,9 @@ export async function varrerAlteracoesDoClickUp(): Promise<{ lidas: number; resu
   let novoMarco = marco;
   for (const t of alteradas) {
     try {
-      resultados.push(await sincronizarTarefaNoDaily(t.id));
+      const r = await comPrazo(sincronizarTarefaNoDaily(t.id), PRAZO_DA_TAREFA_MS, `a tarefa ${t.id}`);
+      resultados.push(r);
+      registrar(r); // o que a varredura ignora também aparece no diagnóstico, não só o que veio por webhook
       novoMarco = Math.max(novoMarco, Number(t.date_updated ?? 0));
     } catch (error) {
       logger.warn({ error, taskId: t.id }, 'Daily sync: varredura não conseguiu uma tarefa; tenta de novo na próxima passada');
@@ -310,7 +323,7 @@ export function iniciarVarreduraDoDaily(): void {
     if (rodando) return;
     rodando = true;
     fila = fila
-      .then(() => varrerAlteracoesDoClickUp())
+      .then(() => comPrazo(varrerAlteracoesDoClickUp(), PRAZO_DA_VARREDURA_MS, 'a varredura'))
       .then((v) => { if (v.lidas > 0) logger.info({ lidas: v.lidas }, 'Daily sync: varredura aplicou alterações'); })
       .catch((error: unknown) => logger.warn({ error }, 'Daily sync: varredura falhou'))
       .finally(() => { rodando = false; });

@@ -142,3 +142,74 @@ export async function assertTaskInScope(
     );
   }
 }
+
+// ── Portão de produção: quem pode atravessar a cerca ─────────────────────────────
+//
+// CÓPIA da regra de `apps/worker/src/processors/bento-action-guard.ts`, para o
+// Daily Tasks (API) decidir igual ao Bento quando a edição de uma pessoa sai
+// para o ClickUp. O guard ainda tem a sua própria porque 15 arquivos de teste do
+// worker simulam este pacote inteiro e quebrariam com a troca. Mudou a regra lá,
+// mude aqui (e vice-versa).
+
+/**
+ * ALLOWLIST DE EMERGÊNCIA — nariz de cera opcional, não é mais o portão
+ * principal de produção (esse virou capacidade/papel, já checado antes de
+ * chegar aqui via `seniorToolContext.permissions`). Continua existindo só
+ * pra operação poder estreitar o raio na mão sem deploy de código, do jeito
+ * que fez durante a homologação:
+ *
+ *   BENTO_WRITE_ALLOWLIST=tammy@institutoalmada.org
+ *
+ * Vazio/unset (padrão de produção) = a allowlist não filtra ninguém; quem
+ * chegou até aqui já provou capacidade (`clickup:write`) e organização.
+ */
+export function bentoWriteAllowlist(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  const raw = env.BENTO_WRITE_ALLOWLIST?.trim();
+  if (!raw) return new Set();
+  return new Set(raw.split(',').map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0));
+}
+
+/**
+ * IDENTIDADE DO BOT DE QA — não é papel nem organização, é uma conta fixa de
+ * teste automatizado. O raio dela é sempre o cliente de QA, nunca a carteira
+ * real, e essa restrição é estrutural: não depende da allowlist de
+ * emergência estar configurada ou não.
+ */
+export function ehQaBot(email: string | null, env: NodeJS.ProcessEnv = process.env): boolean {
+  const configurado = (env.BENTO_QA_BOT_EMAIL ?? 'qa-bot@institutoalmada.org').trim().toLowerCase();
+  return email !== null && email.toLowerCase() === configurado;
+}
+
+function ehClienteDeQa(clientName: string | null | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  const configurado = (env.BENTO_QA_CLIENT_NAME ?? 'Cliente Teste 7').trim().toLowerCase();
+  return typeof clientName === 'string' && clientName.trim().toLowerCase() === configurado;
+}
+
+/**
+ * PORTÃO DE PRODUÇÃO — substitui o allowlist fixo de homologação por
+ * papel/capacidade real (achado no aceite: `super@institutoalmada.org`
+ * tinha `clickup:write` pela RBAC e mesmo assim era recusado só por não
+ * estar no allowlist por e-mail).
+ *
+ * Nesta altura da chamada, `seniorToolContext.permissions` já garantiu
+ * capacidade (`clickup:write`, via papel master/colaborador) e
+ * `loadSeniorRuntimeContext` já garantiu organização (o `organizationId`
+ * resolvido bateu com uma membership do usuário) — cross-tenant já morreu
+ * antes daqui. O que falta checar aqui é só:
+ *
+ *   1. allowlist de emergência, SE estiver configurada (operação estreitando
+ *      o raio na mão);
+ *   2. bot de QA só escreve no cliente de QA, nunca na carteira real —
+ *      mesmo tendo a mesma capacidade RBAC que qualquer colaborador.
+ */
+export function podeEscreverEmProducao(
+  params: { userEmail: string | null; clientName?: string | null | undefined },
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  const lista = bentoWriteAllowlist(env);
+  if (lista.size > 0 && (params.userEmail === null || !lista.has(params.userEmail.toLowerCase()))) {
+    return false;
+  }
+  if (ehQaBot(params.userEmail, env)) return ehClienteDeQa(params.clientName, env);
+  return true;
+}

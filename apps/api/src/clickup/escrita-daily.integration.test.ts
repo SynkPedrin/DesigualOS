@@ -10,14 +10,14 @@ const url = process.env.DATABASE_URL ?? '';
 const enabled = /^postgres(ql)?:\/\/[^@]*@127\.0\.0\.1:/.test(url);
 
 const cu = vi.hoisted(() => ({
-  chamadas: [] as Array<{ fn: string; args: unknown[] }>,
+  chamadas: [] as Array<{ fn: string; args: unknown[]; config?: { writeScope?: { authorizedForProduction: boolean } } }>,
   falhar: null as null | (() => Error),
   membros: [] as Array<{ id: number; email: string; username: string }>,
 }));
 vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
   const real = await importOriginal<typeof import('@desigual-os/tool-gateway')>();
   const registrar = (fn: string, retorno?: unknown) => async (...args: unknown[]) => {
-    cu.chamadas.push({ fn, args: args.slice(1) });
+    cu.chamadas.push({ fn, args: args.slice(1), config: args[0] as never });
     if (cu.falhar) throw cu.falhar();
     return retorno;
   };
@@ -132,6 +132,40 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     await M.empurrarEventosDaEmpresa(org);
     expect(feitas('updateTask').map((c) => c.args[1])).toEqual([{ removeAssignees: [11] }]);
   });
+
+  it('o que veio do ClickUp (autor sistema) não volta para lá: sem eco, sem laço entre os dois lados', async () => {
+    await E.updateTask({ ...ctx(), actorKind: 'system' }, tarefa, { title: 'Título que veio do ClickUp', statusId: statusInicial });
+    await esperar();
+    const r = await M.empurrarEventosDaEmpresa(org);
+    expect(r.empurrados).toBe(0);
+    expect(cu.chamadas).toEqual([]);
+  });
+
+  it('cerca de teste ligada (como em produção): a edição de uma PESSOA atravessa; bot de QA e agente continuam cercados', async () => {
+    process.env.CLICKUP_TEST_LIST_ID = 'CU-LISTA-DE-TESTE';
+    process.env.BENTO_QA_BOT_EMAIL = `caio-${colega}@ed.invalid`; // o Caio faz o papel da conta de QA
+    const valvula = async () => {
+      await esperar();
+      cu.chamadas.length = 0;
+      await M.empurrarEventosDaEmpresa(org);
+      return feitas('updateTask').map((c) => c.config?.writeScope?.authorizedForProduction ?? false);
+    };
+    try {
+      await E.updateTask(ctx(), tarefa, { title: 'Editada por gente' });
+      expect(await valvula()).toEqual([true]);
+      await E.updateTask({ organizationId: org, userId: colega }, tarefa, { title: 'Editada pelo bot de QA' });
+      expect(await valvula()).toEqual([false]);
+      await E.updateTask({ ...ctx(), actorKind: 'agent' }, tarefa, { title: 'Editada pelo agente' });
+      expect(await valvula()).toEqual([false]);
+      process.env.BENTO_WRITE_ALLOWLIST = 'outra-pessoa@ed.invalid'; // allowlist de emergência estreita até a pessoa
+      await E.updateTask(ctx(), tarefa, { title: 'Fora da allowlist' });
+      expect(await valvula()).toEqual([false]);
+    } finally {
+      delete process.env.CLICKUP_TEST_LIST_ID;
+      delete process.env.BENTO_QA_BOT_EMAIL;
+      delete process.env.BENTO_WRITE_ALLOWLIST;
+    }
+  }, 15_000);
 
   it('etiquetas: entra e sai só o que mudou', async () => {
     await E.updateTask(ctx(), tarefa, { tags: ['social', 'urgente'] });

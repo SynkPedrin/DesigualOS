@@ -4,6 +4,7 @@ import {
   createTask,
   createTaskComment,
   getTeamMembers,
+  podeEscreverEmProducao,
   removeTaskTag,
   updateTask,
   WriteScopeError,
@@ -40,8 +41,9 @@ const logger = createLogger({ service: 'daily-sync-clickup-saida' });
  * COMO: lê a trilha `work_activity_events` (que registra TODA mudança, dentro da transação dela) a partir de um
  * cursor durável por empresa, e para cada evento empurra o valor de AGORA do que mudou. Os mesmos freios de sempre
  * valem para tudo que sai daqui, porque as funções de escrita do ClickUp os aplicam por dentro: o interruptor
- * `BENTO_WRITE_ENABLED=false` e a cerca por lista de teste (`CLICKUP_WRITE_SCOPE_LIST_ID`). Esta peça NÃO pede
- * `authorizedForProduction`: com a cerca ligada, ela só escreve na lista de teste.
+ * `BENTO_WRITE_ENABLED=false` e a cerca por lista de teste (`CLICKUP_WRITE_SCOPE_LIST_ID`/`CLICKUP_TEST_LIST_ID`).
+ * A cerca é a trava de homologação do Bento, e em produção ela está ligada: só a edição de uma PESSOA a atravessa
+ * (ver `configDoEvento`). Agente e automação continuam escrevendo só na lista de teste.
  *
  * O QUE VAI: criar tarefa, título, descrição, status, prioridade, prazo, início, estimativa, etiquetas,
  * responsáveis e comentários novos. O QUE NÃO VAI, de propósito: apagar, arquivar e mover (nada destrutivo sai
@@ -81,6 +83,17 @@ export function falhaPassageira(error: unknown): boolean {
   return error instanceof TypeError; // fetch lança TypeError quando a rede cai
 }
 
+export class SincroniaTravada extends Error {}
+/** Corre `passo` com prazo: estourado, rejeita com `SincroniaTravada` (o passo pendurado fica para trás, a fila segue). */
+export function comPrazo<T>(passo: Promise<T>, ms: number, oQue: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const estouro = new Promise<never>((_, rejeitar) => {
+    timer = setTimeout(() => rejeitar(new SincroniaTravada(`${oQue} passou de ${Math.round(ms / 1000)} s sem terminar`)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([passo, estouro]).finally(() => clearTimeout(timer));
+}
+
 // ── membros do ClickUp (para casar responsável por e-mail) ───────────────────────────────────────────────────────
 
 let membrosEmCache: { em: number; membros: ClickUpMember[] } | null = null;
@@ -107,6 +120,19 @@ async function idsNoClickUp(config: ClickUpConfig, userIds: string[]): Promise<n
     else logger.debug({ userId: id }, 'Escrita Daily→ClickUp: responsável sem par no ClickUp, não enviado');
   }
   return ids;
+}
+
+/**
+ * A edição de uma pessoa no Daily é justamente o que esta sincronia existe para levar ao ClickUp; com a cerca ligada,
+ * ela era recusada como "fora do escopo de teste" e se perdia (medido em produção em 28/10/2026). Abre a mesma válvula
+ * das escritas humanas do Bento, pelo mesmo portão (`podeEscreverEmProducao`): allowlist de emergência, se houver, e o
+ * bot de QA nunca. Sem cliente de QA aqui, o bot fica sempre cercado. O interruptor `BENTO_WRITE_ENABLED` vale antes.
+ */
+async function configDoEvento(config: ClickUpConfig, e: EventoDeSaida): Promise<ClickUpConfig> {
+  if (e.actorKind !== 'user' || !e.actorId) return config;
+  const autor = (await usuariosParaSaida([e.actorId])).get(e.actorId);
+  if (!autor || !podeEscreverEmProducao({ userEmail: autor.email, clientName: null })) return config;
+  return { ...config, writeScope: { authorizedForProduction: true } };
 }
 
 // ── tradução do estado do Daily para o formato do ClickUp ────────────────────────────────────────────────────────
@@ -254,7 +280,7 @@ export async function empurrarEventosDaEmpresa(organizationId: string, lote = 10
   let ultimoResolvido: EventoDeSaida | null = null;
   for (const e of eventos) {
     try {
-      const efeito = await aplicarEvento(config, organizationId, e, jaFeito);
+      const efeito = await aplicarEvento(await configDoEvento(config, e), organizationId, e, jaFeito);
       if (efeito === 'empurrado') { r.empurrados++; registrar({ organizationId, acao: e.action, ok: true }); } else r.ignorados++;
     } catch (error) {
       const passageira = falhaPassageira(error);
@@ -274,6 +300,7 @@ export async function empurrarEventosDaEmpresa(organizationId: string, lote = 10
   return r;
 }
 
+const PRAZO_DO_CICLO_MS = Number(process.env.DAILY_SYNC_PRAZO_TAREFA_MS) || 120_000;
 let escoadorLigado = false;
 /** Liga o escoador (a cada 5 s) se a escrita estiver ligada. Idempotente; não roda em teste. */
 export function iniciarEscoadorDoDaily(): void {
@@ -286,7 +313,8 @@ export function iniciarEscoadorDoDaily(): void {
     void (async () => {
       try {
         for (const org of await organizacoesComClickUp()) {
-          const r = await empurrarEventosDaEmpresa(org);
+          // Com prazo: um ciclo pendurado deixaria `rodando` preso em true e a saída parada para sempre.
+          const r = await comPrazo(empurrarEventosDaEmpresa(org), PRAZO_DO_CICLO_MS, 'o ciclo da escrita');
           if (r.empurrados || r.falhas) logger.info({ org, ...r }, 'Escrita Daily→ClickUp: ciclo');
         }
       } catch (error) {

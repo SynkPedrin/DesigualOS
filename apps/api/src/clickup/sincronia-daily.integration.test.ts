@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 const url = process.env.DATABASE_URL ?? '';
 const enabled = /^postgres(ql)?:\/\/[^@]*@127\.0\.0\.1:/.test(url);
 
-const clickup = vi.hoisted(() => ({ respostas: new Map<string, unknown>(), chamadas: [] as string[] }));
+const clickup = vi.hoisted(() => ({ respostas: new Map<string, unknown>(), chamadas: [] as string[], pendurar: new Set<string>() }));
 vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
   const real = await importOriginal<typeof import('@desigual-os/tool-gateway')>();
   return {
@@ -16,6 +16,7 @@ vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
     lerClickUpCru: async (_config: unknown, caminho: string) => {
       clickup.chamadas.push(caminho);
       const chave = caminho.split('?')[0]!;
+      if (clickup.pendurar.has(chave)) return new Promise(() => {}); // nunca responde: a consulta pendurada de produção
       if (!clickup.respostas.has(chave)) throw new real.ClickUpHttpError(404, chave, 'not found');
       return clickup.respostas.get(chave);
     },
@@ -59,6 +60,7 @@ describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () =
   beforeAll(async () => {
     process.env.CLICKUP_API_KEY = 'chave-de-teste';
     process.env.CLICKUP_TEAM_ID = 'TEAM';
+    process.env.DAILY_SYNC_PRAZO_TAREFA_MS = '3000'; // lido ao carregar o módulo; o padrão de produção é 2 min
     dbm = await import('@desigual-os/database');
     M = await import('./sincronia-daily');
     const { db, schema } = dbm;
@@ -188,6 +190,22 @@ describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () =
       expect((await daily()).find((x) => x.title === 'Arte do dia das crianças')!.archivedAt).not.toBeNull();
     } finally {
       delete process.env.DAILY_SYNC_CLICKUP;
+    }
+  }, 20_000);
+
+  it('uma leitura que nunca responde não tranca a fila: estoura o prazo, vira erro no diagnóstico e a próxima tarefa entra', async () => {
+    servir(tarefa({ id: 'T9', name: 'Depois da travada' }), []);
+    clickup.pendurar.add('/task/T-PRESA');
+    process.env.DAILY_SYNC_CLICKUP = 'on';
+    try {
+      M.agendarSincroniaDaTarefa('T-PRESA', 'taskUpdated');
+      M.agendarSincroniaDaTarefa('T9', 'taskUpdated');
+      await new Promise((r) => setTimeout(r, 8000));
+      expect((await daily()).some((x) => x.title === 'Depois da travada')).toBe(true);
+      expect(M.ultimasSincronias().find((r) => r.taskId === 'T-PRESA')).toMatchObject({ acao: 'erro' });
+    } finally {
+      delete process.env.DAILY_SYNC_CLICKUP;
+      clickup.pendurar.clear();
     }
   }, 20_000);
 
