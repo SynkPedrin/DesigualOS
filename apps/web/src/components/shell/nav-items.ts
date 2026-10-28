@@ -225,15 +225,16 @@ export const NAV_ITEMS: NavItem[] = [
   // Gestão da equipe (21/10/2026, para a Tammy): tarefas, atrasos e agenda de
   // cada colaborador. Papel é a régua, como na Equipe: só administrador.
   { href: '/gestao', label: 'Gestão da equipe', icon: UsersRound, section: 'equipe', masterOnly: true },
+  // Desde 28/10/2026 é a ÚNICA tela de tarefas: a antiga "Tarefas" (espelho do ClickUp) foi retirada e /tasks
+  // redireciona para cá. O Daily Tasks é o lugar onde a operação trabalha.
   // Fila pessoal de trabalho sobre o TaskProvider (P1-H, 06/10/2026) — antes
   // só alcançável via Configurações → Administração (`administracao: true`),
   // o que escondia a "Central de Tasks" exatamente de quem mais usa ela no
   // dia a dia (Design, Tráfego). `requirePermission` já era aberto a
   // colaborador; só a navegação estava fechada.
-  { href: '/daily-tasks', label: 'Daily Tasks — Beta', icon: ListChecks, section: 'trabalho', dailyTasks: true },
+  { href: '/daily-tasks', label: 'Daily Tasks', icon: ListChecks, section: 'trabalho', dailyTasks: true },
   // O dado financeiro da agência. Só aparece com o módulo ligado no servidor E para administrador.
   { href: '/gestao-empresarial', label: 'Gestão Empresarial', icon: Landmark, section: 'equipe', masterOnly: true, gestaoEmpresarial: true },
-  { href: '/tasks', label: 'Tarefas', icon: CheckSquare, section: 'trabalho', modulo: 'tarefas' },
   // Duas filas na mesma tela (P1-I/J, 06/10/2026): a de tool-call da IA
   // (budget de Meta Ads, publicação no Instagram, deletar task do ClickUp) -
   // só master vê, `requirePermission('tool_calls','approve')` - e a de

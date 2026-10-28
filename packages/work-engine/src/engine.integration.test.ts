@@ -51,10 +51,11 @@ describe.skipIf(!enabled)('work-engine × PostgreSQL real', () => {
       const r = await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.admin, platformRoles: ['master'] });
       expect(r).toEqual({ allowed: false, reason: 'flag_off' });
     });
-    it('ligado e SEM lista: todo administrador entra; quem não é administrador continua barrado', async () => {
+    it('ligado e SEM lista: todo membro da empresa entra, administrador ou colaborador; quem não é membro continua barrado', async () => {
       await E.setFlag({ organizationId: A.org, enabled: true, allowedUserIds: [], updatedBy: A.admin });
       expect(await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.admin, platformRoles: [] })).toEqual({ allowed: true, reason: 'ok' });
-      expect(await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.member, platformRoles: ['colaborador'] })).toEqual({ allowed: false, reason: 'not_admin' });
+      expect(await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.member, platformRoles: ['colaborador'] })).toEqual({ allowed: true, reason: 'ok' });
+      expect(await E.resolveDailyTasksAccess({ organizationId: A.org, userId: B.admin, platformRoles: ['colaborador'] })).toEqual({ allowed: false, reason: 'not_member' });
     });
     it('com lista preenchida ela RESTRINGE: administrador fora da lista é barrado', async () => {
       await E.setFlag({ organizationId: A.org, enabled: true, allowedUserIds: [A.member], updatedBy: A.admin });
@@ -62,9 +63,11 @@ describe.skipIf(!enabled)('work-engine × PostgreSQL real', () => {
       await E.setFlag({ organizationId: A.org, enabled: true, allowedUserIds: [A.admin], updatedBy: A.admin });
       expect((await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.admin, platformRoles: [] })).allowed).toBe(true);
     });
-    it('estar na lista não basta: colaborador autorizado sem papel de administrador é barrado', async () => {
+    it('colaborador na lista entra; colaborador fora da lista é barrado', async () => {
       await E.setFlag({ organizationId: A.org, enabled: true, allowedUserIds: [A.admin, A.member], updatedBy: A.admin });
-      expect(await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.member, platformRoles: ['colaborador'] })).toEqual({ allowed: false, reason: 'not_admin' });
+      expect(await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.member, platformRoles: ['colaborador'] })).toEqual({ allowed: true, reason: 'ok' });
+      await E.setFlag({ organizationId: A.org, enabled: true, allowedUserIds: [A.admin], updatedBy: A.admin });
+      expect(await E.resolveDailyTasksAccess({ organizationId: A.org, userId: A.member, platformRoles: ['colaborador'] })).toEqual({ allowed: false, reason: 'not_allowlisted' });
     });
     it('a flag de uma empresa não vale para outra', async () => {
       expect((await E.resolveDailyTasksAccess({ organizationId: B.org, userId: B.admin, platformRoles: ['master'] })).allowed).toBe(false);
