@@ -63,6 +63,14 @@ Ordem recomendada:
 3. Conferir `GET /work/admin/clickup-sync` e uma tarefa de ponta a ponta nos dois sentidos.
 4. Tirar a cerca. Abrir para a operação.
 
+## Estado em produção
+
+**Ligada nos dois sentidos desde 28/10/2026 ~12:05** (`DAILY_SYNC_CLICKUP=on` e `DAILY_SYNC_CLICKUP_ESCRITA=on` no `.env` da
+VPS; cópia anterior em `.env.bak-pre-daily-sync-20261028`). Sem cerca de lista de teste: a saída escreve no ClickUp real.
+API `c131b28` (imagem fina; rollback `desigual-os-api:rollback-ec25938`), front `ad55b7f`. Desligar: remover as duas linhas
+e `docker compose -f docker-compose.prod.yml --env-file .env up -d --no-deps --no-build api` — NA VPS, nunca no `.env` do
+Mac (no Mac a API local passaria a escrever no ClickUp de produção).
+
 ## Dia de desligar o ClickUp (ainda não feito)
 
 - O Pipeline e a ficha do cliente hoje leem o ClickUp direto; passam a ler o Daily.
