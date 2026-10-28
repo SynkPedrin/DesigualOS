@@ -209,6 +209,27 @@ describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () =
     }
   }, 20_000);
 
+  it('enquanto a fila está parada, a mesma tarefa não se acumula: vários eventos dela viram UMA leitura quando a vez chega', async () => {
+    servir(tarefa({ id: 'T9', name: 'Depois da travada' }), []);
+    clickup.pendurar.add('/task/T-PRESA').add('/task/T-PRESA2');
+    process.env.DAILY_SYNC_CLICKUP = 'on';
+    try {
+      M.agendarSincroniaDaTarefa('T-PRESA', 'taskUpdated');
+      M.agendarSincroniaDaTarefa('T-PRESA2', 'taskUpdated'); // duas presas seguidas: a fila fica parada ~6 s
+      await new Promise((r) => setTimeout(r, 1700));
+      clickup.chamadas.length = 0;
+      for (let i = 0; i < 3; i++) { // três eventos espaçados além da janela da rajada: sem a trava, três leituras
+        M.agendarSincroniaDaTarefa('T9', 'taskUpdated');
+        await new Promise((r) => setTimeout(r, 1700));
+      }
+      await new Promise((r) => setTimeout(r, 4000));
+      expect(clickup.chamadas.filter((c) => c.startsWith('/task/T9?'))).toHaveLength(1);
+    } finally {
+      delete process.env.DAILY_SYNC_CLICKUP;
+      clickup.pendurar.clear();
+    }
+  }, 20_000);
+
   it('montarSnapshotDaTarefa: lista sem pasta (hidden) não cria pasta', () => {
     const s = M.montarSnapshotDaTarefa({ membros, tarefa: tarefa(), comentarios: [], lista: { ...lista, folder: { id: 'X', hidden: true } }, espaco, camposDaLista: [] });
     expect(s.spaces![0]._folders).toEqual([]);

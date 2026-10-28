@@ -218,6 +218,7 @@ const PRAZO_DA_VARREDURA_MS = Number(process.env.DAILY_SYNC_PRAZO_VARREDURA_MS) 
 
 const pendentes = new Map<string, { timer: ReturnType<typeof setTimeout>; apagada: boolean }>();
 let fila: Promise<unknown> = Promise.resolve();
+const naFila = new Map<string, { apagada: boolean }>();
 const resultadosRecentes: Array<{ em: number; taskId: string; acao: string; motivo?: string; erro?: string }> = [];
 
 function registrar(r: { taskId: string; acao: string; motivo?: string; erro?: string }) {
@@ -242,8 +243,14 @@ export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes:
   const apagadaFinal = apagada || (atual?.apagada ?? false);
   const timer = setTimeout(() => {
     pendentes.delete(taskId);
+    // Já está na fila esperando a vez: não entra de novo. A leitura, quando chegar a vez, já pega o estado de agora.
+    // Sem isto, um travamento de 18 min acumulou um evento por webhook, a mesma tarefa várias vezes (28/10/2026).
+    const enfileirada = naFila.get(taskId);
+    if (enfileirada) { enfileirada.apagada ||= apagadaFinal; return; }
+    const vez = { apagada: apagadaFinal };
+    naFila.set(taskId, vez);
     fila = fila
-      .then(() => comPrazo(sincronizarTarefaNoDaily(taskId, { apagada: apagadaFinal }), PRAZO_DA_TAREFA_MS, `a tarefa ${taskId}`))
+      .then(() => { naFila.delete(taskId); return comPrazo(sincronizarTarefaNoDaily(taskId, { apagada: vez.apagada }), PRAZO_DA_TAREFA_MS, `a tarefa ${taskId}`); })
       .then((r) => { registrar(r); if (r.acao === 'ignorada') logger.debug({ ...r }, 'Daily sync: ignorada'); })
       .catch((error: unknown) => {
         const tentativa = opcoes.tentativa ?? 0;
