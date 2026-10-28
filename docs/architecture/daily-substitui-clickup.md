@@ -76,9 +76,16 @@ Bento; agente, automação e a conta de QA continuam só na lista de teste.
 Testado em produção em 28/10, à tarde: das 17 tarefas mexidas no ClickUp desde que a sincronia ligou, as que estavam no
 Daily tinham o mesmo status. Achados no mesmo teste, corrigidos em `a115f95` e `1f29497`: a fila da entrada ficou parada
 das 14:29 às 14:47 por uma consulta pendurada (sem prazo, só destravou no `ETIMEDOUT` do TCP) e acumulou o mesmo evento
-várias vezes. Diagnóstico ao vivo: `GET /work/admin/clickup-sync` (últimas decisões da entrada e da saída, com o motivo).
+várias vezes. Também corrigido (`c038f51`): o `date_updated_gt` do ClickUp inclui o próprio instante, e a varredura relia a
+última tarefa alterada a cada minuto. Diagnóstico ao vivo: `GET /work/admin/clickup-sync` (últimas decisões da entrada e
+da saída, com o motivo).
 
-API `c131b28` (imagem fina; rollback `desigual-os-api:rollback-ec25938`), front `ad55b7f`. Desligar: remover as duas linhas
+**Edições perdidas antes do conserto.** Tudo o que se fez no Daily entre 28/10 12:05 e 15:09 foi recusado pela cerca e
+pulado. Para reenviar: `POST /work/admin/clickup-sync/reenviar` com `{ "desde": "2026-10-28T15:04:00.000Z" }` (admin;
+no máximo 48 h atrás). Reenviar não duplica criação nem comentário; status, prazo, título etc. vão com o valor de agora, e
+cada escrita avisa quem acompanha a tarefa no ClickUp.
+
+API `c038f51` (imagem fina; anteriores `desigual-os-api:2c930e7`, `:476a229`, `:rollback-c131b28`), front `2c930e7`. Desligar: remover as duas linhas
 e `docker compose -f docker-compose.prod.yml --env-file .env up -d --no-deps --no-build api` — NA VPS, nunca no `.env` do
 Mac (no Mac a API local passaria a escrever no ClickUp de produção).
 
