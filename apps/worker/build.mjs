@@ -1,3 +1,6 @@
+import { copyFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { shaDeRelease, versaoDoSchema } from '../../scripts/identidade-de-release.mjs';
 
@@ -52,3 +55,17 @@ await build({
     js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
   },
 });
+
+/**
+ * O WORKER DO PDF.JS VAI JUNTO DO BUNDLE (28/10/2026).
+ *
+ * O pdf-parse, empacotado, procura `pdf.worker.mjs` ao lado de quem o importa
+ * — aqui, `dist/index.js`. Sem este arquivo, TODA leitura de PDF falha em
+ * produção com "Setting up fake worker failed: Cannot find module
+ * .../dist/pdf.worker.mjs". Achado ao rodar a leitura dentro da imagem de
+ * produção antes de publicar o Jarbas lendo documentos; o teste unitário não
+ * pegava porque roda o pdf-parse direto do node_modules, sem bundle.
+ * O arquivo é o da MESMA versão do pdf-parse que entrou no bundle.
+ */
+const workerDoPdf = join(dirname(fileURLToPath(import.meta.resolve('pdf-parse'))), 'pdf.worker.mjs');
+copyFileSync(workerDoPdf, 'dist/pdf.worker.mjs');

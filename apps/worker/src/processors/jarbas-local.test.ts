@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@desigual-os/database', () => ({ db: {}, schema: {} }));
-vi.mock('@desigual-os/router', () => ({ completeTextSafely: vi.fn() }));
+vi.mock('@desigual-os/router', () => ({ completeTextSafely: vi.fn(), completarTextoComSeguranca: vi.fn() }));
 vi.mock('@desigual-os/tool-gateway', () => ({}));
 
 // Terça, 14/10/2026, 10h em São Paulo.
@@ -85,5 +85,37 @@ describe('montarPromptDoJarbas', () => {
     const { jarbasLocalLigado } = await import('./jarbas-local');
     expect(jarbasLocalLigado({})).toBe(true);
     expect(jarbasLocalLigado({ JARBAS_LOCAL_ENABLED: 'false' })).toBe(false);
+  });
+});
+
+describe('Jarbas com documento anexado (28/10/2026)', () => {
+  it('sem cliente selecionado, analisa o documento em vez de perguntar "de qual cliente?"', async () => {
+    const { completarTextoComSeguranca } = await import('@desigual-os/router');
+    vi.mocked(completarTextoComSeguranca).mockResolvedValueOnce({ texto: '## O que é o documento\nRelatório de setembro.', cortado: false });
+    const { responderJarbasLocal } = await import('./jarbas-local');
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as import('@desigual-os/logging').Logger;
+    const r = await responderJarbasLocal({
+      pergunta: 'analisa esse relatório',
+      clientId: null,
+      clienteDoEscopo: null,
+      organizationId: 'org-1',
+      logger,
+      documentos: [{ filename: 'relatorio.docx', tipo: 'docx', texto: '# Setembro\n| Campanha | CPL |' }],
+    });
+    expect(r.answer).toContain('Relatório de setembro');
+    expect(r.answer).not.toMatch(/De qual cliente/);
+    expect(r.sources).toEqual(['relatorio.docx']);
+    const [prompt, , opts] = vi.mocked(completarTextoComSeguranca).mock.calls.at(-1)!;
+    expect(prompt).toContain('| Campanha | CPL |');
+    expect(opts).toMatchObject({ maxTokens: 12_000, timeoutMs: 240_000 });
+  });
+
+  it('só cruza com a conta quando a pergunta pede', async () => {
+    const { pedeCruzarComAConta } = await import('./jarbas-local');
+    expect(pedeCruzarComAConta('compara esse relatório com a conta')).toBe(true);
+    expect(pedeCruzarComAConta('os números batem com o Meta?')).toBe(true);
+    expect(pedeCruzarComAConta('confere com os dados reais')).toBe(true);
+    expect(pedeCruzarComAConta('analisa esse PDF')).toBe(false);
+    expect(pedeCruzarComAConta('quais as recomendações do documento?')).toBe(false);
   });
 });

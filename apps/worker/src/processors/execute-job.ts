@@ -2539,6 +2539,26 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
       };
       const viaPrimaria = agent === 'bento' && bentoOpenAiReadEnabled() ? await lerPorGpt() : null;
       if (agent === 'jarbas' && jarbasLocalLigado()) {
+        /**
+         * O JARBAS TAMBÉM LÊ (28/10/2026). Leitura própria, não o bloco do Bento:
+         * modo estruturado (página, título, tabela) e documento inteiro — quem
+         * corta e divide é o motor de análise (jarbas-documentos.ts). Só quando
+         * o Jarbas responde do servidor; o serviço externo antigo nunca leu anexo.
+         */
+        const documentosDoJarbas =
+          attachments?.length
+            ? await lerDocumentos(
+                attachments.map((a) => ({ url: a.url, filename: a.filename, contentType: a.contentType })),
+                logger,
+                { estruturado: true, limitePorDoc: 1_500_000, limiteDeBytes: 25 * 1024 * 1024 },
+              ).catch(() => [])
+            : [];
+        if (documentosDoJarbas.length) {
+          logger.info(
+            { lidos: documentosDoJarbas.filter((d) => d.texto).length, total: documentosDoJarbas.length },
+            '[jarbas-documentos] material do pedido lido',
+          );
+        }
         // O Jarbas responde do servidor, com os números reais da conta do
         // cliente (ver jarbas-local.ts). Pergunta crua: o diálogo e o sufixo
         // de cliente existiam para o classificador do serviço antigo.
@@ -2550,6 +2570,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
               clienteDoEscopo: data.clienteDoEscopo ?? (nomeClienteDoTurno || null),
               organizationId: runningExecution?.organizationId ?? null,
               logger,
+              documentos: documentosDoJarbas,
             })),
             execution_id: executionId,
           },

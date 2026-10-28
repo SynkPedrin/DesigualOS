@@ -64,6 +64,12 @@ export interface ResponsesRequest {
   tools?: ResponsesToolDefinition[];
   maxOutputTokens: number;
   previousResponseId?: string;
+  /**
+   * Prazo desta chamada, acima do padrão de 30s do client. Para leitura longa
+   * (análise de documento inteiro pelo Jarbas), onde 30s corta uma resposta
+   * legítima no meio. Sem isto, vale o padrão.
+   */
+  timeoutMs?: number;
 }
 
 export interface ResponsesResult {
@@ -82,6 +88,13 @@ export interface ResponsesResult {
   mcpCalls: Array<{ id: string; serverLabel: string; name: string; arguments: string; output: string | null; error: string | null }>;
   usage: UsageTokens;
   model: OpenAIModelId;
+  /**
+   * A resposta parou no limite de saída (`max_output_tokens`) e o texto está
+   * incompleto. Em modelo com raciocínio, o raciocínio consome do mesmo
+   * limite — achado no teste real da análise de documento do Jarbas
+   * (28/10/2026), em que a análise terminou no meio da frase.
+   */
+  cortado?: boolean;
 }
 
 let cachedClient: OpenAI | null = null;
@@ -115,7 +128,7 @@ export async function callResponses(
       max_output_tokens: request.maxOutputTokens,
       ...(request.previousResponseId ? { previous_response_id: request.previousResponseId } : {}),
       ...(request.tools ? { tools: request.tools } : {}),
-    });
+    }, request.timeoutMs ? { timeout: request.timeoutMs } : undefined);
 
     const toolCalls = (response.output ?? [])
       .filter((item): item is Extract<typeof item, { type: 'function_call' }> => item.type === 'function_call')
@@ -141,6 +154,7 @@ export async function callResponses(
     return {
       responseId: response.id,
       outputText: response.output_text ?? '',
+      cortado: response.status === 'incomplete' && response.incomplete_details?.reason === 'max_output_tokens',
       toolCalls,
       mcpCalls,
       usage,
