@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { comentarioEmMarkdown } from './clickup-comment';
 import type { WorkContext } from './context';
@@ -52,14 +52,44 @@ function ler(dir: string, nome: string): Raw {
   return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
 }
 
-export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: string; dryRun?: boolean; semAtualizarTarefas?: boolean }): Promise<ImportReport> {
+/** O mesmo formato dos arquivos do snapshot em disco, mas já em memória (a sincronização ao vivo monta um por tarefa). */
+export interface SnapshotDoClickUp {
+  team: Raw;
+  spaces?: Raw[];
+  lists?: Raw[];
+  tasks?: Raw[];
+  extras?: Record<string, Raw>;
+  time_entries?: Raw[];
+}
+
+/** Quem importa. Na sincronização automática não há pessoa agindo: `userId` fica nulo (as colunas de autor aceitam). */
+export type ContextoDeImportacao = Pick<WorkContext, 'organizationId' | 'actorKind'> & { userId: string | null };
+
+export async function importClickUp(
+  ctx: ContextoDeImportacao,
+  opts: {
+    snapshotDir?: string;
+    snapshot?: SnapshotDoClickUp;
+    dryRun?: boolean;
+    semAtualizarTarefas?: boolean;
+    /**
+     * MODO AO VIVO (sincronização por webhook). O importador em lote só ACRESCENTA filhos (responsável, item de
+     * checklist, dependência) e nunca tira. Ao vivo, a tarefa daqui precisa ficar IGUAL à do ClickUp: quem saiu
+     * da tarefa lá sai aqui, item desmarcado desmarca, dependência desfeita some.
+     */
+    aoVivo?: boolean;
+  },
+): Promise<ImportReport> {
   const dryRun = opts.dryRun ?? false;
-  const team = ler(opts.snapshotDir, 'team');
-  const spaces: Raw[] = ler(opts.snapshotDir, 'spaces') ?? [];
-  const lists: Raw[] = ler(opts.snapshotDir, 'lists') ?? [];
-  const tasks: Raw[] = ler(opts.snapshotDir, 'tasks') ?? [];
-  const extras: Record<string, Raw> = ler(opts.snapshotDir, 'extras') ?? {};
-  const timeEntries: Raw[] = (() => { const t = ler(opts.snapshotDir, 'time_entries'); return Array.isArray(t) ? t : []; })();
+  const lido = opts.snapshot ?? (opts.snapshotDir ? null : undefined);
+  if (lido === undefined) throw new Error('Informe snapshotDir ou snapshot.');
+  const fonte = (nome: keyof SnapshotDoClickUp): Raw => (lido ? (lido as unknown as Record<string, Raw>)[nome] ?? null : ler(opts.snapshotDir!, nome));
+  const team = fonte('team');
+  const spaces: Raw[] = fonte('spaces') ?? [];
+  const lists: Raw[] = fonte('lists') ?? [];
+  const tasks: Raw[] = fonte('tasks') ?? [];
+  const extras: Record<string, Raw> = fonte('extras') ?? {};
+  const timeEntries: Raw[] = (() => { const t = fonte('time_entries'); return Array.isArray(t) ? t : []; })();
   if (!team) throw new Error('Snapshot sem team.json.');
 
   const org = ctx.organizationId;
@@ -102,6 +132,7 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
   // ── mapeamentos existentes
   const maps = await db.select().from(schema.workExternalMappings).where(and(eq(schema.workExternalMappings.organizationId, org), eq(schema.workExternalMappings.provider, PROVIDER)));
   const mapa = new Map<string, string>(maps.map((m) => [`${m.externalType}:${m.externalId}`, m.entityId]));
+  const comentariosDoDaily = new Set(maps.filter((m) => m.externalType === 'comment' && (m.meta as Record<string, unknown> | null)?.origem === 'daily').map((m) => m.externalId));
   const novosMapas: Array<typeof schema.workExternalMappings.$inferInsert> = [];
   const registrar = (externalType: string, externalId: string, entityType: string, entityId: string, meta: Record<string, unknown> = {}) => {
     mapa.set(`${externalType}:${externalId}`, entityId);
@@ -240,6 +271,8 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
     const anexos: Array<typeof schema.workAttachments.$inferInsert> = [];
     const tempos: Array<typeof schema.workTimeEntries.$inferInsert> = [];
     const atualizacoesDeComentario: Array<{ id: string; body: string }> = [];
+    const checklistsParaAlinhar: Array<{ checklistId: string; itens: Raw[] }> = [];
+    const tarefasAlinhadas: string[] = [];
     // número DT-n das tarefas importadas, para as menções de tarefa virarem link para a tarefa daqui
     const numeroDe = new Map<string, number>();
     for (const t of novasTarefas) numeroDe.set(t.id as string, t.number as number);
@@ -249,6 +282,7 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
     for (const t of tasks) {
       const tid = tarefaId(t.id);
       if (!tid) continue;
+      if (opts.aoVivo) tarefasAlinhadas.push(tid);
       for (const a of t.assignees ?? []) { contarNaoCasado(a); const uid = resolverUsuario(a); if (uid) assignees.push({ taskId: tid, userId: uid, organizationId: org, assignedBy: ctx.userId }); }
       for (const cf of t.custom_fields ?? []) {
         const def = campoPorExterno.get(cf.id);
@@ -269,7 +303,11 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
       }
       for (const lk of t.linked_tasks ?? []) { const a = tid; const b = tarefaId(lk.task_id === t.id ? lk.link_id : lk.task_id); if (b && a !== b) deps.push({ organizationId: org, taskId: a < b ? a : b, dependsOnTaskId: a < b ? b : a, kind: 'related' }); }
       for (const [ci, ch] of (t.checklists ?? []).entries()) {
-        if (jaImportadoFilho('checklist', ch.id)) { bump('checklists', false); continue; }
+        if (jaImportadoFilho('checklist', ch.id)) {
+          if (opts.aoVivo) checklistsParaAlinhar.push({ checklistId: idDe('checklist', ch.id)!, itens: ch.items ?? [] });
+          bump('checklists', false);
+          continue;
+        }
         const cid = randomUUID(); registrar('checklist', ch.id, 'checklist', cid);
         checklists.push({ id: cid, organizationId: org, taskId: tid, name: String(ch.name ?? 'Checklist'), position: ci + 1 });
         const empilhar = (lista: Raw[], pai: string | null) => lista.forEach((it, ix) => {
@@ -283,7 +321,8 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
       for (const c of ex?.comments ?? []) {
         const corpo = comentarioEmMarkdown(c, (ext) => { const u = idDe('task', ext); const n = u ? numeroDe.get(u) : undefined; return u && n ? { href: `/daily-tasks?task=${u}`, chave: `DT-${n}` } : undefined; });
         const existente = idDe('comment', String(c.id));
-        if (existente) { if (corpo) atualizacoesDeComentario.push({ id: existente, body: corpo }); bump('comentarios', false); continue; }
+        // Comentário nascido no Daily e espelhado no ClickUp com o nome do autor na frente: aqui ele continua com o texto original.
+        if (existente) { if (corpo && !comentariosDoDaily.has(String(c.id))) atualizacoesDeComentario.push({ id: existente, body: corpo }); bump('comentarios', false); continue; }
         const cid = randomUUID(); registrar('comment', String(c.id), 'comment', cid);
         contarNaoCasado(c.user);
         if (!corpo) continue;
@@ -297,6 +336,44 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
         bump('anexos', true);
       }
     }
+    // ── AO VIVO: o que o ClickUp tirou, sai daqui também (comentário apagado, checklist desfeita, item removido)
+    if (opts.aoVivo) {
+      // Entidade apagada precisa levar o vínculo junto: vínculo órfão faria uma importação em lote futura achar que ela ainda existe.
+      const esquecer = async (ids: string[]) => { if (ids.length) await tx.delete(schema.workExternalMappings).where(and(eq(schema.workExternalMappings.organizationId, org), eq(schema.workExternalMappings.provider, PROVIDER), inArray(schema.workExternalMappings.entityId, ids))); };
+      const mapeadosComentario = new Set([...mapa].filter(([k]) => k.startsWith('comment:')).map(([, v]) => v));
+      for (const t of tasks) {
+        const tid = tarefaId(t.id);
+        if (!tid) continue;
+        const ex = extras[t.id];
+        if (ex?.comments) {
+          const vivos = new Set((ex.comments as Raw[]).map((c) => idDe('comment', String(c.id))).filter(Boolean) as string[]);
+          const atuais = await tx.select({ id: schema.workComments.id }).from(schema.workComments).where(eq(schema.workComments.taskId, tid));
+          const sobra = atuais.map((c) => c.id).filter((id) => mapeadosComentario.has(id) && !vivos.has(id));
+          if (sobra.length) { await tx.delete(schema.workComments).where(inArray(schema.workComments.id, sobra)); await esquecer(sobra); bump('comentarios_removidos', true); }
+        }
+        const checklistsVivas = new Set(((t.checklists ?? []) as Raw[]).map((ch) => idDe('checklist', ch.id)).filter(Boolean) as string[]);
+        const checklistsAtuais = await tx.select({ id: schema.workChecklists.id }).from(schema.workChecklists).where(eq(schema.workChecklists.taskId, tid));
+        const checklistsSobra = checklistsAtuais.map((c) => c.id).filter((id) => !checklistsVivas.has(id));
+        if (checklistsSobra.length) { await tx.delete(schema.workChecklists).where(inArray(schema.workChecklists.id, checklistsSobra)); await esquecer(checklistsSobra); }
+      }
+      for (const { checklistId, itens: raiz } of checklistsParaAlinhar) {
+        const desejados = new Set<string>();
+        const percorrer = async (lista: Raw[], pai: string | null): Promise<void> => {
+          for (const [ix, it] of lista.entries()) {
+            let iid = idDe('checklist_item', String(it.id));
+            const valores = { text: String(it.name ?? ''), done: Boolean(it.resolved), assigneeId: resolverUsuario(it.assignee), position: ix + 1, parentItemId: pai };
+            if (iid) await tx.update(schema.workChecklistItems).set({ ...valores, updatedAt: new Date() }).where(eq(schema.workChecklistItems.id, iid));
+            else { iid = randomUUID(); registrar('checklist_item', String(it.id), 'checklist_item', iid); await tx.insert(schema.workChecklistItems).values({ id: iid, organizationId: org, checklistId, ...valores }); }
+            desejados.add(iid);
+            if (it.children?.length) await percorrer(it.children, iid);
+          }
+        };
+        await percorrer(raiz, null);
+        const atuais = await tx.select({ id: schema.workChecklistItems.id }).from(schema.workChecklistItems).where(eq(schema.workChecklistItems.checklistId, checklistId));
+        const sobra = atuais.map((x) => x.id).filter((id) => !desejados.has(id));
+        if (sobra.length) { await tx.delete(schema.workChecklistItems).where(inArray(schema.workChecklistItems.id, sobra)); await esquecer(sobra); }
+      }
+    }
     for (const te of timeEntries) {
       const tid = te.task?.id ? tarefaId(String(te.task.id)) : undefined;
       if (!tid || jaImportadoFilho('time_entry', String(te.id))) continue;
@@ -306,6 +383,13 @@ export async function importClickUp(ctx: WorkContext, opts: { snapshotDir: strin
       bump('tempo', true);
     }
 
+    if (opts.aoVivo) {
+      for (const tid of tarefasAlinhadas) {
+        const desejados = assignees.filter((a) => a.taskId === tid).map((a) => a.userId);
+        await tx.delete(schema.workTaskAssignees).where(desejados.length ? and(eq(schema.workTaskAssignees.taskId, tid), notInArray(schema.workTaskAssignees.userId, desejados)) : eq(schema.workTaskAssignees.taskId, tid));
+        await tx.delete(schema.workTaskDependencies).where(or(eq(schema.workTaskDependencies.taskId, tid), eq(schema.workTaskDependencies.dependsOnTaskId, tid)));
+      }
+    }
     for (const c of chunk(assignees)) await tx.insert(schema.workTaskAssignees).values(c).onConflictDoNothing();
     for (const c of chunk(valoresCampo)) await tx.insert(schema.workCustomFieldValues).values(c).onConflictDoUpdate({ target: [schema.workCustomFieldValues.taskId, schema.workCustomFieldValues.fieldId], set: { value: sql`excluded.value`, updatedAt: new Date() } });
     for (const c of chunk(deps)) await tx.insert(schema.workTaskDependencies).values(c).onConflictDoNothing();

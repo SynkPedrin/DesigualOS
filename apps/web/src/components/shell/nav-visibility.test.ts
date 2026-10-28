@@ -135,8 +135,8 @@ describe('sidebar final por contexto — NAV_ITEMS de verdade', () => {
    * bastava o template "Gestão" para um colaborador ver a lista.
    */
   const BARRA_BASE = ['/today', '/calendar', '/', '/clients', '/inbox', '/comunicacao', '/demands', '/midias', '/pipeline'];
-  const BARRA_DO_TENANT_MASTER = [...BARRA_BASE, '/people', '/gestao', '/tasks', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
-  const BARRA_DO_TENANT_COLABORADOR = [...BARRA_BASE, '/tasks', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
+  const BARRA_DO_TENANT_MASTER = [...BARRA_BASE, '/people', '/gestao', '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
+  const BARRA_DO_TENANT_COLABORADOR = [...BARRA_BASE, '/approvals', '/activity', '/integrations', '/workflows', '/settings', '/chat'];
 
   it('master do tenant: operação + ajustes + Equipe, sem Empresas/Conhecimento/admin', () => {
     expect(hrefsReais({ isMaster: true, ehProvider: false, dentroDeTenant: false })).toEqual(BARRA_DO_TENANT_MASTER);
@@ -181,7 +181,6 @@ describe('sidebar final por contexto — NAV_ITEMS de verdade', () => {
       '/pipeline',
       '/people',
       '/gestao',
-      '/tasks',
       '/approvals',
       '/memory',
       '/activity',

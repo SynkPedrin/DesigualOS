@@ -14,6 +14,7 @@ import {
   getTeamMembers,
   parseTaskChangedEvent,
   parseTaskCommentPostedEvent,
+  parseTaskEventForSync,
   queryOperationTasks,
   recordToolResult,
   replyToComment,
@@ -46,6 +47,8 @@ import { esquecerTarefasDaLista } from './cache-de-lista';
 import { criarCacheQuente, emHorarioDeTrabalho } from './cache-quente';
 import { avisarGestao } from '../gestao/avisar';
 import { sincronizarCartaoDaTarefa } from '../pipeline/sincronizar-webhook';
+import { agendarSincroniaDaTarefa, iniciarVarreduraDoDaily } from './sincronia-daily';
+import { iniciarEscoadorDoDaily } from './escrita-daily';
 import { organizacaoProvedora } from '@desigual-os/auth';
 
 const logger = createLogger({ service: 'clickup-webhook' });
@@ -713,6 +716,8 @@ export async function tarefasDaAgencia(user: AuthenticatedUser): Promise<
 
 export async function registerClickUpRoutes(app: FastifyInstance): Promise<void> {
   ligarAquecimento();
+  iniciarVarreduraDoDaily();
+  iniciarEscoadorDoDaily();
   app.post('/clickup/tasks', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
     const config = getClickUpConfig();
@@ -1299,6 +1304,11 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
     // processamento de verdade acontece depois, o ClickUp só precisa de um
     // 200 confirmando que recebemos.
     reply.code(200).send({ ok: true });
+
+    // Daily Tasks: qualquer evento de tarefa (status, responsável, prazo, comentário, mover...) manda reler a tarefa.
+    // Vai ANTES dos tratadores abaixo porque eles saem cedo (evento sem cliente, sem menção) e a sincronia não depende disso.
+    const paraSincronia = parseTaskEventForSync(parsedBody);
+    if (paraSincronia) agendarSincroniaDaTarefa(paraSincronia.taskId, paraSincronia.event);
 
     const taskChanged = parseTaskChangedEvent(parsedBody);
     if (taskChanged) {

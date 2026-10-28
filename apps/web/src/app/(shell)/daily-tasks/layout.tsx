@@ -35,7 +35,7 @@ export default function DailyTasksLayout({ children }: { children: React.ReactNo
   if (isPending) return <Skeleton className="h-64 w-full" />;
   if (!liberado) {
     // O servidor recusa de qualquer jeito (403); aqui só evitamos uma tela quebrada para quem digitou o endereço.
-    return <EmptyState icon={Lock} title="Daily Tasks está em beta fechado" description="Este recurso ainda não foi liberado para a sua empresa ou para o seu perfil. Peça a um administrador da plataforma." />;
+    return <EmptyState icon={Lock} title="Daily Tasks ainda não foi liberado" description="Este recurso ainda não foi liberado para a sua empresa ou para o seu perfil. Peça a um administrador da plataforma." />;
   }
   const naoLidas = inbox.data?.unread ?? 0;
   const rodando = timer.data?.running ?? null;

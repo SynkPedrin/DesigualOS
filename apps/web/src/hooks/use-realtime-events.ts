@@ -93,6 +93,10 @@ export function useRealtimeEvents(): void {
         case 'gestao.mudou':
           queryClient.invalidateQueries({ queryKey: ['gestao'] });
           break;
+        // Daily Tasks: uma tarefa mudou (sincronizada do ClickUp). Refaz o que está na tela: lista, gaveta e resumo.
+        case 'work.mudou':
+          queryClient.invalidateQueries({ queryKey: ['work'] });
+          break;
         case 'clickup.task_changed': {
           const clientId = event.payload.client_id;
           if (typeof clientId === 'string') {

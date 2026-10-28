@@ -82,3 +82,22 @@ export function parseTaskChangedEvent(body: unknown): ClickUpTaskChangedEvent | 
 
   return { event, taskId, listId };
 }
+
+export interface ClickUpTaskEventForSync {
+  event: string;
+  taskId: string;
+  listId: string | null;
+}
+
+/**
+ * QUALQUER evento de tarefa (`taskStatusUpdated`, `taskAssigneeUpdated`, `taskDueDateUpdated`, `taskMoved`,
+ * `taskCommentUpdated`...), não só os três de `parseTaskChangedEvent`. A sincronização do Daily Tasks não precisa
+ * saber O QUE mudou: ela relê a tarefa inteira. Por isso aceita todo evento `task*` que traga `task_id`.
+ */
+export function parseTaskEventForSync(body: unknown): ClickUpTaskEventForSync | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const record = body as Record<string, unknown>;
+  if (typeof record.event !== 'string' || !/^task[A-Z]/.test(record.event)) return null;
+  if (typeof record.task_id !== 'string') return null;
+  return { event: record.event, taskId: record.task_id, listId: typeof record.list_id === 'string' ? record.list_id : null };
+}

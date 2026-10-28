@@ -4,26 +4,25 @@ import { invalid } from './errors';
 
 export const DAILY_TASKS_FLAG = 'daily_tasks_enabled';
 
-/** Papéis que respondem pela empresa. Mesma lista de `podeConfigurar` (organizations/ficha.ts). */
-const ADMIN_ORG_ROLES = new Set(['owner', 'admin', 'master', 'super_admin', 'provider_owner', 'provider_admin']);
-
 export type AccessDecision =
   | { allowed: true; reason: 'ok' }
-  | { allowed: false; reason: 'flag_off' | 'not_allowlisted' | 'not_admin' };
+  | { allowed: false; reason: 'flag_off' | 'not_allowlisted' | 'not_member' };
 
 /**
  * REGRA DE ACESSO (Daily Tasks). As travas valem juntas e nenhuma substitui a outra:
  *   1. a flag da empresa está ligada;
- *   2. a pessoa é ADMINISTRADORA (papel de plataforma `master` ou papel de empresa de quem responde por ela) — é
- *      isso que libera o módulo a todos os administradores da empresa, sem precisar listar um por um;
+ *   2. a pessoa é MEMBRO da empresa (ou administradora da plataforma, `master`). Desde 28/10/2026 qualquer papel
+ *      serve: o Daily Tasks deixou de ser um beta de administradores e virou o lugar onde a operação trabalha
+ *      (a tela "Tarefas" do ClickUp foi retirada). Antes, só administrador entrava, e o colaborador ficava sem
+ *      nenhuma tela de tarefas;
  *   3. se a empresa preencheu uma lista de autorizadas, a pessoa precisa estar nela (restrição opcional, mais
- *      estreita que "todo administrador"). Lista vazia = todos os administradores.
+ *      estreita que "todos os membros"). Lista vazia = todos os membros.
  * O front só ESCONDE o item de menu com base nisto; quem barra de verdade é o backend, em toda rota.
  */
 export function decideAccess(input: { flagEnabled: boolean; allowedUserIds: string[]; userId: string; platformRoles: string[]; orgRole: string | null }): AccessDecision {
   if (!input.flagEnabled) return { allowed: false, reason: 'flag_off' };
-  const isAdmin = input.platformRoles.includes('master') || (input.orgRole !== null && ADMIN_ORG_ROLES.has(input.orgRole.toLowerCase()));
-  if (!isAdmin) return { allowed: false, reason: 'not_admin' };
+  const membro = input.platformRoles.includes('master') || input.orgRole !== null;
+  if (!membro) return { allowed: false, reason: 'not_member' };
   if (input.allowedUserIds.length > 0 && !input.allowedUserIds.includes(input.userId)) return { allowed: false, reason: 'not_allowlisted' };
   return { allowed: true, reason: 'ok' };
 }
