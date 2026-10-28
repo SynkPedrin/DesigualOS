@@ -23,6 +23,12 @@ vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
   };
 });
 
+// Sem Redis no teste: o marco da varredura fica em memória (o mesmo caminho de quando o Redis cai em produção).
+vi.mock('@desigual-os/orchestrator', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@desigual-os/orchestrator')>()),
+  getRedisConnection: () => { throw new Error('sem Redis no teste'); },
+}));
+
 describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () => {
   const org = randomUUID();
   const clienteId = randomUUID();
@@ -229,6 +235,17 @@ describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () =
       clickup.pendurar.clear();
     }
   }, 20_000);
+
+  it('varredura: a tarefa com o mesmo instante do marco (o ClickUp a devolve de novo) não é relida a cada minuto', async () => {
+    const quando = String(Date.now() + 60_000);
+    servir(tarefa({ id: 'T7', name: 'Alterada na varredura', date_updated: quando }), []);
+    clickup.respostas.set('/team/TEAM/task', { tasks: [{ id: 'T7', date_updated: quando }] });
+    expect((await M.varrerAlteracoesDoClickUp()).lidas).toBe(1);
+    expect((await daily()).some((x) => x.title === 'Alterada na varredura')).toBe(true);
+    clickup.chamadas.length = 0;
+    expect((await M.varrerAlteracoesDoClickUp()).lidas).toBe(0); // o ClickUp devolve a mesma tarefa: date_updated_gt inclui o instante
+    expect(clickup.chamadas.filter((c) => c.startsWith('/task/T7'))).toEqual([]);
+  });
 
   it('montarSnapshotDaTarefa: lista sem pasta (hidden) não cria pasta', () => {
     const s = M.montarSnapshotDaTarefa({ membros, tarefa: tarefa(), comentarios: [], lista: { ...lista, folder: { id: 'X', hidden: true } }, espaco, camposDaLista: [] });

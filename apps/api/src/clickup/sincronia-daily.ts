@@ -302,7 +302,12 @@ export async function varrerAlteracoesDoClickUp(): Promise<{ lidas: number; resu
     todas.push(...(r.tasks ?? []));
     if ((r.tasks ?? []).length < 100) break;
   }
-  const alteradas = todas.sort((a, b) => Number(a.date_updated ?? 0) - Number(b.date_updated ?? 0)).slice(0, POR_PASSADA);
+  // O `date_updated_gt` do ClickUp inclui o próprio instante: sem este filtro, a última tarefa alterada era relida a
+  // cada minuto, para sempre (medido em produção em 28/10/2026, `date_updated` igual ao marco até o milissegundo).
+  const alteradas = todas
+    .filter((t) => Number(t.date_updated ?? 0) > marco)
+    .sort((a, b) => Number(a.date_updated ?? 0) - Number(b.date_updated ?? 0))
+    .slice(0, POR_PASSADA);
   const resultados: ResultadoDaSincronia[] = [];
   let novoMarco = marco;
   for (const t of alteradas) {
