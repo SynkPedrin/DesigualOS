@@ -83,7 +83,7 @@ function Execucoes({ id }: { id: string }) {
         <li key={r.id} className="flex items-center gap-3 px-3 py-1.5">
           <span className={cn('w-16 font-medium', r.status === 'ok' ? 'text-sucesso' : r.status === 'failed' ? 'text-red-400' : 'text-nevoa')}>{r.status === 'ok' ? 'executou' : r.status === 'failed' ? 'falhou' : 'ignorou'}</span>
           <span className="text-nevoa">{new Date(r.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' })}</span>
-          {r.taskId && <a href={`/daily-tasks?task=${r.taskId}`} className="text-sinal hover:underline">abrir tarefa</a>}
+          {r.taskId && <a href={`/daily-tasks?task=${r.taskId}`} className="text-lilas hover:underline">abrir tarefa</a>}
           <span className="truncate text-nevoa">{String(r.detail.erro ?? r.detail.motivo ?? (Array.isArray(r.detail.acoes) ? r.detail.acoes.join(', ') : ''))}</span>
         </li>
       ))}
@@ -103,7 +103,7 @@ function ExecutarAgora({ auto, onClose }: { auto: WorkAutomation; onClose: () =>
         {(busca.data?.rows ?? []).map((t) => (
           <li key={t.id} className="flex items-center gap-2 text-sm">
             <span className="font-mono text-[11px] text-nevoa">{t.key}</span><span className="min-w-0 flex-1 truncate text-branco-cru">{t.title}</span>
-            <button type="button" disabled={testar.isPending} onClick={() => testar.mutate({ id: auto.id, taskId: t.id }, { onSuccess: (r) => { toast(r.status === 'ok' ? `Executou: ${(r.detail.acoes as string[] | undefined)?.join(', ')}` : r.status === 'skipped' ? 'Não executou: as condições não bateram nesta tarefa.' : `Falhou: ${String(r.detail.erro)}`, r.status === 'ok' ? 'success' : r.status === 'skipped' ? 'info' : 'error'); onClose(); }, onError: (e) => toast(e instanceof ApiRequestError ? e.message : 'Erro ao executar.', 'error') })} className="flex items-center gap-1 rounded bg-sinal px-2 py-1 text-xs font-semibold text-grafite disabled:opacity-40"><Play size={11} /> Executar</button>
+            <button type="button" disabled={testar.isPending} onClick={() => testar.mutate({ id: auto.id, taskId: t.id }, { onSuccess: (r) => { toast(r.status === 'ok' ? `Executou: ${(r.detail.acoes as string[] | undefined)?.join(', ')}` : r.status === 'skipped' ? 'Não executou: as condições não bateram nesta tarefa.' : `Falhou: ${String(r.detail.erro)}`, r.status === 'ok' ? 'success' : r.status === 'skipped' ? 'info' : 'error'); onClose(); }, onError: (e) => toast(e instanceof ApiRequestError ? e.message : 'Erro ao executar.', 'error') })} className="flex items-center gap-1 rounded bg-roxo-eletrico px-2 py-1 text-xs font-semibold text-white disabled:opacity-40"><Play size={11} /> Executar</button>
           </li>
         ))}
       </ul>
@@ -154,7 +154,7 @@ export default function AutomacoesPage() {
           <h1 className="font-heading text-2xl font-semibold text-branco-cru">Automações</h1>
           <p className="text-sm text-nevoa">Regras que trabalham sozinhas: quando algo acontece numa tarefa, o sistema faz o resto e registra cada execução.</p>
         </div>
-        <button type="button" onClick={() => { setForm(vazio()); setEditando(null); setAberto(true); }} className="flex items-center gap-2 rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite hover:brightness-110"><Plus size={16} /> Nova automação</button>
+        <button type="button" onClick={() => { setForm(vazio()); setEditando(null); setAberto(true); }} className="flex items-center gap-2 rounded-lg bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-white hover:brightness-110"><Plus size={16} /> Nova automação</button>
       </header>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatCard icone={Zap} rotulo="Automações ativas" valor={(lista.data?.automations ?? []).filter((a) => a.enabled).length} tom="verde" />
@@ -166,7 +166,7 @@ export default function AutomacoesPage() {
         <h2 className="flex items-center gap-2 text-sm font-semibold text-branco-cru"><Sparkles size={15} /> Comece por uma receita</h2>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {RECEITAS.map((r) => (
-            <button key={r.titulo} type="button" onClick={() => { setForm(r.form()); setEditando(null); setAberto(true); setErro(null); }} className="rounded-lg border border-grafite-elevado bg-grafite p-3 text-left transition-colors hover:border-sinal/60">
+            <button key={r.titulo} type="button" onClick={() => { setForm(r.form()); setEditando(null); setAberto(true); setErro(null); }} className="rounded-lg border border-grafite-elevado bg-grafite p-3 text-left transition-colors hover:border-roxo-eletrico/60">
               <span className="block text-sm font-medium text-branco-cru">{r.titulo}</span><span className="mt-1 block text-xs text-nevoa">{r.descricao}</span>
             </button>
           ))}
@@ -227,7 +227,7 @@ export default function AutomacoesPage() {
           </div>
           <p className="rounded bg-grafite-elevado/50 px-3 py-2 text-sm text-branco-cru" aria-live="polite"><span className="text-nevoa">Resumo: </span>{frase()}</p>
           {erro && <p role="alert" className="text-xs text-red-400">{erro}</p>}
-          <button type="button" disabled={!pronto || criar.isPending || atualizar.isPending} onClick={salvar} className="rounded bg-sinal px-3 py-1.5 text-sm font-semibold text-grafite disabled:opacity-40">{editando ? 'Salvar alterações' : 'Criar automação'}</button>
+          <button type="button" disabled={!pronto || criar.isPending || atualizar.isPending} onClick={salvar} className="rounded bg-roxo-eletrico px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40">{editando ? 'Salvar alterações' : 'Criar automação'}</button>
         </Surface>
       )}
 
@@ -248,7 +248,7 @@ export default function AutomacoesPage() {
                     <button type="button" onClick={() => setVerRuns(verRuns === a.id ? null : a.id)} className="text-left text-sm text-branco-cru hover:underline" title="Ver o histórico">{a.runCount}</button>
                     <label className="flex items-center gap-1.5 text-xs text-nevoa"><input type="checkbox" checked={a.enabled} onChange={(e) => alternar.mutate({ id: a.id, enabled: e.target.checked })} aria-label={`Ativar ${a.name}`} />{a.enabled ? 'Ativa' : 'Pausada'}</label>
                     <span className="flex items-center justify-end gap-1.5">
-                      <button type="button" onClick={() => setExecutar(executar === a.id ? null : a.id)} className="flex items-center gap-1 rounded-md bg-grafite-elevado px-2.5 py-1 text-xs font-medium text-branco-cru hover:bg-sinal hover:text-grafite"><Play size={11} /> Executar agora</button>
+                      <button type="button" onClick={() => setExecutar(executar === a.id ? null : a.id)} className="flex items-center gap-1 rounded-md bg-grafite-elevado px-2.5 py-1 text-xs font-medium text-branco-cru hover:bg-roxo-eletrico hover:text-white"><Play size={11} /> Executar agora</button>
                       <button type="button" onClick={() => { setForm(deAutomacao(a)); setEditando(a.id); setAberto(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }} aria-label={`Editar ${a.name}`} className="flex items-center gap-1 rounded-md border border-grafite-elevado px-2.5 py-1 text-xs text-branco-cru hover:bg-grafite-elevado"><Pencil size={11} /> Editar</button>
                       <button type="button" aria-label={`Apagar ${a.name}`} onClick={() => { if (window.confirm(`Apagar a automação "${a.name}"?`)) apagar.mutate(a.id); }} className="rounded-md p-1.5 text-nevoa hover:bg-red-500/10 hover:text-red-400"><Trash2 size={14} /></button>
                     </span>

@@ -77,11 +77,11 @@ export function TarefasDoCliente({ clientId, clienteNome, origem, tituloInicial 
   const r = resumo.data;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Link href={`/daily-tasks?cli=${clientId}`} title="Ver as tarefas deste cliente no Daily Tasks" className="flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-2 text-sm text-branco-cru transition-colors hover:border-sinal/60">
+      <Link href={`/daily-tasks?cli=${clientId}`} title="Ver as tarefas deste cliente no Daily Tasks" className="flex items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-2 text-sm text-branco-cru transition-colors hover:border-roxo-eletrico/60">
         <ListChecks size={14} />
         {r ? <>{r.abertas} aberta{r.abertas === 1 ? '' : 's'}{r.atrasadas > 0 && <span className="text-red-400"> · {r.atrasadas} atrasada{r.atrasadas === 1 ? '' : 's'}</span>}</> : 'Tarefas'}
       </Link>
-      <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-1.5 rounded-md bg-sinal px-3 py-2 text-sm font-semibold text-grafite hover:opacity-90"><Plus size={14} /> Nova tarefa</button>
+      <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-1.5 rounded-md bg-roxo-eletrico px-3 py-2 text-sm font-semibold text-white hover:opacity-90"><Plus size={14} /> Nova tarefa</button>
       {aberto && <Modal titulo={`Nova tarefa — ${clienteNome}`} onClose={() => setAberto(false)} largura="max-w-lg"><FormularioDeTarefa clientId={clientId} clienteNome={clienteNome} origem={origem} tituloInicial={tituloInicial} onClose={() => setAberto(false)} /></Modal>}
     </div>
   );

@@ -51,7 +51,7 @@ export default function CaixaDeEntradaPage() {
           <h1 className="font-heading text-2xl font-semibold text-branco-cru">Caixa de Entrada</h1>
           <p className="text-sm text-nevoa">Tudo que chegou para você: tarefas, mensagens da Comunicação, menções e avisos do sistema.</p>
         </div>
-        <button type="button" disabled={(data?.unreadByKind.task ?? 0) + (data?.unreadByKind.system ?? 0) === 0 || lido.isPending} onClick={() => lido.mutate()} className="rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite disabled:opacity-40" title="Marca como lidos os avisos de tarefas e do sistema. Mensagens são lidas na própria Comunicação.">Marcar avisos como lidos</button>
+        <button type="button" disabled={(data?.unreadByKind.task ?? 0) + (data?.unreadByKind.system ?? 0) === 0 || lido.isPending} onClick={() => lido.mutate()} className="rounded-lg bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" title="Marca como lidos os avisos de tarefas e do sistema. Mensagens são lidas na própria Comunicação.">Marcar avisos como lidos</button>
       </header>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         {abas.filter((a) => a.id !== 'tudo').map((a) => (
@@ -60,8 +60,8 @@ export default function CaixaDeEntradaPage() {
       </div>
       <div role="tablist" aria-label="Filtro da caixa" className="flex flex-wrap gap-1">
         {abas.map((a) => (
-          <button key={a.id} role="tab" aria-selected={filtro === a.id} type="button" onClick={() => setFiltro(a.id)} className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm', filtro === a.id ? 'bg-sinal font-medium text-grafite' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>
-            {a.rotulo}{a.naoLidas > 0 && <span className={cn('rounded-full px-1.5 text-[10px] font-semibold', filtro === a.id ? 'bg-grafite text-sinal' : 'bg-sinal text-grafite')}>{a.naoLidas}</span>}
+          <button key={a.id} role="tab" aria-selected={filtro === a.id} type="button" onClick={() => setFiltro(a.id)} className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm', filtro === a.id ? 'bg-roxo-eletrico font-medium text-white' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>
+            {a.rotulo}{a.naoLidas > 0 && <span className={cn('rounded-full px-1.5 text-[10px] font-semibold', filtro === a.id ? 'bg-grafite text-lilas' : 'bg-roxo-eletrico text-white')}>{a.naoLidas}</span>}
           </button>
         ))}
       </div>
@@ -96,15 +96,15 @@ export default function CaixaDeEntradaPage() {
             const Icone = ICONE[i.kind];
             return (
               <li key={i.id}>
-                <button type="button" onClick={() => abrir(i)} className={cn('flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-grafite-elevado/40', i.unread && 'bg-sinal/5')}>
+                <button type="button" onClick={() => abrir(i)} className={cn('flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-grafite-elevado/40', i.unread && 'bg-roxo-eletrico/5')}>
                   {i.kind === 'system' ? <span className="mt-0.5 flex size-7 items-center justify-center rounded-full bg-grafite-elevado text-nevoa"><Icone size={14} /></span> : <Avatar nome={i.actorName} url={i.actorAvatar} size={28} />}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm text-branco-cru"><strong>{i.kind === 'system' ? '' : i.actorName}</strong>{i.verb ? ` ${i.verb} ` : ''}<span className={i.kind === 'system' ? '' : 'font-medium'}>{i.subject}</span></span>
                     {i.snippet && <span className="mt-0.5 block truncate text-xs text-nevoa">“{i.snippet}”</span>}
-                    <span className="mt-1 flex items-center gap-2 text-[11px] text-nevoa/70"><Icone size={11} />{ROTULO[i.kind]}{i.mention && <span className="rounded bg-sinal/15 px-1 text-sinal">menção</span>}</span>
+                    <span className="mt-1 flex items-center gap-2 text-[11px] text-nevoa/70"><Icone size={11} />{ROTULO[i.kind]}{i.mention && <span className="rounded bg-roxo-eletrico/15 px-1 text-lilas">menção</span>}</span>
                   </span>
                   <span className="shrink-0 text-xs text-nevoa">{quando(i.createdAt)}</span>
-                  {i.unread && <span aria-label="Não lida" className="mt-1.5 size-2 shrink-0 rounded-full bg-sinal" />}
+                  {i.unread && <span aria-label="Não lida" className="mt-1.5 size-2 shrink-0 rounded-full bg-roxo-eletrico" />}
                 </button>
               </li>
             );

@@ -12,7 +12,7 @@ const TOKEN = /(\[[^\]\n]+\]\((?:https?:\/\/[^\s)]+|mailto:[^\s)]+|\/[^\s)]*)\))
 
 function Link({ href, children }: { href: string; children: React.ReactNode }) {
   const interno = href.startsWith('/');
-  return <a href={href} {...(interno ? {} : { target: '_blank', rel: 'noreferrer noopener' })} className="break-all text-sinal underline decoration-sinal/40 underline-offset-2 hover:decoration-sinal" onClick={(e) => e.stopPropagation()}>{children}</a>;
+  return <a href={href} {...(interno ? {} : { target: '_blank', rel: 'noreferrer noopener' })} className="break-all text-lilas underline decoration-lilas/40 underline-offset-2 hover:decoration-lilas" onClick={(e) => e.stopPropagation()}>{children}</a>;
 }
 
 function inline(texto: string, chave: string): React.ReactNode[] {
@@ -23,7 +23,7 @@ function inline(texto: string, chave: string): React.ReactNode[] {
     if (m.index! > ultimo) out.push(<Fragment key={`${chave}t${i++}`}>{texto.slice(ultimo, m.index)}</Fragment>);
     const [tudo, md, mencao, negrito, codigo, url] = m;
     if (md) { const mm = /^\[([^\]]+)\]\((.+)\)$/.exec(md)!; out.push(<Link key={`${chave}l${i++}`} href={mm[2]!}>{mm[1]}</Link>); }
-    else if (mencao) { const mm = /^@\[([^\]]+)\]/.exec(mencao)!; out.push(<span key={`${chave}m${i++}`} className="rounded bg-sinal/15 px-1 text-sinal">@{mm[1]}</span>); }
+    else if (mencao) { const mm = /^@\[([^\]]+)\]/.exec(mencao)!; out.push(<span key={`${chave}m${i++}`} className="rounded bg-roxo-eletrico/15 px-1 text-lilas">@{mm[1]}</span>); }
     else if (negrito) out.push(<strong key={`${chave}b${i++}`} className="font-semibold">{negrito.slice(2, -2)}</strong>);
     else if (codigo) out.push(<code key={`${chave}c${i++}`} className="rounded bg-carbono px-1 font-mono text-[0.85em]">{codigo.slice(1, -1)}</code>);
     else if (url) out.push(<Link key={`${chave}u${i++}`} href={url}>{url.length > 70 ? `${url.slice(0, 67)}…` : url}</Link>);

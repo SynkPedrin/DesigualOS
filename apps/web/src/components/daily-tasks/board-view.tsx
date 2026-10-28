@@ -4,9 +4,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { WorkMember, WorkStatus, WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
-import { faixaDaLinha } from '@/components/ui/prazo';
-import { urgenciaDoPrazo } from '@/lib/prazo';
-import { useColunas, type TaskActions } from './list-view';
+import { faixaDaTarefa, useColunas, type TaskActions } from './list-view';
 import { andamento, BarraDeProgresso } from './ui';
 import { LogoDoCliente, nomeLimpo, useListIndex } from './cliente';
 import { AvatarStack, DueDate, PriorityFlag, StatusPill } from './primitivas';
@@ -38,12 +36,12 @@ export function BoardView({ tarefas, statuses, membros, listId, actions }: { tar
               const t = tarefas.find((x) => x.id === e.dataTransfer.getData('text/plain'));
               if (t && t.statusId !== s.id) actions.atualizar(t, { statusId: s.id });
             }}
-            className={cn('flex max-h-[70vh] w-72 shrink-0 flex-col rounded-lg bg-grafite/60 p-2', sobre === s.id && 'ring-1 ring-sinal')}
+            className={cn('flex max-h-[70vh] w-72 shrink-0 flex-col rounded-lg bg-grafite/60 p-2', sobre === s.id && 'ring-1 ring-roxo-eletrico')}
           >
             <div className="mb-2 flex items-center justify-between px-1"><StatusPill nome={s.name} cor={s.color} categoria={s.category} contagem={itens.length} /></div>
             <div className="space-y-2 overflow-y-auto">
               {itens.slice(0, 80).map((t) => (
-                <article key={t.id} draggable onDragStart={(e) => e.dataTransfer.setData('text/plain', t.id)} onClick={() => actions.abrir(t)} className={cn('cursor-pointer rounded-md border border-grafite-elevado bg-carbono p-2.5 hover:border-nevoa/40', faixaDaLinha(t.completedAt ? null : urgenciaDoPrazo(t.dueAt)))}>
+                <article key={t.id} draggable onDragStart={(e) => e.dataTransfer.setData('text/plain', t.id)} onClick={() => actions.abrir(t)} className={cn('cursor-pointer rounded-md border border-grafite-elevado bg-carbono p-2.5 hover:border-roxo-eletrico/50', faixaDaTarefa(t))}>
                   <p className="flex items-start gap-1.5 text-sm text-branco-cru">{tem('cliente') && <LogoDoCliente nome={nomeLimpo(listas.get(t.listId)?.nome ?? '')} className="mt-0.5" />}<span>{t.title}</span></p>
                   {tem('andamento') && t.subtaskCount > 0 && <div className="mt-2"><BarraDeProgresso pct={andamento(t)} /></div>}
                   {tem('tags') && t.tags.length > 0 && <p className="mt-1.5 flex flex-wrap gap-1">{t.tags.slice(0, 3).map((x) => <span key={x} className="rounded bg-grafite-elevado px-1.5 py-0.5 text-[10px] text-nevoa">{x}</span>)}</p>}
@@ -58,7 +56,7 @@ export function BoardView({ tarefas, statuses, membros, listId, actions }: { tar
               {itens.length > 80 && <p className="px-1 text-xs text-nevoa">+{itens.length - 80} (use a Lista para ver todas)</p>}
               {listId && (novo === s.id ? (
                 <form onSubmit={(e) => { e.preventDefault(); if (txt.trim()) { actions.criar({ title: txt.trim(), statusId: s.id, listId }); setTxt(''); } }}>
-                  <input autoFocus value={txt} onChange={(e) => setTxt(e.target.value)} onBlur={() => !txt && setNovo(null)} placeholder="Nome da tarefa" className="w-full rounded border border-sinal/50 bg-carbono px-2 py-1 text-sm text-branco-cru outline-none" />
+                  <input autoFocus value={txt} onChange={(e) => setTxt(e.target.value)} onBlur={() => !txt && setNovo(null)} placeholder="Nome da tarefa" className="w-full rounded border border-roxo-eletrico/50 bg-carbono px-2 py-1 text-sm text-branco-cru outline-none" />
                 </form>
               ) : (
                 <button type="button" onClick={() => setNovo(s.id)} className="flex w-full items-center gap-1 px-1 py-1 text-xs text-nevoa hover:text-branco-cru"><Plus size={13} /> Adicionar Tarefa</button>

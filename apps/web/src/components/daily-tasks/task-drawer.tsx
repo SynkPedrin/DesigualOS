@@ -27,7 +27,7 @@ function CampoPersonalizado({ def, valor, taskId }: { def: WorkTaskDetail['field
   const set = useSetCustomField(taskId);
   const [v, setV] = useState(valor === undefined || valor === null ? '' : String(valor));
   useEffect(() => { setV(valor === undefined || valor === null ? '' : String(valor)); }, [valor]);
-  const cls = 'rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none focus:border-sinal/50';
+  const cls = 'rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none focus:border-roxo-eletrico/50';
   if (def.type === 'checkbox') return <input type="checkbox" aria-label={def.name} checked={valor === true} onChange={(e) => set.mutate({ fieldId: def.id, value: e.target.checked })} />;
   if (def.type === 'drop_down') {
     return (
@@ -65,7 +65,7 @@ function EditaNoLugar({ valor, onSalvar, className }: { valor: string; onSalvar:
   const [edit, setEdit] = useState(false);
   const [v, setV] = useState(valor);
   if (!edit) return <button type="button" onDoubleClick={() => { setV(valor); setEdit(true); }} title="Duplo clique para editar" className={cn('text-left', className)}>{valor}</button>;
-  return <input autoFocus value={v} onChange={(e) => setV(e.target.value)} onBlur={() => setEdit(false)} onKeyDown={(e) => { if (e.key === 'Escape') setEdit(false); if (e.key === 'Enter' && v.trim()) { if (v.trim() !== valor) onSalvar(v.trim()); setEdit(false); } }} className="rounded border border-sinal/50 bg-carbono px-1 text-sm text-branco-cru outline-none" />;
+  return <input autoFocus value={v} onChange={(e) => setV(e.target.value)} onBlur={() => setEdit(false)} onKeyDown={(e) => { if (e.key === 'Escape') setEdit(false); if (e.key === 'Enter' && v.trim()) { if (v.trim() !== valor) onSalvar(v.trim()); setEdit(false); } }} className="rounded border border-roxo-eletrico/50 bg-carbono px-1 text-sm text-branco-cru outline-none" />;
 }
 
 function BuscaDeTarefa({ onPick, excluir }: { onPick: (t: WorkTaskWire) => void; excluir: string }) {
@@ -218,7 +218,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </dd>
               <dt className="text-nevoa">Acompanhando</dt>
               <dd className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => (data.following ? deixar : seguir).mutate(undefined, { onSuccess: () => toast(data.following ? 'Você deixou de seguir esta tarefa.' : 'Você segue esta tarefa: recebe aviso de comentário e mudança de status.', 'success'), onError: erro })} className={cn('rounded-lg px-3 py-1 text-sm font-medium', data.following ? 'bg-sinal/20 text-sinal' : 'border border-grafite-elevado text-branco-cru hover:bg-grafite-elevado')}>{data.following ? '✓ Seguindo' : '+ Seguir'}</button>
+                <button type="button" onClick={() => (data.following ? deixar : seguir).mutate(undefined, { onSuccess: () => toast(data.following ? 'Você deixou de seguir esta tarefa.' : 'Você segue esta tarefa: recebe aviso de comentário e mudança de status.', 'success'), onError: erro })} className={cn('rounded-lg px-3 py-1 text-sm font-medium', data.following ? 'bg-roxo-eletrico/20 text-lilas' : 'border border-grafite-elevado text-branco-cru hover:bg-grafite-elevado')}>{data.following ? '✓ Seguindo' : '+ Seguir'}</button>
                 <span className="flex items-center -space-x-1.5">{data.followers.slice(0, 6).map((f) => <span key={f.id} className="rounded-full ring-2 ring-carbono"><Avatar nome={f.name} url={f.avatar} size={22} /></span>)}</span>
                 {data.followers.length > 0 && <span className="text-xs text-nevoa">{data.followers.length} acompanhando</span>}
               </dd>
@@ -238,7 +238,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 <TextoRico texto={desc} className="text-branco-cru" />
               ) : (
                 <>
-                  <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={4} placeholder="Adicione uma descrição (links ficam clicáveis depois de salvar)" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
+                  <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={4} placeholder="Adicione uma descrição (links ficam clicáveis depois de salvar)" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico/50" />
                   {editandoDesc && <button type="button" onClick={() => setEditandoDesc(false)} className="mt-1 text-xs text-nevoa hover:text-branco-cru">Ver como ficou</button>}
                 </>
               )}
@@ -312,8 +312,8 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                       </p>
                       {editandoComent?.id === c.id ? (
                         <form className="mt-1 space-y-1" onSubmit={(e) => { e.preventDefault(); crud.editarComentario.mutate({ id: c.id, body: editandoComent.body }, { onSuccess: () => setEditandoComent(null), onError: erro }); }}>
-                          <textarea autoFocus value={editandoComent.body} onChange={(e) => setEditandoComent({ id: c.id, body: e.target.value })} rows={3} className="w-full rounded border border-sinal/50 bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />
-                          <span className="flex gap-2"><button type="submit" className="rounded bg-sinal px-2 py-1 text-xs font-semibold text-grafite">Salvar</button><button type="button" onClick={() => setEditandoComent(null)} className="text-xs text-nevoa">Cancelar</button></span>
+                          <textarea autoFocus value={editandoComent.body} onChange={(e) => setEditandoComent({ id: c.id, body: e.target.value })} rows={3} className="w-full rounded border border-roxo-eletrico/50 bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />
+                          <span className="flex gap-2"><button type="submit" className="rounded bg-roxo-eletrico px-2 py-1 text-xs font-semibold text-white">Salvar</button><button type="button" onClick={() => setEditandoComent(null)} className="text-xs text-nevoa">Cancelar</button></span>
                         </form>
                       ) : <TextoRico texto={c.body} className="text-branco-cru" />}
                     </div>
@@ -321,12 +321,12 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 ))}
               </ul>
               <form className="mt-3 space-y-1" onSubmit={(e) => { e.preventDefault(); if (coment.trim()) comentar.mutate(coment.trim(), { onSuccess: () => setComent('') }); }}>
-                <textarea ref={comentRef} value={coment} onChange={(e) => setComent(e.target.value)} rows={2} placeholder="Escreva um comentário" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-sinal/50" />
+                <textarea ref={comentRef} value={coment} onChange={(e) => setComent(e.target.value)} rows={2} placeholder="Escreva um comentário" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico/50" />
                 <div className="flex items-center justify-between">
                   <select aria-label="Mencionar alguém" value="" onChange={(e) => { if (e.target.value) mencionar(e.target.value); }} className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa">
                     <option value="">@ Mencionar…</option>{membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                   </select>
-                  <button type="submit" disabled={comentar.isPending || !coment.trim()} className="rounded bg-sinal px-3 py-1.5 text-sm font-semibold text-grafite disabled:opacity-40">Comentar</button>
+                  <button type="submit" disabled={comentar.isPending || !coment.trim()} className="rounded bg-roxo-eletrico px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40">Comentar</button>
                 </div>
               </form>
             </section>
@@ -348,10 +348,10 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
           </div>
         )}
         {t && (
-          <footer className={cn('sticky bottom-0 z-10 flex items-center gap-3 border-t px-6 py-3', alterado ? 'border-sinal/60 bg-grafite' : 'border-grafite-elevado bg-carbono')}>
+          <footer className={cn('sticky bottom-0 z-10 flex items-center gap-3 border-t px-6 py-3', alterado ? 'border-roxo-eletrico/60 bg-grafite' : 'border-grafite-elevado bg-carbono')}>
             <span className={cn('text-sm', alterado ? 'font-medium text-aviso' : 'text-nevoa')}>{alterado ? 'Você tem alterações não salvas' : 'Tudo salvo — status, responsáveis, prazo, prioridade e cliente salvam na hora'}</span>
             <button type="button" disabled={!alterado} onClick={() => { setTitulo(t.title); setDesc(t.description ?? ''); }} className="ml-auto rounded-lg border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa hover:text-branco-cru disabled:opacity-40">Descartar</button>
-            <button type="button" disabled={!alterado || !titulo.trim() || atualizar.isPending} onClick={() => void salvarRascunho()} className="rounded-lg bg-sinal px-4 py-1.5 text-sm font-semibold text-grafite disabled:opacity-40">{atualizar.isPending ? 'Salvando…' : 'Salvar alterações'}</button>
+            <button type="button" disabled={!alterado || !titulo.trim() || atualizar.isPending} onClick={() => void salvarRascunho()} className="rounded-lg bg-roxo-eletrico px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40">{atualizar.isPending ? 'Salvando…' : 'Salvar alterações'}</button>
           </footer>
         )}
       </aside>

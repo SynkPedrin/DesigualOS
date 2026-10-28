@@ -33,7 +33,7 @@ export default function ModelosPage() {
                 <span className="text-sm text-branco-cru">{m.name}</span>
                 <span className="text-xs text-nevoa">{m.subtasks} subtarefas · {m.checklists} checklists</span>
                 <select aria-label={`Lista para ${m.name}`} value={alvo[m.id] ?? ''} onChange={(e) => setAlvo({ ...alvo, [m.id]: e.target.value })} className={`${sel} ml-auto max-w-64`}><option value="">Escolha a lista…</option>{listas.map((l) => <option key={l.id} value={l.id}>{l.rotulo}</option>)}</select>
-                <button type="button" disabled={!alvo[m.id] || usar.isPending} onClick={() => usar.mutate({ id: m.id, listId: alvo[m.id]! }, { onSuccess: () => setOk(`Tarefa criada a partir de "${m.name}".`) })} className="rounded bg-sinal px-2 py-1 text-xs font-semibold text-grafite disabled:opacity-40">Criar tarefa</button>
+                <button type="button" disabled={!alvo[m.id] || usar.isPending} onClick={() => usar.mutate({ id: m.id, listId: alvo[m.id]! }, { onSuccess: () => setOk(`Tarefa criada a partir de "${m.name}".`) })} className="rounded bg-roxo-eletrico px-2 py-1 text-xs font-semibold text-white disabled:opacity-40">Criar tarefa</button>
                 <button type="button" aria-label={`Apagar modelo ${m.name}`} onClick={() => { if (window.confirm(`Apagar o modelo "${m.name}"?`)) apagar.mutate(m.id); }} className="text-nevoa hover:text-red-400"><Trash2 size={14} /></button>
               </div>
             ))}

@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Calendar, CheckCircle2, Circle, Flag } from 'lucide-react';
+import { AlertTriangle, Calendar, CheckCircle2, Circle, Flag } from 'lucide-react';
 import { PRIORIDADES, type WorkMember, type WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
-import { Prazo } from '@/components/ui/prazo';
+import { diaEmSaoPaulo, urgenciaDoPrazo } from '@/lib/prazo';
 
 const CORES = ['#7c3aed', '#0ea5e9', '#f97316', '#10b981', '#ec4899', '#eab308', '#6366f1', '#14b8a6'];
 
@@ -112,13 +112,21 @@ export function formatarData(iso: string | null): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-/** A data e, ao lado, o que ela significa: HOJE, ATRASADA · 3 DIAS, Amanhã, Feito (ver components/ui/prazo.tsx). */
+/**
+ * Prazo numa linha só, do tamanho da coluna: a data e, colado, o que ela significa. Vence hoje é verde cheio;
+ * atrasada é vermelho no texto (o selo grande do resto do app empurrava a linha e tampava a prioridade).
+ */
 export function DueDate({ tarefa }: { tarefa: Pick<WorkTaskWire, 'dueAt' | 'completedAt'> }) {
   if (!tarefa.dueAt) return <Calendar size={15} className="text-nevoa/50" aria-label="Sem data" />;
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="text-nevoa">{formatarData(tarefa.dueAt)}</span>
-      <Prazo prazo={tarefa.dueAt} feito={Boolean(tarefa.completedAt)} />
-    </span>
-  );
+  const d = new Date(tarefa.dueAt);
+  const data = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', ...(diaEmSaoPaulo(d).slice(0, 4) !== diaEmSaoPaulo(new Date()).slice(0, 4) ? { year: '2-digit' } : {}) });
+  if (tarefa.completedAt) return <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-sucesso"><CheckCircle2 size={12} aria-hidden />{data}</span>;
+  const u = urgenciaDoPrazo(tarefa.dueAt);
+  if (u === 'hoje') return <span className="inline-flex items-center whitespace-nowrap rounded bg-sucesso px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-carbono">Hoje</span>;
+  if (u === 'atrasado') {
+    const dias = Math.max(1, Math.round((Date.parse(`${diaEmSaoPaulo(new Date())}T00:00:00Z`) - Date.parse(`${diaEmSaoPaulo(d)}T00:00:00Z`)) / 86_400_000));
+    return <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-red-400" title={`Atrasada desde ${data}`}><AlertTriangle size={12} aria-hidden />{data}<span className="text-[11px] text-red-400/80">· {dias}d</span></span>;
+  }
+  if (u === 'amanha') return <span className="whitespace-nowrap text-xs font-medium text-lilas">Amanhã</span>;
+  return <span className="whitespace-nowrap text-xs text-nevoa">{data}</span>;
 }

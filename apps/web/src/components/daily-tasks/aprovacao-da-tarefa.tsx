@@ -59,7 +59,7 @@ export function AprovacaoDaTarefa({ taskId, membros, eu }: { taskId: string; mem
             {membros.filter((m) => m.id !== eu).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
           <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Recado (opcional)" aria-label="Recado para quem aprova" className="min-w-40 flex-1 rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
-          <button type="submit" disabled={pedir.isPending} className="rounded-lg bg-sinal px-3 py-1.5 text-sm font-semibold text-grafite disabled:opacity-50">Pedir aprovação</button>
+          <button type="submit" disabled={pedir.isPending} className="rounded-lg bg-roxo-eletrico px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">Pedir aprovação</button>
         </form>
       )}
     </div>

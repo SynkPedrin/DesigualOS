@@ -47,7 +47,7 @@ function ListaBtn({ l, ativa, onClick }: { l: WorkTreeSpace['lists'][number]; at
   const [sobre, setSobre] = useState(false);
   return (
     <li
-      className={cn('group flex items-center rounded', sobre && 'ring-1 ring-sinal', l.archived && 'opacity-60')}
+      className={cn('group flex items-center rounded', sobre && 'ring-1 ring-roxo-eletrico', l.archived && 'opacity-60')}
       onDragOver={(e) => { if (e.dataTransfer.types.includes(TASK_DRAG)) { e.preventDefault(); setSobre(true); } }}
       onDragLeave={() => setSobre(false)}
       onDrop={(e) => {
@@ -58,7 +58,7 @@ function ListaBtn({ l, ativa, onClick }: { l: WorkTreeSpace['lists'][number]; at
         mover.mutate({ id, listId: l.id }, { onSuccess: () => toast(`Movida para "${l.name}".`, 'success'), onError: (er) => toast(er instanceof ApiRequestError ? er.message : 'Não foi possível mover.', 'error') });
       }}
     >
-      <button type="button" onClick={onClick} title={l.name} className={cn('min-w-0 flex-1 truncate rounded px-2 py-1 text-left text-xs', ativa ? 'bg-grafite-elevado text-branco-cru' : 'text-nevoa hover:text-branco-cru')}>
+      <button type="button" onClick={onClick} title={l.name} className={cn('min-w-0 flex-1 truncate rounded px-2 py-1 text-left text-xs', ativa ? 'bg-roxo-eletrico/20 font-medium text-branco-cru ring-1 ring-inset ring-roxo-eletrico/40' : 'text-nevoa hover:bg-grafite-elevado/60 hover:text-branco-cru')}>
         <span className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5"><LogoDoCliente nome={nomeLimpo(l.name)} className="!size-4" /><span className="truncate">{l.name}</span></span>
           {l.openTaskCount > 0 && <span className="shrink-0 text-[10px] text-nevoa/60">{l.openTaskCount}</span>}
@@ -74,9 +74,9 @@ export function Arvore({ spaces, listId, spaceId, onPick, arquivados, onArquivad
   const criarLista = useCreateList();
   const { criarPasta } = useContainerActions();
   return (
-    <Surface className="max-h-[calc(100vh-14rem)] space-y-3 overflow-y-auto p-3">
+    <Surface className="max-h-[calc(100vh-12rem)] space-y-3 overflow-y-auto p-2.5">
       <div className="flex items-center justify-between">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60">Espaços e listas</p>
+        <p className="whitespace-nowrap text-xs font-semibold text-nevoa">Listas</p>
         <label className="flex items-center gap-1 text-[10px] text-nevoa"><input type="checkbox" checked={arquivados} onChange={(e) => onArquivados(e.target.checked)} /> arquivados</label>
       </div>
       {spaces.map((s) => {

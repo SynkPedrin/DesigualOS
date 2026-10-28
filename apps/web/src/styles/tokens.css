@@ -21,6 +21,8 @@
   --color-nevoa: #a1a1aa;
   --color-violeta-sutil: #ddd6fe;
   --color-magenta-spark: #d946ef;
+  /* Roxo para TEXTO e ícone sobre o fundo escuro: o roxo-elétrico como texto fica abaixo do contraste legível. */
+  --color-lilas: #c4b5fd;
 
   /* Product energy accent: exact hex sampled from the real brand asset assets/FUNDO.png
    * (2026-09-01), confirmed by the backend team, replaces the earlier #c4f000 placeholder. */
@@ -108,6 +110,7 @@
   --color-grafite-elevado: #dedede;
   --color-nevoa: #5c5c66;
   --color-sinal: #7a8a00;
+  --color-lilas: #6d28d9;
 }
 
 html {

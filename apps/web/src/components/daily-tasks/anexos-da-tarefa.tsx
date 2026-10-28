@@ -57,7 +57,7 @@ export function AnexosDaTarefa({ taskId, anexos, erro }: { taskId: string; anexo
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setArrastando(true); } }}
       onDragLeave={() => setArrastando(false)}
       onDrop={(e) => { e.preventDefault(); setArrastando(false); void enviar([...e.dataTransfer.files]); }}
-      className={cn('rounded-lg border border-dashed p-2 transition-colors', arrastando ? 'border-sinal bg-sinal/10' : 'border-transparent')}
+      className={cn('rounded-lg border border-dashed p-2 transition-colors', arrastando ? 'border-roxo-eletrico bg-roxo-eletrico/10' : 'border-transparent')}
     >
       <ul className="space-y-1.5">
         {anexos.map((a) => (
@@ -73,13 +73,13 @@ export function AnexosDaTarefa({ taskId, anexos, erro }: { taskId: string; anexo
         {subindo.map((s) => (
           <li key={s.key} className="flex items-center gap-2 text-sm text-nevoa" role="status">
             <Loader2 size={14} className="animate-spin" /><span className="min-w-0 flex-1 truncate">{s.nome}</span>
-            <span className="h-1 w-20 overflow-hidden rounded bg-grafite-elevado"><span className="block h-full bg-sinal" style={{ width: `${Math.round(s.fracao * 100)}%` }} /></span>
+            <span className="h-1 w-20 overflow-hidden rounded bg-grafite-elevado"><span className="block h-full bg-roxo-eletrico" style={{ width: `${Math.round(s.fracao * 100)}%` }} /></span>
           </li>
         ))}
       </ul>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input ref={seletor} type="file" multiple hidden onChange={(e) => { void enviar([...(e.target.files ?? [])]); e.target.value = ''; }} aria-label="Escolher arquivos para anexar" />
-        <button type="button" onClick={() => seletor.current?.click()} className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1.5 text-sm text-branco-cru hover:border-sinal/60"><Upload size={14} /> Anexar arquivo</button>
+        <button type="button" onClick={() => seletor.current?.click()} className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1.5 text-sm text-branco-cru hover:border-roxo-eletrico/60"><Upload size={14} /> Anexar arquivo</button>
         <form className="min-w-40 flex-1" onSubmit={(e) => { e.preventDefault(); if (link.trim()) crud.anexar.mutate({ url: link.trim() }, { onSuccess: () => setLink(''), onError: erro }); }}>
           <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="ou cole um link (Drive, Figma…)" aria-label="Link do anexo" className="w-full rounded border border-grafite-elevado bg-transparent px-2 py-1.5 text-sm text-branco-cru outline-none placeholder:text-nevoa" />
         </form>

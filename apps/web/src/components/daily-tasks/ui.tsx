@@ -8,10 +8,10 @@ import { cn } from '@/lib/utils';
 
 /** Cartão de número do topo da tela. Clicável quando filtra a lista. */
 export function StatCard({ icone: Icone, rotulo, valor, detalhe, tom = 'neutro', onClick, ativo }: { icone: LucideIcon; rotulo: string; valor: number | string; detalhe?: string | undefined; tom?: 'neutro' | 'verde' | 'vermelho' | 'amarelo' | 'roxo'; onClick?: () => void; ativo?: boolean }) {
-  const cor = { neutro: 'bg-grafite-elevado text-nevoa', verde: 'bg-sucesso/15 text-sucesso', vermelho: 'bg-red-500/15 text-red-400', amarelo: 'bg-aviso/15 text-aviso', roxo: 'bg-roxo-eletrico/15 text-roxo-eletrico' }[tom];
+  const cor = { neutro: 'bg-grafite-elevado text-nevoa', verde: 'bg-sucesso/15 text-sucesso', vermelho: 'bg-red-500/15 text-red-400', amarelo: 'bg-aviso/15 text-aviso', roxo: 'bg-roxo-eletrico/15 text-lilas' }[tom];
   const Tag = onClick ? 'button' : 'div';
   return (
-    <Tag type={onClick ? 'button' : undefined} onClick={onClick} aria-pressed={onClick ? ativo : undefined} className={cn('flex items-center gap-3 rounded-xl border bg-grafite px-3 py-2 text-left', ativo ? 'border-sinal' : 'border-grafite-elevado', onClick && 'transition-colors hover:border-sinal/60')}>
+    <Tag type={onClick ? 'button' : undefined} onClick={onClick} aria-pressed={onClick ? ativo : undefined} className={cn('flex items-center gap-3 rounded-xl border bg-grafite px-3 py-2 text-left', ativo ? 'border-roxo-eletrico bg-roxo-eletrico/10' : 'border-grafite-elevado', onClick && 'transition-colors hover:border-roxo-eletrico/60')}>
       <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', cor)}><Icone size={17} /></span>
       <span className="min-w-0">
         <span className="block text-xs text-nevoa">{rotulo}</span>
@@ -23,11 +23,11 @@ export function StatCard({ icone: Icone, rotulo, valor, detalhe, tom = 'neutro',
 }
 
 export function BarraDeProgresso({ pct, titulo }: { pct: number; titulo?: string }) {
-  const cor = pct >= 100 ? 'bg-sucesso' : pct >= 50 ? 'bg-sucesso' : pct > 0 ? 'bg-aviso' : 'bg-grafite-elevado';
+  const cor = pct >= 100 ? 'bg-sucesso' : pct >= 50 ? 'bg-sucesso' : pct > 0 ? 'bg-roxo-eletrico' : 'bg-grafite-elevado';
   return (
     <span className="flex items-center gap-2 text-xs text-nevoa" title={titulo}>
-      <span className="h-1.5 w-12 overflow-hidden rounded bg-grafite-elevado"><span className={cn('block h-full rounded', cor)} style={{ width: `${Math.max(pct, 0)}%` }} /></span>
-      <span className="w-8 tabular-nums">{pct}%</span>
+      <span className="h-1.5 w-9 overflow-hidden rounded bg-grafite-elevado"><span className={cn('block h-full rounded', cor)} style={{ width: `${Math.max(pct, 0)}%` }} /></span>
+      <span className="w-7 tabular-nums">{pct}%</span>
     </span>
   );
 }

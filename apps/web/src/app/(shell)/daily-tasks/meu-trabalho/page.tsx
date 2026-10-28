@@ -17,8 +17,8 @@ type Faixa = 'atrasadas' | 'hoje' | 'semana' | 'depois' | 'sem';
 type Agrupar = 'prazo' | 'cliente' | 'lista';
 const FAIXAS: Array<{ id: Faixa; titulo: string; cor: string }> = [
   { id: 'atrasadas', titulo: 'Atrasadas', cor: 'text-red-400' },
-  { id: 'hoje', titulo: 'Hoje', cor: 'text-aviso' },
-  { id: 'semana', titulo: 'Próximos 7 dias', cor: 'text-branco-cru' },
+  { id: 'hoje', titulo: 'Hoje', cor: 'text-sucesso' },
+  { id: 'semana', titulo: 'Próximos 7 dias', cor: 'text-lilas' },
   { id: 'depois', titulo: 'Depois', cor: 'text-nevoa' },
   { id: 'sem', titulo: 'Sem data', cor: 'text-nevoa' },
 ];
@@ -85,19 +85,19 @@ export default function MeuTrabalhoPage() {
       </header>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatCard icone={AlertTriangle} rotulo="Atrasadas" valor={contagem.atrasadas} tom="vermelho" onClick={() => setFoco(foco === 'atrasadas' ? null : 'atrasadas')} ativo={foco === 'atrasadas'} />
-        <StatCard icone={CalendarClock} rotulo="Vencem hoje" valor={contagem.hoje} tom="amarelo" onClick={() => setFoco(foco === 'hoje' ? null : 'hoje')} ativo={foco === 'hoje'} />
-        <StatCard icone={CalendarDays} rotulo="Próximos 7 dias" valor={contagem.semana} tom="verde" onClick={() => setFoco(foco === 'semana' ? null : 'semana')} ativo={foco === 'semana'} />
+        <StatCard icone={CalendarClock} rotulo="Vencem hoje" valor={contagem.hoje} tom="verde" onClick={() => setFoco(foco === 'hoje' ? null : 'hoje')} ativo={foco === 'hoje'} />
+        <StatCard icone={CalendarDays} rotulo="Próximos 7 dias" valor={contagem.semana} tom="roxo" onClick={() => setFoco(foco === 'semana' ? null : 'semana')} ativo={foco === 'semana'} />
         <StatCard icone={CircleSlash} rotulo="Sem data" valor={contagem.sem} onClick={() => setFoco(foco === 'sem' ? null : 'sem')} ativo={foco === 'sem'} />
       </div>
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-xs text-nevoa">Agrupar por</span>
         <div role="tablist" aria-label="Agrupar" className="flex gap-1">
           {(['prazo', 'cliente', 'lista'] as const).map((a) => (
-            <button key={a} role="tab" aria-selected={agruparPor === a} type="button" onClick={() => setAgruparPor(a)} className={cn('rounded-lg px-3 py-1 text-sm capitalize', agruparPor === a ? 'bg-sinal font-medium text-grafite' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>{a}</button>
+            <button key={a} role="tab" aria-selected={agruparPor === a} type="button" onClick={() => setAgruparPor(a)} className={cn('rounded-lg px-3 py-1 text-sm capitalize', agruparPor === a ? 'bg-roxo-eletrico font-medium text-white' : 'bg-grafite-elevado text-nevoa hover:text-branco-cru')}>{a}</button>
           ))}
         </div>
         <label className="flex items-center gap-1.5 text-xs text-nevoa"><input type="checkbox" checked={concluidas} onChange={(e) => setConcluidas(e.target.checked)} /> Incluir concluídas</label>
-        {foco && <button type="button" onClick={() => setFoco(null)} className="text-xs text-sinal hover:underline">tirar filtro</button>}
+        {foco && <button type="button" onClick={() => setFoco(null)} className="text-xs text-lilas hover:underline">tirar filtro</button>}
         <span className="ml-auto text-xs text-nevoa">{visiveis.length} tarefa(s)</span>
       </div>
       {visiveis.length === 0 ? (

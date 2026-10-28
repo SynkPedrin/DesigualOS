@@ -65,7 +65,7 @@ function ListasEClientes() {
           <h2 className="font-heading text-xl font-semibold text-branco-cru">Listas e clientes</h2>
           <p className="text-sm text-nevoa">Toda tarefa criada numa lista do cliente já nasce com o cliente — e as subtarefas herdam. {semCliente} lista(s) ainda sem cliente.</p>
         </div>
-        <button type="button" disabled={sugestoes.length === 0 || vincular.isPending} onClick={async () => { if (!window.confirm(`Vincular ${sugestoes.length} lista(s) ao cliente de MESMO NOME? (só nome igual, nada aproximado)`)) return; for (const l of sugestoes) await vincular.mutateAsync({ listId: l.id, clientId: porNome.get(normalizar(l.name))!.id }); toast(`${sugestoes.length} lista(s) vinculada(s).`, 'success'); }} className="rounded-lg bg-sinal px-4 py-2 text-sm font-semibold text-grafite disabled:opacity-40">Vincular as {sugestoes.length} de nome igual</button>
+        <button type="button" disabled={sugestoes.length === 0 || vincular.isPending} onClick={async () => { if (!window.confirm(`Vincular ${sugestoes.length} lista(s) ao cliente de MESMO NOME? (só nome igual, nada aproximado)`)) return; for (const l of sugestoes) await vincular.mutateAsync({ listId: l.id, clientId: porNome.get(normalizar(l.name))!.id }); toast(`${sugestoes.length} lista(s) vinculada(s).`, 'success'); }} className="rounded-lg bg-roxo-eletrico px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">Vincular as {sugestoes.length} de nome igual</button>
       </div>
       <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar lista…" aria-label="Buscar lista" className="w-72 rounded-lg border border-grafite-elevado bg-carbono px-3 py-1.5 text-sm text-branco-cru outline-none" />
       <div className="overflow-hidden rounded-xl border border-grafite-elevado">
@@ -138,7 +138,7 @@ export default function ConfiguracoesPage() {
       </header>
       <div className="grid gap-6 lg:grid-cols-[210px_minmax(0,1fr)]">
         <nav aria-label="Seções" className="flex gap-1 lg:flex-col">
-          {secoes.map((x) => <button key={x.id} type="button" aria-current={secao === x.id} onClick={() => setSecao(x.id as typeof secao)} className={cn('rounded-lg px-3 py-2 text-left text-sm', secao === x.id ? 'bg-sinal font-medium text-grafite' : 'text-nevoa hover:bg-grafite-elevado hover:text-branco-cru')}>{x.rotulo}</button>)}
+          {secoes.map((x) => <button key={x.id} type="button" aria-current={secao === x.id} onClick={() => setSecao(x.id as typeof secao)} className={cn('rounded-lg px-3 py-2 text-left text-sm', secao === x.id ? 'bg-roxo-eletrico font-medium text-white' : 'text-nevoa hover:bg-grafite-elevado hover:text-branco-cru')}>{x.rotulo}</button>)}
         </nav>
         <div className="min-w-0 space-y-8">
       {secao === 'listas' && <ListasEClientes />}

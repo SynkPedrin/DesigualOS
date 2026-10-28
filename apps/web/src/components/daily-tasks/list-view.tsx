@@ -1,6 +1,5 @@
 'use client';
 
-import { faixaDaLinha } from '@/components/ui/prazo';
 import { urgenciaDoPrazo } from '@/lib/prazo';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GitFork, Plus } from 'lucide-react';
@@ -16,6 +15,12 @@ import { andamento, BarraDeProgresso } from './ui';
 import { PREFERENCIAS_PADRAO, usePreferences, type ColunaDaLista } from '@/hooks/use-work-extra';
 import { DuePicker } from './pickers';
 
+/** Faixa à esquerda da linha, para ler de longe: vermelho atrasada, verde vence hoje. */
+export function faixaDaTarefa(t: Pick<WorkTaskWire, 'dueAt' | 'completedAt'>): string {
+  const u = t.completedAt ? null : urgenciaDoPrazo(t.dueAt);
+  return u === 'atrasado' ? 'border-l-[3px] border-l-erro' : u === 'hoje' ? 'border-l-[3px] border-l-sucesso' : 'border-l-[3px] border-l-transparent';
+}
+
 export interface TaskActions {
   abrir: (t: WorkTaskWire) => void;
   atualizar: (t: WorkTaskWire, patch: Omit<TaskPatch, 'id' | 'expectedVersion'>) => void;
@@ -23,10 +28,10 @@ export interface TaskActions {
 }
 
 /** Colunas da tabela, na ordem. A pessoa escolhe quais aparecem (Personalizar visualização); tarefa e ações são sempre fixas. */
-const LARGURA: Record<ColunaDaLista, string> = { andamento: '112px', responsavel: '84px', prazo: '150px', prioridade: '112px', status: '128px', cliente: '150px', tags: '140px' };
+const LARGURA: Record<ColunaDaLista, string> = { andamento: '84px', responsavel: '60px', prazo: '124px', prioridade: '100px', status: '124px', cliente: '140px', tags: '120px' };
 const ORDEM: ColunaDaLista[] = ['cliente', 'andamento', 'responsavel', 'prazo', 'prioridade', 'status', 'tags'];
 export function gradeDeColunas(colunas: readonly ColunaDaLista[]): string {
-  return ['24px', 'minmax(240px,1fr)', ...ORDEM.filter((c) => colunas.includes(c)).map((c) => LARGURA[c]), '96px'].join(' ');
+  return ['20px', 'minmax(220px,1fr)', ...ORDEM.filter((c) => colunas.includes(c)).map((c) => LARGURA[c]), '32px'].join(' ');
 }
 export function useColunas() {
   const p = usePreferences().data ?? PREFERENCIAS_PADRAO;
@@ -39,13 +44,13 @@ function InlineAdd({ rotulo, onSubmit, recuo = 0, abrir = false }: { rotulo: str
   if (!aberto) {
     return (
       <div className="px-3 py-1.5" style={{ paddingLeft: 44 + recuo }}>
-        <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-2 rounded-lg border border-dashed border-grafite-elevado px-2.5 py-1 text-xs text-nevoa hover:border-sinal/60 hover:text-branco-cru"><Plus size={12} /> {rotulo}</button>
+        <button type="button" onClick={() => setAberto(true)} className="flex items-center gap-2 rounded-lg border border-dashed border-grafite-elevado px-2.5 py-1 text-xs text-nevoa hover:border-roxo-eletrico/60 hover:text-branco-cru"><Plus size={12} /> {rotulo}</button>
       </div>
     );
   }
   return (
     <form className="px-3 py-2" style={{ paddingLeft: 44 + recuo }} onSubmit={(e) => { e.preventDefault(); if (txt.trim()) { onSubmit(txt.trim()); setTxt(''); } }}>
-      <input autoFocus value={txt} onChange={(e) => setTxt(e.target.value)} onBlur={() => { if (!txt.trim()) setAberto(false); }} onKeyDown={(e) => { if (e.key === 'Escape') { setTxt(''); setAberto(false); } }} placeholder={`${rotulo} — Enter para criar, Esc para sair`} className="w-full rounded border border-sinal/50 bg-carbono px-2 py-1.5 text-sm text-branco-cru outline-none" />
+      <input autoFocus value={txt} onChange={(e) => setTxt(e.target.value)} onBlur={() => { if (!txt.trim()) setAberto(false); }} onKeyDown={(e) => { if (e.key === 'Escape') { setTxt(''); setAberto(false); } }} placeholder={`${rotulo} — Enter para criar, Esc para sair`} className="w-full rounded border border-roxo-eletrico/50 bg-carbono px-2 py-1.5 text-sm text-branco-cru outline-none" />
     </form>
   );
 }
@@ -84,7 +89,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(TASK_DRAG, t.id); e.dataTransfer.effectAllowed = 'move'; }}
         style={{ gridTemplateColumns: grade }}
-        className={cn('group grid items-center gap-3 border-b border-grafite-elevado/40 px-3 hover:bg-grafite-elevado/30', faixaDaLinha(feita ? null : urgenciaDoPrazo(t.dueAt)), compacta ? 'py-1' : 'py-2.5', nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
+        className={cn('group grid items-center gap-2 border-b border-grafite-elevado/40 pl-2 pr-1 hover:bg-roxo-eletrico/[0.06]', faixaDaTarefa(t), compacta ? 'py-1' : 'py-2', nivel > 0 && 'bg-grafite/30', t.archivedAt && 'opacity-60')}
       >
         <input type="checkbox" aria-label={`Selecionar ${t.key}`} checked={ctx.selecionadas.has(t.id)} onChange={() => ctx.alternarSelecao(t.id)} />
         <div className="relative flex min-w-0 items-center gap-2" style={{ paddingLeft: nivel * 22 }}>
@@ -104,7 +109,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
               {t.subtaskCount > 0 && <span className="flex shrink-0 items-center gap-1" title={`${t.subtaskDone} de ${t.subtaskCount} subtarefas concluídas`}><GitFork size={10} className="rotate-90" />{t.subtaskDone}/{t.subtaskCount}</span>}
             </span>
           </div>
-          {!ctx.semSubtarefas && <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex size-5 shrink-0 items-center justify-center rounded border border-grafite-elevado text-nevoa opacity-0 transition-opacity hover:border-sinal/60 hover:text-branco-cru focus:opacity-100 group-hover:opacity-100"><Plus size={12} /></button>}
+          {!ctx.semSubtarefas && <button type="button" aria-label="Adicionar subtarefa" title="Criar uma subtarefa dentro desta tarefa" onClick={() => { setAberta(true); setCriandoSub(true); }} className="flex size-5 shrink-0 items-center justify-center rounded border border-grafite-elevado text-nevoa opacity-0 transition-opacity hover:border-roxo-eletrico/60 hover:text-branco-cru focus:opacity-100 group-hover:opacity-100"><Plus size={12} /></button>}
         </div>
         {tem('cliente') && <div className="flex min-w-0 items-center gap-1.5 text-xs text-nevoa">{nomeCliente ? <><LogoDoCliente nome={nomeCliente} className="!size-4" /><span className="truncate">{nomeCliente}</span></> : <span className="text-nevoa/40">—</span>}</div>}
         {tem('andamento') && <div className="flex items-center"><BarraDeProgresso pct={pct} /></div>}
@@ -115,7 +120,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
         {tem('prioridade') && <div className="flex items-center"><PriorityPicker tarefa={t} badge onChange={(p) => ctx.actions.atualizar(t, { priority: p })} /></div>}
         {tem('status') && <div className="flex items-center"><StatusPicker tarefa={t} statuses={statuses} onChange={(statusId) => ctx.actions.atualizar(t, { statusId })} /></div>}
         {tem('tags') && <div className="flex min-w-0 flex-wrap gap-1">{t.tags.slice(0, 2).map((x) => <span key={x} className="truncate rounded bg-grafite-elevado px-1.5 py-0.5 text-[11px] text-nevoa">{x}</span>)}{t.tags.length > 2 && <span className="text-[11px] text-nevoa">+{t.tags.length - 2}</span>}</div>}
-        <div className="flex items-center justify-end gap-1"><button type="button" onClick={() => ctx.actions.abrir(t)} className="rounded-md bg-grafite-elevado px-2 py-1 text-xs font-medium text-branco-cru opacity-0 transition-opacity hover:bg-sinal hover:text-grafite focus:opacity-100 group-hover:opacity-100">Abrir</button><span className="opacity-60 transition-opacity focus-within:opacity-100 group-hover:opacity-100"><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></span></div>
+        <div className="flex items-center justify-end"><span className="opacity-60 transition-opacity focus-within:opacity-100 group-hover:opacity-100"><RowMenu t={t} onOpen={() => ctx.actions.abrir(t)} /></span></div>
       </div>
       {aberta && !ctx.semSubtarefas && (
         <>
@@ -141,11 +146,11 @@ export function CabecalhoDaTabela({ fixo, ordem, onOrdenar, todasMarcadas, onMar
     prazo: col('prazo', 'Prazo'), prioridade: col('prioridade', 'Prioridade'), status: <span className="uppercase tracking-wide">Status</span>, tags: <span className="uppercase tracking-wide">Tags</span>,
   };
   return (
-    <div style={{ gridTemplateColumns: grade }} className={cn('grid items-center gap-3 border-b border-grafite-elevado px-3 py-2 text-[11px] text-nevoa', fixo && 'sticky top-0 z-10 bg-carbono')}>
+    <div style={{ gridTemplateColumns: grade }} className={cn('grid items-center gap-2 border-b border-grafite-elevado py-2 pl-[11px] pr-1 text-[11px] text-nevoa', fixo && 'sticky top-0 z-10 bg-carbono')}>
       <input type="checkbox" aria-label="Selecionar todas" checked={Boolean(todasMarcadas)} onChange={() => onMarcarTodas?.()} disabled={!onMarcarTodas} />
       {col('tarefa', 'Tarefa')}
       {ORDEM.filter((c) => colunas.includes(c)).map((c) => <Fragment key={c}>{rotulo[c]}</Fragment>)}
-      <span className="text-right uppercase tracking-wide">Ações</span>
+      <span aria-hidden />
     </div>
   );
 }
