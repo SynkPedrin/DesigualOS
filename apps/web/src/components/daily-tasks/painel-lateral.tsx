@@ -78,9 +78,9 @@ export function PainelLateral({ overview, aoAbrir, aoFiltrar }: { overview: Work
       </Cartao>
 
       <Cartao titulo="Próximas entregas" icone={<Clock size={15} />}>
-        {(overview?.proximasEntregas.length ?? 0) === 0 ? <p className="text-sm text-nevoa">Nenhuma entrega com prazo à frente.</p> : (
+        {(overview?.proximasEntregas?.length ?? 0) === 0 ? <p className="text-sm text-nevoa">Nenhuma entrega com prazo à frente.</p> : (
           <ul className="space-y-1">
-            {overview!.proximasEntregas.map((e) => {
+            {(overview?.proximasEntregas ?? []).map((e) => {
               const p = prazoRelativo(e.dueAt, false);
               const nome = (e.clientId && clientes.get(e.clientId)) || nomeLimpo(e.lista);
               return (

@@ -60,8 +60,10 @@ describe.skipIf(!enabled)('integrações (origem externa, cliente, agentes) × P
     expect((await E.workTools.listTasks(ctxA, [], { q: 'agente' })).tasks.map((x) => x.title)).toContain('Criada pelo agente');
     await E.workTools.comment(ctxA, [], t.id, 'feito pelo agente');
     expect((await E.getTaskDetail(ctxA, t.id)).comments[0]!.body).toBe('feito pelo agente');
-    // colaborador comum (não admin), mesmo liberado na lista: o portão exige administrador
-    await expect(E.workTools.createTask(ctxColab, [], { listId, title: 'x' })).rejects.toMatchObject({ code: 'forbidden' });
+    // colaborador comum (membro da empresa, não administrador): o agente age com o acesso dele, que agora existe
+    await expect(E.workTools.createTask(ctxColab, [], { listId, title: 'do colaborador' })).resolves.toMatchObject({ title: 'do colaborador' });
+    // quem não é membro da empresa não passa pelo portão, nem por intermédio de um agente
+    await expect(E.workTools.createTask({ organizationId: A.org, userId: B.admin }, [], { listId, title: 'x' })).rejects.toMatchObject({ code: 'forbidden' });
     // flag desligada vale até para master
     await E.setFlag({ organizationId: A.org, enabled: false, allowedUserIds: [A.admin], updatedBy: A.admin });
     await expect(E.workTools.listTasks(ctxA, ['master'])).rejects.toMatchObject({ code: 'forbidden' });

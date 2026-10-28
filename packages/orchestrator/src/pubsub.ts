@@ -52,7 +52,9 @@ export interface WsEvent {
     // Comunicação interna: entregue só aos ids em payload.recipient_ids (filtro no servidor de WS).
     | 'chat.event'
     // Painel da gestão (Hoje de quem administra): só o aviso, sem dado; filtrado por recipient_ids.
-    | 'gestao.mudou';
+    | 'gestao.mudou'
+    // Daily Tasks: algo mudou (tarefa sincronizada do ClickUp). Só o aviso, sem dado; filtrado por recipient_ids.
+    | 'work.mudou';
   payload: Record<string, unknown>;
 }
 

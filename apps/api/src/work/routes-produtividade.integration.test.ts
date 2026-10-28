@@ -61,8 +61,8 @@ describe.skipIf(!enabled)('Daily Tasks — rotas de produtividade × PostgreSQL 
     ['GET', '/work/recurrences'], ['GET', '/work/reports'], ['GET', '/work/views'],
   ] as const;
 
-  it('colaborador (não administrador) é barrado em TODAS as rotas novas', async () => {
-    for (const [m, p, b] of rotas()) expect((await call('collab', m, p, b)).statusCode, `${m} ${p}`).toBe(403);
+  it('colaborador (membro da empresa, não administrador) usa as rotas novas como qualquer outro membro', async () => {
+    for (const [m, p, b] of rotas()) expect((await call('collab', m, p, b)).statusCode, `${m} ${p}`).toBeLessThan(300);
   });
 
   it('administrador autorizado usa todas; outra empresa recebe 404 em tudo que aponta para a tarefa', async () => {
@@ -103,11 +103,14 @@ describe.skipIf(!enabled)('Daily Tasks — rotas de produtividade × PostgreSQL 
     expect((await call('bAdmin', 'GET', '/work/tasks/by-source?provider=media&type=alert&id=alerta-9')).json().tasks).toHaveLength(0);
   });
 
-  it('edição/exclusão: colaborador barrado (403), outra empresa 404, autor edita o próprio comentário e exclusão definitiva exige arquivar', async () => {
+  it('edição/exclusão: a regra é por autoria, não por papel; outra empresa 404; exclusão definitiva exige arquivar', async () => {
     const c = (await call('admin', 'POST', `/work/tasks/${taskA}/comments`, { body: 'meu' })).json();
-    for (const [m, p, b] of [['PATCH', `/work/comments/${c.id}`, { body: 'x' }], ['DELETE', `/work/comments/${c.id}`], ['DELETE', `/work/tasks/${taskA}`], ['POST', `/work/tasks/${taskA}/attachments`, { url: 'https://a.com/x' }], ['POST', `/work/tasks/${taskA}/dependencies`, { dependsOnId: taskA }]] as const) {
+    // Quem não é o autor não edita nem apaga o comentário dos outros, seja qual for o papel.
+    for (const [m, p, b] of [['PATCH', `/work/comments/${c.id}`, { body: 'x' }], ['DELETE', `/work/comments/${c.id}`]] as const) {
       expect((await call('collab', m, p, b)).statusCode, `colab ${m} ${p}`).toBe(403);
     }
+    // Apagar a tarefa de vez exige arquivá-la antes, para qualquer membro.
+    expect((await call('collab', 'DELETE', `/work/tasks/${taskA}`)).statusCode).toBe(400);
     expect((await call('bAdmin', 'PATCH', `/work/comments/${c.id}`, { body: 'invasão' })).statusCode).toBe(404);
     expect((await call('bAdmin', 'DELETE', `/work/tasks/${taskA}`)).statusCode).toBe(404);
     expect((await call('admin', 'PATCH', `/work/comments/${c.id}`, { body: 'editado' })).statusCode).toBe(200);

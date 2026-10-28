@@ -26,7 +26,8 @@ export interface WsEvent {
     // Comunicação interna: entregue só aos ids em payload.recipient_ids (filtro no servidor de WS).
     | 'chat.event'
     // Gestão da equipe: só o aviso "mudou" (sem dado), entregue aos administradores.
-    | 'gestao.mudou';
+    | 'gestao.mudou'
+    | 'work.mudou';
   payload: Record<string, unknown>;
 }
 

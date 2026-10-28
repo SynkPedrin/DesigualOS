@@ -103,6 +103,52 @@ describe.skipIf(!enabled)('importação ClickUp × PostgreSQL real', () => {
     expect(await db.select().from(schema.workChecklists).where(eq(schema.workChecklists.organizationId, org))).toHaveLength(1);
   });
 
+  it('AO VIVO: a tarefa fica igual à do ClickUp, inclusive o que foi tirado lá', async () => {
+    const { importClickUp } = await import('./clickup-import');
+    const { db, schema } = await import('@desigual-os/database');
+    const { eq } = await import('drizzle-orm');
+    const { readFileSync } = await import('node:fs');
+    const ler = (n: string) => JSON.parse(readFileSync(join(dir, `${n}.json`), 'utf8'));
+    const t1 = (ler('tasks') as Array<Record<string, unknown> & { id: string; assignees: Array<{ id: number }> }>).find((t) => t.id === 't1')!;
+    // No ClickUp: foi para "feito", Ana e os outros saíram (ficou só a Bia), "Gravar" foi desmarcado, entrou "Editar",
+    // a dependência foi desfeita e o único comentário foi apagado.
+    const t1Novo = {
+      ...t1,
+      status: { status: 'feito', type: 'closed' },
+      date_closed: '1700009000000',
+      assignees: t1.assignees.filter((a) => a.id === 3),
+      checklists: [{ id: 'ck1', name: 'Roteiro', items: [{ id: 'i1', name: 'Gravar', resolved: false }, { id: 'i2', name: 'Editar', resolved: false }] }],
+      dependencies: [],
+    };
+    const snapshot = { team: ler('team'), spaces: ler('spaces'), lists: ler('lists'), tasks: [t1Novo], extras: { t1: { comments: [], attachments: [] } } };
+    await importClickUp({ organizationId: org, userId: null, actorKind: 'system' }, { snapshot, aoVivo: true });
+
+    const tasks = await db.select().from(schema.workTasks).where(eq(schema.workTasks.organizationId, org));
+    expect(tasks).toHaveLength(3); // uma tarefa sincronizada não mexe nas outras nem duplica
+    const pai = tasks.find((t) => t.title === 'Pai')!;
+    expect(pai.completedAt).not.toBeNull();
+    const asg = await db.select().from(schema.workTaskAssignees).where(eq(schema.workTaskAssignees.taskId, pai.id));
+    expect(asg.map((a) => a.userId)).toEqual([bia]);
+    const itens = await db.select().from(schema.workChecklistItems).where(eq(schema.workChecklistItems.organizationId, org));
+    expect(itens.map((i) => [i.text, i.done]).sort()).toEqual([['Editar', false], ['Gravar', false]]);
+    expect(await db.select().from(schema.workComments).where(eq(schema.workComments.taskId, pai.id))).toHaveLength(0);
+    expect(await db.select().from(schema.workTaskDependencies).where(eq(schema.workTaskDependencies.organizationId, org))).toHaveLength(0);
+  });
+
+  it('AO VIVO sem a lista de comentários não apaga comentário nenhum (leitura parcial não é remoção)', async () => {
+    const { importClickUp } = await import('./clickup-import');
+    const { db, schema } = await import('@desigual-os/database');
+    const { eq } = await import('drizzle-orm');
+    const antes = await db.select().from(schema.workComments).where(eq(schema.workComments.organizationId, org));
+    await importClickUp({ organizationId: org, userId: admin }, { snapshotDir: dir }); // devolve o comentário e a dependência
+    const { readFileSync } = await import('node:fs');
+    const ler = (n: string) => JSON.parse(readFileSync(join(dir, `${n}.json`), 'utf8'));
+    await importClickUp({ organizationId: org, userId: null, actorKind: 'system' }, { snapshot: { team: ler('team'), spaces: ler('spaces'), lists: ler('lists'), tasks: ler('tasks').slice(0, 1) }, aoVivo: true });
+    const depois = await db.select().from(schema.workComments).where(eq(schema.workComments.organizationId, org));
+    expect(depois.length).toBeGreaterThanOrEqual(antes.length);
+    expect(depois.length).toBe(1);
+  });
+
   it('não vaza para outra empresa', async () => {
     const { db, schema } = await import('@desigual-os/database');
     const { eq } = await import('drizzle-orm');

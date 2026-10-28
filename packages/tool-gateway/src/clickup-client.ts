@@ -292,11 +292,15 @@ export interface CreateTaskParams {
   listId: string;
   name: string;
   description?: string;
+  /** Descrição em markdown (é o que o Daily Tasks guarda). Quando vem, vale no lugar de `description`. */
+  markdownDescription?: string;
   assigneeId?: number;
   /** 1=urgente, 2=alta, 3=normal, 4=baixa (escala do ClickUp). */
   priority?: 1 | 2 | 3 | 4;
   /** Epoch em ms (formato do ClickUp). */
   dueDate?: number;
+  /** false = prazo SÓ de dia (o ClickUp mostra a data sem hora). Omitido, o ClickUp assume que há hora. */
+  dueDateTime?: boolean;
   tags?: string[];
   /** Id da task-mãe: é assim que o ClickUp cria SUBTAREFA (28/09/2026). */
   parent?: string;
@@ -316,10 +320,12 @@ export async function createTask(config: ClickUpConfig, params: CreateTaskParams
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: params.name,
-      description: params.description,
+      description: params.markdownDescription === undefined ? params.description : undefined,
+      markdown_description: params.markdownDescription,
       assignees: params.assigneeId ? [params.assigneeId] : undefined,
       priority: params.priority,
       due_date: params.dueDate,
+      due_date_time: params.dueDate !== undefined ? params.dueDateTime : undefined,
       start_date: params.startDate,
       parent: params.parent,
       tags: params.tags && params.tags.length > 0 ? params.tags : undefined,
@@ -340,9 +346,14 @@ export async function createTask(config: ClickUpConfig, params: CreateTaskParams
 export interface UpdateTaskParams {
   name?: string;
   description?: string;
+  /** Descrição em markdown. Quando vem, vale no lugar de `description`. */
+  markdownDescription?: string;
   status?: string;
-  priority?: 1 | 2 | 3 | 4;
+  /** Null limpa a prioridade. */
+  priority?: 1 | 2 | 3 | 4 | null;
   dueDate?: number | null;
+  /** false = prazo SÓ de dia. Só vale junto de `dueDate`. */
+  dueDateTime?: boolean;
   addAssignees?: number[];
   removeAssignees?: number[];
   /** Epoch ms. Null limpa. Campo separado do vencimento (28/09/2026). */
@@ -355,10 +366,11 @@ export async function updateTask(config: ClickUpConfig, taskId: string, params: 
   await assertTaskInScope(config, taskId);
   const body: Record<string, unknown> = {};
   if (params.name !== undefined) body.name = params.name;
-  if (params.description !== undefined) body.description = params.description;
+  if (params.markdownDescription !== undefined) body.markdown_description = params.markdownDescription;
+  else if (params.description !== undefined) body.description = params.description;
   if (params.status !== undefined) body.status = params.status;
   if (params.priority !== undefined) body.priority = params.priority;
-  if (params.dueDate !== undefined) body.due_date = params.dueDate;
+  if (params.dueDate !== undefined) { body.due_date = params.dueDate; if (params.dueDate !== null && params.dueDateTime !== undefined) body.due_date_time = params.dueDateTime; }
   if (params.startDate !== undefined) body.start_date = params.startDate;
   if (params.timeEstimate !== undefined) body.time_estimate = params.timeEstimate;
   if (params.addAssignees?.length || params.removeAssignees?.length) {
@@ -1046,4 +1058,23 @@ export function casarMembroDoClickUp(
   const nome = dobrar(pessoa.nome ?? '');
   const porNome = nome.length >= 3 ? membros.filter((m) => dobrar(m.username) === nome) : [];
   return porNome.length === 1 ? porNome[0]! : null;
+}
+
+/** Resposta de erro da API do ClickUp, com o status à mostra (404 = a tarefa não existe mais; 429 = limite de taxa). */
+export class ClickUpHttpError extends Error {
+  constructor(readonly status: number, caminho: string, corpo: string) {
+    super(`ClickUp ${caminho} falhou (${status}): ${corpo.slice(0, 300)}`);
+    this.name = 'ClickUpHttpError';
+  }
+}
+
+/**
+ * GET cru na API v2: devolve o JSON exatamente como o ClickUp mandou. Existe para quem espelha a tarefa por
+ * inteiro (a sincronização do Daily Tasks), que precisa de campos que os getters tipados acima não carregam
+ * (checklists, dependências, campos personalizados, anexos). `caminho` começa com "/" e já leva a query string.
+ */
+export async function lerClickUpCru<T = unknown>(config: ClickUpConfig, caminho: string): Promise<T> {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}${caminho}`, { headers: { Authorization: config.apiKey } });
+  if (!response.ok) throw new ClickUpHttpError(response.status, caminho.split('?')[0]!, await response.text());
+  return (await response.json()) as T;
 }

@@ -3,6 +3,8 @@ import { and, eq, sql } from 'drizzle-orm';
 import { gravarAnexo, abrirAnexo, apagarAnexo, copiarAnexo, tipoParaServir, politicaDeAnexos, AnexoRecusado } from '../internal-chat/arquivos';
 import { anexoAcessivel } from '../internal-chat/service';
 import { z } from 'zod';
+import { sincroniaDoDailyLigada, sincronizarTarefaNoDaily, ultimasSincronias, varrerAlteracoesDoClickUp } from '../clickup/sincronia-daily';
+import { empurrarEventosDaEmpresa, escritaNoClickUpLigada, ultimasEscritas } from '../clickup/escrita-daily';
 import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
@@ -183,6 +185,40 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     }
     await auditarAcao(request, { action: 'work.flag.changed', organizationId: request.tenantContext!.organizationId, metadata: { enabled: body.data.enabled, allowed: body.data.allowedUserIds.length } });
     return getFlag(request.tenantContext!.organizationId);
+  });
+
+  // ── Sincronia ClickUp → Daily (ver clickup/sincronia-daily.ts). Só administrador da plataforma. ─────────
+  app.get('/work/admin/clickup-sync', { preHandler: adminOnly }, async () => ({
+    entrada: { ligada: sincroniaDoDailyLigada(), ultimas: ultimasSincronias() },
+    saida: { ligada: escritaNoClickUpLigada(), ultimas: ultimasEscritas() },
+  }));
+  app.post('/work/admin/clickup-sync/empurrar', { preHandler: adminOnly }, async (request, reply) => {
+    if (!escritaNoClickUpLigada()) return reply.code(409).send({ error: 'A escrita para o ClickUp está desligada (DAILY_SYNC_CLICKUP_ESCRITA).' });
+    try {
+      return await empurrarEventosDaEmpresa(request.tenantContext!.organizationId);
+    } catch (e) {
+      return reply.code(502).send({ error: e instanceof Error ? e.message : 'Falha ao empurrar para o ClickUp.' });
+    }
+  });
+  app.post('/work/admin/clickup-sync/varrer', { preHandler: adminOnly }, async (request, reply) => {
+    if (!sincroniaDoDailyLigada()) return reply.code(409).send({ error: 'A sincronia está desligada (DAILY_SYNC_CLICKUP).' });
+    try {
+      const v = await varrerAlteracoesDoClickUp();
+      await auditarAcao(request, { action: 'work.clickup_sync.sweep', organizationId: request.tenantContext!.organizationId, metadata: { lidas: v.lidas } });
+      return { lidas: v.lidas, resultados: v.resultados };
+    } catch (e) {
+      return reply.code(502).send({ error: e instanceof Error ? e.message : 'Falha ao varrer o ClickUp.' });
+    }
+  });
+  app.post('/work/admin/clickup-sync/tarefa', { preHandler: adminOnly }, async (request, reply) => {
+    const body = z.object({ taskId: z.string().min(1).max(40) }).safeParse(request.body);
+    if (!body.success) return bad(reply);
+    if (!sincroniaDoDailyLigada()) return reply.code(409).send({ error: 'A sincronia está desligada (DAILY_SYNC_CLICKUP).' });
+    try {
+      return await sincronizarTarefaNoDaily(body.data.taskId);
+    } catch (e) {
+      return reply.code(502).send({ error: e instanceof Error ? e.message : 'Falha ao sincronizar a tarefa.' });
+    }
   });
 
   // ── Hierarquia ─────────────────────────────────────────────────────────

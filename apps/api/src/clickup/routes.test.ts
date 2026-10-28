@@ -69,6 +69,7 @@ vi.mock('@desigual-os/tool-gateway', () => ({
   getTeamMembers: (...args: unknown[]) => getTeamMembers(...args),
   parseTaskChangedEvent: (...args: unknown[]) => parseTaskChangedEvent(...args),
   parseTaskCommentPostedEvent: vi.fn(),
+  parseTaskEventForSync: vi.fn(() => null),
   queryOperationTasks: vi.fn(),
   recordToolResult: vi.fn(),
   replyToComment: vi.fn(),
