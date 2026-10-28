@@ -83,6 +83,7 @@ export function AreaRolavel({ children, className }: { children: ReactNode; clas
     const el = ref.current;
     if (!el) return;
     medir();
+    if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(medir);
     ro.observe(el);
     if (el.firstElementChild) ro.observe(el.firstElementChild);

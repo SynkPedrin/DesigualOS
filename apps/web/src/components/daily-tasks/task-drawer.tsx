@@ -8,12 +8,14 @@ import {
 } from '@/hooks/use-work';
 import { useClients } from '@/hooks/use-clients';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
-import { useFollowTask, useRecurrenceActions, useSetCustomField, useTaskCrud, useTaskHistory, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
+import { useFollowTask, useRecurrenceActions, useSetCustomField, useTaskApprovals, useTaskCrud, useTaskHistory, useTemplateActions, useTimeEntries, useTimer, useTimerActions } from '@/hooks/use-work-extra';
 import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toast-store';
 import { LogoDoCliente, nomeLimpo } from './cliente';
 import { AbrirDiscussao } from '@/components/comunicacao/abrir-discussao';
+import { statusDeConclusao, statusDeReabertura } from './status-final';
+import { AprovacaoDaTarefa } from './aprovacao-da-tarefa';
 import { AnexosDaTarefa } from './anexos-da-tarefa';
 import { AssigneePicker, DuePicker, PriorityPicker, StatusPicker } from './pickers';
 import { Avatar, StatusDot } from './primitivas';
@@ -88,6 +90,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const statuses = useSpaceStatuses(data?.list?.spaceId ?? null);
   const membros = useWorkMembers().data?.members ?? [];
   const eu = useDailyTasksAccess().data?.userId ?? null;
+  const pendentes = (useTaskApprovals(taskId).data?.approvals ?? []).filter((a) => a.status === 'pending').length;
   const clientes = useClients().data ?? [];
   const atualizar = useUpdateTask();
   const comentar = useAddComment(taskId);
@@ -161,7 +164,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             <div role="toolbar" aria-label="Ações da tarefa" className="flex flex-wrap gap-2">
               {(() => {
                 const feita = t.status?.category === 'done';
-                const alvo = feita ? st.find((x) => x.isInitial) : st.find((x) => x.category === 'done');
+                const alvo = feita ? statusDeReabertura(st) : statusDeConclusao(st);
                 return alvo ? (
                   <button type="button" onClick={() => void salvar({ statusId: alvo.id })} className={cn('flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold', feita ? 'bg-grafite-elevado text-branco-cru' : 'bg-sucesso text-carbono')}><Check size={16} /> {feita ? 'Reabrir tarefa' : 'Concluir tarefa'}</button>
                 ) : null;
@@ -284,6 +287,10 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </form>
             </Recolhivel>
 
+            <Recolhivel titulo="Aprovação" contagem={pendentes} abertaAoInicio={pendentes > 0}>
+              <AprovacaoDaTarefa taskId={taskId} membros={membros} eu={eu} />
+            </Recolhivel>
+
             <Recolhivel titulo="Anexos" contagem={data.attachments.length} abertaAoInicio={data.attachments.length > 0}>
               <AnexosDaTarefa taskId={taskId} anexos={data.attachments} erro={erro} />
             </Recolhivel>
@@ -358,17 +365,17 @@ function ItemAdd({ onAdd }: { onAdd: (t: string) => void }) {
 }
 
 /** Subtarefas com concluir, responsável e prazo no lugar — não só uma lista de títulos. */
-function SubtasksList({ parentId, onOpen, statuses, membros, salvar }: { parentId: string; onOpen: (id: string) => void; statuses: Array<{ id: string; category: string; isInitial: boolean }>; membros: Parameters<typeof AssigneePicker>[0]['membros']; salvar: (t: WorkTaskWire, p: Omit<TaskPatch, 'id' | 'expectedVersion'>) => void }) {
+function SubtasksList({ parentId, onOpen, statuses, membros, salvar }: { parentId: string; onOpen: (id: string) => void; statuses: Array<{ id: string; name: string; category: string; isInitial: boolean }>; membros: Parameters<typeof AssigneePicker>[0]['membros']; salvar: (t: WorkTaskWire, p: Omit<TaskPatch, 'id' | 'expectedVersion'>) => void }) {
   const { data } = useWorkTasks({ parentTaskId: parentId });
   if (!data?.rows.length) return null;
-  const final = statuses.find((s) => s.category === 'done');
+  const final = statusDeConclusao(statuses);
   return (
     <ul className="divide-y divide-grafite-elevado/50 rounded-lg border border-grafite-elevado">
       {data.rows.map((s) => {
         const feita = s.status?.category === 'done';
         return (
           <li key={s.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-grafite-elevado/40">
-            <button type="button" aria-label={feita ? 'Reabrir subtarefa' : 'Concluir subtarefa'} onClick={() => { const alvo = feita ? statuses.find((x) => x.isInitial) : final; if (alvo) salvar(s, { statusId: alvo.id }); }}><StatusDot cor={s.status?.color ?? '#6b7280'} feito={feita} /></button>
+            <button type="button" aria-label={feita ? 'Reabrir subtarefa' : 'Concluir subtarefa'} onClick={() => { const alvo = feita ? statusDeReabertura(statuses) : final; if (alvo) salvar(s, { statusId: alvo.id }); }}><StatusDot cor={s.status?.color ?? '#6b7280'} feito={feita} /></button>
             <button type="button" onClick={() => onOpen(s.id)} className={cn('min-w-0 flex-1 truncate text-left text-sm hover:underline', feita ? 'text-nevoa line-through' : 'text-branco-cru')}>{s.title}</button>
             <AssigneePicker tarefa={s} membros={membros} onChange={(ids) => salvar(s, { assigneeIds: ids })} />
             <DuePicker tarefa={s} onChange={(iso) => salvar(s, { dueAt: iso })} />

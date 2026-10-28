@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { LogoDoCliente, nomeLimpo, useClientIndex } from './cliente';
 import { prazoRelativo } from './ui';
 
-export type FiltroRapido = 'hoje' | 'atrasadas' | 'bloqueadas' | null;
+export type FiltroRapido = 'hoje' | 'atrasadas' | 'bloqueadas' | 'prontas' | null;
 
 const Cartao = ({ titulo, icone, acao, children }: { titulo: string; icone?: React.ReactNode; acao?: React.ReactNode; children: React.ReactNode }) => (
   <section className="space-y-2.5 rounded-xl border border-grafite-elevado/70 bg-grafite/60 p-3.5">
@@ -34,6 +34,8 @@ export function PainelLateral({ overview, aoAbrir, aoFiltrar }: { overview: Work
   const alertas = [
     { n: c?.atrasadas ?? 0, titulo: 'tarefas atrasadas', sub: 'Precisam de atenção', f: 'atrasadas' as const, icone: AlertTriangle, cor: 'text-red-400' },
     { n: c?.bloqueadas ?? 0, titulo: 'tarefas bloqueadas', sub: 'Aguardando resolução', f: 'bloqueadas' as const, icone: Clock, cor: 'text-aviso' },
+    { n: c?.prontasSemEncerrar ?? 0, titulo: 'prontas, não encerradas', sub: 'Entregues, falta encerrar', f: 'prontas' as const, icone: CheckCircle2, cor: 'text-sucesso' },
+    { n: c?.concluidasComSubtarefaAberta ?? 0, titulo: 'concluídas com subtarefa aberta', sub: 'Conferir se terminou mesmo', f: null, icone: AlertTriangle, cor: 'text-aviso' },
     { n: c?.semResponsavel ?? 0, titulo: 'sem responsável', sub: 'Ninguém vai fazer ainda', f: null, icone: Users, cor: 'text-nevoa' },
     { n: c?.clientesSemAtividade ?? 0, titulo: 'clientes sem atividade', sub: 'Nada mexido há 7 dias', f: null, icone: Users, cor: 'text-nevoa' },
   ].filter((a) => a.n > 0);
@@ -78,9 +80,9 @@ export function PainelLateral({ overview, aoAbrir, aoFiltrar }: { overview: Work
       </Cartao>
 
       <Cartao titulo="Próximas entregas" icone={<Clock size={15} />}>
-        {(overview?.proximasEntregas.length ?? 0) === 0 ? <p className="text-sm text-nevoa">Nenhuma entrega com prazo à frente.</p> : (
+        {(overview?.proximasEntregas?.length ?? 0) === 0 ? <p className="text-sm text-nevoa">Nenhuma entrega com prazo à frente.</p> : (
           <ul className="space-y-1">
-            {overview!.proximasEntregas.map((e) => {
+            {(overview?.proximasEntregas ?? []).map((e) => {
               const p = prazoRelativo(e.dueAt, false);
               const nome = (e.clientId && clientes.get(e.clientId)) || nomeLimpo(e.lista);
               return (

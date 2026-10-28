@@ -153,7 +153,7 @@ export async function deleteStatus(ctx: WorkContext, statusId: string, opts: { m
       if (!dest) throw invalid('O status de destino precisa ser do mesmo espaço.');
       const moved = await tx
         .update(schema.workTasks)
-        .set({ statusId: dest.id, completedAt: dest.isFinal ? new Date() : null, version: sql`${schema.workTasks.version} + 1`, updatedAt: new Date() })
+        .set({ statusId: dest.id, completedAt: dest.isFinal ? sql`coalesce(${schema.workTasks.completedAt}, now())` : null, version: sql`${schema.workTasks.version} + 1`, updatedAt: new Date() })
         .where(eq(schema.workTasks.statusId, statusId))
         .returning({ id: schema.workTasks.id });
       for (const t of moved) await recordActivity(tx, ctx, { entityType: 'task', entityId: t.id, taskId: t.id, action: 'status_changed', data: { from: statusId, to: dest.id, reason: 'status_removed' } });

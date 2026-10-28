@@ -17,3 +17,18 @@ Estado: tudo pronto e testado na branch `feat/daily-tasks` (já contém `origin/
 5. **Importar o ClickUp (opcional, depois de 1–4):** `clickup-import-cli.ts --snapshot <dir> --org <uuid da Desigual> --user <uuid> [--aplicar]`
    (sem `--aplicar` é ensaio). Vincula pessoas por e-mail e clientes por nome IGUAL; preenche foto só de quem não tem.
 6. **Verificar:** `GET /work/access` com conta administradora → `allowed: true`; conta de colaborador → 403.
+
+## Depois de publicar a rodada de 23/10/2026 (arquivos, aprovação, Comunicação)
+
+Sem migração nova. A API ganhou rotas; o front, componentes. Publicar API primeiro, front depois.
+
+- **Copiar anexos antigos do ClickUp para o servidor** (hoje são só link e expiram): como `master`, em lotes e repetível:
+  `POST /work/admin/copy-clickup-attachments {"dryRun": true}` (conta) e depois `{"limit": 50}` até `restantes` zerar.
+  Só baixa de servidores do ClickUp, passa pela mesma validação da Comunicação e deixa como link o que for recusado.
+  Roda DENTRO do container da API (o volume `internal_chat_files` é de lá).
+- **Tempo registrado do ClickUp: importado em 23/10/2026** (1.025 lançamentos, ~359 h; 99% é de uma pessoa que já saiu, sem
+  conta no sistema, então ficam só com o nome). O endpoint de equipe (`/team/{id}/time_entries`) responde 403
+  (`TIMEENTRY_059`) para este token, mas `GET /task/{id}/time` funciona: varre-se as tarefas com `time_spent > 0` (696) e
+  monta-se `time_entries.json` (`{id, task:{id}, user, start, end, duration, billable, description}`) ao lado de um
+  `team.json`. O importador é idempotente: reaplicar não duplica.
+- **Aprovação de tarefa** usa a fila do módulo Aprovações (`approval_requests`, tipo `task`): sem tabela nova.

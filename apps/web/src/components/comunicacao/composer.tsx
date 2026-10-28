@@ -393,7 +393,7 @@ export const Composer = forwardRef<ComposerHandle, {
       </div>
       {criandoTarefa && (
         <Modal titulo="Criar tarefa no Daily Tasks" onClose={() => setCriandoTarefa(false)} largura="max-w-lg">
-          <div className="p-4"><CriarTarefaDaily conversationId={conversationId} senderName={null} texto={texto} onClose={() => setCriandoTarefa(false)} /></div>
+          <div className="p-4"><CriarTarefaDaily conversationId={conversationId} senderName={null} texto={texto} anexos={envios.filter((e) => e.status === 'pronto' && e.anexo).map((e) => ({ id: e.anexo!.id, filename: e.anexo!.filename }))} onClose={() => setCriandoTarefa(false)} /></div>
         </Modal>
       )}
       {escolhendo && <EscolherItem tipo={escolhendo} onClose={() => setEscolhendo(null)} onPick={(o) => { addObject(o); setEscolhendo(null); }} />}

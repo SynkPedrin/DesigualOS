@@ -2,11 +2,15 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { and, eq, sql } from 'drizzle-orm';
 import { gravarAnexo, abrirAnexo, apagarAnexo, copiarAnexo, tipoParaServir, politicaDeAnexos, AnexoRecusado } from '../internal-chat/arquivos';
 import { anexoAcessivel } from '../internal-chat/service';
+import { copiarAnexosDoClickUp } from './anexos-externos';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
   addAttachmentLink,
+  listTaskApprovals,
+  requestTaskApproval,
+  resolveTaskApproval,
   addDependency,
   addManualEntry,
   followTask,
@@ -172,6 +176,15 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     if (reply.sent) return;
     if (!request.authUser!.roles.includes('master')) reply.code(403).send({ error: 'Só o administrador da plataforma configura o Daily Tasks.' });
   };
+  // Copia os anexos que vieram do ClickUp como link para o armazenamento próprio. Em lotes, repetível, só master.
+  app.post('/work/admin/copy-clickup-attachments', { preHandler: adminOnly }, async (request, reply) => {
+    const b = z.object({ limit: z.number().int().min(1).max(100).optional(), dryRun: z.boolean().optional() }).safeParse(request.body ?? {});
+    if (!b.success) return reply.code(400).send({ error: 'Dados inválidos.' });
+    const organizationId = request.tenantContext!.organizationId;
+    const r = await copiarAnexosDoClickUp({ organizationId, ...(b.data.limit ? { limite: b.data.limit } : {}), ...(b.data.dryRun ? { simular: true } : {}) });
+    await auditarAcao(request, { action: 'work.attachments.copied', organizationId, metadata: { copiados: r.copiados, recusados: r.recusados.length, falhas: r.falhas.length, dryRun: Boolean(b.data.dryRun) } });
+    return r;
+  });
   app.get('/work/admin/flag', { preHandler: adminOnly }, async (request) => getFlag(request.tenantContext!.organizationId));
   app.put('/work/admin/flag', { preHandler: adminOnly }, async (request, reply) => {
     const body = z.object({ enabled: z.boolean(), allowedUserIds: z.array(uuid).max(100) }).safeParse(request.body);
@@ -612,6 +625,20 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return reply.code(404).send({ error: 'Arquivo não encontrado.' });
       throw e;
     }
+  });
+  app.get<{ Params: { id: string } }>('/work/tasks/:id/approvals', guard, async (request, reply) => {
+    if (!idOk(request.params.id)) return bad(reply);
+    try { return { approvals: await listTaskApprovals(workContext(request), request.params.id) }; } catch (e) { return fail(reply, e); }
+  });
+  app.post<{ Params: { id: string } }>('/work/tasks/:id/approvals', guard, async (request, reply) => {
+    const b = z.object({ approverId: uuid.nullable().optional(), note: z.string().max(1000).nullable().optional() }).safeParse(request.body ?? {});
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { const r = await requestTaskApproval(workContext(request), request.params.id, defined(b.data) as never); reply.code(r.created ? 201 : 200); return r; } catch (e) { return fail(reply, e); }
+  });
+  app.patch<{ Params: { id: string } }>('/work/approvals/:id', guard, async (request, reply) => {
+    const b = z.object({ status: z.enum(['approved', 'rejected', 'changes_requested']), comment: z.string().max(2000).nullable().optional() }).safeParse(request.body);
+    if (!b.success || !idOk(request.params.id)) return bad(reply);
+    try { return await resolveTaskApproval(workContext(request), request.params.id, defined(b.data) as never); } catch (e) { return fail(reply, e); }
   });
   app.delete<{ Params: { id: string } }>('/work/attachments/:id', guard, async (request, reply) => {
     if (!idOk(request.params.id)) return bad(reply);

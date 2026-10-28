@@ -2,7 +2,7 @@ import { and, desc, eq, gt, inArray, isNull, ne, notLike, or, sql } from 'drizzl
 import { db, schema } from '@desigual-os/database';
 import type { WorkContext } from './context';
 
-const RELEVANTES = ['commented', 'status_changed', 'assigned', 'updated', 'mentioned', 'completed'];
+const RELEVANTES = ['commented', 'status_changed', 'assigned', 'updated', 'mentioned', 'completed', 'approval_requested', 'approval_resolved'];
 
 /**
  * Caixa de entrada: o que aconteceu nas tarefas da pessoa (responsável ou criadora) feito POR OUTRA pessoa,
@@ -24,7 +24,8 @@ export async function listInbox(ctx: WorkContext, limit = 60) {
       inArray(E.action, RELEVANTES),
       sql`(
         (${E.action} = 'mentioned' and ${E.data}->>'userId' = ${ctx.userId})
-        or (${E.taskId} in ${minhas} and (${E.actorId} is null or ${E.actorId} <> ${ctx.userId}) and ${E.action} <> 'mentioned')
+        or (${E.action} in ('approval_requested', 'approval_resolved') and ${E.data}->'userIds' @> ${JSON.stringify([ctx.userId])}::jsonb and ${E.actorId} is distinct from ${ctx.userId})
+        or (${E.taskId} in ${minhas} and (${E.actorId} is null or ${E.actorId} <> ${ctx.userId}) and ${E.action} <> 'mentioned' and ${E.action} not in ('approval_requested', 'approval_resolved'))
       )`,
     ))
     .orderBy(desc(E.createdAt))
@@ -72,7 +73,7 @@ export interface InboxEntry {
   createdAt: string;
 }
 
-const VERBOS: Record<string, string> = { mentioned: 'mencionou você em', commented: 'comentou em', status_changed: 'mudou o status de', assigned: 'atribuiu uma pessoa em', updated: 'atualizou', completed: 'concluiu' };
+const VERBOS: Record<string, string> = { mentioned: 'mencionou você em', commented: 'comentou em', status_changed: 'mudou o status de', assigned: 'atribuiu uma pessoa em', updated: 'atualizou', completed: 'concluiu', approval_requested: 'pediu sua aprovação em', approval_resolved: 'respondeu a aprovação de' };
 
 /**
  * CAIXA DE ENTRADA UNIFICADA: tarefas (o que outras pessoas fizeram nas suas), Comunicação (mensagens que você ainda

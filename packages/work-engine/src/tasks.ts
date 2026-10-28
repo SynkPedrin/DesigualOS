@@ -431,7 +431,8 @@ export async function updateTask(ctx: WorkContext, id: string, patch: UpdateTask
       const next = await statusInSpace(tx, ctx, patch.statusId, list!.spaceId);
       await assertTransitionAllowed(tx, ctx, cur.statusId, next.id);
       set.statusId = next.id;
-      set.completedAt = next.isFinal ? new Date() : null;
+      // Entre dois status finais (pronto → encerrado) a data de conclusão original fica: só reabrir a apaga.
+      set.completedAt = next.isFinal ? (cur.completedAt ?? new Date()) : null;
       statusChange = { from: cur.statusId, to: next.id };
     }
 

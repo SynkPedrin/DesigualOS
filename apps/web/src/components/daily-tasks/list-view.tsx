@@ -11,6 +11,7 @@ import { AssigneePicker, PriorityPicker, StatusPicker } from './pickers';
 import { StatusDot, StatusPill } from './primitivas';
 import { RowMenu } from './row-menu';
 import { TASK_DRAG } from './tree';
+import { statusDeConclusao, statusDeReabertura } from './status-final';
 import { andamento, BarraDeProgresso } from './ui';
 import { PREFERENCIAS_PADRAO, usePreferences, type ColunaDaLista } from '@/hooks/use-work-extra';
 import { DuePicker } from './pickers';
@@ -74,7 +75,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
   const statuses = ctx.statuses ?? statusesProprios ?? [];
   const subs = useWorkTasks({ parentTaskId: t.id, enabled: aberta && !ctx.semSubtarefas, includeArchived: ctx.arquivadas });
   const feita = t.status?.category === 'done';
-  const final = statuses.find((s) => s.category === 'done');
+  const final = statusDeConclusao(statuses);
   const nomeCliente = (t.clientId && clientes.get(t.clientId)) || null;
   const pct = andamento(t);
   return (
@@ -93,7 +94,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
               {aberta ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
           )}
-          <button type="button" aria-label={feita ? 'Reabrir' : 'Concluir'} title={feita ? 'Reabrir tarefa' : 'Marcar como concluída'} onClick={() => { const alvo = feita ? statuses.find((s) => s.isInitial) : final; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}>
+          <button type="button" aria-label={feita ? 'Reabrir' : 'Concluir'} title={feita ? 'Reabrir tarefa' : 'Marcar como concluída'} onClick={() => { const alvo = feita ? statusDeReabertura(statuses) : final; if (alvo) ctx.actions.atualizar(t, { statusId: alvo.id }); }}>
             <StatusDot cor={t.status?.color ?? '#6b7280'} feito={feita} />
           </button>
           <div className="min-w-0 flex-1">

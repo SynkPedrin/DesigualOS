@@ -58,6 +58,8 @@ export async function getTaskHistory(ctx: WorkContext, taskId: string, limit = 2
       case 'archived': frases.push('arquivou a tarefa'); break;
       case 'restored': frases.push('restaurou a tarefa'); break;
       case 'timer_started': frases.push('iniciou o cronômetro'); break;
+      case 'approval_requested': frases.push(`pediu aprovação${d.approverId ? ` a ${nomes([d.approverId])}` : ''}${d.note ? ` — “${d.note}”` : ''}`); break;
+      case 'approval_resolved': frases.push(`${d.status === 'approved' ? 'aprovou' : d.status === 'rejected' ? 'reprovou' : 'pediu ajustes'}${d.comment ? ` — “${d.comment}”` : ''}`); break;
       case 'followed': frases.push('passou a seguir a tarefa'); break;
       case 'unfollowed': frases.push('deixou de seguir a tarefa'); break;
       case 'updated': {

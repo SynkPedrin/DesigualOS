@@ -2,6 +2,7 @@
 
 import { use, useState } from 'react';
 import Link from 'next/link';
+import { TarefasDoCliente } from '@/components/daily-tasks/tarefas-do-cliente';
 import { ArrowLeft, ExternalLink, Link2 } from 'lucide-react';
 import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -88,6 +89,8 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
             </div>
           </div>
 
+          <div className="flex flex-wrap items-center gap-2">
+          {cliente && <TarefasDoCliente clientId={clientId} clienteNome={cliente.name} origem={`central de Mídias (/midias/${clientId})`} tituloInicial="Ajustar campanha: " />}
           <Link
             href={`/clients/${clientId}`}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa transition-colors hover:text-branco-cru"
@@ -95,6 +98,7 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
             Ficha do cliente
             <ExternalLink size={13} />
           </Link>
+          </div>
         </div>
       </div>
 

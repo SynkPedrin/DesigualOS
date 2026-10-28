@@ -6,12 +6,15 @@ import type { WorkMember, WorkStatus, WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
 import { faixaDaLinha } from '@/components/ui/prazo';
 import { urgenciaDoPrazo } from '@/lib/prazo';
-import type { TaskActions } from './list-view';
+import { useColunas, type TaskActions } from './list-view';
+import { andamento, BarraDeProgresso } from './ui';
 import { LogoDoCliente, nomeLimpo, useListIndex } from './cliente';
 import { AvatarStack, DueDate, PriorityFlag, StatusPill } from './primitivas';
 
 /** Quadro: uma coluna por status; arrastar o cartão muda o status (a regra de transição continua sendo do servidor). */
 export function BoardView({ tarefas, statuses, membros, listId, actions }: { tarefas: WorkTaskWire[]; statuses: WorkStatus[]; membros: WorkMember[]; listId: string | null; actions: TaskActions }) {
+  const { colunas } = useColunas();
+  const tem = (c: Parameters<typeof colunas.includes>[0]) => colunas.includes(c);
   const [sobre, setSobre] = useState<string | null>(null);
   const [novo, setNovo] = useState<string | null>(null);
   const [txt, setTxt] = useState('');
@@ -41,11 +44,13 @@ export function BoardView({ tarefas, statuses, membros, listId, actions }: { tar
             <div className="space-y-2 overflow-y-auto">
               {itens.slice(0, 80).map((t) => (
                 <article key={t.id} draggable onDragStart={(e) => e.dataTransfer.setData('text/plain', t.id)} onClick={() => actions.abrir(t)} className={cn('cursor-pointer rounded-md border border-grafite-elevado bg-carbono p-2.5 hover:border-nevoa/40', faixaDaLinha(t.completedAt ? null : urgenciaDoPrazo(t.dueAt)))}>
-                  <p className="flex items-start gap-1.5 text-sm text-branco-cru"><LogoDoCliente nome={nomeLimpo(listas.get(t.listId)?.nome ?? '')} className="mt-0.5" /><span>{t.title}</span></p>
+                  <p className="flex items-start gap-1.5 text-sm text-branco-cru">{tem('cliente') && <LogoDoCliente nome={nomeLimpo(listas.get(t.listId)?.nome ?? '')} className="mt-0.5" />}<span>{t.title}</span></p>
+                  {tem('andamento') && t.subtaskCount > 0 && <div className="mt-2"><BarraDeProgresso pct={andamento(t)} /></div>}
+                  {tem('tags') && t.tags.length > 0 && <p className="mt-1.5 flex flex-wrap gap-1">{t.tags.slice(0, 3).map((x) => <span key={x} className="rounded bg-grafite-elevado px-1.5 py-0.5 text-[10px] text-nevoa">{x}</span>)}</p>}
                   <div className="mt-2 flex items-center justify-between gap-2">
-                    <AvatarStack ids={t.assigneeIds} membros={mapa} size={20} />
-                    <DueDate tarefa={t} />
-                    <PriorityFlag valor={t.priority} />
+                    {tem('responsavel') ? <AvatarStack ids={t.assigneeIds} membros={mapa} size={20} /> : <span />}
+                    {tem('prazo') && <DueDate tarefa={t} />}
+                    {tem('prioridade') && <PriorityFlag valor={t.priority} />}
                   </div>
                   <p className="mt-1 font-mono text-[10px] text-nevoa/60">{t.key}{t.subtaskCount > 0 ? ` · ${t.subtaskCount} subtarefas` : ''}</p>
                 </article>
