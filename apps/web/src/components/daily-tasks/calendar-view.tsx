@@ -66,7 +66,8 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
     };
   }, [ref, tarefas, hoje]);
 
-  const atrasadas = atrasadasDeFora ?? atrasadasDaJanela;
+  // As que acabaram de atrasar primeiro: é o que ainda dá para salvar. Data de outro ano leva o ano.
+  const atrasadas = useMemo(() => [...(atrasadasDeFora ?? atrasadasDaJanela)].sort((a, b) => b.dueAt!.localeCompare(a.dueAt!)), [atrasadasDeFora, atrasadasDaJanela]);
   const diaK = chave(dia);
   const doDia = dias.find((x) => x.k === diaK)?.itens ?? tarefas.filter((t) => t.dueAt && chave(t.dueAt) === diaK);
   const reagendar = (id: string, alvo: Date) => {
@@ -91,7 +92,7 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
             <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-nevoa">
               {cliente && <><LogoDoCliente nome={cliente} className="!size-3.5" /><span className="truncate">{cliente}</span></>}
               {t.status && <span className="shrink-0">· {t.status.name}</span>}
-              {comData && t.dueAt && <span className="shrink-0 text-red-400">· {new Date(t.dueAt).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })}</span>}
+              {comData && t.dueAt && <span className="shrink-0 text-red-400">· {new Date(t.dueAt).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', ...(chave(t.dueAt).slice(0, 4) !== hoje.slice(0, 4) ? { year: '2-digit' } : {}) })}</span>}
             </span>
           </span>
           {resp && <Avatar nome={resp.name} url={resp.avatarUrl} size={22} />}
