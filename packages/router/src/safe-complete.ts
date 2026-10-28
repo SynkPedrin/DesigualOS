@@ -53,15 +53,30 @@ const INSTRUCOES =
 export async function completeTextSafely(
   prompt: string,
   logger: FastifyBaseLogger,
-  opts?: { maxTokens?: number },
+  opts?: { maxTokens?: number; timeoutMs?: number },
 ): Promise<string | null> {
+  return (await completarTextoComSeguranca(prompt, logger, opts)).texto;
+}
+
+/**
+ * O mesmo, dizendo também se a resposta foi CORTADA no limite de saída. Quem
+ * entrega texto longo (análise de documento do Jarbas) precisa saber disso
+ * para avisar a pessoa, em vez de entregar meia análise como se fosse inteira.
+ */
+export async function completarTextoComSeguranca(
+  prompt: string,
+  logger: FastifyBaseLogger,
+  opts?: { maxTokens?: number; timeoutMs?: number },
+): Promise<{ texto: string | null; cortado: boolean }> {
   if (!isOpenAICredentialConfigured()) {
     logger.warn('OPENAI_API_KEY não configurada; completeTextSafely indisponível');
-    return null;
+    return { texto: null, cortado: false };
   }
 
   const maxTokens = opts?.maxTokens ?? 700;
-  const timeoutMs = prazoPara(maxTokens);
+  // Prazo explícito só quando o chamador sabe que a leitura é longa (análise
+  // de documento do Jarbas); o padrão continua o de sempre.
+  const timeoutMs = opts?.timeoutMs ?? prazoPara(maxTokens);
 
   /**
    * AQUI O ORÇAMENTO É CONSULTADO DE VERDADE, e no classificador não é.
@@ -101,6 +116,7 @@ export async function completeTextSafely(
           instructions: INSTRUCOES,
           input: prompt,
           maxOutputTokens: maxTokens,
+          ...(opts?.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
           // SEM `tools`, de propósito. Ver o cabeçalho deste arquivo.
         },
         logger,
@@ -110,14 +126,15 @@ export async function completeTextSafely(
 
     if (resultado === null) {
       logger.warn({ timeoutMs, maxTokens }, 'completeTextSafely estourou o prazo');
-      return null;
+      return { texto: null, cortado: false };
     }
-    return resultado.outputText.trim() || null;
+    if (resultado.cortado) logger.warn({ maxTokens, model: decisao.model }, 'completeTextSafely: resposta cortada no limite de saída');
+    return { texto: resultado.outputText.trim() || null, cortado: Boolean(resultado.cortado) };
   } catch (error) {
     logger.warn(
       { error: error instanceof Error ? error.message : String(error), model: decisao.model },
       'completeTextSafely falhou',
     );
-    return null;
+    return { texto: null, cortado: false };
   }
 }
