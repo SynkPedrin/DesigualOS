@@ -82,10 +82,10 @@ export function Popover({ trigger, children, align = 'left', label }: { trigger:
 export function StatusPill({ nome, cor, categoria, contagem, tamanho = 'md' }: { nome: string; cor: string; categoria?: string; contagem?: number; tamanho?: 'sm' | 'md' }) {
   const feito = categoria === 'done';
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={cn('inline-flex items-center gap-1 rounded font-semibold uppercase tracking-wide text-white', tamanho === 'sm' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-1 text-[11px]')} style={{ background: cor }}>
-        {feito ? <CheckCircle2 size={12} /> : <Circle size={11} />}
-        {nome}
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+      <span title={nome} className={cn('inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded font-semibold uppercase tracking-wide text-white', tamanho === 'sm' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-1 text-[11px]')} style={{ background: cor }}>
+        {feito ? <CheckCircle2 size={12} className="shrink-0" /> : <Circle size={11} className="shrink-0" />}
+        <span className="truncate">{nome}</span>
       </span>
       {contagem !== undefined && <span className="text-xs text-nevoa">{contagem}</span>}
     </span>

@@ -1,7 +1,7 @@
 'use client';
 
 import { urgenciaDoPrazo } from '@/lib/prazo';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GitFork, Plus } from 'lucide-react';
 import { useSpaceStatuses, useWorkTasks, type TaskPatch, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
@@ -28,14 +28,27 @@ export interface TaskActions {
 }
 
 /** Colunas da tabela, na ordem. A pessoa escolhe quais aparecem (Personalizar visualização); tarefa e ações são sempre fixas. */
-const LARGURA: Record<ColunaDaLista, string> = { andamento: '84px', responsavel: '60px', prazo: '124px', prioridade: '100px', status: '124px', cliente: '140px', tags: '120px' };
+// Em rem: a fonte do app cresce com a janela (tokens.css), e coluna em px cortava o selo de status no notebook.
+const LARGURA: Record<ColunaDaLista, string> = { andamento: '5.25rem', responsavel: '3.75rem', prazo: '6.75rem', prioridade: '5.75rem', status: '8.75rem', cliente: '8.5rem', tags: '7rem' };
+/** Abaixo de 1536 px a tarefa precisa do espaço: cliente e subtarefas já aparecem embaixo do título. */
+const SO_EM_TELA_LARGA: readonly ColunaDaLista[] = ['andamento', 'cliente', 'tags'];
+const TELA_LARGA = '(min-width: 1536px)';
+function useTelaLarga(): boolean {
+  return useSyncExternalStore(
+    (aviso) => { const m = window.matchMedia(TELA_LARGA); m.addEventListener('change', aviso); return () => m.removeEventListener('change', aviso); },
+    () => window.matchMedia(TELA_LARGA).matches,
+    () => true,
+  );
+}
 const ORDEM: ColunaDaLista[] = ['cliente', 'andamento', 'responsavel', 'prazo', 'prioridade', 'status', 'tags'];
 export function gradeDeColunas(colunas: readonly ColunaDaLista[]): string {
-  return ['20px', 'minmax(220px,1fr)', ...ORDEM.filter((c) => colunas.includes(c)).map((c) => LARGURA[c]), '32px'].join(' ');
+  return ['20px', 'minmax(14rem,1fr)', ...ORDEM.filter((c) => colunas.includes(c)).map((c) => LARGURA[c]), '32px'].join(' ');
 }
 export function useColunas() {
   const p = usePreferences().data ?? PREFERENCIAS_PADRAO;
-  return { colunas: p.colunas, compacta: p.densidade === 'compacta', grade: gradeDeColunas(p.colunas) };
+  const larga = useTelaLarga();
+  const colunas = larga ? p.colunas : p.colunas.filter((c) => !SO_EM_TELA_LARGA.includes(c));
+  return { colunas, compacta: p.densidade === 'compacta', grade: gradeDeColunas(colunas) };
 }
 
 function InlineAdd({ rotulo, onSubmit, recuo = 0, abrir = false }: { rotulo: string; onSubmit: (t: string) => void; recuo?: number; abrir?: boolean }) {

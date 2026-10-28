@@ -100,8 +100,9 @@ export default function DailyTasksPage() {
   const [novaTarefa, setNovaTarefa] = useState('');
   const [listaEscolhidaParaCriar, setListaDaCriacao] = useState<string | null>(null);
   const quickRef = useRef<HTMLInputElement>(null);
-  const [painelAberto, setPainelAberto] = useState(true);
-  useEffect(() => { try { setPainelAberto(localStorage.getItem('dt:painel') !== 'fechado'); } catch { /* sem storage: fica aberto */ } }, []);
+  // Começa fechado: repete o que os números do topo e o Calendário já mostram e tirava espaço do título da tarefa.
+  const [painelAberto, setPainelAberto] = useState(false);
+  useEffect(() => { try { setPainelAberto(localStorage.getItem('dt:painel') === 'aberto'); } catch { /* sem storage: fica fechado */ } }, []);
   const alternarPainel = () => setPainelAberto((v) => { try { localStorage.setItem('dt:painel', v ? 'fechado' : 'aberto'); } catch { /* ignora */ } return !v; });
   const views = useSavedViews();
   const { salvar: salvarView, apagar: apagarView } = useSavedViewActions();
@@ -285,7 +286,7 @@ export default function DailyTasksPage() {
                 {() => (
                   <div className="w-72 space-y-3 p-2 text-sm text-branco-cru">
                     <p className="text-[11px] uppercase tracking-wide text-nevoa">Só para você — salva automaticamente</p>
-                    <fieldset className="space-y-1.5"><legend className="mb-1 text-xs text-nevoa">Colunas da tabela</legend>
+                    <fieldset className="space-y-1.5"><legend className="mb-1 text-xs text-nevoa">Colunas da tabela <span className="block text-[11px] text-nevoa/70">Andamento, Cliente e Tags só em telas largas</span></legend>
                       {COLUNAS_DA_LISTA.map((c) => (
                         <label key={c} className="flex items-center gap-2"><input type="checkbox" checked={prefs.colunas.includes(c)} onChange={(e) => salvarPrefs.mutate({ colunas: e.target.checked ? COLUNAS_DA_LISTA.filter((x) => x === c || prefs.colunas.includes(x)) : prefs.colunas.filter((x) => x !== c) })} /> {ROTULO_COLUNA[c]}</label>
                       ))}

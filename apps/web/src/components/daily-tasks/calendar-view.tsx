@@ -106,7 +106,7 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" aria-label="Mês anterior" onClick={() => irPara(new Date(ref.getFullYear(), ref.getMonth() - 1, 1))} className="rounded-md p-1 text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><ChevronLeft size={16} /></button>
-          <h3 className="w-40 text-center font-heading text-base font-semibold capitalize text-branco-cru">{ref.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</h3>
+          <h3 className="w-40 text-center font-heading text-base font-semibold text-branco-cru first-letter:uppercase">{ref.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</h3>
           <button type="button" aria-label="Próximo mês" onClick={() => irPara(new Date(ref.getFullYear(), ref.getMonth() + 1, 1))} className="rounded-md p-1 text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><ChevronRight size={16} /></button>
           <button type="button" onClick={() => { irPara(new Date()); setDia(new Date()); }} className="rounded-md border border-roxo-eletrico/50 px-2.5 py-0.5 text-xs font-medium text-lilas hover:bg-roxo-eletrico/15">Hoje</button>
           <span className="ml-auto flex items-center gap-3 text-xs text-nevoa">
@@ -175,7 +175,7 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
       <aside aria-label="Tarefas do dia" className="flex shrink-0 flex-col gap-3 rounded-xl border border-grafite-elevado bg-grafite p-3 lg:w-80">
         <div>
           <p className={cn('text-[11px] font-semibold uppercase tracking-wide', ehHojeSelecionado ? 'text-sucesso' : 'text-lilas')}>{ehHojeSelecionado ? 'Hoje' : 'Dia selecionado'}</p>
-          <h4 className="font-heading text-base font-semibold capitalize text-branco-cru">{dia.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</h4>
+          <h4 className="font-heading text-base font-semibold text-branco-cru first-letter:uppercase">{dia.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</h4>
           <p className="text-xs text-nevoa">{doDia.length === 0 ? 'Nada vence neste dia.' : `${doDia.filter((t) => !t.completedAt).length} aberta(s) · ${doDia.filter((t) => t.completedAt).length} concluída(s)`}</p>
         </div>
         {doDia.length > 0 && <ul className="-mx-1 space-y-0.5">{doDia.map((t) => linhaDoPainel(t))}</ul>}
