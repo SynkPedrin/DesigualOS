@@ -186,6 +186,16 @@ describe.skipIf(!enabled)('work-engine × PostgreSQL real', () => {
       expect(r.rows.map((x) => x.title)).toEqual(['D1', 'D2']);
       expect((await E.listTasks(ctxA(), { listId: l, sort: 'due', limit: 2, offset: 2 })).rows.map((x) => x.title)).toEqual(['D0', 'sem prazo']);
     });
+    it('histórico de encerradas: só as concluídas, a encerrada por último primeiro', async () => {
+      const l = (await E.createList(ctxA(), { spaceId: spaceA, name: 'Encerradas' })).id;
+      const done = (await E.listStatuses(ctxA(), spaceA)).find((s) => s.isFinal)!;
+      for (const titulo of ['Primeira a fechar', 'Segunda a fechar', 'Ainda aberta']) {
+        const t = await E.createTask(ctxA(), { listId: l, title: titulo });
+        if (titulo !== 'Ainda aberta') { await E.updateTask(ctxA(), t.id, { statusId: done.id }); await new Promise((r) => setTimeout(r, 20)); }
+      }
+      const r = await E.listTasks(ctxA(), { listId: l, completed: true, sort: 'completed' });
+      expect(r.rows.map((x) => x.title)).toEqual(['Segunda a fechar', 'Primeira a fechar']);
+    });
   });
 
   describe('subtarefas', () => {

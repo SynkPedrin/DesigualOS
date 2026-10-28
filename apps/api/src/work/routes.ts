@@ -92,6 +92,7 @@ import {
   renameList,
   resolveDailyTasksAccess,
   setArchived,
+  recuarCursorDaSaida,
   setFlag,
   setTaskArchived,
   setTransitionsFrom,
@@ -213,6 +214,19 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(502).send({ error: e instanceof Error ? e.message : 'Falha ao empurrar para o ClickUp.' });
     }
   });
+  // Reenvia ao ClickUp o que foi feito no Daily desde `desde` (no máximo 48 h atrás). Para recuperar edições que a
+  // saída pulou (cerca de teste, ClickUp fora por mais que o ciclo aguenta). Reenviar não duplica.
+  app.post('/work/admin/clickup-sync/reenviar', { preHandler: adminOnly }, async (request, reply) => {
+    if (!escritaNoClickUpLigada()) return reply.code(409).send({ error: 'A escrita para o ClickUp está desligada (DAILY_SYNC_CLICKUP_ESCRITA).' });
+    const body = z.object({ desde: z.string().datetime() }).safeParse(request.body);
+    if (!body.success) return bad(reply);
+    const desde = new Date(body.data.desde);
+    if (desde.getTime() > Date.now() || Date.now() - desde.getTime() > 48 * 3_600_000) return reply.code(400).send({ error: 'O instante precisa estar nas últimas 48 horas.' });
+    const organizationId = request.tenantContext!.organizationId;
+    if (!(await recuarCursorDaSaida(organizationId, desde))) return reply.code(409).send({ error: 'A saída ainda não começou nesta empresa.' });
+    await auditarAcao(request, { action: 'work.clickup_sync.resend', organizationId, metadata: { desde: desde.toISOString() } });
+    return { ok: true, desde: desde.toISOString() };
+  });
   app.post('/work/admin/clickup-sync/varrer', { preHandler: adminOnly }, async (request, reply) => {
     if (!sincroniaDoDailyLigada()) return reply.code(409).send({ error: 'A sincronia está desligada (DAILY_SYNC_CLICKUP).' });
     try {
@@ -317,7 +331,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     due_from: z.string().datetime({ offset: true }).optional(), due_to: z.string().datetime({ offset: true }).optional(),
     q: z.string().max(100).optional(), include_subtasks: z.enum(['true', 'false']).optional(), parent_task_id: uuid.optional(),
     include_archived: z.enum(['true', 'false']).optional(), completed: z.enum(['true', 'false']).optional(),
-    sort: z.enum(['position', 'due', 'priority', 'created', 'updated', 'number']).optional(), dir: z.enum(['asc', 'desc']).optional(),
+    sort: z.enum(['position', 'due', 'priority', 'created', 'updated', 'number', 'completed']).optional(), dir: z.enum(['asc', 'desc']).optional(),
     limit: z.coerce.number().int().min(1).max(2000).optional(), offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
   });
   app.get('/work/tasks', guard, async (request, reply) => {

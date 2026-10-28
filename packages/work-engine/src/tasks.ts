@@ -328,7 +328,7 @@ export interface TaskFilter {
   includeArchived?: boolean;
   /** Só abertas (status que não é final) ou só concluídas. */
   completed?: boolean;
-  sort?: 'position' | 'due' | 'priority' | 'created' | 'updated' | 'number';
+  sort?: 'position' | 'due' | 'priority' | 'created' | 'updated' | 'number' | 'completed';
   dir?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
@@ -369,6 +369,7 @@ export async function listTasks(ctx: WorkContext, f: TaskFilter = {}): Promise<{
     : f.sort === 'created' ? [dir(T.createdAt)]
     : f.sort === 'updated' ? [dir(T.updatedAt)]
     : f.sort === 'number' ? [dir(T.number)]
+    : f.sort === 'completed' ? [sql`${T.completedAt} ${f.dir === 'asc' ? sql`asc` : sql`desc`} nulls last`, desc(T.number)] // histórico: a mais recente primeiro
     : [dir(T.position), asc(T.number)];
 
   const [{ n } = { n: 0 }] = await db.select({ n: sql<number>`count(*)::int` }).from(T).where(and(...where));

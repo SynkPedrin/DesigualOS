@@ -14,6 +14,7 @@ const cu = vi.hoisted(() => ({
   falhar: null as null | (() => Error),
   membros: [] as Array<{ id: number; email: string; username: string }>,
 }));
+const feitasDeComentario = vi.hoisted(() => ({ n: 0 }));
 vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
   const real = await importOriginal<typeof import('@desigual-os/tool-gateway')>();
   const registrar = (fn: string, retorno?: unknown) => async (...args: unknown[]) => {
@@ -27,7 +28,7 @@ vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
     updateTask: registrar('updateTask'),
     addTaskTag: registrar('addTaskTag'),
     removeTaskTag: registrar('removeTaskTag'),
-    createTaskComment: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskComment', args: args.slice(1) }); if (cu.falhar) throw cu.falhar(); return { id: 'CU-COM-1', text: '', date: null }; },
+    createTaskComment: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskComment', args: args.slice(1) }); if (cu.falhar) throw cu.falhar(); return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; }, // id próprio por comentário, como no ClickUp
     lerClickUpCru: async () => { throw new Error('leitura simulada: o ClickUp não foi consultado'); },
     getTeamMembers: async () => cu.membros.map((m) => ({ ...m, profilePicture: null, initials: null, color: null })),
   };
@@ -260,6 +261,24 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     expect((await M.empurrarEventosDaEmpresa(org)).lidos).toBe(0); // o cursor andou
     expect(M.ultimasEscritas().some((x) => !x.ok && x.passageira === false)).toBe(true);
   });
+
+  it('recuar o cursor reenvia o que foi pulado, com o valor de agora, sem repetir comentário que já saiu', async () => {
+    const antes = new Date(Date.now() - 500);
+    await E.addComment(ctx(), tarefa, 'Comentário que já tinha ido');
+    await esperar();
+    await M.empurrarEventosDaEmpresa(org); // o comentário sai e fica vinculado
+    await E.updateTask(ctx(), tarefa, { title: 'Encerrada no Daily e recusada lá' });
+    await esperar();
+    cu.falhar = () => new Error('Escrita BLOQUEADA: fora do escopo de teste (400)');
+    expect((await M.empurrarEventosDaEmpresa(org)).falhas).toBe(1); // pulada, como a cerca fazia
+    cu.falhar = null;
+    cu.chamadas.length = 0;
+    expect(await E.recuarCursorDaSaida(org, antes)).toBe(true);
+    await M.empurrarEventosDaEmpresa(org);
+    expect(feitas('updateTask').map((c) => c.args)).toEqual([['CU-T1', { name: 'Encerrada no Daily e recusada lá' }]]);
+    expect(feitas('createTaskComment')).toEqual([]);
+    expect((await M.empurrarEventosDaEmpresa(org)).lidos).toBe(0); // e o cursor voltou ao fim
+  }, 15_000);
 
   it('falhaPassageira distingue rede/5xx/429 de 4xx e da cerca de teste', async () => {
     const { WriteScopeError } = await import('@desigual-os/tool-gateway');

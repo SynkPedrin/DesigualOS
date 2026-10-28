@@ -59,6 +59,21 @@ export async function gravarCursorDaSaida(organizationId: string, evento: { id: 
     .where(and(eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, PROVIDER), eq(schema.workExternalMappings.externalType, 'cursor'), eq(schema.workExternalMappings.externalId, 'saida')));
 }
 
+/**
+ * Recua o cursor para `desde`: o que foi feito no Daily a partir dali sai de novo para o ClickUp. Reenviar não duplica
+ * (tarefa criada e comentário só saem sem vínculo; o resto empurra o valor de AGORA). Existe porque a cerca de teste
+ * recusou e pulou toda edição humana entre 28/10 12:05 e o conserto, e "pulado" não volta sozinho.
+ */
+export async function recuarCursorDaSaida(organizationId: string, desde: Date): Promise<boolean> {
+  const meta: Posicao = { lastEventId: null, lastEventAt: desde.toISOString() };
+  const r = await db
+    .update(schema.workExternalMappings)
+    .set({ meta, syncedAt: new Date() })
+    .where(and(eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, PROVIDER), eq(schema.workExternalMappings.externalType, 'cursor'), eq(schema.workExternalMappings.externalId, 'saida')))
+    .returning({ id: schema.workExternalMappings.id });
+  return r.length > 0;
+}
+
 function depoisDoCursor(pos: Posicao | null) {
   const E = schema.workActivityEvents;
   if (!pos) return sql`true`;

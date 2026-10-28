@@ -16,11 +16,12 @@ const ABAS: Array<{ href: string; label: string }> = [
   { href: '/daily-tasks', label: 'Tarefas' },
   { href: '/daily-tasks/calendario', label: 'Calendário' },
   { href: '/daily-tasks/meu-trabalho', label: 'Meu Trabalho' },
+  { href: '/daily-tasks/encerradas', label: 'Encerradas' },
   { href: '/daily-tasks/caixa-de-entrada', label: 'Caixa de Entrada' },
   { href: '/daily-tasks/relatorios', label: 'Relatórios' },
 ];
 /** Telas em que o modo eu vale. Meu Trabalho já é só seu; Caixa de Entrada e Relatórios têm recorte próprio. */
-const COM_MODO_EU = new Set(['/daily-tasks', '/daily-tasks/calendario']);
+const COM_MODO_EU = new Set(['/daily-tasks', '/daily-tasks/calendario', '/daily-tasks/encerradas']);
 const GERENCIAMENTO: Array<{ href: string; label: string }> = [
   { href: '/daily-tasks/modelos', label: 'Modelos' },
   { href: '/daily-tasks/automacoes', label: 'Automações' },
