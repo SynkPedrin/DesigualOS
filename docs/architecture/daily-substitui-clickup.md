@@ -66,7 +66,18 @@ Ordem recomendada:
 ## Estado em produção
 
 **Ligada nos dois sentidos desde 28/10/2026 ~12:05** (`DAILY_SYNC_CLICKUP=on` e `DAILY_SYNC_CLICKUP_ESCRITA=on` no `.env` da
-VPS; cópia anterior em `.env.bak-pre-daily-sync-20261028`). Sem cerca de lista de teste: a saída escreve no ClickUp real.
+VPS; cópia anterior em `.env.bak-pre-daily-sync-20261028`).
+
+**A cerca de lista de teste ESTÁ ligada na API de produção**, pelo nome alternativo `CLICKUP_TEST_LIST_ID` (trava de
+homologação do Bento). Até `a115f95`, ela recusava toda edição feita no Daily ("fora do escopo de teste"), e a saída a
+pulava. Desde `a115f95`, a edição de uma pessoa atravessa pela válvula `authorizedForProduction`, com o mesmo portão do
+Bento; agente, automação e a conta de QA continuam só na lista de teste.
+
+Testado em produção em 28/10, à tarde: das 17 tarefas mexidas no ClickUp desde que a sincronia ligou, as que estavam no
+Daily tinham o mesmo status. Achados no mesmo teste, corrigidos em `a115f95` e `1f29497`: a fila da entrada ficou parada
+das 14:29 às 14:47 por uma consulta pendurada (sem prazo, só destravou no `ETIMEDOUT` do TCP) e acumulou o mesmo evento
+várias vezes. Diagnóstico ao vivo: `GET /work/admin/clickup-sync` (últimas decisões da entrada e da saída, com o motivo).
+
 API `c131b28` (imagem fina; rollback `desigual-os-api:rollback-ec25938`), front `ad55b7f`. Desligar: remover as duas linhas
 e `docker compose -f docker-compose.prod.yml --env-file .env up -d --no-deps --no-build api` — NA VPS, nunca no `.env` do
 Mac (no Mac a API local passaria a escrever no ClickUp de produção).
