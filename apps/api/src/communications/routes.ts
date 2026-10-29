@@ -8,7 +8,7 @@ import { requireModule } from '../auth/require-module';
 import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import * as svc from './service';
-import { sendMediaFast, sendTextFast } from './openwa-send';
+import { pessoasMarcaveis, sendMediaFast, sendTextFast } from './openwa-send';
 
 /**
  * communications/routes.ts — Inbox (P1-A/C, 06/10/2026).
@@ -30,7 +30,11 @@ const listQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
-const sendMessageSchema = z.object({ text: z.string().trim().min(1).max(4000) });
+// `mentions`: só id individual do WhatsApp (o motor recusa o resto com um 500 sem explicação).
+const sendMessageSchema = z.object({
+  text: z.string().trim().min(1).max(4000),
+  mentions: z.array(z.string().regex(/^\d{5,20}(:\d+)?@(c\.us|lid|s\.whatsapp\.net)$/)).max(100).optional(),
+});
 const assignSchema = z.object({ userId: z.string().uuid().nullable() });
 const linkClientSchema = z.object({ clientId: z.string().uuid().nullable() });
 const statusSchema = z.object({ status: z.enum(CONVERSATION_STATUSES) });
@@ -153,6 +157,21 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
       return { messages: mensagens.map(presentMessage) };
     });
 
+    // Quem dá para marcar com @ nesta conversa (participantes do grupo). Falha do WhatsApp vira lista vazia: sem a
+    // sugestão, a mensagem continua indo.
+    authed.get<{ Params: { id: string } }>('/inbox/threads/:id/mentionables', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
+      if (!thread) {
+        reply.code(404);
+        return { error: `Thread '${request.params.id}' not found` };
+      }
+      const pessoas = await pessoasMarcaveis(request.tenantContext!.organizationId, thread).catch((error: unknown) => {
+        logger.warn({ error, threadId: thread.id }, 'Participantes do grupo indisponíveis para marcar');
+        return [];
+      });
+      return { people: pessoas };
+    });
+
     authed.post<{ Params: { id: string } }>('/inbox/threads/:id/messages', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
       const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) {
@@ -161,7 +180,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
       }
       const body = sendMessageSchema.parse(request.body);
       if (thread.whatsappSessionId) {
-        const rapido = await sendTextFast({ organizationId: request.tenantContext!.organizationId, thread, senderUserId: request.authUser!.id, text: body.text });
+        const rapido = await sendTextFast({ organizationId: request.tenantContext!.organizationId, thread, senderUserId: request.authUser!.id, text: body.text, mentions: body.mentions });
         if (!rapido.ok) { reply.code(409); return { error: rapido.detail }; }
         reply.code(201);
         return presentMessage(rapido.message);

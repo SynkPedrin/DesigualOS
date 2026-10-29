@@ -38,7 +38,7 @@ export function AvatarStack({ ids, membros, size = 24 }: { ids: string[]; membro
  * Posição FIXA calculada pelo retângulo do gatilho: dentro da gaveta (que rola) ou de uma tabela com
  * overflow, um menu "absolute" era cortado ou ficava fora da tela. Vira para cima quando falta espaço embaixo.
  */
-export function Popover({ trigger, children, align = 'left', label }: { trigger: React.ReactNode; children: (fechar: () => void) => React.ReactNode; align?: 'left' | 'right'; label: string }) {
+export function Popover({ trigger, children, align = 'left', label, alturaMax = 320, largura = 200 }: { trigger: React.ReactNode; children: (fechar: () => void) => React.ReactNode; align?: 'left' | 'right'; label: string; alturaMax?: number; largura?: number }) {
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number; maxH: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -58,11 +58,11 @@ export function Popover({ trigger, children, align = 'left', label }: { trigger:
     const r = btn.current!.getBoundingClientRect();
     const abaixo = window.innerHeight - r.bottom - 8;
     const acima = r.top - 8;
-    const emBaixo = abaixo >= 220 || abaixo >= acima;
+    const emBaixo = abaixo >= Math.min(alturaMax, 220) || abaixo >= acima;
     setPos({
       ...(emBaixo ? { top: r.bottom + 4 } : { bottom: window.innerHeight - r.top + 4 }),
-      ...(align === 'right' ? { right: Math.max(8, window.innerWidth - r.right) } : { left: Math.min(r.left, window.innerWidth - 200) }),
-      maxH: Math.max(160, Math.min(320, emBaixo ? abaixo : acima)),
+      ...(align === 'right' ? { right: Math.max(8, window.innerWidth - r.right) } : { left: Math.max(8, Math.min(r.left, window.innerWidth - largura - 8)) }),
+      maxH: Math.max(160, Math.min(alturaMax, emBaixo ? abaixo : acima)),
     });
   };
   return (

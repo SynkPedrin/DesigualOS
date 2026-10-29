@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { CampoDeData } from './calendario';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useClients } from '@/hooks/use-clients';
 import { useWorkMembers, useWorkTree } from '@/hooks/use-work';
@@ -57,7 +58,7 @@ export function CriarTarefaDaily({ conversationId, messageId, senderName, texto,
         <label className="block text-xs text-nevoa">Responsável
           <select value={resp} onChange={(e) => setResp(e.target.value)} className={`${campo} mt-1`}><option value="">Ninguém</option>{membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
         </label>
-        <label className="block text-xs text-nevoa">Prazo<input type="date" value={prazo} onChange={(e) => setPrazo(e.target.value)} className={`${campo} mt-1`} /></label>
+        <div className="block text-xs text-nevoa">Prazo<span className={`${campo} mt-1 block`}><CampoDeData rotulo="Prazo" valor={prazo || null} onChange={(dia) => setPrazo(dia ?? '')} /></span></div>
         <label className="block text-xs text-nevoa">Prioridade
           <select value={prio} onChange={(e) => setPrio(e.target.value)} className={`${campo} mt-1`}><option value="1">Urgente</option><option value="2">Alta</option><option value="3">Normal</option><option value="4">Baixa</option></select>
         </label>

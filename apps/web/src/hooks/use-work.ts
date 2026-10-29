@@ -212,9 +212,43 @@ export interface TaskPatch {
   clientId?: string | null;
 }
 
+/** Campos que a tela pode mostrar já mudados, sem esperar o servidor (status precisa do objeto: espera a volta). */
+const CAMPOS_OTIMISTAS = ['title', 'description', 'priority', 'dueAt', 'startAt', 'assigneeIds', 'tags', 'estimateMinutes', 'clientId'] as const;
+
+function aplicarNaTarefa(t: WorkTaskWire, id: string, mudanca: Partial<WorkTaskWire>): WorkTaskWire {
+  return t.id === id ? { ...t, ...mudanca } : t;
+}
+
+/** Troca a tarefa em qualquer formato guardado sob ['work', ...]: detalhe ({ task }), listas ({ rows }) ou array. */
+function aplicarNoCache(dado: unknown, id: string, mudanca: Partial<WorkTaskWire>): unknown {
+  if (!dado || typeof dado !== 'object') return dado;
+  if (Array.isArray(dado)) return dado.map((x) => (x && typeof x === 'object' && 'id' in x && 'assigneeIds' in x ? aplicarNaTarefa(x as WorkTaskWire, id, mudanca) : x));
+  const o = dado as Record<string, unknown>;
+  if (o.task && typeof o.task === 'object' && (o.task as WorkTaskWire).id === id) return { ...o, task: aplicarNaTarefa(o.task as WorkTaskWire, id, mudanca) };
+  if (Array.isArray(o.rows)) return { ...o, rows: aplicarNoCache(o.rows, id, mudanca) };
+  return dado;
+}
+
 export function useUpdateTask() {
   const inv = useInvalidate();
+  const qc = useQueryClient();
   return useMutation({
+    // Uma de cada vez, na ordem dos cliques: dois responsáveis marcados em seguida chegavam fora de ordem e o
+    // segundo (com a lista velha) desfazia o primeiro — o "clico no responsável e ele buga" (29/10/2026).
+    scope: { id: 'work-task-patch' },
+    // A tela muda NA HORA; o servidor confirma depois. Antes, cada clique esperava a ida e a volta e a recarga.
+    onMutate: async ({ id, ...rest }: TaskPatch) => {
+      const mudanca: Partial<WorkTaskWire> = {};
+      for (const k of CAMPOS_OTIMISTAS) if (k in rest) (mudanca as Record<string, unknown>)[k] = (rest as Record<string, unknown>)[k];
+      if (!Object.keys(mudanca).length) return { antes: [] as Array<[readonly unknown[], unknown]> };
+      await qc.cancelQueries({ queryKey: ['work', 'detail', id] });
+      const antes = qc.getQueriesData({ queryKey: ['work'] });
+      for (const [chave, dado] of antes) {
+        const novo = aplicarNoCache(dado, id, mudanca);
+        if (novo !== dado) qc.setQueryData(chave, novo);
+      }
+      return { antes };
+    },
     mutationFn: async ({ id, expectedVersion, ...rest }: TaskPatch) => {
       try {
         return await apiFetch(`/work/tasks/${id}`, jsonInit('PATCH', { ...rest, expectedVersion }));
@@ -227,7 +261,10 @@ export function useUpdateTask() {
       }
     },
     onSettled: () => inv('tasks', 'detail', 'tree', 'inbox', 'overview', 'history'),
-    onError: (e) => toast(e instanceof ApiRequestError ? e.message : 'Não foi possível salvar a alteração.', 'error'),
+    onError: (e, _vars, ctx) => {
+      for (const [chave, dado] of ctx?.antes ?? []) qc.setQueryData(chave, dado); // volta ao que era
+      toast(e instanceof ApiRequestError ? e.message : 'Não foi possível salvar a alteração.', 'error');
+    },
   });
 }
 

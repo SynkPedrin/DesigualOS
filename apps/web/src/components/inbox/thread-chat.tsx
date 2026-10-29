@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronLeft, Download, FileText, MessageCircle, Mic, MoreHorizontal, Paperclip, Pause, Phone, Play, RotateCcw, Search, Smile, Square, Video, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { useInboxMessages, useInboxThread, useMarkInboxRead, useSendInboxMedia, useSendInboxMessage, useSendInboxSticker } from '@/hooks/use-inbox';
+import { useInboxMentionables, useInboxMessages, useInboxThread, useMarkInboxRead, useSendInboxMedia, useSendInboxMessage, useSendInboxSticker } from '@/hooks/use-inbox';
+import { comNomes, consultaDeMarcacao, filtrarMarcaveis, inserirMarcacao, paraEnvio, type PessoaMarcavel } from './marcacoes';
 import { ApiRequestError } from '@/lib/api/client';
 import type { InboxMessage } from '@/lib/api/contracts';
 import { textoComLinks } from '@/lib/links-no-texto';
@@ -72,6 +73,12 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
   const chunks = useRef<Blob[]>([]);
   const discardRecording = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
+  const ehGrupo = Boolean(thread?.externalChatId?.endsWith('@g.us'));
+  const marcaveis = useInboxMentionables(threadId, ehGrupo).data ?? [];
+  const [marcadas, setMarcadas] = useState<PessoaMarcavel[]>([]);
+  const [consulta, setConsulta] = useState<{ inicio: number; termo: string } | null>(null);
+  const [destaque, setDestaque] = useState(0);
+  const sugestoes = consulta && marcaveis.length ? filtrarMarcaveis(marcaveis, consulta.termo) : [];
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: 'smooth' });
@@ -119,10 +126,30 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
       sendMedia.mutate({ file: selectedFile, ...(text ? { caption: text } : {}), voiceNote });
     } else {
       if (!text) return;
-      sendMessage.mutate(text);
+      const envio = paraEnvio(text, marcadas);
+      sendMessage.mutate(envio.mentions.length ? { text: envio.texto, mentions: envio.mentions } : text);
     }
     setDraft('');
+    setMarcadas([]);
+    setConsulta(null);
     clearFile();
+  }
+
+  function aoDigitar(valor: string, cursor: number) {
+    setDraft(valor);
+    const c = ehGrupo ? consultaDeMarcacao(valor, cursor) : null;
+    setConsulta(c);
+    if (c?.termo !== consulta?.termo) setDestaque(0);
+  }
+
+  function marcar(pessoa: PessoaMarcavel) {
+    if (!consulta) return;
+    const r = inserirMarcacao(draft, consulta, pessoa);
+    setDraft(r.texto);
+    setMarcadas((m) => (m.some((x) => x.id === pessoa.id) ? m : [...m, pessoa]));
+    setConsulta(null);
+    const el = textarea.current;
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(r.cursor, r.cursor); });
   }
 
   async function startRecording() {
@@ -190,7 +217,7 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
               {message.attachmentUrl && <AttachmentView message={message} onImageOpen={setLightbox} />}
               {message.content && (
                 <p className={cn('whitespace-pre-wrap break-words [overflow-wrap:anywhere]', message.attachmentUrl && 'mt-1.5')}>
-                  {textoComLinks(message.content, cn('underline underline-offset-2 hover:opacity-80', message.direction === 'outbound' ? 'text-[#0b5c8a]' : 'text-roxo-eletrico'))}
+                  {textoComLinks(comNomes(message.content, marcaveis), cn('underline underline-offset-2 hover:opacity-80', message.direction === 'outbound' ? 'text-[#0b5c8a]' : 'text-roxo-eletrico'))}
                 </p>
               )}
               <div className={cn('mt-1 flex items-center gap-2 text-[10px]', message.direction === 'outbound' ? 'text-[#173c2a]/70' : 'text-nevoa')}>
@@ -238,7 +265,27 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
           )}
           <input ref={fileInput} type="file" className="hidden" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" onChange={(event) => { const file = event.target.files?.[0] ?? null; setSelectedFile(file); setVoiceNote(false); }} />
           <button type="button" title="Anexar arquivo" onClick={() => fileInput.current?.click()} disabled={recording} className="flex size-9 shrink-0 items-center justify-center rounded-md text-nevoa hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-40"><Paperclip size={18} /></button>
-          <textarea ref={textarea} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSend(); } }} rows={1} placeholder={selectedFile ? 'Adicionar legenda…' : 'Digite uma mensagem...'} className="flex-1 resize-none rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none placeholder:text-nevoa/60 focus:border-sinal" />
+          {sugestoes.length > 0 && (
+            <ul role="listbox" aria-label="Marcar pessoa" className="absolute bottom-12 left-11 z-20 max-h-64 w-72 overflow-y-auto rounded-lg border border-grafite-elevado bg-grafite py-1 shadow-2xl">
+              {sugestoes.map((p, i) => (
+                <li key={p.id} role="option" aria-selected={i === destaque}>
+                  <button type="button" onMouseDown={(event) => { event.preventDefault(); marcar(p); }} onMouseEnter={() => setDestaque(i)} className={cn('flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm', i === destaque ? 'bg-grafite-elevado text-branco-cru' : 'text-branco-cru/85')}>
+                    <span className="truncate">{p.nome}</span>
+                    <span className="ml-auto shrink-0 font-mono text-[10px] text-nevoa">{/^\d+$/.test(p.token) && !p.nome.includes(p.token) ? `+${p.token}` : ''}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <textarea ref={textarea} value={draft} onChange={(event) => aoDigitar(event.target.value, event.target.selectionStart ?? event.target.value.length)} onKeyDown={(event) => {
+            if (sugestoes.length) {
+              if (event.key === 'ArrowDown') { event.preventDefault(); setDestaque((d) => (d + 1) % sugestoes.length); return; }
+              if (event.key === 'ArrowUp') { event.preventDefault(); setDestaque((d) => (d - 1 + sugestoes.length) % sugestoes.length); return; }
+              if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); marcar(sugestoes[Math.min(destaque, sugestoes.length - 1)]!); return; }
+              if (event.key === 'Escape') { event.preventDefault(); setConsulta(null); return; }
+            }
+            if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSend(); }
+          }} rows={1} placeholder={selectedFile ? 'Adicionar legenda…' : ehGrupo ? 'Digite uma mensagem... (@ para marcar alguém)' : 'Digite uma mensagem...'} className="flex-1 resize-none rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none placeholder:text-nevoa/60 focus:border-sinal" />
           <button type="button" title="Emojis e figurinhas" aria-expanded={pickerOpen} onClick={() => setPickerOpen((open) => !open)} className={cn('flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru', pickerOpen ? 'text-sinal' : 'text-nevoa')}><Smile size={18} /></button>
           {!draft.trim() && !selectedFile ? (
             <button type="button" title={recording ? 'Gravando' : 'Gravar áudio'} onClick={() => void startRecording()} disabled={recording} className="flex size-9 shrink-0 items-center justify-center rounded-md bg-grafite-elevado text-nevoa disabled:opacity-40"><Mic size={18} /></button>

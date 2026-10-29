@@ -180,15 +180,28 @@ function settleOptimistic(queryClient: ReturnType<typeof useQueryClient>, thread
   });
 }
 
+/** Quem dá para marcar com @ na conversa (participantes do grupo). Só busca quando a conversa é grupo. */
+export function useInboxMentionables(threadId: string | null, ehGrupo: boolean) {
+  return useQuery({
+    queryKey: ['inbox', 'mentionables', threadId],
+    enabled: Boolean(threadId) && ehGrupo,
+    staleTime: 5 * 60_000,
+    queryFn: () => apiFetch<{ people: Array<{ id: string; token: string; nome: string }> }>(`/inbox/threads/${threadId}/mentionables`).then((r) => r.people),
+  });
+}
+
 export function useSendInboxMessage(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (text: string) =>
-      apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages`, {
+    // Texto puro ou com marcações (@) — `mentions` são os ids do WhatsApp de quem foi marcado.
+    mutationFn: (input: string | { text: string; mentions?: string[] }) => {
+      const corpo = typeof input === 'string' ? { text: input } : { text: input.text, ...(input.mentions?.length ? { mentions: input.mentions } : {}) };
+      return apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ text }),
-      }),
-    onMutate: (text) => ({ localId: optimistic(queryClient, threadId, { content: text }) }),
+        body: JSON.stringify(corpo),
+      });
+    },
+    onMutate: (input) => ({ localId: optimistic(queryClient, threadId, { content: typeof input === 'string' ? input : input.text }) }),
     onSuccess: (wire, _text, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, mapInboxMessage(wire)); },
     onError: (_error, _text, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, null); },
     onSettled: () => invalidateThread(queryClient, threadId),

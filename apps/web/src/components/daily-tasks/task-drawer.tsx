@@ -18,6 +18,8 @@ import { statusDeConclusao, statusDeReabertura } from './status-final';
 import { AprovacaoDaTarefa } from './aprovacao-da-tarefa';
 import { AnexosDaTarefa } from './anexos-da-tarefa';
 import { AssigneePicker, DuePicker, PriorityPicker, StatusPicker } from './pickers';
+import { CampoDeData, instanteDoDia } from './calendario';
+import { diaEmSaoPaulo } from '@/lib/prazo';
 import { Avatar, StatusDot } from './primitivas';
 import { RowMenu } from './row-menu';
 import { TextoRico } from './texto-rico';
@@ -118,7 +120,18 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const [editandoComent, setEditandoComent] = useState<{ id: string; body: string } | null>(null);
   const comentRef = useRef<HTMLTextAreaElement>(null);
   const t = data?.task;
-  useEffect(() => { if (t) { setTitulo(t.title); setDesc(t.description ?? ''); setEditandoDesc(false); } }, [t?.id, t?.version]);
+  // O que veio do servidor só substitui o campo que a pessoa NÃO está editando. Antes, qualquer salvamento instantâneo
+  // (status, responsável, prazo) subia a versão e apagava a descrição que estava sendo escrita (29/10/2026).
+  const doServidor = useRef<{ id: string | null; titulo: string; desc: string }>({ id: null, titulo: '', desc: '' });
+  useEffect(() => {
+    if (!t) return;
+    const outra = doServidor.current.id !== t.id;
+    const anterior = doServidor.current;
+    setTitulo((v) => (outra || v === anterior.titulo ? t.title : v));
+    setDesc((v) => (outra || v === anterior.desc ? (t.description ?? '') : v));
+    if (outra) setEditandoDesc(false);
+    doServidor.current = { id: t.id, titulo: t.title, desc: t.description ?? '' };
+  }, [t?.id, t?.version, t?.title, t?.description]);
   const fecharRef = useRef<() => void>(onClose);
   useEffect(() => { const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') fecharRef.current(); }; document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc); }, []);
 
@@ -136,9 +149,13 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
     comentRef.current?.focus();
   };
   const alterado = Boolean(t) && (titulo !== t!.title || desc !== (t!.description ?? ''));
+  // Leitura só da descrição JÁ SALVA. Antes bastava ter texto: a primeira letra digitada numa descrição vazia trocava
+  // a caixa pelo texto formatado e o campo sumia no meio da digitação.
+  const lendoDesc = Boolean(desc) && !editandoDesc && desc === (t?.description ?? '');
   const salvarRascunho = async () => {
     if (!t || !titulo.trim()) return;
     await salvar({ ...(titulo.trim() !== t.title ? { title: titulo.trim() } : {}), ...(desc !== (t.description ?? '') ? { description: desc || null } : {}) });
+    setEditandoDesc(false);
     toast('Alterações salvas.', 'success');
   };
   const tentarFechar = () => { if (alterado && !window.confirm('Há alterações NÃO salvas nesta tarefa. Fechar e perder o que você escreveu?')) return; onClose(); };
@@ -201,7 +218,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-nevoa hover:text-branco-cru"><span aria-hidden className="inline-block transition-transform group-open/d:rotate-90">›</span> Mais detalhes <span className="text-nevoa/60">(início, estimativa, tempo, quem acompanha, tags e campos)</span></summary>
             <dl className="mt-3 grid grid-cols-[150px_1fr] items-center gap-y-3.5 text-sm">
               <dt className="text-nevoa">Início</dt>
-              <dd className="flex items-center gap-2"><input type="date" aria-label="Data de início" value={t.startAt ? t.startAt.slice(0, 10) : ''} onChange={(e) => void salvar({ startAt: e.target.value ? new Date(`${e.target.value}T12:00:00`).toISOString() : null })} className="rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />{t.startAt && <button type="button" onClick={() => void salvar({ startAt: null })} className="text-xs text-nevoa hover:text-branco-cru">limpar</button>}</dd>
+              <dd className="flex items-center gap-2"><CampoDeData rotulo="Data de início" valor={t.startAt ? diaEmSaoPaulo(t.startAt) : null} onChange={(dia) => void salvar({ startAt: instanteDoDia(dia) })} /></dd>
               <dt className="text-nevoa">Estimativa</dt>
               <dd><input type="number" min={0} aria-label="Estimativa em minutos" defaultValue={t.estimateMinutes ?? ''} key={`est${t.version}`} onBlur={(e) => { const n = e.target.value === '' ? null : Number(e.target.value); if (n !== t.estimateMinutes) void salvar({ estimateMinutes: n }); }} className="w-24 rounded border border-grafite-elevado bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" /> <span className="text-xs text-nevoa">min</span></dd>
               <dt className="text-nevoa">Tempo</dt>
@@ -233,8 +250,8 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             </details>
 
             <section className="border-t border-grafite-elevado pt-4">
-              <Titulo extra={desc && !editandoDesc ? <button type="button" onClick={() => setEditandoDesc(true)} className="flex items-center gap-1 normal-case text-nevoa hover:text-branco-cru"><Pencil size={12} /> Editar descrição</button> : undefined}>Descrição</Titulo>
-              {desc && !editandoDesc ? (
+              <Titulo extra={lendoDesc ? <button type="button" onClick={() => setEditandoDesc(true)} className="flex items-center gap-1 normal-case text-nevoa hover:text-branco-cru"><Pencil size={12} /> Editar descrição</button> : undefined}>Descrição</Titulo>
+              {lendoDesc ? (
                 <TextoRico texto={desc} className="text-branco-cru" />
               ) : (
                 <>

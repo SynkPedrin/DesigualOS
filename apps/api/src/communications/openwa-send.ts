@@ -115,7 +115,53 @@ async function touchThread(threadId: string, at: Date, preview: string): Promise
     .where(eq(schema.conversationThreads.id, threadId));
 }
 
-export async function sendTextFast(params: { organizationId: string; thread: ThreadRef; senderUserId: string; text: string }): Promise<FastSendResult> {
+// ── marcação com @ (pedido do Pedro, 29/10/2026) ─────────────────────────────────────────────────────────────
+
+export interface PessoaMarcavel {
+  /** Id no WhatsApp (`5518...@c.us` ou `...@lid`): vai em `mentions`. */
+  id: string;
+  /** O que vai no texto depois do @ para o WhatsApp desenhar a marcação: a parte do id antes do @. */
+  token: string;
+  nome: string;
+}
+
+const tokenDoId = (id: string) => id.split('@')[0]!.split(':')[0]!;
+const marcaveisEmCache = new Map<string, { em: number; pessoas: PessoaMarcavel[] }>();
+
+/**
+ * Quem pode ser marcado na conversa: os participantes do grupo, com o nome do contato quando a gente conhece a pessoa
+ * (senão o nome que o WhatsApp informa, senão o número). Conversa individual não tem a quem marcar.
+ */
+export async function pessoasMarcaveis(organizationId: string, thread: ThreadRef): Promise<PessoaMarcavel[]> {
+  if (!thread.externalChatId?.endsWith('@g.us') || !thread.whatsappSessionId) return [];
+  const hit = marcaveisEmCache.get(thread.id);
+  if (hit && Date.now() - hit.em < 5 * 60_000) return hit.pessoas;
+  const session = await loadSession(organizationId, thread.whatsappSessionId);
+  if (!session) return [];
+  const participantes = await senderForWhatsappSession(session).groupParticipants(thread.externalChatId);
+  const contatos = await db.select({ name: schema.contacts.name, phone: schema.contacts.phone, externalIds: schema.contacts.externalIds })
+    .from(schema.contacts).where(eq(schema.contacts.organizationId, organizationId));
+  const nomePorChave = new Map<string, string>();
+  for (const c of contatos) {
+    const digitos = (c.phone ?? '').replace(/\D/g, '');
+    if (digitos) nomePorChave.set(digitos, c.name);
+    for (const v of Object.values(c.externalIds ?? {})) if (typeof v === 'string' && v) nomePorChave.set(tokenDoId(v), c.name);
+  }
+  const proprio = tokenDoId(session.phoneNumber ?? '');
+  const pessoas = participantes
+    .filter((p) => p.id && tokenDoId(p.id) !== proprio && (p.number || '').replace(/\D/g, '') !== proprio)
+    .map((p) => {
+      const token = tokenDoId(p.id);
+      const numero = (p.number || '').replace(/\D/g, '');
+      const nome = nomePorChave.get(numero) ?? nomePorChave.get(token) ?? p.name?.trim() ?? (numero ? `+${numero}` : token);
+      return { id: p.id, token, nome };
+    })
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  marcaveisEmCache.set(thread.id, { em: Date.now(), pessoas });
+  return pessoas;
+}
+
+export async function sendTextFast(params: { organizationId: string; thread: ThreadRef; senderUserId: string; text: string; mentions?: string[] | undefined }): Promise<FastSendResult> {
   const { thread } = params;
   const session = thread.whatsappSessionId ? await loadSession(params.organizationId, thread.whatsappSessionId) : null;
   if (!session) return { ok: false, detail: 'Sessão WhatsApp da conversa não encontrada.' };
@@ -135,7 +181,7 @@ export async function sendTextFast(params: { organizationId: string; thread: Thr
     await touchThread(thread.id, pending!.createdAt, params.text).catch(() => undefined);
     await deliver({
       session, thread, pending: pending!, senderUserId: params.senderUserId, summary: 'Enviou uma mensagem.',
-      send: () => senderForWhatsappSession(session).sendText({ chatId, text: params.text, idempotencyKey: randomUUID() }),
+      send: () => senderForWhatsappSession(session).sendText({ chatId, text: params.text, ...(params.mentions?.length ? { mentions: params.mentions } : {}), idempotencyKey: randomUUID() }),
     });
   })();
   return { ok: true, message: pending! };

@@ -4,6 +4,8 @@ import { Check } from 'lucide-react';
 import { PRIORIDADES, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
 import { Avatar, AvatarStack, DueDate, Popover, PriorityFlag, StatusPill } from './primitivas';
 import { EmblemaDePrioridade } from './ui';
+import { Calendario, instanteDoDia } from './calendario';
+import { diaEmSaoPaulo } from '@/lib/prazo';
 
 const item = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-branco-cru hover:bg-grafite-elevado';
 
@@ -58,20 +60,10 @@ export function AssigneePicker({ tarefa, membros, onChange }: { tarefa: WorkTask
 }
 
 export function DuePicker({ tarefa, onChange }: { tarefa: WorkTaskWire; onChange: (iso: string | null) => void }) {
-  const valor = tarefa.dueAt ? tarefa.dueAt.slice(0, 10) : '';
+  const valor = tarefa.dueAt ? diaEmSaoPaulo(tarefa.dueAt) : null;
   return (
-    <Popover label={`Vencimento de ${tarefa.key}`} trigger={<DueDate tarefa={tarefa} />}>
-      {(fechar) => (
-        <div className="space-y-1 p-1">
-          <input
-            type="date"
-            value={valor}
-            onChange={(e) => { fechar(); onChange(e.target.value ? new Date(`${e.target.value}T12:00:00`).toISOString() : null); }}
-            className="rounded border border-grafite-elevado bg-grafite px-2 py-1 text-xs text-branco-cru"
-          />
-          {tarefa.dueAt && <button type="button" className={item} onClick={() => { fechar(); onChange(null); }}>Limpar data</button>}
-        </div>
-      )}
+    <Popover label={`Vencimento de ${tarefa.key}`} trigger={<DueDate tarefa={tarefa} />} alturaMax={420} largura={272}>
+      {(fechar) => <Calendario valor={valor} onEscolher={(dia) => { fechar(); onChange(instanteDoDia(dia)); }} />}
     </Popover>
   );
 }
