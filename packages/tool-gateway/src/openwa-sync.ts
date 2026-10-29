@@ -3,6 +3,7 @@ import { db, schema } from '@desigual-os/database';
 import { OpenwaGatewayError, normalizeOpenwaMessage, type OpenwaMessage } from './openwa-gateway';
 import { cachedWhatsappSession, gatewayForWhatsappSession, whatsappSessionById, whatsappWebhookSecret, type WhatsappSessionRow } from './openwa-session-store';
 import { saveWhatsappMedia, WHATSAPP_MEDIA_MAX_BYTES } from './openwa-media-store';
+import { avisarWhatsappForaDoAr } from './openwa-vigia';
 
 export const LIMITE_PADRAO_HISTORICO = 10;
 
@@ -768,6 +769,8 @@ export async function processOpenwaWebhookEvent(eventId: string): Promise<{ sync
         lastError: typeof data.reason === 'string' ? data.reason : null,
       }).where(eq(schema.whatsappSessions.id, session.id));
       if (status === 'ready') syncSessionId = session.id;
+      // Caiu: quem precisa agir fica sabendo na hora (antes, a Inbox só parava, em silêncio).
+      if (session.status === 'ready' && ['disconnected', 'logged_out', 'failed'].includes(status)) await avisarWhatsappForaDoAr({ ...session, status });
     }
     await db.update(schema.whatsappWebhookEvents).set({ status: 'processed', processedAt: new Date() }).where(eq(schema.whatsappWebhookEvents.id, eventId));
     return { ...(syncSessionId ? { syncSessionId } : {}), ownerUserId: session.ownerUserId, ...(threadId ? { threadId } : {}), inboxChanged };

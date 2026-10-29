@@ -23,7 +23,7 @@ import { agentLoopEnabledFor, processAgentJob } from './processors/execute-job.j
 import { processAutomationJob } from './processors/run-automation.js';
 import { backfillThumbnails, generateThumbnail } from './processors/generate-thumbnail.js';
 import { generateClientReport } from './processors/generate-client-report.js';
-import { recoverOpenwaJobs, retomarEventosDoWhatsapp, startOpenwaWorker } from './processors/openwa.js';
+import { recoverOpenwaJobs, retomarEventosDoWhatsapp, startOpenwaWorker, vigiarWhatsapp } from './processors/openwa.js';
 import { setupDailyJobs } from './scheduler/index.js';
 import { ottoMotionEnabled, startMotionWorker } from '@desigual-os/otto-motion';
 
@@ -58,6 +58,7 @@ if (motionWorker) {
 const openwaWorker = startOpenwaWorker(logger);
 recoverOpenwaJobs(logger).catch((error: unknown) => logger.error({ error }, 'Falha ao recuperar jobs do WhatsApp'));
 setInterval(() => { retomarEventosDoWhatsapp(logger).catch((error: unknown) => logger.error({ error }, 'Falha ao retomar eventos do WhatsApp')); }, 10 * 60_000).unref();
+setInterval(() => { vigiarWhatsapp(logger).catch((error: unknown) => logger.error({ error }, 'Falha ao vigiar as sessões do WhatsApp')); }, 2 * 60_000).unref();
 
 const automationsWorker = new Worker<AutomationJobData>(
   AUTOMATIONS_QUEUE_NAME,

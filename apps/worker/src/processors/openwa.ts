@@ -17,6 +17,7 @@ import {
   listWhatsappWebhookEventsParaRetomar,
   processOpenwaSyncJob,
   recoverWhatsappWebhookEvent,
+  vigiarSessoesDoWhatsapp,
   processOpenwaWebhookEvent,
   whatsappSessionById,
 } from '@desigual-os/tool-gateway';
@@ -107,4 +108,29 @@ export async function retomarEventosDoWhatsapp(logger: Logger): Promise<number> 
   }
   if (eventos.length) logger.info({ eventos: eventos.length }, 'WhatsApp: eventos falhos devolvidos à fila');
   return eventos.length;
+}
+
+let motorAvisadoEm = 0;
+/**
+ * A cada 2 min, confere com o motor o estado real de cada WhatsApp (ver `vigiarSessoesDoWhatsapp`): quem caiu é
+ * avisado; quem voltou é sincronizado na hora, sem depender de alguém abrir a tela.
+ */
+export async function vigiarWhatsapp(logger: Logger): Promise<void> {
+  const { mudancas, motorInacessivel } = await vigiarSessoesDoWhatsapp();
+  for (const m of mudancas) {
+    logger.info(m, 'WhatsApp: sessão mudou de estado');
+    if (m.para === 'ready') {
+      const session = await whatsappSessionById(m.sessionId);
+      if (session) {
+        const sync = await createWhatsappSyncJob(session, null);
+        if (sync.created) await enqueueWhatsappSync(sync.id);
+      }
+    } else if (m.de === 'ready') {
+      void sendOpsAlert({ severity: 'warning', title: 'WhatsApp de colaborador desconectado', detail: `Sessão ${m.sessionId} passou de ready para ${m.para}. O dono e os administradores foram notificados.` });
+    }
+  }
+  if (motorInacessivel && Date.now() - motorAvisadoEm > 60 * 60_000) {
+    motorAvisadoEm = Date.now();
+    void sendOpsAlert({ severity: 'critical', title: 'Motor do WhatsApp (OpenWA) inacessível', detail: 'Nenhuma sessão respondeu na última conferência. A Inbox de todos parou de receber conversas.' });
+  }
 }
