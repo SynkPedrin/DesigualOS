@@ -107,6 +107,15 @@ describe('WhatsApp: a mesma pessoa por @c.us e por @lid', () => {
     expect(noGrupo!.senderContactId).toBe(particular!.id);
   });
 
+  it('contato @lid sem número MAIS ANTIGO que o do número: a mensagem vai para o do número, sem criar telefone repetido', async () => {
+    if (!enabled) return;
+    await db.insert(schema.contacts).values({ organizationId, name: 'Só lid', phone: null, externalIds: { whatsappLid: '77007@lid' }, createdAt: new Date('2026-01-01') });
+    await persistOpenwaMessage({ session, message: msg({ chatId: '5511977770000@c.us', from: '5511977770000@c.us', body: 'pelo número' }) });
+    motor.lids.set('77007@lid', '5511977770000');
+    await persistOpenwaMessage({ session, message: msg({ chatId: '77007@lid', from: '77007@lid', body: 'pelo lid' }) });
+    expect((await contatos()).filter((c) => c.phone === '5511977770000')).toHaveLength(1);
+  });
+
   it('a tabela lid→telefone é consultada uma vez por pessoa, não por mensagem', async () => {
     if (!enabled) return;
     motor.lids.set('77006@lid', '5511966660000');

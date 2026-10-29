@@ -127,10 +127,11 @@ async function ensureContact(input: {
       sql`${schema.contacts.externalIds}->>'whatsappLid' = ${input.externalId}`,
     );
     const identity = phone ? or(eq(schema.contacts.phone, phone), porId) : porId;
-    // O mais antigo primeiro: havendo duplicados de antes, tudo converge para o original.
+    // Quem tem o telefone vence; entre iguais, o mais antigo. Sem a primeira regra, um contato @lid sem número mais
+    // antigo que o do número recebia o telefone e passavam a existir dois com o mesmo número (visto em 29/10/2026).
     const [existing] = await db.select().from(schema.contacts)
       .where(and(eq(schema.contacts.organizationId, input.session.organizationId), identity))
-      .orderBy(asc(schema.contacts.createdAt)).limit(1);
+      .orderBy(...(phone ? [sql`(${schema.contacts.phone} = ${phone}) desc nulls last`] : []), asc(schema.contacts.createdAt)).limit(1);
     const name = input.name?.trim() || phone || input.externalId.split('@')[0] || 'Contato WhatsApp';
     const chave = chaveDoId(input.externalId);
     if (existing) {
