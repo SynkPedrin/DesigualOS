@@ -198,14 +198,16 @@ function valores(organizationId: string, conversationId: string, m: MensagemCU, 
 }
 
 /** Uma passada para a empresa: o que mudou desde a última (na primeira, o histórico inteiro). */
-export async function importarChatDoClickUp(organizationId: string, opcoes: { api?: ApiDeChat; membrosDoTime?: ClickUpMember[] } = {}): Promise<ResultadoDoChat> {
+export async function importarChatDoClickUp(organizationId: string, opcoes: { api?: ApiDeChat; membrosDoTime?: ClickUpMember[]; workspace?: string } = {}): Promise<ResultadoDoChat> {
   const api = opcoes.api ?? apiDeChatReal;
   const r: ResultadoDoChat = { organizationId, tokens: 0, canais: 0, conversasCriadas: 0, mensagens: 0, respostas: 0, ignorados: [], falhas: [] };
   const conexoes = await db.select({ userId: schema.integrationConnections.userId, token: schema.integrationConnections.accessTokenEncrypted, workspace: schema.integrationConnections.externalWorkspaceId })
     .from(schema.integrationConnections)
     .innerJoin(schema.organizationMembers, and(eq(schema.organizationMembers.userId, schema.integrationConnections.userId), eq(schema.organizationMembers.organizationId, organizationId)))
     .where(and(eq(schema.integrationConnections.provider, 'clickup'), eq(schema.integrationConnections.status, 'connected')));
-  const leitores = conexoes.filter((c) => c.workspace).map((c) => ({ ...c, token: decryptToken(c.token) }));
+  // Só o token do MESMO workspace do ClickUp da empresa (o das tarefas do Daily).
+  const workspaceDaEmpresa = opcoes.workspace ?? process.env.CLICKUP_TEAM_ID ?? null;
+  const leitores = conexoes.filter((c) => c.workspace && (!workspaceDaEmpresa || c.workspace === workspaceDaEmpresa)).map((c) => ({ ...c, token: decryptToken(c.token) }));
   r.tokens = leitores.length;
   if (!leitores.length) return r;
 
@@ -277,15 +279,46 @@ let ultimas: ResultadoDoChat[] = [];
 let rodando = false;
 export function ultimasImportacoesDoChat() { return ultimas; }
 
-/** Todas as empresas com alguém que conectou o ClickUp. Uma passada por vez. */
+/**
+ * Empresas DONAS do workspace do ClickUp: as que têm tarefas do ClickUp no Daily (listas vinculadas). Uma pessoa pode
+ * ser membro de várias empresas; sem esta regra, o chat da agência entrava também numa empresa de teste dela
+ * (visto na primeira passada em produção, 29/10/2026).
+ */
+export async function empresasDonasDoClickUp(): Promise<string[]> {
+  const linhas = await db.selectDistinct({ id: schema.workExternalMappings.organizationId }).from(schema.workExternalMappings)
+    .where(and(eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'list')));
+  return linhas.map((l) => l.id);
+}
+
+/**
+ * Desfaz o que foi importado numa empresa que não é dona do workspace. Conversa que só tem mensagens do ClickUp sai
+ * inteira; conversa que já existia (com mensagens escritas aqui) perde só as importadas. Idempotente.
+ */
+export async function desfazerImportacaoFora(donas: string[]): Promise<number> {
+  const fora = await db.select().from(schema.workExternalMappings).where(and(
+    eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'chat_channel'),
+    donas.length ? sql`${schema.workExternalMappings.organizationId} not in (${sql.join(donas.map((d) => sql`${d}::uuid`), sql`, `)})` : sql`true`,
+  ));
+  for (const v of fora) {
+    const [propria] = await db.select({ id: schema.internalMessages.id }).from(schema.internalMessages)
+      .where(and(eq(schema.internalMessages.conversationId, v.entityId), sql`${schema.internalMessages.kind} not in ('clickup', 'clickup_externo')`)).limit(1);
+    if (propria) await db.delete(schema.internalMessages).where(and(eq(schema.internalMessages.conversationId, v.entityId), inArray(schema.internalMessages.kind, ['clickup', 'clickup_externo'])));
+    else await db.delete(schema.internalConversations).where(eq(schema.internalConversations.id, v.entityId));
+    await db.delete(schema.workExternalMappings).where(eq(schema.workExternalMappings.id, v.id));
+  }
+  if (fora.length) logger.warn({ conversas: fora.length }, 'Chat do ClickUp: importação desfeita em empresa que não é dona do workspace');
+  return fora.length;
+}
+
+/** As empresas donas do workspace do ClickUp. Uma passada por vez. */
 export async function passadaDoChatDoClickUp(): Promise<ResultadoDoChat[]> {
   if (rodando) return ultimas;
   rodando = true;
   try {
-    const orgs = await db.selectDistinct({ id: schema.organizationMembers.organizationId }).from(schema.organizationMembers)
-      .innerJoin(schema.integrationConnections, and(eq(schema.integrationConnections.userId, schema.organizationMembers.userId), eq(schema.integrationConnections.provider, 'clickup')));
+    const donas = await empresasDonasDoClickUp();
+    await desfazerImportacaoFora(donas);
     const resultados: ResultadoDoChat[] = [];
-    for (const { id } of orgs) {
+    for (const id of donas) {
       const res = await importarChatDoClickUp(id);
       resultados.push(res);
       if (res.mensagens || res.respostas || res.falhas.length) logger.info({ ...res, ignorados: res.ignorados.length }, 'Chat do ClickUp: passada');

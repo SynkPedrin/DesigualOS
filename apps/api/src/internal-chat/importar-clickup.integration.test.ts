@@ -141,6 +141,38 @@ describe.skipIf(!enabled)('chat do ClickUp → Comunicação × PostgreSQL real'
     expect(await db.select().from(schema.notifications).where(inArray(schema.notifications.userId, [alicia, matheus, jamile]))).toEqual([]);
   });
 
+  it('token de outro workspace do ClickUp não é usado', async () => {
+    ck.leitores.length = 0;
+    const r = await M.importarChatDoClickUp(org, { api, membrosDoTime: time, workspace: 'OUTRO-WS' });
+    expect(r.tokens).toBe(0);
+    expect(ck.leitores).toEqual([]);
+  });
+
+  it('importado numa empresa que não é dona do workspace é desfeito; o escrito lá continua', async () => {
+    const { db, schema } = dbm;
+    const { eq } = await import('drizzle-orm');
+    const outra = randomUUID();
+    await db.insert(schema.organizations).values({ id: outra, name: 'QA outra', slug: `qa-outra-${outra}` });
+    await db.insert(schema.organizationMembers).values({ organizationId: outra, userId: alicia, role: 'collaborator' });
+    try {
+      const r = await M.importarChatDoClickUp(outra, { api, membrosDoTime: time });
+      expect(r.conversasCriadas).toBeGreaterThan(0);
+      const naOutra = await db.select().from(schema.internalConversations).where(eq(schema.internalConversations.organizationId, outra));
+      // Uma conversa da outra empresa ganha uma mensagem escrita lá: essa tem que sobreviver.
+      const alvo = naOutra.find((c) => c.kind === 'group')!;
+      await db.insert(schema.internalMessages).values({ organizationId: outra, conversationId: alvo.id, senderId: alicia, content: 'escrita aqui', clientMessageId: randomUUID() });
+
+      await M.desfazerImportacaoFora([org]);
+      const restam = await db.select().from(schema.internalConversations).where(eq(schema.internalConversations.organizationId, outra));
+      expect(restam.map((c) => c.id)).toEqual([alvo.id]);
+      expect((await mensagensDe(alvo.id)).map((m) => m.content)).toEqual(['escrita aqui']);
+      // A empresa dona não foi tocada.
+      expect(await conversaDoCanal('dm-am')).not.toBeNull();
+    } finally {
+      await db.delete(schema.organizations).where(eq(schema.organizations.id, outra));
+    }
+  });
+
   it('segunda passada traz só o novo e não duplica nada', async () => {
     const dm = (await conversaDoCanal('dm-am'))!;
     const antes = (await mensagensDe(dm.id)).length;
