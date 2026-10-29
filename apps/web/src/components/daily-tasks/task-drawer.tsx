@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Link2, Pencil, Play, Plus, Repeat, Save, Square, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, Link2, Loader2, Pencil, Play, Plus, Repeat, Save, Square, Trash2, X } from 'lucide-react';
 import {
   useAddComment, useChecklistActions, useCreateTask, useSpaceStatuses, useTaskDetail, useUpdateTask, useWorkMembers, useWorkTasks,
   type TaskPatch, type WorkTaskDetail, type WorkTaskWire,
@@ -88,7 +88,19 @@ function BuscaDeTarefa({ onPick, excluir }: { onPick: (t: WorkTaskWire) => void;
 
 /** Gaveta da tarefa (como o painel do ClickUp). Busca o que precisa sozinha: serve a qualquer tela. */
 export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClose: () => void; onOpen: (id: string) => void }) {
-  const { data, isPending, error } = useTaskDetail(taskId);
+  const detalhe = useTaskDetail(taskId);
+  const { data, isPending, error } = detalhe;
+  // Busca parada sem dado (cancelada no meio do caminho): dispara de novo em vez de ficar em "Carregando…".
+  useEffect(() => { if (detalhe.isPending && detalhe.fetchStatus === 'idle') void detalhe.refetch(); }, [detalhe.isPending, detalhe.fetchStatus, detalhe.refetch]);
+  // De onde se veio: abrir uma subtarefa (ou outra tarefa) daqui empilha a atual, e "Voltar" desempilha.
+  const [pilha, setPilha] = useState<string[]>([]);
+  const idAnterior = useRef(taskId);
+  useEffect(() => {
+    if (idAnterior.current === taskId) return;
+    const de = idAnterior.current;
+    setPilha((p) => (p[p.length - 1] === taskId ? p.slice(0, -1) : [...p, de]));
+    idAnterior.current = taskId;
+  }, [taskId]);
   const statuses = useSpaceStatuses(data?.list?.spaceId ?? null);
   const membros = useWorkMembers().data?.members ?? [];
   const eu = useDailyTasksAccess().data?.userId ?? null;
@@ -158,6 +170,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
     setEditandoDesc(false);
     toast('Alterações salvas.', 'success');
   };
+  const voltarPara = pilha[pilha.length - 1] ?? t?.parentTaskId ?? null;
   const tentarFechar = () => { if (alterado && !window.confirm('Há alterações NÃO salvas nesta tarefa. Fechar e perder o que você escreveu?')) return; onClose(); };
   fecharRef.current = tentarFechar;
   const meuTimerNesta = timer.data?.running?.taskId === taskId;
@@ -168,13 +181,23 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={tentarFechar}>
       <aside role="dialog" aria-label="Detalhes da tarefa" onClick={(e) => e.stopPropagation()} className="flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-grafite-elevado bg-carbono shadow-elevated">
         <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-grafite-elevado bg-carbono px-4 py-2 text-xs text-nevoa">
+          {voltarPara && (
+            <button type="button" onClick={() => { if (!alterado || window.confirm('Há alterações NÃO salvas nesta tarefa. Voltar e perder o que você escreveu?')) onOpen(voltarPara); }} className="flex items-center gap-1 rounded-md border border-grafite-elevado px-2.5 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado">
+              <ArrowLeft size={14} /> {pilha.length ? 'Voltar' : 'Tarefa principal'}
+            </button>
+          )}
           <span className="font-mono">{t?.key}</span>
           {data?.list && <span className="flex items-center gap-1.5">em <LogoDoCliente nome={nomeLimpo(data.list.name)} className="!size-5" />{data.list.name}</span>}
           {t?.archivedAt && <span className="rounded bg-aviso/20 px-1.5 py-0.5 text-aviso">arquivada</span>}
           <button type="button" onClick={tentarFechar} aria-label="Fechar" className="ml-auto flex items-center gap-1 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado"><X size={14} /> Fechar</button>
         </header>
-        {isPending && <p className="p-6 text-sm text-nevoa">Carregando…</p>}
-        {error && <p role="alert" className="p-6 text-sm text-red-400">Não foi possível abrir a tarefa.</p>}
+        {isPending && <p className="flex items-center gap-2 p-6 text-sm text-nevoa"><Loader2 size={15} className="animate-spin" /> Carregando a tarefa…</p>}
+        {error && !data && (
+          <div role="alert" className="space-y-2 p-6 text-sm">
+            <p className="text-red-400">Não foi possível abrir a tarefa.</p>
+            <button type="button" onClick={() => void detalhe.refetch()} className="rounded-md border border-grafite-elevado px-3 py-1.5 text-branco-cru hover:bg-grafite-elevado">Tentar de novo</button>
+          </div>
+        )}
         {data && t && (
           <div className="space-y-5 p-6">
             <input value={titulo} onChange={(e) => setTitulo(e.target.value)} aria-label="Título" className="w-full bg-transparent font-heading text-2xl font-semibold text-branco-cru outline-none" />

@@ -68,4 +68,23 @@ describe('atualização de tarefa: a tela muda na hora, em ordem', () => {
     expect(detalhe(qc).assigneeIds).toEqual([]);
     expect(naLista(qc).assigneeIds).toEqual([]);
   });
+
+  it('abrir uma tarefa enquanto outra salva: a busca do detalhe NÃO é cancelada (o "Carregando…" eterno)', async () => {
+    let entregarDetalhe!: (v: unknown) => void;
+    apiFetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/work/tasks/t3/detail') return new Promise((r) => { entregarDetalhe = r; });
+      return new Promise(() => {}); // o salvamento fica pendurado
+      void init;
+    });
+    const { qc, mutar } = montar();
+    let busca!: Promise<unknown>;
+    await act(async () => {
+      // A subtarefa t3 acabou de ser aberta (ainda sem dado) e alguém mexe nela pela lista no mesmo instante.
+      busca = qc.fetchQuery({ queryKey: ['work', 'detail', 't3'], queryFn: () => apiFetchMock('/work/tasks/t3/detail') }).catch((e: unknown) => e);
+      void mutar({ id: 't3', expectedVersion: 1, assigneeIds: ['u-gui'] });
+      await Promise.resolve();
+    });
+    await act(async () => { entregarDetalhe({ task: { id: 't3' } }); await busca; });
+    expect(qc.getQueryData(['work', 'detail', 't3'])).toEqual({ task: { id: 't3' } });
+  });
 });

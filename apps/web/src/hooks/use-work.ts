@@ -237,11 +237,13 @@ export function useUpdateTask() {
     // segundo (com a lista velha) desfazia o primeiro — o "clico no responsável e ele buga" (29/10/2026).
     scope: { id: 'work-task-patch' },
     // A tela muda NA HORA; o servidor confirma depois. Antes, cada clique esperava a ida e a volta e a recarga.
-    onMutate: async ({ id, ...rest }: TaskPatch) => {
+    onMutate: ({ id, ...rest }: TaskPatch) => {
       const mudanca: Partial<WorkTaskWire> = {};
       for (const k of CAMPOS_OTIMISTAS) if (k in rest) (mudanca as Record<string, unknown>)[k] = (rest as Record<string, unknown>)[k];
       if (!Object.keys(mudanca).length) return { antes: [] as Array<[readonly unknown[], unknown]> };
-      await qc.cancelQueries({ queryKey: ['work', 'detail', id] });
+      // NÃO cancela buscas em andamento: cancelar a do detalhe de uma tarefa recém-aberta (ainda sem dado) a deixava
+      // em "Carregando…" para sempre (visto em produção, 29/10/2026). Se uma busca velha chegar depois, a recarga do
+      // fim desta mutação corrige.
       const antes = qc.getQueriesData({ queryKey: ['work'] });
       for (const [chave, dado] of antes) {
         const novo = aplicarNoCache(dado, id, mudanca);
