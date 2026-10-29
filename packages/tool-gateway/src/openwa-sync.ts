@@ -785,6 +785,23 @@ export async function listPendingWhatsappSyncJobs() {
   return db.select().from(schema.whatsappSyncJobs).where(sql`${schema.whatsappSyncJobs.status} in ('queued','running')`).orderBy(asc(schema.whatsappSyncJobs.createdAt)).limit(100);
 }
 
+/**
+ * Eventos que a fila desistiu (5 tentativas) ou que ficaram presos (worker reiniciado no meio). Sem isto, uma
+ * mensagem que falhou numa instabilidade do banco ou do OpenWA nunca chegava à Inbox. Teto de 15 tentativas e 24 h:
+ * o que falha por defeito do próprio evento para de girar.
+ */
+export async function listWhatsappWebhookEventsParaRetomar(limite = 200) {
+  const E = schema.whatsappWebhookEvents;
+  return db.select({ id: E.id }).from(E).where(and(
+    sql`${E.receivedAt} > now() - interval '24 hours'`,
+    sql`${E.attempts} < 15`,
+    or(
+      sql`${E.status} = 'failed' and ${E.processedAt} < now() - interval '5 minutes'`,
+      sql`${E.status} in ('queued','processing') and ${E.receivedAt} < now() - interval '15 minutes'`,
+    ),
+  )).orderBy(asc(E.receivedAt)).limit(limite);
+}
+
 export async function listPendingWhatsappWebhookEvents() {
   return db.select().from(schema.whatsappWebhookEvents).where(sql`${schema.whatsappWebhookEvents.status} in ('queued','processing')`).orderBy(asc(schema.whatsappWebhookEvents.createdAt)).limit(100);
 }

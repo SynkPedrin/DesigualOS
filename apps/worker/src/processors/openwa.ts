@@ -1,8 +1,8 @@
 import { Worker, type Job } from 'bullmq';
 import {
   enqueueWhatsappSync,
-  enqueueWhatsappWebhook,
   retryWhatsappSync,
+  retryWhatsappWebhook,
   getRedisConnection,
   publishWsEvent,
   scheduleWhatsappFollowupSync,
@@ -14,7 +14,9 @@ import {
   createWhatsappSyncJob,
   listPendingWhatsappSyncJobs,
   listPendingWhatsappWebhookEvents,
+  listWhatsappWebhookEventsParaRetomar,
   processOpenwaSyncJob,
+  recoverWhatsappWebhookEvent,
   processOpenwaWebhookEvent,
   whatsappSessionById,
 } from '@desigual-os/tool-gateway';
@@ -87,6 +89,22 @@ export async function recoverOpenwaJobs(logger: Logger): Promise<void> {
   // limit"), e reenfileirar com o mesmo id era ignorado em silêncio — o sync
   // ficava "running" no banco para sempre (visto em produção, 19/10/2026).
   for (const job of syncJobs) await retryWhatsappSync(job.id);
-  for (const event of webhookEvents) await enqueueWhatsappWebhook(event.id);
+  // O mesmo vale para o webhook: o id original ficava preso no conjunto "failed" e o reenvio sumia.
+  for (const event of webhookEvents) await retryWhatsappWebhook(event.id);
   logger.info({ syncJobs: syncJobs.length, webhookEvents: webhookEvents.length }, 'WhatsApp recovery finished');
+}
+
+/**
+ * A cada 10 min, devolve à fila os eventos que falharam ou ficaram presos (ver
+ * `listWhatsappWebhookEventsParaRetomar`). Mensagem que falhou numa instabilidade
+ * passa a chegar sozinha, sem retry manual.
+ */
+export async function retomarEventosDoWhatsapp(logger: Logger): Promise<number> {
+  const eventos = await listWhatsappWebhookEventsParaRetomar();
+  for (const event of eventos) {
+    await recoverWhatsappWebhookEvent(event.id);
+    await retryWhatsappWebhook(event.id);
+  }
+  if (eventos.length) logger.info({ eventos: eventos.length }, 'WhatsApp: eventos falhos devolvidos à fila');
+  return eventos.length;
 }
