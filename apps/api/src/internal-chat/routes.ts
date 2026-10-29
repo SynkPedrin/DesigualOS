@@ -13,6 +13,7 @@ import { estadosDePresenca, marcarPresenca, presentes } from './presenca';
 import { TIPOS_DE_OBJETO, estadoAtual, validarObjetos, visibilidadeDosObjetos, type Contexto, type PedidoDeObjeto } from './objetos';
 import { TarefaEmAndamento, criarTarefaDaMensagem } from './tarefas';
 import { pedirAoAgente } from './assistente';
+import { chatDoClickUpLigado, iniciarChatDoClickUp, passadaDoChatDoClickUp, totaisDoChatImportado, ultimasImportacoesDoChat } from './importar-clickup';
 
 /**
  * Comunicação interna — rotas. Todas exigem login, organização de trabalho e o
@@ -283,6 +284,7 @@ const paginaSchema = z.object({ before: z.string().uuid().optional(), after: z.s
 
 export async function registerInternalChatRoutes(app: FastifyInstance): Promise<void> {
   agendarFaxina();
+  iniciarChatDoClickUp();
   await app.register(async (rotas) => {
     rotas.addHook('preHandler', async (request, reply) => {
       await requireAuth(request, reply);
@@ -302,6 +304,19 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
         const online = await presentes(conversas.map((c) => c.partner_id).filter((id): id is string => Boolean(id)));
         return { conversations: conversas.map((c) => apresentarConversa(c, online)) };
       } catch (erro) { return falha(reply, erro); }
+    });
+
+    // ---------------- Chat do ClickUp (importação) ----------------
+    // Status e "rodar agora" para o administrador. As passadas automáticas rodam sozinhas (importar-clickup.ts).
+    rotas.get('/internal-chat/admin/clickup', async (request, reply) => {
+      if (!ehMaster(request)) return reply.code(403).send({ error: 'Só administrador.' });
+      const { organizationId } = contexto(request);
+      return { ligado: chatDoClickUpLigado(), totais: await totaisDoChatImportado(organizationId), ultimas: ultimasImportacoesDoChat() };
+    });
+    rotas.post('/internal-chat/admin/clickup/importar', async (request, reply) => {
+      if (!ehMaster(request)) return reply.code(403).send({ error: 'Só administrador.' });
+      void passadaDoChatDoClickUp().catch(() => undefined); // pode levar minutos na primeira vez; o resultado aparece no GET
+      return reply.code(202).send({ ok: true });
     });
 
     rotas.get('/internal-chat/unread', async (request, reply) => {

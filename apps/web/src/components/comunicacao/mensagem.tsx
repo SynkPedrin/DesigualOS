@@ -64,7 +64,12 @@ export function Mensagem({ m, agrupada, me, membros, destacada, podeEscrever, ac
   const [menu, setMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const local = m.id.startsWith('local-');
-  const souEu = m.sender_id === me.id;
+  // Quem escreveu no ClickUp e não tem conta aqui vem como "**Nome**: texto" (ver importar-clickup.ts na API).
+  const externo = m.kind === 'clickup_externo' ? /^\*\*(.+?)\*\*: ([\s\S]*)$/.exec(m.content ?? '') : null;
+  const doClickUp = m.kind === 'clickup' || m.kind === 'clickup_externo';
+  const souEu = m.sender_id === me.id && !externo;
+  const nomeDoAutor = externo ? externo[1]! : m.sender_name;
+  const texto = externo ? externo[2]! : m.content;
   const nomesMencionados = m.mentions.map((id) => membros.get(id)?.name).filter((n): n is string => Boolean(n));
 
   useEffect(() => {
@@ -90,14 +95,15 @@ export function Mensagem({ m, agrupada, me, membros, destacada, podeEscrever, ac
       className={cn('group relative flex gap-3 rounded-md px-4 transition-colors hover:bg-grafite-elevado/30', agrupada ? 'py-0.5' : 'mt-2 pb-0.5 pt-1.5', destacada && 'bg-roxo-eletrico/15', m.pinned && 'border-l-2 border-aviso/70')}
     >
       <div className="w-9 shrink-0">
-        {!agrupada && <InboxAvatar name={m.sender_name ?? 'Colaborador'} photoUrl={m.sender_avatar_url} size="md" />}
+        {!agrupada && <InboxAvatar name={nomeDoAutor ?? 'Colaborador'} photoUrl={externo ? null : m.sender_avatar_url} size="md" />}
         {agrupada && <span className="hidden pt-1 font-mono text-[10px] text-nevoa/60 group-hover:block">{hora(m.created_at)}</span>}
       </div>
       <div className="min-w-0 flex-1">
         {!agrupada && (
           <p className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold text-branco-cru">{souEu ? 'Você' : m.sender_name ?? 'Colaborador'}</span>
+            <span className="text-sm font-semibold text-branco-cru">{souEu ? 'Você' : nomeDoAutor ?? 'Colaborador'}</span>
             <span className="font-mono text-[11px] text-nevoa">{hora(m.created_at)}</span>
+            {doClickUp && <span title="Mensagem trazida do chat do ClickUp" className="rounded bg-grafite-elevado px-1 font-mono text-[10px] text-nevoa">ClickUp</span>}
             {m.pinned && <span className="inline-flex items-center gap-0.5 font-mono text-[10px] text-aviso"><Pin size={10} /> fixada</span>}
             {m.saved && <span className="inline-flex items-center gap-0.5 font-mono text-[10px] text-roxo-eletrico"><BookmarkCheck size={10} /> salva</span>}
           </p>
@@ -127,7 +133,7 @@ export function Mensagem({ m, agrupada, me, membros, destacada, podeEscrever, ac
           </div>
         ) : (
           <>
-            {m.content && <TextoFormatado texto={m.content} mencoes={nomesMencionados} meuNome={me.name} />}
+            {texto && <TextoFormatado texto={texto} mencoes={nomesMencionados} meuNome={me.name} />}
             <AnexosDaMensagem anexos={m.attachments} />
             {(m.objects ?? []).map((o) => <CartaoDeObjeto key={o.id} objeto={o} />)}
             {m.edited_at && <span className="font-mono text-[10px] text-nevoa/70">(editada)</span>}
@@ -194,7 +200,7 @@ export function Mensagem({ m, agrupada, me, membros, destacada, podeEscrever, ac
                 )}
                 {acoes.onCreateTask && podeEscrever && <ItemDoMenu icone={CheckSquare} rotulo="Criar tarefa" onClick={() => { setMenu(false); acoes.onCreateTask!(m); }} />}
                 {m.content && <ItemDoMenu icone={Copy} rotulo="Copiar texto" onClick={() => { setMenu(false); void navigator.clipboard?.writeText(m.content ?? '').then(() => toast('Texto copiado.', 'success')).catch(() => undefined); }} />}
-                {souEu && podeEscrever && (
+                {souEu && podeEscrever && !doClickUp && (
                   <>
                     <ItemDoMenu icone={Pencil} rotulo="Editar" onClick={() => { setMenu(false); setRascunho(m.content ?? ''); setEditando(true); }} />
                     <ItemDoMenu icone={Trash2} rotulo="Apagar" perigo onClick={() => { setMenu(false); acoes.onDelete(m); }} />

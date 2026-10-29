@@ -1052,7 +1052,7 @@ export async function buscar(organizationId: string, userId: string, filtros: Fi
   const partes: SQL[] = [
     sql`m.organization_id = ${organizationId}`,
     sql`m.deleted_at is null`,
-    sql`m.kind = 'user'`,
+    sql`m.kind in ('user', 'clickup', 'clickup_externo')`, // o histórico vindo do ClickUp também é buscável
     leituraSql('c', organizationId, userId),
   ];
   if (q.length >= 2) partes.push(sql`m.content ilike ${escaparLike(q)}`);

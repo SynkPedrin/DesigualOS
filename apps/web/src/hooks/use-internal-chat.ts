@@ -49,7 +49,8 @@ export interface ChatMessage {
   sender_id: string;
   sender_name: string | null;
   sender_avatar_url: string | null;
-  kind?: 'user' | 'system';
+  /** `clickup`/`clickup_externo`: histórico importado do chat do ClickUp (no externo, o autor vem no começo do texto). */
+  kind?: 'user' | 'system' | 'clickup' | 'clickup_externo';
   content: string | null;
   client_message_id: string;
   reply_to: { id: string; sender_name: string | null; content: string | null; deleted: boolean } | null;
