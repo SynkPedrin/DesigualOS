@@ -179,9 +179,11 @@ export function ordenarTarefas(ts: WorkTaskWire[], ordem: { col: ColunaOrdenavel
   return [...ts].sort((a, b) => { const x = v(a); const y = v(b); return (x < y ? -1 : x > y ? 1 : 0) * f; });
 }
 
-export function ListView({ tarefas, statuses, membros, listId, actions, onNovoStatus, expandirTudo = false, arquivadas = false, agrupar = false, selecionadas, onSelecionadas }: {
+export function ListView({ tarefas, statuses, membros, listId, actions, onNovoStatus, expandirTudo = false, arquivadas = false, agrupar = false, selecionadas, onSelecionadas, comNovoStatus = true }: {
   tarefas: WorkTaskWire[]; statuses: WorkStatus[]; membros: WorkMember[]; listId: string | null; actions: TaskActions; onNovoStatus: (nome: string) => void;
   expandirTudo?: boolean; arquivadas?: boolean; agrupar?: boolean; selecionadas: Set<string>; onSelecionadas: (s: Set<string>) => void;
+  /** Campo "Novo status" no fim: some quando a ListView se repete (uma por cliente). */
+  comNovoStatus?: boolean;
 }) {
   const [fechados, setFechados] = useState<Set<string>>(new Set());
   const [visiveis, setVisiveis] = useState<Record<string, number>>({});
@@ -237,10 +239,10 @@ export function ListView({ tarefas, statuses, membros, listId, actions, onNovoSt
           </section>
         );
       })}
-      <form className="flex items-center gap-2 text-xs" onSubmit={(e) => { e.preventDefault(); if (novoStatus.trim()) { onNovoStatus(novoStatus.trim()); setNovoStatus(''); } }}>
+      {comNovoStatus && <form className="flex items-center gap-2 text-xs" onSubmit={(e) => { e.preventDefault(); if (novoStatus.trim()) { onNovoStatus(novoStatus.trim()); setNovoStatus(''); } }}>
         <Plus size={13} className="text-nevoa" />
         <input value={novoStatus} onChange={(e) => setNovoStatus(e.target.value)} placeholder="Novo status" className="rounded bg-transparent px-1 py-1 text-nevoa outline-none placeholder:text-nevoa focus:text-branco-cru" />
-      </form>
+      </form>}
     </div>
   );
 }

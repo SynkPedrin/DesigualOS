@@ -37,6 +37,8 @@ import { ApiRequestError } from '@/lib/api/client';
 import { toast } from '@/stores/toast-store';
 import { cn } from '@/lib/utils';
 import { urgenciaDoPrazo } from '@/lib/prazo';
+import { PorCliente } from '@/components/daily-tasks/por-cliente';
+import { Avatar } from '@/components/daily-tasks/primitivas';
 import { FiltroDePrazo, FiltroDeResponsavel, janelaDoPrazo, ROTULO_DO_PRAZO, rotuloDoPeriodo, type Prazo } from '@/components/daily-tasks/filtros-rapidos';
 
 type Visao = 'lista' | 'quadro' | 'calendario' | 'tabela' | 'gantt';
@@ -136,7 +138,7 @@ export default function DailyTasksPage() {
   // Modo eu começa pelo espaço inteiro (tudo que é seu, de todas as listas); clicar numa lista recorta.
   const modoEuAntes = useRef(modoEu);
   useEffect(() => { if (modoEu !== modoEuAntes.current) { modoEuAntes.current = modoEu; if (modoEu) setListId(null); } }, [modoEu]);
-  useEffect(() => { if (!modoEu && !listId && space) { const alvo = [...space.lists].sort((a, b) => b.openTaskCount - a.openTaskCount)[0]; if (alvo) setListId(alvo.id); } }, [space, listId, modoEu]);
+  useEffect(() => { if (!modoEu && !filtroResp && !listId && space) { const alvo = [...space.lists].sort((a, b) => b.openTaskCount - a.openTaskCount)[0]; if (alvo) setListId(alvo.id); } }, [space, listId, modoEu, filtroResp]);
   // Trocar de lista limpa a seleção e o atalho do dia: o que estava marcado não está mais na tela.
   useEffect(() => { setSelecionadas(new Set()); setRapido(null); setFiltroStatus(null); }, [listId, spaceId]);
 
@@ -181,6 +183,16 @@ export default function DailyTasksPage() {
     };
   }, [todas]);
   const pronto = !tree.isPending && !tasks.isPending && !statuses.isPending;
+  // Filtrar por uma pessoa mostra as tarefas DELA em todas as listas, divididas por cliente (como o ClickUp).
+  const pessoa = !modoEu && filtroResp ? membros.find((m) => m.id === filtroResp) ?? null : null;
+  const escolherResponsavel = (v: string | null | 'sem') => {
+    if (v === 'sem') { if (modoEu) definirModoEu(false); setFiltroResp(null); setEscopo('sem_resp'); return; }
+    if (modoEu && v === eu) return;
+    if (modoEu) definirModoEu(false);
+    setFiltroResp(v);
+    if (escopo === 'sem_resp') setEscopo('todas');
+    if (v) setListId(null); // a pessoa em todas as listas; clicar numa lista recorta
+  };
   const filtrosAtivos = [escopo !== 'todas' ? escopo : null, filtroResp, filtroPrio !== null ? 1 : null, filtroCli, filtroStatus, tag.trim() || null, prazo || null].filter(Boolean).length;
   const limparFiltros = () => { setFiltroResp(null); setFiltroPrio(null); setFiltroCli(null); setFiltroStatus(null); setQ(''); setRapido(null); setEscopo('todas'); setTag(''); mudarPrazo('', null, null); };
 
@@ -224,10 +236,10 @@ export default function DailyTasksPage() {
                 {space && <span>{space.name}</span>}{pasta && <><ChevronRight size={11} /><span>{pasta.name}</span></>}
               </nav>
               <h1 className="flex items-center gap-2.5 font-heading text-xl font-semibold text-branco-cru">
-                {modoEu ? <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-roxo-eletrico text-white"><UserRound size={15} /></span> : lista && <LogoDoCliente nome={nomeLimpo(nomeCliente ?? lista.name)} className="!size-7" />}
-                <span className="truncate">{modoEu ? 'Minhas tarefas' : lista?.name ?? space?.name ?? 'Daily Tasks'}</span>
+                {modoEu ? <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-roxo-eletrico text-white"><UserRound size={15} /></span> : pessoa ? <Avatar nome={pessoa.name} url={pessoa.avatarUrl} size={28} /> : lista && <LogoDoCliente nome={nomeLimpo(nomeCliente ?? lista.name)} className="!size-7" />}
+                <span className="truncate">{modoEu ? 'Minhas tarefas' : pessoa ? `Tarefas de ${pessoa.name}` : lista?.name ?? space?.name ?? 'Daily Tasks'}</span>
                 {tasks.data && <span className="rounded-full bg-grafite-elevado px-2 py-0.5 text-xs font-normal tabular-nums text-nevoa">{tasks.data.total}</span>}
-                {modoEu && lista && <button type="button" onClick={() => setListId(null)} title="Voltar a ver as suas tarefas de todas as listas" className="flex items-center gap-1 rounded-full bg-roxo-eletrico/15 px-2 py-0.5 text-xs font-normal text-lilas hover:bg-roxo-eletrico/25">só em {lista.name}<X size={11} /></button>}
+                {(modoEu || pessoa) && lista && <button type="button" onClick={() => setListId(null)} title="Voltar a ver as tarefas de todas as listas" className="flex items-center gap-1 rounded-full bg-roxo-eletrico/15 px-2 py-0.5 text-xs font-normal text-lilas hover:bg-roxo-eletrico/25">só em {lista.name}<X size={11} /></button>}
               </h1>
             </div>
             <div role="group" aria-label="Resumo" className="flex flex-wrap items-center gap-1.5">
@@ -248,7 +260,7 @@ export default function DailyTasksPage() {
               ))}
             </div>
             <label className="flex min-w-40 max-w-xs flex-1 items-center gap-2 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1 focus-within:border-roxo-eletrico/60"><Search size={14} className="text-nevoa" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" aria-label="Buscar tarefas" className="w-full bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" /></label>
-            {!modoEu && <FiltroDeResponsavel membros={membros} valor={filtroResp} semResponsavel={escopo === 'sem_resp'} eu={eu} onEscolher={(v) => { if (v === 'sem') { setFiltroResp(null); setEscopo('sem_resp'); } else { setFiltroResp(v); if (escopo === 'sem_resp') setEscopo('todas'); } }} />}
+            <FiltroDeResponsavel membros={membros} valor={modoEu ? eu : filtroResp} semResponsavel={escopo === 'sem_resp'} eu={eu} onEscolher={escolherResponsavel} />
             <FiltroDePrazo prazo={prazo} de={prazoDe} ate={prazoAte} onMudar={mudarPrazo} />
             <Popover label="Filtros" trigger={<span className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1 text-sm text-branco-cru hover:border-roxo-eletrico/60"><SlidersHorizontal size={14} /> Filtros{filtrosAtivos > 0 && <span className="rounded-full bg-roxo-eletrico px-1.5 text-[10px] font-semibold text-white">{filtrosAtivos}</span>}</span>}>
               {() => (
@@ -352,6 +364,8 @@ export default function DailyTasksPage() {
             <EmptyState icon={ListChecks} title="Crie o primeiro espaço" description='Use "Novo espaço" ao lado, depois crie uma lista para começar.' />
           ) : st.length === 0 ? (
             <EmptyState icon={ListChecks} title="Este espaço ainda não tem status" description="Crie o primeiro status em Novo status." />
+          ) : visao === 'lista' && (modoEu || pessoa) && !listId ? (
+            <PorCliente tarefas={rows} statuses={st} membros={membros} actions={actions} onNovoStatus={(n) => criarStatus.mutate(n)} expandirTudo={expandir} arquivadas={arquivados} selecionadas={selecionadas} onSelecionadas={setSelecionadas} />
           ) : visao === 'lista' ? (
             <ListView tarefas={rows} statuses={st} membros={membros} listId={listId} actions={actions} onNovoStatus={(n) => criarStatus.mutate(n)} expandirTudo={expandir} arquivadas={arquivados} agrupar={agrupar} selecionadas={selecionadas} onSelecionadas={setSelecionadas} />
           ) : visao === 'quadro' ? (
