@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, inArray, isNull, gte, lte, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, gte, lte, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { recordActivity } from './activity';
 import { MAX_SUBTASK_DEPTH, type Db, type WorkContext } from './context';
@@ -356,9 +356,13 @@ export async function listTasks(ctx: WorkContext, f: TaskFilter = {}): Promise<{
   if (f.dueTo) where.push(lte(T.dueAt, f.dueTo));
   if (f.completed !== undefined) where.push(f.completed ? sql`${T.completedAt} is not null` : isNull(T.completedAt));
   if (f.q?.trim()) {
-    const term = f.q.trim().replace(/[%_]/g, '');
+    // `_` e `%` são ESCAPADOS, não apagados: apagar fazia "Cosentino_Europa" virar "CosentinoEuropa" e não achar nada.
+    // Os caracteres invisíveis que o ClickUp põe nos títulos ("Card 25/11 - Quarta Delas\u200b") saem dos dois lados.
+    const invisiveis = /[\u200b-\u200f\ufeff]/g;
+    const term = f.q.trim().replace(invisiveis, '');
     const m = /^DT-(\d+)$/i.exec(term);
-    where.push(m ? eq(T.number, Number(m[1])) : ilike(T.title, `%${term}%`));
+    const padrao = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    where.push(m ? eq(T.number, Number(m[1])) : sql`regexp_replace(${T.title}, '[\u200b-\u200f\ufeff]', '', 'g') ilike ${padrao}`);
   }
   const limit = Math.min(Math.max(f.limit ?? 50, 1), 2000);
   const offset = Math.max(f.offset ?? 0, 0);

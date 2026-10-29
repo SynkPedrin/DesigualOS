@@ -149,4 +149,47 @@ describe.skipIf(!enabled)('pessoas só do ClickUp × PostgreSQL real', () => {
     // Conta comum nunca é adotada.
     expect(await A.adotarPessoaDoClickUp({ authUserId: randomUUID(), email: emailAna })).toBeNull();
   });
+
+  it('conferência: convidado do ClickUp (fora de /team) é cadastrado, e a tarefa com responsável diferente volta para a sincronia', async () => {
+    const emailConvidado = `valenco-${sufixo}@pc.invalid`;
+    const idConvidado = idGui + 1;
+    const naFila: string[] = [];
+    const tarefaComConvidado = { ...tarefa, assignees: [{ id: idConvidado, email: emailConvidado, username: 'Gabriel Valenço' }] };
+    const fantasma = { id: `T-nao-importada-${sufixo}`, list: { id: 'LP' }, assignees: [] };
+    const deOutraEmpresa = { id: `T-outra-${sufixo}`, list: { id: 'LISTA-DE-OUTRA-EMPRESA' }, assignees: [] };
+    const r = await P.conferirResponsaveis(org, { tarefas: [tarefaComConvidado, fantasma, deOutraEmpresa], agendar: (id) => naFila.push(id) });
+    expect(r).toMatchObject({ lidas: 2, pessoasNovas: 1, faltavam: 1, divergiam: 1, agendadas: 2 });
+    expect(naFila.sort()).toEqual([tarefa.id, fantasma.id].sort());
+
+    // A sincronia (a de sempre) aplica: o convidado vira o responsável.
+    clickup.respostas.set(`/task/${tarefa.id}`, tarefaComConvidado);
+    S.esquecerEstruturaDoClickUp();
+    await S.sincronizarTarefaNoDaily(tarefa.id);
+    const { db, schema } = dbm;
+    const { sql, inArray } = await import('drizzle-orm');
+    const [convidado] = await db.select().from(schema.users).where(sql`lower(${schema.users.clickupEmail}) = ${emailConvidado}`);
+    expect(convidado).toMatchObject({ name: 'Gabriel Valenço', active: false });
+    expect(await responsaveis()).toEqual([convidado!.id]);
+
+    // Já igual ao ClickUp: a conferência não agenda nada.
+    naFila.length = 0;
+    expect((await P.conferirResponsaveis(org, { tarefas: [tarefaComConvidado], agendar: (id) => naFila.push(id) })).agendadas).toBe(0);
+    expect(naFila).toEqual([]);
+    clickup.respostas.set(`/task/${tarefa.id}`, tarefa);
+    await db.delete(schema.users).where(inArray(schema.users.id, [convidado!.id]));
+  });
+
+  it('busca do Daily acha título com "_" e com caractere invisível do ClickUp', async () => {
+    const { db, schema } = dbm;
+    const { eq } = await import('drizzle-orm');
+    const { listTasks } = await import('@desigual-os/work-engine');
+    const [t] = await db.select().from(schema.workTasks).where(eq(schema.workTasks.organizationId, org));
+    await db.update(schema.workTasks).set({ title: 'Cosentino_Europa V_Banner Site\u200b' }).where(eq(schema.workTasks.id, t!.id));
+    const ctx = { organizationId: org, userId: ana, actorKind: 'user' as const };
+    const achar = async (q: string) => (await listTasks(ctx as never, { q, includeSubtasks: true })).rows.map((r) => r.id);
+    expect(await achar('Cosentino_Europa')).toEqual([t!.id]);
+    expect(await achar('V_Banner Site')).toEqual([t!.id]);
+    expect(await achar('CosentinoEuropa')).toEqual([]); // "_" não é mais coringa nem é apagado
+    expect(await achar('100%')).toEqual([]);
+  });
 });

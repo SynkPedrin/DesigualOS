@@ -2,7 +2,7 @@
 
 import { urgenciaDoPrazo } from '@/lib/prazo';
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GitFork, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CornerDownRight, GitFork, Plus } from 'lucide-react';
 import { useSpaceStatuses, useWorkTasks, type TaskPatch, type WorkMember, type WorkStatus, type WorkTaskWire } from '@/hooks/use-work';
 import { cn } from '@/lib/utils';
 import { LogoDoCliente, nomeLimpo, useClientIndex, useListIndex } from './cliente';
@@ -118,6 +118,7 @@ export function Linha({ t, nivel, ctx }: { t: WorkTaskWire; nivel: number; ctx: 
           <div className="min-w-0 flex-1">
             <button type="button" onClick={() => ctx.actions.abrir(t)} title={t.title} className={cn('block max-w-full truncate text-left text-sm hover:underline', nivel > 0 ? 'font-normal' : 'font-medium', feita ? 'text-nevoa line-through' : 'text-branco-cru')}>{t.title}</button>
             <span className="flex items-center gap-1.5 truncate text-[11px] text-nevoa">
+              {nivel === 0 && t.parentTaskId && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-grafite-elevado px-1 text-[10px] text-nevoa" title="Subtarefa: abra para ver a tarefa principal"><CornerDownRight size={10} /> subtarefa</span>}
               {nivel === 0 && <>{nomeCliente && <LogoDoCliente nome={nomeCliente} className="!size-3.5" />}<span className="truncate">{[nomeCliente, info ? nomeLimpo(info.nome) : null].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</span></>}
               {t.subtaskCount > 0 && <span className="flex shrink-0 items-center gap-1" title={`${t.subtaskDone} de ${t.subtaskCount} subtarefas concluídas`}><GitFork size={10} className="rotate-90" />{t.subtaskDone}/{t.subtaskCount}</span>}
             </span>

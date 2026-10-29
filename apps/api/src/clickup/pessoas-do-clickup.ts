@@ -2,7 +2,8 @@ import { createLogger } from '@desigual-os/logging';
 import { db, schema } from '@desigual-os/database';
 import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
 import { and, eq, like, sql } from 'drizzle-orm';
-import { getTeamMembers, type ClickUpMember } from '@desigual-os/tool-gateway';
+import { getTeamMembers, lerClickUpCru, type ClickUpMember } from '@desigual-os/tool-gateway';
+import { agendarSincroniaDaTarefa } from './sincronia-daily';
 
 const logger = createLogger({ service: 'pessoas-clickup' });
 
@@ -109,12 +110,106 @@ export async function garantirPessoasDoClickUpNasEmpresas(opcoes: { membros?: Cl
   return resultados;
 }
 
+// ── conferência dos responsáveis ─────────────────────────────────────────────────────────────────────────────────
+
+type Cru = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+export interface ResultadoDaConferencia {
+  organizationId: string;
+  lidas: number;
+  pessoasNovas: number;
+  agendadas: number;
+  faltavam: number;
+  divergiam: number;
+}
+
+/** Todas as tarefas abertas do workspace, subtarefas incluídas (100 por página). */
+async function tarefasAbertasDoClickUp(): Promise<Cru[]> {
+  const apiKey = process.env.CLICKUP_API_KEY;
+  const teamId = process.env.CLICKUP_TEAM_ID;
+  if (!apiKey || !teamId) return [];
+  const todas: Cru[] = [];
+  for (let pagina = 0; pagina < 60; pagina++) {
+    const r = await lerClickUpCru<{ tasks?: Cru[]; last_page?: boolean }>({ apiKey, teamId }, `/team/${teamId}/task?include_closed=false&subtasks=true&page=${pagina}`);
+    todas.push(...(r.tasks ?? []));
+    if (r.last_page || (r.tasks ?? []).length < 100) break;
+  }
+  return todas;
+}
+
+/**
+ * O Daily confere, tarefa a tarefa, se tem as mesmas pessoas que o ClickUp (29/10/2026: o Gui tinha 49 tarefas abertas
+ * no ClickUp e 38 aqui — atribuídas quando ele ainda não existia no OS e nunca mais mexidas, então nenhuma sincronia
+ * as trouxe de volta). Quem aparece como responsável e não existe aqui (convidado do ClickUp, que não vem em
+ * /team) é cadastrado como as outras pessoas só do ClickUp. Tarefa que falta, ou com responsáveis diferentes, vai para
+ * a fila da sincronia de sempre — que lê o ClickUp e aplica, como faria com um webhook.
+ */
+export async function conferirResponsaveis(organizationId: string, opcoes: { tarefas?: Cru[]; agendar?: (taskId: string) => void } = {}): Promise<ResultadoDaConferencia> {
+  const r: ResultadoDaConferencia = { organizationId, lidas: 0, pessoasNovas: 0, agendadas: 0, faltavam: 0, divergiam: 0 };
+  const agendar = opcoes.agendar ?? ((id: string) => agendarSincroniaDaTarefa(id, 'conferencia'));
+  const listasDaEmpresa = new Set((await db.select({ id: schema.workExternalMappings.externalId }).from(schema.workExternalMappings)
+    .where(and(eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'list')))).map((l) => l.id));
+  const tarefas = (opcoes.tarefas ?? await tarefasAbertasDoClickUp()).filter((t) => listasDaEmpresa.has(String(t.list?.id ?? '')));
+  r.lidas = tarefas.length;
+
+  // Responsáveis que ainda não existem aqui (inclui convidado).
+  const vistos = new Map<string, ClickUpMember>();
+  for (const t of tarefas) for (const a of (t.assignees ?? []) as Cru[]) {
+    if (a?.email && !vistos.has(String(a.id))) vistos.set(String(a.id), { id: Number(a.id), email: String(a.email), username: String(a.username ?? a.email), profilePicture: a.profilePicture ?? null, initials: a.initials ?? null, color: a.color ?? null });
+  }
+  r.pessoasNovas = (await garantirPessoasDoClickUp(organizationId, [...vistos.values()])).criadas;
+
+  // O que o Daily tem hoje: tarefa do ClickUp → e-mails (do ClickUp) dos responsáveis.
+  const vinculos = await db.select({ externo: schema.workExternalMappings.externalId, tarefa: schema.workExternalMappings.entityId }).from(schema.workExternalMappings)
+    .where(and(eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'task')));
+  const tarefaDoExterno = new Map(vinculos.map((v) => [v.externo, v.tarefa]));
+  const atuais = await db.select({ tarefa: schema.workTaskAssignees.taskId, email: schema.users.email, clickupEmail: schema.users.clickupEmail })
+    .from(schema.workTaskAssignees).innerJoin(schema.users, eq(schema.users.id, schema.workTaskAssignees.userId))
+    .where(eq(schema.workTaskAssignees.organizationId, organizationId));
+  const emailsDaTarefa = new Map<string, Set<string>>();
+  const quantosNaTarefa = new Map<string, number>();
+  for (const a of atuais) {
+    quantosNaTarefa.set(a.tarefa, (quantosNaTarefa.get(a.tarefa) ?? 0) + 1);
+    const e = (a.clickupEmail ?? a.email).trim().toLowerCase();
+    emailsDaTarefa.set(a.tarefa, (emailsDaTarefa.get(a.tarefa) ?? new Set()).add(e));
+    if (a.clickupEmail) emailsDaTarefa.get(a.tarefa)!.add(a.email.trim().toLowerCase());
+  }
+
+  for (const t of tarefas) {
+    const id = String(t.id);
+    const daqui = tarefaDoExterno.get(id);
+    if (!daqui) { r.faltavam++; agendar(id); r.agendadas++; continue; }
+    const esperados = ((t.assignees ?? []) as Cru[]).map((a) => String(a.email ?? '').trim().toLowerCase()).filter(Boolean);
+    const temAqui = emailsDaTarefa.get(daqui) ?? new Set<string>();
+    if (esperados.some((e) => !temAqui.has(e)) || (quantosNaTarefa.get(daqui) ?? 0) !== esperados.length) { r.divergiam++; agendar(id); r.agendadas++; }
+  }
+  return r;
+}
+
+export async function conferirResponsaveisNasEmpresas(): Promise<ResultadoDaConferencia[]> {
+  if (!process.env.CLICKUP_API_KEY || !process.env.CLICKUP_TEAM_ID) return [];
+  const tarefas = await tarefasAbertasDoClickUp();
+  const donas = await db.selectDistinct({ id: schema.workExternalMappings.organizationId }).from(schema.workExternalMappings)
+    .where(and(eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'list')));
+  const resultados: ResultadoDaConferencia[] = [];
+  for (const { id } of donas) {
+    const res = await conferirResponsaveis(id, { tarefas });
+    if (res.agendadas || res.pessoasNovas) logger.info(res, 'Pessoas do ClickUp: conferência dos responsáveis');
+    resultados.push(res);
+  }
+  return resultados;
+}
+
 let ligado = false;
 /** 20 s depois de subir e a cada 15 min (gente nova no ClickUp entra sozinha). Não roda em teste. */
 export function iniciarPessoasDoClickUp(): void {
   if (ligado || process.env.VITEST || process.env.PESSOAS_CLICKUP_SYNC === 'off') return;
   ligado = true;
-  const rodar = () => { garantirPessoasDoClickUpNasEmpresas().catch((error: unknown) => logger.warn({ error }, 'Pessoas do ClickUp: passada falhou')); };
+  const rodar = () => {
+    garantirPessoasDoClickUpNasEmpresas()
+      .then(() => conferirResponsaveisNasEmpresas())
+      .catch((error: unknown) => logger.warn({ error }, 'Pessoas do ClickUp: passada falhou'));
+  };
   setTimeout(rodar, 20_000).unref();
   setInterval(rodar, 15 * 60_000).unref();
 }

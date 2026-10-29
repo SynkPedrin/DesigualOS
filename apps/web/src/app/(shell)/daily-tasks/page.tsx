@@ -145,6 +145,9 @@ export default function DailyTasksPage() {
   const { soAbertas: soAsAbertasDoPrazo, ...janela } = useMemo(() => janelaDoPrazo(prazo, prazoDe, prazoAte), [prazo, prazoDe, prazoAte]);
   const soAbertas = (visao === 'lista' || visao === 'tabela' || visao === 'gantt') && !concluidas && rapido !== 'prontas';
   const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: modoEu ? eu : filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], statusIds: filtroStatus ? [filtroStatus] : [], includeArchived: arquivados, clientId: filtroCli, completed: soAbertas || soAsAbertasDoPrazo ? false : undefined, tag: tag.trim() || null, ...janela,
+    // Tarefas de uma pessoa incluem as SUBTAREFAS dela: no ClickUp boa parte do trabalho de cada um está em subtarefa
+    // (Alicia: 14 tarefas sem, 38 com; Ana Luiza: 0 sem, 45 com — medido em 29/10/2026), e a visão parecia cortada.
+    includeSubtasks: Boolean(modoEu || filtroResp),
     enabled: !modoEu || Boolean(eu), ...(escopo === 'criadas' ? { createdBy: eu } : {}), ...(escopo === 'sigo' ? { followerId: eu } : {}), ...(escopo === 'sem_resp' ? { unassigned: true } : {}), ...(escopo === 'sem_prazo' ? { dueNone: true } : {}) });
   const statuses = useSpaceStatuses(spaceAtivo);
   const overview = useWorkOverview({ spaceId: spaceAtivo, listId, clientId: filtroCli });
