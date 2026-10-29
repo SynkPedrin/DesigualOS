@@ -37,10 +37,10 @@ import { ApiRequestError } from '@/lib/api/client';
 import { toast } from '@/stores/toast-store';
 import { cn } from '@/lib/utils';
 import { urgenciaDoPrazo } from '@/lib/prazo';
+import { FiltroDePrazo, FiltroDeResponsavel, janelaDoPrazo, ROTULO_DO_PRAZO, rotuloDoPeriodo, type Prazo } from '@/components/daily-tasks/filtros-rapidos';
 
 type Visao = 'lista' | 'quadro' | 'calendario' | 'tabela' | 'gantt';
 type Escopo = 'todas' | 'criadas' | 'sigo' | 'sem_resp' | 'sem_prazo';
-type Prazo = '' | 'hoje' | 'semana' | 'mes';
 const ESCOPOS: Array<{ id: Escopo; rotulo: string }> = [{ id: 'todas', rotulo: 'Todas' }, { id: 'criadas', rotulo: 'Criadas por mim' }, { id: 'sigo', rotulo: 'Que eu sigo' }, { id: 'sem_resp', rotulo: 'Sem responsável' }, { id: 'sem_prazo', rotulo: 'Sem prazo' }];
 const ehHoje = (iso: string | null) => urgenciaDoPrazo(iso) === 'hoje';
 const ROTULO_COLUNA: Record<ColunaDaLista, string> = { cliente: 'Cliente', andamento: 'Andamento', responsavel: 'Responsável', prazo: 'Prazo', prioridade: 'Prioridade', status: 'Status', tags: 'Tags' };
@@ -78,6 +78,9 @@ export default function DailyTasksPage() {
   useEffect(() => { if (params.get('escopo') === 'minhas') definirModoEu(true); }, [params, definirModoEu]);
   const [tag, setTag] = useState(params.get('tag') ?? '');
   const [prazo, setPrazo] = useState<Prazo>((params.get('prazo') as Prazo | null) ?? '');
+  const [prazoDe, setPrazoDe] = useState<string | null>(params.get('de'));
+  const [prazoAte, setPrazoAte] = useState<string | null>(params.get('ate'));
+  const mudarPrazo = (p: Prazo, de: string | null, ate: string | null) => { setPrazo(p); setPrazoDe(de); setPrazoAte(ate); };
   const [filtroCli, setFiltroCli] = useState<string | null>(params.get('cli'));
   const [filtroStatus, setFiltroStatus] = useState<string | null>(params.get('status'));
   const [rapido, setRapido] = useState<FiltroRapido>(null);
@@ -112,13 +115,13 @@ export default function DailyTasksPage() {
       const u = new URLSearchParams();
       const set = (k: string, v: string | number | null | undefined) => { if (v !== null && v !== undefined && v !== '' && v !== 'todas') u.set(k, String(v)); };
       set('espaco', spaceId); set('lista', listId); set('visao', visaoLocal); set('resp', filtroResp); set('prio', filtroPrio); set('cli', filtroCli); set('status', filtroStatus);
-      set('q', q.trim()); set('escopo', escopo); set('tag', tag.trim()); set('prazo', prazo);
+      set('q', q.trim()); set('escopo', escopo); set('tag', tag.trim()); set('prazo', prazo); set('de', prazo === 'periodo' ? prazoDe : null); set('ate', prazo === 'periodo' ? prazoAte : null);
       const tarefa = new URLSearchParams(window.location.search).get('task'); if (tarefa) u.set('task', tarefa);
       const novo = u.toString();
       if (novo !== window.location.search.replace(/^\?/, '')) router.replace(`/daily-tasks${novo ? `?${novo}` : ''}`, { scroll: false });
     }, 400);
     return () => clearTimeout(t);
-  }, [spaceId, listId, visaoLocal, filtroResp, filtroPrio, filtroCli, filtroStatus, q, escopo, tag, prazo, router]);
+  }, [spaceId, listId, visaoLocal, filtroResp, filtroPrio, filtroCli, filtroStatus, q, escopo, tag, prazo, prazoDe, prazoAte, router]);
 
   const spaces = tree.data?.spaces ?? [];
   const spaceAtivo = spaceId ?? spaces.find((s) => s.lists.length > 0)?.id ?? spaces[0]?.id ?? null;
@@ -137,17 +140,9 @@ export default function DailyTasksPage() {
   // Trocar de lista limpa a seleção e o atalho do dia: o que estava marcado não está mais na tela.
   useEffect(() => { setSelecionadas(new Set()); setRapido(null); setFiltroStatus(null); }, [listId, spaceId]);
 
-  const janela = useMemo(() => {
-    if (!prazo) return {};
-    const ini = new Date(); ini.setHours(0, 0, 0, 0);
-    const fim = new Date(ini);
-    if (prazo === 'hoje') fim.setDate(fim.getDate() + 1);
-    else if (prazo === 'semana') fim.setDate(fim.getDate() + 7);
-    else { ini.setDate(1); fim.setTime(new Date(ini.getFullYear(), ini.getMonth() + 1, 1).getTime()); }
-    return { dueFrom: ini.toISOString(), dueTo: fim.toISOString() };
-  }, [prazo]);
+  const { soAbertas: soAsAbertasDoPrazo, ...janela } = useMemo(() => janelaDoPrazo(prazo, prazoDe, prazoAte), [prazo, prazoDe, prazoAte]);
   const soAbertas = (visao === 'lista' || visao === 'tabela' || visao === 'gantt') && !concluidas && rapido !== 'prontas';
-  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: modoEu ? eu : filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], statusIds: filtroStatus ? [filtroStatus] : [], includeArchived: arquivados, clientId: filtroCli, completed: soAbertas ? false : undefined, tag: tag.trim() || null, ...janela,
+  const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: modoEu ? eu : filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], statusIds: filtroStatus ? [filtroStatus] : [], includeArchived: arquivados, clientId: filtroCli, completed: soAbertas || soAsAbertasDoPrazo ? false : undefined, tag: tag.trim() || null, ...janela,
     enabled: !modoEu || Boolean(eu), ...(escopo === 'criadas' ? { createdBy: eu } : {}), ...(escopo === 'sigo' ? { followerId: eu } : {}), ...(escopo === 'sem_resp' ? { unassigned: true } : {}), ...(escopo === 'sem_prazo' ? { dueNone: true } : {}) });
   const statuses = useSpaceStatuses(spaceAtivo);
   const overview = useWorkOverview({ spaceId: spaceAtivo, listId, clientId: filtroCli });
@@ -187,7 +182,7 @@ export default function DailyTasksPage() {
   }, [todas]);
   const pronto = !tree.isPending && !tasks.isPending && !statuses.isPending;
   const filtrosAtivos = [escopo !== 'todas' ? escopo : null, filtroResp, filtroPrio !== null ? 1 : null, filtroCli, filtroStatus, tag.trim() || null, prazo || null].filter(Boolean).length;
-  const limparFiltros = () => { setFiltroResp(null); setFiltroPrio(null); setFiltroCli(null); setFiltroStatus(null); setQ(''); setRapido(null); setEscopo('todas'); setTag(''); setPrazo(''); };
+  const limparFiltros = () => { setFiltroResp(null); setFiltroPrio(null); setFiltroCli(null); setFiltroStatus(null); setQ(''); setRapido(null); setEscopo('todas'); setTag(''); mudarPrazo('', null, null); };
 
   const chipsAtivos: Array<{ rotulo: string; limpar: () => void }> = [
     ...(q.trim() ? [{ rotulo: `busca “${q.trim()}”`, limpar: () => setQ('') }] : []),
@@ -196,7 +191,7 @@ export default function DailyTasksPage() {
     ...(filtroPrio !== null ? [{ rotulo: `prioridade: ${PRIORIDADES[filtroPrio]?.label ?? ''}`, limpar: () => setFiltroPrio(null) }] : []),
     ...(filtroCli ? [{ rotulo: `cliente: ${clientes.find((x) => x.id === filtroCli)?.name ?? '…'}`, limpar: () => setFiltroCli(null) }] : []),
     ...(filtroStatus ? [{ rotulo: `status: ${st.find((x) => x.id === filtroStatus)?.name ?? '…'}`, limpar: () => setFiltroStatus(null) }] : []),
-    ...(prazo ? [{ rotulo: `prazo: ${prazo === 'hoje' ? 'hoje' : prazo === 'semana' ? '7 dias' : 'este mês'}`, limpar: () => setPrazo('') }] : []),
+    ...(prazo ? [{ rotulo: `prazo: ${rotuloDoPeriodo(prazo, prazoDe, prazoAte).toLowerCase()}`, limpar: () => mudarPrazo('', null, null) }] : []),
     ...(tag.trim() ? [{ rotulo: `tag: ${tag.trim()}`, limpar: () => setTag('') }] : []),
     ...(rapido ? [{ rotulo: rapido === 'hoje' ? 'vencem hoje' : rapido === 'atrasadas' ? 'atrasadas' : rapido === 'prontas' ? 'prontas, não encerradas' : 'bloqueadas', limpar: () => setRapido(null) }] : []),
   ];
@@ -253,6 +248,8 @@ export default function DailyTasksPage() {
               ))}
             </div>
             <label className="flex min-w-40 max-w-xs flex-1 items-center gap-2 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1 focus-within:border-roxo-eletrico/60"><Search size={14} className="text-nevoa" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" aria-label="Buscar tarefas" className="w-full bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" /></label>
+            {!modoEu && <FiltroDeResponsavel membros={membros} valor={filtroResp} semResponsavel={escopo === 'sem_resp'} eu={eu} onEscolher={(v) => { if (v === 'sem') { setFiltroResp(null); setEscopo('sem_resp'); } else { setFiltroResp(v); if (escopo === 'sem_resp') setEscopo('todas'); } }} />}
+            <FiltroDePrazo prazo={prazo} de={prazoDe} ate={prazoAte} onMudar={mudarPrazo} />
             <Popover label="Filtros" trigger={<span className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1 text-sm text-branco-cru hover:border-roxo-eletrico/60"><SlidersHorizontal size={14} /> Filtros{filtrosAtivos > 0 && <span className="rounded-full bg-roxo-eletrico px-1.5 text-[10px] font-semibold text-white">{filtrosAtivos}</span>}</span>}>
               {() => (
                 <div className="grid w-80 gap-3 p-2.5 text-xs text-nevoa">
@@ -261,7 +258,7 @@ export default function DailyTasksPage() {
                   <label className="space-y-1">Prioridade<select aria-label="Filtrar por prioridade" value={filtroPrio ?? ''} onChange={(e) => setFiltroPrio(e.target.value === '' ? null : Number(e.target.value))} className={cn(campo, 'block w-full')}><option value="">Todas</option>{[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORIDADES[p]!.label}</option>)}</select></label>
                   <label className="space-y-1">Cliente<select aria-label="Filtrar por cliente" value={filtroCli ?? ''} onChange={(e) => setFiltroCli(e.target.value || null)} className={cn(campo, 'block w-full')}><option value="">Todos</option>{clientes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
                   <label className="space-y-1">Status<select aria-label="Filtrar por status" value={filtroStatus ?? ''} onChange={(e) => setFiltroStatus(e.target.value || null)} className={cn(campo, 'block w-full')}><option value="">Todos</option>{st.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
-                  <label className="space-y-1">Prazo<select aria-label="Filtrar por prazo" value={prazo} onChange={(e) => setPrazo(e.target.value as Prazo)} className={cn(campo, 'block w-full')}><option value="">Qualquer</option><option value="hoje">Vence hoje</option><option value="semana">Próximos 7 dias</option><option value="mes">Este mês</option></select></label>
+                  <label className="space-y-1">Prazo<select aria-label="Filtrar por prazo" value={prazo} onChange={(e) => mudarPrazo(e.target.value as Prazo, prazoDe, prazoAte)} className={cn(campo, 'block w-full')}><option value="">Qualquer</option>{(Object.keys(ROTULO_DO_PRAZO) as Array<Exclude<Prazo, ''>>).filter((p) => p !== 'periodo' || prazo === 'periodo').map((p) => <option key={p} value={p}>{p === 'periodo' ? rotuloDoPeriodo(prazo, prazoDe, prazoAte) : ROTULO_DO_PRAZO[p]}</option>)}</select></label>
                   <label className="space-y-1">Tag<input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="ex.: urgente" aria-label="Filtrar por tag" className={cn(campo, 'block w-full')} /></label>
                   <button type="button" onClick={limparFiltros} disabled={filtrosAtivos === 0} className="rounded-lg border border-grafite-elevado px-2 py-1.5 text-nevoa hover:text-branco-cru disabled:opacity-40">Limpar filtros</button>
                 </div>
