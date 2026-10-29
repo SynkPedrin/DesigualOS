@@ -5,7 +5,16 @@ import { cachedWhatsappSession, gatewayForWhatsappSession, whatsappSessionById, 
 import { saveWhatsappMedia, WHATSAPP_MEDIA_MAX_BYTES } from './openwa-media-store';
 import { avisarWhatsappForaDoAr } from './openwa-vigia';
 
-export const LIMITE_PADRAO_HISTORICO = 10;
+/**
+ * Quanto do histórico o sync traz. O padrão é baixo por causa do Chrome do whatsapp-web.js (ver
+ * CONVERSAS_COM_HISTORICO). Com o motor sem navegador (Baileys + BAILEYS_SYNC_FULL_HISTORY), o histórico já está no
+ * banco do OpenWA e ler mais custa pouco: sobe-se por ambiente, sem deploy.
+ */
+function limiteDoAmbiente(nome: string, padrao: number, maximo: number): number {
+  const n = Number(process.env[nome]);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), maximo) : padrao;
+}
+export const LIMITE_PADRAO_HISTORICO = limiteDoAmbiente('WHATSAPP_HISTORICO_POR_CONVERSA', 10, 5000);
 
 type Session = WhatsappSessionRow;
 type Contact = typeof schema.contacts.$inferSelect;
@@ -512,7 +521,7 @@ const CONTATOS_EM_PARALELO = 8;
  * com 4 GB no container. As demais entram com nome, data e prévia da lista de
  * chats; mensagem nova em qualquer uma chega na hora pelo webhook.
  */
-const CONVERSAS_COM_HISTORICO = 200;
+const CONVERSAS_COM_HISTORICO = limiteDoAmbiente('WHATSAPP_CONVERSAS_COM_HISTORICO', 200, 100_000);
 
 /**
  * Ordem pensada no que a pessoa vê: primeiro as conversas (mais recentes
