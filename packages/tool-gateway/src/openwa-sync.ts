@@ -22,6 +22,77 @@ function phoneFromMessage(message: OpenwaMessage): string | null {
   return message.senderPhone?.replace(/\D/g, '') || telefoneDoChat(message.author ?? message.from ?? message.chatId);
 }
 
+/**
+ * O WhatsApp passou a identificar contatos por `@lid` (sem número) no lugar de `@c.us` (28/10/2026, medido em
+ * produção). Sem o telefone, a mesma pessoa virava um contato e uma conversa novos, e a conversa antiga "parava".
+ * A tabela lid→telefone do OpenWA responde por sessão; o cache poupa uma ida ao motor por mensagem.
+ */
+const LID_TTL_ACHADO_MS = 24 * 3_600_000;
+const LID_TTL_SEM_NUMERO_MS = 3_600_000;
+const telefonesDeLid = new Map<string, { phone: string | null; at: number }>();
+export async function telefoneDoLid(session: Session, lid: string): Promise<string | null> {
+  if (!lid.endsWith('@lid')) return null;
+  const chave = `${session.id}|${lid}`;
+  const hit = telefonesDeLid.get(chave);
+  if (hit && Date.now() - hit.at < (hit.phone ? LID_TTL_ACHADO_MS : LID_TTL_SEM_NUMERO_MS)) return hit.phone;
+  try {
+    const phone = await gatewayForWhatsappSession(session).resolvePhone(lid);
+    if (telefonesDeLid.size > 20_000) telefonesDeLid.clear();
+    telefonesDeLid.set(chave, { phone, at: Date.now() });
+    return phone;
+  } catch {
+    return null; // motor fora ou lento: segue sem telefone (não guarda, tenta de novo na próxima)
+  }
+}
+
+/** O número da própria colaboradora nunca é o telefone de um contato. */
+function semONumeroDaSessao(session: Session, phone: string | null): string | null {
+  const proprio = session.phoneNumber?.replace(/\D/g, '');
+  return phone && proprio && phone === proprio ? null : phone;
+}
+
+/**
+ * Telefone do CONTATO de uma conversa individual. Vem do chat; se o chat é `@lid`, do que o motor informou sobre o
+ * remetente (só em mensagem RECEBIDA) ou da tabela lid→telefone. Nunca do `from` de uma mensagem ENVIADA: ali o
+ * remetente é a própria colaboradora, e o contato da conversa virava ela mesma.
+ */
+async function telefoneDoContatoIndividual(session: Session, message: OpenwaMessage): Promise<string | null> {
+  const doChat = telefoneDoChat(message.chatId);
+  if (doChat) return semONumeroDaSessao(session, doChat);
+  const informado = message.direction === 'incoming' ? message.senderPhone?.replace(/\D/g, '') || null : null;
+  if (informado) return semONumeroDaSessao(session, informado);
+  return semONumeroDaSessao(session, await telefoneDoLid(session, message.chatId));
+}
+
+/** Telefone de quem escreveu num grupo (só mensagem recebida). */
+async function telefoneDoAutor(session: Session, message: OpenwaMessage): Promise<string | null> {
+  const direto = phoneFromMessage(message);
+  if (direto) return semONumeroDaSessao(session, direto);
+  const autor = message.author ?? message.from;
+  return autor ? semONumeroDaSessao(session, await telefoneDoLid(session, autor)) : null;
+}
+
+/**
+ * Uma criação por vez para a mesma chave. O worker processa 12 eventos em paralelo e o sync mais 2+8; sem isto, duas
+ * mensagens da mesma pessoa no mesmo instante criavam dois contatos (não há índice único em `contacts`).
+ */
+const travas = new Map<string, Promise<unknown>>();
+async function umPorVez<T>(chave: string, fn: () => Promise<T>): Promise<T> {
+  const anterior = travas.get(chave) ?? Promise.resolve();
+  const atual = anterior.catch(() => undefined).then(fn);
+  travas.set(chave, atual);
+  try {
+    return await atual;
+  } finally {
+    if (travas.get(chave) === atual) travas.delete(chave);
+  }
+}
+
+/** `@lid` e `@c.us` ficam em chaves separadas do contato: um não apaga o outro. */
+function chaveDoId(externalId: string): 'whatsapp' | 'whatsappLid' {
+  return externalId.endsWith('@lid') ? 'whatsappLid' : 'whatsapp';
+}
+
 function occurredAt(message: OpenwaMessage): Date {
   return message.timestamp && message.timestamp > 0 ? new Date(message.timestamp * 1000) : new Date();
 }
@@ -39,32 +110,42 @@ async function ensureContact(input: {
   name?: string | null | undefined;
   avatarUrl?: string | null | undefined;
 }): Promise<Contact> {
-  const phone = input.phone?.replace(/\D/g, '') || null;
-  const conditions = [eq(schema.contacts.organizationId, input.session.organizationId)];
-  const identity = phone
-    ? or(eq(schema.contacts.phone, phone), sql`${schema.contacts.externalIds}->>'whatsapp' = ${input.externalId}`)
-    : sql`${schema.contacts.externalIds}->>'whatsapp' = ${input.externalId}`;
-  const [existing] = await db.select().from(schema.contacts).where(and(...conditions, identity)).limit(1);
-  const name = input.name?.trim() || phone || input.externalId.split('@')[0] || 'Contato WhatsApp';
-  if (existing) {
-    const nextName = input.name?.trim() || existing.name;
-    const externalIds = { ...existing.externalIds, whatsapp: input.externalId, [`openwa:${input.session.id}`]: input.externalId };
-    const metadata = { ...existing.metadata, ...(input.avatarUrl ? { profilePicUrl: input.avatarUrl } : {}) };
-    if (existing.name !== nextName || input.avatarUrl || externalIds.whatsapp !== existing.externalIds.whatsapp || existing.externalIds[`openwa:${input.session.id}`] !== input.externalId) {
-      const [updated] = await db.update(schema.contacts).set({ name: nextName, externalIds, metadata, ...(phone ? { phone } : {}) }).where(eq(schema.contacts.id, existing.id)).returning();
-      return updated!;
+  const phone = semONumeroDaSessao(input.session, input.phone?.replace(/\D/g, '') || null);
+  return umPorVez(`contato|${input.session.organizationId}|${phone ?? input.externalId}`, async () => {
+    const porId = or(
+      sql`${schema.contacts.externalIds}->>'whatsapp' = ${input.externalId}`,
+      sql`${schema.contacts.externalIds}->>'whatsappLid' = ${input.externalId}`,
+    );
+    const identity = phone ? or(eq(schema.contacts.phone, phone), porId) : porId;
+    // O mais antigo primeiro: havendo duplicados de antes, tudo converge para o original.
+    const [existing] = await db.select().from(schema.contacts)
+      .where(and(eq(schema.contacts.organizationId, input.session.organizationId), identity))
+      .orderBy(asc(schema.contacts.createdAt)).limit(1);
+    const name = input.name?.trim() || phone || input.externalId.split('@')[0] || 'Contato WhatsApp';
+    const chave = chaveDoId(input.externalId);
+    if (existing) {
+      const nextName = input.name?.trim() || existing.name;
+      const externalIds = { ...existing.externalIds, [chave]: input.externalId, [`openwa:${input.session.id}`]: input.externalId };
+      const metadata = { ...existing.metadata, ...(input.avatarUrl ? { profilePicUrl: input.avatarUrl } : {}) };
+      // Telefone só entra onde falta, ou corrige o número da própria colaboradora gravado pelo defeito antigo.
+      const proprio = input.session.phoneNumber?.replace(/\D/g, '');
+      const corrigeTelefone = phone && (!existing.phone || (proprio && existing.phone === proprio)) && existing.phone !== phone;
+      if (existing.name !== nextName || input.avatarUrl || existing.externalIds[chave] !== input.externalId || existing.externalIds[`openwa:${input.session.id}`] !== input.externalId || corrigeTelefone) {
+        const [updated] = await db.update(schema.contacts).set({ name: nextName, externalIds, metadata, ...(corrigeTelefone ? { phone } : {}) }).where(eq(schema.contacts.id, existing.id)).returning();
+        return updated!;
+      }
+      return existing;
     }
-    return existing;
-  }
-  const [created] = await db.insert(schema.contacts).values({
-    organizationId: input.session.organizationId,
-    clientId: null,
-    name,
-    phone,
-    externalIds: { whatsapp: input.externalId, [`openwa:${input.session.id}`]: input.externalId },
-    metadata: input.avatarUrl ? { profilePicUrl: input.avatarUrl } : {},
-  }).returning();
-  return created!;
+    const [created] = await db.insert(schema.contacts).values({
+      organizationId: input.session.organizationId,
+      clientId: null,
+      name,
+      phone,
+      externalIds: { [chave]: input.externalId, [`openwa:${input.session.id}`]: input.externalId },
+      metadata: input.avatarUrl ? { profilePicUrl: input.avatarUrl } : {},
+    }).returning();
+    return created!;
+  });
 }
 
 async function ensureThread(input: {
@@ -75,12 +156,26 @@ async function ensureThread(input: {
   avatarUrl?: string | null | undefined;
   contact?: Contact | undefined;
 }): Promise<Thread> {
-  const [existing] = await db.select().from(schema.conversationThreads).where(and(
+  const isGroup = input.kind === 'group' || input.chatId.endsWith('@g.us');
+  return umPorVez(`conversa|${input.session.id}|${!isGroup && input.contact ? input.contact.id : input.chatId}`, () => ensureThreadSemTrava(input, isGroup));
+}
+
+async function ensureThreadSemTrava(input: Parameters<typeof ensureThread>[0], isGroup: boolean): Promise<Thread> {
+  let [existing] = await db.select().from(schema.conversationThreads).where(and(
     eq(schema.conversationThreads.organizationId, input.session.organizationId),
     eq(schema.conversationThreads.whatsappSessionId, input.session.id),
     eq(schema.conversationThreads.externalChatId, input.chatId),
-  )).limit(1);
-  const isGroup = input.kind === 'group' || input.chatId.endsWith('@g.us');
+  )).orderBy(asc(schema.conversationThreads.createdAt)).limit(1);
+  // A mesma pessoa chegando por outro endereço (`@lid` no lugar de `@c.us`): continua a conversa que já existe, em
+  // vez de abrir outra e deixar a antiga parada. O endereço guardado não muda (é por ele que a Inbox responde).
+  if (!existing && !isGroup && input.contact) {
+    [existing] = await db.select().from(schema.conversationThreads).where(and(
+      eq(schema.conversationThreads.organizationId, input.session.organizationId),
+      eq(schema.conversationThreads.whatsappSessionId, input.session.id),
+      eq(schema.conversationThreads.contactId, input.contact.id),
+      sql`${schema.conversationThreads.kind} <> 'group'`,
+    )).orderBy(asc(schema.conversationThreads.createdAt)).limit(1);
+  }
   const title = input.name || (isGroup ? 'Grupo WhatsApp' : input.contact?.name || input.chatId.split('@')[0] || 'Conversa WhatsApp');
   if (existing) {
     const patch: Partial<Thread> = {};
@@ -156,7 +251,7 @@ async function resolveThreadAndSender(session: Session, message: OpenwaMessage) 
     : await ensureContact({
         session,
         externalId: contactExternalId,
-        phone: isGroup ? phoneFromMessage(message) : telefoneDoChat(message.chatId) ?? phoneFromMessage(message),
+        phone: isGroup ? await telefoneDoAutor(session, message) : await telefoneDoContatoIndividual(session, message),
         name: message.contact?.name ?? message.contact?.pushName,
         avatarUrl: message.contact?.profilePicUrl,
       });
@@ -324,7 +419,7 @@ async function persistHistoryBatch(input: {
         const externalId = message.author ?? message.from ?? 'desconhecido@lid';
         let pending = input.senderCache.get(externalId);
         if (!pending) {
-          pending = ensureContact({ session, externalId, phone: phoneFromMessage(message), name: message.contact?.name ?? message.contact?.pushName });
+          pending = telefoneDoAutor(session, message).then((phone) => ensureContact({ session, externalId, phone, name: message.contact?.name ?? message.contact?.pushName }));
           input.senderCache.set(externalId, pending);
         }
         sender = await pending;
@@ -483,7 +578,7 @@ export async function processOpenwaSyncJob(jobId: string, options: { finalAttemp
     await updateSyncJob(jobId, { phase: 'messages' });
     await inParallel(chats, CHATS_EM_PARALELO, async (chat) => {
       try {
-        const contact = chat.isGroup ? null : await ensureContact({ session, externalId: chat.id, phone: telefoneDoChat(chat.id), name: chat.name });
+        const contact = chat.isGroup ? null : await ensureContact({ session, externalId: chat.id, phone: telefoneDoChat(chat.id) ?? await telefoneDoLid(session, chat.id), name: chat.name });
         if (contact) contactByChat.set(chat.id, contact.id);
         const thread = await ensureThread({ session, chatId: chat.id, kind: chat.kind, name: chat.name ?? contact?.name, contact: contact ?? undefined });
         // Data e prévia da lista de chats ANTES do histórico: se o histórico falhar
