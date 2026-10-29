@@ -48,6 +48,7 @@ import { criarCacheQuente, emHorarioDeTrabalho } from './cache-quente';
 import { avisarGestao } from '../gestao/avisar';
 import { sincronizarCartaoDaTarefa } from '../pipeline/sincronizar-webhook';
 import { agendarSincroniaDaTarefa, iniciarVarreduraDoDaily } from './sincronia-daily';
+import { iniciarPessoasDoClickUp } from './pessoas-do-clickup';
 import { iniciarEscoadorDoDaily } from './escrita-daily';
 import { organizacaoProvedora } from '@desigual-os/auth';
 
@@ -718,6 +719,7 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
   ligarAquecimento();
   iniciarVarreduraDoDaily();
   iniciarEscoadorDoDaily();
+  iniciarPessoasDoClickUp();
   app.post('/clickup/tasks', { preHandler: [requireAuth, requirePermission('clickup', 'write')] }, async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
     const config = getClickUpConfig();

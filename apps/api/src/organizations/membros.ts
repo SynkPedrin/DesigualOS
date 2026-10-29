@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { and, eq, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { adotarPessoaDoClickUp } from '@desigual-os/auth';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware';
 import type { AuthenticatedUser } from '../auth/middleware';
@@ -238,6 +239,9 @@ export async function registerOrganizationMemberRoutes(app: FastifyInstance): Pr
       }
       throw erro;
     }
+
+    // Pessoa que já existia só no ClickUp: a conta do convite ADOTA o cadastro dela (tarefas e conversas vêm junto).
+    if (envio.supabaseUserId) await adotarPessoaDoClickUp({ authUserId: envio.supabaseUserId, email }).catch(() => null);
 
     await auditarAcao(request, {
       action: 'convite.criado',

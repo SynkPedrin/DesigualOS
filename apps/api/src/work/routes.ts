@@ -105,6 +105,7 @@ import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import { requireDailyTasks, workContext } from './guard';
+import { ehEmailDePessoaDoClickUp } from '../clickup/pessoas-do-clickup';
 
 /**
  * Daily Tasks — API do motor nativo de trabalho (Beta, só administradores autorizados).
@@ -731,10 +732,13 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/work/members', guard, async (request) => {
     const rows = await db
-      .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, avatarUrl: schema.users.avatarUrl, role: schema.organizationMembers.role })
+      .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, clickupEmail: schema.users.clickupEmail, avatarUrl: schema.users.avatarUrl, role: schema.organizationMembers.role })
       .from(schema.organizationMembers)
       .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
       .where(eq(schema.organizationMembers.organizationId, request.tenantContext!.organizationId));
-    return { members: rows };
+    // Pessoa só do ClickUp (sem login aqui): atribuível igual às outras, mas com o e-mail real e a marca para a tela.
+    return {
+      members: rows.map(({ clickupEmail, ...m }) => (ehEmailDePessoaDoClickUp(m.email) ? { ...m, email: clickupEmail ?? '', soNoClickUp: true } : m)),
+    };
   });
 }

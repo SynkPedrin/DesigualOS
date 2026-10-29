@@ -46,6 +46,7 @@ export function AssigneePicker({ tarefa, membros, onChange }: { tarefa: WorkTask
               <button key={m.id} type="button" className={item} onClick={() => onChange(marcado ? tarefa.assigneeIds.filter((i) => i !== m.id) : [...tarefa.assigneeIds, m.id])}>
                 <Avatar nome={m.name} url={m.avatarUrl} size={20} />
                 <span className="truncate">{m.name}</span>
+                {m.soNoClickUp && <span className="shrink-0 text-[10px] text-nevoa/60" title="Ainda não entrou no OS; a tarefa chega a ela pelo ClickUp">ClickUp</span>}
                 {marcado && <Check size={12} className="ml-auto" />}
               </button>
             );

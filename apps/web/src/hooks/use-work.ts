@@ -56,6 +56,8 @@ export interface WorkMember {
   email: string;
   avatarUrl: string | null;
   role: string;
+  /** Pessoa que ainda não entrou no OS: existe só no ClickUp, mas recebe tarefa igual. */
+  soNoClickUp?: boolean;
 }
 
 export interface WorkTaskDetail {

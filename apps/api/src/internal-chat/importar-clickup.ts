@@ -1,8 +1,10 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, or, sql } from 'drizzle-orm';
+import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
 import { db, schema } from '@desigual-os/database';
 import { createLogger } from '@desigual-os/logging';
 import { getTeamMembers, type ClickUpMember } from '@desigual-os/tool-gateway';
 import { decryptToken } from '../lib/token-crypto';
+import { garantirPessoasDoClickUpNasEmpresas } from '../clickup/pessoas-do-clickup';
 
 const logger = createLogger({ service: 'chat-clickup' });
 
@@ -131,7 +133,8 @@ async function usuarioTecnico(): Promise<string> {
 async function pessoasDaEmpresa(organizationId: string, membrosCU: ClickUpMember[]) {
   const linhas = await db.select({ id: schema.users.id, email: schema.users.email, clickupEmail: schema.users.clickupEmail, name: schema.users.name })
     .from(schema.organizationMembers).innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
-    .where(and(eq(schema.organizationMembers.organizationId, organizationId), eq(schema.users.active, true)));
+    // Ativas ou pessoas só do ClickUp (inativas por não terem login): a conversa com o Gui é com o Gui, não com "alguém de fora".
+    .where(and(eq(schema.organizationMembers.organizationId, organizationId), or(eq(schema.users.active, true), like(schema.users.email, `%@${DOMINIO_DE_PESSOA_DO_CLICKUP}`))));
   const porEmail = new Map<string, string>();
   for (const u of linhas) for (const e of [u.email, u.clickupEmail]) if (e) porEmail.set(e.trim().toLowerCase(), u.id);
   const porId = new Map<string, { userId: string | null; nome: string }>();
@@ -317,6 +320,8 @@ export async function passadaDoChatDoClickUp(): Promise<ResultadoDoChat[]> {
   try {
     const donas = await empresasDonasDoClickUp();
     await desfazerImportacaoFora(donas);
+    // Quem entrou no ClickUp desde a última passada já chega como pessoa (senão a conversa nasce com "alguém de fora").
+    await garantirPessoasDoClickUpNasEmpresas().catch((error: unknown) => logger.warn({ error }, 'Chat do ClickUp: pessoas do ClickUp não atualizadas'));
     const resultados: ResultadoDoChat[] = [];
     for (const id of donas) {
       const res = await importarChatDoClickUp(id);

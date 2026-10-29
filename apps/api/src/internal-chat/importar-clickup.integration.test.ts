@@ -183,4 +183,28 @@ describe.skipIf(!enabled)('chat do ClickUp → Comunicação × PostgreSQL real'
     const r2 = await rodar();
     expect(r2.mensagens + r2.respostas).toBe(0);
   });
+
+  it('pessoa só do ClickUp (sem login) já cadastrada: a conversa nova é direta com ela, com autoria dela', async () => {
+    const { db, schema } = dbm;
+    const { eq } = await import('drizzle-orm');
+    const { DOMINIO_DE_PESSOA_DO_CLICKUP } = await import('@desigual-os/auth');
+    const gui = randomUUID();
+    await db.insert(schema.users).values({ id: gui, name: 'Gui', email: `${gui}@${DOMINIO_DE_PESSOA_DO_CLICKUP}`, clickupEmail: `gui-${org}@x.invalid`, active: false });
+    await db.insert(schema.organizationMembers).values({ organizationId: org, userId: gui, role: 'collaborator' });
+    try {
+      ck.canais.push({ id: 'dm-ag-novo', type: 'DM' });
+      ck.membros.set('dm-ag-novo', [{ id: 1 }, { id: 3 }]);
+      ck.mensagens.set('dm-ag-novo', [msg('n1', 3, 40, 'manda o briefing?')]);
+      const r = await rodar();
+      expect(r.falhas).toEqual([]);
+      const c = (await conversaDoCanal('dm-ag-novo'))!;
+      expect(c.kind).toBe('direct');
+      const membros = await db.select().from(schema.internalConversationMembers).where(eq(schema.internalConversationMembers.conversationId, c.id));
+      expect(membros.map((m) => m.userId).sort()).toEqual([alicia, gui].sort());
+      const [m] = await mensagensDe(c.id);
+      expect(m).toMatchObject({ kind: 'clickup', senderId: gui, content: 'manda o briefing?' });
+    } finally {
+      await db.delete(schema.users).where(eq(schema.users.id, gui));
+    }
+  });
 });
