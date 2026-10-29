@@ -200,6 +200,33 @@ function valores(organizationId: string, conversationId: string, m: MensagemCU, 
   };
 }
 
+/**
+ * O que entrou antes de a pessoa existir aqui (pessoas só do ClickUp, 29/10/2026) é acertado na passada seguinte:
+ * a conversa direta que tinha virado grupo "Gui · ClickUp" vira a conversa direta com o Gui, e a fala dele, guardada
+ * como "**Gui**: texto" em nome do usuário técnico, passa a ser dele. Idempotente: sem nada a acertar, não escreve.
+ */
+async function promoverConversaAntiga(organizationId: string, conversationId: string, canal: CanalCU, daqui: string[], pessoasDoCanal: Array<{ userId: string | null; nome: string } | undefined>) {
+  const unicos = [...new Set(daqui)];
+  if (String(canal.type ?? '').toUpperCase() === 'DM' && unicos.length === 2) {
+    const directKey = [...unicos].sort().join(':');
+    const [jaExiste] = await db.select({ id: schema.internalConversations.id }).from(schema.internalConversations)
+      .where(and(eq(schema.internalConversations.organizationId, organizationId), eq(schema.internalConversations.kind, 'direct'), eq(schema.internalConversations.directKey, directKey))).limit(1);
+    if (!jaExiste) {
+      await db.update(schema.internalConversations).set({ kind: 'direct', directKey, title: null })
+        .where(and(eq(schema.internalConversations.id, conversationId), eq(schema.internalConversations.kind, 'group')));
+    }
+  }
+  for (const p of pessoasDoCanal) {
+    if (!p?.userId) continue;
+    const prefixo = `**${p.nome.replace(/\*/g, '')}**: `;
+    await db.update(schema.internalMessages).set({ senderId: p.userId, kind: 'clickup', content: sql`substr(${schema.internalMessages.content}, ${prefixo.length + 1})` })
+      .where(and(
+        eq(schema.internalMessages.conversationId, conversationId), eq(schema.internalMessages.kind, 'clickup_externo'),
+        sql`left(${schema.internalMessages.content}, ${prefixo.length}) = ${prefixo}`,
+      ));
+  }
+}
+
 /** Uma passada para a empresa: o que mudou desde a última (na primeira, o histórico inteiro). */
 export async function importarChatDoClickUp(organizationId: string, opcoes: { api?: ApiDeChat; membrosDoTime?: ClickUpMember[]; workspace?: string } = {}): Promise<ResultadoDoChat> {
   const api = opcoes.api ?? apiDeChatReal;
@@ -239,6 +266,7 @@ export async function importarChatDoClickUp(organizationId: string, opcoes: { ap
       if (conversa.criada) r.conversasCriadas++;
       // Membros novos no ClickUp entram aqui também.
       if (!conversa.criada && daqui.length) await db.insert(schema.internalConversationMembers).values([...new Set(daqui)].map((userId) => ({ conversationId: conversa.id, userId, organizationId }))).onConflictDoNothing();
+      if (!conversa.criada) await promoverConversaAntiga(organizationId, conversa.id, canal, daqui, membros.map((m) => pessoas.get(String(m.id))));
 
       const v = await vinculo(organizationId, canal.id);
       const desde = Number((v?.meta as { ultimaMs?: number } | undefined)?.ultimaMs ?? 0);

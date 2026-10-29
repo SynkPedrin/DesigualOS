@@ -201,8 +201,20 @@ describe.skipIf(!enabled)('chat do ClickUp → Comunicação × PostgreSQL real'
       expect(c.kind).toBe('direct');
       const membros = await db.select().from(schema.internalConversationMembers).where(eq(schema.internalConversationMembers.conversationId, c.id));
       expect(membros.map((m) => m.userId).sort()).toEqual([alicia, gui].sort());
-      const [m] = await mensagensDe(c.id);
-      expect(m).toMatchObject({ kind: 'clickup', senderId: gui, content: 'manda o briefing?' });
+      expect((await mensagensDe(c.id)).find((m) => m.content === 'manda o briefing?')).toMatchObject({ kind: 'clickup', senderId: gui });
+      // O que entrou antes de o Gui existir aqui é acertado: o grupo "Gui · ClickUp" virou a conversa direta com ele,
+      // e a fala dele (guardada como "**Gui**: ...") passou a ser dele — na conversa e no canal.
+      const antiga = (await conversaDoCanal('dm-ag'))!;
+      expect(antiga).toMatchObject({ kind: 'direct', title: null });
+      expect((await mensagensDe(antiga.id)).find((m) => m.content === 'Alicia, a arte saiu?')).toMatchObject({ kind: 'clickup', senderId: gui });
+      const canal = (await conversaDoCanal('ch-criacao'))!;
+      expect((await mensagensDe(canal.id)).find((m) => m.content === 'vou subir os layouts')).toMatchObject({ kind: 'clickup', senderId: gui });
+      // Na lista da Alicia, a conversa com quem não tem login aparece (antes sumia por "parceiro inativo").
+      const { listarConversas } = await import('./service');
+      const lista = await listarConversas(org, alicia);
+      expect(lista.find((l) => l.id === antiga.id)).toMatchObject({ partner_id: gui, partner_active: true });
+      // Segunda passada: nada a acertar, nada muda.
+      expect((await rodar()).falhas).toEqual([]);
     } finally {
       await db.delete(schema.users).where(eq(schema.users.id, gui));
     }

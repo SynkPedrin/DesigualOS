@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AtSign, BellOff, Bookmark, Compass, FolderOpen, GraduationCap, Hash, HelpCircle, Home, Loader2, Lock, MessageSquarePlus, Paperclip, Plus, Search, SquarePen, Users, X } from 'lucide-react';
+import { AtSign, BellOff, Bookmark, ChevronRight, Compass, FolderOpen, GraduationCap, Hash, HelpCircle, Home, Loader2, Lock, MessageSquarePlus, Paperclip, Plus, Search, SquarePen, Users, X } from 'lucide-react';
 import { useChatMembers, useOpenDirectChat, type ChatConversation, type ChatMember } from '@/hooks/use-internal-chat';
 import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { toast } from '@/stores/toast-store';
@@ -86,6 +86,42 @@ function NovaConversa({ onClose, onOpened }: { onClose: () => void; onOpened: (i
         })}
       </ul>
     </Modal>
+  );
+}
+
+const CHAVE_CANAIS_ABERTOS = 'comunicacao:canais-abertos';
+
+/**
+ * Canais numa pasta que só abre no clique (pedido do Pedro, 29/10/2026): com o chat do ClickUp importado são dezenas
+ * de canais, e eles empurravam as conversas privadas para o fim da lista — a Jamile achou que nada tinha carregado.
+ * Fechada, a pasta mostra quantos canais e quantas não lidas; o canal aberto no momento continua visível.
+ */
+function PastaDeCanais({ canais, ativaId, meId, onSelect, onCriarCanal, onProcurarCanais }: {
+  canais: ChatConversation[]; ativaId: string | null; meId: string; onSelect: (id: string) => void; onCriarCanal: () => void; onProcurarCanais: () => void;
+}) {
+  const [aberta, setAberta] = useState(false);
+  useEffect(() => { try { setAberta(localStorage.getItem(CHAVE_CANAIS_ABERTOS) === '1'); } catch { /* sem armazenamento: começa fechada */ } }, []);
+  function alternar() {
+    setAberta((v) => { try { localStorage.setItem(CHAVE_CANAIS_ABERTOS, v ? '0' : '1'); } catch { /* idem */ } return !v; });
+  }
+  const naoLidas = canais.reduce((t, c) => t + (c.muted ? 0 : c.unread_count), 0);
+  const mencoes = canais.reduce((t, c) => t + (c.mentions_unread ?? 0), 0);
+  const visiveis = aberta ? canais : canais.filter((c) => c.id === ativaId);
+  return (
+    <div className="pt-3">
+      <div className="flex items-center justify-between px-3 pb-1">
+        <button type="button" onClick={alternar} aria-expanded={aberta} className="flex min-w-0 flex-1 items-center gap-1 text-left font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60 hover:text-branco-cru">
+          <ChevronRight size={12} className={cn('shrink-0 transition-transform', aberta && 'rotate-90')} />
+          <span>Canais</span>
+          <span className="normal-case tracking-normal">({canais.length})</span>
+          {mencoes > 0 && <span className="ml-1 rounded-full bg-erro px-1.5 font-semibold leading-[16px] text-branco-cru">@</span>}
+          {naoLidas > 0 && <span className="ml-1 min-w-[18px] rounded-full bg-sinal px-1.5 text-center font-semibold normal-case leading-[16px] tracking-normal text-grafite">{naoLidas > 99 ? '99+' : naoLidas}</span>}
+        </button>
+        <button type="button" onClick={onCriarCanal} aria-label="Criar canal" title="Criar canal" className="text-nevoa hover:text-branco-cru"><Plus size={13} /></button>
+      </div>
+      {visiveis.map((c) => <Linha key={c.id} c={c} ativa={c.id === ativaId} meId={meId} onSelect={() => onSelect(c.id)} />)}
+      {aberta && <button type="button" onClick={onProcurarCanais} className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs text-nevoa hover:text-branco-cru"><Compass size={14} /> Procurar canais</button>}
+    </div>
   );
 }
 
@@ -184,10 +220,9 @@ export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, 
           <p className="p-4 text-center text-sm text-erro">Não foi possível carregar as conversas.</p>
         ) : (
           <>
-            <Secao titulo="Canais" acao={<button type="button" onClick={onCriarCanal} aria-label="Criar canal" title="Criar canal" className="text-nevoa hover:text-branco-cru"><Plus size={13} /></button>}>
-              {[...geral, ...canais].map((c) => <Linha key={c.id} c={c} ativa={c.id === ativaId} meId={meId} onSelect={() => onSelect(c.id)} />)}
-              <button type="button" onClick={onProcurarCanais} className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs text-nevoa hover:text-branco-cru"><Compass size={14} /> Procurar canais</button>
-            </Secao>
+            <div className="pt-2">
+              {geral.map((c) => <Linha key={c.id} c={c} ativa={c.id === ativaId} meId={meId} onSelect={() => onSelect(c.id)} />)}
+            </div>
             <Secao titulo="Mensagens privadas" acao={<button type="button" onClick={() => setNova(true)} aria-label="Nova conversa privada" title="Nova conversa privada" className="text-nevoa hover:text-branco-cru"><Plus size={13} /></button>}>
               {privadas.length === 0 && (
                 <button type="button" onClick={() => setNova(true)} className="mx-3 mb-2 block w-[calc(100%-1.5rem)] rounded-md border border-dashed border-grafite-elevado px-3 py-3 text-left text-xs text-nevoa hover:border-nevoa/40 hover:text-branco-cru">
@@ -196,6 +231,7 @@ export function ListaDeConversas({ conversas, carregando, erro, ativaId, visao, 
               )}
               {privadas.map((c) => <Linha key={c.id} c={c} ativa={c.id === ativaId} meId={meId} onSelect={() => onSelect(c.id)} />)}
             </Secao>
+            <PastaDeCanais canais={canais} ativaId={ativaId} meId={meId} onSelect={onSelect} onCriarCanal={onCriarCanal} onProcurarCanais={onProcurarCanais} />
             {discussoes.length > 0 && (
               <Secao titulo="Discussões">
                 {discussoes.map((c) => <Linha key={c.id} c={c} ativa={c.id === ativaId} meId={meId} onSelect={() => onSelect(c.id)} />)}
