@@ -172,9 +172,9 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
         if (!consulta.exists) { reply.code(404); return { error: `O número +${numero} não tem WhatsApp.` }; }
         if (consulta.whatsappId) chatId = consulta.whatsappId;
       } catch (error) {
-        // 404 é o motor sem a consulta (versão anterior): segue pelo número, e o próprio envio confere. O resto é o
-        // WhatsApp sem responder agora, e isso não diz nada sobre o número.
-        if (!(error instanceof OpenwaError && error.status === 404)) {
+        // 404/403 é o motor sem a consulta ou chave sem o papel OPERATOR que ela exige (OpenWA 0.25): segue pelo número,
+        // e o próprio envio confere. O resto é o WhatsApp sem responder agora, e isso não diz nada sobre o número.
+        if (!(error instanceof OpenwaError && (error.status === 404 || error.status === 403))) {
           logger.warn({ error, sessionId: session.id }, 'Consulta de número no WhatsApp falhou');
           reply.code(503);
           return { error: 'O WhatsApp não respondeu agora. Tente de novo em instantes.' };

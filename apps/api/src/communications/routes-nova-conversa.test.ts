@@ -103,8 +103,8 @@ describe('POST /inbox/threads — nova conversa', () => {
     expect(abrirConversa).not.toHaveBeenCalled();
   });
 
-  it('motor sem a rota de consulta (404) segue pelo número', async () => {
-    checkNumber.mockRejectedValue(new OpenwaError('Not Found', 404));
+  it.each([404, 403])('consulta indisponível no motor (%i) segue pelo número', async (status) => {
+    checkNumber.mockRejectedValue(new OpenwaError('indisponível', status));
     const res = await (await app()).inject({ method: 'POST', url: '/inbox/threads', payload: { phone: '18 99632-6160' } });
     expect(res.statusCode).toBe(201);
     expect(abrirConversa).toHaveBeenCalledWith(sessoes[0], { chatId: '5518996326160@c.us', phone: '5518996326160' });
