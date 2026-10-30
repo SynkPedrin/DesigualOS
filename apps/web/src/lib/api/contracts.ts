@@ -1226,6 +1226,8 @@ export interface CalendarEventWire {
   meeting_url: string | null;
   source: string;
   created_by: string;
+  /** De qual agenda do Outlook o evento veio (null = criado aqui). */
+  calendar_id?: string | null;
 }
 
 export interface CalendarConflictWire {

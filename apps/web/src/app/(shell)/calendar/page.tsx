@@ -15,6 +15,7 @@ import { ResourcePicker } from '@/components/calendar/resource-picker';
 import { CreateEventModal } from '@/components/calendar/create-event-modal';
 import { MicrosoftCalendarConnect } from '@/components/calendar/microsoft-calendar-connect';
 import { MeetingBriefPanel } from '@/components/calendar/meeting-brief-panel';
+import { useAgendasPintadas } from '@/components/calendar/microsoft-calendar-connect';
 import type { CalendarEventWire } from '@/lib/api/contracts';
 
 /**
@@ -57,6 +58,11 @@ function CalendarPageContent() {
   const dias = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(inicioSemana.getTime() + i * 24 * 60 * 60_000)), [inicioSemana]);
 
   const eventos = useCalendarEvents({ from: inicioSemana, to: fimSemana, memberId: me?.id });
+  const agendas = useAgendasPintadas();
+  const corDaAgenda = useMemo(() => {
+    const porId = new Map(agendas.map((a) => [a.id, a.cor.evento]));
+    return (id: string | null | undefined) => (id ? porId.get(id) : undefined) ?? 'border-roxo-eletrico/40 bg-roxo-eletrico/20 text-branco-cru hover:border-roxo-eletrico/70';
+  }, [agendas]);
 
   const eventosPorDia = useMemo(() => {
     const mapa = new Map<string, CalendarEventWire[]>();
@@ -171,7 +177,14 @@ function CalendarPageContent() {
         eventos.isPending ? (
           <Skeleton className="h-[700px] w-full" />
         ) : (
-          <WeekView dias={dias} eventosPorDia={eventosPorDia} onSelecionarEvento={setSelecionado} onSelecionarSlot={setCriando} />
+          <>
+          {agendas.length > 1 && (
+            <div aria-label="Agendas" className="mb-2 flex flex-wrap items-center gap-3 text-xs text-nevoa">
+              {agendas.map((a) => <span key={a.id} className="flex items-center gap-1.5"><span className={`size-2.5 rounded-full ${a.cor.ponto}`} />{a.nome}</span>)}
+            </div>
+          )}
+          <WeekView dias={dias} eventosPorDia={eventosPorDia} onSelecionarEvento={setSelecionado} onSelecionarSlot={setCriando} corDaAgenda={corDaAgenda} />
+          </>
         )
       ) : agenciaPending && idsAgencia.length > 0 ? (
         <Skeleton className="h-[700px] w-full" />
