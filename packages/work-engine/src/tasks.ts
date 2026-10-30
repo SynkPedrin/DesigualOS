@@ -3,7 +3,6 @@ import { db, schema } from '@desigual-os/database';
 import { recordActivity } from './activity';
 import { MAX_SUBTASK_DEPTH, type Db, type WorkContext } from './context';
 import { conflict, invalid, notFound, WorkError } from './errors';
-import { assertTransitionAllowed } from './statuses';
 
 export const PRIORITIES = { none: 0, urgent: 1, high: 2, normal: 3, low: 4 } as const;
 export type PriorityValue = (typeof PRIORITIES)[keyof typeof PRIORITIES];
@@ -94,6 +93,20 @@ async function statusInSpace(tx: Db, ctx: WorkContext, statusId: string, spaceId
     .where(and(eq(schema.workTaskStatuses.id, statusId), eq(schema.workTaskStatuses.organizationId, ctx.organizationId), eq(schema.workTaskStatuses.spaceId, spaceId)));
   if (!s) throw invalid('O status precisa ser do mesmo espaço da lista.');
   return s;
+}
+
+/**
+ * `statusInSpace` + `assertTransitionAllowed` numa consulta: o status do espaço e as regras de saída do status atual.
+ * Sem regra cadastrada, qualquer mudança vale.
+ */
+async function statusPermitido(tx: Db, ctx: WorkContext, fromId: string, statusId: string, spaceId: string) {
+  const [r] = await tx
+    .select({ s: schema.workTaskStatuses, regras: sql<string[]>`(select coalesce(json_agg(${schema.workStatusTransitions.toStatusId}), '[]'::json) from ${schema.workStatusTransitions} where ${schema.workStatusTransitions.organizationId} = ${ctx.organizationId} and ${schema.workStatusTransitions.fromStatusId} = ${fromId})` })
+    .from(schema.workTaskStatuses)
+    .where(and(eq(schema.workTaskStatuses.id, statusId), eq(schema.workTaskStatuses.organizationId, ctx.organizationId), eq(schema.workTaskStatuses.spaceId, spaceId)));
+  if (!r) throw invalid('O status precisa ser do mesmo espaço da lista.');
+  if (fromId !== r.s.id && r.regras.length > 0 && !r.regras.includes(r.s.id)) throw conflict('Esta mudança de status não é permitida pelo fluxo configurado.', { from: fromId, to: r.s.id });
+  return r.s;
 }
 
 /** Só membros da empresa podem ser responsáveis. Devolve ids únicos validados. */
@@ -412,14 +425,17 @@ export async function updateTask(ctx: WorkContext, id: string, patch: UpdateTask
 
   return db.transaction(async (raw) => {
     const tx = raw as unknown as Db;
-    const [cur] = await tx.select().from(schema.workTasks).where(and(eq(schema.workTasks.id, id), eq(schema.workTasks.organizationId, ctx.organizationId))).for('update');
-    if (!cur) throw notFound('Tarefa');
+    // Tarefa e espaço da lista numa ida só: cada consulta custa ~250 ms até o banco (30/10/2026, "tudo demora 10 s").
+    const [linha] = await tx.select({ t: schema.workTasks, spaceId: schema.workLists.spaceId }).from(schema.workTasks)
+      .innerJoin(schema.workLists, eq(schema.workLists.id, schema.workTasks.listId))
+      .where(and(eq(schema.workTasks.id, id), eq(schema.workTasks.organizationId, ctx.organizationId))).for('update', { of: schema.workTasks });
+    if (!linha) throw notFound('Tarefa');
+    const cur = linha.t;
     if (opts.expectedVersion !== undefined && opts.expectedVersion !== cur.version) {
       throw conflict('A tarefa foi alterada por outra pessoa. Recarregue antes de salvar.', { currentVersion: cur.version });
     }
     validateDates(patch.startAt === undefined ? cur.startAt : patch.startAt, patch.dueAt === undefined ? cur.dueAt : patch.dueAt);
 
-    const [list] = await tx.select().from(schema.workLists).where(eq(schema.workLists.id, cur.listId));
     const set: Partial<typeof schema.workTasks.$inferInsert> = { updatedAt: new Date(), version: cur.version + 1 };
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     const note = (field: string, from: unknown, to: unknown) => { if (JSON.stringify(from) !== JSON.stringify(to)) changes[field] = { from, to }; };
@@ -436,8 +452,7 @@ export async function updateTask(ctx: WorkContext, id: string, patch: UpdateTask
 
     let statusChange: { from: string; to: string } | null = null;
     if (patch.statusId !== undefined && patch.statusId !== cur.statusId) {
-      const next = await statusInSpace(tx, ctx, patch.statusId, list!.spaceId);
-      await assertTransitionAllowed(tx, ctx, cur.statusId, next.id);
+      const next = await statusPermitido(tx, ctx, cur.statusId, patch.statusId, linha.spaceId);
       set.statusId = next.id;
       // Entre dois status finais (pronto → encerrado) a data de conclusão original fica: só reabrir a apaga.
       set.completedAt = next.isFinal ? (cur.completedAt ?? new Date()) : null;

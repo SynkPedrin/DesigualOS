@@ -212,7 +212,7 @@ export interface TaskPatch {
   clientId?: string | null;
 }
 
-/** Campos que a tela pode mostrar já mudados, sem esperar o servidor (status precisa do objeto: espera a volta). */
+/** Campos que a tela pode mostrar já mudados, sem esperar o servidor. O status vem à parte (precisa do objeto). */
 const CAMPOS_OTIMISTAS = ['title', 'description', 'priority', 'dueAt', 'startAt', 'assigneeIds', 'tags', 'estimateMinutes', 'clientId'] as const;
 
 function aplicarNaTarefa(t: WorkTaskWire, id: string, mudanca: Partial<WorkTaskWire>): WorkTaskWire {
@@ -240,6 +240,16 @@ export function useUpdateTask() {
     onMutate: ({ id, ...rest }: TaskPatch) => {
       const mudanca: Partial<WorkTaskWire> = {};
       for (const k of CAMPOS_OTIMISTAS) if (k in rest) (mudanca as Record<string, unknown>)[k] = (rest as Record<string, unknown>)[k];
+      // Status também muda na hora, com o objeto que a tela já tem em cache. Antes esperava salvar e recarregar a
+      // lista: ~5 s com o banco em us-east-1, o "mudar status demora 10 segundos" (30/10/2026).
+      if (rest.statusId) {
+        const st = qc.getQueriesData<{ statuses: WorkStatus[] }>({ queryKey: ['work', 'statuses'] })
+          .flatMap(([, d]) => d?.statuses ?? []).find((x) => x.id === rest.statusId);
+        if (st) {
+          mudanca.statusId = st.id;
+          mudanca.status = { id: st.id, name: st.name, color: st.color, category: st.category, isFinal: st.isFinal };
+        }
+      }
       if (!Object.keys(mudanca).length) return { antes: [] as Array<[readonly unknown[], unknown]> };
       // NÃO cancela buscas em andamento: cancelar a do detalhe de uma tarefa recém-aberta (ainda sem dado) a deixava
       // em "Carregando…" para sempre (visto em produção, 29/10/2026). Se uma busca velha chegar depois, a recarga do

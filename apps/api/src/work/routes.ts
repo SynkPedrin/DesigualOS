@@ -5,7 +5,7 @@ import { anexoAcessivel } from '../internal-chat/service';
 import { copiarAnexosDoClickUp } from './anexos-externos';
 import { z } from 'zod';
 import { sincroniaDoDailyLigada, sincronizarTarefaNoDaily, tamanhoDaFilaDeFundo, ultimasSincronias, varrerAlteracoesDoClickUp } from '../clickup/sincronia-daily';
-import { empurrarEventosDaEmpresa, escritaNoClickUpLigada, ultimasEscritas } from '../clickup/escrita-daily';
+import { acordarEscoador, empurrarEventosDaEmpresa, escritaNoClickUpLigada, ultimasEscritas } from '../clickup/escrita-daily';
 import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
@@ -164,6 +164,11 @@ function defined<T extends Record<string, unknown>>(o: T): { [K in keyof T]?: Ex
 
 export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
   const guard = { preHandler: requireDailyTasks };
+
+  // Toda edição gravada no Daily já está na trilha quando a resposta sai: a saída para o ClickUp corre agora.
+  app.addHook('onResponse', async (request, reply) => {
+    if (request.method !== 'GET' && request.method !== 'OPTIONS' && reply.statusCode < 400 && request.url.startsWith('/work/')) acordarEscoador();
+  });
 
   // ── Acesso ─────────────────────────────────────────────────────────────
   /** O front pergunta isto para decidir se mostra o item de menu. Responde só "sim/não", sem detalhes de configuração. */

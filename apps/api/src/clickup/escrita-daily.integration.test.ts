@@ -10,8 +10,8 @@ const url = process.env.DATABASE_URL ?? '';
 const enabled = /^postgres(ql)?:\/\/[^@]*@127\.0\.0\.1:/.test(url);
 
 const cu = vi.hoisted(() => ({
-  chamadas: [] as Array<{ fn: string; args: unknown[]; config?: { writeScope?: { authorizedForProduction: boolean } } }>,
-  falhar: null as null | (() => Error),
+  chamadas: [] as Array<{ fn: string; args: unknown[]; config?: { apiKey?: string; writeScope?: { authorizedForProduction: boolean } } }>,
+  falhar: null as null | ((config?: { apiKey?: string }) => Error | null),
   membros: [] as Array<{ id: number; email: string; username: string }>,
 }));
 const feitasDeComentario = vi.hoisted(() => ({ n: 0 }));
@@ -19,17 +19,18 @@ vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
   const real = await importOriginal<typeof import('@desigual-os/tool-gateway')>();
   const registrar = (fn: string, retorno?: unknown) => async (...args: unknown[]) => {
     cu.chamadas.push({ fn, args: args.slice(1), config: args[0] as never });
-    if (cu.falhar) throw cu.falhar();
+    const erro = cu.falhar?.(args[0] as never);
+    if (erro) throw erro;
     return retorno;
   };
   return {
     ...real,
-    createTask: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTask', args: args.slice(1) }); if (cu.falhar) throw cu.falhar(); return { id: 'CU-NOVA', url: 'https://app.clickup.com/t/CU-NOVA' }; },
+    createTask: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTask', args: args.slice(1) }); { const erro = cu.falhar?.(); if (erro) throw erro; } return { id: 'CU-NOVA', url: 'https://app.clickup.com/t/CU-NOVA' }; },
     updateTask: registrar('updateTask'),
     addTaskTag: registrar('addTaskTag'),
     removeTaskTag: registrar('removeTaskTag'),
-    createTaskCommentRico: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskCommentRico', args: args.slice(1) }); if (cu.falhar) throw cu.falhar(); return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; },
-    createTaskComment: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskComment', args: args.slice(1) }); if (cu.falhar) throw cu.falhar(); return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; }, // id próprio por comentário, como no ClickUp
+    createTaskCommentRico: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskCommentRico', args: args.slice(1), config: args[0] as never }); if (cu.falhar?.(args[0] as never)) throw cu.falhar(args[0] as never)!; return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; },
+    createTaskComment: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskComment', args: args.slice(1) }); { const erro = cu.falhar?.(); if (erro) throw erro; } return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; }, // id próprio por comentário, como no ClickUp
     lerClickUpCru: async () => { throw new Error('leitura simulada: o ClickUp não foi consultado'); },
     getTeamMembers: async () => cu.membros.map((m) => ({ ...m, profilePicture: null, initials: null, color: null })),
   };
@@ -89,7 +90,7 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     await db.delete(schema.users).where(inArray(schema.users.id, [admin, colega]));
   });
 
-  beforeEach(() => { cu.chamadas.length = 0; cu.falhar = null; M.esquecerMembrosDaEscrita(); });
+  beforeEach(() => { cu.chamadas.length = 0; cu.falhar = null; M.esquecerMembrosDaEscrita(); M.esquecerTokensDaEscrita(); });
 
   it('primeiro ciclo só marca o ponto de partida: o passado nunca é reenviado', async () => {
     const r = await M.empurrarEventosDaEmpresa(org);
@@ -197,6 +198,36 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     cu.chamadas.length = 0;
     await M.empurrarEventosDaEmpresa(org);
     expect(cu.chamadas).toEqual([]);
+  });
+
+  it('com o ClickUp da pessoa conectado, a ação sai EM NOME DELA; token recusado cai na conta da agência', async () => {
+    const { db, schema } = dbm;
+    const { and, eq } = await import('drizzle-orm');
+    process.env.INTEGRATION_ENCRYPTION_KEY ??= '11'.repeat(32);
+    const { encryptToken } = await import('@desigual-os/tool-gateway');
+    await db.insert(schema.integrationConnections).values({ userId: admin, provider: 'clickup', accessTokenEncrypted: encryptToken('token-da-ana'), externalWorkspaceId: 'TEAM' });
+    try {
+      await E.updateTask({ ...ctx(), actorKind: 'system' }, tarefa, { statusId: statusPronto }); // ponto de partida, não sai
+      await E.updateTask(ctx(), tarefa, { statusId: statusInicial });
+      await E.addComment(ctx(), tarefa, 'Ajustei');
+      await esperar();
+      await M.empurrarEventosDaEmpresa(org);
+      // Status e comentário com o token da Ana: o ClickUp mostra a Ana como autora, sem nome na frente.
+      expect(feitas('updateTask').map((c) => c.config?.apiKey)).toEqual(['token-da-ana']);
+      expect(feitas('createTaskCommentRico').map((c) => [c.config?.apiKey, c.args[1]])).toEqual([['token-da-ana', [{ text: 'Ajustei' }]]]);
+
+      // O ClickUp recusa o token (revogado): a mesma ação vai pela conta da agência, sem perder o evento.
+      cu.chamadas.length = 0;
+      cu.falhar = (config) => (config?.apiKey === 'token-da-ana' ? new Error('ClickUp updateTask falhou (401): Token invalid') : null);
+      await E.updateTask(ctx(), tarefa, { statusId: statusPronto });
+      await esperar();
+      const r = await M.empurrarEventosDaEmpresa(org);
+      expect(r).toMatchObject({ empurrados: 1, falhas: 0 });
+      expect(feitas('updateTask').map((c) => c.config?.apiKey)).toEqual(['token-da-ana', 'chave-de-teste']);
+    } finally {
+      cu.falhar = null;
+      await db.delete(schema.integrationConnections).where(and(eq(schema.integrationConnections.userId, admin), eq(schema.integrationConnections.provider, 'clickup')));
+    }
   });
 
   it('marcação "@[Nome](id)" vira marcação de verdade no ClickUp (o id da pessoa lá), não o código em texto', async () => {

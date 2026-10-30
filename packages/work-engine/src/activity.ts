@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { schema } from '@desigual-os/database';
 import type { Db, WorkContext } from './context';
 
@@ -39,28 +39,32 @@ const COM_AVISO = new Set(['assigned', 'mentioned', 'commented', 'status_changed
  */
 export async function notificarEvento(tx: Db, ctx: WorkContext, e: ActivityInput): Promise<void> {
   if (!COM_AVISO.has(e.action) || !e.taskId) return;
-  const [t] = await tx.select({ id: schema.workTasks.id, number: schema.workTasks.number, title: schema.workTasks.title, createdBy: schema.workTasks.createdBy }).from(schema.workTasks).where(and(eq(schema.workTasks.id, e.taskId), eq(schema.workTasks.organizationId, ctx.organizationId)));
-  if (!t) return;
-  const [autor] = await tx.select({ name: schema.users.name }).from(schema.users).where(eq(schema.users.id, ctx.userId));
-  const quem = ctx.actorKind === 'automation' ? 'Uma automação' : ctx.actorKind === 'agent' ? 'Um agente' : (autor?.name ?? 'Alguém');
-  const link = `/daily-tasks?task=${t.id}`;
-  const ref = `DT-${t.number} ${t.title}`;
   const d = (e.data ?? {}) as Record<string, unknown>;
-  let alvo: string[] = [];
-  let titulo = '';
-  if (e.action === 'assigned') { alvo = (d.userIds as string[] | undefined) ?? []; titulo = `${quem} atribuiu você a ${ref}`; }
-  else if (e.action === 'mentioned') { alvo = typeof d.userId === 'string' ? [d.userId] : []; titulo = `${quem} mencionou você em ${ref}`; }
-  else {
-    const resp = await tx.select({ userId: schema.workTaskAssignees.userId }).from(schema.workTaskAssignees).where(eq(schema.workTaskAssignees.taskId, t.id));
-    const seg = await tx.select({ userId: schema.workTaskFollowers.userId }).from(schema.workTaskFollowers).where(eq(schema.workTaskFollowers.taskId, t.id));
-    alvo = [...new Set([...resp.map((r) => r.userId), ...seg.map((r) => r.userId), ...(t.createdBy ? [t.createdBy] : [])])];
-    titulo = e.action === 'commented' ? `${quem} comentou em ${ref}` : `${quem} mudou o status de ${ref}`;
-  }
+  const explicitos = e.action === 'assigned' ? ((d.userIds as string[] | undefined) ?? []) : e.action === 'mentioned' ? (typeof d.userId === 'string' ? [d.userId] : []) : null;
+  if (explicitos && !explicitos.length) return;
   const ctxActorUser = ctx.actorKind === 'automation' || ctx.actorKind === 'agent' ? null : ctx.userId;
-  const destinatarios = [...new Set(alvo)].filter((u) => u !== ctxActorUser);
-  if (!destinatarios.length) return;
-  // Só membros desta empresa recebem (um id estranho no dado nunca vira aviso em outra conta).
-  const membros = await tx.select({ userId: schema.organizationMembers.userId }).from(schema.organizationMembers).where(and(eq(schema.organizationMembers.organizationId, ctx.organizationId), inArray(schema.organizationMembers.userId, destinatarios)));
-  if (!membros.length) return;
-  await tx.insert(schema.notifications).values(membros.map((m) => ({ userId: m.userId, type: `work.${e.action}`, title: titulo.slice(0, 240), body: null, link })));
+  // Comentário e status: responsáveis, seguidores e criador da tarefa.
+  const candidatos = explicitos
+    ? sql`select unnest(array[${sql.join(explicitos.map((u) => sql`${u}::uuid`), sql`, `)}])`
+    : sql`select user_id from work_task_assignees where task_id = t.id
+          union select user_id from work_task_followers where task_id = t.id
+          union select t.created_by where t.created_by is not null`;
+  // Tarefa, nome do autor e destinatários numa ida só (eram seis consultas em série, ~1,5 s até o banco em us-east-1).
+  // Só membros desta empresa recebem (um id estranho no dado nunca vira aviso em outra conta); o autor nunca recebe o próprio.
+  const linhas = (await tx.execute(sql`
+    select t.id, t.number, t.title,
+      (select u.name from users u where u.id = ${ctx.userId}::uuid) as autor,
+      coalesce((select json_agg(distinct m.user_id) from organization_members m
+        where m.organization_id = ${ctx.organizationId}::uuid and m.user_id in (${candidatos})
+          and m.user_id is distinct from ${ctxActorUser}::uuid), '[]'::json) as destinatarios
+    from work_tasks t where t.id = ${e.taskId}::uuid and t.organization_id = ${ctx.organizationId}::uuid`)) as unknown as Array<{ id: string; number: number; title: string; autor: string | null; destinatarios: string[] }>;
+  const t = linhas[0];
+  if (!t || !t.destinatarios.length) return;
+  const quem = ctx.actorKind === 'automation' ? 'Uma automação' : ctx.actorKind === 'agent' ? 'Um agente' : (t.autor ?? 'Alguém');
+  const ref = `DT-${t.number} ${t.title}`;
+  const titulo = e.action === 'assigned' ? `${quem} atribuiu você a ${ref}`
+    : e.action === 'mentioned' ? `${quem} mencionou você em ${ref}`
+    : e.action === 'commented' ? `${quem} comentou em ${ref}` : `${quem} mudou o status de ${ref}`;
+  const link = `/daily-tasks?task=${t.id}`;
+  await tx.insert(schema.notifications).values(t.destinatarios.map((userId) => ({ userId, type: `work.${e.action}`, title: titulo.slice(0, 240), body: null, link })));
 }

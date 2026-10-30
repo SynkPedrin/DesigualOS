@@ -7,27 +7,32 @@ import { getTask } from './tasks';
 
 /** Tudo que a gaveta da tarefa precisa, numa ida só. Toda leitura filtra por organização. */
 export async function getTaskDetail(ctx: WorkContext, taskId: string) {
-  const task = await getTask(ctx, taskId); // 404 para id de outra empresa
   const org = ctx.organizationId;
-  const [comments, checklists, attachments, fieldValues, deps, subtasks, listRow] = await Promise.all([
+  // Uma leva só, em paralelo: eram seis em série (~3,9 s para abrir uma tarefa com o banco em us-east-1, 30/10/2026).
+  // Lista, campos e itens vão por subconsulta à tarefa, sem esperar a tarefa chegar primeiro.
+  const listaDaTarefa = sql`(select ${schema.workTasks.listId} from ${schema.workTasks} where ${schema.workTasks.id} = ${taskId} and ${schema.workTasks.organizationId} = ${org})`;
+  const [task, comments, checklists, items, attachments, fieldValues, deps, subtasks, listRow, defs, seguidores, [tempo]] = await Promise.all([
+    getTask(ctx, taskId), // 404 para id de outra empresa
     db.select({ c: schema.workComments, authorName: schema.users.name, authorAvatar: schema.users.avatarUrl })
       .from(schema.workComments).leftJoin(schema.users, eq(schema.users.id, schema.workComments.authorId))
       .where(and(eq(schema.workComments.taskId, taskId), eq(schema.workComments.organizationId, org))).orderBy(asc(schema.workComments.createdAt)),
     db.select().from(schema.workChecklists).where(and(eq(schema.workChecklists.taskId, taskId), eq(schema.workChecklists.organizationId, org))).orderBy(asc(schema.workChecklists.position)),
+    db.select({ i: schema.workChecklistItems }).from(schema.workChecklistItems)
+      .innerJoin(schema.workChecklists, eq(schema.workChecklists.id, schema.workChecklistItems.checklistId))
+      .where(and(eq(schema.workChecklists.taskId, taskId), eq(schema.workChecklistItems.organizationId, org))).orderBy(asc(schema.workChecklistItems.position)),
     db.select().from(schema.workAttachments).where(and(eq(schema.workAttachments.taskId, taskId), eq(schema.workAttachments.organizationId, org))).orderBy(asc(schema.workAttachments.createdAt)),
     db.select({ v: schema.workCustomFieldValues, name: schema.workCustomFields.name, type: schema.workCustomFields.fieldType })
       .from(schema.workCustomFieldValues).innerJoin(schema.workCustomFields, eq(schema.workCustomFields.id, schema.workCustomFieldValues.fieldId))
       .where(and(eq(schema.workCustomFieldValues.taskId, taskId), eq(schema.workCustomFieldValues.organizationId, org))),
     db.select().from(schema.workTaskDependencies).where(and(eq(schema.workTaskDependencies.organizationId, org), sql`(${schema.workTaskDependencies.taskId} = ${taskId} or ${schema.workTaskDependencies.dependsOnTaskId} = ${taskId})`)),
     db.select({ id: schema.workTasks.id }).from(schema.workTasks).where(and(eq(schema.workTasks.parentTaskId, taskId), eq(schema.workTasks.organizationId, org))),
-    db.select({ name: schema.workLists.name, spaceId: schema.workLists.spaceId }).from(schema.workLists).where(eq(schema.workLists.id, task.listId)),
+    db.select({ name: schema.workLists.name, spaceId: schema.workLists.spaceId }).from(schema.workLists).where(sql`${schema.workLists.id} = ${listaDaTarefa}`),
+    db.select().from(schema.workCustomFields)
+      .where(and(eq(schema.workCustomFields.organizationId, org), sql`${schema.workCustomFields.spaceId} = (select ${schema.workLists.spaceId} from ${schema.workLists} where ${schema.workLists.id} = ${listaDaTarefa})`))
+      .orderBy(asc(schema.workCustomFields.position)),
+    db.select({ id: schema.users.id, name: schema.users.name, avatar: schema.users.avatarUrl }).from(schema.workTaskFollowers).innerJoin(schema.users, eq(schema.users.id, schema.workTaskFollowers.userId)).where(and(eq(schema.workTaskFollowers.taskId, taskId), eq(schema.workTaskFollowers.organizationId, org))),
+    db.select({ ms: sql<number>`coalesce(sum(${schema.workTimeEntries.durationMs}) filter (where ${schema.workTimeEntries.endedAt} is not null), 0)::bigint` }).from(schema.workTimeEntries).where(and(eq(schema.workTimeEntries.taskId, taskId), eq(schema.workTimeEntries.organizationId, org))),
   ]);
-  const items = checklists.length
-    ? await db.select().from(schema.workChecklistItems).where(and(inArray(schema.workChecklistItems.checklistId, checklists.map((c) => c.id)), eq(schema.workChecklistItems.organizationId, org))).orderBy(asc(schema.workChecklistItems.position))
-    : [];
-  const seguidores = await db.select({ id: schema.users.id, name: schema.users.name, avatar: schema.users.avatarUrl }).from(schema.workTaskFollowers).innerJoin(schema.users, eq(schema.users.id, schema.workTaskFollowers.userId)).where(and(eq(schema.workTaskFollowers.taskId, taskId), eq(schema.workTaskFollowers.organizationId, org)));
-  const defs = listRow[0] ? await db.select().from(schema.workCustomFields).where(and(eq(schema.workCustomFields.spaceId, listRow[0].spaceId), eq(schema.workCustomFields.organizationId, org))).orderBy(asc(schema.workCustomFields.position)) : [];
-  const [tempo] = await db.select({ ms: sql<number>`coalesce(sum(${schema.workTimeEntries.durationMs}) filter (where ${schema.workTimeEntries.endedAt} is not null), 0)::bigint` }).from(schema.workTimeEntries).where(and(eq(schema.workTimeEntries.taskId, taskId), eq(schema.workTimeEntries.organizationId, org)));
   const outras = [...new Set(deps.flatMap((d) => [d.taskId, d.dependsOnTaskId]).filter((i) => i !== taskId))];
   const titulos = outras.length ? await db.select({ id: schema.workTasks.id, number: schema.workTasks.number, title: schema.workTasks.title }).from(schema.workTasks).where(and(inArray(schema.workTasks.id, outras), eq(schema.workTasks.organizationId, org))) : [];
   const t = new Map(titulos.map((x) => [x.id, { id: x.id, key: `DT-${x.number}`, title: x.title }]));
@@ -36,7 +41,7 @@ export async function getTaskDetail(ctx: WorkContext, taskId: string) {
     list: listRow[0] ?? null,
     subtaskIds: subtasks.map((s) => s.id),
     comments: comments.map((r) => ({ id: r.c.id, parentCommentId: r.c.parentCommentId, body: r.c.body, authorId: r.c.authorId, authorName: r.authorName ?? r.c.authorLabel ?? 'Alguém', authorAvatar: r.authorAvatar ?? null, resolvedAt: r.c.resolvedAt?.toISOString() ?? null, createdAt: r.c.createdAt.toISOString() })),
-    checklists: checklists.map((c) => ({ id: c.id, name: c.name, items: items.filter((i) => i.checklistId === c.id).map((i) => ({ id: i.id, parentItemId: i.parentItemId, text: i.text, done: i.done })) })),
+    checklists: checklists.map((c) => ({ id: c.id, name: c.name, items: items.map((r) => r.i).filter((i) => i.checklistId === c.id).map((i) => ({ id: i.id, parentItemId: i.parentItemId, text: i.text, done: i.done })) })),
     // Arquivo guardado no servidor não tem URL pública: a tela baixa pela rota autenticada /work/attachments/:id/file.
     attachments: attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes, storage: a.storage, url: a.storage === 'storage' ? `/work/attachments/${a.id}/file` : a.url })),
     fieldDefs: defs.map((d) => ({ id: d.id, name: d.name, type: d.fieldType, options: d.options })),

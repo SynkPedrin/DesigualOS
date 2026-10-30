@@ -45,6 +45,18 @@ describe('atualização de tarefa: a tela muda na hora, em ordem', () => {
     await act(async () => { responder({}); await fim; });
   });
 
+  it('o status novo aparece ANTES de o servidor responder, com nome e cor do espaço', async () => {
+    let responder!: (v: unknown) => void;
+    apiFetchMock.mockImplementation(() => new Promise((r) => { responder = r; }));
+    const { qc, mutar } = montar();
+    qc.setQueryData(['work', 'statuses', 'S'], { statuses: [{ id: 'st-pronto', name: 'Pronto', color: '#0f0', category: 'done', position: 3, isInitial: false, isFinal: true }] });
+    let fim!: Promise<unknown>;
+    await act(async () => { fim = mutar({ id: 't1', expectedVersion: 1, statusId: 'st-pronto' }); await Promise.resolve(); });
+    expect(naLista(qc).statusId).toBe('st-pronto');
+    expect(detalhe(qc).status).toEqual({ id: 'st-pronto', name: 'Pronto', color: '#0f0', category: 'done', isFinal: true });
+    await act(async () => { responder({}); await fim; });
+  });
+
   it('dois cliques seguidos vão ao servidor um de cada vez, na ordem', async () => {
     const ordem: string[] = [];
     const pendentes: Array<() => void> = [];

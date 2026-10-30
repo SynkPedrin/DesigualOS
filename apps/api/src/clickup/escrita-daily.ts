@@ -177,8 +177,21 @@ export async function partesDoComentario(config: ClickUpConfig, corpo: string): 
   return partes.length ? partes : [{ text: corpo }];
 }
 
-/** Token OAuth do ClickUp da pessoa, se ela conectou o mesmo workspace. */
+// ── em nome de quem: o ClickUp mostra como autor o dono do token ─────────────────────────────────────────────────
+
+const tokensEmCache = new Map<string, { em: number; token: string | null }>();
+export function esquecerTokensDaEscrita(): void {
+  tokensEmCache.clear();
+}
+/** Token OAuth do ClickUp da pessoa, se ela conectou o mesmo workspace. Guardado 1 min (cada evento perguntava ao banco). */
 async function tokenDoClickUpDe(userId: string, teamId: string): Promise<string | null> {
+  const guardado = tokensEmCache.get(userId);
+  if (guardado && Date.now() - guardado.em < 60_000) return guardado.token;
+  const token = await lerTokenDoClickUp(userId, teamId);
+  tokensEmCache.set(userId, { em: Date.now(), token });
+  return token;
+}
+async function lerTokenDoClickUp(userId: string, teamId: string): Promise<string | null> {
   const [c] = await db.select({ token: schema.integrationConnections.accessTokenEncrypted, ws: schema.integrationConnections.externalWorkspaceId })
     .from(schema.integrationConnections)
     .where(and(eq(schema.integrationConnections.userId, userId), eq(schema.integrationConnections.provider, 'clickup'), eq(schema.integrationConnections.status, 'connected')))
@@ -187,11 +200,28 @@ async function tokenDoClickUpDe(userId: string, teamId: string): Promise<string 
   try { return decryptToken(c.token) || null; } catch { return null; }
 }
 
+/**
+ * A ação sai em nome de QUEM A FEZ quando a pessoa conectou o ClickUp dela: status, edição, criação, responsáveis,
+ * etiquetas e comentário. Antes só o comentário fazia isso, e o resto saía pela chave da agência, que é a do Pedro:
+ * no ClickUp, "Pedro Gabriel alterou o status" numa mudança feita pela Tammy (30/10/2026).
+ */
+async function configDoAutor(config: ClickUpConfig, e: EventoDeSaida): Promise<ClickUpConfig | null> {
+  if (e.actorKind !== 'user' || !e.actorId) return null;
+  const token = await tokenDoClickUpDe(e.actorId, config.teamId);
+  return token ? { ...config, apiKey: token } : null;
+}
+
+/** O ClickUp recusou o token da pessoa (expirou, revogado, sem acesso à lista): a ação vai pela conta da agência. */
+export function tokenRecusado(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /\((401|403)\)|OAUTH_\d+|Token invalid|not authorized/i.test(msg);
+}
+
 // ── um evento ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 type Efeito = 'empurrado' | 'ignorado';
 
-async function criarNoClickUp(config: ClickUpConfig, org: string, e: EventoDeSaida): Promise<Efeito> {
+async function criarNoClickUp(config: ClickUpConfig, org: string, e: EventoDeSaida, escrita: ClickUpConfig): Promise<Efeito> {
   const t = await tarefaParaSaida(org, e.taskId);
   if (!t || t.archivedAt) return 'ignorado';
   if (await vinculoDaTarefa(org, t.id)) return 'ignorado'; // já tem par (veio do ClickUp ou já foi criada)
@@ -204,7 +234,7 @@ async function criarNoClickUp(config: ClickUpConfig, org: string, e: EventoDeSai
     pai = v.externalId;
   }
   const [primeiro, ...demais] = await idsNoClickUp(config, t.assigneeIds);
-  const criada = await createTask(config, {
+  const criada = await createTask(escrita, {
     listId: lista.externalId,
     name: t.title,
     ...(t.description ? { markdownDescription: t.description } : {}),
@@ -218,13 +248,17 @@ async function criarNoClickUp(config: ClickUpConfig, org: string, e: EventoDeSai
   await registrarVinculoDeSaida(org, { externalType: 'task', externalId: criada.id, entityId: t.id, meta: { url: criada.url } });
   // O resto é acabamento: se falhar, a tarefa já existe nos dois lados e o próximo evento corrige.
   const acabamento: UpdateTaskParams = { status: t.statusName, ...(demais.length ? { addAssignees: demais } : {}), ...(t.estimateMinutes !== null ? { timeEstimate: t.estimateMinutes * 60_000 } : {}) };
-  await updateTask(config, criada.id, acabamento).catch((error: unknown) => logger.warn({ error, taskId: t.id }, 'Escrita Daily→ClickUp: tarefa criada, mas o acabamento (status/responsáveis) falhou'));
-  for (const tag of t.tags) await addTaskTag(config, criada.id, tag).catch((error: unknown) => logger.warn({ error, tag }, 'Escrita Daily→ClickUp: etiqueta não aplicada (precisa existir no espaço)'));
+  await updateTask(escrita, criada.id, acabamento).catch((error: unknown) => logger.warn({ error, taskId: t.id }, 'Escrita Daily→ClickUp: tarefa criada, mas o acabamento (status/responsáveis) falhou'));
+  for (const tag of t.tags) await addTaskTag(escrita, criada.id, tag).catch((error: unknown) => logger.warn({ error, tag }, 'Escrita Daily→ClickUp: etiqueta não aplicada (precisa existir no espaço)'));
   return 'empurrado';
 }
 
-async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaida, jaFeito: Set<string>): Promise<Efeito> {
-  if (e.action === 'created') return criarNoClickUp(config, org, e);
+/**
+ * `config` é a conta da agência (para ler membros e casar pessoas); `escrita` é em nome de quem a ação sai: o token
+ * do autor, se ele conectou o ClickUp, senão a própria conta da agência.
+ */
+async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaida, jaFeito: Set<string>, escrita: ClickUpConfig = config): Promise<Efeito> {
+  if (e.action === 'created') return criarNoClickUp(config, org, e, escrita);
 
   const vinculo = await vinculoDaTarefa(org, e.taskId);
   if (!vinculo) return 'ignorado'; // tarefa só do Daily
@@ -235,19 +269,13 @@ async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaid
     if (!commentId || (await vinculoDoComentario(org, commentId))) return 'ignorado';
     const c = await comentarioParaSaida(org, commentId);
     if (!c) return 'ignorado';
-    const autor = c.authorId ? (await usuariosParaSaida([c.authorId])).get(c.authorId)?.name : null;
-    // Em nome de QUEM ESCREVEU quando ela tem o ClickUp conectado; senão a conta da agência, com o nome na frente.
-    // Antes saía sempre pela conta da agência (o comentário da Tammy aparecia como do Pedro, 30/10/2026).
-    const tokenDoAutor = c.authorId ? await tokenDoClickUpDe(c.authorId, config.teamId) : null;
-    const comoQuem = tokenDoAutor ? { ...config, apiKey: tokenDoAutor } : config;
     const partes = await partesDoComentario(config, c.body);
-    if (!tokenDoAutor) partes.unshift({ text: `${autor ?? c.authorLabel ?? 'Daily Tasks'}: ` });
-    const criado = await createTaskCommentRico(comoQuem, ext, partes).catch((error: unknown) => {
-      if (!tokenDoAutor) throw error;
-      // Token da pessoa recusado (expirou, sem acesso à lista): sai pela conta da agência, com o nome na frente.
-      logger.warn({ error, autor: c.authorId }, 'Escrita Daily→ClickUp: comentário em nome da pessoa falhou; vai pela conta da agência');
-      return createTaskCommentRico(config, ext, [{ text: `${autor ?? c.authorLabel ?? 'Daily Tasks'}: ` }, ...partes]);
-    });
+    // Pela conta da agência, o nome de quem escreveu vai na frente (senão o comentário parece do dono da chave).
+    if (escrita.apiKey === config.apiKey) {
+      const autor = c.authorId ? (await usuariosParaSaida([c.authorId])).get(c.authorId)?.name : null;
+      partes.unshift({ text: `${autor ?? c.authorLabel ?? 'Daily Tasks'}: ` });
+    }
+    const criado = await createTaskCommentRico(escrita, ext, partes);
     await registrarVinculoDeSaida(org, { externalType: 'comment', externalId: criado.id, entityId: c.id });
     return 'empurrado';
   }
@@ -258,7 +286,7 @@ async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaid
   if (e.action === 'status_changed') {
     const chave = `${e.taskId}|status|${t.statusName}`;
     if (jaFeito.has(chave)) return 'ignorado';
-    await updateTask(config, ext, { status: t.statusName });
+    await updateTask(escrita, ext, { status: t.statusName });
     jaFeito.add(chave);
     return 'empurrado';
   }
@@ -266,7 +294,7 @@ async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaid
   if (e.action === 'assigned' || e.action === 'unassigned') {
     const ids = await idsNoClickUp(config, Array.isArray(e.data.userIds) ? (e.data.userIds as string[]) : []);
     if (!ids.length) return 'ignorado';
-    await updateTask(config, ext, e.action === 'assigned' ? { addAssignees: ids } : { removeAssignees: ids });
+    await updateTask(escrita, ext, e.action === 'assigned' ? { addAssignees: ids } : { removeAssignees: ids });
     return 'empurrado';
   }
 
@@ -277,7 +305,7 @@ async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaid
     if (Object.keys(params).length) {
       const chave = `${e.taskId}|${JSON.stringify(params)}`;
       if (!jaFeito.has(chave)) {
-        await updateTask(config, ext, params);
+        await updateTask(escrita, ext, params);
         jaFeito.add(chave);
         fez = true;
       }
@@ -285,8 +313,8 @@ async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaid
     if (mudancas.tags) {
       const de = new Set(Array.isArray(mudancas.tags.from) ? (mudancas.tags.from as string[]) : []);
       const para = new Set(Array.isArray(mudancas.tags.to) ? (mudancas.tags.to as string[]) : []);
-      for (const tag of para) if (!de.has(tag)) { await addTaskTag(config, ext, tag); fez = true; }
-      for (const tag of de) if (!para.has(tag)) { await removeTaskTag(config, ext, tag); fez = true; }
+      for (const tag of para) if (!de.has(tag)) { await addTaskTag(escrita, ext, tag); fez = true; }
+      for (const tag of de) if (!para.has(tag)) { await removeTaskTag(escrita, ext, tag); fez = true; }
     }
     return fez ? 'empurrado' : 'ignorado';
   }
@@ -310,13 +338,17 @@ export function ultimasEscritas() {
  * Empurra os eventos novos de UMA empresa. O cursor só anda sobre o que foi resolvido (empurrado, ignorado ou falha
  * definitiva): uma falha passageira para o ciclo ali e o próximo ciclo recomeça do mesmo evento.
  */
+const cursoresConhecidos = new Set<string>();
 export async function empurrarEventosDaEmpresa(organizationId: string, lote = 100): Promise<ResultadoDaEscrita> {
   const r: ResultadoDaEscrita = { lidos: 0, empurrados: 0, ignorados: 0, falhas: 0 };
   const config = configDoClickUp();
   if (!config) return { ...r, paradaPor: 'CLICKUP_API_KEY/CLICKUP_TEAM_ID não configurados' };
-  if (!(await cursorDaSaidaExiste(organizationId))) {
-    await iniciarCursorDaSaida(organizationId); // primeira vez: começa de agora, nunca reenvia o passado
-    return r;
+  if (!cursoresConhecidos.has(organizationId)) {
+    if (!(await cursorDaSaidaExiste(organizationId))) {
+      await iniciarCursorDaSaida(organizationId); // primeira vez: começa de agora, nunca reenvia o passado
+      return r;
+    }
+    cursoresConhecidos.add(organizationId); // o cursor não some: perguntar a cada ciclo era uma ida ao banco a mais
   }
   const eventos = await eventosParaSaida(organizationId, lote);
   r.lidos = eventos.length;
@@ -324,7 +356,15 @@ export async function empurrarEventosDaEmpresa(organizationId: string, lote = 10
   let ultimoResolvido: EventoDeSaida | null = null;
   for (const e of eventos) {
     try {
-      const efeito = await aplicarEvento(await configDoEvento(config, e), organizationId, e, jaFeito);
+      const daAgencia = await configDoEvento(config, e);
+      const doAutor = await configDoAutor(daAgencia, e);
+      const efeito = await aplicarEvento(daAgencia, organizationId, e, jaFeito, doAutor ?? daAgencia).catch((error: unknown) => {
+        if (!doAutor || !tokenRecusado(error)) throw error;
+        logger.warn({ error, autor: e.actorId, acao: e.action }, 'Escrita Daily→ClickUp: token da pessoa recusado; vai pela conta da agência');
+        // Não insiste no token recusado a cada evento: por 10 min as ações dessa pessoa vão pela agência.
+        tokensEmCache.set(e.actorId!, { em: Date.now() + 9 * 60_000, token: null });
+        return aplicarEvento(daAgencia, organizationId, e, jaFeito, daAgencia);
+      });
       if (efeito === 'empurrado') { r.empurrados++; registrar({ organizationId, acao: e.action, ok: true }); } else r.ignorados++;
     } catch (error) {
       const passageira = falhaPassageira(error);
@@ -346,27 +386,39 @@ export async function empurrarEventosDaEmpresa(organizationId: string, lote = 10
 
 const PRAZO_DO_CICLO_MS = Number(process.env.DAILY_SYNC_PRAZO_TAREFA_MS) || 120_000;
 let escoadorLigado = false;
+let rodando = false;
+let deNovo = false;
+async function cicloDoEscoador(): Promise<void> {
+  if (rodando) { deNovo = true; return; }
+  rodando = true;
+  try {
+    do {
+      deNovo = false;
+      for (const org of await organizacoesComClickUp()) {
+        // Com prazo: um ciclo pendurado deixaria `rodando` preso em true e a saída parada para sempre.
+        const r = await comPrazo(empurrarEventosDaEmpresa(org), PRAZO_DO_CICLO_MS, 'o ciclo da escrita');
+        if (r.empurrados || r.falhas) logger.info({ org, ...r }, 'Escrita Daily→ClickUp: ciclo');
+      }
+    } while (deNovo);
+  } catch (error) {
+    logger.warn({ error }, 'Escrita Daily→ClickUp: ciclo falhou');
+  } finally {
+    rodando = false;
+  }
+}
+
+/**
+ * Chamado logo depois de uma edição no Daily: a saída corre na hora em vez de esperar o próximo tique de 5 s (a
+ * mudança levava até ~10 s para aparecer no ClickUp, 30/10/2026). Edição durante um ciclo marca outra volta.
+ */
+export function acordarEscoador(): void {
+  if (escoadorLigado) void cicloDoEscoador();
+}
+
 /** Liga o escoador (a cada 5 s) se a escrita estiver ligada. Idempotente; não roda em teste. */
 export function iniciarEscoadorDoDaily(): void {
   if (escoadorLigado || process.env.VITEST || !escritaNoClickUpLigada()) return;
   escoadorLigado = true;
-  let rodando = false;
-  setInterval(() => {
-    if (rodando) return;
-    rodando = true;
-    void (async () => {
-      try {
-        for (const org of await organizacoesComClickUp()) {
-          // Com prazo: um ciclo pendurado deixaria `rodando` preso em true e a saída parada para sempre.
-          const r = await comPrazo(empurrarEventosDaEmpresa(org), PRAZO_DO_CICLO_MS, 'o ciclo da escrita');
-          if (r.empurrados || r.falhas) logger.info({ org, ...r }, 'Escrita Daily→ClickUp: ciclo');
-        }
-      } catch (error) {
-        logger.warn({ error }, 'Escrita Daily→ClickUp: ciclo falhou');
-      } finally {
-        rodando = false;
-      }
-    })();
-  }, 5_000).unref();
+  setInterval(() => { if (!rodando) void cicloDoEscoador(); }, 5_000).unref();
   logger.info('Escrita Daily→ClickUp: escoador ligado (a cada 5 s)');
 }
