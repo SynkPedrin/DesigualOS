@@ -143,7 +143,11 @@ export default function DailyTasksPage() {
   useEffect(() => { setSelecionadas(new Set()); setRapido(null); setFiltroStatus(null); }, [listId, spaceId]);
 
   const { soAbertas: soAsAbertasDoPrazo, ...janela } = useMemo(() => janelaDoPrazo(prazo, prazoDe, prazoAte), [prazo, prazoDe, prazoAte]);
-  const soAbertas = (visao === 'lista' || visao === 'tabela' || visao === 'gantt') && !concluidas && rapido !== 'prontas';
+  // Encerradas ficam fora do dia a dia, mas quem BUSCA ou filtra por status está procurando uma tarefa específica, e ela
+  // tem que aparecer mesmo encerrada há meses (pedido do Pedro, 30/10/2026). Antes a busca não achava, e filtrar por
+  // "Encerrado" voltava vazio.
+  const procurando = q.trim().length > 0 || filtroStatus !== null;
+  const soAbertas = (visao === 'lista' || visao === 'tabela' || visao === 'gantt') && !concluidas && rapido !== 'prontas' && !procurando;
   const tasks = useWorkTasks({ listId, spaceId: listId ? null : spaceAtivo, q: q.trim() || undefined, assigneeId: modoEu ? eu : filtroResp, priorities: filtroPrio === null ? [] : [filtroPrio], statusIds: filtroStatus ? [filtroStatus] : [], includeArchived: arquivados, clientId: filtroCli, completed: soAbertas || soAsAbertasDoPrazo ? false : undefined, tag: tag.trim() || null, ...janela,
     // Tarefas de uma pessoa incluem as SUBTAREFAS dela: no ClickUp boa parte do trabalho de cada um está em subtarefa
     // (Alicia: 14 tarefas sem, 38 com; Ana Luiza: 0 sem, 45 com — medido em 29/10/2026), e a visão parecia cortada.
@@ -265,6 +269,10 @@ export default function DailyTasksPage() {
             <label className="flex min-w-40 max-w-xs flex-1 items-center gap-2 rounded-lg border border-grafite-elevado bg-carbono px-2.5 py-1 focus-within:border-roxo-eletrico/60"><Search size={14} className="text-nevoa" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar" aria-label="Buscar tarefas" className="w-full bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa" /></label>
             <FiltroDeResponsavel membros={membros} valor={modoEu ? eu : filtroResp} semResponsavel={escopo === 'sem_resp'} eu={eu} onEscolher={escolherResponsavel} />
             <FiltroDePrazo prazo={prazo} de={prazoDe} ate={prazoAte} onMudar={mudarPrazo} />
+            <button type="button" aria-pressed={concluidas} onClick={() => salvarPrefs.mutate({ mostrarConcluidas: !concluidas })} title={concluidas ? 'Esconder as tarefas encerradas' : 'Mostrar também as tarefas encerradas'}
+              className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-sm transition-colors', concluidas ? 'border-roxo-eletrico/60 bg-roxo-eletrico/15 text-branco-cru' : 'border-grafite-elevado text-branco-cru hover:border-roxo-eletrico/60')}>
+              <ListChecks size={14} /> Encerradas
+            </button>
             <Popover label="Filtros" trigger={<span className="flex items-center gap-1.5 rounded-lg border border-grafite-elevado px-2.5 py-1 text-sm text-branco-cru hover:border-roxo-eletrico/60"><SlidersHorizontal size={14} /> Filtros{filtrosAtivos > 0 && <span className="rounded-full bg-roxo-eletrico px-1.5 text-[10px] font-semibold text-white">{filtrosAtivos}</span>}</span>}>
               {() => (
                 <div className="grid w-80 gap-3 p-2.5 text-xs text-nevoa">
