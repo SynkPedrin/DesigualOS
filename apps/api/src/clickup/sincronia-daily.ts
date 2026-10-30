@@ -304,6 +304,7 @@ export function agendarSincroniaDeFundo(taskId: string, tipo: TipoDeFundo = 'ger
     comPrazo(fecharSeFechadaNoClickUp(id), PRAZO_DA_TAREFA_MS, `a tarefa ${id}`)
       .then((r) => {
         if (r === 'completa') agendarSincroniaDaTarefa(id, 'conferencia', { espera: 0 });
+        else if (r === 'aberta') registrar({ taskId: id, acao: 'ignorada', motivo: 'conferência: aberta no ClickUp também' });
         else registrar({ taskId: id, acao: r === 'arquivada' ? 'arquivada' : 'sincronizada', motivo: 'conferência: fechada no ClickUp' });
       })
       .catch((error: unknown) => {
@@ -330,7 +331,15 @@ export function tamanhoDaFilaDeFundo(): number {
  * arquivada, arquiva. Qualquer outra coisa (reabriu, status que não existe aqui) devolve `completa`: quem chama usa a
  * sincronia de sempre.
  */
-export async function fecharSeFechadaNoClickUp(externalTaskId: string): Promise<'fechada' | 'arquivada' | 'completa'> {
+const verificadasAbertas = new Map<string, number>();
+let diagnosticosDeAberta = 0;
+/** O caminho curto leu a tarefa ABERTA no ClickUp há menos de 12 h: a conferência não a reenvia (ver `fecharSeFechadaNoClickUp`). */
+export function abertaNoClickUpRecentemente(externalTaskId: string): boolean {
+  const em = verificadasAbertas.get(externalTaskId);
+  return em !== undefined && Date.now() - em < 12 * 3_600_000;
+}
+
+export async function fecharSeFechadaNoClickUp(externalTaskId: string): Promise<'fechada' | 'arquivada' | 'aberta' | 'completa'> {
   const par = await parDaTarefaDoClickUp(externalTaskId);
   if (!par) return 'completa';
   if (escritaNoClickUpLigada() && (await temEscritaPendente(par.organizationId, par.taskId))) throw new SincroniaAdiada();
@@ -343,7 +352,14 @@ export async function fecharSeFechadaNoClickUp(externalTaskId: string): Promise<
   }
   if (t.archived) { (await arquivarTarefaDoClickUp(externalTaskId)).forEach(avisarDailyMudou); return 'arquivada'; }
   const tipo = String(t.status?.type ?? '').toLowerCase();
-  if (tipo !== 'closed' && tipo !== 'done') return 'completa';
+  if (tipo !== 'closed' && tipo !== 'done') {
+    // Aberta lá também: o Daily está certo. Medido em 30/10/2026: 727 tarefas de "Clientes Importados operand" abertas
+    // no ClickUp e fora da listagem de abertas do workspace (a lista não está arquivada). Mandar para a sincronia
+    // completa custava ~25 s cada sem mudar nada; agora é uma leitura, e a conferência não as reenvia por 12 h.
+    verificadasAbertas.set(externalTaskId, Date.now());
+    if (diagnosticosDeAberta++ < 5) logger.info({ taskId: externalTaskId, status: t.status?.status, tipo, lista: t.list, pasta: t.folder, espaco: t.space?.id, arquivada: t.archived, pai: t.parent ?? null }, 'Daily sync: aberta no ClickUp mas fora da listagem de abertas (diagnóstico)');
+    return 'aberta';
+  }
   const [aqui] = await db.select({ id: schema.workTasks.id, spaceId: schema.workLists.spaceId, concluida: schema.workTasks.completedAt })
     .from(schema.workTasks).innerJoin(schema.workLists, eq(schema.workLists.id, schema.workTasks.listId))
     .where(and(eq(schema.workTasks.id, par.taskId), eq(schema.workTasks.organizationId, par.organizationId))).limit(1);

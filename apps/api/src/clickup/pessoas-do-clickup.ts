@@ -3,7 +3,7 @@ import { db, schema } from '@desigual-os/database';
 import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
 import { and, eq, like, sql } from 'drizzle-orm';
 import { ClickUpHttpError, getTeamMembers, lerClickUpCru, type ClickUpMember } from '@desigual-os/tool-gateway';
-import { agendarSincroniaDeFundo, estaNaFilaDeFundo } from './sincronia-daily';
+import { abertaNoClickUpRecentemente, agendarSincroniaDeFundo, estaNaFilaDeFundo } from './sincronia-daily';
 
 const logger = createLogger({ service: 'pessoas-clickup' });
 
@@ -262,6 +262,7 @@ export async function conferirComOClickUp(organizationId: string, opcoes: { tare
     for (const [externo, daqui] of tarefaDoExterno) {
       const e = estado.get(daqui);
       if (!e || e.concluida || e.arquivada || abertasLa.has(externo) || listasArquivadasAqui.has(e.lista)) continue;
+      if (!opcoes.agendar && abertaNoClickUpRecentemente(externo)) continue; // já lida aberta lá: o Daily está certo
       suspeitasPorLista.set(e.lista, [...(suspeitasPorLista.get(e.lista) ?? []), externo]);
     }
     const listaExterna = new Map((await db.select({ externo: schema.workExternalMappings.externalId, daqui: schema.workExternalMappings.entityId }).from(schema.workExternalMappings)

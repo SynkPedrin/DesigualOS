@@ -250,7 +250,8 @@ describe.skipIf(!enabled)('pessoas só do ClickUp × PostgreSQL real', () => {
     expect(antes!.completedAt).toBeNull();
 
     clickup.respostas.set(`/task/${tarefa.id}`, { ...tarefa, status: { status: 'aberto', type: 'open' } });
-    expect(await S.fecharSeFechadaNoClickUp(tarefa.id)).toBe('completa');
+    expect(await S.fecharSeFechadaNoClickUp(tarefa.id)).toBe('aberta'); // aberta lá também: nada a fazer
+    expect(S.abertaNoClickUpRecentemente(tarefa.id)).toBe(true);
     clickup.respostas.set(`/task/${tarefa.id}`, { ...tarefa, status: { status: 'status que não existe aqui', type: 'closed' } });
     expect(await S.fecharSeFechadaNoClickUp(tarefa.id)).toBe('completa');
 
