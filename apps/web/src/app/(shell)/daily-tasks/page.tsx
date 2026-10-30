@@ -355,7 +355,7 @@ export default function DailyTasksPage() {
               )}
               {novaTarefa.trim() && <button type="submit" className="rounded-md bg-roxo-eletrico px-2.5 py-0.5 text-xs font-semibold text-white">Criar</button>}
             </form>
-          ) : (
+          ) : pessoa ? null : ( // tarefas de uma pessoa: cada bloco de cliente já tem o próprio "Adicionar tarefa"
             <p className="rounded-lg bg-grafite-elevado/40 px-3 py-2 text-sm text-nevoa">Para criar tarefas, escolha uma lista no menu à esquerda.</p>
           )}
 

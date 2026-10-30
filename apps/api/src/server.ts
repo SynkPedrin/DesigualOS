@@ -4,6 +4,7 @@ import corsPlugin from '@fastify/cors';
 import websocketPlugin from '@fastify/websocket';
 import multipartPlugin from '@fastify/multipart';
 import rateLimitPlugin from '@fastify/rate-limit';
+import { chaveDoLimite } from './lib/chave-do-limite';
 import helmetPlugin from '@fastify/helmet';
 import { z } from 'zod';
 import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/logging';
@@ -245,6 +246,8 @@ async function start(): Promise<void> {
     global: true,
     max: 300,
     timeWindow: '1 minute',
+    // Por pessoa (login) ou pelo IP real; nunca pelo IP do proxy, que é o mesmo para todo mundo (ver chave-do-limite.ts).
+    keyGenerator: (request) => chaveDoLimite(request),
     /**
      * FORA DE PRODUÇÃO, a máquina local não conta.
      *

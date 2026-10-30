@@ -192,4 +192,54 @@ describe.skipIf(!enabled)('pessoas só do ClickUp × PostgreSQL real', () => {
     expect(await achar('CosentinoEuropa')).toEqual([]); // "_" não é mais coringa nem é apagado
     expect(await achar('100%')).toEqual([]);
   });
+
+  it('conferência: status, prazo e prioridade diferentes do ClickUp voltam para a sincronia; igual não', async () => {
+    const naFila: string[] = [];
+    const ag = (id: string) => naFila.push(id);
+    const { db, schema } = dbm;
+    const { eq } = await import('drizzle-orm');
+    const [d] = await db.select().from(schema.workTasks).where(eq(schema.workTasks.organizationId, org));
+    const igual = { ...tarefa, name: d!.title, status: { status: 'aberto', type: 'open' }, due_date: null, priority: null, assignees: [] };
+    await db.delete(schema.workTaskAssignees).where(eq(schema.workTaskAssignees.taskId, d!.id));
+    expect((await P.conferirComOClickUp(org, { tarefas: [igual], agendar: ag })).agendadas).toBe(0);
+
+    const casos: Array<[string, Record<string, unknown>]> = [
+      ['status', { status: { status: 'aguardando aprovação', type: 'custom' } }],
+      ['prazo', { due_date: String(Date.parse('2026-10-29T15:00:00Z')) }],
+      ['prioridade', { priority: { id: '1', priority: 'urgent' } }],
+      ['título', { name: `${d!.title} (renomeada)` }],
+    ];
+    for (const [campo, mudanca] of casos) {
+      naFila.length = 0;
+      const res = await P.conferirComOClickUp(org, { tarefas: [{ ...igual, ...mudanca }], agendar: ag });
+      expect({ campo, divergiam: res.divergiam, exemplos: res.exemplos }).toEqual({ campo, divergiam: 1, exemplos: [`${tarefa.id} ${campo}`] });
+    }
+  });
+
+  it('conferência: aberta no Daily e fechada no ClickUp volta para a sincronia — só se a leitura do ClickUp veio inteira', async () => {
+    const naFila: string[] = [];
+    // A leitura veio inteira e a tarefa não está entre as abertas: foi fechada (ou apagada) lá.
+    const r = await P.conferirComOClickUp(org, { tarefas: [], completa: true, agendar: (id) => naFila.push(id) });
+    expect(r).toMatchObject({ fechadasLa: 1, agendadas: 1 });
+    expect(naFila).toEqual([tarefa.id]);
+    // Leitura cortada no meio: não conclui nada.
+    naFila.length = 0;
+    expect((await P.conferirComOClickUp(org, { tarefas: [], completa: false, agendar: (id) => naFila.push(id) })).fechadasLa).toBe(0);
+    expect(naFila).toEqual([]);
+  });
+
+  it('conferência: divergência que a sincronia não resolve para de ser reenviada depois de duas tentativas', async () => {
+    const { db, schema } = dbm;
+    const { eq } = await import('drizzle-orm');
+    const [d] = await db.select().from(schema.workTasks).where(eq(schema.workTasks.organizationId, org));
+    const teimosa = { ...tarefa, name: d!.title, status: { status: 'pendente', type: 'custom' }, due_date: null, priority: null, assignees: [] };
+    const naFila: string[] = [];
+    const ag = (id: string) => naFila.push(id);
+    const passadas = [];
+    for (let i = 0; i < 4; i++) passadas.push(await P.conferirComOClickUp(org, { tarefas: [teimosa], agendar: ag }));
+    expect(passadas.map((p) => [p.agendadas, p.persistentes])).toEqual([[1, 0], [1, 0], [0, 1], [0, 1]]);
+    // Voltou a ficar igual e depois divergiu de novo: tenta outra vez.
+    await P.conferirComOClickUp(org, { tarefas: [{ ...teimosa, status: { status: 'aberto', type: 'open' } }], agendar: ag });
+    expect((await P.conferirComOClickUp(org, { tarefas: [teimosa], agendar: ag })).agendadas).toBe(1);
+  });
 });
