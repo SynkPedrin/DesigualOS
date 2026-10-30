@@ -23,7 +23,7 @@ export function BotaoModoEu({ className }: { className?: string }) {
       <span className={cn('flex size-6 items-center justify-center rounded-full', ligado ? 'bg-white/20' : 'bg-grafite-elevado')}><UserRound size={14} /></span>
       Modo eu
       <span aria-hidden className={cn('relative h-4 w-7 rounded-full transition-colors', ligado ? 'bg-sucesso' : 'bg-grafite-elevado')}>
-        <span className={cn('absolute top-0.5 size-3 rounded-full bg-white transition-transform', ligado ? 'translate-x-3.5' : 'translate-x-0.5')} />
+        <span className={cn('absolute left-0 top-0.5 size-3 rounded-full bg-white transition-transform', ligado ? 'translate-x-3.5' : 'translate-x-0.5')} />
       </span>
     </button>
   );
