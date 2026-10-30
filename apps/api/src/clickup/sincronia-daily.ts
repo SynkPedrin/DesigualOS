@@ -276,7 +276,10 @@ export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes:
  */
 const INTERVALO_DE_FUNDO_MS = Number(process.env.DAILY_SYNC_FUNDO_MS) || 1_500;
 type TipoDeFundo = 'fechada' | 'geral';
+// Duas filas: as `fechada` (caminho curto, ~1 s, e as mais visíveis — tarefa velha aberta na lista de todo mundo)
+// andam antes das `geral` (sincronia completa, ~25 s cada medido em 30/10/2026).
 const deFundo: string[] = [];
+const deFundoRapidas: string[] = [];
 const noFundo = new Map<string, TipoDeFundo>();
 let escoadorDeFundo: ReturnType<typeof setInterval> | null = null;
 let fundoOcupado = false;
@@ -289,11 +292,11 @@ let fundoOcupado = false;
 export function agendarSincroniaDeFundo(taskId: string, tipo: TipoDeFundo = 'geral'): void {
   if (!sincroniaDoDailyLigada() || noFundo.has(taskId)) return;
   noFundo.set(taskId, tipo);
-  deFundo.push(taskId);
+  (tipo === 'fechada' ? deFundoRapidas : deFundo).push(taskId);
   if (escoadorDeFundo || process.env.VITEST) return;
   escoadorDeFundo = setInterval(() => {
-    if (fundoOcupado || !deFundo.length || pendentes.size > 0 || naFila.size > 0) return; // ao vivo primeiro
-    const id = deFundo.shift()!;
+    if (fundoOcupado || (!deFundo.length && !deFundoRapidas.length) || pendentes.size > 0 || naFila.size > 0) return; // ao vivo primeiro
+    const id = (deFundoRapidas.length ? deFundoRapidas.shift() : deFundo.shift())!;
     const tipoDaVez = noFundo.get(id) ?? 'geral';
     noFundo.delete(id);
     if (tipoDaVez === 'geral') { agendarSincroniaDaTarefa(id, 'conferencia', { espera: 0 }); return; }
@@ -318,7 +321,7 @@ export function estaNaFilaDeFundo(taskId: string): boolean {
 }
 
 export function tamanhoDaFilaDeFundo(): number {
-  return deFundo.length;
+  return deFundo.length + deFundoRapidas.length;
 }
 
 /**
