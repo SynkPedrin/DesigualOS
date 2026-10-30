@@ -2,7 +2,7 @@ import { createLogger } from '@desigual-os/logging';
 import { db, schema } from '@desigual-os/database';
 import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
 import { and, eq, like, sql } from 'drizzle-orm';
-import { getTeamMembers, lerClickUpCru, type ClickUpMember } from '@desigual-os/tool-gateway';
+import { ClickUpHttpError, getTeamMembers, lerClickUpCru, type ClickUpMember } from '@desigual-os/tool-gateway';
 import { agendarSincroniaDeFundo, estaNaFilaDeFundo } from './sincronia-daily';
 
 const logger = createLogger({ service: 'pessoas-clickup' });
@@ -129,6 +129,8 @@ export interface ResultadoDaConferencia {
   persistentes: number;
   /** Já estavam na fila de fundo, esperando a vez. */
   aguardando: number;
+  /** Listas arquivadas (ou apagadas) no ClickUp que foram arquivadas aqui. */
+  listasArquivadas: number;
 }
 
 const insistencias = new Map<string, { motivo: string; vezes: number }>();
@@ -147,6 +149,19 @@ async function tarefasAbertasDoClickUp(): Promise<{ tarefas: Cru[]; completa: bo
   return { tarefas, completa: false };
 }
 
+/** A lista no ClickUp: `null` = não existe mais (404). */
+async function lerListaDoClickUp(listaExterna: string): Promise<Cru | null> {
+  const apiKey = process.env.CLICKUP_API_KEY;
+  const teamId = process.env.CLICKUP_TEAM_ID;
+  if (!apiKey || !teamId) return undefined as unknown as Cru;
+  try {
+    return await lerClickUpCru<Cru>({ apiKey, teamId }, `/list/${listaExterna}`);
+  } catch (e) {
+    if (e instanceof ClickUpHttpError && e.status === 404) return null;
+    throw e;
+  }
+}
+
 const diaEmSP = (ms: number | null) => (ms === null ? null : new Date(ms - 3 * 3_600_000).toISOString().slice(0, 10));
 const msDe = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number(v) || null);
 
@@ -161,8 +176,8 @@ const msDe = (v: unknown): number | null => (v === null || v === undefined || v 
  * não vem em /team) é cadastrado como as outras pessoas só do ClickUp. O inverso também: aberta aqui e fechada ou
  * apagada lá volta para a sincronia — só quando a leitura do ClickUp veio inteira, para não fechar nada por engano.
  */
-export async function conferirComOClickUp(organizationId: string, opcoes: { tarefas?: Cru[]; completa?: boolean; agendar?: (taskId: string, motivo: string) => void } = {}): Promise<ResultadoDaConferencia> {
-  const r: ResultadoDaConferencia = { organizationId, lidas: 0, pessoasNovas: 0, agendadas: 0, faltavam: 0, divergiam: 0, fechadasLa: 0, exemplos: [], persistentes: 0, aguardando: 0 };
+export async function conferirComOClickUp(organizationId: string, opcoes: { tarefas?: Cru[]; completa?: boolean; agendar?: (taskId: string, motivo: string) => void; lerLista?: (listaExterna: string) => Promise<Cru | null> } = {}): Promise<ResultadoDaConferencia> {
+  const r: ResultadoDaConferencia = { organizationId, lidas: 0, pessoasNovas: 0, agendadas: 0, faltavam: 0, divergiam: 0, fechadasLa: 0, exemplos: [], persistentes: 0, aguardando: 0, listasArquivadas: 0 };
   const agendar = opcoes.agendar ?? ((id: string, motivo: string) => agendarSincroniaDeFundo(id, motivo === 'fechada-no-clickup' ? 'fechada' : 'geral'));
   const esperando = opcoes.agendar ? () => false : estaNaFilaDeFundo;
   const marcar = (id: string, motivo: string) => {
@@ -201,7 +216,7 @@ export async function conferirComOClickUp(organizationId: string, opcoes: { tare
     .where(and(eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'task')));
   const tarefaDoExterno = new Map(vinculos.map((v) => [v.externo, v.tarefa]));
   const estado = new Map((await db.select({
-    id: schema.workTasks.id, titulo: schema.workTasks.title, prioridade: schema.workTasks.priority, prazo: schema.workTasks.dueAt,
+    id: schema.workTasks.id, lista: schema.workTasks.listId, titulo: schema.workTasks.title, prioridade: schema.workTasks.priority, prazo: schema.workTasks.dueAt,
     concluida: schema.workTasks.completedAt, arquivada: schema.workTasks.archivedAt, status: schema.workTaskStatuses.name,
   }).from(schema.workTasks).innerJoin(schema.workTaskStatuses, eq(schema.workTaskStatuses.id, schema.workTasks.statusId))
     .where(eq(schema.workTasks.organizationId, organizationId))).map((e) => [e.id, e]));
@@ -237,12 +252,31 @@ export async function conferirComOClickUp(organizationId: string, opcoes: { tare
     if (diferencas.length) { r.divergiam++; vistasAgora.add(`${organizationId}:${id}`); marcar(id, diferencas.join('+')); }
   }
 
-  // Aberta aqui, mas não está entre as abertas do ClickUp: fechada ou apagada lá.
+  // Aberta aqui, mas não está entre as abertas do ClickUp: fechada ou apagada lá — ou a LISTA dela foi arquivada lá
+  // (o ClickUp esconde as tarefas de lista arquivada, mesmo abertas). Pergunta pela lista UMA vez antes de mandar as
+  // tarefas para a fila: 727 de uma lista arquivada iam para a sincronia completa, ~25 s cada, à toa (30/10/2026).
   if (completa) {
+    const listasArquivadasAqui = new Set((await db.select({ id: schema.workLists.id }).from(schema.workLists)
+      .where(and(eq(schema.workLists.organizationId, organizationId), sql`${schema.workLists.archivedAt} is not null`))).map((l) => l.id));
+    const suspeitasPorLista = new Map<string, string[]>();
     for (const [externo, daqui] of tarefaDoExterno) {
       const e = estado.get(daqui);
-      if (!e || e.concluida || e.arquivada || abertasLa.has(externo)) continue;
-      r.fechadasLa++; vistasAgora.add(`${organizationId}:${externo}`); marcar(externo, 'fechada-no-clickup');
+      if (!e || e.concluida || e.arquivada || abertasLa.has(externo) || listasArquivadasAqui.has(e.lista)) continue;
+      suspeitasPorLista.set(e.lista, [...(suspeitasPorLista.get(e.lista) ?? []), externo]);
+    }
+    const listaExterna = new Map((await db.select({ externo: schema.workExternalMappings.externalId, daqui: schema.workExternalMappings.entityId }).from(schema.workExternalMappings)
+      .where(and(eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'list')))).map((l) => [l.daqui, l.externo]));
+    const lerLista = opcoes.lerLista ?? lerListaDoClickUp;
+    for (const [lista, externos] of suspeitasPorLista) {
+      const ext = listaExterna.get(lista);
+      const noClickUp = ext ? await lerLista(ext).catch(() => undefined) : undefined;
+      if (noClickUp === null || noClickUp?.archived) {
+        await db.update(schema.workLists).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(schema.workLists.id, lista), sql`${schema.workLists.archivedAt} is null`));
+        r.listasArquivadas++;
+        logger.info({ organizationId, lista, listaNoClickUp: ext, tarefas: externos.length, motivo: noClickUp === null ? 'apagada' : 'arquivada' }, 'Daily × ClickUp: lista arquivada no ClickUp, arquivada aqui');
+        continue;
+      }
+      for (const externo of externos) { r.fechadasLa++; vistasAgora.add(`${organizationId}:${externo}`); marcar(externo, 'fechada-no-clickup'); }
     }
   }
   // Ficou igual: esquece a insistência (se divergir de novo um dia, volta a tentar).

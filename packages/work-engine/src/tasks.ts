@@ -338,6 +338,9 @@ export async function listTasks(ctx: WorkContext, f: TaskFilter = {}): Promise<{
   const T = schema.workTasks;
   const where: SQL[] = [eq(T.organizationId, ctx.organizationId)];
   if (!f.includeArchived) where.push(isNull(T.archivedAt));
+  // Lista arquivada esconde as tarefas dela, como no ClickUp (30/10/2026: 727 tarefas de "Clientes Importados operand",
+  // lista arquivada lá, apareciam abertas aqui). Abrindo a própria lista (listId), ela mostra o que tem.
+  if (!f.includeArchived && !f.listId && !f.parentTaskId) where.push(sql`${T.listId} not in (select id from work_lists where organization_id = ${ctx.organizationId} and archived_at is not null)`);
   if (f.parentTaskId) where.push(eq(T.parentTaskId, f.parentTaskId));
   else if (!f.includeSubtasks) where.push(isNull(T.parentTaskId));
   if (f.listId) where.push(eq(T.listId, f.listId));

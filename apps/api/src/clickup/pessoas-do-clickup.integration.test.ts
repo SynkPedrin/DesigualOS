@@ -268,4 +268,33 @@ describe.skipIf(!enabled)('pessoas só do ClickUp × PostgreSQL real', () => {
     expect(arq!.archivedAt).not.toBeNull();
     clickup.respostas.set(`/task/${tarefa.id}`, tarefa);
   });
+
+  it('lista arquivada no ClickUp: arquiva a lista aqui, não manda as tarefas para a fila, e elas somem da visão do espaço', async () => {
+    const { db, schema } = dbm;
+    const { eq } = await import('drizzle-orm');
+    const { listTasks } = await import('@desigual-os/work-engine');
+    const [t] = await db.select().from(schema.workTasks).where(eq(schema.workTasks.organizationId, org));
+    await db.update(schema.workTasks).set({ archivedAt: null, completedAt: null }).where(eq(schema.workTasks.id, t!.id));
+    const [lista] = await db.select().from(schema.workLists).where(eq(schema.workLists.id, t!.listId));
+    const ctx = { organizationId: org, userId: ana, actorKind: 'user' as const };
+    expect((await listTasks(ctx as never, { spaceId: lista!.spaceId, includeSubtasks: true })).rows.map((x) => x.id)).toContain(t!.id);
+
+    const naFila: string[] = [];
+    const r = await P.conferirComOClickUp(org, { tarefas: [], completa: true, agendar: (id) => naFila.push(id), lerLista: async () => ({ id: 'LP', archived: true }) });
+    expect(r).toMatchObject({ listasArquivadas: 1, fechadasLa: 0, agendadas: 0 });
+    expect(naFila).toEqual([]);
+    const [depois] = await db.select().from(schema.workLists).where(eq(schema.workLists.id, t!.listId));
+    expect(depois!.archivedAt).not.toBeNull();
+    // Sumiu da visão do espaço; abrindo a própria lista, continua lá.
+    expect((await listTasks(ctx as never, { spaceId: lista!.spaceId, includeSubtasks: true })).rows.map((x) => x.id)).not.toContain(t!.id);
+    expect((await listTasks(ctx as never, { listId: t!.listId })).rows.map((x) => x.id)).toContain(t!.id);
+    // Passada seguinte: lista já arquivada aqui, nem pergunta de novo.
+    let perguntas = 0;
+    await P.conferirComOClickUp(org, { tarefas: [], completa: true, agendar: (id) => naFila.push(id), lerLista: async () => { perguntas++; return { archived: true }; } });
+    expect(perguntas).toBe(0);
+    // Lista apagada no ClickUp (404) também arquiva.
+    await db.update(schema.workLists).set({ archivedAt: null }).where(eq(schema.workLists.id, t!.listId));
+    expect((await P.conferirComOClickUp(org, { tarefas: [], completa: true, agendar: (id) => naFila.push(id), lerLista: async () => null })).listasArquivadas).toBe(1);
+    await db.update(schema.workLists).set({ archivedAt: null }).where(eq(schema.workLists.id, t!.listId));
+  });
 });
