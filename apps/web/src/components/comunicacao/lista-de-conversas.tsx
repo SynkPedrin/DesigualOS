@@ -117,7 +117,7 @@ function PastaDeCanais({ canais, ativaId, meId, onSelect, onCriarCanal, onProcur
           {mencoes > 0 && <span className="ml-1 rounded-full bg-erro px-1.5 font-semibold leading-[16px] text-branco-cru">@</span>}
           {naoLidas > 0 && <span className="ml-1 min-w-[18px] rounded-full bg-sinal px-1.5 text-center font-semibold normal-case leading-[16px] tracking-normal text-grafite">{naoLidas > 99 ? '99+' : naoLidas}</span>}
         </button>
-        <button type="button" onClick={onCriarCanal} aria-label="Criar canal" title="Criar canal" className="text-nevoa hover:text-branco-cru"><Plus size={13} /></button>
+        <button type="button" onClick={onCriarCanal} aria-label="Criar canal" title="Criar canal" className="-my-1 flex size-6 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><Plus size={14} /></button>
       </div>
       {visiveis.map((c) => <Linha key={c.id} c={c} ativa={c.id === ativaId} meId={meId} onSelect={() => onSelect(c.id)} />)}
       {aberta && <button type="button" onClick={onProcurarCanais} className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs text-nevoa hover:text-branco-cru"><Compass size={14} /> Procurar canais</button>}

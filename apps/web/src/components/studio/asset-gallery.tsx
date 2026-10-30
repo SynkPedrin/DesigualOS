@@ -151,10 +151,11 @@ function DownloadButton({ group }: { group: StudioAsset[] }) {
       type="button"
       onClick={handleClick}
       disabled={downloading}
-      className="flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-[11px] text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-50"
+      title={isGroup ? 'Baixar tudo (.zip)' : undefined}
+      className="flex flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-md py-1.5 text-[11px] text-nevoa transition-colors hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-50"
     >
       <Download size={12} />
-      {downloading ? 'Compactando…' : isGroup ? 'Baixar tudo (.zip)' : 'Baixar'}
+      {downloading ? 'Compactando…' : isGroup ? 'Baixar .zip' : 'Baixar'}
     </button>
   );
 }

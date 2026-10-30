@@ -74,7 +74,7 @@ function AutomationToggle({ automation, disabled }: { automation: Automation; di
       >
         <span
           className={cn(
-            'absolute top-0.5 size-4 rounded-full transition-transform',
+            'absolute left-0 top-0.5 size-4 rounded-full transition-transform',
             automation.enabled ? 'translate-x-[22px] bg-sinal' : 'translate-x-0.5 bg-nevoa',
           )}
         />
