@@ -266,6 +266,42 @@ export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes:
   pendentes.set(taskId, { timer, apagada: apagadaFinal });
 }
 
+// ── fila de fundo (correção de atraso) ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * O que a conferência com o ClickUp acha para corrigir vai para uma fila SEPARADA, que só anda quando a fila ao vivo
+ * (webhooks) está vazia, uma tarefa a cada 3 s. Na primeira conferência em produção (30/10/2026) foram 897 de uma
+ * vez: na fila de sempre, uma edição feita agora no ClickUp esperaria atrás de todas, e o ritmo encostaria no limite
+ * de 100 chamadas/min da chave do ClickUp, que é a mesma dos webhooks.
+ */
+const INTERVALO_DE_FUNDO_MS = Number(process.env.DAILY_SYNC_FUNDO_MS) || 3_000;
+const deFundo: string[] = [];
+const noFundo = new Set<string>();
+let escoadorDeFundo: ReturnType<typeof setInterval> | null = null;
+
+export function agendarSincroniaDeFundo(taskId: string): void {
+  if (!sincroniaDoDailyLigada() || noFundo.has(taskId)) return;
+  noFundo.add(taskId);
+  deFundo.push(taskId);
+  if (escoadorDeFundo || process.env.VITEST) return;
+  escoadorDeFundo = setInterval(() => {
+    if (!deFundo.length || pendentes.size > 0 || naFila.size > 0) return; // ao vivo primeiro
+    const id = deFundo.shift()!;
+    noFundo.delete(id);
+    agendarSincroniaDaTarefa(id, 'conferencia', { espera: 0 });
+  }, INTERVALO_DE_FUNDO_MS);
+  escoadorDeFundo.unref?.();
+}
+
+/** Ainda esperando a vez na fila de fundo (a conferência não conta isso como "não resolveu"). */
+export function estaNaFilaDeFundo(taskId: string): boolean {
+  return noFundo.has(taskId);
+}
+
+export function tamanhoDaFilaDeFundo(): number {
+  return deFundo.length;
+}
+
 // ── varredura de segurança ───────────────────────────────────────────────────────────────────────────────────────
 
 const CHAVE_DO_MARCO = 'daily-sync:clickup:marco';

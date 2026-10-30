@@ -3,7 +3,7 @@ import { db, schema } from '@desigual-os/database';
 import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
 import { and, eq, like, sql } from 'drizzle-orm';
 import { getTeamMembers, lerClickUpCru, type ClickUpMember } from '@desigual-os/tool-gateway';
-import { agendarSincroniaDaTarefa } from './sincronia-daily';
+import { agendarSincroniaDeFundo, estaNaFilaDeFundo } from './sincronia-daily';
 
 const logger = createLogger({ service: 'pessoas-clickup' });
 
@@ -127,6 +127,8 @@ export interface ResultadoDaConferencia {
   exemplos: string[];
   /** Divergiram igual depois de duas sincronias: não reenviadas (ver `marcar`). */
   persistentes: number;
+  /** Já estavam na fila de fundo, esperando a vez. */
+  aguardando: number;
 }
 
 const insistencias = new Map<string, { motivo: string; vezes: number }>();
@@ -160,12 +162,14 @@ const msDe = (v: unknown): number | null => (v === null || v === undefined || v 
  * apagada lá volta para a sincronia — só quando a leitura do ClickUp veio inteira, para não fechar nada por engano.
  */
 export async function conferirComOClickUp(organizationId: string, opcoes: { tarefas?: Cru[]; completa?: boolean; agendar?: (taskId: string) => void } = {}): Promise<ResultadoDaConferencia> {
-  const r: ResultadoDaConferencia = { organizationId, lidas: 0, pessoasNovas: 0, agendadas: 0, faltavam: 0, divergiam: 0, fechadasLa: 0, exemplos: [], persistentes: 0 };
-  const agendar = opcoes.agendar ?? ((id: string) => agendarSincroniaDaTarefa(id, 'conferencia'));
+  const r: ResultadoDaConferencia = { organizationId, lidas: 0, pessoasNovas: 0, agendadas: 0, faltavam: 0, divergiam: 0, fechadasLa: 0, exemplos: [], persistentes: 0, aguardando: 0 };
+  const agendar = opcoes.agendar ?? agendarSincroniaDeFundo;
+  const esperando = opcoes.agendar ? () => false : estaNaFilaDeFundo;
   const marcar = (id: string, motivo: string) => {
     // A mesma divergência depois de duas sincronias não é atraso, é algo que a sincronia não sabe aplicar (ex.: status
     // que não existe no espaço daqui). Para de reenviar — senão viraria um laço a cada 15 min — e avisa uma vez.
     const chave = `${organizationId}:${id}`;
+    if (esperando(id)) { r.aguardando++; return; } // ainda na fila de fundo: não é "a sincronia não resolveu"
     const antes = insistencias.get(chave);
     const vezes = antes && antes.motivo === motivo ? antes.vezes + 1 : 1;
     insistencias.set(chave, { motivo, vezes });

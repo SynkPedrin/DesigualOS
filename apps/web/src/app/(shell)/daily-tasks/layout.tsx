@@ -45,16 +45,17 @@ export default function DailyTasksLayout({ children }: { children: React.ReactNo
   const rodando = timer.data?.running ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <nav aria-label="Daily Tasks" className="flex flex-wrap items-center gap-1 border-b border-grafite-elevado">
+      {/* Uma linha só: no notebook (1280) "Gerenciar" caía para uma segunda linha (30/10/2026). Sem espaço, rola de lado. */}
+      <nav aria-label="Daily Tasks" className="flex items-center gap-1 overflow-x-auto whitespace-nowrap border-b border-grafite-elevado [scrollbar-width:none]">
         {ABAS.map((a) => (
-          <Link key={a.href} href={a.href} className={cn('-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium', pathname === a.href ? 'border-roxo-eletrico text-branco-cru' : 'border-transparent text-nevoa hover:text-branco-cru')}>
+          <Link key={a.href} href={a.href} className={cn('-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2 text-sm font-medium xl:px-3', pathname === a.href ? 'border-roxo-eletrico text-branco-cru' : 'border-transparent text-nevoa hover:text-branco-cru')}>
             {a.label}
             {a.href.endsWith('caixa-de-entrada') && naoLidas > 0 && <span className="rounded-full bg-roxo-eletrico px-1.5 text-[10px] font-semibold text-white">{naoLidas > 99 ? '99+' : naoLidas}</span>}
           </Link>
         ))}
         <span className="ml-auto" />
         {COM_MODO_EU.has(pathname) && <BotaoModoEu className="mb-1.5 mr-1" />}
-        <Popover label="Gerenciar" align="right" trigger={<span className={cn('flex items-center gap-1.5 px-2 py-2 text-sm', GERENCIAMENTO.some((g) => g.href === pathname) ? 'font-medium text-branco-cru' : 'text-nevoa')}><Settings size={15} /> Gerenciar</span>}>
+        <Popover label="Gerenciar" align="right" trigger={<span className={cn('flex items-center gap-1.5 px-2 py-2 text-sm', GERENCIAMENTO.some((g) => g.href === pathname) ? 'font-medium text-branco-cru' : 'text-nevoa')}><Settings size={15} /> <span className="hidden xl:inline">Gerenciar</span></span>}>
           {(fechar) => (
             <nav aria-label="Gerenciamento" className="w-52 p-1">
               {GERENCIAMENTO.map((a) => <Link key={a.href} href={a.href} onClick={fechar} className={cn('block rounded px-3 py-2 text-sm hover:bg-grafite-elevado', pathname === a.href ? 'font-medium text-branco-cru' : 'text-nevoa')}>{a.label}</Link>)}

@@ -4,7 +4,7 @@ import { gravarAnexo, abrirAnexo, apagarAnexo, copiarAnexo, tipoParaServir, poli
 import { anexoAcessivel } from '../internal-chat/service';
 import { copiarAnexosDoClickUp } from './anexos-externos';
 import { z } from 'zod';
-import { sincroniaDoDailyLigada, sincronizarTarefaNoDaily, ultimasSincronias, varrerAlteracoesDoClickUp } from '../clickup/sincronia-daily';
+import { sincroniaDoDailyLigada, sincronizarTarefaNoDaily, tamanhoDaFilaDeFundo, ultimasSincronias, varrerAlteracoesDoClickUp } from '../clickup/sincronia-daily';
 import { empurrarEventosDaEmpresa, escritaNoClickUpLigada, ultimasEscritas } from '../clickup/escrita-daily';
 import { db, schema } from '@desigual-os/database';
 import {
@@ -204,7 +204,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
 
   // ── Sincronia ClickUp → Daily (ver clickup/sincronia-daily.ts). Só administrador da plataforma. ─────────
   app.get('/work/admin/clickup-sync', { preHandler: adminOnly }, async () => ({
-    entrada: { ligada: sincroniaDoDailyLigada(), ultimas: ultimasSincronias() },
+    entrada: { ligada: sincroniaDoDailyLigada(), ultimas: ultimasSincronias(), filaDeFundo: tamanhoDaFilaDeFundo() },
     saida: { ligada: escritaNoClickUpLigada(), ultimas: ultimasEscritas() },
   }));
   app.post('/work/admin/clickup-sync/empurrar', { preHandler: adminOnly }, async (request, reply) => {

@@ -346,13 +346,14 @@ export function Sidebar({
                 onClick={() => alternarSecao(secao.id)}
                 aria-expanded={aberta}
                 title={secao.ajuda}
-                className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-nevoa transition-colors hover:bg-grafite/60 hover:text-branco-cru"
+                className="flex w-full items-center gap-2 whitespace-nowrap rounded-md px-3 py-1.5 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-nevoa transition-colors hover:bg-grafite/60 hover:text-branco-cru"
               >
                 {aberta ? <FolderOpen size={15} className="shrink-0 text-sinal" /> : <Folder size={15} className="shrink-0" />}
-                <span>{secao.label}</span>
+                {/* Uma linha só: "Equipe e empresa" quebrava em duas, centralizada (visto em produção, 30/10/2026). */}
+                <span className="min-w-0 truncate">{secao.label}</span>
                 {/* Quantos itens tem lá dentro: sem isso, uma seção fechada
                   * não diz se esconde dois itens ou vinte. */}
-                {!aberta && <span className="font-normal text-nevoa/50">{itensDaSecao.length}</span>}
+                {!aberta && <span className="shrink-0 font-normal text-nevoa/50">{itensDaSecao.length}</span>}
                 {avisosEscondidos > 0 && (
                   <span aria-label={`${avisosEscondidos} não lidas`} className="ml-auto rounded-full bg-sinal px-1.5 font-mono text-[10px] font-semibold leading-4 text-grafite">
                     {avisosEscondidos > 99 ? '99+' : avisosEscondidos}
