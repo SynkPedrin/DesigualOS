@@ -159,6 +159,15 @@ async function ensureContact(input: {
   });
 }
 
+/**
+ * "Nova conversa" na Inbox: o mesmo contato e a mesma conversa que a primeira mensagem recebida desse número criaria.
+ * Se a pessoa já fala com esse número, devolve a conversa que existe em vez de abrir outra.
+ */
+export async function abrirConversaComNumero(session: Session, input: { chatId: string; phone: string }): Promise<Thread> {
+  const contact = await ensureContact({ session, externalId: input.chatId, phone: input.phone });
+  return ensureThread({ session, chatId: input.chatId, kind: 'individual', contact });
+}
+
 async function ensureThread(input: {
   session: Session;
   chatId: string;

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { Search, SquarePen } from 'lucide-react';
@@ -8,7 +8,8 @@ import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { ThreadList, INBOX_FILTERS, type InboxFilterKey } from '@/components/inbox/thread-list';
 import { ThreadChat } from '@/components/inbox/thread-chat';
 import { ThreadContextPanel } from '@/components/inbox/thread-context-panel';
-import { prefetchInboxMessages, useInboxThreads } from '@/hooks/use-inbox';
+import { prefetchInboxMessages, useInboxThreads, useStartInboxThread } from '@/hooks/use-inbox';
+import { ApiRequestError } from '@/lib/api/client';
 import { useWhatsappOpenwaSessions } from '@/hooks/use-whatsapp-openwa';
 import { useMe } from '@/hooks/use-me';
 import type { InboxThread } from '@/lib/api/contracts';
@@ -112,6 +113,23 @@ function InboxPageContent() {
     router.push(`/inbox?${params.toString()}`, { scroll: false });
   }
 
+  // "Nova conversa": o número é conferido no WhatsApp antes de a conversa existir; a primeira mensagem sai pelo campo
+  // de sempre, já com a conversa aberta.
+  const [novaAberta, setNovaAberta] = useState(false);
+  const [numero, setNumero] = useState('');
+  const iniciar = useStartInboxThread();
+  function abrirNova(event: FormEvent) {
+    event.preventDefault();
+    if (!numero.trim()) return;
+    iniciar.mutate(numero, {
+      onSuccess: (thread) => {
+        setNovaAberta(false);
+        setNumero('');
+        selectThread(thread.id);
+      },
+    });
+  }
+
   function clearThread() {
     const params = new URLSearchParams(searchParams.toString());
     params.delete('t');
@@ -130,10 +148,31 @@ function InboxPageContent() {
         <div className={cn('min-h-0 flex-col border-r border-grafite-elevado', selectedId ? 'hidden lg:flex' : 'flex')}>
           <div className="flex items-center justify-between gap-2 border-b border-grafite-elevado px-3 py-2.5">
             <h2 className="font-heading text-sm font-semibold text-branco-cru">Conversas</h2>
-            <button type="button" title="Nova conversa" className="flex size-7 items-center justify-center rounded-md bg-roxo-eletrico text-branco-cru transition-opacity hover:opacity-90">
+            <button type="button" title="Nova conversa" aria-label="Nova conversa" aria-expanded={novaAberta} onClick={() => { setNovaAberta((v) => !v); iniciar.reset(); }} className="flex size-7 items-center justify-center rounded-md bg-roxo-eletrico text-branco-cru transition-opacity hover:opacity-90">
               <SquarePen size={14} />
             </button>
           </div>
+          {novaAberta && (
+            <form onSubmit={abrirNova} onKeyDown={(e) => { if (e.key === 'Escape') setNovaAberta(false); }} className="space-y-1.5 border-b border-grafite-elevado p-3">
+              <label htmlFor="nova-conversa-numero" className="text-xs text-nevoa">Número do WhatsApp, com DDD</label>
+              <div className="flex gap-2">
+                <input
+                  id="nova-conversa-numero"
+                  autoFocus
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={numero}
+                  onChange={(e) => setNumero(e.target.value)}
+                  placeholder="(18) 99999-9999 ou +1 415…"
+                  className="min-w-0 flex-1 rounded-md border border-grafite-elevado bg-grafite px-2.5 py-1.5 text-[13px] text-branco-cru placeholder:text-nevoa/60 focus:border-roxo-eletrico/60 focus:outline-none"
+                />
+                <button type="submit" disabled={!numero.trim() || iniciar.isPending} className="shrink-0 rounded-md bg-roxo-eletrico px-3 text-xs font-medium text-branco-cru transition-opacity hover:opacity-90 disabled:opacity-50">
+                  {iniciar.isPending ? 'Conferindo…' : 'Abrir'}
+                </button>
+              </div>
+              {iniciar.error && <p className="text-xs text-erro">{iniciar.error instanceof ApiRequestError ? iniciar.error.message : 'Não consegui abrir a conversa. Tente de novo.'}</p>}
+            </form>
+          )}
           <div className="flex items-center gap-1.5 border-b border-grafite-elevado px-3 py-2">
             <img src="/logos/whatsapp.webp" alt="WhatsApp" className="size-3.5 shrink-0 rounded-sm" />
             <span className="truncate font-mono text-[11px] text-nevoa">{activeSession?.status === 'ready' ? `+${activeSession.phone_number ?? ''} · Conectado` : activeSession ? 'WhatsApp em configuração' : 'WhatsApp não conectado'}</span>

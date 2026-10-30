@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronLeft, Download, FileText, MessageCircle, Mic, MoreHorizontal, Paperclip, Pause, Phone, Play, RotateCcw, Search, Smile, Square, Video, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowUp, ChevronLeft, Copy, Download, ExternalLink, FileText, MessageCircle, Mic, MoreHorizontal, Paperclip, Pause, Phone, Play, RotateCcw, Search, Smartphone, Smile, Square, UserCheck, UserMinus, Video, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { useInboxMentionables, useInboxMessages, useInboxThread, useMarkInboxRead, useSendInboxMedia, useSendInboxMessage, useSendInboxSticker } from '@/hooks/use-inbox';
+import { useAssignInboxThread, useCreateInboxVideoCall, useInboxMentionables, useInboxMessages, useInboxThread, useMarkInboxRead, useSendInboxMedia, useSendInboxMessage, useSendInboxSticker, useUpdateInboxStatus } from '@/hooks/use-inbox';
+import { useMe } from '@/hooks/use-me';
 import { comNomes, consultaDeMarcacao, filtrarMarcaveis, inserirMarcacao, paraEnvio, type PessoaMarcavel } from './marcacoes';
 import { ApiRequestError } from '@/lib/api/client';
 import type { InboxMessage } from '@/lib/api/contracts';
@@ -13,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { InboxAvatar } from './inbox-avatar';
 import { EmojiStickerPicker } from './emoji-sticker-picker';
 import { useProtectedObjectUrl } from './use-protected-object-url';
+import { MenuDoCabecalho } from './menu-do-cabecalho';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -79,10 +81,27 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
   const [consulta, setConsulta] = useState<{ inicio: number; termo: string } | null>(null);
   const [destaque, setDestaque] = useState(0);
   const sugestoes = consulta && marcaveis.length ? filtrarMarcaveis(marcaveis, consulta.termo) : [];
+  const { data: me } = useMe();
+  const assign = useAssignInboxThread(threadId ?? '');
+  const updateStatus = useUpdateInboxStatus(threadId ?? '');
+  const videoCall = useCreateInboxVideoCall(threadId ?? '');
+  const [buscaAberta, setBuscaAberta] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [aviso, setAviso] = useState<{ erro: boolean; texto: string; link?: { href: string; rotulo: string } } | null>(null);
+  const termo = buscaAberta ? busca.trim().toLowerCase() : '';
+  const visiveis = termo && messages ? messages.filter((m) => `${m.content ?? ''} ${m.attachmentFilename ?? ''}`.toLowerCase().includes(termo)) : messages;
+  // Ligar e abrir no WhatsApp só fazem sentido com o número do contato (grupo e @lid sem número não têm).
+  const telefone = !ehGrupo && thread?.contactPhone ? thread.contactPhone.replace(/\D/g, '') : '';
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages?.length, threadId]);
+
+  useEffect(() => {
+    setBuscaAberta(false);
+    setBusca('');
+    setAviso(null);
+  }, [threadId]);
 
   useEffect(() => {
     if (threadId && (thread?.unreadCount ?? 0) > 0) markRead();
@@ -186,6 +205,35 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
 
   const error = sendMessage.error ?? sendMedia.error;
 
+  // O link vai para o campo de mensagem, não direto para o cliente: quem decide enviar é a pessoa.
+  function criarChamadaDeVideo() {
+    setAviso({ erro: false, texto: 'Criando a reunião do Teams…' });
+    videoCall.mutate(undefined, {
+      onSuccess: ({ join_url }) => {
+        setDraft((atual) => `${atual.trim() ? `${atual.trim()}\n\n` : ''}Vamos falar por vídeo? Entre por aqui: ${join_url}`);
+        setAviso({ erro: false, texto: 'O link da chamada está no campo de mensagem. Revise e envie.', link: { href: join_url, rotulo: 'Entrar na chamada' } });
+        requestAnimationFrame(() => textarea.current?.focus());
+      },
+      onError: (erro) => {
+        const corpo = erro instanceof ApiRequestError ? (erro.body as { web_link?: string | null } | undefined) : undefined;
+        setAviso({
+          erro: true,
+          texto: erro instanceof ApiRequestError ? erro.message : 'Não consegui criar a chamada. Tente de novo.',
+          ...(corpo?.web_link ? { link: { href: corpo.web_link, rotulo: 'Ver o evento no Outlook' } } : {}),
+        });
+      },
+    });
+  }
+
+  async function copiarNumero() {
+    try {
+      await navigator.clipboard.writeText(`+${telefone}`);
+      setAviso({ erro: false, texto: `Número +${telefone} copiado.` });
+    } catch {
+      setAviso({ erro: true, texto: 'O navegador não deixou copiar. O número está no topo da conversa.' });
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-carbono">
       <div className="flex items-center justify-between gap-3 border-b border-grafite-elevado px-4 py-3 sm:px-5">
@@ -201,16 +249,53 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
             <p className="truncate text-xs text-nevoa">{thread?.kind === 'group' ? 'Grupo do WhatsApp' : thread?.contactPhone ?? 'Conversa externa'}{thread?.humanServiceStatus === 'active' ? ' · Atendimento humano em andamento' : ''}</p>
           </div>
         </div>
-        <div className="hidden shrink-0 items-center gap-1 text-nevoa sm:flex">
-          <button type="button" title="Buscar na conversa" className="flex size-8 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru"><Search size={16} /></button>
-          <button type="button" title="Ligar" className="flex size-8 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru"><Phone size={16} /></button>
-          <button type="button" title="Chamada de vídeo" className="flex size-8 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru"><Video size={16} /></button>
-          <button type="button" title="Mais opções" className="flex size-8 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru"><MoreHorizontal size={16} /></button>
+        <div className="flex shrink-0 items-center gap-1 text-nevoa">
+          <button type="button" title="Buscar na conversa" aria-label="Buscar na conversa" aria-pressed={buscaAberta} onClick={() => { setBuscaAberta((v) => !v); setBusca(''); }} className={cn('flex size-8 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru', buscaAberta && 'bg-grafite-elevado text-branco-cru')}><Search size={16} /></button>
+          <MenuDoCabecalho
+            rotulo="Ligar"
+            icone={<Phone size={16} />}
+            className="hidden sm:block"
+            itens={[
+              { rotulo: telefone ? 'Ligar pelo WhatsApp' : 'Sem número para ligar', icone: <MessageCircle size={15} />, href: `https://wa.me/${telefone}`, desabilitado: !telefone },
+              { rotulo: 'Ligar pelo celular', icone: <Smartphone size={15} />, href: `tel:+${telefone}`, desabilitado: !telefone },
+            ]}
+          />
+          <button type="button" title="Chamada de vídeo (Teams)" aria-label="Chamada de vídeo" onClick={criarChamadaDeVideo} disabled={videoCall.isPending} className="hidden size-8 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru disabled:opacity-50 sm:flex"><Video size={16} /></button>
+          <MenuDoCabecalho
+            rotulo="Mais opções"
+            icone={<MoreHorizontal size={16} />}
+            itens={[
+              thread?.assignedToUserId && thread.assignedToUserId === me?.id
+                ? { rotulo: 'Deixar de atender', icone: <UserMinus size={15} />, acao: () => assign.mutate(null) }
+                : { rotulo: 'Atender esta conversa', icone: <UserCheck size={15} />, acao: () => { if (me?.id) assign.mutate(me.id); }, desabilitado: !me?.id },
+              thread?.status === 'archived'
+                ? { rotulo: 'Reabrir conversa', icone: <ArchiveRestore size={15} />, acao: () => updateStatus.mutate('open') }
+                : { rotulo: 'Encerrar atendimento', icone: <Archive size={15} />, acao: () => updateStatus.mutate('archived') },
+              { rotulo: 'Abrir no WhatsApp', icone: <ExternalLink size={15} />, href: `https://wa.me/${telefone}`, desabilitado: !telefone },
+              { rotulo: 'Copiar número', icone: <Copy size={15} />, acao: () => void copiarNumero(), desabilitado: !telefone },
+            ]}
+          />
         </div>
       </div>
 
+      {buscaAberta && (
+        <div className="flex items-center gap-2 border-b border-grafite-elevado px-4 py-2 sm:px-5">
+          <Search size={14} className="shrink-0 text-nevoa" />
+          <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { setBuscaAberta(false); setBusca(''); } }} placeholder="Buscar nesta conversa…" aria-label="Buscar nesta conversa" className="min-w-0 flex-1 bg-transparent text-sm text-branco-cru outline-none placeholder:text-nevoa/60" />
+          {termo && <span className="shrink-0 font-mono text-[11px] text-nevoa">{visiveis?.length ?? 0} de {messages?.length ?? 0}</span>}
+          <button type="button" aria-label="Fechar busca" onClick={() => { setBuscaAberta(false); setBusca(''); }} className="flex size-6 shrink-0 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><X size={14} /></button>
+        </div>
+      )}
+      {aviso && (
+        <div role="status" className={cn('flex items-center gap-3 border-b border-grafite-elevado px-4 py-2 text-xs sm:px-5', aviso.erro ? 'text-erro' : 'text-nevoa')}>
+          <span className="min-w-0 flex-1">{aviso.texto}</span>
+          {aviso.link && <a href={aviso.link.href} target="_blank" rel="noreferrer" className="shrink-0 font-medium text-roxo-eletrico underline-offset-2 hover:underline">{aviso.link.rotulo}</a>}
+          <button type="button" aria-label="Fechar aviso" onClick={() => setAviso(null)} className="flex size-6 shrink-0 items-center justify-center rounded hover:bg-grafite-elevado hover:text-branco-cru"><X size={13} /></button>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#f4f1ec] bg-cover bg-center bg-no-repeat px-3 py-4 sm:px-5" style={{ backgroundImage: 'url(/brand/inbox-whatsapp.png)' }}>
-        {isPending ? Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-10 w-2/3" />) : messages && messages.length > 0 ? messages.map((message) => (
+        {isPending ? Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-10 w-2/3" />) : termo && visiveis?.length === 0 ? <div className="flex h-full items-center justify-center"><p className="rounded-lg bg-grafite/80 px-4 py-2 text-center text-sm text-nevoa">Nada com “{busca.trim()}” nas últimas {messages?.length ?? 0} mensagens.</p></div> : visiveis && visiveis.length > 0 ? visiveis.map((message) => (
           <div key={message.id} className={cn('flex', message.direction === 'outbound' ? 'justify-end' : 'justify-start')}>
             <div className={cn('max-w-[88%] rounded-lg px-3 py-2 text-sm shadow-sm sm:max-w-[72%]', message.direction === 'outbound' ? 'bg-[#c7f5d5] text-[#173c2a]' : 'bg-grafite-elevado text-branco-cru')}>
               {thread?.kind === 'group' && message.direction === 'inbound' && <p className="mb-1 text-[11px] font-semibold text-sinal">{message.senderName ?? message.senderContactId ?? 'Participante'}</p>}

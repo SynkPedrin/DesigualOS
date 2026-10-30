@@ -306,3 +306,23 @@ export function useAssignInboxThread(threadId: string) {
     onSuccess: () => invalidateThread(queryClient, threadId),
   });
 }
+
+/** "Nova conversa": abre (ou reencontra) a conversa com um número pelo WhatsApp de quem pediu. Não envia nada. */
+export function useStartInboxThread() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (phone: string) =>
+      mapInboxThread(await apiFetch<InboxThreadWire>('/inbox/threads', { method: 'POST', body: JSON.stringify({ phone }) })),
+    onSuccess: (thread) => {
+      queryClient.setQueryData(['inbox-thread', thread.id], thread);
+      void queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
+    },
+  });
+}
+
+/** Reunião do Teams agora, na agenda Microsoft de quem pediu; devolve o link para a pessoa mandar na conversa. */
+export function useCreateInboxVideoCall(threadId: string) {
+  return useMutation({
+    mutationFn: () => apiFetch<{ join_url: string; web_link: string | null }>(`/inbox/threads/${threadId}/video-call`, { method: 'POST' }),
+  });
+}
