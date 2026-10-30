@@ -28,6 +28,7 @@ vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
     updateTask: registrar('updateTask'),
     addTaskTag: registrar('addTaskTag'),
     removeTaskTag: registrar('removeTaskTag'),
+    createTaskCommentRico: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskCommentRico', args: args.slice(1) }); if (cu.falhar) throw cu.falhar(); return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; },
     createTaskComment: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskComment', args: args.slice(1) }); if (cu.falhar) throw cu.falhar(); return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; }, // id próprio por comentário, como no ClickUp
     lerClickUpCru: async () => { throw new Error('leitura simulada: o ClickUp não foi consultado'); },
     getTeamMembers: async () => cu.membros.map((m) => ({ ...m, profilePicture: null, initials: null, color: null })),
@@ -185,8 +186,9 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     const c = await E.addComment(ctx(), tarefa, 'Pode aprovar');
     await esperar();
     await M.empurrarEventosDaEmpresa(org);
-    expect(feitas('createTaskComment')).toHaveLength(1);
-    expect(feitas('createTaskComment')[0]!.args).toEqual(['CU-T1', 'Ana Admin: Pode aprovar']);
+    expect(feitas('createTaskCommentRico')).toHaveLength(1);
+    // Sem o ClickUp da pessoa conectado: conta da agência, com o nome de quem escreveu na frente.
+    expect(feitas('createTaskCommentRico')[0]!.args).toEqual(['CU-T1', [{ text: 'Ana Admin: ' }, { text: 'Pode aprovar' }]]);
     const { db, schema } = dbm;
     const { and, eq } = await import('drizzle-orm');
     const [v] = await db.select().from(schema.workExternalMappings).where(and(eq(schema.workExternalMappings.organizationId, org), eq(schema.workExternalMappings.externalType, 'comment'), eq(schema.workExternalMappings.entityId, c.id)));
@@ -195,6 +197,14 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     cu.chamadas.length = 0;
     await M.empurrarEventosDaEmpresa(org);
     expect(cu.chamadas).toEqual([]);
+  });
+
+  it('marcação "@[Nome](id)" vira marcação de verdade no ClickUp (o id da pessoa lá), não o código em texto', async () => {
+    cu.chamadas.length = 0;
+    await E.addComment(ctx(), tarefa, `@[Ana Admin](${admin}) confere o link`);
+    await esperar();
+    await M.empurrarEventosDaEmpresa(org);
+    expect(feitas('createTaskCommentRico')[0]!.args).toEqual(['CU-T1', [{ text: 'Ana Admin: ' }, { type: 'tag', user: { id: 11 } }, { text: ' confere o link' }]]);
   });
 
   it('tarefa nova numa lista do ClickUp é CRIADA lá, ligada pelo vínculo, com status e pai', async () => {
@@ -276,7 +286,7 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     expect(await E.recuarCursorDaSaida(org, antes)).toBe(true);
     await M.empurrarEventosDaEmpresa(org);
     expect(feitas('updateTask').map((c) => c.args)).toEqual([['CU-T1', { name: 'Encerrada no Daily e recusada lá' }]]);
-    expect(feitas('createTaskComment')).toEqual([]);
+    expect(feitas('createTaskCommentRico')).toEqual([]);
     expect((await M.empurrarEventosDaEmpresa(org)).lidos).toBe(0); // e o cursor voltou ao fim
   }, 15_000);
 

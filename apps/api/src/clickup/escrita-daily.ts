@@ -2,7 +2,7 @@ import { createLogger } from '@desigual-os/logging';
 import {
   addTaskTag,
   createTask,
-  createTaskComment,
+  createTaskCommentRico,
   getTeamMembers,
   podeEscreverEmProducao,
   removeTaskTag,
@@ -10,8 +10,12 @@ import {
   WriteScopeError,
   type ClickUpConfig,
   type ClickUpMember,
+  type ParteDoComentario,
   type UpdateTaskParams,
 } from '@desigual-os/tool-gateway';
+import { db, schema } from '@desigual-os/database';
+import { and, eq } from 'drizzle-orm';
+import { decryptToken } from '../lib/token-crypto';
 import {
   comentarioParaSaida,
   cursorDaSaidaExiste,
@@ -153,6 +157,36 @@ export function paramsDosCampos(t: TarefaParaSaida, campos: string[]): UpdateTas
   return p;
 }
 
+// ── comentário: marcação de verdade e autor ────────────────────────────────────────────────────────────────────
+
+/**
+ * "@[Gui](uuid)" do Daily → marcação de verdade no ClickUp (o Gui é avisado lá). Antes ia como texto e aparecia o
+ * código no ClickUp (30/10/2026). Pessoa sem par no ClickUp vira "@Nome" em texto.
+ */
+export async function partesDoComentario(config: ClickUpConfig, corpo: string): Promise<ParteDoComentario[]> {
+  const marca = /@\[([^\]]+)\]\(([0-9a-f-]{36})\)/gi;
+  const partes: ParteDoComentario[] = [];
+  let ultimo = 0;
+  for (const m of corpo.matchAll(marca)) {
+    if (m.index! > ultimo) partes.push({ text: corpo.slice(ultimo, m.index) });
+    const [id] = await idsNoClickUp(config, [m[2]!]);
+    partes.push(id !== undefined ? { type: 'tag', user: { id } } : { text: `@${m[1]}` });
+    ultimo = m.index! + m[0].length;
+  }
+  if (ultimo < corpo.length) partes.push({ text: corpo.slice(ultimo) });
+  return partes.length ? partes : [{ text: corpo }];
+}
+
+/** Token OAuth do ClickUp da pessoa, se ela conectou o mesmo workspace. */
+async function tokenDoClickUpDe(userId: string, teamId: string): Promise<string | null> {
+  const [c] = await db.select({ token: schema.integrationConnections.accessTokenEncrypted, ws: schema.integrationConnections.externalWorkspaceId })
+    .from(schema.integrationConnections)
+    .where(and(eq(schema.integrationConnections.userId, userId), eq(schema.integrationConnections.provider, 'clickup'), eq(schema.integrationConnections.status, 'connected')))
+    .limit(1);
+  if (!c || (c.ws && c.ws !== teamId)) return null;
+  try { return decryptToken(c.token) || null; } catch { return null; }
+}
+
 // ── um evento ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 type Efeito = 'empurrado' | 'ignorado';
@@ -202,8 +236,18 @@ async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaid
     const c = await comentarioParaSaida(org, commentId);
     if (!c) return 'ignorado';
     const autor = c.authorId ? (await usuariosParaSaida([c.authorId])).get(c.authorId)?.name : null;
-    // O comentário sai com a conta do sistema; o nome de quem escreveu vai na frente para quem lê no ClickUp.
-    const criado = await createTaskComment(config, ext, `${autor ?? c.authorLabel ?? 'Daily Tasks'}: ${c.body}`);
+    // Em nome de QUEM ESCREVEU quando ela tem o ClickUp conectado; senão a conta da agência, com o nome na frente.
+    // Antes saía sempre pela conta da agência (o comentário da Tammy aparecia como do Pedro, 30/10/2026).
+    const tokenDoAutor = c.authorId ? await tokenDoClickUpDe(c.authorId, config.teamId) : null;
+    const comoQuem = tokenDoAutor ? { ...config, apiKey: tokenDoAutor } : config;
+    const partes = await partesDoComentario(config, c.body);
+    if (!tokenDoAutor) partes.unshift({ text: `${autor ?? c.authorLabel ?? 'Daily Tasks'}: ` });
+    const criado = await createTaskCommentRico(comoQuem, ext, partes).catch((error: unknown) => {
+      if (!tokenDoAutor) throw error;
+      // Token da pessoa recusado (expirou, sem acesso à lista): sai pela conta da agência, com o nome na frente.
+      logger.warn({ error, autor: c.authorId }, 'Escrita Daily→ClickUp: comentário em nome da pessoa falhou; vai pela conta da agência');
+      return createTaskCommentRico(config, ext, [{ text: `${autor ?? c.authorLabel ?? 'Daily Tasks'}: ` }, ...partes]);
+    });
     await registrarVinculoDeSaida(org, { externalType: 'comment', externalId: criado.id, entityId: c.id });
     return 'empurrado';
   }

@@ -321,6 +321,7 @@ export async function createTask(config: ClickUpConfig, params: CreateTaskParams
     body: JSON.stringify({
       name: params.name,
       description: params.markdownDescription === undefined ? params.description : undefined,
+      markdown_content: params.markdownDescription,
       markdown_description: params.markdownDescription,
       assignees: params.assigneeId ? [params.assigneeId] : undefined,
       priority: params.priority,
@@ -366,8 +367,15 @@ export async function updateTask(config: ClickUpConfig, taskId: string, params: 
   await assertTaskInScope(config, taskId);
   const body: Record<string, unknown> = {};
   if (params.name !== undefined) body.name = params.name;
-  if (params.markdownDescription !== undefined) body.markdown_description = params.markdownDescription;
-  else if (params.description !== undefined) body.description = params.description;
+  // A ATUALIZAÇÃO do ClickUp lê a descrição em markdown de `markdown_content` (`markdown_description` é o nome na
+  // RESPOSTA). Só com `markdown_description` o ClickUp ignorava a descrição nova, e a leitura seguinte trazia a velha
+  // por cima da que a pessoa tinha salvo no Daily — "a descrição some depois de salvar" (30/10/2026). Vão os dois
+  // nomes. Vazio limpa com um espaço, que é como o ClickUp aceita apagar.
+  if (params.markdownDescription !== undefined) {
+    const md = params.markdownDescription.trim() ? params.markdownDescription : ' ';
+    body.markdown_content = md;
+    body.markdown_description = md;
+  } else if (params.description !== undefined) body.description = params.description.trim() ? params.description : ' ';
   if (params.status !== undefined) body.status = params.status;
   if (params.priority !== undefined) body.priority = params.priority;
   if (params.dueDate !== undefined) { body.due_date = params.dueDate; if (params.dueDate !== null && params.dueDateTime !== undefined) body.due_date_time = params.dueDateTime; }
@@ -708,6 +716,26 @@ export interface CreatedTaskComment {
  * replyToComment). A resposta do ClickUp não devolve o texto, então o texto
  * retornado é o que acabamos de enviar.
  */
+/** Pedaço de um comentário rico: texto, ou marcação de uma pessoa do ClickUp (vira @ de verdade e a notifica). */
+export type ParteDoComentario = { text: string } | { type: 'tag'; user: { id: number } };
+
+/**
+ * Comentário com marcação de verdade (`comment` em partes, não `comment_text`). `config.apiKey` pode ser o token
+ * OAuth de quem escreveu: aí o comentário sai em nome DELA, e não da conta da agência.
+ */
+export async function createTaskCommentRico(config: ClickUpConfig, taskId: string, partes: ParteDoComentario[]): Promise<CreatedTaskComment> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment: partes, notify_all: false }),
+  });
+  if (!response.ok) throw new Error(`ClickUp comment creation failed (${response.status}): ${await response.text()}`);
+  const created = createdCommentSchema.parse(await response.json());
+  const texto = partes.map((p) => ('text' in p ? p.text : `@${p.user.id}`)).join('');
+  return { id: created.id, text: texto, date: created.date ?? null };
+}
+
 export async function createTaskComment(config: ClickUpConfig, taskId: string, text: string): Promise<CreatedTaskComment> {
   await assertTaskInScope(config, taskId);
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {

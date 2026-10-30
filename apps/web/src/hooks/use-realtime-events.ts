@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { realtimeClient, type WsEvent } from '@/lib/realtime/ws-client';
 import { useSupabaseSession } from '@/hooks/use-supabase-session';
 import { supabase } from '@/lib/supabase/client';
@@ -18,6 +18,25 @@ import { useMe } from '@/hooks/use-me';
  * de pé como rede de segurança (reconexão perdida, evento raro que não
  * mapeamos aqui); isso só faz a atualização comum acontecer na hora.
  */
+/**
+ * "O Daily mudou", agrupado. Cada tarefa sincronizada do ClickUp avisa; com a conferência corrigindo centenas, vinha um
+ * aviso a cada 1,5 s e a tela refazia TUDO do Daily (até membros e preferências) — e, pior, a busca podia trazer o valor
+ * antigo de uma tarefa que a pessoa acabara de mudar, antes de o servidor gravar: a tarefa "aparecia e sumia"
+ * (30/10/2026). Agora: uma atualização a cada 3 s no máximo, nunca no meio de um salvamento, e só do que a sincronia
+ * muda.
+ */
+let atualizacaoDoDaily: ReturnType<typeof setTimeout> | null = null;
+const MUDA_COM_A_SINCRONIA = ['tasks', 'tree', 'overview', 'inbox', 'detail', 'history'];
+function atualizarDailyAgrupado(queryClient: QueryClient): void {
+  if (atualizacaoDoDaily) return;
+  const tentar = () => {
+    if (queryClient.isMutating() > 0) { atualizacaoDoDaily = setTimeout(tentar, 1_500); return; } // salvando: espera
+    atualizacaoDoDaily = null;
+    for (const k of MUDA_COM_A_SINCRONIA) void queryClient.invalidateQueries({ queryKey: ['work', k] });
+  };
+  atualizacaoDoDaily = setTimeout(tentar, 3_000);
+}
+
 export function useRealtimeEvents(): void {
   const queryClient = useQueryClient();
   const { session } = useSupabaseSession();
@@ -95,7 +114,7 @@ export function useRealtimeEvents(): void {
           break;
         // Daily Tasks: uma tarefa mudou (sincronizada do ClickUp). Refaz o que está na tela: lista, gaveta e resumo.
         case 'work.mudou':
-          queryClient.invalidateQueries({ queryKey: ['work'] });
+          atualizarDailyAgrupado(queryClient);
           break;
         case 'clickup.task_changed': {
           const clientId = event.payload.client_id;
