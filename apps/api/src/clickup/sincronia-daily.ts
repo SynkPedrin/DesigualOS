@@ -2,7 +2,7 @@ import { createLogger } from '@desigual-os/logging';
 import { getRedisConnection, publishWsEvent } from '@desigual-os/orchestrator';
 import { comPrazo, escritaNoClickUpLigada } from './escrita-daily';
 import { db, schema } from '@desigual-os/database';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { ClickUpHttpError, lerClickUpCru, type ClickUpConfig } from '@desigual-os/tool-gateway';
 import {
   arquivarTarefaDoClickUp,
@@ -274,21 +274,40 @@ export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes:
  * vez: na fila de sempre, uma edição feita agora no ClickUp esperaria atrás de todas, e o ritmo encostaria no limite
  * de 100 chamadas/min da chave do ClickUp, que é a mesma dos webhooks.
  */
-const INTERVALO_DE_FUNDO_MS = Number(process.env.DAILY_SYNC_FUNDO_MS) || 3_000;
+const INTERVALO_DE_FUNDO_MS = Number(process.env.DAILY_SYNC_FUNDO_MS) || 1_500;
+type TipoDeFundo = 'fechada' | 'geral';
 const deFundo: string[] = [];
-const noFundo = new Set<string>();
+const noFundo = new Map<string, TipoDeFundo>();
 let escoadorDeFundo: ReturnType<typeof setInterval> | null = null;
+let fundoOcupado = false;
 
-export function agendarSincroniaDeFundo(taskId: string): void {
+/**
+ * `fechada`: a conferência viu a tarefa ABERTA aqui e fora das abertas do ClickUp. Vai pelo caminho curto
+ * (`fecharSeFechadaNoClickUp`: uma leitura, uma escrita, ~1 s) em vez da sincronia completa (~9 s, medido em
+ * 30/10/2026): eram 797 tarefas velhas abertas aqui, que levariam mais de 2 h. `geral`: sincronia completa.
+ */
+export function agendarSincroniaDeFundo(taskId: string, tipo: TipoDeFundo = 'geral'): void {
   if (!sincroniaDoDailyLigada() || noFundo.has(taskId)) return;
-  noFundo.add(taskId);
+  noFundo.set(taskId, tipo);
   deFundo.push(taskId);
   if (escoadorDeFundo || process.env.VITEST) return;
   escoadorDeFundo = setInterval(() => {
-    if (!deFundo.length || pendentes.size > 0 || naFila.size > 0) return; // ao vivo primeiro
+    if (fundoOcupado || !deFundo.length || pendentes.size > 0 || naFila.size > 0) return; // ao vivo primeiro
     const id = deFundo.shift()!;
+    const tipoDaVez = noFundo.get(id) ?? 'geral';
     noFundo.delete(id);
-    agendarSincroniaDaTarefa(id, 'conferencia', { espera: 0 });
+    if (tipoDaVez === 'geral') { agendarSincroniaDaTarefa(id, 'conferencia', { espera: 0 }); return; }
+    fundoOcupado = true;
+    comPrazo(fecharSeFechadaNoClickUp(id), PRAZO_DA_TAREFA_MS, `a tarefa ${id}`)
+      .then((r) => {
+        if (r === 'completa') agendarSincroniaDaTarefa(id, 'conferencia', { espera: 0 });
+        else registrar({ taskId: id, acao: r === 'arquivada' ? 'arquivada' : 'sincronizada', motivo: 'conferência: fechada no ClickUp' });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof SincroniaAdiada) { agendarSincroniaDeFundo(id, 'fechada'); return; }
+        logger.warn({ error, taskId: id }, 'Daily sync: caminho curto falhou; a próxima conferência tenta de novo');
+      })
+      .finally(() => { fundoOcupado = false; });
   }, INTERVALO_DE_FUNDO_MS);
   escoadorDeFundo.unref?.();
 }
@@ -300,6 +319,45 @@ export function estaNaFilaDeFundo(taskId: string): boolean {
 
 export function tamanhoDaFilaDeFundo(): number {
   return deFundo.length;
+}
+
+/**
+ * Caminho curto da conferência: a tarefa está aberta aqui e não está entre as abertas do ClickUp. Lê só a tarefa;
+ * se lá está fechada, aplica o status fechado de MESMO NOME do espaço e a data de conclusão; se sumiu ou foi
+ * arquivada, arquiva. Qualquer outra coisa (reabriu, status que não existe aqui) devolve `completa`: quem chama usa a
+ * sincronia de sempre.
+ */
+export async function fecharSeFechadaNoClickUp(externalTaskId: string): Promise<'fechada' | 'arquivada' | 'completa'> {
+  const par = await parDaTarefaDoClickUp(externalTaskId);
+  if (!par) return 'completa';
+  if (escritaNoClickUpLigada() && (await temEscritaPendente(par.organizationId, par.taskId))) throw new SincroniaAdiada();
+  let t: Cru;
+  try {
+    t = await lerClickUpCru(configDoClickUp(), `/task/${externalTaskId}`);
+  } catch (e) {
+    if (e instanceof ClickUpHttpError && e.status === 404) { (await arquivarTarefaDoClickUp(externalTaskId)).forEach(avisarDailyMudou); return 'arquivada'; }
+    throw e;
+  }
+  if (t.archived) { (await arquivarTarefaDoClickUp(externalTaskId)).forEach(avisarDailyMudou); return 'arquivada'; }
+  const tipo = String(t.status?.type ?? '').toLowerCase();
+  if (tipo !== 'closed' && tipo !== 'done') return 'completa';
+  const [aqui] = await db.select({ id: schema.workTasks.id, spaceId: schema.workLists.spaceId, concluida: schema.workTasks.completedAt })
+    .from(schema.workTasks).innerJoin(schema.workLists, eq(schema.workLists.id, schema.workTasks.listId))
+    .where(and(eq(schema.workTasks.id, par.taskId), eq(schema.workTasks.organizationId, par.organizationId))).limit(1);
+  if (!aqui) return 'completa';
+  const [status] = await db.select({ id: schema.workTaskStatuses.id }).from(schema.workTaskStatuses)
+    .where(and(eq(schema.workTaskStatuses.spaceId, aqui.spaceId), sql`lower(${schema.workTaskStatuses.name}) = lower(${String(t.status?.status ?? '')})`)).limit(1);
+  if (!status) return 'completa';
+  const quando = [t.date_closed, t.date_done, t.date_updated].map((v) => Number(v)).find((n) => Number.isFinite(n) && n > 0);
+  await db.update(schema.workTasks)
+    .set({ statusId: status.id, completedAt: aqui.concluida ?? new Date(quando ?? Date.now()), version: sql`${schema.workTasks.version} + 1`, updatedAt: new Date() })
+    .where(eq(schema.workTasks.id, par.taskId));
+  await db.insert(schema.workActivityEvents).values({
+    organizationId: par.organizationId, entityType: 'task', entityId: par.taskId, taskId: par.taskId, action: 'status_changed', actorId: null, actorKind: 'system',
+    data: { provider: 'clickup', origem: 'conferencia', para: String(t.status?.status ?? '') },
+  });
+  avisarDailyMudou(par.organizationId);
+  return 'fechada';
 }
 
 // ── varredura de segurança ───────────────────────────────────────────────────────────────────────────────────────

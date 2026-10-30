@@ -161,9 +161,9 @@ const msDe = (v: unknown): number | null => (v === null || v === undefined || v 
  * não vem em /team) é cadastrado como as outras pessoas só do ClickUp. O inverso também: aberta aqui e fechada ou
  * apagada lá volta para a sincronia — só quando a leitura do ClickUp veio inteira, para não fechar nada por engano.
  */
-export async function conferirComOClickUp(organizationId: string, opcoes: { tarefas?: Cru[]; completa?: boolean; agendar?: (taskId: string) => void } = {}): Promise<ResultadoDaConferencia> {
+export async function conferirComOClickUp(organizationId: string, opcoes: { tarefas?: Cru[]; completa?: boolean; agendar?: (taskId: string, motivo: string) => void } = {}): Promise<ResultadoDaConferencia> {
   const r: ResultadoDaConferencia = { organizationId, lidas: 0, pessoasNovas: 0, agendadas: 0, faltavam: 0, divergiam: 0, fechadasLa: 0, exemplos: [], persistentes: 0, aguardando: 0 };
-  const agendar = opcoes.agendar ?? agendarSincroniaDeFundo;
+  const agendar = opcoes.agendar ?? ((id: string, motivo: string) => agendarSincroniaDeFundo(id, motivo === 'fechada-no-clickup' ? 'fechada' : 'geral'));
   const esperando = opcoes.agendar ? () => false : estaNaFilaDeFundo;
   const marcar = (id: string, motivo: string) => {
     // A mesma divergência depois de duas sincronias não é atraso, é algo que a sincronia não sabe aplicar (ex.: status
@@ -178,7 +178,7 @@ export async function conferirComOClickUp(organizationId: string, opcoes: { tare
       r.persistentes++;
       return;
     }
-    agendar(id); r.agendadas++; if (r.exemplos.length < 15) r.exemplos.push(`${id} ${motivo}`);
+    agendar(id, motivo); r.agendadas++; if (r.exemplos.length < 15) r.exemplos.push(`${id} ${motivo}`);
   };
   const vistasAgora = new Set<string>();
   const listasDaEmpresa = new Set((await db.select({ id: schema.workExternalMappings.externalId }).from(schema.workExternalMappings)

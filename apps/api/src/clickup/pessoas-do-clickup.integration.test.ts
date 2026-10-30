@@ -242,4 +242,30 @@ describe.skipIf(!enabled)('pessoas só do ClickUp × PostgreSQL real', () => {
     await P.conferirComOClickUp(org, { tarefas: [{ ...teimosa, status: { status: 'aberto', type: 'open' } }], agendar: ag });
     expect((await P.conferirComOClickUp(org, { tarefas: [teimosa], agendar: ag })).agendadas).toBe(1);
   });
+
+  it('caminho curto: fechada no ClickUp fecha aqui (status de mesmo nome); reaberta ou status desconhecido pede a sincronia completa; apagada arquiva', async () => {
+    const { db, schema } = dbm;
+    const { eq } = await import('drizzle-orm');
+    const [antes] = await db.select().from(schema.workTasks).where(eq(schema.workTasks.organizationId, org));
+    expect(antes!.completedAt).toBeNull();
+
+    clickup.respostas.set(`/task/${tarefa.id}`, { ...tarefa, status: { status: 'aberto', type: 'open' } });
+    expect(await S.fecharSeFechadaNoClickUp(tarefa.id)).toBe('completa');
+    clickup.respostas.set(`/task/${tarefa.id}`, { ...tarefa, status: { status: 'status que não existe aqui', type: 'closed' } });
+    expect(await S.fecharSeFechadaNoClickUp(tarefa.id)).toBe('completa');
+
+    clickup.respostas.set(`/task/${tarefa.id}`, { ...tarefa, status: { status: 'feito', type: 'closed' }, date_closed: String(Date.parse('2026-10-20T15:00:00Z')) });
+    expect(await S.fecharSeFechadaNoClickUp(tarefa.id)).toBe('fechada');
+    const [depois] = await db.select().from(schema.workTasks).where(eq(schema.workTasks.id, antes!.id));
+    const [st] = await db.select().from(schema.workTaskStatuses).where(eq(schema.workTaskStatuses.id, depois!.statusId));
+    expect(st!.name).toBe('feito');
+    expect(depois!.completedAt?.toISOString()).toBe('2026-10-20T15:00:00.000Z');
+    expect(depois!.version).toBe(antes!.version + 1);
+
+    clickup.respostas.delete(`/task/${tarefa.id}`); // 404
+    expect(await S.fecharSeFechadaNoClickUp(tarefa.id)).toBe('arquivada');
+    const [arq] = await db.select().from(schema.workTasks).where(eq(schema.workTasks.id, antes!.id));
+    expect(arq!.archivedAt).not.toBeNull();
+    clickup.respostas.set(`/task/${tarefa.id}`, tarefa);
+  });
 });
