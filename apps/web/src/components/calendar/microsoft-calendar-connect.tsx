@@ -36,7 +36,8 @@ export function useAgendas() {
  * usar é o do Outlook"). Três estados, idênticos ao GoogleCalendarConnect:
  * desconectado → conectado sem agenda vinculada → vinculado (com sync manual).
  */
-export function MicrosoftCalendarConnect() {
+/** `soAviso`: só o aviso de conexão expirada, para o calendário do Daily, que não tem o banner inteiro. */
+export function MicrosoftCalendarConnect({ soAviso = false }: { soAviso?: boolean } = {}) {
   const integration = useMicrosoftCalendarIntegration();
   const connect = useConnectMicrosoftCalendar();
   const contas = useMicrosoftCalendarAccounts();
@@ -51,6 +52,25 @@ export function MicrosoftCalendarConnect() {
 
   const vinculadas = contas.data ?? [];
   const contaVinculada = vinculadas[0] ?? null;
+
+  if (contaVinculada && integration.data?.connected === false) {
+    // A agenda segue vinculada, mas a conexão com o Outlook expirou: sem este aviso a tela mostrava "sincronizado" com a
+    // data velha, o mês vazio e nenhuma pista do porquê (03/11/2026).
+    return (
+      <div role="alert" className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-aviso/50 bg-aviso/10 px-3 py-2 text-xs">
+        <span className="text-branco-cru">A conexão com o seu Outlook expirou. Os seus compromissos pararam de sincronizar até você reconectar.</span>
+        <button
+          type="button"
+          onClick={() => connect.mutate()}
+          disabled={connect.isPending}
+          className="ml-auto flex items-center gap-1 rounded-md bg-roxo-eletrico px-2.5 py-1 font-medium text-branco-cru hover:opacity-90 disabled:opacity-60"
+        >
+          <Link2 size={11} /> {connect.isPending ? 'Abrindo o Outlook…' : 'Reconectar Outlook'}
+        </button>
+      </div>
+    );
+  }
+  if (soAviso) return null;
 
   if (contaVinculada) {
     const ultima = vinculadas.map((c) => c.last_synced_at).filter(Boolean).sort().pop();

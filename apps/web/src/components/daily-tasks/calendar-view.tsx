@@ -7,6 +7,7 @@ import { PRIORIDADES } from '@/hooks/use-work';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { AbasDeAgendas, SeletorDeModo, useAbaDeAgenda, type ModoDaAgenda } from '@/components/calendar/abas-de-agendas';
 import { useAgendaDoModo } from '@/components/calendar/agenda-do-modo';
+import { MicrosoftCalendarConnect } from '@/components/calendar/microsoft-calendar-connect';
 import { COR_PADRAO, TODAS, contarPorAba, eventoDaAba, type CorDaAgenda } from '@/components/calendar/cores-das-agendas';
 import type { CalendarEventWire } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
@@ -157,6 +158,7 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
             {atrasadas.length > 0 && <span className="text-red-400"><strong>{atrasadas.length}</strong> atrasadas</span>}
           </span>
         </div>
+        <MicrosoftCalendarConnect soAviso />
         <div className="flex flex-wrap items-center gap-2">
           {isMaster && (
             <SeletorDeModo

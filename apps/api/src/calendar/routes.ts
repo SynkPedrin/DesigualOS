@@ -81,26 +81,27 @@ async function loadBusyIntervals(memberIds: string[], organizationId: string, ra
   return porMembro;
 }
 
-type AgendasDaConta = Map<string, { nome: string | null; padrao: boolean }>;
-const agendasEmCache = new Map<string, { expira: number; agendas: AgendasDaConta }>();
+type AgendasDaConta = { connectionId: string | null; agendas: Map<string, { nome: string | null; padrao: boolean }> };
+const agendasEmCache = new Map<string, { expira: number; conta: AgendasDaConta }>();
 
 /** Nome e "é a padrão" de cada agenda do Outlook de uma pessoa, guardado por 10 min (2 min quando a consulta falha). */
 async function agendasDoOutlook(userId: string): Promise<AgendasDaConta> {
   const guardado = agendasEmCache.get(userId);
-  if (guardado && guardado.expira > Date.now()) return guardado.agendas;
-  let agendas: AgendasDaConta = new Map();
+  if (guardado && guardado.expira > Date.now()) return guardado.conta;
+  let conta: AgendasDaConta = { connectionId: null, agendas: new Map() };
   let validade = 2 * 60_000;
   try {
     const access = await resolveMicrosoftCalendarAccess(userId);
     if (access) {
-      agendas = new Map((await listMicrosoftCalendars(access.accessToken)).map((c) => [c.id, { nome: c.name, padrao: c.isDefault }]));
+      const agendas = new Map((await listMicrosoftCalendars(access.accessToken)).map((c) => [c.id, { nome: c.name, padrao: c.isDefault }]));
+      conta = { connectionId: access.connectionId, agendas };
       validade = 10 * 60_000;
     }
   } catch {
     /* sem nome desta vez; a agenda continua aparecendo em "Todas" */
   }
-  agendasEmCache.set(userId, { expira: Date.now() + validade, agendas });
-  return agendas;
+  agendasEmCache.set(userId, { expira: Date.now() + validade, conta });
+  return conta;
 }
 
 export async function registerCalendarRoutes(app: FastifyInstance): Promise<void> {
@@ -421,11 +422,41 @@ export async function registerCalendarRoutes(app: FastifyInstance): Promise<void
       .from(schema.memberCalendarAccounts)
       .innerJoin(schema.integrationConnections, eq(schema.integrationConnections.id, schema.memberCalendarAccounts.connectionId))
       .where(and(eq(schema.memberCalendarAccounts.organizationId, request.tenantContext!.organizationId), eq(schema.integrationConnections.provider, 'microsoft_calendar')));
+    const organizationId = request.tenantContext!.organizationId;
     const donos = [...new Set(rows.map((r) => r.userId))];
-    const nomes = new Map(await Promise.all(donos.map(async (userId) => [userId, await agendasDoOutlook(userId)] as const)));
+    const contas = new Map(await Promise.all(donos.map(async (userId) => [userId, await agendasDoOutlook(userId)] as const)));
+
+    /**
+     * TODA agenda que a conta de cada pessoa enxerga entra (03/11/2026, Pedro: "ainda não consigo visualizar as outras
+     * agendas além da Desigual, falta Manada e outros"). Antes só entrava a que alguém vinculou à mão pelo "+ Agenda",
+     * e ninguém tinha vinculado a da Manada. A agenda nova sincroniza agora e, depois, a cada ciclo do worker.
+     */
+    const vinculadas = new Set(rows.map((r) => `${r.userId}|${r.externalCalendarId}`));
+    const novas: Array<{ userId: string; connectionId: string; externalCalendarId: string; isPrimary: boolean }> = [];
+    for (const [userId, conta] of contas) {
+      if (!conta.connectionId) continue;
+      for (const [externalCalendarId, agenda] of conta.agendas) {
+        if (!vinculadas.has(`${userId}|${externalCalendarId}`)) novas.push({ userId, connectionId: conta.connectionId, externalCalendarId, isPrimary: agenda.padrao });
+      }
+    }
+    if (novas.length > 0) {
+      const criadas = await db
+        .insert(schema.memberCalendarAccounts)
+        .values(novas.map((n) => ({ ...n, organizationId })))
+        .onConflictDoNothing({ target: [schema.memberCalendarAccounts.userId, schema.memberCalendarAccounts.externalCalendarId] })
+        .returning({ id: schema.memberCalendarAccounts.id });
+      for (const { id } of criadas) {
+        void syncMemberMicrosoftCalendar(id).catch((erro: unknown) =>
+          request.log.warn({ accountId: id, motivo: erro instanceof Error ? erro.message : String(erro) }, 'Primeira sincronização de agenda descoberta falhou; o worker tenta de novo'),
+        );
+      }
+      if (criadas.length > 0) request.log.info({ vinculadas: criadas.length }, 'Agendas do Outlook da equipe vinculadas automaticamente');
+    }
+
+    const todas = [...rows.map((r) => ({ userId: r.userId, externalCalendarId: r.externalCalendarId })), ...novas];
     return {
-      agendas: rows.map((r) => {
-        const daConta = nomes.get(r.userId)?.get(r.externalCalendarId);
+      agendas: todas.map((r) => {
+        const daConta = contas.get(r.userId)?.agendas.get(r.externalCalendarId);
         return { calendar_id: r.externalCalendarId, user_id: r.userId, nome: daConta?.nome ?? null, padrao: daConta?.padrao ?? false };
       }),
     };

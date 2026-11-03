@@ -62,6 +62,17 @@ describe('permissão de agendas compartilhadas', () => {
     expect(escopoPedido(fetchMock.mock.calls[1]!)).not.toContain('Shared');
   });
 
+  it('o AADSTS70000 de escopo não concedido também renova com as permissões de antes', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(resposta(400, { error: 'invalid_grant', error_description: 'AADSTS70000: The request was denied because one or more scopes requested are unauthorized or expired.' }))
+      .mockResolvedValueOnce(resposta(200, { access_token: 'at' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(refreshMicrosoftCalendarAccessToken({ ...config, agendasCompartilhadas: true }, 'rt')).resolves.toEqual({ accessToken: 'at', refreshToken: null });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('token revogado continua falhando (é o que faz a tela pedir para reconectar)', async () => {
     const fetchMock = vi.fn().mockResolvedValue(resposta(400, { error: 'invalid_grant', error_description: 'AADSTS700082: The refresh token has expired' }));
     vi.stubGlobal('fetch', fetchMock);

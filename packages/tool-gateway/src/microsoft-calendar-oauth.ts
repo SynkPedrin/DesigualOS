@@ -69,9 +69,13 @@ function escopos(config: Pick<MicrosoftCalendarOAuthConfig, 'agendasCompartilhad
   return (config.agendasCompartilhadas ? SCOPES_COMPARTILHADAS : SCOPES).join(' ');
 }
 
-/** Permissão ainda sem consentimento, ou não concedida: dá para renovar sem ela, com as permissões de antes. */
+/**
+ * Permissão ainda sem consentimento, ou não concedida: dá para renovar sem ela, com as permissões de antes. O AADSTS70000
+ * ("one or more scopes requested are unauthorized") é como a Microsoft costuma recusar, na renovação, um escopo que o
+ * token nunca recebeu; se o token estiver revogado de verdade, a segunda tentativa falha também e a conexão expira.
+ */
 function faltaConsentimento(motivo: string): boolean {
-  return /consent_required|invalid_scope|AADSTS(65001|70011)/i.test(motivo);
+  return /consent_required|invalid_scope|scopes? requested (is|are) unauthorized|AADSTS(65001|70011|70000)\b/i.test(motivo);
 }
 
 export function buildMicrosoftCalendarAuthorizeUrl(config: MicrosoftCalendarOAuthConfig, state: string): string {

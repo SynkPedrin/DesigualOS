@@ -54,6 +54,7 @@ vi.mock('@/components/calendar/agenda-do-modo', () => ({
     adicionando: false,
   }),
 }));
+vi.mock('@/components/calendar/microsoft-calendar-connect', () => ({ MicrosoftCalendarConnect: () => null }));
 vi.mock('./cliente', () => ({ useListIndex: () => new Map(), useClientIndex: () => new Map(), LogoDoCliente: () => null, nomeLimpo: (n: string) => n }));
 
 const { CalendarView } = await import('./calendar-view');
