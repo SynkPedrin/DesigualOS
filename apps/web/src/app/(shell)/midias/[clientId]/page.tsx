@@ -65,7 +65,7 @@ export default function CentralDeTrafegoPage({ params }: { params: Promise<{ cli
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-6">
-      <div className="sticky top-0 z-20 -mx-8 bg-carbono px-8 pt-8">
+      <div className="sticky top-0 z-20 -mx-8 px-8 pt-8 bg-carbono/40 backdrop-blur-md [mask-image:linear-gradient(to_bottom,black_80%,transparent)]">
         <Link
           href="/midias"
           className="inline-flex items-center gap-1.5 font-mono text-[11px] text-nevoa transition-colors hover:text-branco-cru"

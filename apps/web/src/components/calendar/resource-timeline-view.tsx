@@ -57,8 +57,8 @@ export function ResourceTimelineView({
   }
 
   return (
-    <div className="flex overflow-hidden rounded-lg border border-grafite-elevado">
-      <div className="w-14 shrink-0 border-r border-grafite-elevado bg-grafite">
+    <div className="flex overflow-hidden rounded-2xl border border-sinal/[0.14] bg-grafite/70">
+      <div className="w-14 shrink-0 border-r border-grafite-elevado bg-carbono/30">
         <div className="h-16 border-b border-grafite-elevado" />
         <div className="relative" style={{ height: `${TOTAL_HORAS * 48}px` }}>
           {Array.from({ length: TOTAL_HORAS }, (_, i) => (

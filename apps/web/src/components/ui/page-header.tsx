@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { BrandBanner } from './brand-banner';
 import { titleCardVideoFor } from '@/lib/title-card-videos';
+import { cn } from '@/lib/utils';
 
 /**
  * Cabeçalho de página — de volta ao card de título com vídeo (restaurado em
@@ -36,8 +37,9 @@ export function PageHeader({
   // virariam um vão transparente por onde a lista apareceria passando. O
   // `bg-carbono` fecha esse vão, e o `-mx-8` faz o fundo cobrir a largura toda.
   return (
-    // Translúcida (03/11/2026): opaca, a faixa do cabeçalho cortava a luz animada do fundo num retângulo escuro.
-    <div className={compact ? 'sticky top-0 z-20 -mx-8 bg-carbono/30 px-8 pt-4 backdrop-blur-md' : 'sticky top-0 z-20 -mx-8 bg-carbono/30 px-8 pt-8 backdrop-blur-md'}>
+    // Vidro que se dissolve na borda de baixo (03/11/2026): opaca, a faixa fixa do cabeçalho cortava a luz animada do
+    // fundo num retângulo escuro; com borda reta, sobrava uma linha de recorte por cima do conteúdo que rola.
+    <div className={cn('sticky top-0 z-20 -mx-8 px-8 pb-1 bg-carbono/40 backdrop-blur-md [mask-image:linear-gradient(to_bottom,black_80%,transparent)]', compact ? 'pt-4' : 'pt-8')}>
     <BrandBanner className={compact ? 'mb-4 p-4 md:p-5' : 'mb-8 p-6 md:p-8'} videoSrc={videoSrc}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>

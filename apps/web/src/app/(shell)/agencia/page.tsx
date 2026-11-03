@@ -115,12 +115,16 @@ export default function AgenciaPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <PageHeader eyebrow="Agência" title="Bom dia, Desigual." description="Como está a operação da agência inteira, agora." />
-        <p className="pb-2 text-right text-sm text-nevoa">
-          {new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())}
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Agência"
+        title="Bom dia, Desigual."
+        description="Como está a operação da agência inteira, agora."
+        actions={
+          <p className="text-right text-sm text-nevoa">
+            {new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())}
+          </p>
+        }
+      />
 
       {/* A EMPRESA. A faixa abaixo responde "o que a Desigual é": carteira,
           gente, trabalho e dinheiro. A faixa seguinte responde "como ela está

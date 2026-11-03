@@ -34,7 +34,7 @@ export function Topbar() {
 
   return (
     <>
-    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-branco-cru/[0.06] bg-carbono/40 px-4 backdrop-blur-md sm:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-branco-cru/[0.06] px-4 sm:px-6">
       <button
         type="button"
         onClick={toggleMobileNav}

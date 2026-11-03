@@ -112,17 +112,20 @@ function CalendarPageContent() {
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <PageHeader eyebrow="Calendário" title={visao === 'geral' ? 'Agenda geral' : visao === 'pessoal' ? 'Sua semana' : 'Agenda da agência'} />
-        {isMaster && (
-          <div className="flex shrink-0 items-center gap-1 rounded-md border border-grafite-elevado p-1">
+      {/* O seletor vai DENTRO do cabeçalho (03/11/2026): ao lado dele, num flex, a faixa do cabeçalho ficava da largura
+          do banner e aparecia como um quadrado em volta dele por cima da luz de fundo. */}
+      <PageHeader
+        eyebrow="Calendário"
+        title={visao === 'geral' ? 'Agenda geral' : visao === 'pessoal' ? 'Sua semana' : 'Agenda da agência'}
+        actions={isMaster ? (
+          <div className="flex shrink-0 items-center gap-1 rounded-xl border border-sinal/25 bg-carbono/60 p-1 backdrop-blur-md">
             <button
               type="button"
               onClick={() => {
                 setVisao('geral');
                 setAba(TODAS);
               }}
-              className={`rounded px-3 py-1 text-sm transition-colors ${visao === 'geral' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
+              className={`rounded-lg px-3 py-1 text-sm transition-colors ${visao === 'geral' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
             >
               Agenda geral
             </button>
@@ -132,20 +135,20 @@ function CalendarPageContent() {
                 setVisao('pessoal');
                 setAba(TODAS);
               }}
-              className={`rounded px-3 py-1 text-sm transition-colors ${visao === 'pessoal' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
+              className={`rounded-lg px-3 py-1 text-sm transition-colors ${visao === 'pessoal' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
             >
               Minha agenda
             </button>
             <button
               type="button"
               onClick={() => setVisao('agencia')}
-              className={`rounded px-3 py-1 text-sm transition-colors ${visao === 'agencia' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
+              className={`rounded-lg px-3 py-1 text-sm transition-colors ${visao === 'agencia' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
             >
               Agência
             </button>
           </div>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       {/* SÓ OUTLOOK (14/10/2026, Pedro: "é sempre Microsoft, não existe
        * Google Calendar"). O banner do Google convidava toda pessoa a conectar
