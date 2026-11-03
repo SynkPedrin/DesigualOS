@@ -54,7 +54,9 @@ export interface WsEvent {
     // Painel da gestão (Hoje de quem administra): só o aviso, sem dado; filtrado por recipient_ids.
     | 'gestao.mudou'
     // Daily Tasks: algo mudou (tarefa sincronizada do ClickUp). Só o aviso, sem dado; filtrado por recipient_ids.
-    | 'work.mudou';
+    | 'work.mudou'
+    // Notificação nova no sino: só o aviso (a tela busca a lista e toca o som); filtrado por recipient_ids.
+    | 'notificacao.nova';
   payload: Record<string, unknown>;
 }
 

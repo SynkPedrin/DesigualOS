@@ -67,4 +67,5 @@ export async function notificarEvento(tx: Db, ctx: WorkContext, e: ActivityInput
     : e.action === 'commented' ? `${quem} comentou em ${ref}` : `${quem} mudou o status de ${ref}`;
   const link = `/daily-tasks?task=${t.id}`;
   await tx.insert(schema.notifications).values(t.destinatarios.map((userId) => ({ userId, type: `work.${e.action}`, title: titulo.slice(0, 240), body: null, link })));
+  ctx.aoNotificar?.(t.destinatarios);
 }

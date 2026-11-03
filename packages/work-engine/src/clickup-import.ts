@@ -28,6 +28,8 @@ export interface ImportReport {
   listasSemCliente: string[];
   statusCriadosPorTarefa: string[];
   naoImportado: string[];
+  /** Ao vivo: quem passou a ser responsável por alguma tarefa nesta sincronia e recebeu aviso no sino. */
+  notificados?: string[];
 }
 
 export function normalizar(s: string): string {
@@ -391,6 +393,24 @@ export async function importClickUp(
       }
     }
     for (const c of chunk(assignees)) await tx.insert(schema.workTaskAssignees).values(c).onConflictDoNothing();
+    /**
+     * Tarefa atribuída pelo ClickUp avisa no sino (03/11/2026): sem isto, só a atribuição feita aqui no Daily avisava.
+     * Quem continua na tarefa manteve a linha antiga; a linha gravada AGORA (assigned_at = início desta transação) é
+     * de quem acabou de entrar. Atribuição feita aqui e que volta do ClickUp já tem a linha: não avisa duas vezes.
+     * Tarefa concluída ou arquivada não avisa.
+     */
+    if (opts.aoVivo && tarefasAlinhadas.length && !dryRun) {
+      const avisados = (await tx.execute(sql`
+        insert into notifications (user_id, organization_id, type, title, link, dedupe_key)
+        select a.user_id, ${org}::uuid, 'work.assigned', left('Tarefa atribuída a você: DT-' || t.number || ' ' || t.title, 240),
+          '/daily-tasks?task=' || t.id, 'work-assigned:' || t.id || ':' || a.user_id || ':' || (extract(epoch from a.assigned_at) * 1000)::bigint
+        from work_task_assignees a join work_tasks t on t.id = a.task_id
+        where a.task_id in (${sql.join(tarefasAlinhadas.map((id) => sql`${id}::uuid`), sql`, `)})
+          and a.assigned_at = now() and t.organization_id = ${org}::uuid and t.archived_at is null and t.completed_at is null
+        on conflict do nothing
+        returning user_id`)) as unknown as Array<{ user_id: string }>;
+      if (avisados.length) report.notificados = [...new Set(avisados.map((a) => a.user_id))];
+    }
     for (const c of chunk(valoresCampo)) await tx.insert(schema.workCustomFieldValues).values(c).onConflictDoUpdate({ target: [schema.workCustomFieldValues.taskId, schema.workCustomFieldValues.fieldId], set: { value: sql`excluded.value`, updatedAt: new Date() } });
     for (const c of chunk(deps)) await tx.insert(schema.workTaskDependencies).values(c).onConflictDoNothing();
     for (const c of chunk(checklists)) await tx.insert(schema.workChecklists).values(c);

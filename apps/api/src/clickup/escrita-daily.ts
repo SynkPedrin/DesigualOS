@@ -184,7 +184,7 @@ export function esquecerTokensDaEscrita(): void {
   tokensEmCache.clear();
 }
 /** Token OAuth do ClickUp da pessoa, se ela conectou o mesmo workspace. Guardado 1 min (cada evento perguntava ao banco). */
-async function tokenDoClickUpDe(userId: string, teamId: string): Promise<string | null> {
+export async function tokenDoClickUpDe(userId: string, teamId: string): Promise<string | null> {
   const guardado = tokensEmCache.get(userId);
   if (guardado && Date.now() - guardado.em < 60_000) return guardado.token;
   const token = await lerTokenDoClickUp(userId, teamId);

@@ -116,6 +116,10 @@ export function useRealtimeEvents(): void {
         case 'work.mudou':
           atualizarDailyAgrupado(queryClient);
           break;
+        // Notificação nova no sino (mensagem, tarefa atribuída): busca a lista na hora; o popup toca o som.
+        case 'notificacao.nova':
+          queryClient.invalidateQueries({ queryKey: ['notifications'] });
+          break;
         case 'clickup.task_changed': {
           const clientId = event.payload.client_id;
           if (typeof clientId === 'string') {

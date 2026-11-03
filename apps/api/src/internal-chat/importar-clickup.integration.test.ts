@@ -162,7 +162,10 @@ describe.skipIf(!enabled)('chat do ClickUp → Comunicação × PostgreSQL real'
       const alvo = naOutra.find((c) => c.kind === 'group')!;
       await db.insert(schema.internalMessages).values({ organizationId: outra, conversationId: alvo.id, senderId: alicia, content: 'escrita aqui', clientMessageId: randomUUID() });
 
-      await M.desfazerImportacaoFora([org]);
+      // A faxina vale para o banco inteiro: as outras empresas do banco (de testes rodando em paralelo) contam como
+      // donas, senão este teste apagava o que elas importaram. Só a "outra" fica de fora.
+      const todas = await db.select({ id: schema.organizations.id }).from(schema.organizations);
+      await M.desfazerImportacaoFora(todas.map((o) => o.id).filter((id) => id !== outra));
       const restam = await db.select().from(schema.internalConversations).where(eq(schema.internalConversations.organizationId, outra));
       expect(restam.map((c) => c.id)).toEqual([alvo.id]);
       expect((await mensagensDe(alvo.id)).map((m) => m.content)).toEqual(['escrita aqui']);

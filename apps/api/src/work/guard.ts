@@ -23,7 +23,23 @@ export async function requireDailyTasks(request: FastifyRequest, reply: FastifyR
   }
 }
 
+const notificadosPorRequisicao = new WeakMap<FastifyRequest, Set<string>>();
+
 /** Contexto do motor a partir da requisição já autorizada. A empresa vem do tenant resolvido, NUNCA do corpo. */
 export function workContext(request: FastifyRequest): WorkContext {
-  return { organizationId: request.tenantContext!.organizationId, userId: request.authUser!.id, actorKind: 'user' };
+  return {
+    organizationId: request.tenantContext!.organizationId,
+    userId: request.authUser!.id,
+    actorKind: 'user',
+    aoNotificar: (ids) => {
+      const s = notificadosPorRequisicao.get(request) ?? new Set<string>();
+      for (const id of ids) s.add(id);
+      notificadosPorRequisicao.set(request, s);
+    },
+  };
+}
+
+/** Quem recebeu aviso no sino durante esta requisição (para o aviso ao vivo depois da resposta). */
+export function notificadosDaRequisicao(request: FastifyRequest): string[] {
+  return [...(notificadosPorRequisicao.get(request) ?? [])];
 }

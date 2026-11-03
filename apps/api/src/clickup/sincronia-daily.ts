@@ -1,5 +1,6 @@
 import { createLogger } from '@desigual-os/logging';
 import { getRedisConnection, publishWsEvent } from '@desigual-os/orchestrator';
+import { avisarNotificacoesNovas } from '../notifications/avisar';
 import { comPrazo, escritaNoClickUpLigada } from './escrita-daily';
 import { db, schema } from '@desigual-os/database';
 import { and, eq, isNull, sql } from 'drizzle-orm';
@@ -167,8 +168,9 @@ export async function sincronizarTarefaNoDaily(taskId: string, opcoes: { apagada
   ]);
 
   const snapshot = montarSnapshotDaTarefa({ membros, tarefa, comentarios, lista, espaco, camposDaLista });
-  await importClickUp({ organizationId, userId: null, actorKind: 'system' }, { snapshot, aoVivo: true });
+  const relatorio = await importClickUp({ organizationId, userId: null, actorKind: 'system' }, { snapshot, aoVivo: true });
   avisarDailyMudou(organizationId);
+  if (relatorio.notificados?.length) void avisarNotificacoesNovas(relatorio.notificados);
   return { taskId, acao: 'sincronizada' };
 }
 

@@ -9,6 +9,7 @@ import { useMarkNotificationRead, useNotifications } from '@/hooks/use-notificat
 import { useOpenNotificationLink } from '@/hooks/use-open-notification-link';
 import { useUiStore } from '@/stores/ui-store';
 import type { Notification } from '@/lib/api/contracts';
+import { avisarNoNavegador, prepararAvisos, tipoDeAvisoSonoro, tocarAviso } from '@/lib/aviso-sonoro';
 
 /**
  * Único popup de notificação do app: aparece no canto INFERIOR direito,
@@ -66,19 +67,34 @@ export function NotificationInboxPopup() {
    */
   const primeiraLevaIgnorada = useRef(false);
 
+  useEffect(() => { prepararAvisos(); }, []);
+
   useEffect(() => {
     if (!notifications) return;
 
     const unseenUnread = notifications.filter(
       (notification) => !notification.read && !shownIds.current.has(notification.id),
     );
-    if (unseenUnread.length === 0) return;
     for (const notification of unseenUnread) shownIds.current.add(notification.id);
 
-    // A primeira resposta da query é o acervo: marca como visto e não abre.
+    // A primeira resposta da query é o acervo: marca como visto e não abre. Vale também quando ela vem VAZIA: antes,
+    // quem abria o sistema sem nada no sino perdia a primeira notificação que chegava (tratada como acervo).
     if (!primeiraLevaIgnorada.current) {
       primeiraLevaIgnorada.current = true;
       return;
+    }
+    if (unseenUnread.length === 0) return;
+
+    /**
+     * SOM: mensagem nova e tarefa atribuída tocam sempre, mesmo dentro do Studio e com a aba em segundo plano
+     * (aí também vira aviso do sistema). Tarefa tem prioridade sobre mensagem quando chegam juntas.
+     */
+    const sonoras = unseenUnread.filter((n) => tipoDeAvisoSonoro(n.type));
+    if (sonoras.length) {
+      tocarAviso(sonoras.some((n) => tipoDeAvisoSonoro(n.type) === 'tarefa') ? 'tarefa' : 'mensagem');
+      for (const n of sonoras.slice(-3)) {
+        avisarNoNavegador(n.title, n.body, () => { markRead.mutate(n.id); openNotificationLink(n.link); }, n.id);
+      }
     }
 
     if (insideStudio) return;

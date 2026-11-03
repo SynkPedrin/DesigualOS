@@ -6,6 +6,11 @@ export interface WorkContext {
   userId: string;
   /** user | automation | agent | system: vai para a trilha de atividade, para separar pessoa de máquina. */
   actorKind?: 'user' | 'automation' | 'agent' | 'system';
+  /**
+   * Quem recebeu aviso no sino nesta operação. O motor grava a notificação DENTRO da transação; quem monta o contexto
+   * (a rota) avisa a tela de cada pessoa depois que a resposta sai, quando a transação já foi confirmada.
+   */
+  aoNotificar?: (userIds: string[]) => void;
 }
 
 /** Tipo da conexão OU da transação (os dois expõem a mesma API de consulta). */

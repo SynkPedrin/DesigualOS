@@ -20,7 +20,7 @@ import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
  */
 
 export type Conversa = typeof schema.internalConversations.$inferSelect;
-type Mensagem = typeof schema.internalMessages.$inferSelect;
+export type Mensagem = typeof schema.internalMessages.$inferSelect;
 type Anexo = typeof schema.internalMessageAttachments.$inferSelect;
 type ObjetoDaMensagem = typeof schema.internalMessageObjects.$inferSelect;
 

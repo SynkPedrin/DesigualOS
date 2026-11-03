@@ -27,7 +27,8 @@ export interface WsEvent {
     | 'chat.event'
     // Gestão da equipe: só o aviso "mudou" (sem dado), entregue aos administradores.
     | 'gestao.mudou'
-    | 'work.mudou';
+    | 'work.mudou'
+    | 'notificacao.nova';
   payload: Record<string, unknown>;
 }
 

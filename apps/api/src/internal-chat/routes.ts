@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { eq, inArray } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import { publishWsEvent } from '@desigual-os/orchestrator';
 import { createLogger } from '@desigual-os/logging';
@@ -13,6 +14,8 @@ import { estadosDePresenca, marcarPresenca, presentes } from './presenca';
 import { TIPOS_DE_OBJETO, estadoAtual, validarObjetos, visibilidadeDosObjetos, type Contexto, type PedidoDeObjeto } from './objetos';
 import { TarefaEmAndamento, criarTarefaDaMensagem } from './tarefas';
 import { pedirAoAgente } from './assistente';
+import { avisarNotificacoesNovas } from '../notifications/avisar';
+import { espelharAlteracao, espelharMensagem } from './espelho-clickup';
 import { chatDoClickUpLigado, iniciarChatDoClickUp, passadaDoChatDoClickUp, totaisDoChatImportado, ultimasImportacoesDoChat } from './importar-clickup';
 
 /**
@@ -164,7 +167,9 @@ async function notificarAlvos(conversa: svc.Conversa, alvos: Map<string, Alvo>, 
     link,
     dedupeKey: `${dedupe}:${userId}`,
   }));
-  if (linhas.length) await db.insert(schema.notifications).values(linhas).onConflictDoNothing();
+  if (!linhas.length) return;
+  const gravadas = await db.insert(schema.notifications).values(linhas).onConflictDoNothing().returning({ userId: schema.notifications.userId });
+  await avisarNotificacoesNovas(gravadas.map((g) => g.userId));
 }
 
 type Envio = Pick<Awaited<ReturnType<typeof svc.enviarMensagem>>, 'mensagem' | 'mencionados' | 'autorRespondido' | 'raiz'> & { participantesDaThread?: string[] };
@@ -200,8 +205,10 @@ async function notificarMensagem(conversa: svc.Conversa, r: Envio) {
   const m = r.mensagem;
   const participantesDaThread = r.participantesDaThread ?? (r.raiz ? await svc.participantesDaThread(r.raiz, m.message.senderId) : []);
   const remetente = m.message.senderId;
-  const nome = m.sender?.name ?? 'Alguém';
-  const trecho = m.message.content ?? (m.objects.length ? 'Compartilhou um item' : m.attachments.length ? 'Enviou um arquivo' : '');
+  // Do ClickUp, de quem não tem conta aqui: o remetente é o usuário técnico e o nome real vem na frente do texto.
+  const deFora = m.message.kind === 'clickup_externo' ? /^\*\*([^*]+)\*\*: ([\s\S]*)$/.exec(m.message.content ?? '') : null;
+  const nome = deFora?.[1] ?? m.sender?.name ?? 'Alguém';
+  const trecho = deFora?.[2] ?? m.message.content ?? (m.objects.length ? 'Compartilhou um item' : m.attachments.length ? 'Enviou um arquivo' : '');
   const onde = nomeDaConversa(conversa);
   const alvos = new Map<string, Alvo>();
   if (!r.raiz) {
@@ -282,9 +289,28 @@ function agendarFaxina() {
 
 const paginaSchema = z.object({ before: z.string().uuid().optional(), after: z.string().uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(40) });
 
+/**
+ * Mensagem que CHEGOU do ClickUp (não a primeira carga do histórico): mesmo efeito de uma escrita aqui, evento ao
+ * vivo para quem lê e aviso no sino com som. Uma rajada grande numa passada (alguém voltou de férias e respondeu
+ * tudo) avisa as 20 mais recentes; o resto aparece pela lista.
+ */
+async function chegouDoClickUp(conversationId: string, ids: string[]) {
+  const [conversa] = await db.select().from(schema.internalConversations).where(eq(schema.internalConversations.id, conversationId));
+  if (!conversa || conversa.archivedAt) return;
+  const linhas = await db.select().from(schema.internalMessages).where(inArray(schema.internalMessages.id, ids.slice(-20)));
+  linhas.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const raizes = new Map<string, svc.Mensagem>();
+  const idsDasRaizes = [...new Set(linhas.map((l) => l.threadRootId).filter((x): x is string => Boolean(x)))];
+  if (idsDasRaizes.length) for (const r of await db.select().from(schema.internalMessages).where(inArray(schema.internalMessages.id, idsDasRaizes))) raizes.set(r.id, r);
+  for (const mensagem of await svc.completar(linhas)) {
+    const raiz = mensagem.message.threadRootId ? raizes.get(mensagem.message.threadRootId) ?? null : null;
+    await depoisDoEnvio(conversa, { mensagem, mencionados: [], autorRespondido: null, raiz });
+  }
+}
+
 export async function registerInternalChatRoutes(app: FastifyInstance): Promise<void> {
   agendarFaxina();
-  iniciarChatDoClickUp();
+  iniciarChatDoClickUp(chegouDoClickUp);
   await app.register(async (rotas) => {
     rotas.addHook('preHandler', async (request, reply) => {
       await requireAuth(request, reply);
@@ -581,6 +607,7 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
           // Gravou: a resposta sai agora. Eventos ao vivo e notificações vêm logo depois, fora do caminho
           // de quem enviou (a mensagem já está no banco; quem perder o evento recupera pelo refetch).
           void depoisDoEnvio(rapido.conversa, rapido).catch((error) => logger.warn({ error }, 'Falha ao avisar do envio na Comunicação'));
+          void espelharMensagem(rapido.conversa, rapido.mensagem);
           reply.code(201);
           reply.header('server-timing', tempo.cabecalho());
           // Quem envia acabou de ter cada item validado com a própria permissão: vê o resumo de todos.
@@ -592,7 +619,10 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
         const resultado = await svc.enviarMensagem(conversa, ctx.userId, body, objetos);
         // A raiz que este caminho devolve é a de ANTES da resposta: o evento leva o contador já somado.
         const raizAtual = resultado.raiz ? { ...resultado.raiz, replyCount: resultado.raiz.replyCount + 1, lastReplyAt: resultado.mensagem.message.createdAt } : null;
-        if (resultado.criada) void depoisDoEnvio(conversa, { ...resultado, raiz: raizAtual }).catch((error) => logger.warn({ error }, 'Falha ao avisar do envio na Comunicação'));
+        if (resultado.criada) {
+          void depoisDoEnvio(conversa, { ...resultado, raiz: raizAtual }).catch((error) => logger.warn({ error }, 'Falha ao avisar do envio na Comunicação'));
+          void espelharMensagem(conversa, resultado.mensagem);
+        }
         reply.code(resultado.criada ? 201 : 200);
         const [apresentada] = await apresentarParaLeitor([resultado.mensagem], ctx);
         reply.header('server-timing', tempo.marca('completo').cabecalho());
@@ -607,6 +637,7 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
         const conversa = await svc.conversaAcessivel(ctx.organizationId, ctx.userId, request.params.id);
         const editada = await svc.editarMensagem(conversa, ctx.userId, request.params.messageId, body.content);
         await avisar(await svc.destinatarios(conversa), 'message.updated', { conversation_id: conversa.id, message: apresentarMensagem(editada, null) });
+        void espelharAlteracao(conversa, ctx.userId, editada.message.id, editada.message.content);
         return (await apresentarParaLeitor([editada], ctx))[0];
       } catch (erro) { return falha(reply, erro); }
     });
@@ -619,6 +650,7 @@ export async function registerInternalChatRoutes(app: FastifyInstance): Promise<
         await Promise.all(storageKeys.map((k) => apagarAnexo(k).catch(() => undefined)));
         const apagada = apresentarMensagem(mensagem, null);
         await avisar(await svc.destinatarios(conversa), 'message.updated', { conversation_id: conversa.id, message: apagada });
+        void espelharAlteracao(conversa, ctx.userId, mensagem.message.id, null);
         await auditarAcao(request, { action: 'internal_chat.message_deleted', resourceType: 'internal_message', resourceId: request.params.messageId, metadata: { conversation_id: conversa.id, attachments: storageKeys.length } });
         return apagada;
       } catch (erro) { return falha(reply, erro); }

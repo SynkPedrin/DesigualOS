@@ -104,7 +104,8 @@ import {
 import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
-import { requireDailyTasks, workContext } from './guard';
+import { notificadosDaRequisicao, requireDailyTasks, workContext } from './guard';
+import { avisarNotificacoesNovas } from '../notifications/avisar';
 import { ehEmailDePessoaDoClickUp } from '../clickup/pessoas-do-clickup';
 
 /**
@@ -167,7 +168,11 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
 
   // Toda edição gravada no Daily já está na trilha quando a resposta sai: a saída para o ClickUp corre agora.
   app.addHook('onResponse', async (request, reply) => {
-    if (request.method !== 'GET' && request.method !== 'OPTIONS' && reply.statusCode < 400 && request.url.startsWith('/work/')) acordarEscoador();
+    if (request.method !== 'GET' && request.method !== 'OPTIONS' && reply.statusCode < 400 && request.url.startsWith('/work/')) {
+      acordarEscoador();
+      // Atribuição, menção, comentário: a transação já foi confirmada, o sino de quem recebeu toca agora.
+      void avisarNotificacoesNovas(notificadosDaRequisicao(request));
+    }
   });
 
   // ── Acesso ─────────────────────────────────────────────────────────────

@@ -124,6 +124,23 @@ describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () =
     expect(await db.select().from(schema.workComments).where(eq(schema.workComments.taskId, tasks[0]!.id))).toHaveLength(0);
   });
 
+  it('tarefa atribuída pelo ClickUp avisa no sino SÓ quem entrou nela, uma vez (03/11/2026)', async () => {
+    const { db, schema } = dbm;
+    const { and, asc, eq, inArray } = await import('drizzle-orm');
+    const avisos = () => db.select().from(schema.notifications).where(and(inArray(schema.notifications.userId, [ana, bia]), eq(schema.notifications.type, 'work.assigned'))).orderBy(asc(schema.notifications.createdAt));
+    const antes = (await avisos()).length;
+    // Estado anterior: só a Bia. O ClickUp põe a Ana de volta.
+    servir(tarefa({ status: { status: 'em aprovação', type: 'custom', color: '#a0f' } }), []);
+    await M.sincronizarTarefaNoDaily('T1');
+    const novos = (await avisos()).slice(antes);
+    expect(novos.map((n) => n.userId)).toEqual([ana]);
+    expect(novos[0]!.title).toMatch(/^Tarefa atribuída a você: DT-\d+ Arte do dia das crianças$/);
+    expect(novos[0]!.link).toMatch(/^\/daily-tasks\?task=/);
+    // A mesma tarefa sincronizada de novo, sem mudança de responsável: ninguém é avisado outra vez.
+    await M.sincronizarTarefaNoDaily('T1');
+    expect((await avisos()).length).toBe(antes + 1);
+  });
+
   it('só lê o ClickUp: nenhuma chamada que não seja GET de leitura, e a lista/o espaço vêm do cache na segunda vez', async () => {
     servir(tarefa(), []);
     await M.sincronizarTarefaNoDaily('T1');

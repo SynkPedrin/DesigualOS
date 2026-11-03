@@ -5,6 +5,7 @@ import { createLogger } from '@desigual-os/logging';
 import { getTeamMembers, type ClickUpMember } from '@desigual-os/tool-gateway';
 import { decryptToken } from '../lib/token-crypto';
 import { garantirPessoasDoClickUpNasEmpresas } from '../clickup/pessoas-do-clickup';
+import { espelhandoConversa, publicadasDaqui } from './espelho-clickup';
 
 const logger = createLogger({ service: 'chat-clickup' });
 
@@ -42,7 +43,7 @@ export interface MembroCU { id: string | number; email?: string | null; username
 export interface ApiDeChat {
   canais(token: string, workspace: string): Promise<CanalCU[]>;
   membros(token: string, workspace: string, canalId: string): Promise<MembroCU[]>;
-  /** Da mais nova para a mais antiga, parando no que já foi importado (`desdeMs`). */
+  /** Da mais nova para a mais antiga, parando no que já foi importado (`desdeMs`); a primeira página vem inteira. */
   mensagens(token: string, workspace: string, canalId: string, desdeMs: number, maximo: number): Promise<MensagemCU[]>;
   respostas(token: string, workspace: string, mensagemId: string): Promise<MensagemCU[]>;
 }
@@ -88,10 +89,14 @@ export const apiDeChatReal: ApiDeChat = {
     return todos;
   },
   async mensagens(token, ws, canalId, desdeMs, maximo) {
+    // A primeira página vem sempre inteira, mesmo o que já foi importado: é nela que aparece a resposta nova numa
+    // thread de mensagem antiga (a contagem de respostas muda; a data da mensagem, não).
     const todas: MensagemCU[] = [];
-    for await (const p of paginas<MensagemCU>(token, `${BASE}/${ws}/chat/channels/${canalId}/messages?limit=100&content_format=text/md`)) {
-      for (const m of p) { if (quando(m) <= desdeMs) return todas; todas.push(m); }
-      if (todas.length >= maximo) return todas;
+    let pagina = 0;
+    for await (const p of paginas<MensagemCU>(token, `${BASE}/${ws}/chat/channels/${canalId}/messages?limit=${desdeMs > 0 ? 50 : 100}&content_format=text/md`)) {
+      pagina++;
+      for (const m of p) { if (quando(m) <= desdeMs && pagina > 1) return todas; todas.push(m); }
+      if (todas.length >= maximo || p.some((m) => quando(m) <= desdeMs)) return todas;
     }
     return todas;
   },
@@ -227,8 +232,25 @@ async function promoverConversaAntiga(organizationId: string, conversationId: st
   }
 }
 
+export interface OpcoesDaImportacao {
+  api?: ApiDeChat;
+  membrosDoTime?: ClickUpMember[];
+  workspace?: string;
+  /**
+   * Mensagens que CHEGARAM agora (não a primeira carga): a rota avisa ao vivo e notifica, como numa mensagem escrita
+   * aqui. Ids das mensagens gravadas, por conversa.
+   */
+  aoChegar?: (conversationId: string, messageIds: string[]) => Promise<void>;
+}
+
+interface MetaDoCanal { ultimaMs?: number; tipo?: string; primeiraCarga?: boolean; respostas?: Record<string, number> }
+
+/** Membros de cada canal mudam pouco: relidos a cada 10 min (a passada agora roda a cada 30 s). */
+const membrosEmCache = new Map<string, { em: number; membros: MembroCU[]; daqui?: string }>();
+const MEMBROS_VALEM_MS = 10 * 60_000;
+
 /** Uma passada para a empresa: o que mudou desde a última (na primeira, o histórico inteiro). */
-export async function importarChatDoClickUp(organizationId: string, opcoes: { api?: ApiDeChat; membrosDoTime?: ClickUpMember[]; workspace?: string } = {}): Promise<ResultadoDoChat> {
+export async function importarChatDoClickUp(organizationId: string, opcoes: OpcoesDaImportacao = {}): Promise<ResultadoDoChat> {
   const api = opcoes.api ?? apiDeChatReal;
   const r: ResultadoDoChat = { organizationId, tokens: 0, canais: 0, conversasCriadas: 0, mensagens: 0, respostas: 0, ignorados: [], falhas: [] };
   const conexoes = await db.select({ userId: schema.integrationConnections.userId, token: schema.integrationConnections.accessTokenEncrypted, workspace: schema.integrationConnections.externalWorkspaceId })
@@ -241,73 +263,137 @@ export async function importarChatDoClickUp(organizationId: string, opcoes: { ap
   r.tokens = leitores.length;
   if (!leitores.length) return r;
 
-  const membrosCU = opcoes.membrosDoTime ?? await getTeamMembers({ apiKey: process.env.CLICKUP_API_KEY ?? '', teamId: process.env.CLICKUP_TEAM_ID ?? '' });
+  const membrosCU = opcoes.membrosDoTime ?? await membrosDoTimeEmCache();
   const pessoas = await pessoasDaEmpresa(organizationId, membrosCU);
   const tecnico = await usuarioTecnico();
 
-  // Cada canal é lido uma vez, pelo primeiro token que o enxerga.
-  const canais = new Map<string, { canal: CanalCU; token: string; workspace: string }>();
+  // Cada canal é lido por UM token que o enxerga. Os canais se repartem entre os tokens (cada token tem o próprio
+  // limite no ClickUp) e os tokens leem em paralelo: com um token só lendo tudo, a passada passava de 30 s.
+  const vistos = new Map<string, { canal: CanalCU; leitores: Array<{ token: string; workspace: string }> }>();
   for (const l of leitores) {
     try {
-      for (const canal of await api.canais(l.token, l.workspace!)) if (!canais.has(canal.id)) canais.set(canal.id, { canal, token: l.token, workspace: l.workspace! });
+      for (const canal of await api.canais(l.token, l.workspace!)) {
+        const v = vistos.get(canal.id) ?? { canal, leitores: [] };
+        v.leitores.push({ token: l.token, workspace: l.workspace! });
+        vistos.set(canal.id, v);
+      }
     } catch (error) {
       r.falhas.push({ erro: `canais de um colaborador: ${error instanceof Error ? error.message : String(error)}` });
     }
   }
+  const porToken = new Map<string, Array<{ canal: CanalCU; token: string; workspace: string }>>();
+  for (const { canal, leitores: ls } of vistos.values()) {
+    const escolhido = ls.reduce((a, b) => ((porToken.get(a.token)?.length ?? 0) <= (porToken.get(b.token)?.length ?? 0) ? a : b));
+    const fila = porToken.get(escolhido.token) ?? [];
+    fila.push({ canal, ...escolhido });
+    porToken.set(escolhido.token, fila);
+  }
 
-  for (const { canal, token, workspace } of canais.values()) {
+  // Os vínculos canal→conversa numa ida só (antes, duas consultas por canal a cada passada).
+  const vinculos = new Map((await db.select().from(schema.workExternalMappings).where(and(
+    eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, 'clickup'),
+    eq(schema.workExternalMappings.externalType, 'chat_channel'),
+  ))).map((v) => [v.externalId, v]));
+
+  async function lerCanal(canal: CanalCU, token: string, workspace: string) {
     r.canais++;
     try {
-      const membros = await api.membros(token, workspace, canal.id);
+      const emCache = membrosEmCache.get(canal.id);
+      const frescos = !emCache || Date.now() - emCache.em > MEMBROS_VALEM_MS;
+      const membros = frescos ? await api.membros(token, workspace, canal.id) : emCache.membros;
       const daqui = membros.map((m) => pessoas.get(String(m.id))?.userId).filter((x): x is string => Boolean(x));
+      // Quem da conversa tem conta aqui mudou (pessoa nova cadastrada): acerta membros e autoria já, sem esperar os 10 min.
+      const chaveDaqui = [...new Set(daqui)].sort().join(',');
+      const mudouQuemEDaqui = emCache?.daqui !== chaveDaqui;
+      membrosEmCache.set(canal.id, frescos ? { em: Date.now(), membros, daqui: chaveDaqui } : { ...emCache, daqui: chaveDaqui });
       const deFora = membros.filter((m) => !pessoas.get(String(m.id))?.userId).map((m) => pessoas.get(String(m.id))?.nome ?? m.username ?? m.email ?? 'alguém');
-      const conversa = await conversaDoCanal(organizationId, canal, daqui, deFora);
-      if (!conversa) { r.ignorados.push({ canal: canal.id, motivo: 'ninguém da conversa tem conta na plataforma' }); continue; }
+      const jaLigada = vinculos.get(canal.id);
+      const conversa = jaLigada ? { id: jaLigada.entityId, criada: false } : await conversaDoCanal(organizationId, canal, daqui, deFora);
+      if (!conversa) { r.ignorados.push({ canal: canal.id, motivo: 'ninguém da conversa tem conta na plataforma' }); return; }
       if (conversa.criada) r.conversasCriadas++;
-      // Membros novos no ClickUp entram aqui também.
-      if (!conversa.criada && daqui.length) await db.insert(schema.internalConversationMembers).values([...new Set(daqui)].map((userId) => ({ conversationId: conversa.id, userId, organizationId }))).onConflictDoNothing();
-      if (!conversa.criada) await promoverConversaAntiga(organizationId, conversa.id, canal, daqui, membros.map((m) => pessoas.get(String(m.id))));
+      // Mensagem daqui sendo publicada lá agora: esta conversa fica para a próxima passada (senão voltaria em dobro).
+      if (espelhandoConversa(conversa.id)) return;
+      // Membros novos no ClickUp entram aqui também (só quando a lista de membros foi relida).
+      if (!conversa.criada && (frescos || mudouQuemEDaqui) && daqui.length) {
+        await db.insert(schema.internalConversationMembers).values([...new Set(daqui)].map((userId) => ({ conversationId: conversa.id, userId, organizationId }))).onConflictDoNothing();
+        await promoverConversaAntiga(organizationId, conversa.id, canal, daqui, membros.map((m) => pessoas.get(String(m.id))));
+      }
 
-      const v = await vinculo(organizationId, canal.id);
-      const desde = Number((v?.meta as { ultimaMs?: number } | undefined)?.ultimaMs ?? 0);
-      const novas = (await api.mensagens(token, workspace, canal.id, desde, MAXIMO_POR_CANAL)).sort((a, b) => quando(a) - quando(b));
-      if (!novas.length) continue;
+      const v = jaLigada ?? await vinculo(organizationId, canal.id);
+      const meta = (v?.meta ?? {}) as MetaDoCanal;
+      const desde = Number(meta.ultimaMs ?? 0);
+      // Primeira carga (conversa nova aqui, ou vínculo recém-criado pelo envio daqui): histórico, não notifica.
+      const primeira = conversa.criada || Boolean(meta.primeiraCarga);
+      const lidas = await api.mensagens(token, workspace, canal.id, desde, MAXIMO_POR_CANAL);
+      const candidatas = lidas.filter((m) => quando(m) > desde);
+      // Respostas: a contagem de cada mensagem lida, comparada com a da passada anterior. Mudou → lê a thread.
+      const respostasAntes = meta.respostas ?? {};
+      const threadsMudaram = lidas.filter((m) => (m.replies_count ?? 0) > 0 && (m.replies_count ?? 0) !== (respostasAntes[m.id] ?? 0));
+      if (!candidatas.length && !threadsMudaram.length && !meta.primeiraCarga) return;
+
+      const doDaqui = await publicadasDaqui(organizationId, [...candidatas, ...threadsMudaram].map((m) => m.id));
+      const novas = candidatas.filter((m) => !doDaqui.has(m.id)).sort((a, b) => quando(a) - quando(b));
+      const chegaram: string[] = [];
       for (let i = 0; i < novas.length; i += 200) {
         const lote = novas.slice(i, i + 200).map((m) => valores(organizationId, conversa.id, m, pessoas, tecnico, null));
         const gravadas = await db.insert(schema.internalMessages).values(lote).onConflictDoNothing().returning({ id: schema.internalMessages.id });
         r.mensagens += gravadas.length;
+        chegaram.push(...gravadas.map((g) => g.id));
       }
-      // Respostas em thread: a raiz é a mensagem já gravada com o mesmo id do ClickUp.
-      for (const raizCU of novas.filter((m) => (m.replies_count ?? 0) > 0)) {
-        const [raiz] = await db.select({ id: schema.internalMessages.id }).from(schema.internalMessages).where(and(eq(schema.internalMessages.conversationId, conversa.id), eq(schema.internalMessages.clientMessageId, `clickup:${raizCU.id}`))).limit(1);
-        if (!raiz) continue;
-        const respostas = await api.respostas(token, workspace, raizCU.id);
+      // Respostas em thread: a raiz é a mensagem daqui com o mesmo id do ClickUp (importada, ou publicada daqui).
+      for (const raizCU of threadsMudaram) {
+        const raizId = doDaqui.get(raizCU.id) ?? (await db.select({ id: schema.internalMessages.id }).from(schema.internalMessages)
+          .where(and(eq(schema.internalMessages.conversationId, conversa.id), eq(schema.internalMessages.clientMessageId, `clickup:${raizCU.id}`))).limit(1))[0]?.id;
+        if (!raizId) continue;
+        const todas = await api.respostas(token, workspace, raizCU.id);
+        const jaDaqui = await publicadasDaqui(organizationId, todas.map((m) => m.id));
+        const respostas = todas.filter((m) => !jaDaqui.has(m.id));
         if (!respostas.length) continue;
-        const gravadas = await db.insert(schema.internalMessages).values(respostas.map((m) => valores(organizationId, conversa.id, m, pessoas, tecnico, raiz.id))).onConflictDoNothing().returning({ id: schema.internalMessages.id });
+        const gravadas = await db.insert(schema.internalMessages).values(respostas.map((m) => valores(organizationId, conversa.id, m, pessoas, tecnico, raizId))).onConflictDoNothing().returning({ id: schema.internalMessages.id });
         r.respostas += gravadas.length;
+        chegaram.push(...gravadas.map((g) => g.id));
+        if (!gravadas.length) continue;
         const ultima = new Date(Math.max(...respostas.map(quando)));
         await db.update(schema.internalMessages).set({
-          replyCount: sql`(select count(*)::int from internal_messages t where t.thread_root_id = ${raiz.id} and t.deleted_at is null)`,
-          lastReplyAt: ultima,
-        }).where(eq(schema.internalMessages.id, raiz.id));
+          replyCount: sql`(select count(*)::int from internal_messages t where t.thread_root_id = ${raizId} and t.deleted_at is null)`,
+          lastReplyAt: sql`greatest(${schema.internalMessages.lastReplyAt}, ${ultima.toISOString()}::timestamptz)`,
+        }).where(eq(schema.internalMessages.id, raizId));
       }
-      const maisNova = Math.max(...novas.map(quando));
-      await db.update(schema.internalConversations).set({ lastMessageAt: sql`greatest(${schema.internalConversations.lastMessageAt}, ${new Date(maisNova).toISOString()}::timestamptz)` }).where(eq(schema.internalConversations.id, conversa.id));
+      const maisNova = Math.max(desde, ...lidas.map(quando));
+      if (novas.length) {
+        await db.update(schema.internalConversations).set({ lastMessageAt: sql`greatest(${schema.internalConversations.lastMessageAt}, ${new Date(Math.max(...novas.map(quando))).toISOString()}::timestamptz)` }).where(eq(schema.internalConversations.id, conversa.id));
+      }
       // Primeira carga: o histórico entra como lido (senão cada pessoa abriria a Comunicação com milhares de "novas").
       if (conversa.criada) await db.update(schema.internalConversationMembers).set({ lastReadAt: new Date() }).where(eq(schema.internalConversationMembers.conversationId, conversa.id));
-      await db.update(schema.workExternalMappings).set({ meta: sql`${schema.workExternalMappings.meta} || ${JSON.stringify({ ultimaMs: maisNova })}::jsonb`, syncedAt: new Date() })
+      const respostas = Object.fromEntries(lidas.filter((m) => (m.replies_count ?? 0) > 0).slice(0, 100).map((m) => [m.id, m.replies_count ?? 0]));
+      await db.update(schema.workExternalMappings).set({ meta: sql`${schema.workExternalMappings.meta} || ${JSON.stringify({ ultimaMs: maisNova, primeiraCarga: false, respostas: { ...respostasAntes, ...respostas } })}::jsonb`, syncedAt: new Date() })
         .where(and(eq(schema.workExternalMappings.organizationId, organizationId), eq(schema.workExternalMappings.provider, 'clickup'), eq(schema.workExternalMappings.externalType, 'chat_channel'), eq(schema.workExternalMappings.externalId, canal.id)));
+      if (!primeira && chegaram.length && opcoes.aoChegar) {
+        await opcoes.aoChegar(conversa.id, chegaram).catch((error: unknown) => logger.warn({ error, conversationId: conversa.id }, 'Chat do ClickUp: aviso da mensagem que chegou falhou'));
+      }
     } catch (error) {
       r.falhas.push({ canal: canal.id, erro: error instanceof Error ? error.message : String(error) });
     }
   }
+
+  await Promise.all([...porToken.values()].map(async (fila) => { for (const c of fila) await lerCanal(c.canal, c.token, c.workspace); }));
   return r;
+}
+
+let timeEmCache: { em: number; membros: ClickUpMember[] } | null = null;
+async function membrosDoTimeEmCache(): Promise<ClickUpMember[]> {
+  if (timeEmCache && Date.now() - timeEmCache.em < 5 * 60_000) return timeEmCache.membros;
+  const membros = await getTeamMembers({ apiKey: process.env.CLICKUP_API_KEY ?? '', teamId: process.env.CLICKUP_TEAM_ID ?? '' });
+  timeEmCache = { em: Date.now(), membros };
+  return membros;
 }
 
 // ── passadas automáticas ──────────────────────────────────────────────────────────────────────────────────────────
 
 let ultimas: ResultadoDoChat[] = [];
 let rodando = false;
+let ultimaArrumacao = 0;
+let aoChegar: OpcoesDaImportacao['aoChegar'] | null = null;
 export function ultimasImportacoesDoChat() { return ultimas; }
 
 /**
@@ -347,12 +433,16 @@ export async function passadaDoChatDoClickUp(): Promise<ResultadoDoChat[]> {
   rodando = true;
   try {
     const donas = await empresasDonasDoClickUp();
-    await desfazerImportacaoFora(donas);
-    // Quem entrou no ClickUp desde a última passada já chega como pessoa (senão a conversa nasce com "alguém de fora").
-    await garantirPessoasDoClickUpNasEmpresas().catch((error: unknown) => logger.warn({ error }, 'Chat do ClickUp: pessoas do ClickUp não atualizadas'));
+    // A passada roda a cada 30 s; a faxina e as pessoas novas do ClickUp, a cada 5 min (mudam muito pouco).
+    if (Date.now() - ultimaArrumacao > 5 * 60_000) {
+      ultimaArrumacao = Date.now();
+      await desfazerImportacaoFora(donas);
+      // Quem entrou no ClickUp desde a última passada já chega como pessoa (senão a conversa nasce com "alguém de fora").
+      await garantirPessoasDoClickUpNasEmpresas().catch((error: unknown) => logger.warn({ error }, 'Chat do ClickUp: pessoas do ClickUp não atualizadas'));
+    }
     const resultados: ResultadoDoChat[] = [];
     for (const id of donas) {
-      const res = await importarChatDoClickUp(id);
+      const res = await importarChatDoClickUp(id, aoChegar ? { aoChegar } : {});
       resultados.push(res);
       if (res.mensagens || res.respostas || res.falhas.length) logger.info({ ...res, ignorados: res.ignorados.length }, 'Chat do ClickUp: passada');
     }
@@ -364,14 +454,20 @@ export async function passadaDoChatDoClickUp(): Promise<ResultadoDoChat[]> {
 }
 
 let ligado = false;
-/** A cada 5 min (a primeira 1 min depois de subir). Não roda em teste. */
-export function iniciarChatDoClickUp(): void {
+const INTERVALO_MS = Number(process.env.CHAT_CLICKUP_INTERVALO_MS) || 30_000;
+/**
+ * A cada 30 s (era 5 min: a mensagem do ClickUp chegava aqui até 5 min depois, 03/11/2026). A primeira passada sai
+ * 1 min depois de subir. Passada que demora mais que o intervalo não empilha (`rodando`). Não roda em teste.
+ * `aoChegarMensagens`: o que fazer com a mensagem que chegou (aviso ao vivo e notificação, nas rotas).
+ */
+export function iniciarChatDoClickUp(aoChegarMensagens?: OpcoesDaImportacao['aoChegar']): void {
   if (ligado || process.env.VITEST || !chatDoClickUpLigado()) return;
   ligado = true;
+  aoChegar = aoChegarMensagens ?? null;
   const rodar = () => { passadaDoChatDoClickUp().catch((error: unknown) => logger.warn({ error }, 'Chat do ClickUp: passada falhou')); };
   setTimeout(rodar, 60_000).unref();
-  setInterval(rodar, 5 * 60_000).unref();
-  logger.info('Chat do ClickUp: importação ligada (a cada 5 min)');
+  setInterval(rodar, INTERVALO_MS).unref();
+  logger.info({ intervaloMs: INTERVALO_MS }, 'Chat do ClickUp: importação ligada');
 }
 
 /** Para a tela de status: quantas conversas e mensagens do ClickUp já estão aqui. */
