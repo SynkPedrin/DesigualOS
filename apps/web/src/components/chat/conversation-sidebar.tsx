@@ -302,6 +302,7 @@ export function ConversationSidebar({
   onSelect,
   onNewConversation,
   onDeleteConversation,
+  className,
 }: {
   agentFilter: AgentName | null;
   /** Cliente selecionado no ClientSelector: além de marcar conversas novas, também
@@ -311,6 +312,7 @@ export function ConversationSidebar({
   onSelect: (id: string) => void;
   onNewConversation: () => void;
   onDeleteConversation: (id: string) => void;
+  className?: string;
 }) {
   const {
     data: conversations,
@@ -335,7 +337,7 @@ export function ConversationSidebar({
   const privateList = list.filter((conversation) => conversation.visibility !== 'public');
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-grafite-elevado pr-4">
+    <aside className={cn('flex w-64 shrink-0 flex-col border-r border-grafite-elevado pr-4', className)}>
       <button
         type="button"
         onClick={onNewConversation}

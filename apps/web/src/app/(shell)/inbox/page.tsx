@@ -140,7 +140,7 @@ function InboxPageContent() {
     // Tela de trabalho, não de leitura (20/10/2026, referência: inbox do
     // GoHighLevel): sem o banner do topo e quase sem margem, para a conversa
     // ocupar a altura toda. As margens negativas anulam o px-8/pb-8 do shell.
-    <div className="-mx-6 -mb-6 flex h-[calc(100%+1.5rem)] min-h-0 flex-col pt-2">
+    <div className="-mx-2 -mb-6 flex h-[calc(100%+1.5rem)] min-h-0 flex-col pt-2 md:-mx-6">
       <h1 className="sr-only">Inbox</h1>
       {/* minmax(0,1fr): sem isto a coluna da conversa crescia com o conteúdo
           (um token longo sem espaço) e espremia a lista e o painel do contato. */}

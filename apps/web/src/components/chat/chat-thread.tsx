@@ -12,7 +12,7 @@ import {
   useReducedMotion,
   useSpring,
 } from 'framer-motion';
-import { ArrowLeft, FolderClosed, MessageCircle } from 'lucide-react';
+import { ArrowLeft, FolderClosed, MessageCircle, PanelLeft, X } from 'lucide-react';
 import type { AgentName, ExecutionStatus } from '@desigual-os/types';
 import { ClientSelector } from './client-selector';
 import { Composer } from './composer';
@@ -517,16 +517,37 @@ export function ChatThread() {
 
   const hasMessages = messages.length > 0;
   const firstName = me?.name?.trim().split(/\s+/)[0] || 'Time';
+  // No telefone a lista de conversas é gaveta (03/11/2026): fixa ao lado, com 256px, ela deixava a conversa
+  // em si com uma tira de 100px.
+  const [conversasAbertas, setConversasAbertas] = useState(false);
 
   return (
     <LayoutGroup>
-      <div className="flex h-[calc(100vh-8rem)] gap-4">
+      <div className="relative flex h-[calc(100vh-8rem)] gap-4">
+        {conversasAbertas && (
+          <button
+            type="button"
+            aria-label="Fechar conversas"
+            onClick={() => setConversasAbertas(false)}
+            className="fixed inset-0 z-40 bg-carbono/70 backdrop-blur-sm md:hidden"
+          />
+        )}
         <ConversationSidebar
+          className={cn(
+            'max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:w-[min(20rem,85vw)] max-md:bg-carbono max-md:p-4 max-md:shadow-2xl max-md:transition-transform',
+            conversasAbertas ? 'max-md:translate-x-0' : 'max-md:-translate-x-full',
+          )}
           agentFilter={isAgentName(agentFromQuery) ? agentFromQuery : null}
           clientFilter={clientId}
           activeConversationId={activeConversationId}
-          onSelect={handleSelectConversation}
-          onNewConversation={handleNewConversation}
+          onSelect={(id) => {
+            setConversasAbertas(false);
+            handleSelectConversation(id);
+          }}
+          onNewConversation={() => {
+            setConversasAbertas(false);
+            handleNewConversation();
+          }}
           onDeleteConversation={(id) => {
             if (id === activeConversationId) handleNewConversation();
           }}
@@ -534,6 +555,14 @@ export function ChatThread() {
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <ChatAmbient dimmed={hasMessages} />
+          <button
+            type="button"
+            onClick={() => setConversasAbertas((aberta) => !aberta)}
+            className="relative z-10 mb-2 inline-flex items-center gap-1.5 self-start rounded-md border border-grafite-elevado bg-grafite px-3 py-1.5 text-sm text-nevoa hover:text-branco-cru md:hidden"
+          >
+            {conversasAbertas ? <X size={14} /> : <PanelLeft size={14} />}
+            Conversas
+          </button>
 
         <AnimatePresence initial={false}>
           {!hasMessages && projectFromQuery !== null && (

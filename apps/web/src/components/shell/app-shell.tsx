@@ -60,7 +60,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               * junto com a lista e quem rolava perdia o título, os filtros e a
               * busca de vista — justo o que precisa ficar à mão numa tela de
               * lista. Agora o quadro é fixo, como a sidebar sempre foi, e quem
-              * rola é a área de conteúdo logo abaixo. */}
+              * rola é a área de conteúdo logo abaixo.
+              * `px-4` no telefone (03/11/2026): as margens de desktop comiam um sexto da tela.
+              * `[&>*]:w-full`: este quadro é uma coluna flex, e a raiz de página com `mx-auto max-w-[...]` (a maioria)
+              * deixava de esticar e ficava da largura do seu texto mais comprido sem quebra. No telefone, Saúde e
+              * Atividade saíam com o dobro da tela, cortadas pelo `overflow-x-hidden`. Com largura cheia, o `max-w`
+              * continua limitando e o `mx-auto` continua centralizando. */}
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <AnimatePresence mode="wait">
               <motion.div
@@ -69,7 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.25, ease: 'easeOut' }}
-                className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden px-8 pb-8"
+                className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-col overflow-y-auto overflow-x-hidden px-4 pb-8 md:px-8 [&>*]:w-full [&>*]:min-w-0"
               >
                 {children}
               </motion.div>

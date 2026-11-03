@@ -70,7 +70,10 @@ export function DonutChart({
   }, [data, formatValue, resolvedTheme]);
 
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+    // Lado a lado só quando o CARTÃO cabe rosca e legenda (03/11/2026): com `sm:` da janela, um notebook de 1024px
+    // punha os dois em meio cartão e a legenda vazava pela borda.
+    <div className="@container">
+    <div className="flex flex-col gap-4 @min-[30rem]:flex-row @min-[30rem]:items-center">
       <div className="relative h-52 w-52 shrink-0" role="img" aria-label={`${centerLabel}: ${centerValue}`}>
         <EChart option={option} height="100%" className="size-full" />
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -79,7 +82,7 @@ export function DonutChart({
         </div>
       </div>
 
-      <div className="flex-1 space-y-2">
+      <div className="min-w-0 flex-1 space-y-2">
         {data.map((entry) => {
           const percent = total > 0 ? Math.round((entry.value / total) * 100) : 0;
           return (
@@ -96,6 +99,7 @@ export function DonutChart({
           );
         })}
       </div>
+    </div>
     </div>
   );
 }

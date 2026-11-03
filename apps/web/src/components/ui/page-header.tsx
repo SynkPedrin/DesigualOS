@@ -39,7 +39,7 @@ export function PageHeader({
   return (
     // Vidro que se dissolve na borda de baixo (03/11/2026): opaca, a faixa fixa do cabeçalho cortava a luz animada do
     // fundo num retângulo escuro; com borda reta, sobrava uma linha de recorte por cima do conteúdo que rola.
-    <div className={cn('sticky top-0 z-20 -mx-8 px-8 pb-1 bg-carbono/40 backdrop-blur-md [mask-image:linear-gradient(to_bottom,black_80%,transparent)]', compact ? 'pt-4' : 'pt-8')}>
+    <div className={cn('sticky top-0 z-20 -mx-4 px-4 pb-1 md:-mx-8 md:px-8 bg-carbono/40 backdrop-blur-md [mask-image:linear-gradient(to_bottom,black_80%,transparent)]', compact ? 'pt-4' : 'pt-8')}>
     <BrandBanner className={compact ? 'mb-4 p-4 md:p-5' : 'mb-8 p-6 md:p-8'} videoSrc={videoSrc}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>

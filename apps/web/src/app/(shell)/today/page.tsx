@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
@@ -146,31 +146,9 @@ interface ItemDePrioridade {
   externo?: boolean;
 }
 
-/**
- * Escala da tela Hoje (pedido: "uma visão mais longe, mais informação, sem rolar"). Menor que o resto do
- * app porque aqui o objetivo é panorama. Acompanha a ALTURA da janela: monitor de 27" fica em ~0,72 e o
- * notebook (janela baixa) em 0,68, que é onde mais precisa de espaço.
- */
-function useZoomDoHoje(confortavel = false): number {
-  const [z, setZ] = useState(confortavel ? 0.9 : 0.72);
-  useEffect(() => {
-    /**
-     * `confortavel`: quem administra tem o painel da equipe no topo — muito texto
-     * por cartão, e a escala de panorama deixava tudo pequeno demais para ler
-     * (pedido de 22/10/2026: "melhore a visualização do conteúdo e leitura").
-     */
-    const calc = () => setZ(confortavel ? Math.min(0.95, Math.max(0.85, window.innerHeight / 1150)) : Math.min(0.8, Math.max(0.68, window.innerHeight / 1800)));
-    calc();
-    window.addEventListener('resize', calc);
-    return () => window.removeEventListener('resize', calc);
-  }, [confortavel]);
-  return z;
-}
-
 export default function TodayPage() {
   // Quem administra a operação vê a equipe ao vivo no topo do Hoje (22/10/2026, pedido para a Tammy).
   const { isMaster } = useIsMaster();
-  const zoomDoHoje = useZoomDoHoje(isMaster);
   // Fixado no MOUNT: recalcular a cada render mudaria a queryKey das consultas
   // de calendário (intervalo [from,to] levemente diferente toda vez) e elas
   // nunca estabilizariam. Achado real, não hipotético (travou a aba Calendário
@@ -491,8 +469,16 @@ export default function TodayPage() {
     });
   }
 
+  /*
+   * SEM `zoom` (03/11/2026, "pra alguns usuários as informações estão saindo quebradas"). Até aqui o Hoje encolhia
+   * para 0,68-0,8 de quem não é master, menor quanto mais baixa a janela. Num notebook isso deixava o texto
+   * ilegível e, pior, enganava as container queries: com zoom a área parece maior do que é, abria o layout de três
+   * colunas e cortava o prazo das prioridades. O tamanho agora é o do resto do app (a escala fluida do html e a
+   * preferência em Configurações), e as colunas acompanham a largura de verdade. `pb-16`: o último painel sobe
+   * acima da bolha do Bento, fixa no canto, que cobria as porcentagens de "Tarefas do dia".
+   */
   return (
-    <div className="@container mx-auto w-full max-w-[2400px] space-y-3" style={{ zoom: zoomDoHoje }}>
+    <div className="@container mx-auto w-full max-w-[2400px] space-y-3 pb-16">
       <div>
         <PageHeader
           compact
@@ -505,7 +491,7 @@ export default function TodayPage() {
 
       {isMaster && <EquipeNoHoje />}
 
-      <div className="grid gap-3 @min-[1900px]:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
+      <div className="grid grid-cols-1 gap-3 @min-[1900px]:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
       <BentoBriefing
         itens={insights}
         carregando={briefingPendente}
@@ -516,7 +502,7 @@ export default function TodayPage() {
         acao={{ label: 'Ver detalhes', href: '/chat' }}
       />
 
-      <div className="grid content-start gap-3 grid-cols-2 @min-[1100px]:grid-cols-4">
+      <div className="grid content-start gap-3 grid-cols-1 @min-[480px]:grid-cols-2 @min-[1100px]:grid-cols-4">
         <StatCard
           icon={MessageSquare}
           iconClassName="bg-roxo-eletrico/15 text-roxo-eletrico"
@@ -589,8 +575,8 @@ export default function TodayPage() {
           "Seu dia" mais "Saúde operacional", virando um retângulo vazio de uma
           tela de altura com uma frase no meio. Cada painel agora tem a altura
           do que tem dentro. */}
-      <div className="grid items-start gap-3 @min-[1000px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] @min-[1800px]:grid-cols-[minmax(0,5fr)_minmax(0,3.3fr)_minmax(0,3.7fr)]">
-        <Surface className="flex flex-col gap-3 p-4">
+      <div className="grid grid-cols-1 items-start gap-3 @min-[1000px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] @min-[1800px]:grid-cols-[minmax(0,5fr)_minmax(0,3.3fr)_minmax(0,3.7fr)]">
+        <Surface className="@container flex min-w-0 flex-col gap-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <h2 className="font-heading text-base font-semibold text-branco-cru">Prioridades de hoje</h2>
@@ -622,7 +608,7 @@ export default function TodayPage() {
           )}
         </Surface>
 
-        <div className="flex flex-col gap-3">
+        <div className="flex min-w-0 flex-col gap-3">
           <Surface className="flex flex-col gap-3 p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-base font-semibold text-branco-cru">Seu dia</h2>
@@ -667,9 +653,9 @@ export default function TodayPage() {
           <SaudeOperacional consulta={tarefasDaAgencia} />
         </div>
 
-        {/* Terceira coluna: o resumo do que está esperando, empilhado. Abaixo de xl volta a ser uma
-            faixa de três colunas embaixo, como era. */}
-        <div className="grid content-start gap-3 @min-[700px]:grid-cols-3 @min-[1000px]:col-span-2 @min-[1800px]:col-span-1 @min-[1800px]:grid-cols-1">
+        {/* Terceira coluna: o resumo do que está esperando, empilhado. Mais estreito, vira uma faixa embaixo: 2x2
+            (quatro painéis em três colunas deixavam um sozinho na linha de baixo), e quatro lado a lado quando cabe. */}
+        <div className="grid min-w-0 grid-cols-1 content-start gap-3 @min-[640px]:grid-cols-2 @min-[1000px]:col-span-2 @min-[1300px]:grid-cols-4 @min-[1800px]:col-span-1 @min-[1800px]:grid-cols-1">
         <MidiaHojePanel />
         <ConversasRecentesPanel consulta={resumo.conversasRecentes} />
         <TarefasDoDiaPanel
@@ -805,47 +791,55 @@ function AbasDeRecorte({
  * que é a pergunta que esta tela existe pra responder. Na lista anterior o
  * prazo ficava no fim de cada linha, em posição variável.
  *
- * No telefone as colunas somem e cada linha volta a ser um bloco empilhado,
- * porque tabela de 5 colunas em 390px não se lê.
+ * As colunas acompanham a largura do CARTÃO (container query), não a da janela
+ * (03/11/2026): num notebook o cartão divide a linha com "Seu dia" e as quatro
+ * colunas espremiam o título em "Preparar o..." e cortavam o selo do prazo.
+ * Estreito, cada linha é um bloco empilhado; médio, cliente e status descem
+ * pra baixo do título e o prazo fica na sua coluna; largo, as quatro colunas.
+ * Layout automático: prazo, status e cliente têm a largura do que mostram (o
+ * selo "ATRASADA · 182 DIAS" nunca é cortado) e o título fica com o resto.
  */
 function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
+  const th = 'px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa';
   return (
     <div className="-mx-2">
-      <table className="w-full table-fixed border-collapse text-left">
-        <thead className="hidden md:table-header-group">
+      <table className="w-full border-collapse text-left">
+        <thead className="hidden @min-[520px]:table-header-group">
           <tr className="border-b border-grafite-elevado">
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa">Item</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[24%]">Cliente / Projeto</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[8.5rem]">Status</th>
-            <th className="px-2 pb-2 text-right font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[8.5rem]">Prazo</th>
+            <th className={th}>Item</th>
+            <th className={cn(th, 'hidden @min-[820px]:table-cell')}>Cliente / Projeto</th>
+            <th className={cn(th, 'hidden @min-[820px]:table-cell')}>Status</th>
+            <th className={cn(th, 'text-right')}>Prazo</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-grafite-elevado">
           {itens.map((item) => (
             <tr key={item.id} className="group transition-colors hover:bg-sinal/[0.04]">
-              <td className={cn('min-w-0 px-2 py-3 align-middle', faixaDaLinha(item.prazo !== undefined ? urgenciaDoPrazo(item.prazo) : item.atrasada ? 'atrasado' : null))}>
+              <td className={cn('w-full max-w-0 px-2 py-3 align-middle', faixaDaLinha(item.prazo !== undefined ? urgenciaDoPrazo(item.prazo) : item.atrasada ? 'atrasado' : null))}>
                 <LinhaDeItem item={item}>
                   <span className={cn('size-2 shrink-0 rounded-full', PONTO_CLASS[item.badge.tom])} />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-branco-cru">{item.titulo}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-branco-cru" title={item.titulo}>{item.titulo}</span>
                 </LinhaDeItem>
-                {/* No telefone a tabela vira bloco: cliente, status e prazo
-                    descem pra baixo do título em vez de sumirem com as colunas. */}
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-4 md:hidden">
-                  <span className="text-xs text-nevoa">{item.cliente}</span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
-                  {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : item.quando && <span className="text-xs text-nevoa">{item.quando}</span>}
+                {/* Sem as colunas, cliente, status (e no estreito o prazo)
+                    descem pra baixo do título em vez de sumirem. */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-4 @min-[820px]:hidden">
+                  <span className="min-w-0 max-w-full truncate text-xs text-nevoa">{item.cliente}</span>
+                  <span className={cn('whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
+                  <span className="@min-[520px]:hidden">
+                    {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : item.quando && <span className="text-xs text-nevoa">{item.quando}</span>}
+                  </span>
                 </div>
               </td>
-              <td className="hidden px-2 py-3 align-middle md:table-cell">
+              <td className="hidden px-2 py-3 align-middle @min-[820px]:table-cell">
                 <div className="flex items-center gap-2">
                   <EntityAvatar name={item.cliente} kind="client" size="sm" />
-                  <span className="truncate text-sm text-nevoa">{item.cliente}</span>
+                  <span className="block max-w-[11rem] truncate text-sm text-nevoa" title={item.cliente}>{item.cliente}</span>
                 </div>
               </td>
-              <td className="hidden px-2 py-3 align-middle md:table-cell">
-                <span className={cn('inline-block max-w-full truncate whitespace-nowrap rounded-full px-2.5 py-1 align-middle text-xs font-semibold', BADGE_CLASS[item.badge.tom])} title={item.badge.label}>{item.badge.label}</span>
+              <td className="hidden px-2 py-3 align-middle @min-[820px]:table-cell">
+                <span className={cn('inline-block whitespace-nowrap rounded-full px-2.5 py-1 align-middle text-xs font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
               </td>
-              <td className="hidden whitespace-nowrap px-2 py-3 text-right align-middle text-sm md:table-cell">
+              <td className="hidden whitespace-nowrap px-2 py-3 text-right align-middle text-sm @min-[520px]:table-cell">
                 {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : <span className={item.atrasada ? 'text-erro' : 'text-nevoa'}>{item.quando}</span>}
               </td>
             </tr>
