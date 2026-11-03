@@ -230,3 +230,17 @@ funcionando exatamente como antes, só sem avisar ninguém.
 Sem essa variável configurada (ou antes de 08/09/2026), o único jeito de saber que algo está
 errado é olhar a tela de Monitoramento (ou consultar `GET /health/infrastructure` /
 `GET /health/events`) manualmente, ou alguém perceber que um agente parou de responder no chat.
+
+## 7. Gateway da GPU (porta 11500)
+
+A RTX 4090 (`100.107.198.50:11434`) tem uma fila única: o gateway que roda dentro do worker
+(`apps/worker/src/gpu-gateway.ts`). Quem gera texto na placa fala com ele, nunca direto com o Ollama.
+
+- No worker de produção ele escuta em `127.0.0.1:11500` da VPS (`docker-compose.prod.yml`).
+- A tailnet chega nele pelo `tailscale serve` do host da VPS, que fica salvo e volta sozinho depois de reiniciar:
+  `tailscale serve --bg --tcp 11500 tcp://127.0.0.1:11500`. Conferir com `tailscale serve status`.
+- O bento-qa do Mac Mini usa `OLLAMA_URL=http://100.99.14.75:11500`.
+
+Por que não o worker de um notebook: até 03/11/2026 o Bento apontava para o gateway do worker local do notebook
+do Pedro (`100.115.58.105:11500`). Com o notebook desligado ou o Tailscale parado, toda pergunta ao Bento dava
+"fetch failed" e o painel mostrava "motor de texto respondeu HTTP 502".

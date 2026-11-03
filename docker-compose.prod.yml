@@ -119,7 +119,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    # Sem "ports:": o worker não expõe HTTP, só consome as filas do Redis.
+    # O worker só consome filas, com UMA exceção: o gateway da GPU (gpu-gateway.ts, porta 11500), a fila única da
+    # RTX 4090. Fica preso a 127.0.0.1 de propósito: a tailnet chega nele pelo `tailscale serve --tcp 11500` do host,
+    # nunca a internet. Sem isto o Bento (Mac Mini) apontava para o gateway do worker do NOTEBOOK do Pedro e ficava
+    # mudo sempre que o notebook desligava (03/11/2026). docs/runbook.md, seção 7.
+    ports:
+      - "127.0.0.1:11500:11500"
     healthcheck:
       # O worker não tem endpoint HTTP (é consumidor BullMQ puro), então não
       # dá para checar "processando de verdade" sem inventar um sinal. Isto
