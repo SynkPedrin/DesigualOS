@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { MenuDoCabecalho } from '@/components/inbox/menu-do-cabecalho';
 import { cn } from '@/lib/utils';
@@ -18,29 +18,35 @@ export interface AbaExtra {
 }
 
 /**
- * A aba escolhida, lembrada neste navegador (conveniência: sem armazenamento, começa em "Todas"). Aba que não existe
- * mais (agenda desvinculada) vale como "Todas".
+ * A aba escolhida. Sempre começa em "Todas" (pedido do Pedro, 03/11/2026: "sempre abre com o geral"): antes ela ficava
+ * lembrada no navegador e a tela abria filtrada numa agenda só. Aba que não existe mais vale como "Todas".
  */
-export function useAbaDeAgenda(chave: string, agendas: AgendaPintada[], extras: AbaExtra[] = []): [string, (aba: string) => void] {
+export function useAbaDeAgenda(agendas: AgendaPintada[], extras: AbaExtra[] = []): [string, (aba: string) => void] {
   const [aba, setAba] = useState(TODAS);
-  useEffect(() => {
-    try {
-      const salva = localStorage.getItem(chave);
-      if (salva) setAba(salva);
-    } catch {
-      /* navegador sem armazenamento: fica em "Todas" */
-    }
-  }, [chave]);
-  function escolher(nova: string) {
-    setAba(nova);
-    try {
-      localStorage.setItem(chave, nova);
-    } catch {
-      /* idem */
-    }
-  }
   const existe = aba === TODAS || agendas.some((a) => a.id === aba) || extras.some((e) => e.id === aba);
-  return [existe ? aba : TODAS, escolher];
+  return [existe ? aba : TODAS, setAba];
+}
+
+export type ModoDaAgenda = 'geral' | 'minha';
+
+/** "Geral" junta as agendas de toda a equipe num calendário só; "Minha agenda" mostra só as de quem está vendo. */
+export function SeletorDeModo({ modo, onModo }: { modo: ModoDaAgenda; onModo: (modo: ModoDaAgenda) => void }) {
+  const opcao = (valor: ModoDaAgenda, rotulo: string) => (
+    <button
+      type="button"
+      aria-pressed={modo === valor}
+      onClick={() => onModo(valor)}
+      className={cn('rounded px-2.5 py-1 text-xs transition-colors', modo === valor ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru')}
+    >
+      {rotulo}
+    </button>
+  );
+  return (
+    <div role="group" aria-label="Qual agenda ver" className="flex shrink-0 items-center gap-0.5 rounded-md border border-grafite-elevado p-0.5">
+      {opcao('geral', 'Agenda geral')}
+      {opcao('minha', 'Minha agenda')}
+    </div>
+  );
 }
 
 export function AbasDeAgendas({ agendas, ativa, onEscolher, contagem, extras = [], paraAdicionar = [], onAdicionar, adicionando = false }: {

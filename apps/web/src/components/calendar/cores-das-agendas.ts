@@ -65,3 +65,61 @@ export function contarPorAba(eventos: Array<{ calendar_id?: string | null }>, ag
   for (const agenda of agendas) contagem.set(agenda.id, eventos.filter((e) => eventoDaAba(e.calendar_id, agenda.id, agendas)).length);
   return contagem;
 }
+
+/** GET /calendar/agendas: as agendas do Outlook vinculadas por toda a equipe, com o nome que cada uma tem no Outlook. */
+export interface AgendaDaEquipe {
+  calendar_id: string;
+  user_id: string;
+  nome: string | null;
+  padrao: boolean;
+}
+
+/**
+ * Agenda geral (pedido do Pedro, 03/11/2026: "junta todas as agendas em um único calendário"): as agendas da equipe
+ * agrupadas pelo NOME, não pelo id, porque o Outlook dá um id diferente para a mesma agenda em cada conta. A agenda
+ * padrão de cada pessoa é a da agência (Desigual); a "Manada Filmes" de qualquer pessoa cai numa aba só, em laranja.
+ * Agenda sem nome conhecido fica fora das abas e aparece só em "Todas".
+ */
+export function agruparAgendasDaEquipe(lista: AgendaDaEquipe[]): { agendas: AgendaPintada[]; grupoDe: Map<string, string> } {
+  const chaveDe = (nome: string) => `grupo:${nome.toLocaleLowerCase('pt-BR')}`;
+  const nomes = new Map<string, string>([[chaveDe(NOME_DA_AGENCIA), NOME_DA_AGENCIA]]);
+  const grupoDe = new Map<string, string>();
+  for (const a of lista) {
+    const nome = a.padrao && (!a.nome || NOME_GENERICO.test(a.nome.trim())) ? NOME_DA_AGENCIA : a.nome?.trim();
+    if (!nome) continue;
+    const chave = chaveDe(nome);
+    if (!nomes.has(chave)) nomes.set(chave, nome);
+    grupoDe.set(a.calendar_id, chave);
+  }
+  const daAgencia = chaveDe(NOME_DA_AGENCIA);
+  const outras = [...nomes.entries()].filter(([k]) => k !== daAgencia).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
+  let proxima = 0;
+  const agendas: AgendaPintada[] = [
+    { id: daAgencia, nome: NOME_DA_AGENCIA, cor: AGENCIA, principal: true },
+    ...outras.map(([id, nome]) => ({ id, nome, cor: /manada/i.test(nome) ? MANADA : OUTRAS[proxima++ % OUTRAS.length]!, principal: false })),
+  ];
+  return { agendas, grupoDe };
+}
+
+/**
+ * Os eventos de toda a equipe num calendário só: cada um passa a apontar para o grupo da sua agenda (é o que as abas e
+ * as cores leem), e a mesma reunião, que chega uma vez por convidado com Outlook, aparece uma vez. Entre as cópias
+ * fica a da agenda mais específica: a reunião da Manada que caiu também na agenda padrão de quem foi convidado é da Manada.
+ */
+export function juntarEventos<E extends { id: string; visible: boolean; title: string | null; start_at: string; end_at: string; calendar_id?: string | null }>(
+  eventos: E[],
+  grupoDe: Map<string, string>,
+  agendas: AgendaPintada[],
+): E[] {
+  const principal = new Set(agendas.filter((a) => a.principal).map((a) => a.id));
+  const porChave = new Map<string, E>();
+  for (const e of eventos) {
+    const grupo = e.calendar_id ? (grupoDe.get(e.calendar_id) ?? e.calendar_id) : null;
+    const evento = { ...e, calendar_id: grupo };
+    const chave = e.visible && e.title ? `${e.title}|${e.start_at}|${e.end_at}` : e.id;
+    const ja = porChave.get(chave);
+    const generico = (x: E) => !x.calendar_id || principal.has(x.calendar_id);
+    if (!ja || (generico(ja) && !generico(evento))) porChave.set(chave, evento);
+  }
+  return [...porChave.values()];
+}

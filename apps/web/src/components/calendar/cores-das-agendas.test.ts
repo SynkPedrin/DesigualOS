@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contarPorAba, eventoDaAba, pintarAgendas, TODAS } from './cores-das-agendas';
+import { agruparAgendasDaEquipe, contarPorAba, eventoDaAba, juntarEventos, pintarAgendas, TODAS } from './cores-das-agendas';
 
 describe('cor de cada agenda do Outlook', () => {
   it('a principal é roxa e se chama Desigual, a da Manada Filmes laranja, outra pega a próxima cor', () => {
@@ -40,5 +40,35 @@ describe('aba de cada agenda', () => {
   it('conta os eventos de cada aba', () => {
     const contagem = contarPorAba([{ calendar_id: 'ag' }, { calendar_id: null }, { calendar_id: 'mf' }, { calendar_id: 'antiga' }], agendas);
     expect(Object.fromEntries(contagem)).toEqual({ todas: 4, ag: 2, mf: 1 });
+  });
+});
+
+describe('agenda geral: as agendas da equipe num calendário só', () => {
+  const equipe = [
+    { calendar_id: 'ag-pedro', user_id: 'pedro', nome: 'Calendário', padrao: true },
+    { calendar_id: 'mf-pedro', user_id: 'pedro', nome: 'Manada Filmes', padrao: false },
+    { calendar_id: 'ag-ana', user_id: 'ana', nome: null, padrao: true },
+    { calendar_id: 'mf-ana', user_id: 'ana', nome: 'Manada Filmes ', padrao: false },
+    { calendar_id: 'sem-nome', user_id: 'ana', nome: null, padrao: false },
+  ];
+  const ev = (id: string, calendar_id: string | null, title = 'Reunião', visible = true) => ({ id, calendar_id, title, visible, start_at: '2026-11-03T13:00:00Z', end_at: '2026-11-03T14:00:00Z' });
+
+  it('agrupa pelo nome: a padrão de cada pessoa é a Desigual, a Manada de qualquer pessoa é uma aba laranja só', () => {
+    const { agendas, grupoDe } = agruparAgendasDaEquipe(equipe);
+    expect(agendas.map((a) => [a.nome, a.cor.ponto, a.principal])).toEqual([['Desigual', 'bg-roxo-eletrico', true], ['Manada Filmes', 'bg-aviso', false]]);
+    expect(grupoDe.get('ag-ana')).toBe(grupoDe.get('ag-pedro'));
+    expect(grupoDe.get('mf-ana')).toBe(grupoDe.get('mf-pedro'));
+    expect(grupoDe.has('sem-nome')).toBe(false);
+  });
+
+  it('a mesma reunião, vinda de cada convidado, aparece uma vez, e na agenda mais específica', () => {
+    const { agendas, grupoDe } = agruparAgendasDaEquipe(equipe);
+    const juntos = juntarEventos([ev('1', 'ag-pedro'), ev('2', 'mf-ana'), ev('3', 'ag-ana')], grupoDe, agendas);
+    expect(juntos.map((e) => [e.id, e.calendar_id])).toEqual([['2', grupoDe.get('mf-ana')]]);
+  });
+
+  it('evento "Ocupado" (privado de outra pessoa) não se funde com outro no mesmo horário', () => {
+    const { agendas, grupoDe } = agruparAgendasDaEquipe(equipe);
+    expect(juntarEventos([ev('1', 'ag-pedro', null as never, false), ev('2', 'ag-ana', null as never, false)], grupoDe, agendas)).toHaveLength(2);
   });
 });

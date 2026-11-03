@@ -39,11 +39,14 @@ export function ResourceTimelineView({
   colaboradores,
   eventosPorColaborador,
   onSelecionarEvento,
+  corDaAgenda,
 }: {
   dia: Date;
   colaboradores: ColaboradorDaAgenda[];
   eventosPorColaborador: Map<string, CalendarEventWire[]>;
   onSelecionarEvento: (evento: CalendarEventWire) => void;
+  /** Mesma cor por agenda da semana pessoal (Manada Filmes em laranja). Cada conta tem os próprios ids de agenda, então só pinta as de quem está vendo. */
+  corDaAgenda?: ((calendarId: string | null | undefined) => string) | undefined;
 }) {
   if (colaboradores.length === 0) {
     return (
@@ -92,7 +95,7 @@ export function ResourceTimelineView({
                       cancelado
                         ? 'border-grafite-elevado bg-grafite-elevado/40 text-nevoa line-through'
                         : evento.visible
-                          ? 'border-roxo-eletrico/40 bg-roxo-eletrico/20 text-branco-cru hover:border-roxo-eletrico/70'
+                          ? (corDaAgenda?.(evento.calendar_id) ?? 'border-roxo-eletrico/40 bg-roxo-eletrico/20 text-branco-cru hover:border-roxo-eletrico/70')
                           : 'border-grafite-elevado bg-grafite-elevado text-nevoa'
                     }`}
                     style={{ top: `${topo}%`, height: `${altura}%` }}

@@ -4,11 +4,11 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Plus, Video } from 'lucide-react';
 import type { WorkMember, WorkTaskWire } from '@/hooks/use-work';
 import { PRIORIDADES } from '@/hooks/use-work';
-import { useMe } from '@/hooks/use-me';
-import { useCalendarEvents } from '@/hooks/use-calendar';
-import { useAgendas } from '@/components/calendar/microsoft-calendar-connect';
-import { AbasDeAgendas, useAbaDeAgenda } from '@/components/calendar/abas-de-agendas';
-import { COR_PADRAO, contarPorAba, eventoDaAba, type CorDaAgenda } from '@/components/calendar/cores-das-agendas';
+import { useIsMaster } from '@/hooks/use-is-master';
+import { AbasDeAgendas, SeletorDeModo, useAbaDeAgenda, type ModoDaAgenda } from '@/components/calendar/abas-de-agendas';
+import { useAgendaDoModo } from '@/components/calendar/agenda-do-modo';
+import { MicrosoftCalendarConnect } from '@/components/calendar/microsoft-calendar-connect';
+import { COR_PADRAO, TODAS, contarPorAba, eventoDaAba, type CorDaAgenda } from '@/components/calendar/cores-das-agendas';
 import type { CalendarEventWire } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 import { diaEmSaoPaulo } from '@/lib/prazo';
@@ -63,13 +63,16 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
   const clientes = useClientIndex();
   const hoje = chave(new Date());
 
-  const { data: me } = useMe();
-  const { agendas, paraAdicionar, adicionar, adicionando } = useAgendas();
-  const [aba, setAba] = useAbaDeAgenda('desigual-os:daily:agenda', agendas, EXTRAS);
+  // Abre na agenda geral (todas as agendas da equipe juntas) para quem gere, como o Calendário; os outros, na própria.
+  const { isMaster } = useIsMaster();
+  const [modoEscolhido, setModoEscolhido] = useState<ModoDaAgenda | null>(null);
+  const modo: ModoDaAgenda = modoEscolhido ?? (isMaster ? 'geral' : 'minha');
   const grade = useMemo(() => gradeDoMes(ref), [ref]);
-  const compromissos = useCalendarEvents({ from: grade.inicio, to: grade.fim, memberId: me?.id }, { enabled: Boolean(me?.id) });
+  const compromissos = useAgendaDoModo(modo, grade.inicio, grade.fim);
+  const { agendas, paraAdicionar, adicionar, adicionando } = compromissos;
+  const [aba, setAba] = useAbaDeAgenda(agendas, EXTRAS);
   const { eventosPorDia, contagem } = useMemo(() => {
-    const ativos = (compromissos.data ?? []).filter((e) => e.status !== 'cancelled');
+    const ativos = (compromissos.eventos ?? []).filter((e) => e.status !== 'cancelled');
     const porDia = new Map<string, CalendarEventWire[]>();
     if (aba !== SO_TAREFAS) {
       for (const e of ativos) {
@@ -80,7 +83,7 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
       for (const v of porDia.values()) v.sort((a, b) => Number(ehDiaInteiro(b)) - Number(ehDiaInteiro(a)) || a.start_at.localeCompare(b.start_at));
     }
     return { eventosPorDia: porDia, contagem: contarPorAba(ativos, agendas) };
-  }, [compromissos.data, aba, agendas]);
+  }, [compromissos.eventos, aba, agendas]);
   const agendaDe = useMemo(() => new Map(agendas.map((a) => [a.id, a])), [agendas]);
   // Evento criado aqui (sem agenda de origem) é da agência: mesmo nome e cor da aba onde ele aparece.
   const agendaDo = (e: CalendarEventWire) => (e.calendar_id ? agendaDe.get(e.calendar_id) : agendas.find((a) => a.principal));
@@ -155,16 +158,28 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
             {atrasadas.length > 0 && <span className="text-red-400"><strong>{atrasadas.length}</strong> atrasadas</span>}
           </span>
         </div>
-        <AbasDeAgendas
-          agendas={agendas}
-          ativa={aba}
-          onEscolher={setAba}
-          contagem={compromissos.data ? contagem : undefined}
-          extras={EXTRAS}
-          paraAdicionar={paraAdicionar}
-          onAdicionar={adicionar}
-          adicionando={adicionando}
-        />
+        <MicrosoftCalendarConnect soAviso />
+        <div className="flex flex-wrap items-center gap-2">
+          {isMaster && (
+            <SeletorDeModo
+              modo={modo}
+              onModo={(novo) => {
+                setModoEscolhido(novo);
+                setAba(TODAS);
+              }}
+            />
+          )}
+          <AbasDeAgendas
+            agendas={agendas}
+            ativa={aba}
+            onEscolher={setAba}
+            contagem={compromissos.eventos ? contagem : undefined}
+            extras={EXTRAS}
+            paraAdicionar={paraAdicionar}
+            onAdicionar={adicionar}
+            adicionando={adicionando}
+          />
+        </div>
         <div role="grid" aria-label="Calendário de prazos" className="grid grid-cols-7 overflow-hidden rounded-xl border border-grafite-elevado text-xs">
           {DIAS.map((d) => <div key={d} role="columnheader" className="border-b border-grafite-elevado bg-grafite px-2 py-1.5 text-[11px] font-medium text-nevoa">{d}</div>)}
           {dias.map(({ d, k, itens }) => {
