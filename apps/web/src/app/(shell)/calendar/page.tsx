@@ -191,7 +191,7 @@ function CalendarPageContent() {
       ) : agenciaPending && idsAgencia.length > 0 ? (
         <Skeleton className="h-[700px] w-full" />
       ) : (
-        <ResourceTimelineView dia={diaAgencia} colaboradores={colaboradoresSelecionados} eventosPorColaborador={eventosPorMembro} onSelecionarEvento={setSelecionado} />
+        <ResourceTimelineView dia={diaAgencia} colaboradores={colaboradoresSelecionados} eventosPorColaborador={eventosPorMembro} onSelecionarEvento={setSelecionado} corDaAgenda={corDaAgenda} />
       )}
 
       {criando && <CreateEventModal initialStart={criando} onClose={() => setCriando(null)} />}

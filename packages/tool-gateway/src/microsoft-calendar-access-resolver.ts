@@ -20,7 +20,9 @@ export function getMicrosoftCalendarEnvConfig(): MicrosoftCalendarOAuthConfig | 
   // que não precisa travar o login num tenant Entra específico. Um valor
   // explícito em env sobrescreve quando isso for necessário.
   const tenant = process.env.MICROSOFT_CALENDAR_TENANT || 'common';
-  return { clientId, clientSecret, redirectUri, tenant };
+  // Só depois do consentimento do administrador para Calendars.ReadWrite.Shared (ver SCOPES_COMPARTILHADAS).
+  const agendasCompartilhadas = process.env.MICROSOFT_CALENDAR_AGENDAS_COMPARTILHADAS === '1';
+  return { clientId, clientSecret, redirectUri, tenant, agendasCompartilhadas };
 }
 
 export async function getMicrosoftCalendarConnection(userId: string) {
