@@ -38,7 +38,7 @@ import { mockApprovals, mockBriefs, mockBriefVersions, mockDemands, nextMockId }
 import { mockAgencyTasks } from './clickup-tasks';
 import { findTeamMember, mockClientAssignments } from './client-assignments';
 import { dicebearAvatarUrl } from './avatar';
-import { mockCalendarEventParticipants, mockCalendarEvents } from './calendar';
+import { mockAgendasDaConta, mockCalendarEventParticipants, mockCalendarEvents, mockContasMicrosoft } from './calendar';
 import { modulosPadrao } from '@desigual-os/types';
 import { bentoWhatsappHandlers } from './bento-whatsapp';
 import { openwaHandlers } from './openwa';
@@ -1500,11 +1500,20 @@ export const handlers = [
   }),
 
   http.get('/calendar/microsoft/accounts', () => {
-    return HttpResponse.json({
-      accounts: [
-        { id: 'mscal-pedro', external_calendar_id: 'pedro@agenciadesigual.com.br', is_primary: true, connected: true, last_synced_at: new Date(Date.now() - 15 * 60_000).toISOString() },
-      ],
-    });
+    return HttpResponse.json({ accounts: mockContasMicrosoft });
+  }),
+
+  // Agendas da conta Outlook (03/11/2026): a da agência e a da Manada Filmes vinculadas, Feriados para o "+ Agenda".
+  http.get('/integrations/microsoft-calendar/calendars', () => {
+    return HttpResponse.json({ calendars: mockAgendasDaConta });
+  }),
+
+  http.post('/calendar/microsoft/accounts', async ({ request }) => {
+    const { external_calendar_id: id } = (await request.json()) as { external_calendar_id: string };
+    if (!mockContasMicrosoft.some((c) => c.external_calendar_id === id)) {
+      mockContasMicrosoft.push({ id: `mscal-${id}`, external_calendar_id: id, is_primary: true, connected: true, last_synced_at: new Date().toISOString() });
+    }
+    return HttpResponse.json({ id: `mscal-${id}`, external_calendar_id: id, events_upserted: 0 }, { status: 201 });
   }),
 
   http.get('/integrations/notion/status', () => {

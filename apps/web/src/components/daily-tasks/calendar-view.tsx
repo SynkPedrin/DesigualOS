@@ -1,9 +1,15 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Plus, Video } from 'lucide-react';
 import type { WorkMember, WorkTaskWire } from '@/hooks/use-work';
 import { PRIORIDADES } from '@/hooks/use-work';
+import { useMe } from '@/hooks/use-me';
+import { useCalendarEvents } from '@/hooks/use-calendar';
+import { useAgendas } from '@/components/calendar/microsoft-calendar-connect';
+import { AbasDeAgendas, useAbaDeAgenda } from '@/components/calendar/abas-de-agendas';
+import { COR_PADRAO, contarPorAba, eventoDaAba, type CorDaAgenda } from '@/components/calendar/cores-das-agendas';
+import type { CalendarEventWire } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
 import { diaEmSaoPaulo } from '@/lib/prazo';
 import { LogoDoCliente, nomeLimpo, useClientIndex, useListIndex } from './cliente';
@@ -15,6 +21,14 @@ const DRAG = 'application/x-work-calendar-task';
 /** Dia do calendário (fuso de São Paulo, o mesmo da régua de prazo): a tarefa cai no dia em que vence lá. */
 const chave = (d: Date | string) => diaEmSaoPaulo(d);
 const POR_CELULA = 3;
+/** Aba do Daily que esconde os compromissos e deixa só as tarefas, como o calendário era antes de 03/11/2026. */
+const SO_TAREFAS = 'tarefas';
+const EXTRAS = [{ id: SO_TAREFAS, rotulo: 'Só tarefas' }];
+const FUSO = 'America/Sao_Paulo';
+const DIA_INTEIRO_MS = 24 * 60 * 60_000 - 60_000;
+const ehDiaInteiro = (e: CalendarEventWire) => new Date(e.end_at).getTime() - new Date(e.start_at).getTime() >= DIA_INTEIRO_MS;
+const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { timeZone: FUSO, hour: '2-digit', minute: '2-digit' });
+const tituloDo = (e: CalendarEventWire) => (e.visible ? e.title || '(sem título)' : 'Ocupado');
 
 /** Primeiro dia (domingo) e o dia seguinte ao último da grade de 6 semanas do mês de `mes`. */
 export function gradeDoMes(mes: Date): { inicio: Date; fim: Date } {
@@ -27,7 +41,8 @@ export function gradeDoMes(mes: Date): { inicio: Date; fim: Date } {
 
 /**
  * Calendário mensal pelos prazos. Cada dia mostra o que VENCE nele; arrastar um cartão para outro dia reagenda
- * (mantém a hora). O painel do dia fica sempre aberto, começa em HOJE, e no dia de hoje traz também o que está
+ * (mantém a hora). Os compromissos das agendas do Outlook de quem está olhando entram junto, na cor de cada agenda,
+ * com uma aba por agenda (Desigual, Manada Filmes...) e "Só tarefas" para esconder todos (03/11/2026). O painel do dia fica sempre aberto, começa em HOJE, e no dia de hoje traz também o que está
  * atrasado: é a pergunta que a pessoa faz ao abrir. Sem data fica à parte, nunca some.
  * O mês pode ser controlado de fora (`mes`/`onMes`) para quem busca só a janela visível.
  */
@@ -47,6 +62,29 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
   const listas = useListIndex();
   const clientes = useClientIndex();
   const hoje = chave(new Date());
+
+  const { data: me } = useMe();
+  const { agendas, paraAdicionar, adicionar, adicionando } = useAgendas();
+  const [aba, setAba] = useAbaDeAgenda('desigual-os:daily:agenda', agendas, EXTRAS);
+  const grade = useMemo(() => gradeDoMes(ref), [ref]);
+  const compromissos = useCalendarEvents({ from: grade.inicio, to: grade.fim, memberId: me?.id }, { enabled: Boolean(me?.id) });
+  const { eventosPorDia, contagem } = useMemo(() => {
+    const ativos = (compromissos.data ?? []).filter((e) => e.status !== 'cancelled');
+    const porDia = new Map<string, CalendarEventWire[]>();
+    if (aba !== SO_TAREFAS) {
+      for (const e of ativos) {
+        if (!eventoDaAba(e.calendar_id, aba, agendas)) continue;
+        const k = chave(e.start_at);
+        porDia.set(k, [...(porDia.get(k) ?? []), e]);
+      }
+      for (const v of porDia.values()) v.sort((a, b) => Number(ehDiaInteiro(b)) - Number(ehDiaInteiro(a)) || a.start_at.localeCompare(b.start_at));
+    }
+    return { eventosPorDia: porDia, contagem: contarPorAba(ativos, agendas) };
+  }, [compromissos.data, aba, agendas]);
+  const agendaDe = useMemo(() => new Map(agendas.map((a) => [a.id, a])), [agendas]);
+  // Evento criado aqui (sem agenda de origem) é da agência: mesmo nome e cor da aba onde ele aparece.
+  const agendaDo = (e: CalendarEventWire) => (e.calendar_id ? agendaDe.get(e.calendar_id) : agendas.find((a) => a.principal));
+  const corDo = (e: CalendarEventWire): CorDaAgenda => agendaDo(e)?.cor ?? COR_PADRAO;
 
   const { dias, semData, resumo, atrasadas: atrasadasDaJanela } = useMemo(() => {
     const { inicio } = gradeDoMes(ref);
@@ -70,6 +108,7 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
   const atrasadas = useMemo(() => [...(atrasadasDeFora ?? atrasadasDaJanela)].sort((a, b) => b.dueAt!.localeCompare(a.dueAt!)), [atrasadasDeFora, atrasadasDaJanela]);
   const diaK = chave(dia);
   const doDia = dias.find((x) => x.k === diaK)?.itens ?? tarefas.filter((t) => t.dueAt && chave(t.dueAt) === diaK);
+  const compromissosDoDia = eventosPorDia.get(diaK) ?? [];
   const reagendar = (id: string, alvo: Date) => {
     const t = tarefas.find((x) => x.id === id);
     if (!t?.dueAt) return;
@@ -116,6 +155,16 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
             {atrasadas.length > 0 && <span className="text-red-400"><strong>{atrasadas.length}</strong> atrasadas</span>}
           </span>
         </div>
+        <AbasDeAgendas
+          agendas={agendas}
+          ativa={aba}
+          onEscolher={setAba}
+          contagem={compromissos.data ? contagem : undefined}
+          extras={EXTRAS}
+          paraAdicionar={paraAdicionar}
+          onAdicionar={adicionar}
+          adicionando={adicionando}
+        />
         <div role="grid" aria-label="Calendário de prazos" className="grid grid-cols-7 overflow-hidden rounded-xl border border-grafite-elevado text-xs">
           {DIAS.map((d) => <div key={d} role="columnheader" className="border-b border-grafite-elevado bg-grafite px-2 py-1.5 text-[11px] font-medium text-nevoa">{d}</div>)}
           {dias.map(({ d, k, itens }) => {
@@ -123,12 +172,17 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
             const selecionado = k === diaK;
             const foraDoMes = d.getMonth() !== ref.getMonth();
             const abertas = itens.filter((t) => !t.completedAt).length;
+            const eventos = eventosPorDia.get(k) ?? [];
+            // No Daily a tarefa é o principal: com tarefa no dia, os compromissos deixam pelo menos uma linha para ela.
+            const eventosNaCelula = eventos.slice(0, itens.length > 0 ? POR_CELULA - 1 : POR_CELULA);
+            const tarefasNaCelula = itens.slice(0, POR_CELULA - eventosNaCelula.length);
+            const escondidos = eventos.length + itens.length - eventosNaCelula.length - tarefasNaCelula.length;
             return (
               <div
                 key={k}
                 role="gridcell"
                 aria-selected={selecionado}
-                aria-label={`${d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}: ${itens.length} tarefa(s)`}
+                aria-label={`${d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}: ${itens.length} tarefa(s)${eventos.length ? `, ${eventos.length} compromisso(s)` : ''}`}
                 onClick={() => setDia(d)}
                 onDragOver={(e) => { if (e.dataTransfer.types.includes(DRAG)) { e.preventDefault(); setSobre(k); } }}
                 onDragLeave={() => setSobre((v) => (v === k ? null : v))}
@@ -144,7 +198,17 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
                   {abertas > 0 ? <span className="rounded-full bg-grafite-elevado px-1.5 text-[10px] tabular-nums text-branco-cru">{abertas}</span> : <span />}
                   <span className={cn('flex size-6 items-center justify-center rounded-full text-[11px] tabular-nums', ehHoje ? 'bg-roxo-eletrico font-bold text-white' : foraDoMes ? 'text-nevoa/40' : 'text-nevoa', selecionado && !ehHoje && 'ring-1 ring-roxo-eletrico text-branco-cru')}>{d.getDate()}</span>
                 </p>
-                {itens.slice(0, POR_CELULA).map((t) => {
+                {eventosNaCelula.map((e) => (
+                  <p
+                    key={e.id}
+                    title={`${ehDiaInteiro(e) ? 'Dia todo' : `${hora(e.start_at)} às ${hora(e.end_at)}`} · ${tituloDo(e)}`}
+                    className={cn('mb-0.5 flex items-center gap-1 truncate rounded border px-1.5 py-0.5 text-[11px]', corDo(e).evento)}
+                  >
+                    {!ehDiaInteiro(e) && <span className="shrink-0 tabular-nums opacity-75">{hora(e.start_at)}</span>}
+                    <span className="truncate">{tituloDo(e)}</span>
+                  </p>
+                ))}
+                {tarefasNaCelula.map((t) => {
                   const atrasada = !t.completedAt && k < hoje;
                   return (
                     <button
@@ -165,7 +229,7 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
                     </button>
                   );
                 })}
-                {itens.length > POR_CELULA && <p className="px-1 text-[10px] font-medium text-lilas">+{itens.length - POR_CELULA} no dia</p>}
+                {escondidos > 0 && <p className="px-1 text-[10px] font-medium text-lilas">+{escondidos} no dia</p>}
               </div>
             );
           })}
@@ -179,7 +243,37 @@ export function CalendarView({ tarefas, actions, membros = [], onCriar, mes, onM
           <h4 className="font-heading text-base font-semibold text-branco-cru first-letter:uppercase">{dia.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</h4>
           <p className="text-xs text-nevoa">{doDia.length === 0 ? 'Nada vence neste dia.' : `${doDia.filter((t) => !t.completedAt).length} aberta(s) · ${doDia.filter((t) => t.completedAt).length} concluída(s)`}</p>
         </div>
-        {doDia.length > 0 && <ul className="-mx-1 space-y-0.5">{doDia.map((t) => linhaDoPainel(t))}</ul>}
+        {compromissosDoDia.length > 0 && (
+          <section aria-label="Compromissos do dia">
+            <p className="mb-1 text-xs font-semibold text-branco-cru">Compromissos · {compromissosDoDia.length}</p>
+            <ul className="-mx-1 space-y-0.5">
+              {compromissosDoDia.map((e) => (
+                <li key={e.id} className="flex items-start gap-2 rounded-md px-2 py-1.5">
+                  <span aria-hidden className={cn('mt-1.5 size-2.5 shrink-0 rounded-full', corDo(e).ponto)} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm leading-snug text-branco-cru">{tituloDo(e)}</span>
+                    <span className="mt-0.5 block text-[11px] text-nevoa">
+                      {ehDiaInteiro(e) ? 'Dia todo' : `${hora(e.start_at)} às ${hora(e.end_at)}`}
+                      {agendaDo(e) && ` · ${agendaDo(e)!.nome}`}
+                      {e.visible && e.location && ` · ${e.location}`}
+                    </span>
+                  </span>
+                  {e.visible && e.meeting_url && (
+                    <a href={e.meeting_url} target="_blank" rel="noreferrer" className="flex shrink-0 items-center gap-1 rounded-md border border-grafite-elevado px-2 py-1 text-[11px] text-branco-cru hover:border-roxo-eletrico/60">
+                      <Video size={12} /> Entrar
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {doDia.length > 0 && (
+          <section aria-label="Tarefas que vencem no dia">
+            {compromissosDoDia.length > 0 && <p className="mb-1 text-xs font-semibold text-branco-cru">Tarefas · {doDia.length}</p>}
+            <ul className="-mx-1 space-y-0.5">{doDia.map((t) => linhaDoPainel(t))}</ul>
+          </section>
+        )}
         {onCriar && (
           <form className="flex gap-1" onSubmit={(e) => { e.preventDefault(); if (novo.trim()) { onCriar(dia, novo.trim()); setNovo(''); } }}>
             <input value={novo} onChange={(e) => setNovo(e.target.value)} placeholder="Nova tarefa para este dia" aria-label="Nova tarefa para este dia" className="min-w-0 flex-1 rounded-md border border-grafite-elevado bg-carbono px-2 py-1.5 text-xs text-branco-cru outline-none focus:border-roxo-eletrico/60" />

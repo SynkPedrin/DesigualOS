@@ -15,7 +15,9 @@ import { ResourcePicker } from '@/components/calendar/resource-picker';
 import { CreateEventModal } from '@/components/calendar/create-event-modal';
 import { MicrosoftCalendarConnect } from '@/components/calendar/microsoft-calendar-connect';
 import { MeetingBriefPanel } from '@/components/calendar/meeting-brief-panel';
-import { useAgendasPintadas } from '@/components/calendar/microsoft-calendar-connect';
+import { useAgendas } from '@/components/calendar/microsoft-calendar-connect';
+import { AbasDeAgendas, useAbaDeAgenda } from '@/components/calendar/abas-de-agendas';
+import { contarPorAba, eventoDaAba } from '@/components/calendar/cores-das-agendas';
 import type { CalendarEventWire } from '@/lib/api/contracts';
 
 /**
@@ -58,7 +60,9 @@ function CalendarPageContent() {
   const dias = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(inicioSemana.getTime() + i * 24 * 60 * 60_000)), [inicioSemana]);
 
   const eventos = useCalendarEvents({ from: inicioSemana, to: fimSemana, memberId: me?.id });
-  const agendas = useAgendasPintadas();
+  const { agendas, paraAdicionar, adicionar, adicionando } = useAgendas();
+  const [aba, setAba] = useAbaDeAgenda('desigual-os:calendario:agenda', agendas);
+  const contagem = useMemo(() => contarPorAba(eventos.data ?? [], agendas), [eventos.data, agendas]);
   const corDaAgenda = useMemo(() => {
     const porId = new Map(agendas.map((a) => [a.id, a.cor.evento]));
     return (id: string | null | undefined) => (id ? porId.get(id) : undefined) ?? 'border-roxo-eletrico/40 bg-roxo-eletrico/20 text-branco-cru hover:border-roxo-eletrico/70';
@@ -67,13 +71,14 @@ function CalendarPageContent() {
   const eventosPorDia = useMemo(() => {
     const mapa = new Map<string, CalendarEventWire[]>();
     for (const evento of eventos.data ?? []) {
+      if (!eventoDaAba(evento.calendar_id, aba, agendas)) continue;
       const chave = new Date(evento.start_at).toDateString();
       const lista = mapa.get(chave) ?? [];
       lista.push(evento);
       mapa.set(chave, lista);
     }
     return mapa;
-  }, [eventos.data]);
+  }, [eventos.data, aba, agendas]);
 
   // Calendário da Agência (§6-9) — mesma `referencia`, mas um dia só por vez
   // (não faz sentido ver a semana inteira de 6 pessoas lado a lado).
@@ -173,18 +178,15 @@ function CalendarPageContent() {
         </button>
       </div>
 
+      {visao === 'pessoal' && (
+        <AbasDeAgendas agendas={agendas} ativa={aba} onEscolher={setAba} contagem={eventos.data ? contagem : undefined} paraAdicionar={paraAdicionar} onAdicionar={adicionar} adicionando={adicionando} />
+      )}
+
       {visao === 'pessoal' ? (
         eventos.isPending ? (
           <Skeleton className="h-[700px] w-full" />
         ) : (
-          <>
-          {agendas.length > 1 && (
-            <div aria-label="Agendas" className="mb-2 flex flex-wrap items-center gap-3 text-xs text-nevoa">
-              {agendas.map((a) => <span key={a.id} className="flex items-center gap-1.5"><span className={`size-2.5 rounded-full ${a.cor.ponto}`} />{a.nome}</span>)}
-            </div>
-          )}
           <WeekView dias={dias} eventosPorDia={eventosPorDia} onSelecionarEvento={setSelecionado} onSelecionarSlot={setCriando} corDaAgenda={corDaAgenda} />
-          </>
         )
       ) : agenciaPending && idsAgencia.length > 0 ? (
         <Skeleton className="h-[700px] w-full" />

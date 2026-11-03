@@ -12,8 +12,13 @@ export interface ItemDoMenu {
   desabilitado?: boolean;
 }
 
-/** Menu dos botões do cabeçalho da conversa. Fecha ao escolher, ao clicar fora e com Esc. */
-export function MenuDoCabecalho({ rotulo, icone, itens, className }: { rotulo: string; icone: ReactNode; itens: ItemDoMenu[]; className?: string }) {
+/**
+ * Menu dos botões do cabeçalho da conversa (e do "+ Agenda" do calendário). Fecha ao escolher, ao clicar fora e com
+ * Esc. Com `texto`, o botão mostra o texto ao lado do ícone; `alinhar="esquerda"` abre o menu para a direita do botão.
+ */
+export function MenuDoCabecalho({ rotulo, icone, itens, className, texto, alinhar = 'direita', classeDoBotao }: {
+  rotulo: string; icone: ReactNode; itens: ItemDoMenu[]; className?: string; texto?: string; alinhar?: 'esquerda' | 'direita'; classeDoBotao?: string;
+}) {
   const [aberto, setAberto] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -41,12 +46,12 @@ export function MenuDoCabecalho({ rotulo, icone, itens, className }: { rotulo: s
         aria-haspopup="menu"
         aria-expanded={aberto}
         onClick={() => setAberto((v) => !v)}
-        className={cn('flex size-8 items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru', aberto && 'bg-grafite-elevado text-branco-cru')}
+        className={cn(classeDoBotao ?? cn('flex items-center justify-center rounded-md hover:bg-grafite-elevado hover:text-branco-cru', texto ? 'h-8 gap-1.5 px-2.5 text-xs' : 'size-8'), aberto && 'bg-grafite-elevado text-branco-cru')}
       >
-        {icone}
+        {icone}{texto}
       </button>
       {aberto && (
-        <div role="menu" aria-label={rotulo} className="absolute right-0 top-full z-30 mt-1.5 w-60 rounded-lg border border-grafite-elevado bg-grafite-elevado p-1 shadow-elevated">
+        <div role="menu" aria-label={rotulo} className={cn('absolute top-full z-30 mt-1.5 w-60', alinhar === 'esquerda' ? 'left-0' : 'right-0', 'rounded-lg border border-grafite-elevado bg-grafite-elevado p-1 shadow-elevated')}>
           {itens.map((item) =>
             item.href && !item.desabilitado ? (
               <a key={item.rotulo} role="menuitem" href={item.href} target={item.href.startsWith('http') ? '_blank' : undefined} rel="noreferrer" onClick={() => setAberto(false)} className={classeDoItem}>
