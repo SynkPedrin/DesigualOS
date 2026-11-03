@@ -36,7 +36,8 @@ export function PageHeader({
   // virariam um vão transparente por onde a lista apareceria passando. O
   // `bg-carbono` fecha esse vão, e o `-mx-8` faz o fundo cobrir a largura toda.
   return (
-    <div className={compact ? 'sticky top-0 z-20 -mx-8 bg-carbono px-8 pt-4' : 'sticky top-0 z-20 -mx-8 bg-carbono px-8 pt-8'}>
+    // Translúcida (03/11/2026): opaca, a faixa do cabeçalho cortava a luz animada do fundo num retângulo escuro.
+    <div className={compact ? 'sticky top-0 z-20 -mx-8 bg-carbono/30 px-8 pt-4 backdrop-blur-md' : 'sticky top-0 z-20 -mx-8 bg-carbono/30 px-8 pt-8 backdrop-blur-md'}>
     <BrandBanner className={compact ? 'mb-4 p-4 md:p-5' : 'mb-8 p-6 md:p-8'} videoSrc={videoSrc}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>

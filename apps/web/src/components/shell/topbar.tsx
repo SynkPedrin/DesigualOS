@@ -34,7 +34,7 @@ export function Topbar() {
 
   return (
     <>
-    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-grafite-elevado bg-carbono px-4 sm:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-branco-cru/[0.06] bg-carbono/40 px-4 backdrop-blur-md sm:px-6">
       <button
         type="button"
         onClick={toggleMobileNav}
@@ -47,7 +47,7 @@ export function Topbar() {
       <button
         type="button"
         onClick={() => setCommandPaletteOpen(true)}
-        className="flex w-full max-w-sm items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-left text-sm text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
+        className="flex w-full max-w-sm items-center gap-2 rounded-xl border border-sinal/20 bg-grafite/70 px-3 py-2 text-left text-sm text-nevoa transition-colors hover:border-sinal/50 hover:text-branco-cru"
       >
         <Search size={16} className="shrink-0" />
         <span className="hidden flex-1 truncate sm:inline">Buscar cliente, tarefa, conversa...</span>

@@ -123,3 +123,18 @@ export function juntarEventos<E extends { id: string; visible: boolean; title: s
   }
   return [...porChave.values()];
 }
+
+/**
+ * A mesma reunião, vinda de duas agendas da mesma pessoa (a padrão e a da Manada, por exemplo), aparece uma vez só, e
+ * reunião cancelada sai. Foi o "[SC] Inovação" que aparecia duas vezes no "Seu dia" do Hoje (03/11/2026).
+ */
+export function semRepetidas<E extends { id: string; visible: boolean; title: string | null; start_at: string; end_at: string; status?: string }>(eventos: E[]): E[] {
+  const vistos = new Set<string>();
+  return eventos.filter((e) => {
+    if (e.status === 'cancelled') return false;
+    const chave = e.visible && e.title ? `${e.title}|${e.start_at}|${e.end_at}` : e.id;
+    if (vistos.has(chave)) return false;
+    vistos.add(chave);
+    return true;
+  });
+}

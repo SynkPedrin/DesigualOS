@@ -24,6 +24,9 @@ import { BotaoNovaTarefa } from '@/components/tasks/nova-tarefa';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { BentoBriefing, type InsightDoBento } from '@/components/bento/painel-de-insights';
 import { useCalendarEvents } from '@/hooks/use-calendar';
+import { useAgendas } from '@/components/calendar/microsoft-calendar-connect';
+import { COR_PADRAO, semRepetidas, type AgendaPintada } from '@/components/calendar/cores-das-agendas';
+import type { CalendarEventWire } from '@/lib/api/contracts';
 import { useTodaySummary, type SecaoAprovacoes, type SecaoClientes, type SecaoTarefas, type SecaoThreads } from '@/hooks/use-today-summary';
 import { formatClockTime, formatRelativeTime } from '@/lib/format';
 import { ApiRequestError } from '@/lib/api/client';
@@ -104,14 +107,6 @@ const PONTO_CLASS: Record<Tom, string> = {
   urgent: 'bg-erro',
   warning: 'bg-aviso',
   neutral: 'bg-info',
-};
-
-/** Participantes por reunião, "Seu dia" (mockup, 07/10/2026). O contrato de
- * calendário não carrega participante nenhum na wire de evento (só o
- * organizador); nunca inventar presença real de cliente, então isto só cobre
- * a reunião interna, cujos nomes são o próprio time da demo. */
-const PARTICIPANTES_POR_TITULO: Record<string, string[]> = {
-  'Reunião interna, Atendimento': ['Pedro Gabriel', 'Matheus Rial', 'Tami Alves'],
 };
 
 /**
@@ -208,7 +203,10 @@ export default function TodayPage() {
   const tarefasDaAgencia = resumo.tarefasDaAgencia;
   const conversasAguardando = resumo.conversasAguardando;
   const conversasAguardandoMinhas = resumo.conversasAguardandoMinhas;
-  const eventosHoje = resumo.eventosHoje;
+  const eventosHojeBrutos = resumo.eventosHoje;
+  // A mesma reunião chega uma vez por agenda vinculada (agora que toda agenda da conta entra): conta e mostra uma vez.
+  const eventosHoje = { ...eventosHojeBrutos, data: eventosHojeBrutos.data && semRepetidas(eventosHojeBrutos.data) };
+  const { agendas } = useAgendas();
   const aprovacoesPendentes = resumo.aprovacoesPendentes;
   const minhasDemandas = resumo.minhasDemandas;
 
@@ -222,10 +220,11 @@ export default function TodayPage() {
     [diaSelecionado],
   );
   const olhandoHoje = deslocamentoDeDia === 0;
-  const eventosDoDiaRemoto = useCalendarEvents(intervaloDoDiaEscolhido, { enabled: !olhandoHoje });
+  // Com `memberId`: sem ele a consulta trazia a agenda da organização inteira ao navegar para outro dia.
+  const eventosDoDiaRemoto = useCalendarEvents({ ...intervaloDoDiaEscolhido, memberId: me?.id }, { enabled: !olhandoHoje && Boolean(me?.id) });
   const eventosDoDia = olhandoHoje
     ? { data: eventosHoje.data, isPending: eventosHoje.isPending }
-    : { data: eventosDoDiaRemoto.data, isPending: eventosDoDiaRemoto.isPending };
+    : { data: eventosDoDiaRemoto.data && semRepetidas(eventosDoDiaRemoto.data), isPending: eventosDoDiaRemoto.isPending };
   /**
    * CONTAGEM DERIVADA DE PÁGINA É PISO, NÃO TOTAL. As duas listas abaixo vêm
    * paginadas em 30, então tudo que eu filtrar delas (demanda vencendo hoje,
@@ -521,6 +520,7 @@ export default function TodayPage() {
         <StatCard
           icon={MessageSquare}
           iconClassName="bg-roxo-eletrico/15 text-roxo-eletrico"
+          className="bg-gradient-to-br from-roxo-eletrico/20 via-grafite/90 to-grafite/90"
           label="Conversas não respondidas"
           value={conversasAguardando.data?.length ?? 0}
           isLoading={conversasAguardando.isPending}
@@ -539,6 +539,7 @@ export default function TodayPage() {
         <StatCard
           icon={CheckSquare}
           iconClassName="bg-sucesso/15 text-sucesso"
+          className="bg-gradient-to-br from-sucesso/15 via-grafite/90 to-grafite/90"
           label="Tarefas para hoje"
           value={tarefasAbertas.length}
           isLoading={minhasTarefas.isPending}
@@ -554,6 +555,7 @@ export default function TodayPage() {
         <StatCard
           icon={Calendar}
           iconClassName="bg-magenta-spark/15 text-magenta-spark"
+          className="bg-gradient-to-br from-magenta-spark/20 via-grafite/90 to-grafite/90"
           label="Reuniões hoje"
           value={nEventos}
           isLoading={eventosHoje.isPending}
@@ -563,7 +565,8 @@ export default function TodayPage() {
         />
         <StatCard
           icon={ClipboardCheck}
-          iconClassName="bg-ametista/15 text-ametista"
+          iconClassName="bg-sinal/15 text-sinal"
+          className="bg-gradient-to-br from-sinal/[0.12] via-grafite/90 to-grafite/90"
           label="Aprovações pendentes"
           value={aprovacoesPendentes.data?.length ?? 0}
           isLoading={aprovacoesPendentes.isPending}
@@ -645,40 +648,16 @@ export default function TodayPage() {
                 {mesmoDia(diaSelecionado, agora) ? 'Nenhuma reunião marcada pra hoje.' : 'Nenhuma reunião marcada nesse dia.'}
               </p>
             ) : (
-              <div className="max-h-[22rem] overflow-y-auto pl-2 pr-1">
-              {/* Teto de altura: num dia cheio (7+ reuniões) a coluna crescia e empurrava o resto do painel para fora da tela. A lista rola por dentro; o `pl-2` deixa os pontos da linha do tempo fora do corte. */}
-              <ul className="relative space-y-4 border-l border-grafite-elevado pl-4">
+              <ul className="max-h-[24rem] space-y-2 overflow-y-auto pr-1">
                 {eventosDoDia.data.map((evento) => (
-                  <li key={evento.id} className="relative">
-                    <span className="absolute -left-[21px] top-1 size-2.5 rounded-full bg-roxo-eletrico" />
-                    <p className="font-mono text-[11px] text-nevoa">{formatClockTime(evento.start_at)}</p>
-                    <p className="text-sm font-medium text-branco-cru">{evento.title ?? 'Sem título'}</p>
-                    {evento.meeting_url && (
-                      <a href={evento.meeting_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-nevoa hover:text-roxo-eletrico">
-                        <Video size={12} /> Link da reunião
-                      </a>
-                    )}
-                    {evento.location && (
-                      <p className="flex items-center gap-1 text-xs text-nevoa">
-                        <MapPin size={12} /> {evento.location}
-                      </p>
-                    )}
-                    {PARTICIPANTES_POR_TITULO[evento.title ?? ''] && (
-                      <div className="mt-1.5 flex -space-x-2">
-                        {PARTICIPANTES_POR_TITULO[evento.title ?? '']!.map((nome) => (
-                          <EntityAvatar key={nome} name={nome} kind="person" size="sm" className="ring-2 ring-grafite" />
-                        ))}
-                      </div>
-                    )}
-                  </li>
+                  <CompromissoDoDia key={evento.id} evento={evento} agendas={agendas} agora={agora} />
                 ))}
               </ul>
-              </div>
             )}
 
             <Link
               href="/calendar"
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-grafite-elevado py-2 text-sm text-nevoa transition-colors hover:border-roxo-eletrico/60 hover:text-branco-cru"
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-sinal/30 py-2 text-sm text-nevoa transition-colors hover:border-sinal/70 hover:bg-sinal/5 hover:text-branco-cru"
             >
               <Plus size={14} />
               Nova reunião
@@ -704,6 +683,67 @@ export default function TodayPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Um compromisso do "Seu dia" (03/11/2026, pedido do Pedro: "elementos desconexos e desproporcionais"). Antes eram
+ * quatro linhas soltas numa linha do tempo (hora, título, "Link da reunião", local) com o mesmo ponto roxo para
+ * tudo. Agora cada compromisso é um bloco só: horário de início e fim à esquerda, a cor e o nome da agenda, e o
+ * "Entrar" como botão. O que está acontecendo agora ou começa em até uma hora ganha destaque.
+ */
+function CompromissoDoDia({ evento, agendas, agora }: { evento: CalendarEventWire; agendas: AgendaPintada[]; agora: Date }) {
+  const agenda = evento.calendar_id ? agendas.find((a) => a.id === evento.calendar_id) : agendas.find((a) => a.principal);
+  const cor = agenda?.cor ?? COR_PADRAO;
+  const inicio = new Date(evento.start_at).getTime();
+  const fim = new Date(evento.end_at).getTime();
+  const acontecendo = inicio <= agora.getTime() && agora.getTime() < fim;
+  const minutosParaComecar = Math.round((inicio - agora.getTime()) / 60_000);
+  const emBreve = !acontecendo && minutosParaComecar > 0 && minutosParaComecar <= 60;
+  const passou = fim <= agora.getTime();
+  const titulo = evento.visible ? evento.title || 'Sem título' : 'Ocupado';
+  const detalhes = [agenda?.nome, evento.visible ? evento.location : null].filter(Boolean).join(' · ');
+
+  return (
+    <li
+      className={cn(
+        'flex items-stretch gap-3 rounded-xl border bg-carbono/40 p-2.5 transition-colors',
+        acontecendo ? 'border-sinal/60 shadow-[0_0_0_1px_rgba(225,249,0,0.15)]' : 'border-branco-cru/[0.06] hover:border-sinal/30',
+        passou && 'opacity-60',
+      )}
+    >
+      <div className="flex w-12 shrink-0 flex-col justify-center text-right font-mono tabular-nums">
+        <span className="text-sm font-semibold text-branco-cru">{formatClockTime(evento.start_at)}</span>
+        <span className="text-[11px] text-nevoa">{formatClockTime(evento.end_at)}</span>
+      </div>
+      <span aria-hidden className={cn('w-1 shrink-0 rounded-full', cor.ponto)} />
+      <div className="min-w-0 flex-1 py-0.5">
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-branco-cru" title={titulo}>{titulo}</p>
+          {acontecendo && <span className="shrink-0 rounded-full bg-sinal px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-carbono">Agora</span>}
+          {emBreve && <span className="shrink-0 rounded-full bg-roxo-eletrico/20 px-2 py-0.5 text-[10px] font-semibold text-lilas">em {minutosParaComecar} min</span>}
+        </div>
+        {detalhes && (
+          <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-nevoa">
+            {evento.visible && evento.location && <MapPin size={11} className="shrink-0" />}
+            {detalhes}
+          </p>
+        )}
+      </div>
+      {evento.visible && evento.meeting_url && !passou && (
+        <a
+          href={evento.meeting_url}
+          target="_blank"
+          rel="noreferrer"
+          className={cn(
+            'flex shrink-0 items-center gap-1 self-center rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors',
+            acontecendo || emBreve ? 'bg-sinal text-carbono hover:shadow-sinal' : 'border border-branco-cru/10 text-nevoa hover:border-sinal/50 hover:text-branco-cru',
+          )}
+        >
+          <Video size={12} /> Entrar
+        </a>
+      )}
+    </li>
   );
 }
 
@@ -770,19 +810,19 @@ function AbasDeRecorte({
  */
 function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
   return (
-    <div className="-mx-2 overflow-x-auto">
+    <div className="-mx-2">
       <table className="w-full table-fixed border-collapse text-left">
         <thead className="hidden md:table-header-group">
           <tr className="border-b border-grafite-elevado">
             <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa">Item</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[26%]">Cliente / Projeto</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[15%]">Status</th>
-            <th className="px-2 pb-2 text-right font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[14%]">Prazo</th>
+            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[24%]">Cliente / Projeto</th>
+            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[8.5rem]">Status</th>
+            <th className="px-2 pb-2 text-right font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[8.5rem]">Prazo</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-grafite-elevado">
           {itens.map((item) => (
-            <tr key={item.id} className="group transition-colors hover:bg-grafite-elevado/40">
+            <tr key={item.id} className="group transition-colors hover:bg-sinal/[0.04]">
               <td className={cn('min-w-0 px-2 py-3 align-middle', faixaDaLinha(item.prazo !== undefined ? urgenciaDoPrazo(item.prazo) : item.atrasada ? 'atrasado' : null))}>
                 <LinhaDeItem item={item}>
                   <span className={cn('size-2 shrink-0 rounded-full', PONTO_CLASS[item.badge.tom])} />
@@ -803,7 +843,7 @@ function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
                 </div>
               </td>
               <td className="hidden px-2 py-3 align-middle md:table-cell">
-                <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
+                <span className={cn('inline-block max-w-full truncate whitespace-nowrap rounded-full px-2.5 py-1 align-middle text-xs font-semibold', BADGE_CLASS[item.badge.tom])} title={item.badge.label}>{item.badge.label}</span>
               </td>
               <td className="hidden whitespace-nowrap px-2 py-3 text-right align-middle text-sm md:table-cell">
                 {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : <span className={item.atrasada ? 'text-erro' : 'text-nevoa'}>{item.quando}</span>}

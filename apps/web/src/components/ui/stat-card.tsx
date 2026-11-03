@@ -33,6 +33,7 @@ export function StatCard({
   formatValue = (v) => Math.round(v).toLocaleString('pt-BR'),
   isLoading = false,
   isError = false,
+  className,
 }: {
   /** Ícone num círculo colorido à esquerda do número — opcional, card sem ele
    *  continua valendo (ex.: usos mais antigos/simples). */
@@ -57,6 +58,8 @@ export function StatCard({
   /** Fetch falhou pra essa métrica: mostra um indicador discreto no lugar do número em vez
    * de cair silenciosamente em "0" (que parece um dado real, só que errado). */
   isError?: boolean;
+  /** Fundo do cartão (ex.: um degradê na cor do indicador), somado ao da Surface. */
+  className?: string | undefined;
 }) {
   const animated = useCountUp(isLoading ? 0 : value);
 
@@ -110,8 +113,8 @@ export function StatCard({
 
   if (href) {
     return (
-      <Link href={href}>
-        <Surface level="grafite" className="p-5 transition-colors hover:border-roxo-eletrico/60">
+      <Link href={href} className="block h-full">
+        <Surface level="grafite" className={cn('h-full p-5 transition-all hover:-translate-y-0.5 hover:border-sinal/50 hover:shadow-sinal', className)}>
           {conteudo}
         </Surface>
       </Link>
@@ -119,7 +122,7 @@ export function StatCard({
   }
 
   return (
-    <Surface level="grafite" className="p-5">
+    <Surface level="grafite" className={cn('h-full p-5', className)}>
       {conteudo}
     </Surface>
   );

@@ -200,13 +200,14 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        'h-full flex-col bg-carbono transition-[width] duration-300 ease-out',
-        // Desktop: sidebar fixa, escondida abaixo do breakpoint md (o drawer assume nesse
-        // caso, ver mobile-nav-drawer.tsx). Drawer: sempre flex, tamanho controlado pelo
-        // container que a envolve.
+        'h-full flex-col transition-[width] duration-300 ease-out',
+        // Desktop: FLUTUANTE (03/11/2026, pedido do Pedro: "igual ao da Citável"), um cartão de cantos bem
+        // arredondados, solto da borda da janela, com o contorno verde-limão da marca. Escondida abaixo do
+        // breakpoint md (o drawer assume nesse caso, ver mobile-nav-drawer.tsx). Drawer: sempre flex, tamanho
+        // controlado pelo container que a envolve.
         variant === 'desktop'
-          ? 'hidden h-screen border-r border-grafite-elevado md:flex'
-          : 'flex',
+          ? 'my-3 ml-3 hidden h-[calc(100%-1.5rem)] shrink-0 overflow-hidden rounded-[1.75rem] border border-sinal/25 bg-grafite/80 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.6),0_0_0_1px_rgba(225,249,0,0.04)] backdrop-blur-xl md:flex'
+          : 'flex bg-carbono',
         collapsed ? 'w-[76px]' : 'w-64',
       )}
     >
@@ -253,7 +254,7 @@ export function Sidebar({
         </Link>
       )}
 
-      <div className={cn('mx-4 mb-3 rounded-lg bg-grafite px-3 py-2.5', collapsed && 'mx-2 px-2')}>
+      <div className={cn('mx-4 mb-3 rounded-2xl border border-branco-cru/[0.06] bg-carbono/50 px-3 py-2.5', collapsed && 'mx-2 px-2')}>
         <div className="flex items-center gap-3">
           <div className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru">
             {me?.avatarUrl ? (
@@ -288,7 +289,7 @@ export function Sidebar({
           onClick={handleNewChat}
           aria-label="Novo chat"
           title="Novo chat"
-          className="flex w-full items-center justify-center gap-2 rounded-md bg-roxo-eletrico py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-roxo-eletrico to-magenta-spark/90 py-2.5 text-sm font-semibold text-branco-cru transition-all hover:opacity-95 hover:shadow-glow"
         >
           <Plus size={16} className="shrink-0" />
           {!collapsed && <span className="truncate">Novo chat</span>}
@@ -311,7 +312,7 @@ export function Sidebar({
         {temMais && (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-carbono to-transparent"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-grafite to-transparent"
           />
         )}
       <nav
@@ -379,16 +380,18 @@ export function Sidebar({
           const isActive = caminhoDoItem === '/' ? pathname === '/' : pathname.startsWith(caminhoDoItem);
           const Icon = item.icon;
           const itemClassName = cn(
-            'relative flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors',
-            isActive ? 'bg-grafite text-branco-cru' : 'text-nevoa hover:bg-grafite/60 hover:text-branco-cru',
+            'relative isolate flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors',
+            isActive ? 'text-branco-cru [&>svg]:text-sinal' : 'text-nevoa hover:bg-branco-cru/[0.05] hover:text-branco-cru',
           );
           const itemContent = (
             <>
               {isActive && (
+                // A pílula do item ativo desliza de um item para o outro (como a da Citável), com o contorno limão.
                 <motion.span
                   layoutId="sidebar-active-bar"
-                  className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-sinal shadow-sinal"
-                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                  aria-hidden
+                  className="absolute inset-0 -z-10 rounded-xl bg-gradient-to-r from-sinal/[0.14] to-roxo-eletrico/[0.10] ring-1 ring-inset ring-sinal/40 shadow-[0_6px_20px_-8px_rgba(225,249,0,0.35)]"
+                  transition={{ duration: 0.25, ease: 'easeOut' }}
                 />
               )}
               <Icon size={18} className="shrink-0" />

@@ -9,8 +9,10 @@ export function Surface({ level = 'grafite', glow = false, className, ...props }
   return (
     <div
       className={cn(
-        'rounded-lg border border-grafite-elevado',
-        level === 'grafite' ? 'bg-grafite' : 'bg-grafite-elevado',
+        // Contorno verde-limão discreto e fundo levemente translúcido (03/11/2026): a luz animada do fundo aparece por
+        // baixo sem atrapalhar a leitura, e todo cartão do sistema ganha a mesma borda da marca.
+        'rounded-2xl border border-sinal/[0.14]',
+        level === 'grafite' ? 'bg-grafite/90' : 'bg-grafite-elevado/90',
         glow ? 'shadow-elevated' : 'shadow-card',
         className,
       )}

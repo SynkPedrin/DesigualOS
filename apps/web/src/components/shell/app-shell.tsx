@@ -9,6 +9,7 @@ import { Topbar } from './topbar';
 import { ContextoDaEmpresa } from './contexto-da-empresa';
 import { CommandPalette } from './command-palette';
 import { NoiseOverlay } from './noise-overlay';
+import { FundoVivo } from './fundo-vivo';
 import { NotificationInboxPopup } from './notification-inbox-popup';
 import { MockModeBanner } from './mock-mode-banner';
 import { MobileNavDrawer } from './mobile-nav-drawer';
@@ -42,11 +43,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <TourProvider>
     <div className="flex h-screen justify-center overflow-hidden bg-carbono">
+      <FundoVivo />
       <NoiseOverlay />
       {/* Sidebar + content together, capped and centered as a unit - on an ultra-wide
        * screen a left-pinned sidebar with only the content centered in what's left looks
        * lopsided (all the extra space dumped on the right). */}
-      <div className="flex h-full w-full max-w-[2400px]">
+      <div className="relative z-10 flex h-full w-full max-w-[2400px]">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           {/* ACIMA DE TUDO, inclusive da barra superior: saber em qual empresa
