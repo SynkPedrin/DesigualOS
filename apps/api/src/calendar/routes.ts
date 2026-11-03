@@ -81,6 +81,28 @@ async function loadBusyIntervals(memberIds: string[], organizationId: string, ra
   return porMembro;
 }
 
+type AgendasDaConta = Map<string, { nome: string | null; padrao: boolean }>;
+const agendasEmCache = new Map<string, { expira: number; agendas: AgendasDaConta }>();
+
+/** Nome e "é a padrão" de cada agenda do Outlook de uma pessoa, guardado por 10 min (2 min quando a consulta falha). */
+async function agendasDoOutlook(userId: string): Promise<AgendasDaConta> {
+  const guardado = agendasEmCache.get(userId);
+  if (guardado && guardado.expira > Date.now()) return guardado.agendas;
+  let agendas: AgendasDaConta = new Map();
+  let validade = 2 * 60_000;
+  try {
+    const access = await resolveMicrosoftCalendarAccess(userId);
+    if (access) {
+      agendas = new Map((await listMicrosoftCalendars(access.accessToken)).map((c) => [c.id, { nome: c.name, padrao: c.isDefault }]));
+      validade = 10 * 60_000;
+    }
+  } catch {
+    /* sem nome desta vez; a agenda continua aparecendo em "Todas" */
+  }
+  agendasEmCache.set(userId, { expira: Date.now() + validade, agendas });
+  return agendas;
+}
+
 export async function registerCalendarRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
     await requireAuth(request, reply);
@@ -384,6 +406,28 @@ export async function registerCalendarRoutes(app: FastifyInstance): Promise<void
         connected: r.connectionId !== null,
         last_synced_at: r.lastSyncedAt?.toISOString() ?? null,
       })),
+    };
+  });
+
+  /**
+   * As agendas do Outlook de TODA a equipe, com nome (03/11/2026, pedido do Pedro: "agenda geral, que junta todas as
+   * agendas"). A tela já recebia o id da agenda de cada evento, mas só sabia o nome das agendas de quem está vendo, e a
+   * da Manada Filmes pode estar vinculada por outra pessoa. O nome vem do Graph com a conexão de cada dono, guardado
+   * por 10 min; sem conexão, a agenda volta sem nome e a tela a mostra só em "Todas".
+   */
+  app.get('/calendar/agendas', { preHandler: [requirePermission('calendar', 'read'), requireModule('calendario')] }, async (request) => {
+    const rows = await db
+      .select({ userId: schema.memberCalendarAccounts.userId, externalCalendarId: schema.memberCalendarAccounts.externalCalendarId })
+      .from(schema.memberCalendarAccounts)
+      .innerJoin(schema.integrationConnections, eq(schema.integrationConnections.id, schema.memberCalendarAccounts.connectionId))
+      .where(and(eq(schema.memberCalendarAccounts.organizationId, request.tenantContext!.organizationId), eq(schema.integrationConnections.provider, 'microsoft_calendar')));
+    const donos = [...new Set(rows.map((r) => r.userId))];
+    const nomes = new Map(await Promise.all(donos.map(async (userId) => [userId, await agendasDoOutlook(userId)] as const)));
+    return {
+      agendas: rows.map((r) => {
+        const daConta = nomes.get(r.userId)?.get(r.externalCalendarId);
+        return { calendar_id: r.externalCalendarId, user_id: r.userId, nome: daConta?.nome ?? null, padrao: daConta?.padrao ?? false };
+      }),
     };
   });
 

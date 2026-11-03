@@ -136,6 +136,50 @@ export const mockCalendarEvents: CalendarEventWire[] = [
   },
 ];
 
+/** A Jamile (colaborador-1) também tem a agenda dela e a da Manada Filmes, com outros ids, como o Outlook faz. */
+const MOCK_AGENDA_JAMILE = 'jamile@agenciadesigual.com.br';
+const MOCK_AGENDA_MANADA_JAMILE = 'manada-filmes-jamile';
+export const mockAgendasDaEquipe = [
+  { calendar_id: MOCK_AGENDA_DESIGUAL, user_id: 'user-admin-master', nome: 'Calendário', padrao: true },
+  { calendar_id: MOCK_AGENDA_MANADA, user_id: 'user-admin-master', nome: 'Manada Filmes', padrao: false },
+  { calendar_id: MOCK_AGENDA_JAMILE, user_id: 'user-colaborador-1', nome: 'Calendário', padrao: true },
+  { calendar_id: MOCK_AGENDA_MANADA_JAMILE, user_id: 'user-colaborador-1', nome: 'Manada Filmes', padrao: false },
+];
+mockCalendarEvents.push(
+  {
+    id: nextEventId(),
+    client_id: null,
+    start_at: iso(daqui(1, 9, 0)),
+    end_at: iso(daqui(1, 10, 0)),
+    timezone: 'America/Sao_Paulo',
+    status: 'confirmed',
+    visible: true,
+    title: 'Roteiro do clipe, Manada Filmes',
+    description: null,
+    location: null,
+    meeting_url: null,
+    source: 'microsoft_calendar',
+    created_by: 'user-colaborador-1',
+    calendar_id: MOCK_AGENDA_MANADA_JAMILE,
+  },
+  {
+    id: nextEventId(),
+    client_id: 'client-cosentino',
+    start_at: iso(hoje(10, 30)),
+    end_at: iso(hoje(11, 0)),
+    timezone: 'America/Sao_Paulo',
+    status: 'confirmed',
+    visible: true,
+    title: 'Alinhamento, Cosentino',
+    description: 'A mesma reunião, vinda da agenda da Jamile.',
+    location: null,
+    meeting_url: null,
+    source: 'microsoft_calendar',
+    created_by: 'user-colaborador-1',
+    calendar_id: MOCK_AGENDA_JAMILE,
+  },
+);
+
 /** Quem participa de cada evento (Calendário da Agência, §6-9 — sem isto
  *  `GET /calendar/events?member_id=X` não tinha como diferenciar a agenda de
  *  uma pessoa da de outra, e toda coluna mostrava os MESMOS 4 eventos). Só a
@@ -147,4 +191,6 @@ export const mockCalendarEventParticipants: Record<string, string[]> = {
   [mockCalendarEvents[3]!.id]: ['user-admin-master'], // Revisão de criativos — G4
   [mockCalendarEvents[4]!.id]: ['user-admin-master'], // Gravação — Manada Filmes
   [mockCalendarEvents[5]!.id]: ['user-admin-master'], // Pós-produção — Manada Filmes
+  [mockCalendarEvents[6]!.id]: ['user-colaborador-1'], // Roteiro do clipe — Manada Filmes (da Jamile)
+  [mockCalendarEvents[7]!.id]: ['user-colaborador-1'], // Alinhamento — Cosentino (cópia da Jamile)
 };

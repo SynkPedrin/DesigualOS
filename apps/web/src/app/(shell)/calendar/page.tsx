@@ -8,16 +8,16 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useMe } from '@/hooks/use-me';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useCollaborators } from '@/hooks/use-collaborators';
-import { useCalendarEvents, useCalendarEventsForMembers, useCancelCalendarEvent } from '@/hooks/use-calendar';
+import { useCalendarEventsForMembers, useCancelCalendarEvent } from '@/hooks/use-calendar';
 import { WeekView } from '@/components/calendar/week-view';
 import { ResourceTimelineView } from '@/components/calendar/resource-timeline-view';
 import { ResourcePicker } from '@/components/calendar/resource-picker';
 import { CreateEventModal } from '@/components/calendar/create-event-modal';
 import { MicrosoftCalendarConnect } from '@/components/calendar/microsoft-calendar-connect';
 import { MeetingBriefPanel } from '@/components/calendar/meeting-brief-panel';
-import { useAgendas } from '@/components/calendar/microsoft-calendar-connect';
 import { AbasDeAgendas, useAbaDeAgenda } from '@/components/calendar/abas-de-agendas';
-import { contarPorAba, eventoDaAba } from '@/components/calendar/cores-das-agendas';
+import { useAgendaDoModo } from '@/components/calendar/agenda-do-modo';
+import { TODAS, contarPorAba, eventoDaAba } from '@/components/calendar/cores-das-agendas';
 import type { CalendarEventWire } from '@/lib/api/contracts';
 
 /**
@@ -42,7 +42,11 @@ function CalendarPageContent() {
   const searchParams = useSearchParams();
   const { data: me } = useMe();
   const { isMaster } = useIsMaster();
-  const [visao, setVisao] = useState<'pessoal' | 'agencia'>('pessoal');
+  // "Agenda geral" é a visão de abertura de quem gere (pedido do Pedro, 03/11/2026: "sempre abre com o geral"); quem
+  // não gere continua só com a própria agenda, como a visão da Agência.
+  const [visaoEscolhida, setVisao] = useState<'geral' | 'pessoal' | 'agencia' | null>(null);
+  const visao = visaoEscolhida ?? (isMaster ? 'geral' : 'pessoal');
+  const semana = visao !== 'agencia';
   const [referencia, setReferencia] = useState(() => new Date());
   const [criando, setCriando] = useState<Date | null>(null);
   const [selecionado, setSelecionado] = useState<CalendarEventWire | null>(null);
@@ -59,10 +63,9 @@ function CalendarPageContent() {
   const fimSemana = useMemo(() => new Date(inicioSemana.getTime() + 7 * 24 * 60 * 60_000), [inicioSemana]);
   const dias = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(inicioSemana.getTime() + i * 24 * 60 * 60_000)), [inicioSemana]);
 
-  const eventos = useCalendarEvents({ from: inicioSemana, to: fimSemana, memberId: me?.id });
-  const { agendas, paraAdicionar, adicionar, adicionando } = useAgendas();
-  const [aba, setAba] = useAbaDeAgenda('desigual-os:calendario:agenda', agendas);
-  const contagem = useMemo(() => contarPorAba(eventos.data ?? [], agendas), [eventos.data, agendas]);
+  const { eventos, isPending: eventosPending, agendas, paraAdicionar, adicionar, adicionando } = useAgendaDoModo(visao === 'geral' ? 'geral' : 'minha', inicioSemana, fimSemana);
+  const [aba, setAba] = useAbaDeAgenda(agendas);
+  const contagem = useMemo(() => contarPorAba(eventos ?? [], agendas), [eventos, agendas]);
   const corDaAgenda = useMemo(() => {
     const porId = new Map(agendas.map((a) => [a.id, a.cor.evento]));
     return (id: string | null | undefined) => (id ? porId.get(id) : undefined) ?? 'border-roxo-eletrico/40 bg-roxo-eletrico/20 text-branco-cru hover:border-roxo-eletrico/70';
@@ -70,7 +73,7 @@ function CalendarPageContent() {
 
   const eventosPorDia = useMemo(() => {
     const mapa = new Map<string, CalendarEventWire[]>();
-    for (const evento of eventos.data ?? []) {
+    for (const evento of eventos ?? []) {
       if (!eventoDaAba(evento.calendar_id, aba, agendas)) continue;
       const chave = new Date(evento.start_at).toDateString();
       const lista = mapa.get(chave) ?? [];
@@ -78,7 +81,7 @@ function CalendarPageContent() {
       mapa.set(chave, lista);
     }
     return mapa;
-  }, [eventos.data, aba, agendas]);
+  }, [eventos, aba, agendas]);
 
   // Calendário da Agência (§6-9) — mesma `referencia`, mas um dia só por vez
   // (não faz sentido ver a semana inteira de 6 pessoas lado a lado).
@@ -109,13 +112,26 @@ function CalendarPageContent() {
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-4">
-      <div className="flex items-center justify-between">
-        <PageHeader eyebrow="Calendário" title={visao === 'pessoal' ? 'Sua semana' : 'Agenda da agência'} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <PageHeader eyebrow="Calendário" title={visao === 'geral' ? 'Agenda geral' : visao === 'pessoal' ? 'Sua semana' : 'Agenda da agência'} />
         {isMaster && (
-          <div className="flex items-center gap-1 rounded-md border border-grafite-elevado p-1">
+          <div className="flex shrink-0 items-center gap-1 rounded-md border border-grafite-elevado p-1">
             <button
               type="button"
-              onClick={() => setVisao('pessoal')}
+              onClick={() => {
+                setVisao('geral');
+                setAba(TODAS);
+              }}
+              className={`rounded px-3 py-1 text-sm transition-colors ${visao === 'geral' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
+            >
+              Agenda geral
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setVisao('pessoal');
+                setAba(TODAS);
+              }}
               className={`rounded px-3 py-1 text-sm transition-colors ${visao === 'pessoal' ? 'bg-roxo-eletrico text-branco-cru' : 'text-nevoa hover:text-branco-cru'}`}
             >
               Minha agenda
@@ -135,13 +151,13 @@ function CalendarPageContent() {
        * Google Calendar"). O banner do Google convidava toda pessoa a conectar
        * uma agenda que a agência não usa. As rotas da API continuam; só a tela
        * deixou de oferecer. */}
-      {visao === 'pessoal' && <MicrosoftCalendarConnect />}
+      {semana && <MicrosoftCalendarConnect />}
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setReferencia(new Date(referencia.getTime() - (visao === 'pessoal' ? 7 : 1) * 24 * 60 * 60_000))}
+            onClick={() => setReferencia(new Date(referencia.getTime() - (semana ? 7 : 1) * 24 * 60 * 60_000))}
             className="rounded-md border border-grafite-elevado p-1.5 text-nevoa hover:text-branco-cru"
           >
             <ChevronLeft size={16} />
@@ -151,12 +167,12 @@ function CalendarPageContent() {
           </button>
           <button
             type="button"
-            onClick={() => setReferencia(new Date(referencia.getTime() + (visao === 'pessoal' ? 7 : 1) * 24 * 60 * 60_000))}
+            onClick={() => setReferencia(new Date(referencia.getTime() + (semana ? 7 : 1) * 24 * 60 * 60_000))}
             className="rounded-md border border-grafite-elevado p-1.5 text-nevoa hover:text-branco-cru"
           >
             <ChevronRight size={16} />
           </button>
-          {visao === 'pessoal' ? (
+          {semana ? (
             <p className="ml-2 text-sm text-branco-cru">
               {inicioSemana.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}, {new Date(fimSemana.getTime() - 86_400_000).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
             </p>
@@ -178,12 +194,12 @@ function CalendarPageContent() {
         </button>
       </div>
 
-      {visao === 'pessoal' && (
-        <AbasDeAgendas agendas={agendas} ativa={aba} onEscolher={setAba} contagem={eventos.data ? contagem : undefined} paraAdicionar={paraAdicionar} onAdicionar={adicionar} adicionando={adicionando} />
+      {semana && (
+        <AbasDeAgendas agendas={agendas} ativa={aba} onEscolher={setAba} contagem={eventos ? contagem : undefined} paraAdicionar={paraAdicionar} onAdicionar={adicionar} adicionando={adicionando} />
       )}
 
-      {visao === 'pessoal' ? (
-        eventos.isPending ? (
+      {semana ? (
+        eventosPending ? (
           <Skeleton className="h-[700px] w-full" />
         ) : (
           <WeekView dias={dias} eventosPorDia={eventosPorDia} onSelecionarEvento={setSelecionado} onSelecionarSlot={setCriando} corDaAgenda={corDaAgenda} />

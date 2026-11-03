@@ -38,7 +38,7 @@ import { mockApprovals, mockBriefs, mockBriefVersions, mockDemands, nextMockId }
 import { mockAgencyTasks } from './clickup-tasks';
 import { findTeamMember, mockClientAssignments } from './client-assignments';
 import { dicebearAvatarUrl } from './avatar';
-import { mockAgendasDaConta, mockCalendarEventParticipants, mockCalendarEvents, mockContasMicrosoft } from './calendar';
+import { mockAgendasDaConta, mockCalendarEventParticipants, mockCalendarEvents, mockContasMicrosoft, mockAgendasDaEquipe } from './calendar';
 import { modulosPadrao } from '@desigual-os/types';
 import { bentoWhatsappHandlers } from './bento-whatsapp';
 import { openwaHandlers } from './openwa';
@@ -1498,6 +1498,8 @@ export const handlers = [
   http.get('/integrations/microsoft-calendar/status', () => {
     return HttpResponse.json({ connected: true, configured: true, connected_at: new Date(Date.now() - 45 * 86_400_000).toISOString() });
   }),
+
+  http.get('/calendar/agendas', () => HttpResponse.json({ agendas: mockAgendasDaEquipe })),
 
   http.get('/calendar/microsoft/accounts', () => {
     return HttpResponse.json({ accounts: mockContasMicrosoft });
