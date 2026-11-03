@@ -211,6 +211,40 @@ describe.skipIf(!enabled)('Comunicação → chat do ClickUp × PostgreSQL real'
     expect(ck.escritas).toEqual([]);
   });
 
+  it('#Geral = canal do workspace no ClickUp: o "Agência Desigual" importado antes vai para o #Geral, sem apagar nada, e o que se escreve no #Geral sai lá', async () => {
+    const { db, schema } = dbm;
+    const { and, eq } = await import('drizzle-orm');
+    const geral = await svc.garantirGeral(org);
+    // Como estava em produção até hoje: o canal do workspace tinha virado um canal à parte, com histórico e leitura.
+    const [antigo] = await db.insert(schema.internalConversations).values({ organizationId: org, kind: 'channel', title: 'Agência Desigual', visibility: 'public' }).returning();
+    await db.insert(schema.workExternalMappings).values({ organizationId: org, provider: 'clickup', externalType: 'chat_channel', externalId: '7-WS-8', entityType: 'internal_conversation', entityId: antigo!.id, meta: { ultimaMs: t0 + 10, tipo: 'CHANNEL' } });
+    await db.insert(schema.internalMessages).values({ organizationId: org, conversationId: antigo!.id, senderId: matheus, kind: 'clickup', content: 'bom dia, equipe', clientMessageId: 'clickup:g-antiga', createdAt: new Date(t0 + 10) });
+    const lido = new Date(t0 + 20);
+    await db.insert(schema.internalConversationMembers).values({ conversationId: antigo!.id, userId: alicia, organizationId: org, lastReadAt: lido });
+    ck.canais.push({ id: '7-WS-8', type: 'CHANNEL', name: 'Agência Desigual', visibility: 'PUBLIC' });
+    ck.membros.set('7-WS-8', [{ id: 1 }, { id: 2 }, { id: 4 }]);
+    ck.mensagens.set('7-WS-8', [{ id: 'g-antiga', user_id: 2, date: t0 + 10, content: 'bom dia, equipe' }]);
+
+    const r = await importar();
+    expect(r.falhas).toEqual([]);
+    expect((await conversaDoCanal('7-WS-8'))!.id).toBe(geral.id);
+    expect((await mensagensDe(geral.id)).map((m) => m.content)).toEqual(['bom dia, equipe']);
+    const [arquivado] = await db.select().from(schema.internalConversations).where(eq(schema.internalConversations.id, antigo!.id));
+    expect(arquivado!.archivedAt).not.toBeNull();
+    const [leitura] = await db.select().from(schema.internalConversationMembers).where(and(eq(schema.internalConversationMembers.conversationId, geral.id), eq(schema.internalConversationMembers.userId, alicia)));
+    expect(leitura!.lastReadAt!.getTime()).toBeGreaterThanOrEqual(lido.getTime());
+    expect(chegadas).toEqual([]);
+
+    ck.escritas.length = 0;
+    await escrever(geral, alicia, 'reunião às 14h');
+    expect(ck.escritas).toEqual([{ acao: 'publicar', token: 'token-alicia', alvo: '7-WS-8', conteudo: 'reunião às 14h' }]);
+    ck.mensagens.get('7-WS-8')!.push({ id: 'g-nova', user_id: 2, date: (ck.relogio += 60_000), content: 'combinado' });
+    await importar();
+    // (o relógio do ClickUp simulado é de 01/11; a mensagem escrita aqui leva a hora de agora: compara o conjunto)
+    expect((await mensagensDe(geral.id)).map((m) => m.content).sort()).toEqual(['bom dia, equipe', 'combinado', 'reunião às 14h']);
+    expect(chegadas.map((c) => c.conversa)).toEqual([geral.id]);
+  });
+
   it('edição e exclusão daqui chegam lá, pela mesma pessoa', async () => {
     const canal = (await conversaDoCanal('ch-envu'))!;
     const m = await escrever(canal, alicia, 'texto com erro');

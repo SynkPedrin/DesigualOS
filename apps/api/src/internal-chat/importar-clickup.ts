@@ -155,6 +155,54 @@ async function vinculo(organizationId: string, canalId: string) {
   return v ?? null;
 }
 
+/**
+ * O #GERAL É O CANAL DO WORKSPACE DO CLICKUP (03/11/2026, decisão do Pedro: "Agência Desigual" ↔ #Geral). No ClickUp,
+ * o canal do workspace inteiro tem o id `7-<workspace>-8` (os de lista, pasta e espaço são 6-, 5- e 4-). Antes disto
+ * ele entrava como um canal à parte, "Agência Desigual"; a primeira passada depois da mudança leva esse histórico
+ * para o #Geral (mensagens, anexos e até onde cada pessoa leu), arquiva o canal antigo sem apagar nada e guarda o id
+ * dele no vínculo (`geralDe`), para dar para desfazer.
+ */
+export function canalDoWorkspace(workspace: string | null): string | null {
+  return process.env.CHAT_CLICKUP_CANAL_GERAL ?? (workspace ? `7-${workspace}-8` : null);
+}
+
+async function geralDaEmpresa(organizationId: string): Promise<string | null> {
+  const [g] = await db.select({ id: schema.internalConversations.id }).from(schema.internalConversations)
+    .where(and(eq(schema.internalConversations.organizationId, organizationId), eq(schema.internalConversations.kind, 'general'))).limit(1);
+  return g?.id ?? null;
+}
+
+const geralJaLigado = new Set<string>();
+/** O canal do workspace da passada em curso (conversaDoCanal não recebe a empresa inteira). */
+const opcoesGerais: { canalGeral: string | null } = { canalGeral: null };
+async function ligarGeralAoWorkspace(organizationId: string, canalId: string): Promise<void> {
+  if (geralJaLigado.has(organizationId)) return;
+  const geral = await geralDaEmpresa(organizationId);
+  if (!geral) return;
+  const v = await vinculo(organizationId, canalId);
+  if (v && v.entityId !== geral) {
+    const antiga = v.entityId;
+    await db.transaction(async (tx) => {
+      await tx.update(schema.internalMessages).set({ conversationId: geral }).where(eq(schema.internalMessages.conversationId, antiga));
+      await tx.update(schema.internalMessageAttachments).set({ conversationId: geral }).where(eq(schema.internalMessageAttachments.conversationId, antiga));
+      // Quem já tinha lido no canal antigo não vê esse histórico como novo no #Geral.
+      await tx.execute(sql`
+        insert into internal_conversation_members (conversation_id, user_id, organization_id, last_read_at)
+        select ${geral}::uuid, m.user_id, m.organization_id, m.last_read_at from internal_conversation_members m
+        where m.conversation_id = ${antiga}::uuid and m.last_read_at is not null
+        on conflict (conversation_id, user_id) do update set last_read_at = greatest(internal_conversation_members.last_read_at, excluded.last_read_at)`);
+      await tx.execute(sql`update internal_conversations g set last_message_at = greatest(g.last_message_at, a.last_message_at)
+        from internal_conversations a where g.id = ${geral}::uuid and a.id = ${antiga}::uuid`);
+      await tx.update(schema.internalConversations).set({ archivedAt: new Date() })
+        .where(and(eq(schema.internalConversations.id, antiga), eq(schema.internalConversations.kind, 'channel')));
+      await tx.update(schema.workExternalMappings).set({ entityId: geral, meta: sql`${schema.workExternalMappings.meta} || ${JSON.stringify({ geralDe: antiga })}::jsonb` })
+        .where(eq(schema.workExternalMappings.id, v.id));
+    });
+    logger.info({ organizationId, canalAntigo: antiga }, 'Chat do ClickUp: canal do workspace passou a ser o #Geral');
+  }
+  geralJaLigado.add(organizationId);
+}
+
 /** A conversa da Comunicação que corresponde ao canal (cria na primeira vez). `null` = ninguém daqui participa. */
 async function conversaDoCanal(organizationId: string, canal: CanalCU, membrosDaqui: string[], nomesDeFora: string[]): Promise<{ id: string; criada: boolean } | null> {
   const v = await vinculo(organizationId, canal.id);
@@ -162,6 +210,14 @@ async function conversaDoCanal(organizationId: string, canal: CanalCU, membrosDa
   const unicos = [...new Set(membrosDaqui)];
   if (unicos.length === 0) return null;
   const tipo = String(canal.type ?? 'CHANNEL').toUpperCase();
+  // Canal do workspace: o #Geral (todo membro ativo já lê; não ganha lista de membros).
+  if (opcoesGerais.canalGeral === canal.id) {
+    const geral = await geralDaEmpresa(organizationId);
+    if (geral) {
+      await db.insert(schema.workExternalMappings).values({ organizationId, provider: 'clickup', externalType: 'chat_channel', externalId: canal.id, entityType: 'internal_conversation', entityId: geral, meta: { ultimaMs: 0, tipo, primeiraCarga: true } }).onConflictDoNothing();
+      return { id: geral, criada: false };
+    }
+  }
   let id: string;
   if (tipo === 'DM' && unicos.length === 2) {
     const directKey = [...unicos].sort().join(':');
@@ -262,6 +318,9 @@ export async function importarChatDoClickUp(organizationId: string, opcoes: Opco
   const leitores = conexoes.filter((c) => c.workspace && (!workspaceDaEmpresa || c.workspace === workspaceDaEmpresa)).map((c) => ({ ...c, token: decryptToken(c.token) }));
   r.tokens = leitores.length;
   if (!leitores.length) return r;
+  const canalGeral = canalDoWorkspace(workspaceDaEmpresa ?? leitores[0]!.workspace);
+  opcoesGerais.canalGeral = canalGeral;
+  if (canalGeral) await ligarGeralAoWorkspace(organizationId, canalGeral);
 
   const membrosCU = opcoes.membrosDoTime ?? await membrosDoTimeEmCache();
   const pessoas = await pessoasDaEmpresa(organizationId, membrosCU);
@@ -314,7 +373,7 @@ export async function importarChatDoClickUp(organizationId: string, opcoes: Opco
       // Mensagem daqui sendo publicada lá agora: esta conversa fica para a próxima passada (senão voltaria em dobro).
       if (espelhandoConversa(conversa.id)) return;
       // Membros novos no ClickUp entram aqui também (só quando a lista de membros foi relida).
-      if (!conversa.criada && (frescos || mudouQuemEDaqui) && daqui.length) {
+      if (!conversa.criada && (frescos || mudouQuemEDaqui) && daqui.length && canal.id !== canalGeral) {
         await db.insert(schema.internalConversationMembers).values([...new Set(daqui)].map((userId) => ({ conversationId: conversa.id, userId, organizationId }))).onConflictDoNothing();
         await promoverConversaAntiga(organizationId, conversa.id, canal, daqui, membros.map((m) => pessoas.get(String(m.id))));
       }
@@ -322,14 +381,16 @@ export async function importarChatDoClickUp(organizationId: string, opcoes: Opco
       const v = jaLigada ?? await vinculo(organizationId, canal.id);
       const meta = (v?.meta ?? {}) as MetaDoCanal;
       const desde = Number(meta.ultimaMs ?? 0);
-      // Primeira carga (conversa nova aqui, ou vínculo recém-criado pelo envio daqui): histórico, não notifica.
-      const primeira = conversa.criada || Boolean(meta.primeiraCarga);
+      // Primeira carga (conversa nova aqui, ou vínculo recém-criado pelo envio daqui): histórico, não notifica. Vínculo
+      // sem contagem de respostas guardada também: é a primeira passada desta versão, que traz as respostas antigas que
+      // a anterior não lia; aquilo é histórico, não mensagem nova.
+      const primeira = conversa.criada || Boolean(meta.primeiraCarga) || meta.respostas === undefined;
       const lidas = await api.mensagens(token, workspace, canal.id, desde, MAXIMO_POR_CANAL);
       const candidatas = lidas.filter((m) => quando(m) > desde);
       // Respostas: a contagem de cada mensagem lida, comparada com a da passada anterior. Mudou → lê a thread.
       const respostasAntes = meta.respostas ?? {};
       const threadsMudaram = lidas.filter((m) => (m.replies_count ?? 0) > 0 && (m.replies_count ?? 0) !== (respostasAntes[m.id] ?? 0));
-      if (!candidatas.length && !threadsMudaram.length && !meta.primeiraCarga) return;
+      if (!candidatas.length && !threadsMudaram.length && !meta.primeiraCarga && meta.respostas !== undefined) return;
 
       const doDaqui = await publicadasDaqui(organizationId, [...candidatas, ...threadsMudaram].map((m) => m.id));
       const novas = candidatas.filter((m) => !doDaqui.has(m.id)).sort((a, b) => quando(a) - quando(b));
