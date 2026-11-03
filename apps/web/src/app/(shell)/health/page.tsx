@@ -16,6 +16,8 @@ import { StatusDoSistema } from '@/components/control/status-do-sistema';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
 import { useExecutions } from '@/hooks/use-executions';
 import { useIsMaster } from '@/hooks/use-is-master';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ShieldAlert } from 'lucide-react';
 import { formatarDuracao, resumir } from '@/lib/control/execucoes';
 
 /**
@@ -33,11 +35,16 @@ import { formatarDuracao, resumir } from '@/lib/control/execucoes';
  * Incidentes, que carrega o detalhe.
  */
 export default function HealthPage() {
-  const { isMaster } = useIsMaster();
+  const { isMaster, isPending: papelPendente } = useIsMaster();
   const { data: infra, isPending, isError } = useInfrastructureHealth(isMaster);
   const { data: execucoes } = useExecutions();
 
   const resumo = resumir(execucoes ?? []);
+
+  // Só o master vê a saúde do sistema (03/11/2026), como o Monitoramento.
+  if (!papelPendente && !isMaster) {
+    return <EmptyState icon={ShieldAlert} title="Acesso restrito" description="A saúde do sistema é visível só para o papel Administrador Master." />;
+  }
 
   return (
     <div className="mx-auto max-w-[1400px]">

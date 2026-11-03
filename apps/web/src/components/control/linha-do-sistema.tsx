@@ -69,6 +69,10 @@ export function LinhaDoSistema() {
    * bem" de propósito: só dá para afirmar que está tudo certo depois de ter
    * olhado tudo.
    */
+  // Só o master vê o estado técnico (03/11/2026). Para a equipe, sem acesso aos dados de saúde, a linha dizia
+  // "API, fila sem resposta" todo dia e levava a uma tela que ela não pode usar.
+  if (!isMaster) return null;
+
   const { estado, texto } = comErro.length
     ? {
         estado: 'erro' as Estado,

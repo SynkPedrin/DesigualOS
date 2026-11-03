@@ -263,7 +263,8 @@ export const NAV_ITEMS: NavItem[] = [
    * SISTEMA — recolhido. Nada aqui é urgente num dia normal, e tudo aqui é
    * essencial no dia em que algo quebra.
    */
-  { href: '/health', label: 'Saúde', icon: Heart, section: 'sistema', administracao: true },
+  // Saúde é só do master (pedido do Pedro, 03/11/2026): a equipe via "sistema com degradação" sem poder fazer nada.
+  { href: '/health', label: 'Saúde', icon: Heart, section: 'sistema', masterOnly: true, administracao: true },
   { href: '/activity', label: 'Atividade', icon: Activity, section: 'trabalho' },
   // "MCP" é sigla de protocolo. Quem supervisiona quer saber quais Claudes
   // estão plugados no sistema — então é esse o nome.
