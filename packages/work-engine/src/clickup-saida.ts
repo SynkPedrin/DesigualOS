@@ -13,7 +13,7 @@ const PROVIDER = 'clickup';
  */
 
 /** As ações da trilha que viram escrita no ClickUp. Mover, arquivar e o resto ficam só no Daily, de propósito. */
-export const ACOES_DE_SAIDA = ['created', 'updated', 'status_changed', 'assigned', 'unassigned', 'commented'] as const;
+export const ACOES_DE_SAIDA = ['created', 'updated', 'status_changed', 'assigned', 'unassigned', 'commented', 'attachment_added'] as const;
 
 export interface EventoDeSaida {
   id: string;
@@ -223,9 +223,17 @@ export async function parDaTarefaDoClickUp(externalTaskId: string): Promise<{ or
 export const vinculoDaTarefa = (organizationId: string, taskId: string) => vinculoPorEntidade(organizationId, 'task', taskId);
 export const vinculoDaLista = (organizationId: string, listId: string) => vinculoPorEntidade(organizationId, 'list', listId);
 export const vinculoDoComentario = (organizationId: string, commentId: string) => vinculoPorEntidade(organizationId, 'comment', commentId);
+export const vinculoDoAnexo = (organizationId: string, attachmentId: string) => vinculoPorEntidade(organizationId, 'attachment', attachmentId);
+
+/** Anexo enviado no Daily (arquivo guardado no nosso armazenamento), para ir à tarefa do ClickUp. */
+export async function anexoParaSaida(organizationId: string, attachmentId: string) {
+  const [a] = await db.select().from(schema.workAttachments)
+    .where(and(eq(schema.workAttachments.id, attachmentId), eq(schema.workAttachments.organizationId, organizationId))).limit(1);
+  return a && a.storage === 'storage' && a.url.startsWith('storage:') ? { id: a.id, fileName: a.fileName, sizeBytes: a.sizeBytes, storageKey: a.url.slice('storage:'.length) } : null;
+}
 
 /** Liga uma entidade nascida AQUI à que foi criada no ClickUp. `origem: 'daily'` impede a leitura de reescrevê-la depois. */
-export async function registrarVinculoDeSaida(organizationId: string, v: { externalType: 'task' | 'comment'; externalId: string; entityId: string; meta?: Record<string, unknown> }): Promise<void> {
+export async function registrarVinculoDeSaida(organizationId: string, v: { externalType: 'task' | 'comment' | 'attachment'; externalId: string; entityId: string; meta?: Record<string, unknown> }): Promise<void> {
   await db
     .insert(schema.workExternalMappings)
     .values({ organizationId, provider: PROVIDER, externalType: v.externalType, externalId: v.externalId, entityType: v.externalType, entityId: v.entityId, meta: { origem: 'daily', ...(v.meta ?? {}) } })

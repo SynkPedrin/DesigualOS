@@ -10,6 +10,7 @@ import { db, schema } from '@desigual-os/database';
 import {
   HTTP_STATUS,
   addAttachmentLink,
+  recordActivity,
   listTaskApprovals,
   requestTaskApproval,
   resolveTaskApproval,
@@ -104,7 +105,7 @@ import {
 import { requireAuth } from '../auth/middleware';
 import { requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
-import { notificadosDaRequisicao, requireDailyTasks, workContext } from './guard';
+import { esquecerAcessosDoDaily, notificadosDaRequisicao, requireDailyTasks, workContext } from './guard';
 import { avisarNotificacoesNovas } from '../notifications/avisar';
 import { ehEmailDePessoaDoClickUp } from '../clickup/pessoas-do-clickup';
 
@@ -205,6 +206,7 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
     if (!body.success) return reply.code(400).send({ error: body.error.issues.map((i) => i.message).join(' ') });
     try {
       await setFlag({ organizationId: request.tenantContext!.organizationId, enabled: body.data.enabled, allowedUserIds: body.data.allowedUserIds, updatedBy: request.authUser!.id });
+      esquecerAcessosDoDaily();
     } catch (e) {
       return fail(reply, e);
     }
@@ -658,7 +660,13 @@ export async function registerWorkRoutes(app: FastifyInstance): Promise<void> {
       if (!file) return bad(reply, 'Nenhum arquivo enviado.');
       const g = await gravarAnexo({ organizationId: ctx.organizationId, conversationId: `tarefa-${request.params.id}`, filename: file.filename, mimetype: file.mimetype, stream: file.file, usadoPelaOrganizacao: Number(uso?.total ?? 0) });
       if (file.file.truncated) { await apagarAnexo(g.storageKey); throw new AnexoRecusado('Arquivo acima do limite.', 413); }
-      const [a] = await db.insert(schema.workAttachments).values({ organizationId: ctx.organizationId, taskId: request.params.id, fileName: g.filename, mimeType: g.servirComo, sizeBytes: g.sizeBytes, url: `storage:${g.storageKey}`, storage: 'storage', uploadedBy: ctx.userId }).returning();
+      // O evento "anexou" entra na trilha junto com o arquivo: é por ele que o anexo chega à tarefa do ClickUp (antes não
+      // havia evento, e o anexo ficava só aqui; 03/11/2026, tarefas da Colormaq).
+      const a = await db.transaction(async (tx) => {
+        const [linha] = await tx.insert(schema.workAttachments).values({ organizationId: ctx.organizationId, taskId: request.params.id, fileName: g.filename, mimeType: g.servirComo, sizeBytes: g.sizeBytes, url: `storage:${g.storageKey}`, storage: 'storage', uploadedBy: ctx.userId }).returning();
+        await recordActivity(tx, ctx, { entityType: 'task', entityId: request.params.id, taskId: request.params.id, action: 'attachment_added', data: { attachmentId: linha!.id, fileName: g.filename } });
+        return linha;
+      });
       reply.code(201);
       return { id: a!.id, fileName: a!.fileName, mimeType: a!.mimeType, sizeBytes: a!.sizeBytes, storage: 'storage', url: `/work/attachments/${a!.id}/file` };
     } catch (e) {

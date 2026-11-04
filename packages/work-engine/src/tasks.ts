@@ -128,14 +128,6 @@ async function assertClient(tx: Db, ctx: WorkContext, clientId: string | null | 
   if (!c) throw invalid('Cliente não encontrado nesta empresa.');
 }
 
-async function nextNumber(tx: Db, ctx: WorkContext): Promise<number> {
-  const rows = (await tx.execute(
-    sql`insert into work_counters (organization_id, key, value) values (${ctx.organizationId}, 'task', 1)
-        on conflict (organization_id, key) do update set value = work_counters.value + 1 returning value`,
-  )) as unknown as Array<{ value: number }>;
-  return Number(rows[0]!.value);
-}
-
 async function nextPosition(tx: Db, ctx: WorkContext, listId: string, parentTaskId: string | null): Promise<number> {
   const [r] = await tx
     .select({ m: sql<number>`coalesce(max(${schema.workTasks.position}), 0)` })
@@ -164,8 +156,11 @@ async function hydrate(tx: Db, ctx: WorkContext, rows: WorkTaskRow[]): Promise<W
   const statusById = new Map(statuses.map((s) => [s.id, s]));
   const subCount = new Map(subs.map((s) => [s.parentTaskId as string, s.n]));
   const subDone = new Map(subs.map((s) => [s.parentTaskId as string, s.feitas]));
-  return rows.map((r) => {
-    const st = statusById.get(r.statusId);
+  return rows.map((r) => serializar(r, statusById.get(r.statusId), byTask.get(r.id) ?? [], subCount.get(r.id) ?? 0, subDone.get(r.id) ?? 0));
+}
+
+function serializar(r: WorkTaskRow, st: typeof schema.workTaskStatuses.$inferSelect | undefined, assigneeIds: string[], subtaskCount: number, subtaskDone: number): WorkTask {
+  {
     return {
       id: r.id,
       number: r.number,
@@ -187,14 +182,14 @@ async function hydrate(tx: Db, ctx: WorkContext, rows: WorkTaskRow[]): Promise<W
       position: r.position,
       archivedAt: iso(r.archivedAt),
       version: r.version,
-      assigneeIds: byTask.get(r.id) ?? [],
-      subtaskCount: subCount.get(r.id) ?? 0,
-      subtaskDone: subDone.get(r.id) ?? 0,
+      assigneeIds,
+      subtaskCount,
+      subtaskDone,
       createdBy: r.createdBy,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
-  });
+  }
 }
 
 // ── Criar ────────────────────────────────────────────────────────────────
@@ -223,6 +218,37 @@ export async function createTask(ctx: WorkContext, input: CreateTaskInput): Prom
   const tags = validateTags(input.tags);
   if (input.estimateMinutes != null && (input.estimateMinutes < 0 || input.estimateMinutes > 60 * 24 * 365)) throw invalid('Estimativa inválida.');
 
+  /**
+   * CONFERÊNCIAS ANTES, EM PARALELO (04/11/2026). Criar tarefa fazia 17 idas ao banco em fila (~4 s medidos em
+   * produção): dentro da transação, cada consulta espera a anterior. Lista, tarefa-mãe, responsáveis, status e cliente
+   * só LEEM; vão antes, em duas rodadas paralelas. A transação fica com o que grava.
+   */
+  const leitor = db as unknown as Db;
+  const [list, parent, assignees] = await Promise.all([
+    loadList(leitor, ctx, input.listId),
+    input.parentTaskId
+      ? leitor.select().from(schema.workTasks)
+        .where(and(eq(schema.workTasks.id, input.parentTaskId), eq(schema.workTasks.organizationId, ctx.organizationId), isNull(schema.workTasks.archivedAt)))
+        .then((r) => r[0] ?? null)
+      : Promise.resolve(null),
+    validateAssignees(leitor, ctx, input.assigneeIds),
+  ]);
+  let depth = 0;
+  let clientePai: string | null = null;
+  if (input.parentTaskId) {
+    if (!parent) throw invalid('Tarefa-mãe não encontrada.');
+    if (parent.listId !== list.id) throw invalid('A subtarefa precisa ficar na mesma lista da tarefa-mãe.');
+    clientePai = parent.clientId;
+    depth = parent.depth + 1;
+    if (depth > MAX_SUBTASK_DEPTH) throw conflict(`Profundidade máxima de subtarefas (${MAX_SUBTASK_DEPTH}) atingida.`);
+  }
+  // O cliente NÃO se pede de novo: vem de quem já o tem — a tarefa-mãe, ou a própria lista do cliente.
+  const clienteFinal = input.clientId !== undefined ? input.clientId : (clientePai ?? list.clientId ?? null);
+  const [status] = await Promise.all([
+    input.statusId ? statusInSpace(leitor, ctx, input.statusId, list.spaceId) : initialStatusOf(leitor, ctx, list.spaceId),
+    assertClient(leitor, ctx, clienteFinal),
+  ]);
+
   return db.transaction(async (raw) => {
     const tx = raw as unknown as Db;
 
@@ -240,28 +266,18 @@ export async function createTask(ctx: WorkContext, input: CreateTaskInput): Prom
       }
     }
 
-    const list = await loadList(tx, ctx, input.listId);
-    let depth = 0;
-    let clientePai: string | null = null;
-    if (input.parentTaskId) {
-      const [parent] = await tx
-        .select()
-        .from(schema.workTasks)
-        .where(and(eq(schema.workTasks.id, input.parentTaskId), eq(schema.workTasks.organizationId, ctx.organizationId), isNull(schema.workTasks.archivedAt)));
-      if (!parent) throw invalid('Tarefa-mãe não encontrada.');
-      if (parent.listId !== list.id) throw invalid('A subtarefa precisa ficar na mesma lista da tarefa-mãe.');
-      clientePai = parent.clientId;
-      depth = parent.depth + 1;
-      if (depth > MAX_SUBTASK_DEPTH) throw conflict(`Profundidade máxima de subtarefas (${MAX_SUBTASK_DEPTH}) atingida.`);
-    }
-
-    const status = input.statusId ? await statusInSpace(tx, ctx, input.statusId, list.spaceId) : await initialStatusOf(tx, ctx, list.spaceId);
-    // O cliente NÃO se pede de novo: vem de quem já o tem — a tarefa-mãe, ou a própria lista do cliente.
-    const clienteFinal = input.clientId !== undefined ? input.clientId : (clientePai ?? list.clientId ?? null);
-    await assertClient(tx, ctx, clienteFinal);
-    const assignees = await validateAssignees(tx, ctx, input.assigneeIds);
-    const number = await nextNumber(tx, ctx);
-    const position = await nextPosition(tx, ctx, list.id, input.parentTaskId ?? null);
+    // Número e posição numa ida só.
+    const [np] = (await tx.execute(sql`
+      with n as (
+        insert into work_counters (organization_id, key, value) values (${ctx.organizationId}, 'task', 1)
+        on conflict (organization_id, key) do update set value = work_counters.value + 1 returning value
+      )
+      select (select value from n) as number,
+        (select coalesce(max(position), 0) + 1000 from work_tasks
+          where organization_id = ${ctx.organizationId} and list_id = ${list.id}
+            and ${input.parentTaskId ? sql`parent_task_id = ${input.parentTaskId}` : sql`parent_task_id is null`}) as position`)) as unknown as Array<{ number: number | string; position: number | string }>;
+    const number = Number(np!.number);
+    const position = Number(np!.position);
 
     const [row] = await tx
       .insert(schema.workTasks)
@@ -295,7 +311,8 @@ export async function createTask(ctx: WorkContext, input: CreateTaskInput): Prom
     await recordActivity(tx, ctx, { entityType: 'task', entityId: row!.id, taskId: row!.id, action: 'created', data: { key: taskKey(number), listId: list.id, parentTaskId: input.parentTaskId ?? null, assignees } });
     // Quem já nasce com responsável também é "atribuída": avisa a pessoa e dispara automações de atribuição.
     if (assignees.length) await recordActivity(tx, ctx, { entityType: 'task', entityId: row!.id, taskId: row!.id, action: 'assigned', data: { userIds: assignees } });
-    return (await hydrate(tx, ctx, [row!]))[0]!;
+    // Tudo o que a resposta mostra já está em mãos: sem reler (eram mais três idas).
+    return serializar(row!, status, assignees, 0, 0);
   });
 }
 
@@ -392,8 +409,11 @@ export async function listTasks(ctx: WorkContext, f: TaskFilter = {}): Promise<{
     : f.sort === 'completed' ? [sql`${T.completedAt} ${f.dir === 'asc' ? sql`asc` : sql`desc`} nulls last`, desc(T.number)] // histórico: a mais recente primeiro
     : [dir(T.position), asc(T.number)];
 
-  const [{ n } = { n: 0 }] = await db.select({ n: sql<number>`count(*)::int` }).from(T).where(and(...where));
-  const rows = await db.select().from(T).where(and(...where)).orderBy(...order).limit(limit).offset(offset);
+  // Contagem e página ao mesmo tempo: uma consulta não depende da outra, e cada ida ao banco custa ~270 ms (04/11/2026).
+  const [[{ n } = { n: 0 }], rows] = await Promise.all([
+    db.select({ n: sql<number>`count(*)::int` }).from(T).where(and(...where)),
+    db.select().from(T).where(and(...where)).orderBy(...order).limit(limit).offset(offset),
+  ]);
   return { total: n, rows: await hydrate(db as unknown as Db, ctx, rows) };
 }
 
@@ -423,7 +443,7 @@ export async function updateTask(ctx: WorkContext, id: string, patch: UpdateTask
   const tags = validateTags(patch.tags);
   if (patch.estimateMinutes != null && (patch.estimateMinutes < 0 || patch.estimateMinutes > 60 * 24 * 365)) throw invalid('Estimativa inválida.');
 
-  return db.transaction(async (raw) => {
+  const gravada = await db.transaction(async (raw) => {
     const tx = raw as unknown as Db;
     // Tarefa e espaço da lista numa ida só: cada consulta custa ~250 ms até o banco (30/10/2026, "tudo demora 10 s").
     const [linha] = await tx.select({ t: schema.workTasks, spaceId: schema.workLists.spaceId }).from(schema.workTasks)
@@ -482,8 +502,11 @@ export async function updateTask(ctx: WorkContext, id: string, patch: UpdateTask
     }
     if (statusChange) await recordActivity(tx, ctx, { entityType: 'task', entityId: id, taskId: id, action: 'status_changed', data: statusChange });
     if (Object.keys(changes).length > 0) await recordActivity(tx, ctx, { entityType: 'task', entityId: id, taskId: id, action: 'updated', data: { changes } });
-    return (await hydrate(tx, ctx, [row]))[0]!;
+    return row;
   });
+  // Releitura DEPOIS da transação: dentro dela, as três consultas de `hydrate` iam em fila na mesma conexão; fora,
+  // vão juntas (04/11/2026, edição levava ~2 s).
+  return (await hydrate(db as unknown as Db, ctx, [gravada]))[0]!;
 }
 
 // ── Mover / hierarquia ───────────────────────────────────────────────────

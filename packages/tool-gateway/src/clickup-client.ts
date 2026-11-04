@@ -470,6 +470,19 @@ export async function uploadTaskAttachment(config: ClickUpConfig, taskId: string
   if (buffer.byteLength > ATTACHMENT_MAX_BYTES) {
     throw new Error(`Anexo maior que o limite permitido (${ATTACHMENT_MAX_BYTES} bytes)`);
   }
+  return enviarAnexo(config, taskId, buffer, filename);
+}
+
+/**
+ * Anexo que já está em mãos (o arquivo enviado no Daily, guardado no nosso armazenamento): vai direto para a tarefa
+ * do ClickUp, sem passar por URL. Mesma cerca de escrita do envio por URL.
+ */
+export async function uploadTaskAttachmentBytes(config: ClickUpConfig, taskId: string, buffer: Buffer, filename: string): Promise<{ id: string | null }> {
+  await assertTaskInScope(config, taskId);
+  return enviarAnexo(config, taskId, buffer, filename);
+}
+
+async function enviarAnexo(config: ClickUpConfig, taskId: string, buffer: Buffer, filename: string): Promise<{ id: string | null }> {
   const form = new FormData();
   form.append('attachment', new Blob([buffer]), filename);
 

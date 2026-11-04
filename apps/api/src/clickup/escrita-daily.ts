@@ -7,6 +7,7 @@ import {
   podeEscreverEmProducao,
   removeTaskTag,
   updateTask,
+  uploadTaskAttachmentBytes,
   WriteScopeError,
   type ClickUpConfig,
   type ClickUpMember,
@@ -16,7 +17,9 @@ import {
 import { db, schema } from '@desigual-os/database';
 import { and, eq } from 'drizzle-orm';
 import { decryptToken } from '../lib/token-crypto';
+import { abrirAnexo } from '../internal-chat/arquivos';
 import {
+  anexoParaSaida,
   comentarioParaSaida,
   cursorDaSaidaExiste,
   eventosParaSaida,
@@ -28,6 +31,7 @@ import {
   usuariosParaSaida,
   vinculoDaLista,
   vinculoDaTarefa,
+  vinculoDoAnexo,
   vinculoDoComentario,
   type EventoDeSaida,
   type TarefaParaSaida,
@@ -50,8 +54,8 @@ const logger = createLogger({ service: 'daily-sync-clickup-saida' });
  * (ver `configDoEvento`). Agente e automação continuam escrevendo só na lista de teste.
  *
  * O QUE VAI: criar tarefa, título, descrição, status, prioridade, prazo, início, estimativa, etiquetas,
- * responsáveis e comentários novos. O QUE NÃO VAI, de propósito: apagar, arquivar e mover (nada destrutivo sai
- * daqui), anexos e campos personalizados (sem equivalente simples de escrita ainda).
+ * responsáveis, comentários novos e arquivos anexados (desde 04/11/2026). O QUE NÃO VAI, de propósito: apagar,
+ * arquivar e mover (nada destrutivo sai daqui) e campos personalizados (sem equivalente simples de escrita ainda).
  *
  * Falha passageira (rede, 5xx, 429) PARA a fila e tenta de novo no próximo ciclo, sem perder nada. Falha definitiva
  * (4xx, cerca de teste) é registrada e pulada, senão um evento ruim trancaria todos os que vêm depois dele.
@@ -61,6 +65,20 @@ const logger = createLogger({ service: 'daily-sync-clickup-saida' });
 
 export function escritaNoClickUpLigada(): boolean {
   return process.env.DAILY_SYNC_CLICKUP_ESCRITA === 'on';
+}
+
+/** O logger perde a mensagem de um Error comum (vira `{}` no log): foi assim que a falha do acabamento ficou muda. */
+const mensagem = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** Teto do anexo que vai ao ClickUp: o arquivo passa inteiro pela memória da API. */
+const ANEXO_MAXIMO_BYTES = Number(process.env.DAILY_SYNC_ANEXO_MAXIMO_BYTES) || 100 * 1024 * 1024;
+
+async function lerArquivo(storageKey: string): Promise<Buffer> {
+  const aberto = await abrirAnexo(storageKey, undefined);
+  if (!('stream' in aberto) || !aberto.stream) throw new Error('anexo sem conteúdo no armazenamento');
+  const partes: Buffer[] = [];
+  for await (const parte of aberto.stream as AsyncIterable<Buffer | string>) partes.push(typeof parte === 'string' ? Buffer.from(parte) : parte);
+  return Buffer.concat(partes);
 }
 
 function configDoClickUp(): ClickUpConfig | null {
@@ -247,9 +265,14 @@ async function criarNoClickUp(config: ClickUpConfig, org: string, e: EventoDeSai
   // Logo depois de criar: o vínculo é o que impede a leitura (o webhook de "tarefa criada" que vem aí) de duplicar.
   await registrarVinculoDeSaida(org, { externalType: 'task', externalId: criada.id, entityId: t.id, meta: { url: criada.url } });
   // O resto é acabamento: se falhar, a tarefa já existe nos dois lados e o próximo evento corrige.
-  const acabamento: UpdateTaskParams = { status: t.statusName, ...(demais.length ? { addAssignees: demais } : {}), ...(t.estimateMinutes !== null ? { timeEstimate: t.estimateMinutes * 60_000 } : {}) };
-  await updateTask(escrita, criada.id, acabamento).catch((error: unknown) => logger.warn({ error, taskId: t.id }, 'Escrita Daily→ClickUp: tarefa criada, mas o acabamento (status/responsáveis) falhou'));
-  for (const tag of t.tags) await addTaskTag(escrita, criada.id, tag).catch((error: unknown) => logger.warn({ error, tag }, 'Escrita Daily→ClickUp: etiqueta não aplicada (precisa existir no espaço)'));
+  // Status em chamada própria: o nome do status do Daily pode não existir no fluxo daquela lista no ClickUp, e quando
+  // ia junto ele derrubava a chamada inteira: os demais responsáveis nunca entravam lá (03/11/2026, toda criação).
+  if (demais.length || t.estimateMinutes !== null) {
+    const pessoas: UpdateTaskParams = { ...(demais.length ? { addAssignees: demais } : {}), ...(t.estimateMinutes !== null ? { timeEstimate: t.estimateMinutes * 60_000 } : {}) };
+    await updateTask(escrita, criada.id, pessoas).catch((error: unknown) => logger.warn({ erro: mensagem(error), taskId: t.id }, 'Escrita Daily→ClickUp: tarefa criada, mas os demais responsáveis/estimativa não entraram'));
+  }
+  await updateTask(escrita, criada.id, { status: t.statusName }).catch((error: unknown) => logger.warn({ erro: mensagem(error), taskId: t.id, status: t.statusName }, 'Escrita Daily→ClickUp: tarefa criada com o status padrão da lista (o do Daily não existe lá)'));
+  for (const tag of t.tags) await addTaskTag(escrita, criada.id, tag).catch((error: unknown) => logger.warn({ erro: mensagem(error), tag }, 'Escrita Daily→ClickUp: etiqueta não aplicada (precisa existir no espaço)'));
   return 'empurrado';
 }
 
@@ -277,6 +300,21 @@ async function aplicarEvento(config: ClickUpConfig, org: string, e: EventoDeSaid
     }
     const criado = await createTaskCommentRico(escrita, ext, partes);
     await registrarVinculoDeSaida(org, { externalType: 'comment', externalId: criado.id, entityId: c.id });
+    return 'empurrado';
+  }
+
+  if (e.action === 'attachment_added') {
+    const attachmentId = typeof e.data.attachmentId === 'string' ? e.data.attachmentId : null;
+    if (!attachmentId || (await vinculoDoAnexo(org, attachmentId))) return 'ignorado';
+    const a = await anexoParaSaida(org, attachmentId);
+    if (!a) return 'ignorado'; // apagado antes de sair, ou não é arquivo nosso
+    if ((a.sizeBytes ?? 0) > ANEXO_MAXIMO_BYTES) {
+      logger.warn({ taskId: e.taskId, arquivo: a.fileName, bytes: a.sizeBytes }, 'Escrita Daily→ClickUp: anexo grande demais para enviar; fica só no Daily');
+      return 'ignorado';
+    }
+    const enviado = await uploadTaskAttachmentBytes(escrita, ext, await lerArquivo(a.storageKey), a.fileName);
+    // O vínculo impede a leitura do ClickUp de trazer o mesmo arquivo de volta como um segundo anexo.
+    if (enviado.id) await registrarVinculoDeSaida(org, { externalType: 'attachment', externalId: enviado.id, entityId: a.id });
     return 'empurrado';
   }
 

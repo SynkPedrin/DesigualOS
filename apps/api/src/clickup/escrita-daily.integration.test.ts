@@ -11,7 +11,7 @@ const enabled = /^postgres(ql)?:\/\/[^@]*@127\.0\.0\.1:/.test(url);
 
 const cu = vi.hoisted(() => ({
   chamadas: [] as Array<{ fn: string; args: unknown[]; config?: { apiKey?: string; writeScope?: { authorizedForProduction: boolean } } }>,
-  falhar: null as null | ((config?: { apiKey?: string }) => Error | null),
+  falhar: null as null | ((config?: { apiKey?: string }, args?: unknown[]) => Error | null),
   membros: [] as Array<{ id: number; email: string; username: string }>,
 }));
 const feitasDeComentario = vi.hoisted(() => ({ n: 0 }));
@@ -19,7 +19,7 @@ vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
   const real = await importOriginal<typeof import('@desigual-os/tool-gateway')>();
   const registrar = (fn: string, retorno?: unknown) => async (...args: unknown[]) => {
     cu.chamadas.push({ fn, args: args.slice(1), config: args[0] as never });
-    const erro = cu.falhar?.(args[0] as never);
+    const erro = cu.falhar?.(args[0] as never, args.slice(1));
     if (erro) throw erro;
     return retorno;
   };
@@ -32,8 +32,16 @@ vi.mock('@desigual-os/tool-gateway', async (importOriginal) => {
     createTaskCommentRico: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskCommentRico', args: args.slice(1), config: args[0] as never }); if (cu.falhar?.(args[0] as never)) throw cu.falhar(args[0] as never)!; return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; },
     createTaskComment: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'createTaskComment', args: args.slice(1) }); { const erro = cu.falhar?.(); if (erro) throw erro; } return { id: `CU-COM-${feitasDeComentario.n += 1}`, text: '', date: null }; }, // id próprio por comentário, como no ClickUp
     lerClickUpCru: async () => { throw new Error('leitura simulada: o ClickUp não foi consultado'); },
+    uploadTaskAttachmentBytes: async (...args: unknown[]) => { cu.chamadas.push({ fn: 'uploadTaskAttachmentBytes', args: args.slice(1), config: args[0] as never }); return { id: 'CU-ANEXO-1' }; },
     getTeamMembers: async () => cu.membros.map((m) => ({ ...m, profilePicture: null, initials: null, color: null })),
   };
+});
+
+// O arquivo do anexo: o conteúdo vem daqui, sem disco.
+vi.mock('../internal-chat/arquivos', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../internal-chat/arquivos')>();
+  const { Readable } = await import('node:stream');
+  return { ...real, abrirAnexo: async () => ({ status: 200 as const, size: 5, stream: Readable.from([Buffer.from('%PDF-')]) }) };
 });
 
 describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => {
@@ -252,6 +260,44 @@ describe.skipIf(!enabled)('escrita Daily → ClickUp × PostgreSQL real', () => 
     expect(v!.externalId).toBe('CU-NOVA');
     expect(v!.meta).toMatchObject({ origem: 'daily' });
     expect(feitas('updateTask').some((c) => c.args[0] === 'CU-NOVA' && (c.args[1] as Record<string, unknown>).status !== undefined)).toBe(true);
+  });
+
+  it('criação com duas responsáveis e um status que não existe na lista do ClickUp: as duas entram mesmo assim (04/11/2026)', async () => {
+    cu.membros = [{ id: 11, email: `ana-${admin}@clickup.invalid`, username: 'Ana' }, { id: 12, email: `caio-${colega}@ed.invalid`, username: 'Caio' }];
+    // Como em produção: o ClickUp recusa o status do Daily naquela lista; antes isto levava junto os demais responsáveis.
+    cu.falhar = (_config, args) => ((args?.[1] as { status?: string } | undefined)?.status ? new Error('Status inválido para esta lista. Status disponíveis: to do, complete') : null);
+    await E.createTask(ctx(), { listId: listaMapeada, title: 'Roteiros', assigneeIds: [admin, colega] });
+    await esperar();
+    const r = await M.empurrarEventosDaEmpresa(org);
+    expect(r.falhas).toBe(0);
+    expect(feitas('createTask').at(-1)!.args[0]).toMatchObject({ name: 'Roteiros', assigneeId: 11 });
+    expect(feitas('updateTask').some((c) => JSON.stringify((c.args[1] as { addAssignees?: number[] }).addAssignees) === '[12]')).toBe(true);
+    cu.membros = [{ id: 11, email: `ana-${admin}@clickup.invalid`, username: 'Ana' }];
+  });
+
+  it('arquivo anexado no Daily vai para a tarefa do ClickUp, uma vez só, e fica vinculado (04/11/2026)', async () => {
+    const { db, schema } = dbm;
+    const { and, eq } = await import('drizzle-orm');
+    const anexo = await db.transaction(async (tx) => {
+      const [a] = await tx.insert(schema.workAttachments).values({ organizationId: org, taskId: tarefa, fileName: 'briefing.pdf', mimeType: 'application/pdf', sizeBytes: 5, url: 'storage:org/briefing.pdf', storage: 'storage', uploadedBy: admin }).returning();
+      await E.recordActivity(tx, ctx(), { entityType: 'task', entityId: tarefa, taskId: tarefa, action: 'attachment_added', data: { attachmentId: a!.id, fileName: 'briefing.pdf' } });
+      return a!;
+    });
+    await esperar();
+    const r = await M.empurrarEventosDaEmpresa(org);
+    expect(r.falhas).toBe(0);
+    const envio = feitas('uploadTaskAttachmentBytes');
+    expect(envio).toHaveLength(1);
+    expect(envio[0]!.args[0]).toBe('CU-T1');
+    expect((envio[0]!.args[1] as Buffer).toString()).toBe('%PDF-');
+    expect(envio[0]!.args[2]).toBe('briefing.pdf');
+    const [v] = await db.select().from(schema.workExternalMappings).where(and(eq(schema.workExternalMappings.organizationId, org), eq(schema.workExternalMappings.externalType, 'attachment'), eq(schema.workExternalMappings.entityId, anexo.id)));
+    expect(v!.externalId).toBe('CU-ANEXO-1');
+    // Nada novo: nada sai de novo.
+    cu.chamadas.length = 0;
+    await esperar();
+    await M.empurrarEventosDaEmpresa(org);
+    expect(feitas('uploadTaskAttachmentBytes')).toEqual([]);
   });
 
   it('tarefa de uma lista que só existe no Daily não vai ao ClickUp', async () => {

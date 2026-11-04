@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { WorkContext } from './context';
-import { getTask } from './tasks';
+import { notFound } from './errors';
 
 export interface HistoryItem {
   id: string;
@@ -20,9 +20,14 @@ const uuidLike = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f
 
 /** Linha do tempo da tarefa: quem fez o quê e quando, com os ids já trocados por nomes. */
 export async function getTaskHistory(ctx: WorkContext, taskId: string, limit = 200): Promise<HistoryItem[]> {
-  await getTask(ctx, taskId);
   const E = schema.workActivityEvents;
-  const eventos = await db.select().from(E).where(and(eq(E.organizationId, ctx.organizationId), eq(E.taskId, taskId))).orderBy(desc(E.createdAt)).limit(Math.min(limit, 500));
+  // A conferência de que a tarefa é desta empresa vai junto com a leitura dos eventos (eram três idas em fila antes de
+  // começar; 04/11/2026). Os eventos já são filtrados pela empresa; a conferência só decide o 404.
+  const [[existe], eventos] = await Promise.all([
+    db.select({ id: schema.workTasks.id }).from(schema.workTasks).where(and(eq(schema.workTasks.id, taskId), eq(schema.workTasks.organizationId, ctx.organizationId))).limit(1),
+    db.select().from(E).where(and(eq(E.organizationId, ctx.organizationId), eq(E.taskId, taskId))).orderBy(desc(E.createdAt)).limit(Math.min(limit, 500)),
+  ]);
+  if (!existe) throw notFound('Tarefa');
   const userIds = new Set<string>(); const statusIds = new Set<string>(); const listIds = new Set<string>(); const clientIds = new Set<string>();
   for (const e of eventos) {
     if (e.actorId) userIds.add(e.actorId);
@@ -54,6 +59,7 @@ export async function getTaskHistory(ctx: WorkContext, taskId: string, limit = 2
       case 'status_changed': frases.push(`mudou o status de “${S.get(d.from) ?? '?'}” para “${S.get(d.to) ?? '?'}”`); break;
       case 'moved': frases.push(`moveu a tarefa de “${L.get(d.fromList) ?? '?'}” para “${L.get(d.toList) ?? '?'}”`); break;
       case 'commented': frases.push('comentou'); break;
+      case 'attachment_added': frases.push(`anexou “${String(d.fileName ?? 'um arquivo')}”`); break;
       case 'mentioned': frases.push(`mencionou ${nomes([d.userId])}`); break;
       case 'archived': frases.push('arquivou a tarefa'); break;
       case 'restored': frases.push('restaurou a tarefa'); break;
