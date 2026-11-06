@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, Link2, Loader2, Pencil, Play, Plus, Repeat, Save, Square, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, Link2, Loader2, Pencil, Play, Plus, Repeat, Save, Share2, Square, Trash2, X } from 'lucide-react';
 import {
   useAddComment, useChecklistActions, useCreateTask, useSpaceStatuses, useTaskDetail, useUpdateTask, useWorkMembers, useWorkTasks,
   type TaskPatch, type WorkTaskDetail, type WorkTaskWire,
@@ -23,6 +23,7 @@ import { diaEmSaoPaulo } from '@/lib/prazo';
 import { Avatar, StatusDot } from './primitivas';
 import { RowMenu } from './row-menu';
 import { TextoRico } from './texto-rico';
+import { copiarLinkDaTarefa } from './link-da-tarefa';
 import { formatarDuracao, TempoCorrendo } from './tempo';
 
 function CampoPersonalizado({ def, valor, taskId }: { def: WorkTaskDetail['fieldDefs'][number]; valor: unknown; taskId: string }) {
@@ -189,7 +190,8 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
           <span className="font-mono">{t?.key}</span>
           {data?.list && <span className="flex items-center gap-1.5">em <LogoDoCliente nome={nomeLimpo(data.list.name)} className="!size-5" />{data.list.name}</span>}
           {t?.archivedAt && <span className="rounded bg-aviso/20 px-1.5 py-0.5 text-aviso">arquivada</span>}
-          <button type="button" onClick={tentarFechar} aria-label="Fechar" className="ml-auto flex items-center gap-1 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado"><X size={14} /> Fechar</button>
+          <button type="button" onClick={() => void copiarLinkDaTarefa(taskId, t?.key)} title="Copiar o link desta tarefa" className="ml-auto flex items-center gap-1 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado"><Share2 size={14} /> Compartilhar</button>
+          <button type="button" onClick={tentarFechar} aria-label="Fechar" className="flex items-center gap-1 rounded-md border border-grafite-elevado px-3 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado"><X size={14} /> Fechar</button>
         </header>
         {isPending && <p className="flex items-center gap-2 p-6 text-sm text-nevoa"><Loader2 size={15} className="animate-spin" /> Carregando a tarefa…</p>}
         {error && !data && (

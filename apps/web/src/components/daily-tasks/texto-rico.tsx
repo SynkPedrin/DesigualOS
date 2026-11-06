@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment } from 'react';
+import { hrefDe, LinkNoTexto, quebrarEmLinks } from '@/lib/links-no-texto';
 import { cn } from '@/lib/utils';
 
 /**
@@ -8,11 +9,17 @@ import { cn } from '@/lib/utils';
  * endereços soltos (https://…), **negrito**, `código`, listas ("- ", "1. ", "- [x] "), separador "---" e menção @[Nome](id).
  * Só abre http(s), mailto e caminhos internos — nunca `javascript:`. Links externos abrem em outra aba.
  */
-const TOKEN = /(\[[^\]\n]+\]\((?:https?:\/\/[^\s)]+|mailto:[^\s)]+|\/[^\s)]*)\))|(@\[[^\]]+\]\([0-9a-f-]{36}\))|(\*\*[^*\n]+\*\*)|(`[^`\n]+`)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/gi;
+// A url de [texto](url) aceita um nível de parêntese ("Arte (1).png"); a solta é aparada depois (pontuação e ")" sem par).
+const TOKEN = /(\[[^\]\n]+\]\((?:(?:https?:\/\/|mailto:)(?:[^\s()]|\([^\s()]*\))+|\/[^\s)]*)\))|(@\[[^\]]+\]\([0-9a-f-]{36}\))|(\*\*[^*\n]+\*\*)|(`[^`\n]+`)|(https?:\/\/[^\s<>]+)/gi;
 
-function Link({ href, children }: { href: string; children: React.ReactNode }) {
-  const interno = href.startsWith('/');
-  return <a href={href} {...(interno ? {} : { target: '_blank', rel: 'noreferrer noopener' })} className="break-all text-lilas underline decoration-lilas/40 underline-offset-2 hover:decoration-lilas" onClick={(e) => e.stopPropagation()}>{children}</a>;
+const CLASSE_LINK = 'break-all text-lilas underline decoration-lilas/40 underline-offset-2 hover:decoration-lilas';
+
+function Link({ href, texto, rotulado }: { href: string; texto: string; rotulado: boolean }) {
+  if (href.startsWith('/')) return <a href={href} className={CLASSE_LINK} onClick={(e) => e.stopPropagation()}>{texto}</a>;
+  // Só http(s) e mailto viram link; o resto fica como texto.
+  const seguro = hrefDe(href);
+  if (!seguro) return <>{texto}</>;
+  return <LinkNoTexto href={seguro} texto={texto} rotulado={rotulado} className={CLASSE_LINK} />;
 }
 
 function inline(texto: string, chave: string): React.ReactNode[] {
@@ -22,11 +29,18 @@ function inline(texto: string, chave: string): React.ReactNode[] {
   for (const m of texto.matchAll(TOKEN)) {
     if (m.index! > ultimo) out.push(<Fragment key={`${chave}t${i++}`}>{texto.slice(ultimo, m.index)}</Fragment>);
     const [tudo, md, mencao, negrito, codigo, url] = m;
-    if (md) { const mm = /^\[([^\]]+)\]\((.+)\)$/.exec(md)!; out.push(<Link key={`${chave}l${i++}`} href={mm[2]!}>{mm[1]}</Link>); }
+    if (md) { const mm = /^\[([^\]]+)\]\((.+)\)$/.exec(md)!; out.push(<Link key={`${chave}l${i++}`} href={mm[2]!} texto={mm[1]!} rotulado={mm[1] !== mm[2]} />); }
     else if (mencao) { const mm = /^@\[([^\]]+)\]/.exec(mencao)!; out.push(<span key={`${chave}m${i++}`} className="rounded bg-roxo-eletrico/15 px-1 text-lilas">@{mm[1]}</span>); }
-    else if (negrito) out.push(<strong key={`${chave}b${i++}`} className="font-semibold">{negrito.slice(2, -2)}</strong>);
+    else if (negrito) out.push(<strong key={`${chave}b${i++}`} className="font-semibold">{inline(negrito.slice(2, -2), `${chave}b${i}`)}</strong>);
     else if (codigo) out.push(<code key={`${chave}c${i++}`} className="rounded bg-carbono px-1 font-mono text-[0.85em]">{codigo.slice(1, -1)}</code>);
-    else if (url) out.push(<Link key={`${chave}u${i++}`} href={url}>{url.length > 70 ? `${url.slice(0, 67)}…` : url}</Link>);
+    else if (url) {
+      // A sobra (pontuação ou ")" sem par no fim) volta para o texto, e a varredura segue dali.
+      const [pedaco] = quebrarEmLinks(url);
+      if (pedaco?.tipo === 'link') {
+        out.push(<Link key={`${chave}u${i++}`} href={pedaco.href} texto={pedaco.texto} rotulado={false} />);
+        if (pedaco.texto.length < url.length) out.push(<Fragment key={`${chave}s${i++}`}>{url.slice(pedaco.texto.length)}</Fragment>);
+      } else out.push(<Fragment key={`${chave}s${i++}`}>{url}</Fragment>);
+    }
     ultimo = m.index! + tudo.length;
   }
   if (ultimo < texto.length) out.push(<Fragment key={`${chave}f`}>{texto.slice(ultimo)}</Fragment>);

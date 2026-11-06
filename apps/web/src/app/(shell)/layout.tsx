@@ -13,7 +13,9 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     if (!isLoading && !session) {
-      router.replace('/login');
+      // Volta para onde a pessoa ia (ex.: link compartilhado de uma tarefa, /daily-tasks?task=…).
+      const destino = window.location.pathname + window.location.search;
+      router.replace(destino === '/' ? '/login' : `/login?next=${encodeURIComponent(destino)}`);
     }
   }, [isLoading, session, router]);
 

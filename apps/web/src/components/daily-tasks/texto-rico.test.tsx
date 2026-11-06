@@ -11,8 +11,8 @@ describe('TextoRico', () => {
     const div = montar('Veja https://www.canva.com/design/abc e [a pasta](https://drive.google.com/x)\n[perigo](javascript:alert(1)) e [DT-9](/daily-tasks?task=U1)');
     const as = [...div.querySelectorAll('a')];
     const href = (txt: string) => as.find((a) => a.textContent?.includes(txt));
-    expect(href('canva.com')?.getAttribute('href')).toBe('https://www.canva.com/design/abc');
-    expect(href('canva.com')?.getAttribute('target')).toBe('_blank');
+    expect(href('Canva')?.getAttribute('href')).toBe('https://www.canva.com/design/abc');
+    expect(href('Canva')?.getAttribute('target')).toBe('_blank');
     expect(href('a pasta')?.getAttribute('href')).toBe('https://drive.google.com/x');
     expect(href('DT-9')?.getAttribute('href')).toBe('/daily-tasks?task=U1');
     expect(href('DT-9')?.getAttribute('target')).toBeNull();
@@ -23,5 +23,18 @@ describe('TextoRico', () => {
     expect(div.querySelector('a')?.getAttribute('href')).toBe('https://a.com/x');
     expect(div.querySelector('strong')?.textContent).toBe('forte');
     expect(div.textContent).toMatch(/1\.\s*passo/);
+  });
+  it('link do SharePoint vira selo clicável, com escape do ClickUp, parêntese no nome e dentro de negrito', () => {
+    const div = montar('Pasta: https://agencia.sharepoint.com/:f:/s/Agencia\\_Desigual/E\\_x?e=1\nArte: https://agencia.sharepoint.com/:i:/r/sites/C/Arte%20(1).png?e=2\n**https://a.com/x_y**');
+    const as = [...div.querySelectorAll('a')];
+    expect(as.map((a) => a.getAttribute('href'))).toEqual([
+      'https://agencia.sharepoint.com/:f:/s/Agencia_Desigual/E_x?e=1',
+      'https://agencia.sharepoint.com/:i:/r/sites/C/Arte%20(1).png?e=2',
+      'https://a.com/x_y',
+    ]);
+    expect(as[0]!.textContent).toBe('SharePoint · Pasta');
+    expect(as[0]!.getAttribute('title')).toBe('https://agencia.sharepoint.com/:f:/s/Agencia_Desigual/E_x?e=1');
+    expect(as[1]!.textContent).toBe('SharePoint · Imagem');
+    expect(div.querySelector('strong a')).not.toBeNull();
   });
 });

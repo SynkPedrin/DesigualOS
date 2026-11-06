@@ -46,4 +46,22 @@ describe('texto formatado da mensagem', () => {
   it('variável_com_sublinhado não vira itálico', () => {
     expect(render('nome_do_arquivo_final.pdf').querySelector('em')).toBeNull();
   });
+  it('links do ClickUp (markdown, escape e "_" no endereço) viram link inteiro, sem itálico no meio', () => {
+    const div = render('[Pasta do cliente](https://agencia.sharepoint.com/:f:/s/D/E?e=1) e https://agencia.sharepoint.com/:x:/s/Agencia\\_Desigual/E\\_x?e=2 e https://a.com/pasta_de_arte_final e [https://b.com/y](https://b.com/y)');
+    const as = [...div.querySelectorAll('a')];
+    expect(as.map((a) => a.getAttribute('href'))).toEqual([
+      'https://agencia.sharepoint.com/:f:/s/D/E?e=1',
+      'https://agencia.sharepoint.com/:x:/s/Agencia_Desigual/E_x?e=2',
+      'https://a.com/pasta_de_arte_final',
+      'https://b.com/y',
+    ]);
+    expect(as.map((a) => a.textContent)).toEqual(['Pasta do cliente', 'SharePoint · Planilha', 'https://a.com/pasta_de_arte_final', 'https://b.com/y']);
+    expect(div.querySelector('em')).toBeNull();
+  });
+
+  it('link dentro de negrito continua link', () => {
+    const div = render('**https://a.com/x_y** e _leve_');
+    expect(div.querySelector('strong a')?.getAttribute('href')).toBe('https://a.com/x_y');
+    expect(div.querySelector('em')?.textContent).toBe('leve');
+  });
 });

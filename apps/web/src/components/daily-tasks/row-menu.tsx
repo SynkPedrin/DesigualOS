@@ -1,12 +1,13 @@
 'use client';
 
-import { Archive, ArrowRightLeft, Copy, ExternalLink, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react';
+import { Archive, ArrowRightLeft, Copy, ExternalLink, Link2, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react';
 import { useWorkTree, type WorkTaskWire } from '@/hooks/use-work';
 import { useMoveTask, useTaskArchiveActions, useTemplateActions } from '@/hooks/use-work-extra';
 import { ApiRequestError } from '@/lib/api/client';
 import { toast } from '@/stores/toast-store';
 import { cn } from '@/lib/utils';
 import { Popover } from './primitivas';
+import { copiarLinkDaTarefa } from './link-da-tarefa';
 
 const item = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-branco-cru hover:bg-grafite-elevado';
 
@@ -23,6 +24,7 @@ export function RowMenu({ t, onOpen, onDone, rotulo, extras }: { t: Pick<WorkTas
       {(fechar) => (
         <div className="min-w-56">
           {onOpen && <button type="button" className={item} onClick={() => { fechar(); onOpen(); }}><ExternalLink size={12} /> Abrir</button>}
+          <button type="button" className={item} onClick={() => { fechar(); void copiarLinkDaTarefa(t.id, t.key); }}><Link2 size={12} /> Copiar link</button>
           <button type="button" className={item} onClick={() => { fechar(); duplicar.mutate(t.id, { onSuccess: () => toast('Tarefa duplicada.', 'success'), onError: erro }); }}><Copy size={12} /> Duplicar</button>
           {extras?.map((x) => <button key={x.rotulo} type="button" className={item} onClick={() => { fechar(); x.onClick(); }}>{x.icone} {x.rotulo}</button>)}
           <div className="px-2 pb-1 pt-2 text-[10px] uppercase tracking-wide text-nevoa/60"><ArrowRightLeft size={10} className="mr-1 inline" />Mover para a lista</div>

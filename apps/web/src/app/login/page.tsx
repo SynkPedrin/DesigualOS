@@ -16,7 +16,7 @@ import { mensagemDeErroDoLogin } from '@/lib/auth/mensagem-de-erro-do-login';
  * open redirect pra domínio externo.
  */
 function safeNextPath(next: string | null): string {
-  if (next && next.startsWith('/') && !next.startsWith('//')) return next;
+  if (next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\')) return next;
   return '/';
 }
 
