@@ -372,10 +372,12 @@ export async function importarChatDoClickUp(organizationId: string, opcoes: Opco
       if (conversa.criada) r.conversasCriadas++;
       // Mensagem daqui sendo publicada lá agora: esta conversa fica para a próxima passada (senão voltaria em dobro).
       if (espelhandoConversa(conversa.id)) return;
-      // Membros novos no ClickUp entram aqui também (só quando a lista de membros foi relida).
+      // Membros novos no ClickUp entram aqui também (só quando a lista de membros foi relida). O acerto de autoria das
+      // mensagens antigas só quando MUDOU quem da conversa tem conta aqui: rodando a cada releitura, eram centenas de
+      // `update` por hora sem nada a acertar (visto em produção, 06/11/2026).
       if (!conversa.criada && (frescos || mudouQuemEDaqui) && daqui.length && canal.id !== canalGeral) {
         await db.insert(schema.internalConversationMembers).values([...new Set(daqui)].map((userId) => ({ conversationId: conversa.id, userId, organizationId }))).onConflictDoNothing();
-        await promoverConversaAntiga(organizationId, conversa.id, canal, daqui, membros.map((m) => pessoas.get(String(m.id))));
+        if (mudouQuemEDaqui) await promoverConversaAntiga(organizationId, conversa.id, canal, daqui, membros.map((m) => pessoas.get(String(m.id))));
       }
 
       const v = jaLigada ?? await vinculo(organizationId, canal.id);
