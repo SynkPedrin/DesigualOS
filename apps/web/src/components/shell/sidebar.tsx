@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { FotoOuInicial } from './foto-ou-inicial';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { ChevronDown, ChevronsLeft, ChevronsRight, Folder, FolderOpen, LogOut, Plus, X } from 'lucide-react';
@@ -257,11 +258,7 @@ export function Sidebar({
       <div className={cn('mx-4 mb-3 rounded-2xl border border-branco-cru/[0.06] bg-carbono/50 px-3 py-2.5', collapsed && 'mx-2 px-2')}>
         <div className="flex items-center gap-3">
           <div className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru">
-            {me?.avatarUrl ? (
-              <Image src={me.avatarUrl} alt={me.name} fill sizes="36px" unoptimized className="object-cover" />
-            ) : (
-              (me?.name ?? '?').charAt(0).toUpperCase()
-            )}
+            <FotoOuInicial url={me?.avatarUrl} nome={me?.name} />
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">

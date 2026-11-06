@@ -11,8 +11,10 @@ const CORES = ['#7c3aed', '#0ea5e9', '#f97316', '#10b981', '#ec4899', '#eab308',
 export function Avatar({ nome, url, size = 24 }: { nome: string; url?: string | null | undefined; size?: number }) {
   const cor = CORES[[...nome].reduce((a, c) => a + c.charCodeAt(0), 0) % CORES.length];
   const iniciais = nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase()).join('');
-  return url ? (
-    <img src={url} alt={nome} title={nome} width={size} height={size} className="rounded-full object-cover" style={{ width: size, height: size }} />
+  // Foto que não carrega (arquivo apagado, Storage fora do ar) cai nas iniciais, nunca em imagem quebrada.
+  const [falhou, setFalhou] = useState<string | null>(null);
+  return url && falhou !== url ? (
+    <img src={url} alt={nome} title={nome} width={size} height={size} className="rounded-full object-cover" style={{ width: size, height: size }} onError={() => setFalhou(url)} />
   ) : (
     <span title={nome} className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white" style={{ width: size, height: size, background: cor, fontSize: size * 0.4 }}>
       {iniciais || '?'}

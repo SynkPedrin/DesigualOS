@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import Image from 'next/image';
+import { FotoOuInicial } from '@/components/shell/foto-ou-inicial';
 import { Camera, Check, Monitor, Moon, Sun } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Surface } from '@/components/ui/surface';
@@ -156,12 +157,8 @@ export default function SettingsPage() {
                 aria-label="Trocar foto de perfil"
                 className="group relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-lg font-semibold text-branco-cru disabled:opacity-60"
               >
-                {me.avatarUrl ? (
-                  <Image src={me.avatarUrl} alt={me.name ?? ''} fill sizes="64px" unoptimized className="object-cover" />
-                ) : (
-                  // Perfil sem nome ainda não é erro — é conta recém-criada.
-                  (me.name?.charAt(0) ?? '?').toUpperCase()
-                )}
+                {/* Perfil sem nome ainda não é erro — é conta recém-criada. */}
+                <FotoOuInicial url={me.avatarUrl} nome={me.name ?? undefined} />
                 <span className="absolute inset-0 flex items-center justify-center bg-carbono/60 opacity-0 transition-opacity group-hover:opacity-100">
                   <Camera size={18} />
                 </span>

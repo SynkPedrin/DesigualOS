@@ -1,6 +1,6 @@
 'use client';
 
-import Image from 'next/image';
+import { FotoOuInicial } from './foto-ou-inicial';
 import Link from 'next/link';
 import { GraduationCap, Menu, Monitor, Moon, Search, Sparkles, Sun } from 'lucide-react';
 import { useUiStore } from '@/stores/ui-store';
@@ -91,11 +91,7 @@ export function Topbar() {
           aria-label="Configurações da conta"
           className="relative ml-2 flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru"
         >
-          {me?.avatarUrl ? (
-            <Image src={me.avatarUrl} alt={me.name} fill sizes="36px" unoptimized className="object-cover" />
-          ) : (
-            (me?.name ?? '?').charAt(0).toUpperCase()
-          )}
+          <FotoOuInicial url={me?.avatarUrl} nome={me?.name} />
         </Link>
       </div>
     </header>
