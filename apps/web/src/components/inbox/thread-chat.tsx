@@ -302,7 +302,7 @@ export function ThreadChat({ threadId, onBack }: { threadId: string | null; onBa
               {message.attachmentUrl && <AttachmentView message={message} onImageOpen={setLightbox} />}
               {message.content && (
                 <p className={cn('whitespace-pre-wrap break-words [overflow-wrap:anywhere]', message.attachmentUrl && 'mt-1.5')}>
-                  {textoComLinks(comNomes(message.content, marcaveis), cn('underline underline-offset-2 hover:opacity-80', message.direction === 'outbound' ? 'text-[#0b5c8a]' : 'text-roxo-eletrico'))}
+                  {textoComLinks(comNomes(message.content, marcaveis), cn('underline underline-offset-2 hover:opacity-80', message.direction === 'outbound' ? 'text-[#0b5c8a]' : 'text-link'))}
                 </p>
               )}
               <div className={cn('mt-1 flex items-center gap-2 text-[10px]', message.direction === 'outbound' ? 'text-[#173c2a]/70' : 'text-nevoa')}>

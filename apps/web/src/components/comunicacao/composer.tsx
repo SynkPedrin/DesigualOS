@@ -18,6 +18,7 @@ import { EscolherItem, Modal, type TipoEscolhivel } from './modais';
 import { cn } from '@/lib/utils';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { CriarTarefaDaily } from '@/components/daily-tasks/criar-tarefa-da-mensagem';
+import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
 
 const KIND_POR_EXTENSAO: Record<string, ChatAttachment['kind']> = {
   png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', gif: 'image',
@@ -358,7 +359,8 @@ export const Composer = forwardRef<ComposerHandle, {
             </div>
           )}
         </div>
-        <textarea
+        <TextareaFormatavel
+          atalhos={false}
           ref={area}
           value={texto}
           rows={1}

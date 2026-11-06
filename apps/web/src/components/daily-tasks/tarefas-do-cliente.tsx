@@ -10,6 +10,7 @@ import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { useWorkMembers, useWorkTree } from '@/hooks/use-work';
 import { apiFetch, ApiRequestError } from '@/lib/api/client';
 import { toast } from '@/stores/toast-store';
+import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
 
 const campo = 'w-full rounded-md border border-grafite-elevado bg-carbono/40 px-3 py-2 text-sm text-branco-cru placeholder:text-nevoa/60 focus:border-roxo-eletrico/60 focus:outline-none';
 interface Resumo { abertas: number; atrasadas: number; concluidas30d: number; proximas: Array<{ id: string; key: string; title: string; dueAt: string | null }> }
@@ -45,7 +46,7 @@ function FormularioDeTarefa({ clientId, clienteNome, origem, tituloInicial, onCl
     <form className="space-y-3 p-4" onSubmit={(e) => { e.preventDefault(); criar.mutate(); }}>
       <p className="text-xs text-nevoa">Cliente: <strong className="text-branco-cru">{clienteNome}</strong> · {origem}</p>
       <label className="block text-xs text-nevoa">Título<input autoFocus required minLength={3} maxLength={200} value={titulo} onChange={(e) => setTitulo(e.target.value)} className={`${campo} mt-1`} /></label>
-      <label className="block text-xs text-nevoa">Detalhes<textarea rows={3} value={descricao} onChange={(e) => setDescricao(e.target.value)} className={`${campo} mt-1`} placeholder="O que precisa ser feito, referências, links…" /></label>
+      <label className="block text-xs text-nevoa">Detalhes<TextareaFormatavel rows={3} value={descricao} onChange={(e) => setDescricao(e.target.value)} className={`${campo} mt-1`} placeholder="O que precisa ser feito, referências, links…" /></label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block text-xs text-nevoa">Lista
           <select required value={lista} onChange={(e) => setListId(e.target.value)} className={`${campo} mt-1`} aria-label="Lista do Daily Tasks"><option value="">Escolha…</option>{listas.map((l) => <option key={l.id} value={l.id}>{l.espaco} › {l.name}</option>)}</select>

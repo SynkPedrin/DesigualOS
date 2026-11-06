@@ -37,4 +37,11 @@ describe('TextoRico', () => {
     expect(as[1]!.textContent).toBe('SharePoint · Imagem');
     expect(div.querySelector('strong a')).not.toBeNull();
   });
+  it('itálico, riscado e links sem https (www., site.com.br, e-mail) também', () => {
+    const div = montar('_leve_ e ~~fora~~ em www.cliente.com.br ou contato@cliente.com.br, sem mexer em arquivo_final_v2');
+    expect(div.querySelector('em')?.textContent).toBe('leve');
+    expect(div.querySelector('s')?.textContent).toBe('fora');
+    expect([...div.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['https://www.cliente.com.br/', 'mailto:contato@cliente.com.br']);
+    expect(div.textContent).toContain('arquivo_final_v2');
+  });
 });

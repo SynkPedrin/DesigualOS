@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { apresentarConhecimento } from '@/lib/apresentacao/conhecimento';
 import { ControlHeader, LinhasFantasma, Secao, SemNadaAinda, StatusDot, type Estado } from '@/components/control/primitives';
 import { useMemories, useMemoryKinds, type MemoriaWire } from '@/hooks/use-memories';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 /**
  * O CENTRO DE MEMÓRIA.
@@ -214,12 +215,12 @@ function TextoDaMemoria({ conteudo }: { conteudo: string }) {
   const [aberto, setAberto] = useState(false);
   const longo = conteudo.length > LIMITE_DE_PREVIA;
 
-  if (!longo) return <p className="mt-2 whitespace-pre-wrap text-sm text-branco-cru">{conteudo}</p>;
+  if (!longo) return <p className="mt-2 whitespace-pre-wrap text-sm text-branco-cru">{textoComLinks(conteudo, '')}</p>;
 
   return (
     <div className="mt-2">
       <p className={cn('whitespace-pre-wrap text-sm text-branco-cru', !aberto && 'line-clamp-4')}>
-        {aberto ? conteudo : `${conteudo.slice(0, LIMITE_DE_PREVIA)}…`}
+        {textoComLinks(aberto ? conteudo : `${conteudo.slice(0, LIMITE_DE_PREVIA)}…`, '')}
       </p>
       <button
         type="button"

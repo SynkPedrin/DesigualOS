@@ -35,6 +35,7 @@ import {
 import { useApprovals, useCreateApprovalRequest, useResolveApproval } from '@/hooks/use-approvals';
 import type { BriefContentWire, DemandStatus } from '@/lib/api/contracts';
 import { cn } from '@/lib/utils';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 const STATUS_LABEL: Record<DemandStatus, string> = {
   new: 'Nova',
@@ -416,7 +417,7 @@ function BriefDetail({ briefId, clientId }: { briefId: string; clientId: string 
                   {CONTENT_FIELDS.filter((f) => version.content[f.key]).map((f) => (
                     <div key={f.key} className={f.multiline ? 'sm:col-span-2' : undefined}>
                       <dt className="text-[10px] uppercase tracking-wide text-nevoa">{f.label}</dt>
-                      <dd className="whitespace-pre-wrap text-branco-cru">{String(version.content[f.key])}</dd>
+                      <dd className="whitespace-pre-wrap text-branco-cru">{textoComLinks(String(version.content[f.key]), '')}</dd>
                     </div>
                   ))}
                 </dl>

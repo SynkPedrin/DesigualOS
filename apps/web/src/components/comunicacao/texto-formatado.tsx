@@ -14,7 +14,6 @@ import { cn } from '@/lib/utils';
  * e não executa nada. É por isso que não existe dangerouslySetInnerHTML aqui.
  */
 
-const LINK = 'text-roxo-eletrico underline underline-offset-2 hover:opacity-80';
 
 // Marca de lugar de um link já reconhecido: caracteres de controle que ninguém digita.
 const MARCA = /\u0001(\d+)\u0002/g;
@@ -36,7 +35,7 @@ function comLinks(texto: string, links: Links, chave: string): ReactNode[] {
   return texto.split(MARCA).map((p, i) => {
     if (i % 2 === 0) return p ? <Fragment key={`${chave}t${i}`}>{p}</Fragment> : null;
     const l = links[Number(p)];
-    return l ? <LinkNoTexto key={`${chave}l${i}`} href={l.href} texto={l.texto} rotulado={l.rotulado} className={LINK} /> : null;
+    return l ? <LinkNoTexto key={`${chave}l${i}`} href={l.href} texto={l.texto} rotulado={l.rotulado} /> : null;
   });
 }
 

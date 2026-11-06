@@ -9,6 +9,7 @@ import { AnexosDaMensagem } from './anexos';
 import { CartaoDeObjeto } from './cartao-de-objeto';
 import { TextoFormatado } from './texto-formatado';
 import { cn } from '@/lib/utils';
+import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
 
 export const REACOES_RAPIDAS = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏', '🔥'];
 
@@ -117,7 +118,7 @@ export function Mensagem({ m, agrupada, me, membros, destacada, podeEscrever, ac
           <p className="text-sm italic text-nevoa">Mensagem apagada</p>
         ) : editando ? (
           <div className="mt-1">
-            <textarea
+            <TextareaFormatavel
               autoFocus
               value={rascunho}
               onChange={(e) => setRascunho(e.target.value)}

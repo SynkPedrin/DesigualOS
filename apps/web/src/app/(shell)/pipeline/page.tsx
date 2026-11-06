@@ -44,6 +44,7 @@ import {
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { estagioConcluido } from '@/lib/tarefa-concluida';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 /**
  * PIPELINES — mais de um quadro, cada um de um tipo:
@@ -716,7 +717,7 @@ function CartaoDetalheModal({
                 </div>
               )}
               {card.valor && <p className="text-sinal">{card.valor}</p>}
-              <p className="whitespace-pre-wrap text-branco-cru">{card.nota || <span className="text-nevoa">Sem nota.</span>}</p>
+              <p className="whitespace-pre-wrap text-branco-cru">{card.nota ? textoComLinks(card.nota, '') : <span className="text-nevoa">Sem nota.</span>}</p>
               {card.clientId && (
                 <Link href={`/clients?id=${card.clientId}`} className="inline-block text-sm text-roxo-eletrico hover:underline">
                   Abrir ficha completa do cliente →

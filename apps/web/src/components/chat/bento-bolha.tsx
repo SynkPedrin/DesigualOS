@@ -17,6 +17,7 @@ import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useSendChatMessage } from '@/hooks/use-send-chat-message';
 import { useUiStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 /**
  * A BOLHA DO BENTO — o chat a um clique, de qualquer tela.
@@ -308,7 +309,7 @@ export function BentoBolha() {
 
               {historico.map((m) => (
                 <Balao key={m.id} dePessoa={m.role === 'user'}>
-                  {m.role === 'user' ? <p className="whitespace-pre-wrap">{m.content}</p> : <MarkdownLite text={m.content} />}
+                  {m.role === 'user' ? <p className="whitespace-pre-wrap">{textoComLinks(m.content, '')}</p> : <MarkdownLite text={m.content} />}
                 </Balao>
               ))}
 

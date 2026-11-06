@@ -127,7 +127,9 @@ export function servicoDoLink(href: string): { servico: string; tipo?: string | 
   return null;
 }
 
-const CHIP = 'mx-0.5 inline-flex max-w-full items-center gap-1 rounded-md border border-current/25 px-1.5 py-px align-baseline text-[0.92em] font-medium no-underline';
+/** Azul e sublinhado em todo lugar: é o que as pessoas reconhecem como "dá para clicar". */
+export const CLASSE_DO_LINK = 'break-words text-link underline decoration-link/40 underline-offset-2 hover:decoration-link';
+const CHIP = 'mx-0.5 inline-flex max-w-full items-center gap-1 rounded-md border border-link/30 bg-link/10 px-1.5 py-px align-baseline text-[0.92em] font-medium text-link no-underline hover:bg-link/20';
 
 /** Um link do texto. Serviço conhecido vira selo ("SharePoint · Pasta"); o resto mostra o próprio endereço. */
 export function LinkNoTexto({ href, texto, rotulado, className }: { href: string; texto: string; rotulado?: boolean | undefined; className?: string | undefined }) {
@@ -140,7 +142,7 @@ export function LinkNoTexto({ href, texto, rotulado, className }: { href: string
       title={href.startsWith('mailto:') ? undefined : href}
       // A bolha tem ações próprias (responder, reagir…); o clique no link é só o link.
       onClick={(e) => e.stopPropagation()}
-      className={cn(className, servico && CHIP)}
+      className={cn(CLASSE_DO_LINK, className, servico && CHIP)}
     >
       {servico ? (
         <>
