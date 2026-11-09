@@ -208,9 +208,8 @@ function LinhaDeTarefa({ t, pessoas, aba }: { t: TarefaDaEquipe; pessoas: Map<st
   );
   return (
     <motion.li layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-      {t.url
-        ? <a href={t.url} target="_blank" rel="noopener noreferrer" aria-label={`${t.name} no ClickUp`} className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-grafite-elevado/60">{conteudo}</a>
-        : <div className="flex items-center gap-3 px-2 py-2">{conteudo}</div>}
+      {/* Tarefa abre na página interna de tarefas, não no ClickUp (pedido do Pedro). */}
+      <Link href="/tasks" aria-label={`${t.name} nas tarefas`} className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-grafite-elevado/60">{conteudo}</Link>
     </motion.li>
   );
 }

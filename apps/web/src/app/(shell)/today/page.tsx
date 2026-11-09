@@ -140,7 +140,6 @@ interface ItemDePrioridade {
   bloqueada: boolean;
   /** Linha de outra pessoa: só aparece no recorte "Equipe". */
   daEquipe: boolean;
-  externo?: boolean;
 }
 
 /**
@@ -306,12 +305,11 @@ export default function TodayPage() {
       cliente: t.client?.name ?? 'Sem cliente',
       badge: { label: 'Atrasada', tom: 'urgent' },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
-      href: t.url ?? '/tasks',
+      href: '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
       bloqueada: pareceBloqueada(t.status),
       daEquipe: false,
-      externo: Boolean(t.url),
     });
   }
   const proximoEvento = (eventosHoje.data ?? []).find((e) => new Date(e.start_at).getTime() > Date.now());
@@ -341,12 +339,11 @@ export default function TodayPage() {
       cliente: t.client?.name ?? 'Sem cliente',
       badge: { label: 'Atrasada', tom: 'urgent' as Tom },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
-      href: t.url ?? '/tasks',
+      href: '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
       bloqueada: pareceBloqueada(t.status),
       daEquipe: true,
-      externo: Boolean(t.url),
     }));
 
   const temBloqueada = prioridades.some((p) => p.bloqueada) || prioridadesDaEquipe.some((p) => p.bloqueada);
@@ -785,16 +782,9 @@ function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
   );
 }
 
-/** Tarefa do ClickUp abre no ClickUp (outra aba); o resto navega aqui dentro. */
+/** Tudo no Hoje navega aqui dentro: tarefa abre a página interna de tarefas, não o ClickUp. */
 function LinhaDeItem({ item, children }: { item: ItemDePrioridade; children: React.ReactNode }) {
   const classe = 'flex items-center gap-2';
-  if (item.externo) {
-    return (
-      <a href={item.href} target="_blank" rel="noreferrer" className={classe}>
-        {children}
-      </a>
-    );
-  }
   return (
     <Link href={item.href} className={classe}>
       {children}
