@@ -25,7 +25,7 @@ import { RowMenu } from './row-menu';
 import { TextoRico } from './texto-rico';
 import { copiarLinkDaTarefa } from './link-da-tarefa';
 import { formatarDuracao, TempoCorrendo } from './tempo';
-import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
+import { EditorRico, type EditorRicoHandle } from '@/components/ui/editor-rico';
 
 function CampoPersonalizado({ def, valor, taskId }: { def: WorkTaskDetail['fieldDefs'][number]; valor: unknown; taskId: string }) {
   const set = useSetCustomField(taskId);
@@ -132,7 +132,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const [todosCampos, setTodosCampos] = useState(false);
   const [editandoDesc, setEditandoDesc] = useState(false);
   const [editandoComent, setEditandoComent] = useState<{ id: string; body: string } | null>(null);
-  const comentRef = useRef<HTMLTextAreaElement>(null);
+  const comentRef = useRef<EditorRicoHandle>(null);
   const t = data?.task;
   // O que veio do servidor só substitui o campo que a pessoa NÃO está editando. Antes, qualquer salvamento instantâneo
   // (status, responsável, prazo) subia a versão e apagava a descrição que estava sendo escrita (29/10/2026).
@@ -160,7 +160,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
     const m = membros.find((x) => x.id === id);
     if (!m) return;
     setComent((c) => `${c}${c && !c.endsWith(' ') ? ' ' : ''}@[${m.name}](${m.id}) `);
-    comentRef.current?.focus();
+    comentRef.current?.focus('fim');
   };
   const alterado = Boolean(t) && (titulo !== t!.title || desc !== (t!.description ?? ''));
   // Leitura só da descrição JÁ SALVA. Antes bastava ter texto: a primeira letra digitada numa descrição vazia trocava
@@ -281,7 +281,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 <TextoRico texto={desc} className="text-branco-cru" />
               ) : (
                 <>
-                  <TextareaFormatavel value={desc} onChange={(e) => setDesc(e.target.value)} rows={4} placeholder="Adicione uma descrição (links ficam clicáveis depois de salvar)" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico/50" />
+                  <EditorRico value={desc} onChange={setDesc} ariaLabel="Descrição" placeholder="Adicione uma descrição" className="min-h-[6rem] w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru focus-within:border-roxo-eletrico/50" />
                   {editandoDesc && <button type="button" onClick={() => setEditandoDesc(false)} className="mt-1 text-xs text-nevoa hover:text-branco-cru">Ver como ficou</button>}
                 </>
               )}
@@ -355,7 +355,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                       </p>
                       {editandoComent?.id === c.id ? (
                         <form className="mt-1 space-y-1" onSubmit={(e) => { e.preventDefault(); crud.editarComentario.mutate({ id: c.id, body: editandoComent.body }, { onSuccess: () => setEditandoComent(null), onError: erro }); }}>
-                          <TextareaFormatavel autoFocus value={editandoComent.body} onChange={(e) => setEditandoComent({ id: c.id, body: e.target.value })} rows={3} className="w-full rounded border border-roxo-eletrico/50 bg-grafite px-2 py-1 text-sm text-branco-cru outline-none" />
+                          <EditorRico autoFocus value={editandoComent.body} onChange={(body) => setEditandoComent({ id: c.id, body })} ariaLabel="Editar comentário" className="min-h-[4.5rem] w-full rounded border border-roxo-eletrico/50 bg-grafite px-2 py-1 text-sm text-branco-cru" />
                           <span className="flex gap-2"><button type="submit" className="rounded bg-roxo-eletrico px-2 py-1 text-xs font-semibold text-white">Salvar</button><button type="button" onClick={() => setEditandoComent(null)} className="text-xs text-nevoa">Cancelar</button></span>
                         </form>
                       ) : <TextoRico texto={c.body} className="text-branco-cru" />}
@@ -364,7 +364,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
                 ))}
               </ul>
               <form className="mt-3 space-y-1" onSubmit={(e) => { e.preventDefault(); if (coment.trim()) comentar.mutate(coment.trim(), { onSuccess: () => setComent('') }); }}>
-                <TextareaFormatavel ref={comentRef} value={coment} onChange={(e) => setComent(e.target.value)} rows={2} placeholder="Escreva um comentário" className="w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru outline-none focus:border-roxo-eletrico/50" />
+                <EditorRico ref={comentRef} value={coment} onChange={setComent} ariaLabel="Escreva um comentário" placeholder="Escreva um comentário" className="min-h-[3.5rem] w-full rounded border border-grafite-elevado bg-grafite px-3 py-2 text-sm text-branco-cru focus-within:border-roxo-eletrico/50" />
                 <div className="flex items-center justify-between">
                   <select aria-label="Mencionar alguém" value="" onChange={(e) => { if (e.target.value) mencionar(e.target.value); }} className="rounded border border-grafite-elevado bg-carbono px-2 py-1 text-xs text-nevoa">
                     <option value="">@ Mencionar…</option>{membros.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}

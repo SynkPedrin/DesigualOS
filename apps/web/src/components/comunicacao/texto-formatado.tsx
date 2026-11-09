@@ -33,7 +33,8 @@ function inline(texto: string, mencoes: string[], meuNome: string | null, chave:
 
 function comLinks(texto: string, links: Links, chave: string): ReactNode[] {
   return texto.split(MARCA).map((p, i) => {
-    if (i % 2 === 0) return p ? <Fragment key={`${chave}t${i}`}>{p}</Fragment> : null;
+    // Escape de markdown ("\*", "\_") é marcação, não texto: a barra não aparece.
+    if (i % 2 === 0) return p ? <Fragment key={`${chave}t${i}`}>{p.replace(/\\([\\`*_{}[\]()#+\-.!~>|])/g, '$1')}</Fragment> : null;
     const l = links[Number(p)];
     return l ? <LinkNoTexto key={`${chave}l${i}`} href={l.href} texto={l.texto} rotulado={l.rotulado} /> : null;
   });

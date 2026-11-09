@@ -1,7 +1,7 @@
 'use client';
 
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Bold, Building2, CheckSquare, ClipboardList, Code, Italic, List, Loader2, Paperclip, Plus, RotateCcw, Send, Smile, SquareCode, Strikethrough, X } from 'lucide-react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { Bold, Building2, CheckSquare, ClipboardList, Code, Italic, Link2, List, Loader2, Paperclip, Plus, RotateCcw, Send, Smile, SquareCode, Strikethrough, X } from 'lucide-react';
 import {
   newClientMessageId,
   notifyTyping,
@@ -18,7 +18,7 @@ import { EscolherItem, Modal, type TipoEscolhivel } from './modais';
 import { cn } from '@/lib/utils';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { CriarTarefaDaily } from '@/components/daily-tasks/criar-tarefa-da-mensagem';
-import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
+import { EditorRico, type EditorRicoHandle, type FormatoDoEditor } from '@/components/ui/editor-rico';
 
 const KIND_POR_EXTENSAO: Record<string, ChatAttachment['kind']> = {
   png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', gif: 'image',
@@ -51,13 +51,15 @@ function gravarRascunho(chave: string, texto: string) {
   try { if (texto) localStorage.setItem(chave, texto); else localStorage.removeItem(chave); } catch { /* sem armazenamento: só não lembra */ }
 }
 
-const FORMATOS = [
-  { rotulo: 'Negrito', icone: Bold, antes: '**', depois: '**' },
-  { rotulo: 'Itálico', icone: Italic, antes: '_', depois: '_' },
-  { rotulo: 'Riscado', icone: Strikethrough, antes: '~~', depois: '~~' },
-  { rotulo: 'Código', icone: Code, antes: '`', depois: '`' },
-  { rotulo: 'Bloco de código', icone: SquareCode, antes: '```\n', depois: '\n```' },
-] as const;
+const FORMATOS: Array<{ rotulo: string; icone: typeof Bold; formato: FormatoDoEditor }> = [
+  { rotulo: 'Negrito', icone: Bold, formato: 'negrito' },
+  { rotulo: 'Itálico', icone: Italic, formato: 'italico' },
+  { rotulo: 'Riscado', icone: Strikethrough, formato: 'riscado' },
+  { rotulo: 'Código', icone: Code, formato: 'codigo' },
+  { rotulo: 'Bloco de código', icone: SquareCode, formato: 'bloco' },
+  { rotulo: 'Link', icone: Link2, formato: 'link' },
+  { rotulo: 'Lista', icone: List, formato: 'lista' },
+];
 
 /**
  * Caixa de escrever. Enter envia, Shift+Enter quebra linha; "@" sugere colegas.
@@ -89,18 +91,9 @@ export const Composer = forwardRef<ComposerHandle, {
   const [escolhendo, setEscolhendo] = useState<TipoEscolhivel | null>(null);
   const [criandoTarefa, setCriandoTarefa] = useState(false);
   const daily = useDailyTasksAccess().data?.allowed === true;
-  const area = useRef<HTMLTextAreaElement>(null);
+  const area = useRef<EditorRicoHandle>(null);
   const seletor = useRef<HTMLInputElement>(null);
   const politica = useAttachmentPolicy();
-  // Cursor depois de inserir a menção/formatação: aplicado no MESMO commit que
-  // troca o texto. Num requestAnimationFrame, a letra digitada nesse meio-tempo
-  // ia parar no fim da frase.
-  const cursorPendente = useRef<[number, number] | null>(null);
-  useLayoutEffect(() => {
-    if (cursorPendente.current === null || !area.current) return;
-    area.current.setSelectionRange(cursorPendente.current[0], cursorPendente.current[1]);
-    cursorPendente.current = null;
-  }, [texto]);
 
   // Trocou de conversa/thread: carrega o rascunho dela.
   useEffect(() => { setTexto(lerRascunho(chaveRascunho)); setObjetos([]); }, [chaveRascunho]);
@@ -189,60 +182,22 @@ export const Composer = forwardRef<ComposerHandle, {
     // Os que falharam ficam para a pessoa decidir; os enviados saem.
     setEnvios((lista) => lista.filter((e) => e.status === 'erro'));
     setSugestao(null);
-    requestAnimationFrame(() => { if (area.current) area.current.style.height = ''; });
   }
 
-  function ajustarAltura() {
-    const el = area.current;
-    if (el) { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 240)}px`; }
-  }
-
-  function aoDigitar(valor: string, cursor: number) {
+  function aoDigitar(valor: string) {
     setTexto(valor);
     if (valor.trim()) notifyTyping(conversationId, threadRootId);
-    const antes = valor.slice(0, cursor);
-    const achado = /(^|\s)@([\p{L}\p{N}._-]{0,30})$/u.exec(antes);
-    if (achado) { setSugestao({ termo: achado[2]!, inicio: cursor - achado[2]!.length - 1 }); setIndiceSugestao(0); }
+    // "@nome" sendo digitado logo antes do cursor abre as sugestões.
+    const achado = /(^|\s)@([\p{L}\p{N}._-]{0,30})$/u.exec(area.current?.antesDoCursor() ?? '');
+    if (achado) { setSugestao({ termo: achado[2]!, inicio: 0 }); setIndiceSugestao(0); }
     else setSugestao(null);
-    ajustarAltura();
   }
 
   function escolher(membro: ChatMember) {
     if (!sugestao) return;
-    const el = area.current;
-    const cursor = el?.selectionStart ?? texto.length;
-    const novo = `${texto.slice(0, sugestao.inicio)}@${membro.name} ${texto.slice(cursor)}`;
-    setTexto(novo);
+    area.current?.trocarAntesDoCursor(sugestao.termo.length + 1, `@${membro.name} `);
     setMencionados((m) => new Map(m).set(membro.id, membro.name));
     setSugestao(null);
-    const pos = sugestao.inicio + membro.name.length + 2;
-    cursorPendente.current = [pos, pos];
-    el?.focus();
-  }
-
-  /** Envolve a seleção (ou insere o par vazio) com a marcação do formato. */
-  function formatar(antes: string, depois: string) {
-    const el = area.current;
-    const ini = el?.selectionStart ?? texto.length;
-    const fim = el?.selectionEnd ?? texto.length;
-    const selecionado = texto.slice(ini, fim);
-    setTexto(`${texto.slice(0, ini)}${antes}${selecionado}${depois}${texto.slice(fim)}`);
-    cursorPendente.current = [ini + antes.length, ini + antes.length + selecionado.length];
-    el?.focus();
-    requestAnimationFrame(ajustarAltura);
-  }
-
-  function lista() {
-    const el = area.current;
-    const ini = el?.selectionStart ?? texto.length;
-    const fim = el?.selectionEnd ?? texto.length;
-    const inicioDaLinha = texto.lastIndexOf('\n', ini - 1) + 1;
-    const trecho = texto.slice(inicioDaLinha, fim);
-    const novo = trecho.split('\n').map((l) => (/^\s*- /.test(l) ? l : `- ${l}`)).join('\n');
-    setTexto(`${texto.slice(0, inicioDaLinha)}${novo}${texto.slice(fim)}`);
-    const pos = inicioDaLinha + novo.length;
-    cursorPendente.current = [pos, pos];
-    el?.focus();
   }
 
   if (readOnly) {
@@ -301,9 +256,8 @@ export const Composer = forwardRef<ComposerHandle, {
       )}
       <div className="mb-1 flex items-center gap-0.5" role="toolbar" aria-label="Formatação">
         {FORMATOS.map((f) => (
-          <button key={f.rotulo} type="button" onClick={() => formatar(f.antes, f.depois)} aria-label={f.rotulo} title={f.rotulo} className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><f.icone size={14} /></button>
+          <button key={f.rotulo} type="button" onClick={() => area.current?.formatar(f.formato)} aria-label={f.rotulo} title={f.rotulo} className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><f.icone size={14} /></button>
         ))}
-        <button type="button" onClick={lista} aria-label="Lista" title="Lista" className="flex size-7 items-center justify-center rounded text-nevoa hover:bg-grafite-elevado hover:text-branco-cru"><List size={14} /></button>
         {!compacto && <span className="ml-auto hidden truncate font-mono text-[10px] text-nevoa/60 2xl:inline">Enter envia · Shift+Enter quebra linha</span>}
       </div>
       <div className="relative flex items-end gap-1.5">
@@ -354,33 +308,30 @@ export const Composer = forwardRef<ComposerHandle, {
           {emojisAbertos && (
             <div className="absolute bottom-full left-0 z-20 mb-2 grid w-64 grid-cols-7 gap-0.5 rounded-lg border border-grafite-elevado bg-grafite p-2 shadow-2xl" role="dialog" aria-label="Emojis">
               {EMOJIS_RAPIDOS.map((e) => (
-                <button key={e} type="button" onClick={() => { setTexto((t) => t + e); setEmojisAbertos(false); area.current?.focus(); }} className="rounded p-1 text-lg hover:bg-grafite-elevado">{e}</button>
+                <button key={e} type="button" onClick={() => { area.current?.inserir(e); setEmojisAbertos(false); }} className="rounded p-1 text-lg hover:bg-grafite-elevado">{e}</button>
               ))}
             </div>
           )}
         </div>
-        <TextareaFormatavel
-          atalhos={false}
+        <EditorRico
           ref={area}
           value={texto}
-          rows={1}
           placeholder={placeholder}
-          aria-label={threadRootId ? 'Responder na thread' : 'Escreva uma mensagem'}
-          onChange={(ev) => aoDigitar(ev.target.value, ev.target.selectionStart)}
-          onPaste={(ev) => { if (ev.clipboardData.files.length) { ev.preventDefault(); addFiles(ev.clipboardData.files); } }}
-          onKeyDown={(ev) => {
+          ariaLabel={threadRootId ? 'Responder na thread' : 'Escreva uma mensagem'}
+          onChange={aoDigitar}
+          onColarArquivos={addFiles}
+          onEnviar={enviar}
+          onTecla={(ev) => {
             if (sugestao && candidatos.length) {
-              if (ev.key === 'ArrowDown') { ev.preventDefault(); setIndiceSugestao((i) => (i + 1) % candidatos.length); return; }
-              if (ev.key === 'ArrowUp') { ev.preventDefault(); setIndiceSugestao((i) => (i - 1 + candidatos.length) % candidatos.length); return; }
-              if (ev.key === 'Enter' || ev.key === 'Tab') { ev.preventDefault(); escolher(candidatos[indiceSugestao]!); return; }
-              if (ev.key === 'Escape') { setSugestao(null); return; }
+              if (ev.key === 'ArrowDown') { setIndiceSugestao((i) => (i + 1) % candidatos.length); return true; }
+              if (ev.key === 'ArrowUp') { setIndiceSugestao((i) => (i - 1 + candidatos.length) % candidatos.length); return true; }
+              if (ev.key === 'Enter' || ev.key === 'Tab') { escolher(candidatos[indiceSugestao]!); return true; }
+              if (ev.key === 'Escape') { setSugestao(null); return true; }
             }
-            if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'b') { ev.preventDefault(); formatar('**', '**'); return; }
-            if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'i') { ev.preventDefault(); formatar('_', '_'); return; }
-            if (ev.key === 'Escape' && replyTo) { onCancelReply(); return; }
-            if (ev.key === 'Enter' && !ev.shiftKey && !ev.nativeEvent.isComposing) { ev.preventDefault(); enviar(); }
+            if (ev.key === 'Escape' && replyTo) { onCancelReply(); return true; }
+            return false;
           }}
-          className="max-h-[240px] min-h-[36px] flex-1 resize-none rounded-md border border-grafite-elevado bg-carbono/40 px-3 py-2 text-sm text-branco-cru placeholder:text-nevoa/60 focus:border-roxo-eletrico/60 focus:outline-none"
+          className="max-h-[240px] min-h-[36px] min-w-0 flex-1 overflow-y-auto rounded-md border border-grafite-elevado bg-carbono/40 px-3 py-2 text-sm text-branco-cru focus-within:border-roxo-eletrico/60"
         />
         <button
           type="button"

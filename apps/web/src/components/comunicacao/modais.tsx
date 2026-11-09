@@ -25,7 +25,7 @@ import { toast } from '@/stores/toast-store';
 import { CriarTarefaDaily } from '@/components/daily-tasks/criar-tarefa-da-mensagem';
 import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { cn } from '@/lib/utils';
-import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
+import { EditorRico } from '@/components/ui/editor-rico';
 
 /** Moldura comum dos modais da Comunicação: Esc fecha, clique fora fecha. */
 export function Modal({ titulo, onClose, children, largura = 'max-w-md' }: { titulo: string; onClose: () => void; children: ReactNode; largura?: string }) {
@@ -288,7 +288,7 @@ export function CriarTarefa({ conversationId, mensagem, onClose }: { conversatio
           <span className="font-semibold">{mensagem.sender_name}:</span> {(mensagem.content ?? '').slice(0, 300) || 'mensagem com anexo'}
         </blockquote>
         <label className="block text-xs text-nevoa">Título<input autoFocus required minLength={3} value={titulo} onChange={(e) => setTitulo(e.target.value)} maxLength={250} className={cn(campo, 'mt-1')} /></label>
-        <label className="block text-xs text-nevoa">Descrição (opcional — a mensagem de origem vai junto)<TextareaFormatavel value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={3} className={cn(campo, 'mt-1 resize-y')} /></label>
+        <div className="block text-xs text-nevoa">Descrição (opcional — a mensagem de origem vai junto)<EditorRico value={descricao} onChange={setDescricao} ariaLabel="Descrição" className={cn(campo, 'mt-1 min-h-[4.5rem]')} /></div>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-xs text-nevoa">Cliente (lista do ClickUp)
             <select required value={cliente} onChange={(e) => setCliente(e.target.value)} className={cn(campo, 'mt-1')}>
@@ -344,7 +344,7 @@ export function EscolherConversa({ onClose, onPick, enviando }: { onClose: () =>
             </li>
           ))}
         </ul>
-        <label className="block text-xs text-nevoa">Comentário (opcional)<TextareaFormatavel value={comentario} onChange={(e) => setComentario(e.target.value)} rows={2} maxLength={2000} className={cn(campo, 'mt-1 resize-y')} /></label>
+        <div className="block text-xs text-nevoa">Comentário (opcional)<EditorRico value={comentario} onChange={setComentario} ariaLabel="Comentário" className={cn(campo, 'mt-1 min-h-[3.5rem]')} /></div>
         <p className="text-[11px] text-nevoa">Quem não tiver acesso ao item vê só um aviso — compartilhar não libera os dados.</p>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-md px-3 py-2 text-sm text-nevoa hover:text-branco-cru">Cancelar</button>

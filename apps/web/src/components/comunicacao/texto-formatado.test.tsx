@@ -64,4 +64,7 @@ describe('texto formatado da mensagem', () => {
     expect(div.querySelector('strong a')?.getAttribute('href')).toBe('https://a.com/x_y');
     expect(div.querySelector('em')?.textContent).toBe('leve');
   });
+  it('escape de markdown não aparece na tela', () => {
+    expect(render('preço 2\\*3 e \\_rascunho').textContent).toBe('preço 2*3 e _rascunho');
+  });
 });

@@ -8,7 +8,7 @@ import { ApiRequestError } from '@/lib/api/client';
 import type { ClickUpClientCommentWire, ClickUpTaskWire } from '@/lib/api/contracts';
 import { formatRelativeTime } from '@/lib/format';
 import { TextoRico } from '@/components/daily-tasks/texto-rico';
-import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
+import { EditorRico } from '@/components/ui/editor-rico';
 
 /** O ClickUp manda `date` como epoch em ms em string, não ISO. */
 function commentTimeLabel(date: string): string {
@@ -78,12 +78,12 @@ function CommentComposer({ tasks, clientId }: { tasks: ClickUpTaskWire[]; client
         </select>
       </div>
       <div className="flex items-end gap-2">
-        <TextareaFormatavel
+        <EditorRico
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={setText}
+          ariaLabel="Comentário pro ClickUp"
           placeholder="Escreva um comentário pro ClickUp…"
-          rows={2}
-          className="min-w-0 flex-1 resize-none rounded-md border border-grafite-elevado bg-grafite px-2 py-1.5 text-sm text-branco-cru placeholder:text-nevoa"
+          className="min-h-[3.5rem] min-w-0 flex-1 rounded-md border border-grafite-elevado bg-grafite px-2 py-1.5 text-sm text-branco-cru"
         />
         <button
           type="submit"
