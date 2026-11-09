@@ -2,7 +2,9 @@ import { and, asc, desc, eq, ilike, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { ExecuteResponse } from '@desigual-os/node-protocol';
 import type { Logger } from '@desigual-os/logging';
-import { completeTextSafely } from '@desigual-os/router';
+import { completarTextoComSeguranca, completeTextSafely } from '@desigual-os/router';
+import type { DocumentoLido } from './bento-documentos';
+import { analisarDocumentos } from './jarbas-documentos';
 import {
   getGoogleAdsAccountInsights,
   getGoogleAdsCampaigns,
@@ -303,8 +305,20 @@ export function montarPromptDoJarbas(pergunta: string, dados: string): string {
 
 // ── Resposta ──────────────────────────────────────────────────────────────
 
-function resposta(answer: string): ExecuteResponse {
-  return { execution_id: '', agent: 'jarbas', status: 'completed', answer, sources: [], tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 } };
+function resposta(answer: string, sources: string[] = []): ExecuteResponse {
+  return { execution_id: '', agent: 'jarbas', status: 'completed', answer, sources, tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 } };
+}
+
+/**
+ * A pergunta pede para cruzar o documento com os números REAIS da conta?
+ * Só então a conta é consultada: relatório de agosto comparado sem pedido com
+ * "últimos 7 dias" da conta produziria divergência falsa, e cada consulta às
+ * plataformas custa tempo do turno.
+ */
+export function pedeCruzarComAConta(pergunta: string): boolean {
+  return /\b(compar|confront|cruz|bate|batem|confer|confira|valid|checa|chequ|verifi)|dados reais|n[úu]meros reais|da conta|na conta|ao vivo|plataforma/i.test(
+    pergunta,
+  );
 }
 
 async function clienteDoTurno(params: {
@@ -347,8 +361,15 @@ async function clientesComConta(organizationId: string | null): Promise<string[]
   return rows.map((r) => r.name);
 }
 
-export async function responderJarbasLocal(params: {
+/**
+ * MODO DOCUMENTO (28/10/2026). Com anexo no turno, o Jarbas analisa o
+ * material — ver jarbas-documentos.ts. Sem cliente selecionado ele analisa
+ * mesmo assim (o documento diz de quem é); com cliente e pedido de
+ * comparação, cruza com os números reais da conta.
+ */
+async function responderComDocumentos(params: {
   pergunta: string;
+  documentos: DocumentoLido[];
   clientId: string | null;
   clienteDoEscopo: string | null;
   organizationId: string | null;
@@ -356,6 +377,51 @@ export async function responderJarbasLocal(params: {
   agora?: Date;
 }): Promise<ExecuteResponse> {
   const { logger } = params;
+  const cliente = await clienteDoTurno(params).catch(() => null);
+
+  let dadosDaConta: string | null = null;
+  if (cliente && pedeCruzarComAConta(params.pergunta)) {
+    try {
+      const permitido = params.organizationId
+        ? (await mediaContextForAgent({ organizationId: params.organizationId, clientIds: null }, cliente.id)).allowed
+        : true;
+      if (permitido) {
+        const periodo = periodoDaPergunta(params.pergunta, params.agora);
+        const canais = await Promise.all([lerMeta(cliente.id, periodo, logger), lerGoogle(cliente.id, periodo, logger)]);
+        dadosDaConta = dadosEmTexto(cliente.name, periodo, canais);
+      }
+    } catch (error) {
+      logger.warn({ motivo: error instanceof Error ? error.message : String(error) }, '[jarbas-local] dados da conta indisponíveis para cruzar com o documento');
+    }
+  }
+
+  const analise = await analisarDocumentos({
+    pergunta: params.pergunta,
+    documentos: params.documentos,
+    cliente: cliente?.name ?? null,
+    dadosDaConta,
+    logger,
+    completar: (prompt, opts) => completarTextoComSeguranca(prompt, logger, opts),
+  });
+  logger.info(
+    { modo: analise.modo, lidos: analise.caracteresLidos, analisados: analise.caracteresAnalisados, cruzouComConta: Boolean(dadosDaConta) },
+    '[jarbas-local] documento analisado',
+  );
+  return resposta(analise.texto, params.documentos.map((d) => d.filename));
+}
+
+export async function responderJarbasLocal(params: {
+  pergunta: string;
+  clientId: string | null;
+  clienteDoEscopo: string | null;
+  organizationId: string | null;
+  logger: Logger;
+  agora?: Date;
+  /** Anexos do turno já lidos (modo estruturado). Com eles, o turno é de análise de documento. */
+  documentos?: DocumentoLido[];
+}): Promise<ExecuteResponse> {
+  const { logger } = params;
+  if (params.documentos?.length) return responderComDocumentos({ ...params, documentos: params.documentos });
   const cliente = await clienteDoTurno(params);
 
   if (!cliente) {

@@ -572,8 +572,57 @@
     {
       "idx": 81,
       "version": "7",
+      "when": 1792604098153,
+      "tag": "0081_daily_tasks_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792605915197,
+      "tag": "0082_daily_tasks_collab_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792611395268,
+      "tag": "0083_daily_tasks_produtividade_automacoes",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792696695349,
+      "tag": "0084_work_lists_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1792698445418,
+      "tag": "0085_gestao_empresarial",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792699075628,
+      "tag": "0086_gestao_empresarial_pagamento_desconhecido",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792758610702,
+      "tag": "0087_work_historico_preferencias_seguidores",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
       "when": 1792765093604,
-      "tag": "0081_automacao_no_whatsapp",
+      "tag": "0088_automacao_no_whatsapp",
       "breakpoints": true
     }
   ]

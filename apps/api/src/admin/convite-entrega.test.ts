@@ -28,6 +28,7 @@ const sendInviteEmail = vi.fn();
 const conferirEntrega = vi.fn();
 
 vi.mock('@desigual-os/auth', () => ({
+  adotarPessoaDoClickUp: async () => null,
   getSupabaseAdminClient: () => ({ auth: { admin: { generateLink: (...a: unknown[]) => generateLink(...a) } } }),
 }));
 

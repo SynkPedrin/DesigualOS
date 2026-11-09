@@ -7,6 +7,8 @@ import { useClientClickUpComments, usePostClickUpTaskComment } from '@/hooks/use
 import { ApiRequestError } from '@/lib/api/client';
 import type { ClickUpClientCommentWire, ClickUpTaskWire } from '@/lib/api/contracts';
 import { formatRelativeTime } from '@/lib/format';
+import { TextoRico } from '@/components/daily-tasks/texto-rico';
+import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
 
 /** O ClickUp manda `date` como epoch em ms em string, não ISO. */
 function commentTimeLabel(date: string): string {
@@ -35,7 +37,7 @@ function CommentCard({ comment }: { comment: ClickUpClientCommentWire }) {
       ) : (
         <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wider text-nevoa">{comment.task_name}</p>
       )}
-      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-branco-cru/90">{comment.text}</p>
+      <TextoRico texto={comment.text} className="mt-1 text-branco-cru/90" />
     </li>
   );
 }
@@ -76,7 +78,7 @@ function CommentComposer({ tasks, clientId }: { tasks: ClickUpTaskWire[]; client
         </select>
       </div>
       <div className="flex items-end gap-2">
-        <textarea
+        <TextareaFormatavel
           value={text}
           onChange={(event) => setText(event.target.value)}
           placeholder="Escreva um comentário pro ClickUp…"

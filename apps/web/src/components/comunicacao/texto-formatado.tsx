@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, type ReactNode } from 'react';
-import { textoComLinks } from '@/lib/links-no-texto';
+import { LinkNoTexto, quebrarEmLinks, type PedacoDeTexto } from '@/lib/links-no-texto';
 import { cn } from '@/lib/utils';
 
 /**
@@ -14,36 +14,50 @@ import { cn } from '@/lib/utils';
  * e não executa nada. É por isso que não existe dangerouslySetInnerHTML aqui.
  */
 
-const LINK = 'text-roxo-eletrico underline underline-offset-2 hover:opacity-80';
+
+// Marca de lugar de um link já reconhecido: caracteres de controle que ninguém digita.
+const MARCA = /\u0001(\d+)\u0002/g;
+type Links = Array<Extract<PedacoDeTexto, { tipo: 'link' }>>;
 
 function inline(texto: string, mencoes: string[], meuNome: string | null, chave: string): ReactNode[] {
   // 1) código inline protege o que está dentro de qualquer outra formatação
   const pedacos = texto.split(/(`[^`\n]+`)/g);
   return pedacos.flatMap((p, i): ReactNode[] => {
     if (/^`[^`\n]+`$/.test(p)) return [<code key={`${chave}c${i}`} className="rounded bg-carbono/40 px-1 py-0.5 font-mono text-[0.85em]">{p.slice(1, -1)}</code>];
-    return enfatizar(p, mencoes, meuNome, `${chave}e${i}`);
+    // 2) os links saem antes da ênfase: o "_" de "Agencia_Desigual" numa url não pode virar itálico
+    const links: Links = [];
+    const marcado = quebrarEmLinks(p).map((q) => (q.tipo === 'link' ? `\u0001${links.push(q) - 1}\u0002` : q.texto.replace(/[\u0001\u0002]/g, ''))).join('');
+    return enfatizar(marcado, mencoes, meuNome, `${chave}e${i}`, links);
   });
 }
 
-function enfatizar(texto: string, mencoes: string[], meuNome: string | null, chave: string): ReactNode[] {
+function comLinks(texto: string, links: Links, chave: string): ReactNode[] {
+  return texto.split(MARCA).map((p, i) => {
+    if (i % 2 === 0) return p ? <Fragment key={`${chave}t${i}`}>{p}</Fragment> : null;
+    const l = links[Number(p)];
+    return l ? <LinkNoTexto key={`${chave}l${i}`} href={l.href} texto={l.texto} rotulado={l.rotulado} /> : null;
+  });
+}
+
+function enfatizar(texto: string, mencoes: string[], meuNome: string | null, chave: string, links: Links): ReactNode[] {
   const re = /(\*\*[^*\n]+\*\*|~~[^~\n]+~~|(?<![\w*])_[^_\n]+_(?![\w])|(?<![\w*])\*[^*\n]+\*(?![\w*]))/g;
   return texto.split(re).flatMap((p, i): ReactNode[] => {
     const k = `${chave}${i}`;
-    if (/^\*\*[^*\n]+\*\*$/.test(p)) return [<strong key={k} className="font-semibold">{mencionar(p.slice(2, -2), mencoes, meuNome, k)}</strong>];
-    if (/^~~[^~\n]+~~$/.test(p)) return [<s key={k}>{mencionar(p.slice(2, -2), mencoes, meuNome, k)}</s>];
-    if (/^_[^_\n]+_$/.test(p) || /^\*[^*\n]+\*$/.test(p)) return [<em key={k}>{mencionar(p.slice(1, -1), mencoes, meuNome, k)}</em>];
-    return mencionar(p, mencoes, meuNome, k);
+    if (/^\*\*[^*\n]+\*\*$/.test(p)) return [<strong key={k} className="font-semibold">{mencionar(p.slice(2, -2), mencoes, meuNome, k, links)}</strong>];
+    if (/^~~[^~\n]+~~$/.test(p)) return [<s key={k}>{mencionar(p.slice(2, -2), mencoes, meuNome, k, links)}</s>];
+    if (/^_[^_\n]+_$/.test(p) || /^\*[^*\n]+\*$/.test(p)) return [<em key={k}>{mencionar(p.slice(1, -1), mencoes, meuNome, k, links)}</em>];
+    return mencionar(p, mencoes, meuNome, k, links);
   });
 }
 
-function mencionar(texto: string, mencoes: string[], meuNome: string | null, chave: string): ReactNode[] {
-  if (mencoes.length === 0) return textoComLinks(texto, LINK, chave);
+function mencionar(texto: string, mencoes: string[], meuNome: string | null, chave: string, links: Links): ReactNode[] {
+  if (mencoes.length === 0) return comLinks(texto, links, chave);
   const nomes = mencoes.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return texto.split(new RegExp(`(@(?:${nomes.join('|')}))`, 'g')).flatMap((p, i): ReactNode[] => {
     if (p.startsWith('@') && mencoes.includes(p.slice(1))) {
       return [<span key={`${chave}m${i}`} className={cn('rounded px-0.5 font-medium', p.slice(1) === meuNome ? 'bg-sinal/20 text-sinal' : 'bg-roxo-eletrico/20 text-roxo-eletrico')}>{p}</span>];
     }
-    return textoComLinks(p, LINK, `${chave}l${i}-`);
+    return comLinks(p, links, `${chave}l${i}-`);
   });
 }
 

@@ -14,8 +14,11 @@ import {
   type SendInput,
 } from '@/hooks/use-internal-chat';
 import { IconeDoArquivo, tamanhoLegivel } from './anexos';
-import { EscolherItem, type TipoEscolhivel } from './modais';
+import { EscolherItem, Modal, type TipoEscolhivel } from './modais';
 import { cn } from '@/lib/utils';
+import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
+import { CriarTarefaDaily } from '@/components/daily-tasks/criar-tarefa-da-mensagem';
+import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
 
 const KIND_POR_EXTENSAO: Record<string, ChatAttachment['kind']> = {
   png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', gif: 'image',
@@ -84,6 +87,8 @@ export const Composer = forwardRef<ComposerHandle, {
   const [emojisAbertos, setEmojisAbertos] = useState(false);
   const [maisAberto, setMaisAberto] = useState(false);
   const [escolhendo, setEscolhendo] = useState<TipoEscolhivel | null>(null);
+  const [criandoTarefa, setCriandoTarefa] = useState(false);
+  const daily = useDailyTasksAccess().data?.allowed === true;
   const area = useRef<HTMLTextAreaElement>(null);
   const seletor = useRef<HTMLInputElement>(null);
   const politica = useAttachmentPolicy();
@@ -322,6 +327,7 @@ export const Composer = forwardRef<ComposerHandle, {
             <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-lg border border-grafite-elevado bg-grafite py-1 shadow-2xl" role="menu" data-tour-id="comunicacao-compartilhar">
               {([
                 ['Anexar arquivo', Paperclip, () => seletor.current?.click()],
+                ...(daily && !readOnly ? ([['Criar tarefa no Daily Tasks', Plus, () => setCriandoTarefa(true)]] as const) : []),
                 ['Compartilhar tarefa', CheckSquare, () => setEscolhendo('task')],
                 ['Compartilhar cliente', Building2, () => setEscolhendo('client')],
                 ['Compartilhar quinzena', ClipboardList, () => setEscolhendo('demand')],
@@ -353,7 +359,8 @@ export const Composer = forwardRef<ComposerHandle, {
             </div>
           )}
         </div>
-        <textarea
+        <TextareaFormatavel
+          atalhos={false}
           ref={area}
           value={texto}
           rows={1}
@@ -386,6 +393,11 @@ export const Composer = forwardRef<ComposerHandle, {
           {subindo ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
         </button>
       </div>
+      {criandoTarefa && (
+        <Modal titulo="Criar tarefa no Daily Tasks" onClose={() => setCriandoTarefa(false)} largura="max-w-lg">
+          <div className="p-4"><CriarTarefaDaily conversationId={conversationId} senderName={null} texto={texto} anexos={envios.filter((e) => e.status === 'pronto' && e.anexo).map((e) => ({ id: e.anexo!.id, filename: e.anexo!.filename }))} onClose={() => setCriandoTarefa(false)} /></div>
+        </Modal>
+      )}
       {escolhendo && <EscolherItem tipo={escolhendo} onClose={() => setEscolhendo(null)} onPick={(o) => { addObject(o); setEscolhendo(null); }} />}
     </div>
   );

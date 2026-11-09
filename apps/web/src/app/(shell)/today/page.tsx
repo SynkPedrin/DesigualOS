@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
@@ -20,9 +20,13 @@ import { Surface } from '@/components/ui/surface';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard } from '@/components/ui/stat-card';
 import { MidiaHojePanel } from '@/components/media/hub/midia-hoje';
+import { BotaoNovaTarefa } from '@/components/tasks/nova-tarefa';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { BentoBriefing, type InsightDoBento } from '@/components/bento/painel-de-insights';
 import { useCalendarEvents } from '@/hooks/use-calendar';
+import { useAgendas } from '@/components/calendar/microsoft-calendar-connect';
+import { COR_PADRAO, semRepetidas, type AgendaPintada } from '@/components/calendar/cores-das-agendas';
+import type { CalendarEventWire } from '@/lib/api/contracts';
 import { useTodaySummary, type SecaoAprovacoes, type SecaoClientes, type SecaoTarefas, type SecaoThreads } from '@/hooks/use-today-summary';
 import { formatClockTime, formatRelativeTime } from '@/lib/format';
 import { ApiRequestError } from '@/lib/api/client';
@@ -30,6 +34,8 @@ import { TETO_DE_PAGINA, comoPiso, veioCheia } from '@/lib/teto-de-pagina';
 import { cn } from '@/lib/utils';
 import { tarefaConcluida } from '@/lib/tarefa-concluida';
 import { EquipeNoHoje } from '@/components/gestao/equipe-no-hoje';
+import { AguardandoAprovacao, faixaDaLinha, Prazo } from '@/components/ui/prazo';
+import { urgenciaDoPrazo } from '@/lib/prazo';
 import { useIsMaster } from '@/hooks/use-is-master';
 
 /** 409 de "Minhas tarefas" = e-mail do ClickUp ainda não vinculado, estado
@@ -103,14 +109,6 @@ const PONTO_CLASS: Record<Tom, string> = {
   neutral: 'bg-info',
 };
 
-/** Participantes por reunião, "Seu dia" (mockup, 07/10/2026). O contrato de
- * calendário não carrega participante nenhum na wire de evento (só o
- * organizador); nunca inventar presença real de cliente, então isto só cobre
- * a reunião interna, cujos nomes são o próprio time da demo. */
-const PARTICIPANTES_POR_TITULO: Record<string, string[]> = {
-  'Reunião interna, Atendimento': ['Pedro Gabriel', 'Matheus Rial', 'Tami Alves'],
-};
-
 /**
  * "Bloqueada" não é um campo do nosso contrato: o ClickUp manda `status` como
  * texto livre por workspace. Isto é uma HEURÍSTICA sobre esse texto, declarada
@@ -132,6 +130,11 @@ interface ItemDePrioridade {
   cliente: string;
   badge: { label: string; tom: Tom };
   quando: string;
+  /**
+   * O prazo de verdade, quando o item tem um (tarefa, demanda). Com ele a coluna Prazo vira o selo de bater o olho
+   * (HOJE, ATRASADA · 3 DIAS, Amanhã); sem ele (conversa, reunião) fica o `quando` em texto.
+   */
+  prazo?: string | number | null;
   href: string;
   /** `true` manda a linha pro recorte "Atrasadas". */
   atrasada: boolean;
@@ -140,33 +143,12 @@ interface ItemDePrioridade {
   bloqueada: boolean;
   /** Linha de outra pessoa: só aparece no recorte "Equipe". */
   daEquipe: boolean;
-}
-
-/**
- * Escala da tela Hoje (pedido: "uma visão mais longe, mais informação, sem rolar"). Menor que o resto do
- * app porque aqui o objetivo é panorama. Acompanha a ALTURA da janela: monitor de 27" fica em ~0,72 e o
- * notebook (janela baixa) em 0,68, que é onde mais precisa de espaço.
- */
-function useZoomDoHoje(confortavel = false): number {
-  const [z, setZ] = useState(confortavel ? 0.9 : 0.72);
-  useEffect(() => {
-    /**
-     * `confortavel`: quem administra tem o painel da equipe no topo — muito texto
-     * por cartão, e a escala de panorama deixava tudo pequeno demais para ler
-     * (pedido de 22/10/2026: "melhore a visualização do conteúdo e leitura").
-     */
-    const calc = () => setZ(confortavel ? Math.min(0.95, Math.max(0.85, window.innerHeight / 1150)) : Math.min(0.8, Math.max(0.68, window.innerHeight / 1800)));
-    calc();
-    window.addEventListener('resize', calc);
-    return () => window.removeEventListener('resize', calc);
-  }, [confortavel]);
-  return z;
+  externo?: boolean;
 }
 
 export default function TodayPage() {
   // Quem administra a operação vê a equipe ao vivo no topo do Hoje (22/10/2026, pedido para a Tammy).
   const { isMaster } = useIsMaster();
-  const zoomDoHoje = useZoomDoHoje(isMaster);
   // Fixado no MOUNT: recalcular a cada render mudaria a queryKey das consultas
   // de calendário (intervalo [from,to] levemente diferente toda vez) e elas
   // nunca estabilizariam. Achado real, não hipotético (travou a aba Calendário
@@ -199,7 +181,10 @@ export default function TodayPage() {
   const tarefasDaAgencia = resumo.tarefasDaAgencia;
   const conversasAguardando = resumo.conversasAguardando;
   const conversasAguardandoMinhas = resumo.conversasAguardandoMinhas;
-  const eventosHoje = resumo.eventosHoje;
+  const eventosHojeBrutos = resumo.eventosHoje;
+  // A mesma reunião chega uma vez por agenda vinculada (agora que toda agenda da conta entra): conta e mostra uma vez.
+  const eventosHoje = { ...eventosHojeBrutos, data: eventosHojeBrutos.data && semRepetidas(eventosHojeBrutos.data) };
+  const { agendas } = useAgendas();
   const aprovacoesPendentes = resumo.aprovacoesPendentes;
   const minhasDemandas = resumo.minhasDemandas;
 
@@ -213,10 +198,11 @@ export default function TodayPage() {
     [diaSelecionado],
   );
   const olhandoHoje = deslocamentoDeDia === 0;
-  const eventosDoDiaRemoto = useCalendarEvents(intervaloDoDiaEscolhido, { enabled: !olhandoHoje });
+  // Com `memberId`: sem ele a consulta trazia a agenda da organização inteira ao navegar para outro dia.
+  const eventosDoDiaRemoto = useCalendarEvents({ ...intervaloDoDiaEscolhido, memberId: me?.id }, { enabled: !olhandoHoje && Boolean(me?.id) });
   const eventosDoDia = olhandoHoje
     ? { data: eventosHoje.data, isPending: eventosHoje.isPending }
-    : { data: eventosDoDiaRemoto.data, isPending: eventosDoDiaRemoto.isPending };
+    : { data: eventosDoDiaRemoto.data && semRepetidas(eventosDoDiaRemoto.data), isPending: eventosDoDiaRemoto.isPending };
   /**
    * CONTAGEM DERIVADA DE PÁGINA É PISO, NÃO TOTAL. As duas listas abaixo vêm
    * paginadas em 30, então tudo que eu filtrar delas (demanda vencendo hoje,
@@ -271,6 +257,7 @@ export default function TodayPage() {
       cliente: d.clientName ?? 'Cliente',
       badge: { label: 'Nova quinzena', tom: 'neutral' },
       quando: formatRelativeTime(d.requestedAt),
+      prazo: d.dueDate,
       href: `/demands/${d.id}`,
       atrasada: false,
       venceHoje: d.dueDate !== null && new Date(d.dueDate).getTime() <= fimHoje,
@@ -289,6 +276,7 @@ export default function TodayPage() {
       cliente: d.clientName ?? 'Cliente',
       badge: { label: 'Vence hoje', tom: 'urgent' },
       quando: formatRelativeTime(d.dueDate!),
+      prazo: d.dueDate,
       href: `/demands/${d.id}`,
       atrasada: new Date(d.dueDate!).getTime() < Date.now(),
       venceHoje: true,
@@ -305,9 +293,27 @@ export default function TodayPage() {
       cliente: t.client?.name ?? 'Sem cliente',
       badge: { label: 'Atrasada', tom: 'urgent' },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
+      prazo: t.due_date,
       href: '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
+      bloqueada: pareceBloqueada(t.status),
+      daEquipe: false,
+    });
+  }
+  // Tarefa que vence HOJE e ainda não passou da hora: antes só a atrasada entrava, e a aba "Hoje" deixava de fora
+  // justamente o que é para hoje.
+  for (const t of tarefasAbertas.filter((t) => t.due_date !== null && t.due_date >= Date.now() && urgenciaDoPrazo(t.due_date) === 'hoje')) {
+    prioridades.push({
+      id: `tarefa-hoje-${t.id}`,
+      titulo: t.name,
+      cliente: t.client?.name ?? 'Sem cliente',
+      badge: { label: 'Vence hoje', tom: 'warning' },
+      quando: formatClockTime(new Date(t.due_date!).toISOString()),
+      prazo: t.due_date,
+      href: '/tasks',
+      atrasada: false,
+      venceHoje: true,
       bloqueada: pareceBloqueada(t.status),
       daEquipe: false,
     });
@@ -339,6 +345,7 @@ export default function TodayPage() {
       cliente: t.client?.name ?? 'Sem cliente',
       badge: { label: 'Atrasada', tom: 'urgent' as Tom },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
+      prazo: t.due_date,
       href: '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
@@ -459,20 +466,29 @@ export default function TodayPage() {
     });
   }
 
+  /*
+   * SEM `zoom` (03/11/2026, "pra alguns usuários as informações estão saindo quebradas"). Até aqui o Hoje encolhia
+   * para 0,68-0,8 de quem não é master, menor quanto mais baixa a janela. Num notebook isso deixava o texto
+   * ilegível e, pior, enganava as container queries: com zoom a área parece maior do que é, abria o layout de três
+   * colunas e cortava o prazo das prioridades. O tamanho agora é o do resto do app (a escala fluida do html e a
+   * preferência em Configurações), e as colunas acompanham a largura de verdade. `pb-16`: o último painel sobe
+   * acima da bolha do Bento, fixa no canto, que cobria as porcentagens de "Tarefas do dia".
+   */
   return (
-    <div className="@container mx-auto w-full max-w-[2400px] space-y-3" style={{ zoom: zoomDoHoje }}>
+    <div className="@container mx-auto w-full max-w-[2400px] space-y-3 pb-16">
       <div>
         <PageHeader
           compact
           eyebrow="Hoje"
           title={`${saudacao(agora.getHours())}, ${me ? primeiroNome(me.name) : '...'}.`}
           description={`${new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(agora).replace(/^\w/, (c) => c.toUpperCase())} · veja o que precisa da sua atenção hoje.`}
+          actions={<BotaoNovaTarefa />}
         />
       </div>
 
       {isMaster && <EquipeNoHoje />}
 
-      <div className="grid gap-3 @min-[1900px]:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
+      <div className="grid grid-cols-1 gap-3 @min-[1900px]:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
       <BentoBriefing
         itens={insights}
         carregando={briefingPendente}
@@ -483,10 +499,11 @@ export default function TodayPage() {
         acao={{ label: 'Ver detalhes', href: '/chat' }}
       />
 
-      <div className="grid content-start gap-3 grid-cols-2 @min-[1100px]:grid-cols-4">
+      <div className="grid content-start gap-3 grid-cols-1 @min-[480px]:grid-cols-2 @min-[1100px]:grid-cols-4">
         <StatCard
           icon={MessageSquare}
           iconClassName="bg-roxo-eletrico/15 text-roxo-eletrico"
+          className="bg-gradient-to-br from-roxo-eletrico/20 via-grafite/90 to-grafite/90"
           label="Conversas não respondidas"
           value={conversasAguardando.data?.length ?? 0}
           isLoading={conversasAguardando.isPending}
@@ -505,6 +522,7 @@ export default function TodayPage() {
         <StatCard
           icon={CheckSquare}
           iconClassName="bg-sucesso/15 text-sucesso"
+          className="bg-gradient-to-br from-sucesso/15 via-grafite/90 to-grafite/90"
           label="Tarefas para hoje"
           value={tarefasAbertas.length}
           isLoading={minhasTarefas.isPending}
@@ -520,6 +538,7 @@ export default function TodayPage() {
         <StatCard
           icon={Calendar}
           iconClassName="bg-magenta-spark/15 text-magenta-spark"
+          className="bg-gradient-to-br from-magenta-spark/20 via-grafite/90 to-grafite/90"
           label="Reuniões hoje"
           value={nEventos}
           isLoading={eventosHoje.isPending}
@@ -529,7 +548,8 @@ export default function TodayPage() {
         />
         <StatCard
           icon={ClipboardCheck}
-          iconClassName="bg-ametista/15 text-ametista"
+          iconClassName="bg-sinal/15 text-sinal"
+          className="bg-gradient-to-br from-sinal/[0.12] via-grafite/90 to-grafite/90"
           label="Aprovações pendentes"
           value={aprovacoesPendentes.data?.length ?? 0}
           isLoading={aprovacoesPendentes.isPending}
@@ -552,8 +572,8 @@ export default function TodayPage() {
           "Seu dia" mais "Saúde operacional", virando um retângulo vazio de uma
           tela de altura com uma frase no meio. Cada painel agora tem a altura
           do que tem dentro. */}
-      <div className="grid items-start gap-3 @min-[1000px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] @min-[1800px]:grid-cols-[minmax(0,5fr)_minmax(0,3.3fr)_minmax(0,3.7fr)]">
-        <Surface className="flex flex-col gap-3 p-4">
+      <div className="grid grid-cols-1 items-start gap-3 @min-[1000px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] @min-[1800px]:grid-cols-[minmax(0,5fr)_minmax(0,3.3fr)_minmax(0,3.7fr)]">
+        <Surface className="@container flex min-w-0 flex-col gap-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <h2 className="font-heading text-base font-semibold text-branco-cru">Prioridades de hoje</h2>
@@ -585,7 +605,7 @@ export default function TodayPage() {
           )}
         </Surface>
 
-        <div className="flex flex-col gap-3">
+        <div className="flex min-w-0 flex-col gap-3">
           <Surface className="flex flex-col gap-3 p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-base font-semibold text-branco-cru">Seu dia</h2>
@@ -611,40 +631,16 @@ export default function TodayPage() {
                 {mesmoDia(diaSelecionado, agora) ? 'Nenhuma reunião marcada pra hoje.' : 'Nenhuma reunião marcada nesse dia.'}
               </p>
             ) : (
-              <div className="max-h-[22rem] overflow-y-auto pl-2 pr-1">
-              {/* Teto de altura: num dia cheio (7+ reuniões) a coluna crescia e empurrava o resto do painel para fora da tela. A lista rola por dentro; o `pl-2` deixa os pontos da linha do tempo fora do corte. */}
-              <ul className="relative space-y-4 border-l border-grafite-elevado pl-4">
+              <ul className="max-h-[24rem] space-y-2 overflow-y-auto pr-1">
                 {eventosDoDia.data.map((evento) => (
-                  <li key={evento.id} className="relative">
-                    <span className="absolute -left-[21px] top-1 size-2.5 rounded-full bg-roxo-eletrico" />
-                    <p className="font-mono text-[11px] text-nevoa">{formatClockTime(evento.start_at)}</p>
-                    <p className="text-sm font-medium text-branco-cru">{evento.title ?? 'Sem título'}</p>
-                    {evento.meeting_url && (
-                      <a href={evento.meeting_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-nevoa hover:text-roxo-eletrico">
-                        <Video size={12} /> Link da reunião
-                      </a>
-                    )}
-                    {evento.location && (
-                      <p className="flex items-center gap-1 text-xs text-nevoa">
-                        <MapPin size={12} /> {evento.location}
-                      </p>
-                    )}
-                    {PARTICIPANTES_POR_TITULO[evento.title ?? ''] && (
-                      <div className="mt-1.5 flex -space-x-2">
-                        {PARTICIPANTES_POR_TITULO[evento.title ?? '']!.map((nome) => (
-                          <EntityAvatar key={nome} name={nome} kind="person" size="sm" className="ring-2 ring-grafite" />
-                        ))}
-                      </div>
-                    )}
-                  </li>
+                  <CompromissoDoDia key={evento.id} evento={evento} agendas={agendas} agora={agora} />
                 ))}
               </ul>
-              </div>
             )}
 
             <Link
               href="/calendar"
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-grafite-elevado py-2 text-sm text-nevoa transition-colors hover:border-roxo-eletrico/60 hover:text-branco-cru"
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-sinal/30 py-2 text-sm text-nevoa transition-colors hover:border-sinal/70 hover:bg-sinal/5 hover:text-branco-cru"
             >
               <Plus size={14} />
               Nova reunião
@@ -654,9 +650,9 @@ export default function TodayPage() {
           <SaudeOperacional consulta={tarefasDaAgencia} />
         </div>
 
-        {/* Terceira coluna: o resumo do que está esperando, empilhado. Abaixo de xl volta a ser uma
-            faixa de três colunas embaixo, como era. */}
-        <div className="grid content-start gap-3 @min-[700px]:grid-cols-3 @min-[1000px]:col-span-2 @min-[1800px]:col-span-1 @min-[1800px]:grid-cols-1">
+        {/* Terceira coluna: o resumo do que está esperando, empilhado. Mais estreito, vira uma faixa embaixo: 2x2
+            (quatro painéis em três colunas deixavam um sozinho na linha de baixo), e quatro lado a lado quando cabe. */}
+        <div className="grid min-w-0 grid-cols-1 content-start gap-3 @min-[640px]:grid-cols-2 @min-[1000px]:col-span-2 @min-[1300px]:grid-cols-4 @min-[1800px]:col-span-1 @min-[1800px]:grid-cols-1">
         <MidiaHojePanel />
         <ConversasRecentesPanel consulta={resumo.conversasRecentes} />
         <TarefasDoDiaPanel
@@ -670,6 +666,67 @@ export default function TodayPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Um compromisso do "Seu dia" (03/11/2026, pedido do Pedro: "elementos desconexos e desproporcionais"). Antes eram
+ * quatro linhas soltas numa linha do tempo (hora, título, "Link da reunião", local) com o mesmo ponto roxo para
+ * tudo. Agora cada compromisso é um bloco só: horário de início e fim à esquerda, a cor e o nome da agenda, e o
+ * "Entrar" como botão. O que está acontecendo agora ou começa em até uma hora ganha destaque.
+ */
+function CompromissoDoDia({ evento, agendas, agora }: { evento: CalendarEventWire; agendas: AgendaPintada[]; agora: Date }) {
+  const agenda = evento.calendar_id ? agendas.find((a) => a.id === evento.calendar_id) : agendas.find((a) => a.principal);
+  const cor = agenda?.cor ?? COR_PADRAO;
+  const inicio = new Date(evento.start_at).getTime();
+  const fim = new Date(evento.end_at).getTime();
+  const acontecendo = inicio <= agora.getTime() && agora.getTime() < fim;
+  const minutosParaComecar = Math.round((inicio - agora.getTime()) / 60_000);
+  const emBreve = !acontecendo && minutosParaComecar > 0 && minutosParaComecar <= 60;
+  const passou = fim <= agora.getTime();
+  const titulo = evento.visible ? evento.title || 'Sem título' : 'Ocupado';
+  const detalhes = [agenda?.nome, evento.visible ? evento.location : null].filter(Boolean).join(' · ');
+
+  return (
+    <li
+      className={cn(
+        'flex items-stretch gap-3 rounded-xl border bg-carbono/40 p-2.5 transition-colors',
+        acontecendo ? 'border-sinal/60 shadow-[0_0_0_1px_rgba(225,249,0,0.15)]' : 'border-branco-cru/[0.06] hover:border-sinal/30',
+        passou && 'opacity-60',
+      )}
+    >
+      <div className="flex w-12 shrink-0 flex-col justify-center text-right font-mono tabular-nums">
+        <span className="text-sm font-semibold text-branco-cru">{formatClockTime(evento.start_at)}</span>
+        <span className="text-[11px] text-nevoa">{formatClockTime(evento.end_at)}</span>
+      </div>
+      <span aria-hidden className={cn('w-1 shrink-0 rounded-full', cor.ponto)} />
+      <div className="min-w-0 flex-1 py-0.5">
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-branco-cru" title={titulo}>{titulo}</p>
+          {acontecendo && <span className="shrink-0 rounded-full bg-sinal px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-carbono">Agora</span>}
+          {emBreve && <span className="shrink-0 rounded-full bg-roxo-eletrico/20 px-2 py-0.5 text-[10px] font-semibold text-lilas">em {minutosParaComecar} min</span>}
+        </div>
+        {detalhes && (
+          <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-nevoa">
+            {evento.visible && evento.location && <MapPin size={11} className="shrink-0" />}
+            {detalhes}
+          </p>
+        )}
+      </div>
+      {evento.visible && evento.meeting_url && !passou && (
+        <a
+          href={evento.meeting_url}
+          target="_blank"
+          rel="noreferrer"
+          className={cn(
+            'flex shrink-0 items-center gap-1 self-center rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors',
+            acontecendo || emBreve ? 'bg-sinal text-carbono hover:shadow-sinal' : 'border border-branco-cru/10 text-nevoa hover:border-sinal/50 hover:text-branco-cru',
+          )}
+        >
+          <Video size={12} /> Entrar
+        </a>
+      )}
+    </li>
   );
 }
 
@@ -731,48 +788,56 @@ function AbasDeRecorte({
  * que é a pergunta que esta tela existe pra responder. Na lista anterior o
  * prazo ficava no fim de cada linha, em posição variável.
  *
- * No telefone as colunas somem e cada linha volta a ser um bloco empilhado,
- * porque tabela de 5 colunas em 390px não se lê.
+ * As colunas acompanham a largura do CARTÃO (container query), não a da janela
+ * (03/11/2026): num notebook o cartão divide a linha com "Seu dia" e as quatro
+ * colunas espremiam o título em "Preparar o..." e cortavam o selo do prazo.
+ * Estreito, cada linha é um bloco empilhado; médio, cliente e status descem
+ * pra baixo do título e o prazo fica na sua coluna; largo, as quatro colunas.
+ * Layout automático: prazo, status e cliente têm a largura do que mostram (o
+ * selo "ATRASADA · 182 DIAS" nunca é cortado) e o título fica com o resto.
  */
 function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
+  const th = 'px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa';
   return (
-    <div className="-mx-2 overflow-x-auto">
-      <table className="w-full table-fixed border-collapse text-left">
-        <thead className="hidden md:table-header-group">
+    <div className="-mx-2">
+      <table className="w-full border-collapse text-left">
+        <thead className="hidden @min-[520px]:table-header-group">
           <tr className="border-b border-grafite-elevado">
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa">Item</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[26%]">Cliente / Projeto</th>
-            <th className="px-2 pb-2 font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[15%]">Status</th>
-            <th className="px-2 pb-2 text-right font-mono text-[11px] font-normal uppercase tracking-wider text-nevoa md:w-[14%]">Prazo</th>
+            <th className={th}>Item</th>
+            <th className={cn(th, 'hidden @min-[820px]:table-cell')}>Cliente / Projeto</th>
+            <th className={cn(th, 'hidden @min-[820px]:table-cell')}>Status</th>
+            <th className={cn(th, 'text-right')}>Prazo</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-grafite-elevado">
           {itens.map((item) => (
-            <tr key={item.id} className="group transition-colors hover:bg-grafite-elevado/40">
-              <td className="min-w-0 px-2 py-3 align-middle">
+            <tr key={item.id} className="group transition-colors hover:bg-sinal/[0.04]">
+              <td className={cn('w-full max-w-0 px-2 py-3 align-middle', faixaDaLinha(item.prazo !== undefined ? urgenciaDoPrazo(item.prazo) : item.atrasada ? 'atrasado' : null))}>
                 <LinhaDeItem item={item}>
                   <span className={cn('size-2 shrink-0 rounded-full', PONTO_CLASS[item.badge.tom])} />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-branco-cru">{item.titulo}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-branco-cru" title={item.titulo}>{item.titulo}</span>
                 </LinhaDeItem>
-                {/* No telefone a tabela vira bloco: cliente, status e prazo
-                    descem pra baixo do título em vez de sumirem com as colunas. */}
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-4 md:hidden">
-                  <span className="text-xs text-nevoa">{item.cliente}</span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
-                  {item.quando && <span className="text-xs text-nevoa">{item.quando}</span>}
+                {/* Sem as colunas, cliente, status (e no estreito o prazo)
+                    descem pra baixo do título em vez de sumirem. */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-4 @min-[820px]:hidden">
+                  <span className="min-w-0 max-w-full truncate text-xs text-nevoa">{item.cliente}</span>
+                  <span className={cn('whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
+                  <span className="@min-[520px]:hidden">
+                    {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : item.quando && <span className="text-xs text-nevoa">{item.quando}</span>}
+                  </span>
                 </div>
               </td>
-              <td className="hidden px-2 py-3 align-middle md:table-cell">
+              <td className="hidden px-2 py-3 align-middle @min-[820px]:table-cell">
                 <div className="flex items-center gap-2">
                   <EntityAvatar name={item.cliente} kind="client" size="sm" />
-                  <span className="truncate text-sm text-nevoa">{item.cliente}</span>
+                  <span className="block max-w-[11rem] truncate text-sm text-nevoa" title={item.cliente}>{item.cliente}</span>
                 </div>
               </td>
-              <td className="hidden px-2 py-3 align-middle md:table-cell">
-                <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
+              <td className="hidden px-2 py-3 align-middle @min-[820px]:table-cell">
+                <span className={cn('inline-block whitespace-nowrap rounded-full px-2.5 py-1 align-middle text-xs font-semibold', BADGE_CLASS[item.badge.tom])}>{item.badge.label}</span>
               </td>
-              <td className="hidden whitespace-nowrap px-2 py-3 text-right align-middle text-sm md:table-cell">
-                <span className={item.atrasada ? 'text-erro' : 'text-nevoa'}>{item.quando}</span>
+              <td className="hidden whitespace-nowrap px-2 py-3 text-right align-middle text-sm @min-[520px]:table-cell">
+                {item.prazo !== undefined ? <Prazo prazo={item.prazo} /> : <span className={item.atrasada ? 'text-erro' : 'text-nevoa'}>{item.quando}</span>}
               </td>
             </tr>
           ))}
@@ -782,9 +847,16 @@ function TabelaDePrioridades({ itens }: { itens: ItemDePrioridade[] }) {
   );
 }
 
-/** Tudo no Hoje navega aqui dentro: tarefa abre a página interna de tarefas, não o ClickUp. */
+/** Tarefa do ClickUp abre no ClickUp (outra aba); o resto navega aqui dentro. */
 function LinhaDeItem({ item, children }: { item: ItemDePrioridade; children: React.ReactNode }) {
   const classe = 'flex items-center gap-2';
+  if (item.externo) {
+    return (
+      <a href={item.href} target="_blank" rel="noreferrer" className={classe}>
+        {children}
+      </a>
+    );
+  }
   return (
     <Link href={item.href} className={classe}>
       {children}
@@ -1182,7 +1254,7 @@ function AprovacoesPendentesPanel({ aprovacoes, clientes }: { aprovacoes: SecaoA
                 <p className="truncate text-sm text-branco-cru">{RESOURCE_TYPE_LABEL[a.resource_type] ?? a.resource_type}</p>
                 <p className="truncate text-xs text-nevoa">{nomeDoCliente(a.client_id)}{a.version ? ` · ${a.version}` : ''}</p>
               </div>
-              <span className="shrink-0 text-[11px] text-nevoa">{formatRelativeTime(a.created_at)}</span>
+              <AguardandoAprovacao desde={a.created_at} rotulo="Aprovar" className="shrink-0" />
             </Link>
           </li>
         ))}

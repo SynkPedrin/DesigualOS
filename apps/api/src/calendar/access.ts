@@ -40,6 +40,8 @@ export interface CalendarEventRow {
   visibility: string;
   status: string;
   createdBy: string;
+  /** Agenda de origem (Outlook) — a tela pinta cada agenda numa cor (agência, Manada Filmes...). */
+  externalCalendarId?: string | null;
 }
 
 export interface RedactedEvent {
@@ -57,6 +59,8 @@ export interface RedactedEvent {
   meeting_url: string | null;
   source: string;
   created_by: string;
+  /** De qual agenda o evento veio (null = criado aqui). Não revela nada: é só a cor. */
+  calendar_id: string | null;
 }
 
 /**
@@ -82,6 +86,7 @@ export function redactForViewer(event: CalendarEventRow, viewerId: string, parti
     meeting_url: podeVerDetalhe ? event.meetingUrl : null,
     source: event.source,
     created_by: event.createdBy,
+    calendar_id: event.externalCalendarId ?? null,
   };
 }
 

@@ -67,6 +67,13 @@ interface OpcoesDoCliente {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+export interface OpenwaGroupParticipant {
+  id: string;
+  number: string;
+  name?: string;
+  isAdmin?: boolean;
+}
+
 export class OpenwaClient {
   private readonly timeoutMs: number;
 
@@ -123,6 +130,8 @@ export class OpenwaClient {
     chatId: string;
     text: string;
     quotedMessageId?: string;
+    /** Ids de quem marcar (`5518...@c.us` ou `...@lid`); o texto leva `@<parte antes do @>` de cada um. */
+    mentions?: string[];
     idempotencyKey: string;
   }): Promise<OpenwaSentMessage> {
     const resposta = await this.requisitar(
@@ -133,6 +142,7 @@ export class OpenwaClient {
         text: input.text,
         linkPreview: false,
         ...(input.quotedMessageId ? { quotedMessageId: input.quotedMessageId } : {}),
+        ...(input.mentions?.length ? { mentions: input.mentions } : {}),
       },
       { 'Idempotency-Key': input.idempotencyKey },
     );
@@ -190,6 +200,23 @@ export class OpenwaClient {
    * o transporte funciona. O que a sessão representa (conectada ou não) é
    * informação de negócio — quem decida conectá-la é o painel.
    */
+  /**
+   * GET /api/sessions/:sessionId/contacts/check/:number — se o número tem WhatsApp e o id do chat dele. É uma consulta
+   * ao WhatsApp sobre terceiro: uma por pedido de quem está na tela, nunca em lote.
+   */
+  async checkNumber(number: string): Promise<{ exists: boolean; whatsappId: string | null }> {
+    const resposta = await this.requisitar('GET', `/api/sessions/${encodeURIComponent(this.opcoes.sessionId)}/contacts/check/${encodeURIComponent(number)}`);
+    const r = (await resposta.json()) as { exists?: boolean; whatsappId?: string | null };
+    return { exists: r.exists === true, whatsappId: typeof r.whatsappId === 'string' ? r.whatsappId : null };
+  }
+
+  /** GET /api/sessions/:sessionId/groups/:groupId — os participantes, para marcar com @. */
+  async groupParticipants(groupId: string): Promise<OpenwaGroupParticipant[]> {
+    const resposta = await this.requisitar('GET', `/api/sessions/${encodeURIComponent(this.opcoes.sessionId)}/groups/${encodeURIComponent(groupId)}`);
+    const grupo = (await resposta.json()) as { participants?: OpenwaGroupParticipant[] };
+    return grupo.participants ?? [];
+  }
+
   async health(): Promise<OpenwaHealth> {
     const resposta = await this.requisitar('GET', `/api/sessions/${encodeURIComponent(this.opcoes.sessionId)}`);
     const sessao = (await resposta.json()) as { status?: string };

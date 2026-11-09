@@ -1,14 +1,27 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CONVERSATION_STATUSES } from '@desigual-os/types';
-import { parseEvolutionWebhookEvent, phoneFromRemoteJid, WHATSAPP_MEDIA_MAX_BYTES } from '@desigual-os/tool-gateway';
+import { and, eq } from 'drizzle-orm';
+import { db, schema } from '@desigual-os/database';
+import {
+  abrirConversaComNumero,
+  createMicrosoftCalendarEvent,
+  listMicrosoftCalendars,
+  OpenwaError,
+  parseEvolutionWebhookEvent,
+  phoneFromRemoteJid,
+  resolveMicrosoftCalendarAccess,
+  senderForWhatsappSession,
+  WHATSAPP_MEDIA_MAX_BYTES,
+} from '@desigual-os/tool-gateway';
 import { createLogger } from '@desigual-os/logging';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { requireModule } from '../auth/require-module';
 import { clientBelongsToTenant, requireTenant } from '../lib/tenant-context';
 import { auditarAcao } from '../lib/auditoria';
 import * as svc from './service';
-import { sendMediaFast, sendTextFast } from './openwa-send';
+import { pessoasMarcaveis, sendMediaFast, sendTextFast } from './openwa-send';
+import { numeroParaWhatsapp } from './numero';
 
 /**
  * communications/routes.ts — Inbox (P1-A/C, 06/10/2026).
@@ -30,10 +43,16 @@ const listQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
-const sendMessageSchema = z.object({ text: z.string().trim().min(1).max(4000) });
+// `mentions`: só id individual do WhatsApp (o motor recusa o resto com um 500 sem explicação).
+const sendMessageSchema = z.object({
+  text: z.string().trim().min(1).max(4000),
+  mentions: z.array(z.string().regex(/^\d{5,20}(:\d+)?@(c\.us|lid|s\.whatsapp\.net)$/)).max(100).optional(),
+});
 const assignSchema = z.object({ userId: z.string().uuid().nullable() });
 const linkClientSchema = z.object({ clientId: z.string().uuid().nullable() });
 const statusSchema = z.object({ status: z.enum(CONVERSATION_STATUSES) });
+const novaConversaSchema = z.object({ phone: z.string().trim().min(1).max(40) });
+const DURACAO_DA_CHAMADA_MS = 30 * 60_000;
 
 interface PresentableThread {
   id: string;
@@ -134,6 +153,75 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
       return { threads: linhas.map(presentThread) };
     });
 
+    // "Nova conversa": abre a conversa com um número pelo WhatsApp de quem pediu. Não envia nada — a primeira mensagem
+    // sai pelo campo de sempre. Se já existe conversa com o número, devolve ela.
+    authed.post('/inbox/threads', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      const organizationId = request.tenantContext!.organizationId;
+      const userId = request.authUser!.id;
+      const numero = numeroParaWhatsapp(novaConversaSchema.parse(request.body).phone);
+      if (!numero) { reply.code(400); return { error: 'Número inválido. Digite com DDD, ou com + e o código do país.' }; }
+      const [session] = await db.select().from(schema.whatsappSessions).where(and(
+        eq(schema.whatsappSessions.organizationId, organizationId),
+        eq(schema.whatsappSessions.ownerUserId, userId),
+        eq(schema.whatsappSessions.status, 'ready'),
+      )).limit(1);
+      if (!session) { reply.code(409); return { error: 'Seu WhatsApp não está conectado. Conecte em Configurações para começar conversas.' }; }
+      let chatId = `${numero}@c.us`;
+      try {
+        const consulta = await senderForWhatsappSession(session).checkNumber(numero);
+        if (!consulta.exists) { reply.code(404); return { error: `O número +${numero} não tem WhatsApp.` }; }
+        if (consulta.whatsappId) chatId = consulta.whatsappId;
+      } catch (error) {
+        // 404/403 é o motor sem a consulta ou chave sem o papel OPERATOR que ela exige (OpenWA 0.25): segue pelo número,
+        // e o próprio envio confere. O resto é o WhatsApp sem responder agora, e isso não diz nada sobre o número.
+        if (!(error instanceof OpenwaError && (error.status === 404 || error.status === 403))) {
+          logger.warn({ error, sessionId: session.id }, 'Consulta de número no WhatsApp falhou');
+          reply.code(503);
+          return { error: 'O WhatsApp não respondeu agora. Tente de novo em instantes.' };
+        }
+      }
+      const thread = await abrirConversaComNumero(session, { chatId, phone: numero });
+      await auditarAcao(request, { action: 'conversation.started', resourceType: 'conversation_thread', resourceId: thread.id, metadata: { phone: numero } });
+      reply.code(201);
+      return presentThread(await svc.getThread(organizationId, thread.id, userId));
+    });
+
+    // Chamada de vídeo: reunião do Teams agora, na agenda Microsoft de quem pediu. Devolve o link para a pessoa mandar
+    // na conversa — quem decide enviar é ela.
+    authed.post<{ Params: { id: string } }>('/inbox/threads/:id/video-call', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
+      const userId = request.authUser!.id;
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, userId);
+      if (!thread) { reply.code(404); return { error: 'Conversa não encontrada.' }; }
+      const access = await resolveMicrosoftCalendarAccess(userId).catch(() => null);
+      if (!access) { reply.code(409); return { error: 'Conecte sua agenda Microsoft em Configurações para criar chamadas de vídeo.' }; }
+      const nome = thread.clientName ?? thread.contactName ?? thread.title ?? 'contato do WhatsApp';
+      try {
+        const agendas = await listMicrosoftCalendars(access.accessToken);
+        const agenda = agendas.find((a) => a.isDefault && a.canEdit) ?? agendas.find((a) => a.canEdit);
+        if (!agenda) { reply.code(409); return { error: 'Sua conta Microsoft não tem agenda onde criar a chamada.' }; }
+        const inicio = new Date();
+        const evento = await createMicrosoftCalendarEvent(access.accessToken, agenda.id, {
+          subject: `Chamada com ${nome}`,
+          description: 'Criada pela Inbox do Desigual OS.',
+          startIso: inicio.toISOString().slice(0, 19),
+          endIso: new Date(inicio.getTime() + DURACAO_DA_CHAMADA_MS).toISOString().slice(0, 19),
+          timezone: 'UTC',
+          requestTeamsMeeting: true,
+        });
+        await auditarAcao(request, { action: 'conversation.video_call_created', resourceType: 'conversation_thread', resourceId: thread.id, metadata: { teams: Boolean(evento.meetingUrl) } });
+        if (!evento.meetingUrl) {
+          reply.code(502);
+          return { error: 'O evento entrou na sua agenda, mas a conta Microsoft não gerou link do Teams (conta sem Teams).', web_link: evento.webLink };
+        }
+        reply.code(201);
+        return { join_url: evento.meetingUrl, web_link: evento.webLink };
+      } catch (error) {
+        logger.warn({ error, threadId: thread.id }, 'Falha ao criar a chamada de vídeo no Microsoft');
+        reply.code(502);
+        return { error: 'A Microsoft não criou a chamada agora. Tente de novo em instantes.' };
+      }
+    });
+
     authed.get<{ Params: { id: string } }>('/inbox/threads/:id', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
       const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) {
@@ -153,6 +241,21 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
       return { messages: mensagens.map(presentMessage) };
     });
 
+    // Quem dá para marcar com @ nesta conversa (participantes do grupo). Falha do WhatsApp vira lista vazia: sem a
+    // sugestão, a mensagem continua indo.
+    authed.get<{ Params: { id: string } }>('/inbox/threads/:id/mentionables', { preHandler: requirePermission('communications', 'read') }, async (request, reply) => {
+      const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
+      if (!thread) {
+        reply.code(404);
+        return { error: `Thread '${request.params.id}' not found` };
+      }
+      const pessoas = await pessoasMarcaveis(request.tenantContext!.organizationId, thread).catch((error: unknown) => {
+        logger.warn({ error, threadId: thread.id }, 'Participantes do grupo indisponíveis para marcar');
+        return [];
+      });
+      return { people: pessoas };
+    });
+
     authed.post<{ Params: { id: string } }>('/inbox/threads/:id/messages', { preHandler: requirePermission('communications', 'write') }, async (request, reply) => {
       const thread = await svc.getThread(request.tenantContext!.organizationId, request.params.id, request.authUser!.id);
       if (!thread) {
@@ -161,7 +264,7 @@ export async function registerCommunicationRoutes(app: FastifyInstance): Promise
       }
       const body = sendMessageSchema.parse(request.body);
       if (thread.whatsappSessionId) {
-        const rapido = await sendTextFast({ organizationId: request.tenantContext!.organizationId, thread, senderUserId: request.authUser!.id, text: body.text });
+        const rapido = await sendTextFast({ organizationId: request.tenantContext!.organizationId, thread, senderUserId: request.authUser!.id, text: body.text, mentions: body.mentions });
         if (!rapido.ok) { reply.code(409); return { error: rapido.detail }; }
         reply.code(201);
         return presentMessage(rapido.message);

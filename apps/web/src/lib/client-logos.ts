@@ -28,6 +28,10 @@ const LOGO_POR_NOME: Record<string, string> = {
   apae: '/logos/clientes/apae.png',
   'areia branca': '/logos/clientes/areia-branca.png',
   'citavel enterprise': '/logos/clientes/citavel-enterprise.png',
+  // Entregue em 18/10 em `assets/logos clientes/` e esquecido fora deste mapa até 03/11 ("clínica são josé está
+  // sem logo"). As duas grafias: a carteira às vezes registra só "São José".
+  'clinica sao jose': '/logos/clientes/clinica-sao-jose.png',
+  'sao jose': '/logos/clientes/clinica-sao-jose.png',
   colpar: '/logos/clientes/colpar.png',
   // Mesma marca, segundo registro na carteira ("Colpar Brasil"). O mapa casa
   // por nome normalizado, então variação de nome vira cliente sem logo —

@@ -22,7 +22,10 @@ import {
 } from '@/hooks/use-internal-chat';
 import { InboxAvatar } from '@/components/inbox/inbox-avatar';
 import { toast } from '@/stores/toast-store';
+import { CriarTarefaDaily } from '@/components/daily-tasks/criar-tarefa-da-mensagem';
+import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { cn } from '@/lib/utils';
+import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
 
 /** Moldura comum dos modais da Comunicação: Esc fecha, clique fora fecha. */
 export function Modal({ titulo, onClose, children, largura = 'max-w-md' }: { titulo: string; onClose: () => void; children: ReactNode; largura?: string }) {
@@ -252,6 +255,20 @@ export function CriarTarefa({ conversationId, mensagem, onClose }: { conversatio
   const [prazo, setPrazo] = useState('');
   const [prioridade, setPrioridade] = useState('3');
   const comLista = (clientes.data ?? []).filter((c) => c.clickupListId);
+  // Destino: só oferece o Daily Tasks (beta) a quem o módulo está liberado; sem ele, nada muda para ninguém.
+  const daily = useDailyTasksAccess().data?.allowed === true;
+  const [escolhido, setDestino] = useState<'clickup' | 'daily' | null>(null);
+  const destino = escolhido ?? (daily ? 'daily' : 'clickup');
+  if (daily && destino === 'daily') {
+    return (
+      <Modal titulo="Criar tarefa no Daily Tasks" onClose={onClose} largura="max-w-lg">
+        <div className="space-y-3 p-4">
+          <button type="button" onClick={() => setDestino('clickup')} className="text-xs text-nevoa hover:text-branco-cru">← criar no ClickUp em vez disso</button>
+          <CriarTarefaDaily conversationId={conversationId} messageId={mensagem.id} senderName={mensagem.sender_name} texto={mensagem.content ?? ''} anexos={mensagem.attachments.map((a) => ({ id: a.id, filename: a.filename }))} onClose={onClose} />
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal titulo="Criar tarefa no ClickUp" onClose={onClose} largura="max-w-lg">
       <form className="space-y-3 p-4" onSubmit={(e) => {
@@ -266,11 +283,12 @@ export function CriarTarefa({ conversationId, mensagem, onClose }: { conversatio
           onError: (err) => toast(err.message, 'error'),
         });
       }}>
+        {daily && <button type="button" onClick={() => setDestino('daily')} className="text-xs text-roxo-eletrico hover:underline">Criar no Daily Tasks (beta) →</button>}
         <blockquote className="rounded-md border-l-2 border-nevoa/40 bg-grafite-elevado/40 px-3 py-2 text-xs text-nevoa">
           <span className="font-semibold">{mensagem.sender_name}:</span> {(mensagem.content ?? '').slice(0, 300) || 'mensagem com anexo'}
         </blockquote>
         <label className="block text-xs text-nevoa">Título<input autoFocus required minLength={3} value={titulo} onChange={(e) => setTitulo(e.target.value)} maxLength={250} className={cn(campo, 'mt-1')} /></label>
-        <label className="block text-xs text-nevoa">Descrição (opcional — a mensagem de origem vai junto)<textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={3} className={cn(campo, 'mt-1 resize-y')} /></label>
+        <label className="block text-xs text-nevoa">Descrição (opcional — a mensagem de origem vai junto)<TextareaFormatavel value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={3} className={cn(campo, 'mt-1 resize-y')} /></label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-xs text-nevoa">Cliente (lista do ClickUp)
             <select required value={cliente} onChange={(e) => setCliente(e.target.value)} className={cn(campo, 'mt-1')}>
@@ -326,7 +344,7 @@ export function EscolherConversa({ onClose, onPick, enviando }: { onClose: () =>
             </li>
           ))}
         </ul>
-        <label className="block text-xs text-nevoa">Comentário (opcional)<textarea value={comentario} onChange={(e) => setComentario(e.target.value)} rows={2} maxLength={2000} className={cn(campo, 'mt-1 resize-y')} /></label>
+        <label className="block text-xs text-nevoa">Comentário (opcional)<TextareaFormatavel value={comentario} onChange={(e) => setComentario(e.target.value)} rows={2} maxLength={2000} className={cn(campo, 'mt-1 resize-y')} /></label>
         <p className="text-[11px] text-nevoa">Quem não tiver acesso ao item vê só um aviso — compartilhar não libera os dados.</p>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-md px-3 py-2 text-sm text-nevoa hover:text-branco-cru">Cancelar</button>

@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NAV_ITEMS } from '@/components/shell/nav-items';
 import { ThemeProvider } from '@/app/theme-provider';
 
+// jsdom não traz ResizeObserver, e as listas do Daily Tasks (borda que esmaece onde há mais conteúdo) o usam.
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+
 /**
  * TODA TELA DO SIDEBAR PRECISA ABRIR SEM QUEBRAR.
  *

@@ -4,6 +4,7 @@ import { APPROVAL_RESOURCE_TYPES, APPROVAL_STATUSES } from '@desigual-os/types';
 import { requireAuth, requirePermission } from '../auth/middleware';
 import { requireModule } from '../auth/require-module';
 import { requireTenant } from '../lib/tenant-context';
+import { registrarResolucao } from '@desigual-os/work-engine';
 import * as svc from './service';
 
 /**
@@ -109,6 +110,10 @@ export async function registerApprovalRequestRoutes(app: FastifyInstance): Promi
       return { error: resultado.reason === 'not_found' ? 'Approval not found' : 'This approval was already resolved by someone else.' };
     }
 
+    // Aprovação de uma tarefa do Daily Tasks: deixa o rastro na tarefa e avisa quem pediu (não faz nada para os outros tipos).
+    if (resultado.approval.resourceType === 'task') {
+      await registrarResolucao({ organizationId: request.tenantContext!.organizationId, userId: request.authUser!.id }, resultado.approval).catch((error) => request.log.warn({ error }, 'Falha ao registrar a aprovação na tarefa'));
+    }
     return present(resultado.approval);
   });
 }

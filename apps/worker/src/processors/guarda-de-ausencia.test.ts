@@ -167,3 +167,22 @@ describe('respostaDeUltimoRecurso', () => {
     expect(trechosDeAusencia(texto)).toEqual([]);
   });
 });
+
+describe('casos reais de 09/11/2026 (DCS, Endrigo)', () => {
+  const ev = (fonte: string, texto: string, citavel: boolean) =>
+    ({ fonte, sourceType: fonte, sourceId: null, clientId: null, confidence: 0.9, citavel, texto }) as never;
+  const dialogo = ev('dialogo', 'Usuário: quais os endereços da DCS ?\nBento: Encontrei isto registrado no sistema:', false);
+  const canonico = ev('client.profile', '[DADOS CANONICOS (fatos oficiais)]\n## Unidades\n- Birigui (matriz): Av. Nove de Julho, 1491, Birigui/SP\n- Araçatuba: Rua Rio de Janeiro, 236', true);
+
+  it('a própria pergunta no histórico da conversa não conta como "o dado está nas fontes"', () => {
+    expect(coberturaDoTopico('enderecos', [dialogo]).coberto).toBe(false);
+  });
+
+  it('com os dados canônicos entregues, o último recurso cita eles, em linhas inteiras, e não a conversa', () => {
+    const c = coberturaDoTopico('unidades', [dialogo, canonico]);
+    expect(c.coberto).toBe(true);
+    const texto = respostaDeUltimoRecurso([c]);
+    expect(texto).toContain('- Birigui (matriz): Av. Nove de Julho, 1491, Birigui/SP');
+    expect(texto).not.toContain('Usuário:');
+  });
+});

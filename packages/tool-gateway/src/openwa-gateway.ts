@@ -348,6 +348,22 @@ export class OpenwaGatewayClient {
     }
   }
 
+  /**
+   * Telefone (só dígitos) de um contato `@lid`, pela tabela lid→telefone do próprio OpenWA. Funciona com ou sem
+   * `RESOLVE_LID_TO_PHONE` no motor. `null` quando o WhatsApp não revela o número (404/422): não é erro.
+   */
+  async resolvePhone(contactId: string): Promise<string | null> {
+    try {
+      const response = await this.request('GET', this.sessionPath(`/contacts/${encodeURIComponent(contactId)}/phone`), undefined, {}, 15_000);
+      const body = await response.json() as { phone?: string | null };
+      const digits = body.phone?.replace(/\D/g, '') ?? '';
+      return digits.length >= 8 && digits.length <= 15 ? digits : null;
+    } catch (error) {
+      if (error instanceof OpenwaGatewayError && error.status !== null && error.status >= 400 && error.status < 500 && error.status !== 429) return null;
+      throw error;
+    }
+  }
+
   async downloadMedia(chatId: string, messageId: string, maxBytes: number): Promise<{ bytes: Buffer; mimetype: string }> {
     const response = await this.request('GET', this.sessionPath(`/messages/${encodeURIComponent(chatId)}/${encodeURIComponent(messageId)}/media`));
     const declared = Number(response.headers.get('content-length') ?? '0');

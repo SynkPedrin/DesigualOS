@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { pintarAgendas } from './cores-das-agendas';
 import { Link2, RefreshCw } from 'lucide-react';
 import { useMe } from '@/hooks/use-me';
 import {
@@ -13,28 +14,68 @@ import {
 } from '@/hooks/use-microsoft-calendar';
 
 /**
+ * As agendas de quem está logado: as vinculadas, com nome e cor (Desigual, Manada Filmes...), e as da conta Outlook
+ * que ainda não foram vinculadas, para o "+ Agenda" das abas. A API sincroniza a agenda na hora em que ela é vinculada.
+ */
+export function useAgendas() {
+  const integration = useMicrosoftCalendarIntegration();
+  const contas = useMicrosoftCalendarAccounts();
+  const daConta = useMicrosoftCalendarList(integration.data?.connected === true);
+  const vincular = useLinkMicrosoftCalendarAccount();
+  const agendas = useMemo(() => pintarAgendas(contas.data ?? [], daConta.data ?? []), [contas.data, daConta.data]);
+  const paraAdicionar = useMemo(() => {
+    const jaVinculadas = new Set((contas.data ?? []).map((c) => c.external_calendar_id));
+    return (daConta.data ?? []).filter((c) => !jaVinculadas.has(c.id)).map((c) => ({ id: c.id, nome: c.name ?? 'Agenda' }));
+  }, [contas.data, daConta.data]);
+  return { agendas, paraAdicionar, adicionar: (id: string) => vincular.mutate(id), adicionando: vincular.isPending };
+}
+
+/**
  * Banner de conexão do Microsoft 365/Outlook Calendar na página /calendar
  * (07/10/2026, pedido explícito do usuário: "o calendário que a operação vai
  * usar é o do Outlook"). Três estados, idênticos ao GoogleCalendarConnect:
  * desconectado → conectado sem agenda vinculada → vinculado (com sync manual).
  */
-export function MicrosoftCalendarConnect() {
+/** `soAviso`: só o aviso de conexão expirada, para o calendário do Daily, que não tem o banner inteiro. */
+export function MicrosoftCalendarConnect({ soAviso = false }: { soAviso?: boolean } = {}) {
   const integration = useMicrosoftCalendarIntegration();
   const connect = useConnectMicrosoftCalendar();
   const contas = useMicrosoftCalendarAccounts();
   const { data: me } = useMe();
-  const agendasMicrosoft = useMicrosoftCalendarList(integration.data?.connected === true && (contas.data?.length ?? 0) === 0);
+  // Lista das agendas da conta, para escolher a primeira. As outras (ex.: Manada Filmes) entram pelo "+ Agenda" das abas.
+  const agendasMicrosoft = useMicrosoftCalendarList(integration.data?.connected === true);
   const vincular = useLinkMicrosoftCalendarAccount();
   const sincronizar = useSyncMicrosoftCalendarAccount();
   const [selecionada, setSelecionada] = useState('');
 
   if (integration.isPending || contas.isPending) return null;
 
-  const contaVinculada = contas.data?.[0] ?? null;
+  const vinculadas = contas.data ?? [];
+  const contaVinculada = vinculadas[0] ?? null;
+
+  if (contaVinculada && integration.data?.connected === false) {
+    // A agenda segue vinculada, mas a conexão com o Outlook expirou: sem este aviso a tela mostrava "sincronizado" com a
+    // data velha, o mês vazio e nenhuma pista do porquê (03/11/2026).
+    return (
+      <div role="alert" className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-aviso/50 bg-aviso/10 px-3 py-2 text-xs">
+        <span className="text-branco-cru">A conexão com o seu Outlook expirou. Os seus compromissos pararam de sincronizar até você reconectar.</span>
+        <button
+          type="button"
+          onClick={() => connect.mutate()}
+          disabled={connect.isPending}
+          className="ml-auto flex items-center gap-1 rounded-md bg-roxo-eletrico px-2.5 py-1 font-medium text-branco-cru hover:opacity-90 disabled:opacity-60"
+        >
+          <Link2 size={11} /> {connect.isPending ? 'Abrindo o Outlook…' : 'Reconectar Outlook'}
+        </button>
+      </div>
+    );
+  }
+  if (soAviso) return null;
 
   if (contaVinculada) {
+    const ultima = vinculadas.map((c) => c.last_synced_at).filter(Boolean).sort().pop();
     return (
-      <div className="mb-3 flex items-center justify-between rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-xs">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-xs">
         <span className="text-nevoa">
           {/*
             * O NOME DE QUEM CONECTOU, não o id da agenda (14/10/2026, pedido do
@@ -43,13 +84,13 @@ export function MicrosoftCalendarConnect() {
             * logado (a API filtra por usuário), então o nome certo é o dele.
             */}
           Outlook: <span className="text-branco-cru">{me?.name?.trim() || 'sua agenda'}</span>
-          {contaVinculada.last_synced_at && ` · sincronizado ${new Date(contaVinculada.last_synced_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`}
+          {ultima && ` · sincronizado ${new Date(ultima).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`}
         </span>
         <button
           type="button"
-          onClick={() => sincronizar.mutate(contaVinculada.id)}
+          onClick={() => vinculadas.forEach((c) => sincronizar.mutate(c.id))}
           disabled={sincronizar.isPending}
-          className="flex items-center gap-1 rounded-md border border-grafite-elevado px-2 py-1 text-nevoa hover:border-roxo-eletrico/50 hover:text-branco-cru"
+          className="ml-auto flex items-center gap-1 rounded-md border border-grafite-elevado px-2 py-1 text-nevoa hover:border-roxo-eletrico/50 hover:text-branco-cru"
         >
           <RefreshCw size={11} className={sincronizar.isPending ? 'animate-spin' : ''} /> Sincronizar agora
         </button>

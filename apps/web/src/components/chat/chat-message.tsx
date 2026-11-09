@@ -15,6 +15,7 @@ import { formatClockTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { AgentName, ExecutionStatus } from '@desigual-os/types';
 import type { ChatMotionBriefRequestWire, TeamMember, AgentToolCallWire } from '@/lib/api/contracts';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 /** Anexo de mensagem persistida (attachment_url/type/filename do backend). */
 export interface ChatUiAttachment {
@@ -217,7 +218,7 @@ export function ChatMessage({
                   isLast && 'rounded-tr-sm',
                 )}
               >
-                <span className="whitespace-pre-wrap">{block}</span>
+                <span className="whitespace-pre-wrap">{textoComLinks(block, '')}</span>
                 {isLast && message.createdAt && (
                   <span className="ml-2 font-mono text-[10px] text-roxo-eletrico/70">
                     {formatClockTime(message.createdAt)}

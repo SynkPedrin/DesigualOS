@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { AlertTriangle, ArrowLeft, CalendarOff, ExternalLink, Lock, ShieldAlert } from 'lucide-react';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Prazo } from '@/components/ui/prazo';
 import { Surface } from '@/components/ui/surface';
 import { useDetalheDoColaborador, type TarefaDaGestao } from '@/hooks/use-gestao';
 import { useIsMaster } from '@/hooks/use-is-master';
@@ -19,7 +20,6 @@ import { cn } from '@/lib/utils';
  */
 
 const DIA = 24 * 60 * 60_000;
-const data = (ms: number) => new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(ms));
 const diaDaSemana = (iso: string) => new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' }).format(new Date(iso));
 const RESPONSABILIDADE: Record<string, string> = { manager: 'Gestão', account: 'Atendimento', traffic: 'Tráfego', design: 'Design', video: 'Vídeo', social: 'Social', copy: 'Redação', sales: 'Comercial', other: 'Outro' };
 
@@ -42,7 +42,7 @@ function LinhaDeTarefa({ t }: { t: TarefaDaGestao }) {
         <span className="block truncate text-sm text-branco-cru">{t.name}</span>
         <span className="block truncate text-[11px] text-nevoa">{[t.client?.name, t.list_name, t.status].filter(Boolean).join(' · ')}</span>
       </span>
-      <span className={cn('shrink-0 font-mono text-[11px]', t.atrasada ? 'text-erro' : 'text-nevoa')}>{t.due_date ? data(t.due_date) : 'sem prazo'}</span>
+      <Prazo prazo={t.due_date} className="shrink-0" />
       {t.url && <ExternalLink size={13} className="shrink-0 text-nevoa" aria-hidden />}
     </>
   );
@@ -148,7 +148,7 @@ export default function ColaboradorPage() {
                 <ul className="space-y-1">{d.demandas.map((q) => (
                   <li key={q.id} className="flex items-center gap-2 text-sm">
                     <span className="min-w-0 flex-1 truncate text-branco-cru">{q.title}{q.client_name && <span className="text-nevoa"> · {q.client_name}</span>}</span>
-                    <span className={cn('shrink-0 font-mono text-[11px]', q.atrasada ? 'text-erro' : 'text-nevoa')}>{q.due_date ? data(Date.parse(q.due_date)) : 'sem prazo'}</span>
+                    <Prazo prazo={q.due_date} className="shrink-0" />
                   </li>
                 ))}</ul>
               )}

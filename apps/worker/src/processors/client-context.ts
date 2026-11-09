@@ -66,10 +66,22 @@ const PERFIL_MAX_CHARS = 9000;
  * UMA DELAS ao acaso, e a que faltasse viraria exatamente a lacuna que o modelo
  * preenche inventando. Por isso: le todas, ordena e rotula.
  */
-const ORDEM_DAS_FONTES = ['brain', 'dossie', 'aprendizado'] as const;
+const ORDEM_DAS_FONTES = ['canonico', 'brain', 'dossie', 'vault', 'aprendizado'] as const;
+
+/**
+ * DADOS CANÔNICOS VÊM PRIMEIRO, COM ESPAÇO PRÓPRIO (09/11/2026). O Endrigo perguntou ao Bento as unidades, endereços e
+ * telefones da DCS e o médico responsável com o CRM; o Bento disse que não tinha. Tinha: na nota `dados-canonicos`
+ * do vault (validada pela gerente da cliente), que nunca foi importada e que, importada, entraria cortada no fim do
+ * orçamento comum. Agora é uma fonte própria, a primeira do bloco, com orçamento SEPARADO (até o corpo clínico e os
+ * convênios cabem), sem tirar espaço do brain, do dossiê e do que a equipe ensinou.
+ */
+const CANONICO_MAX_CHARS = 12_000;
 type FonteDePerfil = (typeof ORDEM_DAS_FONTES)[number] | 'outra';
 
 const ROTULO_DA_FONTE: Record<FonteDePerfil, string> = {
+  canonico:
+    'DADOS CANONICOS (fatos oficiais validados pelo cliente: unidades, enderecos, telefones, CNPJ, corpo clinico; responda com eles. Valem sobre qualquer outra ficha que marque o mesmo dado como pendente, [FALTA] ou [CONFIRMAR])',
+  vault: 'NOTAS DO VAULT (anotacoes da equipe, menos curadas que as fichas)',
   brain: 'REGISTRO CRIATIVO (posicionamento, publico, tom de voz)',
   dossie: 'REGISTRO OPERACIONAL (contrato, servicos, historico, lacunas)',
   // Vem por ultimo de proposito: e o mais RECENTE. O que a equipe contou depois
@@ -96,6 +108,8 @@ const MIN_CHARS_POR_FONTE = 2000;
  */
 export function fonteDoPerfil(subject: unknown): FonteDePerfil {
   if (typeof subject !== 'string') return 'outra';
+  // A nota canônica chega como nota do vault (`cliente:<id>:vault:dcs/dados-canonicos.md`): é o NOME que a separa.
+  if (/(^|[:/])dados-canonicos(\.md)?$/.test(subject)) return 'canonico';
   const achada = subject.split(':').find((seg) => (ORDEM_DAS_FONTES as readonly string[]).includes(seg));
   return (achada as FonteDePerfil | undefined) ?? 'outra';
 }
@@ -110,8 +124,15 @@ export function comporPerfil(
   orcamento = PERFIL_MAX_CHARS,
   agora: Date = new Date(),
 ): string | null {
-  const uteis = fontes.filter((f) => f.content.trim().length > 0);
-  if (uteis.length === 0) return null;
+  const todas = fontes.filter((f) => f.content.trim().length > 0);
+  if (todas.length === 0) return null;
+  // Orçamento próprio da fonte canônica: ela não disputa espaço com as fichas.
+  const canonicas = todas.filter((f) => f.fonte === 'canonico');
+  const uteis = todas.filter((f) => f.fonte !== 'canonico');
+  const blocoCanonico = canonicas.length
+    ? `[${ROTULO_DA_FONTE.canonico}${idadeDaFonte(canonicas.map((c) => c.atualizadoEm).filter((d): d is Date => Boolean(d)).sort((a, b) => b.getTime() - a.getTime())[0], agora)}]\n${canonicas.map((c) => c.content.trim()).join('\n').slice(0, CANONICO_MAX_CHARS)}`
+    : null;
+  if (uteis.length === 0) return blocoCanonico;
 
   // Agrupa antes de repartir: 'aprendizado' chega como VARIOS registros (um por
   // aspecto), e trata-los como fontes separadas daria a cada fato um cabecalho
@@ -139,6 +160,7 @@ export function comporPerfil(
     restante -= texto.length;
   });
 
+  if (blocoCanonico) blocos.unshift(blocoCanonico);
   return blocos.length > 0 ? blocos.join('\n\n') : null;
 }
 
@@ -169,8 +191,13 @@ function indiceDaFonte(f: FonteDePerfil): number {
 }
 
 /**
- * Resolve o cliente do turno. Precedência: cliente da execução (seletor do
- * chat) > cliente citado no texto. Nunca "escolhe" quando há ambiguidade.
+ * Resolve o cliente do turno. Precedência: cliente CITADO no texto > cliente da execução (seletor do chat). Nunca
+ * "escolhe" quando há ambiguidade.
+ *
+ * O NOME CITADO MANDA (09/11/2026). Era o contrário: a conversa ficou presa no cliente da pergunta anterior
+ * ("que citável manager?") e "qual o endereço da dcs" foi respondido com o dossiê da Citável, sem nenhuma ficha da
+ * DCS — "não tenho o endereço". Quem escreve o nome de um cliente está falando dele; o seletor vale quando a mensagem
+ * não cita ninguém ou cita o próprio cliente selecionado.
  */
 export async function resolveClientTurnContext(params: {
   message: string;
@@ -198,6 +225,8 @@ export async function resolveClientTurnContext(params: {
   const ambiguous = (doTexto?.ambiguous ?? []).map((a) => (typeof a === 'string' ? a : (a as { name?: string }).name ?? '')).filter(Boolean);
 
   let clientId = params.executionClientId ?? null;
+  const citados = doTexto?.matches ?? [];
+  if (clientId && citados.length > 0 && !citados.some((m) => m.id === clientId)) clientId = citados[0]!.id;
   let clientName: string | null = null;
   // Ambiente do cliente do turno; preenchido junto com o nome, na mesma query.
   let ambienteResolvido = 'production';

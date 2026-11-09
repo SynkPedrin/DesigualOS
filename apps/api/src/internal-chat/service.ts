@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, getTableColumns, inArray, isNull, lt, ne, sql, type SQL } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
+import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
 
 /**
  * Comunicação interna — regras de acesso e dados. Toda função recebe a
@@ -19,13 +20,14 @@ import { db, schema } from '@desigual-os/database';
  */
 
 export type Conversa = typeof schema.internalConversations.$inferSelect;
-type Mensagem = typeof schema.internalMessages.$inferSelect;
+export type Mensagem = typeof schema.internalMessages.$inferSelect;
 type Anexo = typeof schema.internalMessageAttachments.$inferSelect;
 type ObjetoDaMensagem = typeof schema.internalMessageObjects.$inferSelect;
 
 export const LIMITE_DE_TEXTO = 8000;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_MEMBROS_POR_GRUPO = 50;
+const PESSOA_DO_CLICKUP = `%@${DOMINIO_DE_PESSOA_DO_CLICKUP}`;
 
 export class AcessoNegado extends Error {
   constructor(message = 'Conversa não encontrada.') {
@@ -163,6 +165,10 @@ export async function podeVerEntidade(organizationId: string, userId: string, en
   if (entityType === 'demand') {
     const [d] = await db.execute<{ id: string }>(sql`select d.id from demands d where d.id = ${entityId} and d.organization_id = ${organizationId} limit 1`);
     return Boolean(d);
+  }
+  if (entityType === 'work_task') {
+    const [t] = await db.select({ id: schema.workTasks.id }).from(schema.workTasks).where(and(eq(schema.workTasks.id, entityId), eq(schema.workTasks.organizationId, organizationId))).limit(1);
+    return Boolean(t);
   }
   return false;
 }
@@ -458,10 +464,11 @@ export async function listarConversas(organizationId: string, userId: string): P
   await prepararGeral(organizationId, userId);
   const linhas = await db.execute<LinhaDaLista>(sql`
     select c.id, c.kind, c.title, c.description, c.visibility, c.archived_at, c.entity_type, c.entity_id, c.last_message_at, me.muted_at, me.role,
-      p.id as partner_id, p.name as partner_name, p.avatar_url as partner_avatar, (p.active and p.deleted_at is null) as partner_active,
+      -- Pessoa só do ClickUp (sem login, inativa) conta como ativa aqui: a conversa com ela é a conversa do ClickUp.
+      p.id as partner_id, p.name as partner_name, p.avatar_url as partner_avatar, ((p.active or p.email like ${PESSOA_DO_CLICKUP}) and p.deleted_at is null) as partner_active,
       case when c.kind = 'group' then (
         select array_agg(u.name order by u.name) from internal_conversation_members o join users u on u.id = o.user_id
-        where o.conversation_id = c.id and o.user_id <> ${userId} and u.active
+        where o.conversation_id = c.id and o.user_id <> ${userId} and (u.active or u.email like ${PESSOA_DO_CLICKUP})
       ) end as member_names,
       (select count(*)::int from internal_conversation_members o where o.conversation_id = c.id) as member_count,
       lm.content as last_content, lm.sender_id as last_sender_id, ls.name as last_sender_name, (lm.deleted_at is not null) as last_deleted, lm.kind as last_kind,
@@ -1048,7 +1055,7 @@ export async function buscar(organizationId: string, userId: string, filtros: Fi
   const partes: SQL[] = [
     sql`m.organization_id = ${organizationId}`,
     sql`m.deleted_at is null`,
-    sql`m.kind = 'user'`,
+    sql`m.kind in ('user', 'clickup', 'clickup_externo')`, // o histórico vindo do ClickUp também é buscável
     leituraSql('c', organizationId, userId),
   ];
   if (q.length >= 2) partes.push(sql`m.content ilike ${escaparLike(q)}`);

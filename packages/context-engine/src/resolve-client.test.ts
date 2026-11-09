@@ -78,6 +78,7 @@ const REAIS: FakeClient[] = [
   { id: 'c-fratelli', name: 'Gelateria Fratelli', slug: 'gelateria-fratelli' },
   { id: 'c-damata', name: 'Da Mata', slug: 'da-mata' },
   { id: 'c-teste', name: 'teste', slug: 'teste' },
+  { id: 'c-dcs', name: 'DCS - Diagnostico por imagem', slug: 'dcs-diagnostico-por-imagem' },
 ];
 
 beforeEach(() => {
@@ -299,5 +300,16 @@ describe('palavra comum não sequestra cliente', () => {
     // "Costa" sozinho não pode arrastar "Costa Azul" quando o texto diz outra coisa.
     const r = await resolveClientsFromText('falei com a Costa Rica ontem');
     expect(r.matches.map((m) => m.name)).not.toContain('Costa Azul');
+  });
+});
+
+describe('sigla no começo do nome (09/11/2026)', () => {
+  it('"dcs" no texto acha "DCS - Diagnostico por imagem", em minúscula e com pontuação colada', async () => {
+    expect((await resolveClientFromText('bento qual crm ou plataforma a dcs utiliza?'))?.id).toBe('c-dcs');
+    expect((await resolveClientFromText('qual o endereço da dcs/'))?.id).toBe('c-dcs');
+    expect((await resolveClientFromText('Qual o médico responsável pela DCS?'))?.id).toBe('c-dcs');
+  });
+  it('a sigla precisa aparecer como palavra inteira', async () => {
+    expect((await resolveClientFromText('falei com os dcsx hoje'))?.id).not.toBe('c-dcs');
   });
 });

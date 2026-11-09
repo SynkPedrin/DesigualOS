@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 
@@ -55,6 +56,9 @@ export function CollaboratorAvatar({
   className?: string;
 }) {
   const initials = clickupInitials?.trim() || deriveInitials(name);
+  // Foto que não carrega (arquivo apagado, Storage fora do ar) cai nas iniciais, nunca em imagem quebrada.
+  const [falhou, setFalhou] = useState<string | null>(null);
+  const foto = avatarUrl && falhou !== avatarUrl ? avatarUrl : null;
 
   return (
     <span className={cn('relative block shrink-0', className)}>
@@ -62,12 +66,12 @@ export function CollaboratorAvatar({
         className={cn(
           'relative flex items-center justify-center overflow-hidden rounded-full font-mono font-semibold text-branco-cru ring-1 ring-white/10',
           SIZE_CLASSES[size],
-          !avatarUrl && !clickupColor && 'bg-roxo-eletrico',
+          !foto && !clickupColor && 'bg-roxo-eletrico',
         )}
-        style={!avatarUrl && clickupColor ? { backgroundColor: clickupColor } : undefined}
+        style={!foto && clickupColor ? { backgroundColor: clickupColor } : undefined}
       >
-        {avatarUrl ? (
-          <Image src={avatarUrl} alt={name} width={SIZE_PX[size]} height={SIZE_PX[size]} unoptimized className="size-full object-cover" />
+        {foto ? (
+          <Image src={foto} alt={name} width={SIZE_PX[size]} height={SIZE_PX[size]} unoptimized className="size-full object-cover" onError={() => setFalhou(foto)} />
         ) : (
           initials
         )}

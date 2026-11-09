@@ -28,6 +28,7 @@ import type { Message, MessageThread } from '@/lib/api/contracts';
 import { isOnlineNow } from '@/lib/presence';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 /** Parceiro de conversa já resolvido (thread ou diretório de colaboradores). */
 export interface ConversationPartner {
@@ -244,7 +245,7 @@ function MessageBubble({
             : 'rounded-bl-md border border-white/5 bg-grafite/80 text-branco-cru backdrop-blur-sm',
         )}
       >
-        {message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>}
+        {message.content && <p className="whitespace-pre-wrap break-words">{textoComLinks(message.content, '')}</p>}
         <MessageAttachment message={message} />
         <p className={cn('mt-1 flex items-center gap-1 font-mono text-[10px]', isMine ? 'justify-end text-branco-cru/60' : 'text-nevoa')}>
           {formatTime(message.createdAt)}

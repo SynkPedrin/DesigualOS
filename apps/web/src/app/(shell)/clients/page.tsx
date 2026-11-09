@@ -7,6 +7,7 @@ import { ArrowRight, Calendar, ClipboardList, FileText, Plus, Search, Users } fr
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Prazo } from '@/components/ui/prazo';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { useClients } from '@/hooks/use-clients';
 import { logoDoCliente } from '@/lib/client-logos';
@@ -227,11 +228,11 @@ function ClientsPageContent() {
       )}
 
       {isPending ? (
-        <div className="grid grid-cols-[300px_1fr_300px] gap-4">
+        <div className="@container"><div className="grid grid-cols-1 gap-4 @min-[760px]:grid-cols-[260px_minmax(0,1fr)] @min-[1180px]:grid-cols-[300px_minmax(0,1fr)_300px]">
           <Skeleton className="h-[600px]" />
           <Skeleton className="h-[600px]" />
           <Skeleton className="h-[600px]" />
-        </div>
+        </div></div>
       ) : isError ? (
         <div className="space-y-4">
           <EmptyState icon={Users} title="Não conseguimos carregar seus clientes." description="Verifique sua conexão e tente novamente." />
@@ -244,8 +245,15 @@ function ClientsPageContent() {
       ) : !clients || clients.length === 0 ? (
         <EmptyState icon={Users} title="Nenhum cliente ainda" description="Importe os clientes do ClickUp em Configurações → Integrações, ou clique em Novo cliente." />
       ) : (
-        <div className="grid grid-cols-[300px_1fr_300px] gap-4" style={{ minHeight: 'calc(100vh - 260px)' }}>
-          <div className="flex flex-col overflow-hidden rounded-lg border border-grafite-elevado">
+        /*
+         * Três colunas só quando cabem (03/11/2026, "informações saindo quebradas"). A grade era fixa em
+         * 300px | resto | 300px: num notebook de 1024px a ficha do meio ficava com 70px, e no telefone as três
+         * saíam da tela. Agora acompanha a largura do conteúdo: estreito, tudo empilhado (a lista com altura
+         * limitada); médio, lista e ficha lado a lado com o painel lateral embaixo da ficha; largo, as três.
+         */
+        <div className="@container">
+        <div className="grid grid-cols-1 gap-4 @min-[760px]:grid-cols-[260px_minmax(0,1fr)] @min-[1180px]:grid-cols-[300px_minmax(0,1fr)_300px] @min-[760px]:min-h-[calc(100vh-260px)]">
+          <div className="flex max-h-[22rem] flex-col overflow-hidden rounded-lg border border-grafite-elevado @min-[760px]:max-h-none">
             <div className="flex-1 divide-y divide-grafite-elevado overflow-y-auto">
               {filtrados.length === 0 ? (
                 <p className="p-4 text-center text-sm text-nevoa">Nada com esse filtro.</p>
@@ -257,7 +265,12 @@ function ClientsPageContent() {
                       key={client.id}
                       type="button"
                       data-client-id={client.id}
-                      onClick={() => { setSelectedId(client.id); setTab('Visão geral'); }}
+                      onClick={() => {
+                        setSelectedId(client.id);
+                        setTab('Visão geral');
+                        // Empilhado, a ficha fica embaixo da lista: leva a pessoa até ela.
+                        if (window.innerWidth < 768) requestAnimationFrame(() => document.getElementById('ficha-do-cliente')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+                      }}
                       className={cn(
                         'flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-grafite-elevado/60',
                         selectedId === client.id && 'bg-grafite-elevado',
@@ -286,7 +299,10 @@ function ClientsPageContent() {
             </div>
           )}
 
-          {selecionado ? <ClientSidePanel client={selecionado} /> : <div className="rounded-lg border border-grafite-elevado" />}
+          <div className="min-w-0 @min-[760px]:col-start-2 @min-[1180px]:col-start-auto">
+            {selecionado ? <ClientSidePanel client={selecionado} /> : <div className="h-full rounded-lg border border-grafite-elevado" />}
+          </div>
+        </div>
         </div>
       )}
 
@@ -316,13 +332,13 @@ function ClientCenterPanel({ client, tab, onTab }: { client: ClientSummary; tab:
   const conversas = (threadsDoCliente.data ?? []).filter((t) => t.clientId === client.id).slice(0, 4);
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-grafite-elevado">
-      <div className="flex items-center justify-between gap-3 border-b border-grafite-elevado px-5 py-4">
-        <div className="flex items-center gap-3">
+    <div id="ficha-do-cliente" className="flex min-w-0 scroll-mt-4 flex-col overflow-hidden rounded-lg border border-grafite-elevado">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-grafite-elevado px-5 py-4">
+        <div className="flex min-w-0 items-center gap-3">
           <EntityAvatar name={client.name} kind="client" size="lg" />
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-heading text-lg font-semibold text-branco-cru">{client.name}</h2>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="min-w-0 truncate font-heading text-lg font-semibold text-branco-cru">{client.name}</h2>
               {badge && <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', badge.className)}>{badge.label}</span>}
             </div>
             <p className="text-xs text-nevoa">Cliente desde {info.clienteDesde}</p>
@@ -463,7 +479,7 @@ function ClientSidePanel({ client }: { client: ClientSummary }) {
   const arquivos = (workspace?.studioAssets ?? []).slice(0, 3);
 
   return (
-    <div className="flex flex-col gap-4 overflow-y-auto rounded-lg border border-grafite-elevado p-4">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto rounded-lg border border-grafite-elevado p-4">
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h3 className="flex items-center gap-1.5 font-heading text-sm font-semibold text-branco-cru"><ClipboardList size={14} /> Quinzenas em andamento</h3>
@@ -478,7 +494,7 @@ function ClientSidePanel({ client }: { client: ClientSummary }) {
               <li key={d.id}>
                 <Link href={`/demands/${d.id}`} className="block rounded-md border border-grafite-elevado bg-carbono px-3 py-2 hover:border-roxo-eletrico/40">
                   <p className="truncate text-sm font-medium text-branco-cru">{d.title}</p>
-                  <p className="text-xs text-nevoa">{d.dueDate ? formatRelativeTime(d.dueDate) : 'Sem prazo'}</p>
+                  <Prazo prazo={d.dueDate} className="mt-1" />
                 </Link>
               </li>
             ))}

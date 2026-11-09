@@ -4,6 +4,7 @@ import corsPlugin from '@fastify/cors';
 import websocketPlugin from '@fastify/websocket';
 import multipartPlugin from '@fastify/multipart';
 import rateLimitPlugin from '@fastify/rate-limit';
+import { chaveDoLimite } from './lib/chave-do-limite';
 import helmetPlugin from '@fastify/helmet';
 import { z } from 'zod';
 import { createLogger, getReleaseInfo, redactTokenFromUrl } from '@desigual-os/logging';
@@ -53,6 +54,9 @@ import { registerClickUpMcpOAuthRoutes } from './integrations/clickup-mcp-routes
 import { registerNotionRoutes } from './integrations/notion-routes';
 import { registerMetaIntegrationRoutes } from './integrations/meta-routes';
 import { registerMediaRoutes } from './media/routes';
+import { startWorkScheduler } from './work/scheduler';
+import { registerWorkRoutes } from './work/routes';
+import { registerGestaoEmpresarialRoutes } from './gestao-empresarial/routes';
 import { registerGoogleAdsIntegrationRoutes } from './integrations/google-ads-routes';
 import { registerAgencyControlCenterRoutes } from './agency-control-center/routes';
 import { registerWorkspaceRoutes } from './workspace/routes';
@@ -198,7 +202,7 @@ async function start(): Promise<void> {
     // front publicado inteiro ficou preso em "Carregando..." — o preflight
     // passou a devolver a origem errada e o Chrome bloqueou TUDO.)
     origin: origensDoFront(),
-    allowedHeaders: ['Authorization', 'Content-Type'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
   });
   // Private Network Access (14/09/2026, medido no smoke de produção): quando a
   // API é alcançada via Tailscale Funnel de DENTRO da tailnet, o hostname
@@ -242,6 +246,8 @@ async function start(): Promise<void> {
     global: true,
     max: 300,
     timeWindow: '1 minute',
+    // Por pessoa (login) ou pelo IP real; nunca pelo IP do proxy, que é o mesmo para todo mundo (ver chave-do-limite.ts).
+    keyGenerator: (request) => chaveDoLimite(request),
     /**
      * FORA DE PRODUÇÃO, a máquina local não conta.
      *
@@ -309,6 +315,8 @@ async function start(): Promise<void> {
   await app.register(registerClickUpMcpOAuthRoutes);
   await app.register(registerMetaIntegrationRoutes);
   await app.register(registerMediaRoutes);
+  await app.register(registerWorkRoutes);
+  await app.register(registerGestaoEmpresarialRoutes);
   await app.register(registerGoogleAdsIntegrationRoutes);
   await app.register(registerAgencyControlCenterRoutes);
   await app.register(registerWorkspaceRoutes);
@@ -344,6 +352,7 @@ async function start(): Promise<void> {
   // Sem isto `health_checks` cresce pra sempre (medido: +21 mil linhas/dia) e
   // a consulta do painel varre a tabela inteira, ficando mais lenta a cada dia.
   const retentionTimer = startHealthCheckRetention(logger);
+  const pararWorkScheduler = startWorkScheduler(logger);
   logger.info({ port }, 'Orchestrator API listening');
 
   // Sem isso, um restart/redeploy corta requisições em voo com SIGKILL e os
@@ -353,6 +362,7 @@ async function start(): Promise<void> {
     clearInterval(healthSweepTimer);
     clearInterval(agentProbeTimer);
     clearInterval(retentionTimer);
+    pararWorkScheduler();
     pararWatchdog();
     app
       .close()

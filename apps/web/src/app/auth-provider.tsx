@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase, wireSupabaseAccessToken } from '@/lib/supabase/client';
 import { setOnAccountDeactivated } from '@/lib/api/client';
+import { esquecerCache, persistirCache, restaurarCache } from '@/lib/cache-persistente';
 
 /** Keeps apiFetch's Authorization header synced to the live Supabase session, and
  *  shows ONE honest screen when the account itself is deactivated — instead of
@@ -26,14 +27,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
      * depois de um convite, etc.). Conta diferente entrando = todo o cache de
      * dados da conta anterior é apagado na hora.
      */
+    /**
+     * Cache das telas guardado no navegador (lib/cache-persistente.ts): restaura o desta pessoa ao abrir e passa a
+     * guardar; troca de conta ou saída apaga, pela mesma trava acima.
+     */
+    let pararDeGuardar: (() => void) | null = null;
+    const guardarPara = (id: string) => {
+      pararDeGuardar?.();
+      pararDeGuardar = null;
+      void restaurarCache(queryClient, id).finally(() => {
+        if (usuarioAtual.current === id) pararDeGuardar = persistirCache(queryClient, id);
+      });
+    };
+    void supabase.auth.getSession().then(({ data }) => {
+      const id = data.session?.user.id ?? null;
+      if (id && !usuarioAtual.current) { usuarioAtual.current = id; guardarPara(id); }
+    });
+
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       const id = session?.user.id ?? null;
       if (event === 'SIGNED_IN' && id && usuarioAtual.current && id !== usuarioAtual.current) {
         queryClient.clear();
+        void esquecerCache();
       }
+      if (event === 'SIGNED_OUT') {
+        pararDeGuardar?.();
+        pararDeGuardar = null;
+        void esquecerCache();
+      }
+      const novo = Boolean(id && id !== usuarioAtual.current);
       usuarioAtual.current = id;
+      if (novo && id) guardarPara(id);
     });
-    return () => sub.subscription.unsubscribe();
+    return () => { sub.subscription.unsubscribe(); pararDeGuardar?.(); };
   }, [queryClient]);
 
   if (contaDesativada) {

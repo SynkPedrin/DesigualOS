@@ -20,6 +20,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { EntityAvatar } from '@/components/ui/entity-avatar';
 import { useClientWorkspace } from '@/hooks/use-client-workspace';
 import { AbrirDiscussao } from '@/components/comunicacao/abrir-discussao';
+import { TarefasDoCliente } from '@/components/daily-tasks/tarefas-do-cliente';
 import { useMyWorkspace } from '@/hooks/use-my-workspace';
 import { useClientOverview } from '@/hooks/use-client-overview';
 import { useInboxThreads } from '@/hooks/use-inbox';
@@ -172,6 +173,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <TarefasDoCliente clientId={client.id} clienteNome={client.name} origem={`ficha do cliente (/clients/${client.id})`} />
           <AbrirDiscussao entityType="client" entityId={client.id} titulo={client.name} />
           {primeiraThread && (
             <Link

@@ -11,6 +11,8 @@ import { formatClockTime, formatRelativeTime } from '@/lib/format';
 import { usePainelDaEquipe, type EventoDaGestao, type PessoaDaGestao, type TarefaDaEquipe } from '@/hooks/use-gestao';
 import { tituloDoEvento } from './cartao-do-colaborador';
 import { cn } from '@/lib/utils';
+import { Prazo } from '@/components/ui/prazo';
+import { urgenciaDoPrazo } from '@/lib/prazo';
 
 /**
  * SUA EQUIPE AGORA — a gestão da equipe dentro do Hoje de quem administra a
@@ -179,31 +181,21 @@ const VAZIO: Record<AbaDeTarefas, string> = {
 };
 const VISIVEIS = 8;
 
-/** Prazo que não atrasou: hora se é hoje, data se é outro dia, "sem prazo" se não tem. */
-function prazoCurto(dueMs: number | null): string {
-  if (dueMs === null) return 'sem prazo';
-  const d = new Date(dueMs);
-  const hoje = new Date();
-  if (d.toDateString() === hoje.toDateString()) return formatClockTime(d.toISOString());
-  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(d);
-}
-
 function LinhaDeTarefa({ t, pessoas, aba }: { t: TarefaDaEquipe; pessoas: Map<string, PessoaDaGestao>; aba: AbaDeTarefas }) {
   const donos = t.donos.map((id) => pessoas.get(id)).filter((p): p is PessoaDaGestao => Boolean(p));
-  const selo = aba === 'entregues_hoje'
-    ? { texto: t.updated_at ? formatClockTime(new Date(t.updated_at).toISOString()) : 'hoje', cor: 'text-sucesso' }
-    : t.atrasada ? { texto: `${t.dias_de_atraso} ${t.dias_de_atraso === 1 ? 'dia' : 'dias'}`, cor: 'text-erro' }
-    : { texto: prazoCurto(t.due_date), cor: 'text-nevoa' };
+  const horaDaEntrega = t.updated_at ? formatClockTime(new Date(t.updated_at).toISOString()) : 'hoje';
   const minha = aba === 'minhas';
   const conteudo = (
     <>
-      {minha ? <span className={cn('size-2 shrink-0 rounded-full', t.atrasada ? 'bg-erro' : t.em_andamento ? 'bg-roxo-eletrico' : 'bg-nevoa/40')} aria-hidden />
+      {minha ? <span className={cn('size-2 shrink-0 rounded-full', t.atrasada ? 'bg-erro' : urgenciaDoPrazo(t.due_date) === 'hoje' ? 'bg-sinal' : t.em_andamento ? 'bg-roxo-eletrico' : 'bg-nevoa/40')} aria-hidden />
         : donos[0] ? <EntityAvatar name={donos[0].name} photoUrl={donos[0].avatar_url} kind="person" size="sm" /> : <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-grafite-elevado text-nevoa" title="Sem responsável"><UserX size={12} /></span>}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-branco-cru" title={t.name}>{t.name}</p>
         <p className="truncate text-xs text-nevoa">{(minha ? [t.client?.name, t.status] : [donos.map((p) => p.name.split(' ')[0]).join(', ') || 'Sem responsável', t.client?.name]).filter(Boolean).join(' · ')}</p>
       </div>
-      <span className={cn('shrink-0 text-xs font-medium tabular-nums', selo.cor)}>{selo.texto}</span>
+      {aba === 'entregues_hoje'
+        ? <span className="shrink-0 text-xs font-medium tabular-nums text-sucesso">{horaDaEntrega}</span>
+        : <Prazo prazo={t.due_date} className="shrink-0" />}
     </>
   );
   return (

@@ -1,12 +1,13 @@
 'use client';
 
-import Image from 'next/image';
+import { FotoOuInicial } from './foto-ou-inicial';
 import Link from 'next/link';
-import { GraduationCap, HelpCircle, Menu, Monitor, Moon, Search, Sparkles, Sun } from 'lucide-react';
+import { GraduationCap, Menu, Monitor, Moon, Search, Sparkles, Sun } from 'lucide-react';
 import { useUiStore } from '@/stores/ui-store';
 import { useMe } from '@/hooks/use-me';
 import { useTheme } from '@/hooks/use-theme';
 import { NotificationsMenu } from './notifications-menu';
+import { AjudaMenu } from './ajuda-menu';
 import type { Theme } from '@/lib/api/contracts';
 import { TutorialModal, useTutorial } from '@/components/tutorial/tutorial-modal';
 
@@ -33,7 +34,7 @@ export function Topbar() {
 
   return (
     <>
-    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-grafite-elevado bg-carbono px-4 sm:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-branco-cru/[0.06] px-4 sm:px-6">
       <button
         type="button"
         onClick={toggleMobileNav}
@@ -46,7 +47,7 @@ export function Topbar() {
       <button
         type="button"
         onClick={() => setCommandPaletteOpen(true)}
-        className="flex w-full max-w-sm items-center gap-2 rounded-md border border-grafite-elevado bg-grafite px-3 py-2 text-left text-sm text-nevoa transition-colors hover:border-roxo-eletrico/50 hover:text-branco-cru"
+        className="flex w-full max-w-sm items-center gap-2 rounded-xl border border-sinal/20 bg-grafite/70 px-3 py-2 text-left text-sm text-nevoa transition-colors hover:border-sinal/50 hover:text-branco-cru"
       >
         <Search size={16} className="shrink-0" />
         <span className="hidden flex-1 truncate sm:inline">Buscar cliente, tarefa, conversa...</span>
@@ -84,23 +85,13 @@ export function Topbar() {
           <ThemeIcon size={18} />
         </button>
         <NotificationsMenu />
-        <button
-          type="button"
-          aria-label="Ajuda"
-          className="flex size-9 items-center justify-center rounded-md text-nevoa transition-colors hover:bg-grafite hover:text-branco-cru"
-        >
-          <HelpCircle size={18} />
-        </button>
+        <AjudaMenu onTutorial={tutorial.abrir} onBuscar={() => setCommandPaletteOpen(true)} />
         <Link
           href="/settings"
           aria-label="Configurações da conta"
           className="relative ml-2 flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru"
         >
-          {me?.avatarUrl ? (
-            <Image src={me.avatarUrl} alt={me.name} fill sizes="36px" unoptimized className="object-cover" />
-          ) : (
-            (me?.name ?? '?').charAt(0).toUpperCase()
-          )}
+          <FotoOuInicial url={me?.avatarUrl} nome={me?.name} />
         </Link>
       </div>
     </header>

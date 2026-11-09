@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '@desigual-os/database';
-import { getSupabaseAdminClient } from '@desigual-os/auth';
+import { adotarPessoaDoClickUp, getSupabaseAdminClient } from '@desigual-os/auth';
 import { ROLE_NAMES } from '@desigual-os/types';
 import { invalidateUserAccessCache, requireAuth, requirePermission, requireRole } from '../auth/middleware';
 import { recorteDePessoasVisiveis } from '../lib/escopo-de-organizacao';
@@ -274,7 +274,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
      * 500 que faz parecer que nada aconteceu.
      */
     try {
-      const [inserido] = await db
+      // Pessoa que já existia só no ClickUp: o convite ADOTA o cadastro (tarefas e conversas vêm junto).
+      const adotada = await adotarPessoaDoClickUp({ authUserId, email: body.email });
+      const [inserido] = adotada ? [adotada] : await db
         .insert(schema.users)
         .values({ authUserId, email: body.email, name: body.name ?? body.email.split('@')[0] ?? body.email })
         .onConflictDoNothing({ target: schema.users.authUserId })

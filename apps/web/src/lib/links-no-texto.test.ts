@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { quebrarEmLinks } from './links-no-texto';
+import { quebrarEmLinks, servicoDoLink } from './links-no-texto';
 
 const links = (texto: string) => quebrarEmLinks(texto).filter((p) => p.tipo === 'link').map((p) => (p.tipo === 'link' ? [p.texto, p.href] : []));
 
@@ -26,5 +26,20 @@ describe('links no texto da mensagem', () => {
   it('o texto volta inteiro, na ordem', () => {
     const texto = 'oi, olha https://a.com e www.b.com.br!\nvaleu';
     expect(quebrarEmLinks(texto).map((p) => p.texto).join('')).toBe(texto);
+  });
+  it('markdown do ClickUp: [nome](url), <url> e escape com barra', () => {
+    expect(links('[Pasta](https://x.sharepoint.com/:f:/s/D/E?e=1)')).toEqual([['Pasta', 'https://x.sharepoint.com/:f:/s/D/E?e=1']]);
+    expect(links('<https://a.com/b>')).toEqual([['https://a.com/b', 'https://a.com/b']]);
+    expect(links('https://x.sharepoint.com/s/Agencia\\_Desigual/a\\_b')).toEqual([['https://x.sharepoint.com/s/Agencia_Desigual/a_b', 'https://x.sharepoint.com/s/Agencia_Desigual/a_b']]);
+    expect(links('[pro João](mailto:joao@cliente.com.br)')).toEqual([['pro João', 'mailto:joao@cliente.com.br']]);
+    expect(links('[perigo](javascript:alert(1))')).toEqual([]);
+  });
+
+  it('reconhece o serviço e o tipo do arquivo pelo endereço', () => {
+    expect(servicoDoLink('https://agencia.sharepoint.com/:x:/s/D/E?e=1')).toEqual({ servico: 'SharePoint', tipo: 'Planilha' });
+    expect(servicoDoLink('https://agencia-my.sharepoint.com/:w:/g/personal/p/E')).toEqual({ servico: 'OneDrive', tipo: 'Documento' });
+    expect(servicoDoLink('https://agencia.sharepoint.com/sites/C/Shared%20Documents/Forms/AllItems.aspx')).toEqual({ servico: 'SharePoint', tipo: 'Pasta' });
+    expect(servicoDoLink('https://docs.google.com/spreadsheets/d/1')).toEqual({ servico: 'Google', tipo: 'Planilha' });
+    expect(servicoDoLink('https://cliente.com.br/')).toBeNull();
   });
 });

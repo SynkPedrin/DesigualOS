@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { db, schema } from '@desigual-os/database';
 import type { SupabaseClaims } from './supabase-jwt';
 
@@ -77,6 +77,39 @@ export async function aceitarConvitesPendentes(user: typeof schema.users.$inferS
   }
 }
 
+/**
+ * Domínio do e-mail técnico das pessoas que só existem no ClickUp (apps/api/src/clickup/pessoas-do-clickup.ts).
+ * `.invalid` é reservado (RFC 2606): nenhum e-mail sai para esse endereço.
+ */
+export const DOMINIO_DE_PESSOA_DO_CLICKUP = 'clickup.desigual-os.invalid';
+
+/**
+ * A pessoa do ClickUp que chega ao sistema herda o cadastro que já existia em nome dela — com as tarefas, as
+ * conversas e o vínculo com a empresa —, em vez de nascer uma segunda vez vazia. Casa pelo `clickup_email` igual ao
+ * e-mail de login, e só um cadastro técnico, sem login, pode ser adotado.
+ *
+ * Quem chama garante que o e-mail é da pessoa: o convite (o link vai para a caixa dela) ou o token com e-mail
+ * confirmado. Sem isso, cadastrar-se com o e-mail de outra pessoa daria a empresa dela de presente.
+ */
+export async function adotarPessoaDoClickUp(dados: { authUserId: string; email: string }): Promise<typeof schema.users.$inferSelect | null> {
+  const [adotada] = await db
+    .update(schema.users)
+    .set({ authUserId: dados.authUserId, email: dados.email, active: true, updatedAt: new Date() })
+    .where(and(
+      isNull(schema.users.authUserId),
+      sql`lower(${schema.users.clickupEmail}) = lower(${dados.email})`,
+      sql`${schema.users.email} like ${`%@${DOMINIO_DE_PESSOA_DO_CLICKUP}`}`,
+    ))
+    .returning()
+    .catch(() => []); // e-mail já usado por outro perfil: não adota, segue o caminho normal
+  return adotada ?? null;
+}
+
+const emailConfirmado = (claims: SupabaseClaims): boolean => {
+  const metadata = claims.raw.user_metadata as Record<string, unknown> | undefined;
+  return metadata?.email_verified === true;
+};
+
 export async function resolveOrProvisionUser(
   claims: SupabaseClaims,
   masterEmails: ReadonlySet<string>,
@@ -85,6 +118,14 @@ export async function resolveOrProvisionUser(
   if (existing) {
     await aceitarConvitesPendentes(existing).catch(() => undefined);
     return existing;
+  }
+
+  if (emailConfirmado(claims)) {
+    const adotada = await adotarPessoaDoClickUp({ authUserId: claims.sub, email: claims.email });
+    if (adotada) {
+      await aceitarConvitesPendentes(adotada).catch(() => undefined);
+      return adotada;
+    }
   }
 
   // Nome de exibição: o signup manda options.data.name (apps/web/src/app/

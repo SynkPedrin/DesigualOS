@@ -153,21 +153,47 @@ const JANELA_DO_TRECHO = 400;
  * orçamento tinha cortado antes dele ver.
  */
 export function coberturaDoTopico(topico: string, evidencias: readonly RegistroDeEvidencia[]): CoberturaDeTopico {
-  for (const ev of evidencias) {
-    const corpo = normalizar(ev.texto ?? '');
-    const i = corpo.indexOf(topico);
-    if (i < 0) continue;
-
-    const bruto = ev.texto ?? '';
-    const inicio = Math.max(0, i - JANELA_DO_TRECHO / 4);
-    return {
-      topico,
-      coberto: true,
-      fonte: ev.sourceType || ev.fonte,
-      trecho: bruto.slice(inicio, inicio + JANELA_DO_TRECHO).trim(),
-    };
+  /**
+   * SÓ EVIDÊNCIA CITÁVEL COBRE O TÓPICO (09/11/2026). O histórico da conversa e o registro das execuções contêm a
+   * própria PERGUNTA ("quais os endereços da DCS"): contavam como "o tópico está nas fontes", e o último recurso citava
+   * a pergunta de volta para o Endrigo como se fosse a resposta. E os dados canônicos do cliente vêm antes de qualquer
+   * outra fonte: são o fato validado.
+   */
+  const ordenadas = evidencias
+    .filter((ev) => ev.citavel)
+    .map((ev, i) => ({ ev, i, canonica: (ev.texto ?? '').includes('DADOS CANONICOS') }))
+    .sort((a, b) => Number(b.canonica) - Number(a.canonica) || a.i - b.i)
+    .map((x) => x.ev);
+  for (const ev of ordenadas) {
+    const trecho = linhasComOTopico(ev.texto ?? '', topico);
+    if (!trecho) continue;
+    return { topico, coberto: true, fonte: ev.sourceType || ev.fonte, trecho };
   }
   return { topico, coberto: false, fonte: null, trecho: null };
+}
+
+/**
+ * O trecho em LINHAS INTEIRAS. Cortar por caractere entregava "ncias como..." e "Nahes Dias..." pela metade.
+ *   - linha de RÓTULO do bloco ("[REGISTRO CRIATIVO (posicionamento, publico...)]") não conta: ela nomeia o tópico, não
+ *     o responde;
+ *   - termo num TÍTULO ("## 2. POSICIONAMENTO", "## Unidades"): a seção, até o próximo título;
+ *   - termo numa linha comum: ela e as duas seguintes (onde costuma estar o dado).
+ */
+function linhasComOTopico(texto: string, topico: string): string | null {
+  const linhas = texto.split('\n');
+  const ehRotulo = (l: string) => /^\s*\[[^\]]*\]\s*$/.test(l);
+  const ehTitulo = (l: string) => /^\s*#{1,6}\s/.test(l);
+  const i = linhas.findIndex((l) => !ehRotulo(l) && normalizar(l).includes(topico));
+  if (i < 0) return null;
+  const limite = JANELA_DO_TRECHO * 2;
+  let trecho = linhas[i]!;
+  const seguintes = ehTitulo(linhas[i]!) ? linhas.slice(i + 1) : linhas.slice(i + 1, i + 3);
+  for (const linha of seguintes) {
+    if (ehTitulo(linha) || ehRotulo(linha)) break;
+    if (trecho.length + linha.length + 1 > limite) break;
+    trecho = `${trecho}\n${linha}`;
+  }
+  return trecho.trim() || null;
 }
 
 export interface VeredictoDaGuarda {
@@ -221,7 +247,9 @@ export function respostaDeUltimoRecurso(cobertos: readonly CoberturaDeTopico[]):
   const linhas = ['Encontrei isto registrado no sistema:'];
   for (const c of cobertos) {
     if (!c.trecho) continue;
-    linhas.push('', `**${c.topico}** — ${c.fonte ?? 'registro do cliente'}:`, c.trecho);
+    // Dois tópicos que caem no mesmo trecho aparecem uma vez só.
+    if (linhas.some((l) => l === c.trecho)) continue;
+    linhas.push('', c.trecho);
   }
   linhas.push(
     '',

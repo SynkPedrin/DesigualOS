@@ -29,20 +29,23 @@ export function WeekView({
   eventosPorDia,
   onSelecionarEvento,
   onSelecionarSlot,
+  corDaAgenda,
 }: {
   dias: Date[];
   eventosPorDia: Map<string, CalendarEventWire[]>;
   onSelecionarEvento: (evento: CalendarEventWire) => void;
   /** Clicou numa hora vazia da grade: abre "Novo evento" já com esse horário. */
   onSelecionarSlot?: (data: Date) => void;
+  /** Classes do evento pela agenda de origem (agência, Manada Filmes...); sem isto, o roxo de sempre. */
+  corDaAgenda?: (calendarId: string | null | undefined) => string;
 }) {
   const hoje = new Date();
   const ehHoje = (d: Date) => d.toDateString() === hoje.toDateString();
 
   return (
-    <div className="flex overflow-hidden rounded-lg border border-grafite-elevado">
+    <div className="flex overflow-hidden rounded-2xl border border-sinal/[0.14] bg-grafite/70">
       {/* Coluna de horas */}
-      <div className="w-14 shrink-0 border-r border-grafite-elevado bg-grafite">
+      <div className="w-14 shrink-0 border-r border-grafite-elevado bg-carbono/30">
         <div className="h-10 border-b border-grafite-elevado" />
         <div className="relative" style={{ height: `${TOTAL_HORAS * 72}px` }}>
           {Array.from({ length: TOTAL_HORAS }, (_, i) => (
@@ -103,7 +106,7 @@ export function WeekView({
                       cancelado
                         ? 'border-grafite-elevado bg-grafite-elevado/40 text-nevoa line-through'
                         : evento.visible
-                          ? 'border-roxo-eletrico/40 bg-roxo-eletrico/20 text-branco-cru hover:border-roxo-eletrico/70'
+                          ? (corDaAgenda?.(evento.calendar_id) ?? 'border-roxo-eletrico/40 bg-roxo-eletrico/20 text-branco-cru hover:border-roxo-eletrico/70')
                           : 'border-grafite-elevado bg-grafite-elevado text-nevoa'
                     }`}
                     style={{ top: `${topo}%`, height: `${altura}%` }}

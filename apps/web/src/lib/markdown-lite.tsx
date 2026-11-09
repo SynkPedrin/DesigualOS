@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 /** Small, dependency-free renderer for the subset of markdown agent replies use: **bold**,
  * `code`, and "- " bullet lists. Not a full markdown parser, intentionally.
@@ -23,7 +24,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
         </code>
       );
     }
-    return <Fragment key={key}>{part}</Fragment>;
+    return <Fragment key={key}>{textoComLinks(part, '', `${key}-`)}</Fragment>;
   });
 }
 

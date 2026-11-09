@@ -23,9 +23,13 @@ docker run --rm $PG psql "$DESTINO_URL" -X -v ON_ERROR_STOP=1 -c \
 
 echo "== restaura app no destino (schema public recriado)"
 docker run --rm $PG psql "$DESTINO_URL" -X -v ON_ERROR_STOP=1 -c \
-  'drop schema if exists drizzle cascade; drop schema if exists public cascade; create schema public; grant usage on schema public to postgres, anon, authenticated, service_role; grant all on schema public to postgres, service_role;'
+  'drop schema if exists drizzle cascade; drop schema if exists public cascade; create schema public; create extension if not exists pg_trgm with schema public; alter extension pg_trgm set schema public;'
+# No projeto atual o pg_trgm mora em public (os índices citam public.gin_trgm_ops); o schema já existe, então
+# o CREATE SCHEMA public do dump sai da lista.
 docker run --rm -v "$DIR:/d" -e U="$DESTINO_URL" $PG sh -c \
-  'pg_restore -d "$U" --no-owner --no-privileges --exit-on-error /d/app.dump'
+  'pg_restore -l /d/app.dump | grep -v " SCHEMA - public " > /d/lista && pg_restore -d "$U" -L /d/lista --no-owner --no-privileges --exit-on-error /d/app.dump'
+docker run --rm $PG psql "$DESTINO_URL" -X -v ON_ERROR_STOP=1 -c \
+  'grant usage on schema public to postgres, anon, authenticated, service_role; grant all on schema public to postgres, service_role;'
 
 echo "== restaura logins no destino (limpa os de teste do projeto novo antes)"
 docker run --rm $PG psql "$DESTINO_URL" -X -v ON_ERROR_STOP=1 -c 'delete from auth.identities; delete from auth.users;'

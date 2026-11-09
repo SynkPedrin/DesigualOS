@@ -3,21 +3,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { FotoOuInicial } from './foto-ou-inicial';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, LogOut, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronsLeft, ChevronsRight, Folder, FolderOpen, LogOut, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui-store';
 import { useInfrastructureHealth } from '@/hooks/use-infrastructure-health';
 import { useIsMaster } from '@/hooks/use-is-master';
 import { useMe } from '@/hooks/use-me';
 import { useMyWorkspace } from '@/hooks/use-my-workspace';
+import { useGestaoAcesso } from '@/hooks/use-gestao-empresarial';
+import { useDailyTasksAccess } from '@/hooks/use-daily-tasks-access';
 import { useBrandAssets } from '@/hooks/use-brand-assets';
 import { useChatUnread } from '@/hooks/use-internal-chat';
+import { useInbox } from '@/hooks/use-work-extra';
 import { supabase } from '@/lib/supabase/client';
 import { NAV_ITEMS, NAV_SECTIONS } from './nav-items';
 import { estaDentroDeTenant, itensVisiveisNaNavegacao } from './nav-visibility';
 import { saudeEmCor } from '@/lib/saude-em-cor';
+
+const CHAVE_DAS_PASTAS = 'desigual:sidebar:pastas-abertas';
 
 function formatBackupTime(iso: string | null) {
   if (!iso) return 'Sem registro';
@@ -71,6 +77,8 @@ export function Sidebar({
   }, [conferirSeTemMais]);
   const { data: me } = useMe();
   const { data: workspace } = useMyWorkspace();
+  const { data: dailyTasksAccess } = useDailyTasksAccess();
+  const { data: gestaoAcesso } = useGestaoAcesso();
   const { logoSrc } = useBrandAssets();
   /**
    * `eh_provider` vem do /me e NUNCA é derivado só do papel: exige também
@@ -114,6 +122,8 @@ export function Sidebar({
     ehProvider,
     dentroDeTenant,
     modulosHabilitados: workspace ? new Set(workspace.modules) : null,
+    dailyTasksLiberado: dailyTasksAccess?.allowed === true,
+    gestaoEmpresarialLiberada: gestaoAcesso?.allowed === true,
   });
 
   /**
@@ -130,24 +140,45 @@ export function Sidebar({
   // Contador da Comunicação: só pergunta se o item está na barra.
   const comunicacaoVisivel = visibleNavItems.some((i) => i.href === '/comunicacao');
   const { data: chatNaoLidas = 0 } = useChatUnread(comunicacaoVisivel);
-  const badgeDe = (href: string) => (href === '/comunicacao' ? chatNaoLidas : 0);
+  // Daily Tasks: só pergunta quando o módulo está liberado para esta pessoa (o item nem existe senão).
+  const { data: dailyInbox } = useInbox(dailyTasksAccess?.allowed === true);
+  const badgeDe = (href: string) => (href === '/comunicacao' ? chatNaoLidas : href === '/daily-tasks' ? (dailyInbox?.unreadByKind.task ?? 0) + (dailyInbox?.unreadByKind.system ?? 0) : 0);
 
+  /**
+   * QUAIS PASTAS ESTÃO ABERTAS.
+   *
+   * Todas se abrem e fecham, menos a de entrada ("Dia a dia"). O que a pessoa
+   * deixou aberto é lembrado neste navegador. A pasta da tela em que ela está
+   * SEMPRE abre, para quem chega por link ou pelo ⌘K ver a barra dizendo onde
+   * está, em vez de uma lista inteira fechada.
+   */
+  const pastaDaRota = NAV_ITEMS.find((i) => i.href !== '/' && pathname.startsWith(i.href.split('?')[0]!))?.section;
   const [abertas, setAbertas] = useState<Set<string>>(
-    () =>
-      new Set(
-        NAV_SECTIONS.filter(
-          (s) =>
-            !s.recolhida ||
-            NAV_ITEMS.some((i) => i.section === s.id && i.href !== '/' && pathname.startsWith(i.href)),
-        ).map((s) => s.id),
-      ),
+    () => new Set([...NAV_SECTIONS.filter((s) => s.fixa).map((s) => s.id), ...(pastaDaRota ? [pastaDaRota] : [])]),
   );
+  useEffect(() => {
+    try {
+      const salvas = JSON.parse(localStorage.getItem(CHAVE_DAS_PASTAS) ?? 'null') as string[] | null;
+      if (Array.isArray(salvas)) setAbertas((atual) => new Set([...atual, ...salvas]));
+    } catch {
+      // Sem armazenamento (janela privada): as pastas só não são lembradas.
+    }
+  }, []);
+  useEffect(() => {
+    if (!pastaDaRota) return;
+    setAbertas((atual) => (atual.has(pastaDaRota) ? atual : new Set(atual).add(pastaDaRota)));
+  }, [pastaDaRota]);
 
   function alternarSecao(id: string) {
     setAbertas((atual) => {
       const proxima = new Set(atual);
       if (proxima.has(id)) proxima.delete(id);
       else proxima.add(id);
+      try {
+        localStorage.setItem(CHAVE_DAS_PASTAS, JSON.stringify([...proxima]));
+      } catch {
+        // idem: lembrar é conveniência, não requisito.
+      }
       return proxima;
     });
   }
@@ -170,13 +201,14 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        'h-full flex-col bg-carbono transition-[width] duration-300 ease-out',
-        // Desktop: sidebar fixa, escondida abaixo do breakpoint md (o drawer assume nesse
-        // caso, ver mobile-nav-drawer.tsx). Drawer: sempre flex, tamanho controlado pelo
-        // container que a envolve.
+        'h-full flex-col transition-[width] duration-300 ease-out',
+        // Desktop: FLUTUANTE (03/11/2026, pedido do Pedro: "igual ao da Citável"), um cartão de cantos bem
+        // arredondados, solto da borda da janela, com o contorno verde-limão da marca. Escondida abaixo do
+        // breakpoint md (o drawer assume nesse caso, ver mobile-nav-drawer.tsx). Drawer: sempre flex, tamanho
+        // controlado pelo container que a envolve.
         variant === 'desktop'
-          ? 'hidden h-screen border-r border-grafite-elevado md:flex'
-          : 'flex',
+          ? 'my-3 ml-3 hidden h-[calc(100%-1.5rem)] shrink-0 overflow-hidden rounded-[1.75rem] border border-sinal/25 bg-grafite/80 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.6),0_0_0_1px_rgba(225,249,0,0.04)] backdrop-blur-xl md:flex'
+          : 'flex bg-carbono',
         collapsed ? 'w-[76px]' : 'w-64',
       )}
     >
@@ -223,14 +255,10 @@ export function Sidebar({
         </Link>
       )}
 
-      <div className={cn('mx-4 mb-3 rounded-lg bg-grafite px-3 py-2.5', collapsed && 'mx-2 px-2')}>
+      <div className={cn('mx-4 mb-3 rounded-2xl border border-branco-cru/[0.06] bg-carbono/50 px-3 py-2.5', collapsed && 'mx-2 px-2')}>
         <div className="flex items-center gap-3">
           <div className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-roxo-eletrico font-mono text-sm font-semibold text-branco-cru">
-            {me?.avatarUrl ? (
-              <Image src={me.avatarUrl} alt={me.name} fill sizes="36px" unoptimized className="object-cover" />
-            ) : (
-              (me?.name ?? '?').charAt(0).toUpperCase()
-            )}
+            <FotoOuInicial url={me?.avatarUrl} nome={me?.name} />
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">
@@ -258,7 +286,7 @@ export function Sidebar({
           onClick={handleNewChat}
           aria-label="Novo chat"
           title="Novo chat"
-          className="flex w-full items-center justify-center gap-2 rounded-md bg-roxo-eletrico py-2 text-sm font-medium text-branco-cru transition-all hover:opacity-90 hover:shadow-glow"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-roxo-eletrico to-magenta-spark/90 py-2.5 text-sm font-semibold text-branco-cru transition-all hover:opacity-95 hover:shadow-glow"
         >
           <Plus size={16} className="shrink-0" />
           {!collapsed && <span className="truncate">Novo chat</span>}
@@ -281,7 +309,7 @@ export function Sidebar({
         {temMais && (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-carbono to-transparent"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-grafite to-transparent"
           />
         )}
       <nav
@@ -299,9 +327,11 @@ export function Sidebar({
           * sem nenhuma pista do que existe.
           */
         const aberta = collapsed || abertas.has(secao.id);
-        const podeRecolher = !collapsed && Boolean(secao.recolhida);
+        const podeRecolher = !collapsed && !secao.fixa;
+        // Pasta fechada não pode esconder um aviso: soma os badges de dentro no cabeçalho.
+        const avisosEscondidos = aberta ? 0 : itensDaSecao.reduce((n, i) => n + badgeDe(i.href), 0);
         return (
-        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-3')}>
+        <div key={secao.id} className={cn(secao.id !== NAV_SECTIONS[0]!.id && 'pt-2')}>
           {/*
             * O rótulo da seção some quando a sidebar está colapsada — ali só
             * cabe ícone, e um texto truncado em 3 letras não agrupa nada.
@@ -314,13 +344,19 @@ export function Sidebar({
                 onClick={() => alternarSecao(secao.id)}
                 aria-expanded={aberta}
                 title={secao.ajuda}
-                className="flex w-full items-center gap-1.5 rounded px-3 pb-1.5 pt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-nevoa/60 transition-colors hover:text-branco-cru"
+                className="flex w-full items-center gap-2 whitespace-nowrap rounded-md px-3 py-1.5 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-nevoa transition-colors hover:bg-grafite/60 hover:text-branco-cru"
               >
-                {aberta ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                <span>{secao.label}</span>
+                {aberta ? <FolderOpen size={15} className="shrink-0 text-sinal" /> : <Folder size={15} className="shrink-0" />}
+                {/* Uma linha só: "Equipe e empresa" quebrava em duas, centralizada (visto em produção, 30/10/2026). */}
+                <span className="min-w-0 truncate">{secao.label}</span>
                 {/* Quantos itens tem lá dentro: sem isso, uma seção fechada
                   * não diz se esconde dois itens ou vinte. */}
-                {!aberta && <span className="text-nevoa/40">{itensDaSecao.length}</span>}
+                {!aberta && <span className="shrink-0 font-normal text-nevoa/50">{itensDaSecao.length}</span>}
+                {avisosEscondidos > 0 && (
+                  <span aria-label={`${avisosEscondidos} não lidas`} className="ml-auto rounded-full bg-sinal px-1.5 font-mono text-[10px] font-semibold leading-4 text-grafite">
+                    {avisosEscondidos > 99 ? '99+' : avisosEscondidos}
+                  </span>
+                )}
               </button>
             ) : (
               <p
@@ -341,16 +377,18 @@ export function Sidebar({
           const isActive = caminhoDoItem === '/' ? pathname === '/' : pathname.startsWith(caminhoDoItem);
           const Icon = item.icon;
           const itemClassName = cn(
-            'relative flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors',
-            isActive ? 'bg-grafite text-branco-cru' : 'text-nevoa hover:bg-grafite/60 hover:text-branco-cru',
+            'relative isolate flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors',
+            isActive ? 'text-branco-cru [&>svg]:text-sinal' : 'text-nevoa hover:bg-branco-cru/[0.05] hover:text-branco-cru',
           );
           const itemContent = (
             <>
               {isActive && (
+                // A pílula do item ativo desliza de um item para o outro (como a da Citável), com o contorno limão.
                 <motion.span
                   layoutId="sidebar-active-bar"
-                  className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-sinal shadow-sinal"
-                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                  aria-hidden
+                  className="absolute inset-0 -z-10 rounded-xl bg-gradient-to-r from-sinal/[0.14] to-roxo-eletrico/[0.10] ring-1 ring-inset ring-sinal/40 shadow-[0_6px_20px_-8px_rgba(225,249,0,0.35)]"
+                  transition={{ duration: 0.25, ease: 'easeOut' }}
                 />
               )}
               <Icon size={18} className="shrink-0" />

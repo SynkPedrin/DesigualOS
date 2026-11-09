@@ -292,11 +292,15 @@ export interface CreateTaskParams {
   listId: string;
   name: string;
   description?: string;
+  /** Descrição em markdown (é o que o Daily Tasks guarda). Quando vem, vale no lugar de `description`. */
+  markdownDescription?: string;
   assigneeId?: number;
   /** 1=urgente, 2=alta, 3=normal, 4=baixa (escala do ClickUp). */
   priority?: 1 | 2 | 3 | 4;
   /** Epoch em ms (formato do ClickUp). */
   dueDate?: number;
+  /** false = prazo SÓ de dia (o ClickUp mostra a data sem hora). Omitido, o ClickUp assume que há hora. */
+  dueDateTime?: boolean;
   tags?: string[];
   /** Id da task-mãe: é assim que o ClickUp cria SUBTAREFA (28/09/2026). */
   parent?: string;
@@ -316,10 +320,13 @@ export async function createTask(config: ClickUpConfig, params: CreateTaskParams
     headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: params.name,
-      description: params.description,
+      description: params.markdownDescription === undefined ? params.description : undefined,
+      markdown_content: params.markdownDescription,
+      markdown_description: params.markdownDescription,
       assignees: params.assigneeId ? [params.assigneeId] : undefined,
       priority: params.priority,
       due_date: params.dueDate,
+      due_date_time: params.dueDate !== undefined ? params.dueDateTime : undefined,
       start_date: params.startDate,
       parent: params.parent,
       tags: params.tags && params.tags.length > 0 ? params.tags : undefined,
@@ -340,9 +347,14 @@ export async function createTask(config: ClickUpConfig, params: CreateTaskParams
 export interface UpdateTaskParams {
   name?: string;
   description?: string;
+  /** Descrição em markdown. Quando vem, vale no lugar de `description`. */
+  markdownDescription?: string;
   status?: string;
-  priority?: 1 | 2 | 3 | 4;
+  /** Null limpa a prioridade. */
+  priority?: 1 | 2 | 3 | 4 | null;
   dueDate?: number | null;
+  /** false = prazo SÓ de dia. Só vale junto de `dueDate`. */
+  dueDateTime?: boolean;
   addAssignees?: number[];
   removeAssignees?: number[];
   /** Epoch ms. Null limpa. Campo separado do vencimento (28/09/2026). */
@@ -355,10 +367,18 @@ export async function updateTask(config: ClickUpConfig, taskId: string, params: 
   await assertTaskInScope(config, taskId);
   const body: Record<string, unknown> = {};
   if (params.name !== undefined) body.name = params.name;
-  if (params.description !== undefined) body.description = params.description;
+  // A ATUALIZAÇÃO do ClickUp lê a descrição em markdown de `markdown_content` (`markdown_description` é o nome na
+  // RESPOSTA). Só com `markdown_description` o ClickUp ignorava a descrição nova, e a leitura seguinte trazia a velha
+  // por cima da que a pessoa tinha salvo no Daily — "a descrição some depois de salvar" (30/10/2026). Vão os dois
+  // nomes. Vazio limpa com um espaço, que é como o ClickUp aceita apagar.
+  if (params.markdownDescription !== undefined) {
+    const md = params.markdownDescription.trim() ? params.markdownDescription : ' ';
+    body.markdown_content = md;
+    body.markdown_description = md;
+  } else if (params.description !== undefined) body.description = params.description.trim() ? params.description : ' ';
   if (params.status !== undefined) body.status = params.status;
   if (params.priority !== undefined) body.priority = params.priority;
-  if (params.dueDate !== undefined) body.due_date = params.dueDate;
+  if (params.dueDate !== undefined) { body.due_date = params.dueDate; if (params.dueDate !== null && params.dueDateTime !== undefined) body.due_date_time = params.dueDateTime; }
   if (params.startDate !== undefined) body.start_date = params.startDate;
   if (params.timeEstimate !== undefined) body.time_estimate = params.timeEstimate;
   if (params.addAssignees?.length || params.removeAssignees?.length) {
@@ -450,6 +470,19 @@ export async function uploadTaskAttachment(config: ClickUpConfig, taskId: string
   if (buffer.byteLength > ATTACHMENT_MAX_BYTES) {
     throw new Error(`Anexo maior que o limite permitido (${ATTACHMENT_MAX_BYTES} bytes)`);
   }
+  return enviarAnexo(config, taskId, buffer, filename);
+}
+
+/**
+ * Anexo que já está em mãos (o arquivo enviado no Daily, guardado no nosso armazenamento): vai direto para a tarefa
+ * do ClickUp, sem passar por URL. Mesma cerca de escrita do envio por URL.
+ */
+export async function uploadTaskAttachmentBytes(config: ClickUpConfig, taskId: string, buffer: Buffer, filename: string): Promise<{ id: string | null }> {
+  await assertTaskInScope(config, taskId);
+  return enviarAnexo(config, taskId, buffer, filename);
+}
+
+async function enviarAnexo(config: ClickUpConfig, taskId: string, buffer: Buffer, filename: string): Promise<{ id: string | null }> {
   const form = new FormData();
   form.append('attachment', new Blob([buffer]), filename);
 
@@ -696,6 +729,26 @@ export interface CreatedTaskComment {
  * replyToComment). A resposta do ClickUp não devolve o texto, então o texto
  * retornado é o que acabamos de enviar.
  */
+/** Pedaço de um comentário rico: texto, ou marcação de uma pessoa do ClickUp (vira @ de verdade e a notifica). */
+export type ParteDoComentario = { text: string } | { type: 'tag'; user: { id: number } };
+
+/**
+ * Comentário com marcação de verdade (`comment` em partes, não `comment_text`). `config.apiKey` pode ser o token
+ * OAuth de quem escreveu: aí o comentário sai em nome DELA, e não da conta da agência.
+ */
+export async function createTaskCommentRico(config: ClickUpConfig, taskId: string, partes: ParteDoComentario[]): Promise<CreatedTaskComment> {
+  await assertTaskInScope(config, taskId);
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
+    method: 'POST',
+    headers: { Authorization: config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment: partes, notify_all: false }),
+  });
+  if (!response.ok) throw new Error(`ClickUp comment creation failed (${response.status}): ${await response.text()}`);
+  const created = createdCommentSchema.parse(await response.json());
+  const texto = partes.map((p) => ('text' in p ? p.text : `@${p.user.id}`)).join('');
+  return { id: created.id, text: texto, date: created.date ?? null };
+}
+
 export async function createTaskComment(config: ClickUpConfig, taskId: string, text: string): Promise<CreatedTaskComment> {
   await assertTaskInScope(config, taskId);
   const response = await fetchClickUp(`${CLICKUP_API_BASE}/task/${taskId}/comment`, {
@@ -1046,4 +1099,23 @@ export function casarMembroDoClickUp(
   const nome = dobrar(pessoa.nome ?? '');
   const porNome = nome.length >= 3 ? membros.filter((m) => dobrar(m.username) === nome) : [];
   return porNome.length === 1 ? porNome[0]! : null;
+}
+
+/** Resposta de erro da API do ClickUp, com o status à mostra (404 = a tarefa não existe mais; 429 = limite de taxa). */
+export class ClickUpHttpError extends Error {
+  constructor(readonly status: number, caminho: string, corpo: string) {
+    super(`ClickUp ${caminho} falhou (${status}): ${corpo.slice(0, 300)}`);
+    this.name = 'ClickUpHttpError';
+  }
+}
+
+/**
+ * GET cru na API v2: devolve o JSON exatamente como o ClickUp mandou. Existe para quem espelha a tarefa por
+ * inteiro (a sincronização do Daily Tasks), que precisa de campos que os getters tipados acima não carregam
+ * (checklists, dependências, campos personalizados, anexos). `caminho` começa com "/" e já leva a query string.
+ */
+export async function lerClickUpCru<T = unknown>(config: ClickUpConfig, caminho: string): Promise<T> {
+  const response = await fetchClickUp(`${CLICKUP_API_BASE}${caminho}`, { headers: { Authorization: config.apiKey } });
+  if (!response.ok) throw new ClickUpHttpError(response.status, caminho.split('?')[0]!, await response.text());
+  return (await response.json()) as T;
 }

@@ -180,15 +180,28 @@ function settleOptimistic(queryClient: ReturnType<typeof useQueryClient>, thread
   });
 }
 
+/** Quem dá para marcar com @ na conversa (participantes do grupo). Só busca quando a conversa é grupo. */
+export function useInboxMentionables(threadId: string | null, ehGrupo: boolean) {
+  return useQuery({
+    queryKey: ['inbox', 'mentionables', threadId],
+    enabled: Boolean(threadId) && ehGrupo,
+    staleTime: 5 * 60_000,
+    queryFn: () => apiFetch<{ people: Array<{ id: string; token: string; nome: string }> }>(`/inbox/threads/${threadId}/mentionables`).then((r) => r.people),
+  });
+}
+
 export function useSendInboxMessage(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (text: string) =>
-      apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages`, {
+    // Texto puro ou com marcações (@) — `mentions` são os ids do WhatsApp de quem foi marcado.
+    mutationFn: (input: string | { text: string; mentions?: string[] }) => {
+      const corpo = typeof input === 'string' ? { text: input } : { text: input.text, ...(input.mentions?.length ? { mentions: input.mentions } : {}) };
+      return apiFetch<InboxMessageWire>(`/inbox/threads/${threadId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ text }),
-      }),
-    onMutate: (text) => ({ localId: optimistic(queryClient, threadId, { content: text }) }),
+        body: JSON.stringify(corpo),
+      });
+    },
+    onMutate: (input) => ({ localId: optimistic(queryClient, threadId, { content: typeof input === 'string' ? input : input.text }) }),
     onSuccess: (wire, _text, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, mapInboxMessage(wire)); },
     onError: (_error, _text, context) => { if (context) settleOptimistic(queryClient, threadId, context.localId, null); },
     onSettled: () => invalidateThread(queryClient, threadId),
@@ -291,5 +304,25 @@ export function useAssignInboxThread(threadId: string) {
         body: JSON.stringify({ userId }),
       }),
     onSuccess: () => invalidateThread(queryClient, threadId),
+  });
+}
+
+/** "Nova conversa": abre (ou reencontra) a conversa com um número pelo WhatsApp de quem pediu. Não envia nada. */
+export function useStartInboxThread() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (phone: string) =>
+      mapInboxThread(await apiFetch<InboxThreadWire>('/inbox/threads', { method: 'POST', body: JSON.stringify({ phone }) })),
+    onSuccess: (thread) => {
+      queryClient.setQueryData(['inbox-thread', thread.id], thread);
+      void queryClient.invalidateQueries({ queryKey: ['inbox-threads'] });
+    },
+  });
+}
+
+/** Reunião do Teams agora, na agenda Microsoft de quem pediu; devolve o link para a pessoa mandar na conversa. */
+export function useCreateInboxVideoCall(threadId: string) {
+  return useMutation({
+    mutationFn: () => apiFetch<{ join_url: string; web_link: string | null }>(`/inbox/threads/${threadId}/video-call`, { method: 'POST' }),
   });
 }

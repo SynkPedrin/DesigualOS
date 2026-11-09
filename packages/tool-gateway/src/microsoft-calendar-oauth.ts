@@ -50,10 +50,33 @@ export interface MicrosoftCalendarOAuthConfig {
   redirectUri: string;
   /** 'common' (padrão) aceita contas pessoais E corporativas; um tenant id fixa numa organização só. */
   tenant: string;
+  /** Pede também as agendas compartilhadas com a pessoa (ex.: a da Manada Filmes). Ver SCOPES_COMPARTILHADAS. */
+  agendasCompartilhadas?: boolean | undefined;
 }
 
 /** `Calendars.ReadWrite` (não só `.Read`): §30-equivalente do Google — criar evento do lado Desigual quando fizer sentido, não só ler. `offline_access` é o que garante refresh_token. */
 const SCOPES = ['openid', 'offline_access', 'Calendars.ReadWrite'] as const;
+
+/**
+ * Agenda que OUTRA conta compartilhou com a pessoa (a da Manada Filmes, 03/11/2026) não aparece em /me/calendars nem
+ * deixa ler os eventos só com `Calendars.ReadWrite`: precisa de `Calendars.ReadWrite.Shared`. Fica atrás de
+ * MICROSOFT_CALENDAR_AGENDAS_COMPARTILHADAS porque o institutoalmada.org não deixa usuário consentir: pedir a
+ * permissão antes do consentimento do administrador mandaria todo mundo para "solicitar aprovação" ao conectar.
+ */
+const SCOPES_COMPARTILHADAS = [...SCOPES, 'Calendars.ReadWrite.Shared'] as const;
+
+function escopos(config: Pick<MicrosoftCalendarOAuthConfig, 'agendasCompartilhadas'>): string {
+  return (config.agendasCompartilhadas ? SCOPES_COMPARTILHADAS : SCOPES).join(' ');
+}
+
+/**
+ * Permissão ainda sem consentimento, ou não concedida: dá para renovar sem ela, com as permissões de antes. O AADSTS70000
+ * ("one or more scopes requested are unauthorized") é como a Microsoft costuma recusar, na renovação, um escopo que o
+ * token nunca recebeu; se o token estiver revogado de verdade, a segunda tentativa falha também e a conexão expira.
+ */
+function faltaConsentimento(motivo: string): boolean {
+  return /consent_required|invalid_scope|scopes? requested (is|are) unauthorized|AADSTS(65001|70011|70000)\b/i.test(motivo);
+}
 
 export function buildMicrosoftCalendarAuthorizeUrl(config: MicrosoftCalendarOAuthConfig, state: string): string {
   const url = new URL(`${MICROSOFT_OAUTH_TOKEN_URL_BASE}/${config.tenant}/oauth2/v2.0/authorize`);
@@ -61,7 +84,7 @@ export function buildMicrosoftCalendarAuthorizeUrl(config: MicrosoftCalendarOAut
   url.searchParams.set('redirect_uri', config.redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('response_mode', 'query');
-  url.searchParams.set('scope', SCOPES.join(' '));
+  url.searchParams.set('scope', escopos(config));
   url.searchParams.set('state', state);
   // NUNCA prompt=consent (14/10/2026): ele obriga o consentimento DO USUÁRIO a
   // cada conexão, e organização que não deixa usuário consentir (o caso do
@@ -90,7 +113,7 @@ export async function exchangeMicrosoftCalendarCode(config: MicrosoftCalendarOAu
       redirect_uri: config.redirectUri,
       code,
       grant_type: 'authorization_code',
-      scope: SCOPES.join(' '),
+      scope: escopos(config),
     }),
   });
   await assertOk(response, 'Microsoft Calendar OAuth token exchange failed');
@@ -99,20 +122,22 @@ export async function exchangeMicrosoftCalendarCode(config: MicrosoftCalendarOAu
 }
 
 export async function refreshMicrosoftCalendarAccessToken(
-  config: Pick<MicrosoftCalendarOAuthConfig, 'clientId' | 'clientSecret' | 'tenant'>,
+  config: Pick<MicrosoftCalendarOAuthConfig, 'clientId' | 'clientSecret' | 'tenant' | 'agendasCompartilhadas'>,
   refreshToken: string,
 ): Promise<MicrosoftOAuthTokens> {
-  const response = await fetchMicrosoft(`${MICROSOFT_OAUTH_TOKEN_URL_BASE}/${config.tenant}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      refresh_token: refreshToken,
-      grant_type: 'refresh_token',
-      scope: SCOPES.join(' '),
-    }),
-  });
+  const renovar = (scope: string) =>
+    fetchMicrosoft(`${MICROSOFT_OAUTH_TOKEN_URL_BASE}/${config.tenant}/oauth2/v2.0/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token', scope }),
+    });
+  let response = await renovar(escopos(config));
+  // Sem o consentimento da permissão nova, a renovação falharia com AADSTS65001 e o resolver marcaria a conexão
+  // como expirada: a agenda de todo mundo pararia. Renova com as permissões de antes; só as compartilhadas ficam de fora.
+  if (!response.ok && config.agendasCompartilhadas) {
+    const motivo = await response.clone().text();
+    if (faltaConsentimento(motivo)) response = await renovar(SCOPES.join(' '));
+  }
   await assertOk(response, 'Microsoft Calendar OAuth token refresh failed');
   const parsed = tokenResponseSchema.parse(await response.json());
   // Microsoft pode devolver um refresh_token NOVO a cada troca — o antigo tem
@@ -122,6 +147,7 @@ export async function refreshMicrosoftCalendarAccessToken(
 
 const calendarListSchema = z.object({
   value: z.array(z.object({ id: z.string(), name: z.string().nullish(), isDefaultCalendar: z.boolean().nullish(), canEdit: z.boolean().nullish() })),
+  '@odata.nextLink': z.string().nullish(),
 });
 
 export interface MicrosoftCalendarListEntry {
@@ -131,12 +157,22 @@ export interface MicrosoftCalendarListEntry {
   canEdit: boolean;
 }
 
-/** As agendas que esta conta Microsoft enxerga — mesmo papel de listGoogleCalendars no seletor "qual agenda é a sua". */
+/**
+ * As agendas que esta conta Microsoft enxerga — mesmo papel de listGoogleCalendars no seletor "qual agenda é a sua".
+ * Pagina: sem `$top`, o Graph devolve só as 10 primeiras, e quem tem feriados, aniversários e agendas de outras
+ * pessoas passava disso sem a agenda que faltava aparecer em lugar nenhum (03/11/2026).
+ */
 export async function listMicrosoftCalendars(accessToken: string): Promise<MicrosoftCalendarListEntry[]> {
-  const response = await fetchMicrosoft(`${GRAPH_API_BASE}/me/calendars`, { headers: { Authorization: `Bearer ${accessToken}` } });
-  await assertOk(response, 'Microsoft Graph /me/calendars lookup failed');
-  const parsed = calendarListSchema.parse(await response.json());
-  return parsed.value.map((item) => ({ id: item.id, name: item.name ?? null, isDefault: item.isDefaultCalendar ?? false, canEdit: item.canEdit ?? false }));
+  const agendas: MicrosoftCalendarListEntry[] = [];
+  let url: string | null = `${GRAPH_API_BASE}/me/calendars?$top=100`;
+  while (url) {
+    const response: Response = await fetchMicrosoft(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    await assertOk(response, 'Microsoft Graph /me/calendars lookup failed');
+    const parsed = calendarListSchema.parse(await response.json());
+    for (const item of parsed.value) agendas.push({ id: item.id, name: item.name ?? null, isDefault: item.isDefaultCalendar ?? false, canEdit: item.canEdit ?? false });
+    url = parsed['@odata.nextLink'] ?? null;
+  }
+  return agendas;
 }
 
 const eventsListSchema = z.object({

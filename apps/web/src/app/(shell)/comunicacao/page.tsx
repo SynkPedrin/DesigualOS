@@ -154,7 +154,7 @@ function ComunicacaoConteudo() {
   const mostraPrincipal = Boolean(pedida || visao);
 
   return (
-    <div className="-mx-6 -mb-6 flex h-[calc(100%+1.5rem)] min-h-0 flex-col pt-2">
+    <div className="-mx-2 -mb-6 flex h-[calc(100%+1.5rem)] min-h-0 flex-col pt-2 md:-mx-6">
       <div className={cn('grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-lg border border-grafite-elevado lg:grid-cols-[280px_minmax(0,1fr)]', temPainel && 'xl:grid-cols-[280px_minmax(0,1fr)_380px]')}>
         <div className={cn('min-h-0 flex-col border-r border-grafite-elevado', mostraPrincipal ? 'hidden lg:flex' : 'flex')}>
           <ListaDeConversas

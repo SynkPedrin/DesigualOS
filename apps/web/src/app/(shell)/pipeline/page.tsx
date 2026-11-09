@@ -1,5 +1,7 @@
 'use client';
 
+import { AguardandoAprovacao, faixaDaLinha, Prazo } from '@/components/ui/prazo';
+import { estaEmAprovacao, urgenciaDoPrazo } from '@/lib/prazo';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowDown, ArrowUp, CalendarClock, CircleUserRound, FileText, Flag, Layers, Paperclip, Plus, Settings2, SquareKanban, Trash2, Upload, Wallet, X, Search } from 'lucide-react';
@@ -42,6 +44,7 @@ import {
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { estagioConcluido } from '@/lib/tarefa-concluida';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 /**
  * PIPELINES — mais de um quadro, cada um de um tipo:
@@ -703,6 +706,7 @@ function CartaoDetalheModal({
                   {card.prazo && (
                     <span className="flex items-center gap-1">
                       <CalendarClock size={13} /> Vence em {new Date(card.prazo).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+                      <Prazo prazo={card.prazo} feminino={false} className="ml-1" />
                     </span>
                   )}
                   {card.prioridade && card.prioridade !== 'normal' && (
@@ -713,7 +717,7 @@ function CartaoDetalheModal({
                 </div>
               )}
               {card.valor && <p className="text-sinal">{card.valor}</p>}
-              <p className="whitespace-pre-wrap text-branco-cru">{card.nota || <span className="text-nevoa">Sem nota.</span>}</p>
+              <p className="whitespace-pre-wrap text-branco-cru">{card.nota ? textoComLinks(card.nota, '') : <span className="text-nevoa">Sem nota.</span>}</p>
               {card.clientId && (
                 <Link href={`/clients?id=${card.clientId}`} className="inline-block text-sm text-roxo-eletrico hover:underline">
                   Abrir ficha completa do cliente →
@@ -1376,6 +1380,8 @@ function PipelineBoardUI() {
                     const ehTarefa = board.tipo === 'tarefas';
                     const nomeCliente = card.clientId ? nomeDoCliente.get(card.clientId) : undefined;
                     const prazo = prazoDoCartao(card.prazo, estagioConcluido(stage));
+                    const emAprovacao = estaEmAprovacao(stage);
+                    const urgencia = estagioConcluido(stage) ? null : urgenciaDoPrazo(card.prazo);
                     const bandeira = card.prioridade ? PRIORIDADE_BANDEIRA[card.prioridade] : undefined;
                     return (
                       <div
@@ -1384,8 +1390,9 @@ function PipelineBoardUI() {
                         onDragStart={(e) => { e.dataTransfer.setData('text/plain', card.id); e.dataTransfer.effectAllowed = 'move'; setArrastando(card.id); }}
                         onDragEnd={() => setArrastando(null)}
                         onClick={() => setCartaoAberto(card.id)}
-                        className={cn('cursor-grab rounded-lg border border-grafite-elevado bg-grafite p-3 shadow-sm transition-all hover:border-roxo-eletrico/40 hover:shadow-md active:cursor-grabbing', arrastando === card.id && 'opacity-40')}
+                        className={cn('cursor-grab rounded-lg border border-grafite-elevado bg-grafite p-3 shadow-sm transition-all hover:border-roxo-eletrico/40 hover:shadow-md active:cursor-grabbing', faixaDaLinha(emAprovacao ? 'aprovacao' : urgencia), arrastando === card.id && 'opacity-40')}
                       >
+                        {emAprovacao && <AguardandoAprovacao className="mb-2" />}
                         {/* Nome ORIGINAL da tarefa, completo (quebra em 2 linhas em vez de cortar). */}
                         <p className="line-clamp-2 text-sm font-semibold leading-snug text-branco-cru">{card.name}</p>
 
@@ -1414,8 +1421,9 @@ function PipelineBoardUI() {
                               </span>
                             )}
                             {prazo && (
-                              <span className={cn('flex items-center gap-1', prazo.classe)} title="Vencimento no ClickUp">
-                                <CalendarClock size={12} /> {prazo.texto}
+                              <span className="flex items-center gap-1.5 text-nevoa" title="Vencimento no ClickUp">
+                                <CalendarClock size={12} /> {prazo.texto.replace(' (atrasado)', '')}
+                                <Prazo prazo={card.prazo} feito={estagioConcluido(stage)} feminino={false} />
                               </span>
                             )}
                           </div>

@@ -49,7 +49,8 @@ export interface ChatMessage {
   sender_id: string;
   sender_name: string | null;
   sender_avatar_url: string | null;
-  kind?: 'user' | 'system';
+  /** `clickup`/`clickup_externo`: histórico importado do chat do ClickUp (no externo, o autor vem no começo do texto). */
+  kind?: 'user' | 'system' | 'clickup' | 'clickup_externo';
   content: string | null;
   client_message_id: string;
   reply_to: { id: string; sender_name: string | null; content: string | null; deleted: boolean } | null;
@@ -414,7 +415,7 @@ export function useCreateGroup() {
 export function useOpenDiscussion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { entity_type: 'client' | 'demand'; entity_id: string; title: string }) =>
+    mutationFn: (input: { entity_type: 'client' | 'demand' | 'work_task'; entity_id: string; title: string }) =>
       apiFetch<{ id: string }>('/internal-chat/discussions', { method: 'POST', body: JSON.stringify(input) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.conversations }),
   });

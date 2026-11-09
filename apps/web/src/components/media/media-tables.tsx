@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { dash, int, money, pct, STATUS_LABEL, TONE_CLASS } from './format';
 import { DataBar, DeltaChip, Sparkline } from './media-charts';
 import { CompartilharNaComunicacao } from '@/components/comunicacao/compartilhar-na-comunicacao';
+import { textoComLinks } from '@/lib/links-no-texto';
 
 type Level = 'campaign' | 'adset' | 'ad';
 const LEVEL_LABEL: Record<Level, string> = { campaign: 'Campanhas', adset: 'Conjuntos', ad: 'Anúncios' };
@@ -471,7 +472,7 @@ function CreativeDrawer({ row, currency, onClose, accountId, period }: { row: Me
           <p><span className="text-branco-cru">Campanha:</span> {row.campaignName ?? dash}</p>
           <p><span className="text-branco-cru">Conjunto:</span> {row.adsetName ?? dash}</p>
           {c?.title && <p><span className="text-branco-cru">Título:</span> {c.title}</p>}
-          {c?.body && <p className="whitespace-pre-line"><span className="text-branco-cru">Texto:</span> {c.body}</p>}
+          {c?.body && <p className="whitespace-pre-line"><span className="text-branco-cru">Texto:</span> {textoComLinks(c.body, '')}</p>}
           {c?.callToAction && <p><span className="text-branco-cru">CTA:</span> {c.callToAction}</p>}
           {c?.linkUrl && (
             <p className="break-all"><span className="text-branco-cru">Destino:</span> <a href={c.linkUrl} target="_blank" rel="noreferrer noopener" className="text-roxo-eletrico hover:underline">{c.linkUrl}</a></p>

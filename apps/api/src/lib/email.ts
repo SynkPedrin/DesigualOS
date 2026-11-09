@@ -43,8 +43,8 @@ const NEVOA_FRACA = '#6B6B72';
 const ROXO_ELETRICO = '#9333EA';
 const SINAL = '#E1F900';
 
-const LOGO_URL = 'https://dddchncdrgbhdirytdsp.supabase.co/storage/v1/object/public/user-uploads/branding/email-logo-320.png';
-const HERO_URL = 'https://dddchncdrgbhdirytdsp.supabase.co/storage/v1/object/public/user-uploads/branding/email-hero-1200.jpg';
+const LOGO_URL = 'https://lydrnodsauuwarpzjmll.supabase.co/storage/v1/object/public/user-uploads/branding/email-logo-320.png';
+const HERO_URL = 'https://lydrnodsauuwarpzjmll.supabase.co/storage/v1/object/public/user-uploads/branding/email-hero-1200.jpg';
 
 const ROLE_LABEL: Record<string, string> = {
   master: 'Administrador',

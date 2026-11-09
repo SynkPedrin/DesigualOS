@@ -151,7 +151,18 @@ export async function getMetaBusinesses(token: string): Promise<MetaBusiness[]> 
     todas.push(...businessesSchema.parse(corpo).data);
     proxima = corpo.paging?.next ?? null;
   }
-  return todas;
+
+  // As BMs das contas que este token ENXERGA também entram. O usuário do sistema da agência não "possui" BM
+  // nenhuma (/me/businesses volta vazio) e enxerga as contas dos clientes direto: sem isto o seletor de BM em
+  // Cliente → Meta Ads ficava vazio e ninguém conseguia vincular conta (John Deere, 29/10/2026).
+  const ids = new Set(todas.map((b) => b.id));
+  for (const conta of await getMetaAdAccounts(token)) {
+    if (conta.businessId && !ids.has(conta.businessId)) {
+      ids.add(conta.businessId);
+      todas.push({ id: conta.businessId, name: conta.businessName ?? conta.businessId });
+    }
+  }
+  return todas.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 }
 
 const adAccountsSchema = z.object({
@@ -202,9 +213,8 @@ function toAdAccount(raw: z.infer<typeof adAccountsSchema>['data'][number]): Met
  * devolve só 25 por página: agência com mais clientes perdia o resto.
  */
 export async function getMetaAdAccounts(token: string, businessId?: string): Promise<MetaAdAccount[]> {
-  const caminhos = businessId ? [`${businessId}/owned_ad_accounts`, `${businessId}/client_ad_accounts`] : ['me/adaccounts'];
   const porId = new Map<string, MetaAdAccount>();
-  for (const path of caminhos) {
+  const ler = async (path: string, filtro?: (c: MetaAdAccount) => boolean) => {
     const url = new URL(`${GRAPH_BASE}/${path}`);
     url.searchParams.set('fields', 'id,name,account_id,account_status,currency,business{id,name}');
     url.searchParams.set('limit', '200');
@@ -214,10 +224,32 @@ export async function getMetaAdAccounts(token: string, businessId?: string): Pro
       const response = await fetchMeta(new URL(proxima));
       await assertOk(response, 'Meta ad accounts lookup failed');
       const corpo = (await response.json()) as { paging?: { next?: string } };
-      for (const conta of adAccountsSchema.parse(corpo).data.map(toAdAccount)) porId.set(conta.id, conta);
+      for (const conta of adAccountsSchema.parse(corpo).data.map(toAdAccount)) if (!filtro || filtro(conta)) porId.set(conta.id, conta);
       proxima = corpo.paging?.next ?? null;
     }
+  };
+  if (!businessId) {
+    await ler('me/adaccounts');
+    return [...porId.values()];
   }
+  // Com BM: as que ela possui, as de clientes compartilhadas com ela, e as que este token enxerga daquela BM.
+  // A terceira é a que serve ao usuário do sistema da agência, que não tem permissão de listar a BM do cliente
+  // (os dois primeiros caminhos falham ou vêm vazios), mas enxerga as contas dela. Basta um caminho responder.
+  let falha: unknown = null;
+  let algumRespondeu = false;
+  for (const [path, filtro] of [
+    [`${businessId}/owned_ad_accounts`, undefined],
+    [`${businessId}/client_ad_accounts`, undefined],
+    ['me/adaccounts', (c: MetaAdAccount) => c.businessId === businessId],
+  ] as const) {
+    try {
+      await ler(path, filtro);
+      algumRespondeu = true;
+    } catch (error) {
+      falha = error;
+    }
+  }
+  if (!algumRespondeu) throw falha;
   return [...porId.values()];
 }
 

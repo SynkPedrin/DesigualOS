@@ -21,6 +21,8 @@
   --color-nevoa: #a1a1aa;
   --color-violeta-sutil: #ddd6fe;
   --color-magenta-spark: #d946ef;
+  /* Roxo para TEXTO e ícone sobre o fundo escuro: o roxo-elétrico como texto fica abaixo do contraste legível. */
+  --color-lilas: #c4b5fd;
 
   /* Product energy accent: exact hex sampled from the real brand asset assets/FUNDO.png
    * (2026-09-01), confirmed by the backend team, replaces the earlier #c4f000 placeholder. */
@@ -31,6 +33,8 @@
   --color-aviso: #f59e0b;
   --color-erro: #ef4444;
   --color-info: #8b5cf6;
+  /* Link no texto (comentário, mensagem, descrição): azul, o que todo mundo reconhece como clicável. */
+  --color-link: #60a5fa;
 
   /* Agent identity colors */
   --color-agent-bento: #9333ea;
@@ -108,6 +112,8 @@
   --color-grafite-elevado: #dedede;
   --color-nevoa: #5c5c66;
   --color-sinal: #7a8a00;
+  --color-lilas: #6d28d9;
+  --color-link: #1d4ed8;
 }
 
 html {
@@ -140,8 +146,16 @@ body {
   font-family: var(--font-body);
 }
 
-* {
-  border-color: var(--color-grafite-elevado);
+/*
+ * Cor padrão de borda DENTRO da camada base. Fora de camada (como estava até 26/10/2026), esta regra vencia toda
+ * classe de cor de borda do Tailwind, que mora na camada utilities: `border-sinal`, `border-l-erro`,
+ * `hover:border-roxo-eletrico/40` e até `border-transparent` eram ignoradas, e tudo saía cinza. Na camada base ela
+ * continua sendo o padrão, e as classes voltam a mandar.
+ */
+@layer base {
+  * {
+    border-color: var(--color-grafite-elevado);
+  }
 }
 
 ::selection {
@@ -202,3 +216,36 @@ body {
 .text-\[13px\] { font-size: 0.9375rem; }
 .text-\[14px\] { font-size: 1rem; }
 .text-\[15px\] { font-size: 1.0625rem; }
+
+/*
+ * FUNDO VIVO (03/11/2026, pedido do Pedro: "animação de movimento das iluminações de fundo"). Três luzes desfocadas nas
+ * cores da marca (roxo, magenta e o verde-limão), derivando devagar atrás de toda a área logada. Lento de propósito
+ * (30-46 s por volta): é ambiente, não pode puxar o olho de quem está lendo uma tabela. Sem movimento para quem pediu
+ * menos movimento no sistema.
+ */
+@keyframes deriva-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(14vw, 10vh, 0) scale(1.15); }
+}
+@keyframes deriva-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
+  50% { transform: translate3d(-12vw, -8vh, 0) scale(0.9); }
+}
+@keyframes deriva-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
+  33% { transform: translate3d(-8vw, 12vh, 0) scale(1.1); }
+  66% { transform: translate3d(9vw, -6vh, 0) scale(1); }
+}
+.luz-de-fundo {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  will-change: transform;
+}
+.luz-de-fundo-a { animation: deriva-a 38s ease-in-out infinite; }
+.luz-de-fundo-b { animation: deriva-b 46s ease-in-out infinite; }
+.luz-de-fundo-c { animation: deriva-c 30s ease-in-out infinite; }
+html[data-theme='light'] .luz-de-fundo { opacity: 0.45; }
+@media (prefers-reduced-motion: reduce) {
+  .luz-de-fundo-a, .luz-de-fundo-b, .luz-de-fundo-c { animation: none; }
+}

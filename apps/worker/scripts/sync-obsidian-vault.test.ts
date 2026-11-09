@@ -11,7 +11,7 @@ import path from 'node:path';
 vi.mock('@desigual-os/database', () => ({ db: {}, schema: {} }));
 vi.mock('@desigual-os/orchestrator', () => ({ rememberFact: vi.fn() }));
 
-const { arquivosDoVault, deveIgnorarCaminho } = await import('./sync-obsidian-vault.mjs');
+const { arquivosDoVault, deveIgnorarCaminho, pastaDoCliente } = await import('./sync-obsidian-vault.mjs');
 
 /**
  * Não há vault Obsidian real disponível nesta sessão (OBSIDIAN_VAULT_PATH não
@@ -66,5 +66,18 @@ describe('arquivosDoVault', () => {
 
   it('vault inexistente devolve lista vazia, nunca lança', () => {
     expect(arquivosDoVault(path.join(raiz, 'nao-existe'))).toEqual([]);
+  });
+});
+
+describe('pastaDoCliente', () => {
+  it('no vault do Bento o cliente está na pasta: clientes/dcs/dados-canonicos.md -> dcs (09/11/2026)', () => {
+    expect(pastaDoCliente(path.join('clientes', 'dcs', 'dados-canonicos.md'))).toBe('dcs');
+    expect(pastaDoCliente(path.join('01_Clientes', 'envu', 'timeline.md'))).toBe('envu');
+  });
+  it('com a raiz já na pasta clientes/, a primeira pasta é o cliente', () => {
+    expect(pastaDoCliente(path.join('dcs', 'fontes-externas', 'dossie.md'))).toBe('dcs');
+  });
+  it('nota solta na raiz não tem pasta de cliente', () => {
+    expect(pastaDoCliente('memory.md')).toBeNull();
   });
 });

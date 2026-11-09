@@ -25,6 +25,7 @@ export * from './openwa-session-store';
 export * from './openwa-signature';
 export * from './openwa-media-store';
 export * from './openwa-sync';
+export * from './openwa-vigia';
 export * from './meta-oauth';
 export * from './google-ads-oauth';
 export * from './meta-access-resolver';

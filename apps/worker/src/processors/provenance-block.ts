@@ -78,6 +78,7 @@ const NOME_HUMANO: Record<FonteDeContexto, string> = {
   // sustenta fato: citá-lo como fonte seria o agente se citando.
   dialogo: 'o que já foi dito nesta conversa',
   cliente: 'dossiê do cliente registrado no sistema',
+  cerebro: 'notas do vault do Bento (cerebro-desigual)',
   campanha: 'registro de campanhas, derivado das tarefas do ClickUp',
   pessoas: 'registro de pessoas e relações, derivado do ClickUp',
   episodios: 'memória do que foi decidido em conversas anteriores, com data',

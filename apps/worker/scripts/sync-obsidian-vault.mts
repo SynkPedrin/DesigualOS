@@ -73,6 +73,18 @@ export function arquivosDoVault(raiz: string, dir = raiz): string[] {
   });
 }
 
+/**
+ * A pasta do cliente, quando o vault separa por cliente (`clientes/dcs/dados-canonicos.md`, ou a raiz já é a pasta
+ * `clientes/`: `dcs/dados-canonicos.md`). No vault do Bento (cerebro-desigual) o cliente está na PASTA, não no nome
+ * do arquivo: sem isto, a nota canônica da DCS não casava com cliente nenhum e ficava de fora (09/11/2026).
+ */
+export function pastaDoCliente(relativo: string): string | null {
+  const segmentos = relativo.split(path.sep).slice(0, -1);
+  const i = segmentos.findIndex((s) => /^(\d+_)?clientes$/i.test(s));
+  if (i !== -1) return segmentos[i + 1] ?? null;
+  return segmentos[0] ?? null;
+}
+
 const RODANDO_COMO_SCRIPT = process.argv[1]?.endsWith('sync-obsidian-vault.mts') ?? false;
 
 if (RODANDO_COMO_SCRIPT) {
@@ -110,7 +122,8 @@ if (RODANDO_COMO_SCRIPT) {
     const base = path.basename(arquivo, '.md');
     // Mesma ordem de candidatos que sync-dossies.mts: frontmatter antes do nome
     // do arquivo, porque o frontmatter é declarado, o nome é só convenção.
-    const c = acharCliente([fm.slug ?? '', fm.cliente ?? '', fm.nome ?? '', base], clientes);
+    // A pasta do cliente vem depois do frontmatter e antes do nome do arquivo ("cerebro", "timeline" não dizem de quem é).
+    const c = acharCliente([fm.slug ?? '', fm.cliente ?? '', fm.nome ?? '', pastaDoCliente(relativo) ?? '', base], clientes);
 
     if (!c) {
       semCliente.push(relativo);

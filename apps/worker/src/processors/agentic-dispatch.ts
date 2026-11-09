@@ -49,6 +49,7 @@ import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto, type RegistroDeEvidencia } from './context-assembler';
 import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
 import { montarProveniencia } from './response-provenance.js';
+import { buscarNoCerebroDoBento, formatarBlocoDoCerebro } from './cerebro-do-bento';
 import { avaliarAusencia, respostaDeUltimoRecurso } from './guarda-de-ausencia';
 import {
   blocoDeContinuacaoCriativa,
@@ -421,6 +422,12 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       organizationId,
     }).catch(() => clienteDoTurno);
   }
+
+  // CÉREBRO DO BENTO (vault cerebro-desigual): dispara já, em paralelo com o resto da coleta. Teto de 4 s e pausa
+  // depois de falha (ver cerebro-do-bento.ts): nunca segura a resposta. Só o Bento tem esse vault.
+  const cerebroDoTurnoP = data.agent === 'bento'
+    ? buscarNoCerebroDoBento(data.message.split('\n\n---\n')[0] ?? data.message, { cliente: clienteDoTurnoFinal?.clientName ?? null }).catch(() => [])
+    : Promise.resolve([]);
 
   /**
    * RETRIEVAL PLANNER (01/10/2026). Até aqui a recuperação era fixa e
@@ -987,6 +994,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       // Concatenar tudo funcionava com dois blocos; com seis vira despejo, e o
       // modelo passa a prestar atenção no lugar errado — foi assim que um
       // aprendizado velho ancorou um pedido no cliente errado.
+      const blocoCerebro = formatarBlocoDoCerebro(await cerebroDoTurnoP);
       const blocos: BlocoDeContexto[] = [
         // Primeiro de todos: é o que decide O QUE entregar neste turno.
         { fonte: 'frescor', texto: blocoContinuacao },
@@ -1017,6 +1025,13 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
             clientId: clienteDoTurnoFinal?.clientId ?? clientId ?? null,
             confidence: 0.9,
           },
+        },
+        // O vault do próprio Bento, logo depois da ficha: notas curadas da equipe, achadas pela pergunta.
+        {
+          fonte: 'cerebro',
+          texto: blocoCerebro,
+          evidenciavel: true,
+          proveniencia: { sourceType: 'vault', sourceId: null, clientId: clienteDoTurnoFinal?.clientId ?? clientId ?? null, confidence: 0.8 },
         },
         // O estado ao vivo da conta, quando o turno pede: fato consultado, na
         // mesma faixa de autoridade do registro de campanha.

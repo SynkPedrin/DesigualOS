@@ -105,8 +105,12 @@ export function BentoBriefing({
   acao?: { label: string; href: string };
 }) {
   return (
-    <Surface className="flex flex-col gap-5 bg-gradient-to-r from-roxo-eletrico/15 via-grafite to-grafite p-5 lg:flex-row lg:items-center lg:gap-8">
-      <div className="lg:w-56 lg:shrink-0">
+    // Pela LARGURA DO CARTÃO, não da janela (03/11/2026): no Hoje ele divide a linha com os indicadores, e com `lg:` ele
+    // virava três colunas num cartão estreito e o texto do meio quebrava uma palavra por linha.
+    <Surface className="@container relative overflow-hidden bg-gradient-to-br from-roxo-eletrico/25 via-grafite/90 to-magenta-spark/10 p-5">
+      <div aria-hidden className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-sinal/10 blur-3xl" />
+      <div className="relative flex flex-col gap-4 @min-[46rem]:flex-row @min-[46rem]:items-center @min-[46rem]:gap-8">
+      <div className="@min-[46rem]:w-52 @min-[46rem]:shrink-0">
         <Assinatura titulo="Bento" subtitulo={subtitulo} />
       </div>
 
@@ -136,12 +140,13 @@ export function BentoBriefing({
       {acao && !carregando && (
         <Link
           href={acao.href}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-roxo-eletrico px-4 py-2.5 text-sm font-medium text-branco-cru transition-opacity hover:opacity-90"
+          className="inline-flex shrink-0 items-center justify-center gap-2 self-start rounded-xl bg-sinal px-4 py-2.5 text-sm font-semibold text-carbono transition-all hover:shadow-sinal @min-[46rem]:self-center"
         >
           {acao.label}
           <ArrowRight size={14} />
         </Link>
       )}
+      </div>
     </Surface>
   );
 }

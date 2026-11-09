@@ -63,9 +63,14 @@ export function ControleDaAgencia() {
     },
   } = data;
 
+  /*
+   * Colunas pela largura DESTE painel (container query), não da janela (03/11/2026): ele mora ao lado da sidebar, e
+   * com `lg:`/`xl:` um notebook de 1024px abria duas colunas em meio painel, cortando o funil em "Conclui" e a
+   * coluna "Atrasados" da tabela de colaboradores.
+   */
   return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+    <div className="@container space-y-8">
+      <div className="grid grid-cols-2 gap-3 @min-[640px]:grid-cols-3 @min-[1100px]:grid-cols-6">
         {/*
           * "CADASTRADOS", NÃO "ATIVOS" (10/10/2026). A consulta por trás deste
           * número (`cli_filtrado` em agency-control-center/routes.ts) conta
@@ -98,7 +103,7 @@ export function ControleDaAgencia() {
 
       <div>
         <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-nevoa">Funil de workflow</p>
-        <div className="flex gap-2 overflow-x-auto">
+        <div className="grid grid-cols-3 gap-2 @min-[720px]:grid-cols-6">
           {[
             ['Novas', funil.novas],
             ['Briefing', funil.briefing],
@@ -107,15 +112,15 @@ export function ControleDaAgencia() {
             ['Aprovação', funil.aprovacao],
             ['Concluído', funil.concluido],
           ].map(([rotulo, valor]) => (
-            <div key={rotulo as string} className="min-w-[110px] flex-1 rounded-lg border border-grafite-elevado bg-grafite px-3 py-2.5 text-center">
+            <div key={rotulo as string} className="min-w-0 rounded-lg border border-grafite-elevado bg-grafite px-2 py-2.5 text-center">
               <p className="font-heading text-xl font-semibold text-branco-cru">{valor}</p>
-              <p className="mt-0.5 text-[11px] text-nevoa">{rotulo}</p>
+              <p className="mt-0.5 truncate text-[11px] text-nevoa">{rotulo}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 @min-[900px]:grid-cols-2">
         <div>
           <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-nevoa">Clientes em atenção</p>
           {atencao.length === 0 ? (
@@ -147,8 +152,8 @@ export function ControleDaAgencia() {
           {operacao.length === 0 ? (
             <SemNadaAinda titulo="Ninguém com carga agora" explicacao="Nenhum colaborador com quinzena ou aprovação em aberto." />
           ) : (
-            <div className="overflow-hidden rounded-lg border border-grafite-elevado bg-grafite">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto rounded-lg border border-grafite-elevado bg-grafite">
+              <table className="w-full whitespace-nowrap text-sm">
                 <thead className="bg-grafite-elevado/50 text-left font-mono text-[10px] uppercase tracking-wider text-nevoa">
                   <tr>
                     <th className="px-3 py-2">Pessoa</th>
@@ -183,7 +188,7 @@ export function ControleDaAgencia() {
               Ver tarefas →
             </Link>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-4">
             <div className="rounded-lg border border-grafite-elevado bg-grafite px-3 py-2.5">
               <p className="font-heading text-xl font-semibold text-branco-cru">{clickup.total_tarefas}</p>
               <p className="mt-0.5 text-[11px] text-nevoa">Total</p>
@@ -207,7 +212,7 @@ export function ControleDaAgencia() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 @min-[900px]:grid-cols-2">
         <div>
           <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-nevoa">Mídia</p>
           <div className="rounded-lg border border-grafite-elevado bg-grafite px-4 py-3 text-sm text-branco-cru">
