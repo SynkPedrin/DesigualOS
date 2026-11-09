@@ -274,3 +274,29 @@ describe('comporPerfil com a idade do registro', () => {
     expect(comporPerfil([{ fonte: 'brain', content: 'X' }], 9000, agora)).toBe('[REGISTRO CRIATIVO (posicionamento, publico, tom de voz)]\nX');
   });
 });
+
+describe('dados canônicos do cliente (09/11/2026)', () => {
+  it('a nota dados-canonicos do vault vira a fonte canônica; as outras notas do vault, fonte de vault', () => {
+    expect(fonteDoPerfil('cliente:abc:vault:dcs/dados-canonicos.md')).toBe('canonico');
+    expect(fonteDoPerfil('cliente:abc:vault:clientes/dcs/dados-canonicos.md')).toBe('canonico');
+    expect(fonteDoPerfil('cliente:abc:vault:dcs/timeline.md')).toBe('vault');
+  });
+
+  it('vem primeiro, rotulada, e com espaço próprio: não tira espaço do brain nem do dossiê', () => {
+    const canonico = 'Birigui: Av. Nove de Julho, 1491. CRM-SP 115229. ' + 'x'.repeat(8_000);
+    const p = comporPerfil([
+      { fonte: 'brain', content: 'B'.repeat(6_000) },
+      { fonte: 'dossie', content: 'D'.repeat(2_500) },
+      { fonte: 'canonico', content: canonico },
+    ])!;
+    expect(p.startsWith('[DADOS CANONICOS')).toBe(true);
+    expect(p).toContain('CRM-SP 115229');
+    expect(p).toContain('x'.repeat(8_000));
+    // Brain e dossiê seguem com o orçamento de sempre (9.000), como se a canônica não existisse.
+    expect(p.split('B').length - 1 + p.split('D').length - 1).toBeGreaterThanOrEqual(8_400);
+  });
+
+  it('só a canônica, sem fichas: ainda assim entra', () => {
+    expect(comporPerfil([{ fonte: 'canonico', content: 'Unidades: Birigui e Araçatuba.' }])).toContain('Birigui');
+  });
+});
