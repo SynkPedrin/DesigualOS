@@ -80,7 +80,7 @@ type FonteDePerfil = (typeof ORDEM_DAS_FONTES)[number] | 'outra';
 
 const ROTULO_DA_FONTE: Record<FonteDePerfil, string> = {
   canonico:
-    'DADOS CANONICOS (fatos oficiais validados pelo cliente: unidades, enderecos, telefones, CNPJ, corpo clinico; responda com eles, citando a fonte)',
+    'DADOS CANONICOS (fatos oficiais validados pelo cliente: unidades, enderecos, telefones, CNPJ, corpo clinico; responda com eles. Valem sobre qualquer outra ficha que marque o mesmo dado como pendente, [FALTA] ou [CONFIRMAR])',
   vault: 'NOTAS DO VAULT (anotacoes da equipe, menos curadas que as fichas)',
   brain: 'REGISTRO CRIATIVO (posicionamento, publico, tom de voz)',
   dossie: 'REGISTRO OPERACIONAL (contrato, servicos, historico, lacunas)',
