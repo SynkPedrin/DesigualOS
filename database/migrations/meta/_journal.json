@@ -617,6 +617,13 @@
       "when": 1792758610702,
       "tag": "0087_work_historico_preferencias_seguidores",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792765093604,
+      "tag": "0088_automacao_no_whatsapp",
+      "breakpoints": true
     }
   ]
 }

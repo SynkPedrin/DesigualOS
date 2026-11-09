@@ -78,8 +78,8 @@ function vazioViraNull(valor: string | undefined): string | null {
   return limpo ? limpo : null;
 }
 
-/** O número corporativo do Bento (conta WhatsApp Business dedicada). */
-export const NUMERO_DO_BENTO = '5518997987295';
+/** O número corporativo do Bento: chip da agência (18) 99632-6160, reativado em 11/03/2026. Trocado em 23/10/2026. */
+export const NUMERO_DO_BENTO = '5518996326160';
 
 export function bentoWhatsappConfig(env: NodeJS.ProcessEnv = process.env): BentoWhatsappConfig {
   return {

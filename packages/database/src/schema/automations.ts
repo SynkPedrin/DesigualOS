@@ -34,6 +34,13 @@ export const automations = pgTable(
     schedule: text('schedule').notNull(),
     scheduleLabel: text('schedule_label').notNull(),
     enabled: boolean('enabled').notNull().default(true),
+    /**
+     * Para onde o Bento manda a resposta no WhatsApp, além do chat (só dígitos,
+     * com DDI e DDD). Null = só no chat, como sempre foi. É o ÚNICO jeito de o
+     * Bento escrever primeiro para alguém: quem pediu é quem recebe, no número
+     * que a própria pessoa digitou.
+     */
+    whatsappPhone: text('whatsapp_phone'),
     estimatedMinutesSaved: integer('estimated_minutes_saved'),
     lastRunAt: timestamp('last_run_at', { withTimezone: true }),
     ...timestampColumns,

@@ -24,6 +24,13 @@ export const users = pgTable('users', {
    * pessoa como "configurada" sem módulo nenhum.
    */
   homePath: text('home_path'),
+  /**
+   * O WhatsApp da pessoa, só dígitos com DDI e DDD. Guardado na primeira vez
+   * que ela pede "enviar no WhatsApp" numa automação, para não precisar
+   * digitar de novo na próxima. Não é o vínculo com o Bento
+   * (bento_whatsapp_links): é só o destino que ela mesma escolheu.
+   */
+  whatsappPhone: text('whatsapp_phone'),
   // Idioma de preferência da UI (central de configuração da conta).
   language: text('language').notNull().default('pt-BR'),
   // Tema de preferência da UI (central de configuração da conta): claro,

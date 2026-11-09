@@ -22,7 +22,7 @@ export const bentoWhatsappHandlers = [
     const p = estado.pending;
     return HttpResponse.json({
       enabled: true,
-      bot_phone: '+55 18 99798-7295',
+      bot_phone: '+55 18 99632-6160',
       link: estado.link,
       pending_code: p ? { id: p.id, status: p.status, expires_at: p.expires_at, claimed_phone: p.claimed_phone } : null,
     });
@@ -35,8 +35,8 @@ export const bentoWhatsappHandlers = [
       id: 'mock-code',
       code: 'BENTO-MOCK-2026',
       expires_at: expires,
-      bot_phone: '+55 18 99798-7295',
-      wa_link: 'https://wa.me/5518997987295?text=BENTO-MOCK-2026',
+      bot_phone: '+55 18 99632-6160',
+      wa_link: 'https://wa.me/5518996326160?text=BENTO-MOCK-2026',
     });
   }),
 
@@ -67,7 +67,7 @@ export const bentoWhatsappHandlers = [
       agent_hint: 'AUTO',
       open_mode: null,
       missing_config: [],
-      bot_phone: '+55 18 99798-7295',
+      bot_phone: '+55 18 99632-6160',
       transcription: 'openai',
       documents: true,
       allowed_groups: 0,
@@ -101,7 +101,7 @@ export const bentoWhatsappHandlers = [
 
   http.post('/bento-whatsapp/admin/session/start', () => HttpResponse.json({ status: 'initializing' })),
 
-  http.post('/bento-whatsapp/admin/session/pairing-code', () => HttpResponse.json({ pairing_code: 'ABCD1234', phone: '+55 18 99798-7295' })),
+  http.post('/bento-whatsapp/admin/session/pairing-code', () => HttpResponse.json({ pairing_code: 'ABCD1234', phone: '+55 18 99632-6160' })),
 
   http.get('/bento-whatsapp/admin/session/qr', () =>
     HttpResponse.json({ error: 'Modo mock: nenhum OpenWA real para gerar QR.' }, { status: 409 }),

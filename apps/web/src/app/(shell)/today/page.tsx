@@ -294,12 +294,11 @@ export default function TodayPage() {
       badge: { label: 'Atrasada', tom: 'urgent' },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
       prazo: t.due_date,
-      href: t.url ?? '/tasks',
+      href: '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
       bloqueada: pareceBloqueada(t.status),
       daEquipe: false,
-      externo: Boolean(t.url),
     });
   }
   // Tarefa que vence HOJE e ainda não passou da hora: antes só a atrasada entrava, e a aba "Hoje" deixava de fora
@@ -312,12 +311,11 @@ export default function TodayPage() {
       badge: { label: 'Vence hoje', tom: 'warning' },
       quando: formatClockTime(new Date(t.due_date!).toISOString()),
       prazo: t.due_date,
-      href: t.url ?? '/tasks',
+      href: '/tasks',
       atrasada: false,
       venceHoje: true,
       bloqueada: pareceBloqueada(t.status),
       daEquipe: false,
-      externo: Boolean(t.url),
     });
   }
   const proximoEvento = (eventosHoje.data ?? []).find((e) => new Date(e.start_at).getTime() > Date.now());
@@ -348,12 +346,11 @@ export default function TodayPage() {
       badge: { label: 'Atrasada', tom: 'urgent' as Tom },
       quando: formatRelativeTime(new Date(t.due_date!).toISOString()),
       prazo: t.due_date,
-      href: t.url ?? '/tasks',
+      href: '/tasks',
       atrasada: true,
       venceHoje: t.due_date! >= inicioHoje,
       bloqueada: pareceBloqueada(t.status),
       daEquipe: true,
-      externo: Boolean(t.url),
     }));
 
   const temBloqueada = prioridades.some((p) => p.bloqueada) || prioridadesDaEquipe.some((p) => p.bloqueada);

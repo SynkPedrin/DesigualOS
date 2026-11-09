@@ -68,15 +68,15 @@ describe('formatação para WhatsApp', () => {
 
 describe('identidade', () => {
   it('telefone só sai de JID de pessoa', () => {
-    expect(telefoneDoJid('5518997987295@c.us')).toBe('5518997987295');
-    expect(telefoneDoJid('5518997987295:12@s.whatsapp.net')).toBe('5518997987295');
+    expect(telefoneDoJid('5518996326160@c.us')).toBe('5518996326160');
+    expect(telefoneDoJid('5518996326160:12@s.whatsapp.net')).toBe('5518996326160');
     expect(telefoneDoJid('99887766@lid')).toBeNull();
     expect(telefoneDoJid('120363@g.us')).toBeNull();
   });
 
   it('formata e mascara número brasileiro', () => {
-    expect(telefoneLegivel('5518997987295')).toBe('+55 18 99798-7295');
-    expect(telefoneMascarado('5518997987295')).toBe('+55 18 9****-7295');
+    expect(telefoneLegivel('5518996326160')).toBe('+55 18 99632-6160');
+    expect(telefoneMascarado('5518996326160')).toBe('+55 18 9****-6160');
   });
 
   it('código: formato, aleatoriedade e extração tolerante', () => {
