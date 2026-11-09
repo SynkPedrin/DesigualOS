@@ -276,7 +276,12 @@ export async function resolveClientsFromText(message: string): Promise<ClientRes
   for (const client of clients) {
     const full = normalize(client.name);
     const slugAsText = normalize(client.slug.replace(/-/g, ' '));
-    const shortForm = normalize(client.name.split(/[—|]/)[0] ?? client.name);
+    // Forma curta: o nome antes do separador. Hífen com espaço também separa ("DCS - Diagnostico por imagem"): sem
+    // isto a forma curta era o nome inteiro, e "dcs" no texto nunca achava a DCS (09/11/2026, Endrigo e Pedro).
+    const primeiroSegmento = (client.name.split(/\s[-–]\s|[—|]/)[0] ?? client.name).trim();
+    const shortForm = normalize(primeiroSegmento);
+    // Sigla em maiúsculas no cadastro ("DCS", "APAE") vale com 3 letras: é um nome próprio, não uma palavra comum.
+    const sigla = /^[A-Z0-9]{3,5}$/.test(primeiroSegmento) ? normalize(primeiroSegmento) : null;
 
     const matchesTerm = (candidate: string): boolean => {
       if (!candidate || candidate.length < MIN_CONFIDENT_NAME_LEN) return false;
@@ -295,6 +300,10 @@ export async function resolveClientsFromText(message: string): Promise<ClientRes
     }
     if (matchesTerm(shortForm)) {
       tiers[1]!.hits.set(client.id, { client, term: shortForm });
+      continue;
+    }
+    if (sigla && new RegExp(`\\b${sigla}\\b`).test(normalizedMessage)) {
+      tiers[1]!.hits.set(client.id, { client, term: sigla });
       continue;
     }
     const distinctive = shortForm

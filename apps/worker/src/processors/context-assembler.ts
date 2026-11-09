@@ -41,6 +41,8 @@ export type FonteDeContexto =
    */
   | 'dialogo'
   | 'cliente'
+  /** O vault do próprio Bento (cerebro-desigual), pela memory-api: notas curadas achadas pela pergunta. */
+  | 'cerebro'
   | 'campanha'
   | 'pessoas'
   | 'episodios'
@@ -126,6 +128,8 @@ const ORDEM: FonteDeContexto[] = [
   'frescor',
   'dialogo',
   'cliente',
+  // Logo depois da ficha: nota curada da equipe, achada pela pergunta (ver cerebro-do-bento.ts).
+  'cerebro',
   'campanha',
   'pessoas',
   'episodios',
@@ -151,6 +155,7 @@ const PISO: Record<FonteDeContexto, number> = {
   // reescreve o enquadramento do turno.
   dialogo: 1_200,
   cliente: 2_500,
+  cerebro: 1_500,
   campanha: 1_500,
   pessoas: 600,
   episodios: 600,
@@ -160,8 +165,13 @@ const PISO: Record<FonteDeContexto, number> = {
   aprendizado: 900,
 };
 
-/** Teto total do pacote. Medido contra o node com dossiê rico + campanha ativa. */
-export const ORCAMENTO_PADRAO = 14_000;
+/**
+ * Teto total do pacote. Era 14.000, medido contra o modelo LOCAL (GPU) com dossiê rico + campanha ativa. Desde
+ * 13/10/2026 quem lê é o GPT (a GPU virou socorro), e 14.000 cortava a ficha do cliente em ~8.000: os dados canônicos
+ * da DCS chegavam sem o corpo clínico, e o Bento negou o CRM que estava na ficha (09/11/2026). 30.000 caracteres são
+ * ~8 mil tokens: folga para o GPT e ainda cabe no modelo local quando ele socorre.
+ */
+export const ORCAMENTO_PADRAO = 30_000;
 
 export interface ContextPack {
   texto: string;

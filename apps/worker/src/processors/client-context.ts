@@ -191,8 +191,13 @@ function indiceDaFonte(f: FonteDePerfil): number {
 }
 
 /**
- * Resolve o cliente do turno. Precedência: cliente da execução (seletor do
- * chat) > cliente citado no texto. Nunca "escolhe" quando há ambiguidade.
+ * Resolve o cliente do turno. Precedência: cliente CITADO no texto > cliente da execução (seletor do chat). Nunca
+ * "escolhe" quando há ambiguidade.
+ *
+ * O NOME CITADO MANDA (09/11/2026). Era o contrário: a conversa ficou presa no cliente da pergunta anterior
+ * ("que citável manager?") e "qual o endereço da dcs" foi respondido com o dossiê da Citável, sem nenhuma ficha da
+ * DCS — "não tenho o endereço". Quem escreve o nome de um cliente está falando dele; o seletor vale quando a mensagem
+ * não cita ninguém ou cita o próprio cliente selecionado.
  */
 export async function resolveClientTurnContext(params: {
   message: string;
@@ -220,6 +225,8 @@ export async function resolveClientTurnContext(params: {
   const ambiguous = (doTexto?.ambiguous ?? []).map((a) => (typeof a === 'string' ? a : (a as { name?: string }).name ?? '')).filter(Boolean);
 
   let clientId = params.executionClientId ?? null;
+  const citados = doTexto?.matches ?? [];
+  if (clientId && citados.length > 0 && !citados.some((m) => m.id === clientId)) clientId = citados[0]!.id;
   let clientName: string | null = null;
   // Ambiente do cliente do turno; preenchido junto com o nome, na mesma query.
   let ambienteResolvido = 'production';
