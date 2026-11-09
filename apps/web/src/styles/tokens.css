@@ -249,3 +249,56 @@ html[data-theme='light'] .luz-de-fundo { opacity: 0.45; }
 @media (prefers-reduced-motion: reduce) {
   .luz-de-fundo-a, .luz-de-fundo-b, .luz-de-fundo-c { animation: none; }
 }
+
+/*
+ * EDITOR QUE FORMATA ENQUANTO SE DIGITA (components/ui/editor-rico.tsx). Mesma aparência do texto
+ * já enviado: negrito, itálico, riscado, código, link azul e lista.
+ */
+.editor-rico .ProseMirror {
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.editor-rico .ProseMirror p { margin: 0; }
+.editor-rico .ProseMirror p + p { margin-top: 0.25rem; }
+.editor-rico .ProseMirror strong { font-weight: 600; }
+.editor-rico .ProseMirror em { font-style: italic; }
+.editor-rico .ProseMirror s { text-decoration: line-through; }
+.editor-rico .ProseMirror code {
+  border-radius: 0.25rem;
+  background: var(--color-carbono);
+  padding: 0 0.25rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+}
+.editor-rico .ProseMirror a {
+  color: var(--color-link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--color-link) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: text;
+}
+.editor-rico .ProseMirror a[href^='mencao:'] {
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--color-roxo-eletrico) 15%, transparent);
+  color: var(--color-lilas);
+  text-decoration: none;
+  padding: 0 0.25rem;
+}
+.editor-rico .ProseMirror ul { list-style: disc; padding-left: 1.25rem; }
+.editor-rico .ProseMirror ol { list-style: decimal; padding-left: 1.25rem; }
+.editor-rico .ProseMirror li p { margin: 0; }
+.editor-rico .ProseMirror pre {
+  border-radius: 0.375rem;
+  background: var(--color-carbono);
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+}
+.editor-rico .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: color-mix(in oklab, var(--color-nevoa) 70%, transparent);
+}

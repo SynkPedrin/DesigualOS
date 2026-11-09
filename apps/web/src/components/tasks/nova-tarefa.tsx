@@ -8,7 +8,7 @@ import { useClientWorkspace } from '@/hooks/use-client-workspace';
 import { useCreateClickUpTask } from '@/hooks/use-create-clickup-task';
 import { ApiRequestError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
-import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
+import { EditorRico } from '@/components/ui/editor-rico';
 
 const PRIORIDADES = [
   { valor: 3, rotulo: 'Normal' },
@@ -120,7 +120,7 @@ function Dialogo({ aoFechar, clienteInicial }: { aoFechar: () => void; clienteIn
 
             <label className="block space-y-1">
               <span className="text-xs text-nevoa">Detalhes (opcional)</span>
-              <TextareaFormatavel value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={3} className={campo} aria-label="Detalhes" />
+              <EditorRico value={descricao} onChange={setDescricao} className={`${campo} min-h-[4.5rem]`} ariaLabel="Detalhes" />
             </label>
 
             <div className="grid grid-cols-2 gap-3">

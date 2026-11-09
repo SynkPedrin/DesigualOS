@@ -9,7 +9,7 @@ import { AnexosDaMensagem } from './anexos';
 import { CartaoDeObjeto } from './cartao-de-objeto';
 import { TextoFormatado } from './texto-formatado';
 import { cn } from '@/lib/utils';
-import { TextareaFormatavel } from '@/components/ui/barra-de-formatacao';
+import { EditorRico } from '@/components/ui/editor-rico';
 
 export const REACOES_RAPIDAS = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏', '🔥'];
 
@@ -118,17 +118,19 @@ export function Mensagem({ m, agrupada, me, membros, destacada, podeEscrever, ac
           <p className="text-sm italic text-nevoa">Mensagem apagada</p>
         ) : editando ? (
           <div className="mt-1">
-            <TextareaFormatavel
+            <EditorRico
               autoFocus
               value={rascunho}
-              onChange={(e) => setRascunho(e.target.value)}
-              aria-label="Editar mensagem"
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') { setEditando(false); setRascunho(m.content ?? ''); }
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (rascunho.trim() || m.attachments.length) { acoes.onEdit(m, rascunho.trim()); setEditando(false); } }
+              onChange={setRascunho}
+              ariaLabel="Editar mensagem"
+              onTecla={(e) => {
+                if (e.key !== 'Escape') return false;
+                setEditando(false);
+                setRascunho(m.content ?? '');
+                return true;
               }}
-              className="w-full resize-none rounded-md border border-roxo-eletrico/60 bg-carbono/40 px-2 py-1.5 text-sm text-branco-cru focus:outline-none"
-              rows={Math.min(8, Math.max(1, rascunho.split('\n').length))}
+              onEnviar={() => { if (rascunho.trim() || m.attachments.length) { acoes.onEdit(m, rascunho.trim()); setEditando(false); } }}
+              className="max-h-60 w-full overflow-y-auto rounded-md border border-roxo-eletrico/60 bg-carbono/40 px-2 py-1.5 text-sm text-branco-cru"
             />
             <p className="font-mono text-[10px] text-nevoa">Enter salva · Esc cancela</p>
           </div>
