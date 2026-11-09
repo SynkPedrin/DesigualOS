@@ -3,6 +3,7 @@ import {
   avaliarAusencia,
   coberturaDoTopico,
   respostaDeUltimoRecurso,
+  promptDeRegeracao,
   topicosDaPergunta,
   trechosDeAusencia,
 } from './guarda-de-ausencia';
@@ -184,5 +185,22 @@ describe('casos reais de 09/11/2026 (DCS, Endrigo)', () => {
     const texto = respostaDeUltimoRecurso([c]);
     expect(texto).toContain('- Birigui (matriz): Av. Nove de Julho, 1491, Birigui/SP');
     expect(texto).not.toContain('Usuário:');
+  });
+});
+
+describe('promptDeRegeracao (09/11/2026)', () => {
+  const ev = (texto: string, citavel: boolean) => ({ fonte: 'cliente', sourceType: 'memory', sourceId: null, clientId: null, confidence: 0.9, citavel, texto }) as never;
+  it('leva a pergunta e só o registro citável, com a regra de que fato vale sobre pendência', () => {
+    const p = promptDeRegeracao('Qual o CRM do médico responsável da DCS?', [
+      ev('Usuário: qual o CRM?', false),
+      ev('[DADOS CANONICOS]\nDr. Fernando Dias da Costa e Silva, CRM-SP 115229, RQE 83811', true),
+    ])!;
+    expect(p).toContain('PERGUNTA:\nQual o CRM do médico responsável da DCS?');
+    expect(p).toContain('CRM-SP 115229');
+    expect(p).toContain('[CONFIRMAR]');
+    expect(p).not.toContain('Usuário: qual o CRM?');
+  });
+  it('sem registro citável, não há segunda tentativa', () => {
+    expect(promptDeRegeracao('x', [ev('Usuário: x', false)])).toBeNull();
   });
 });

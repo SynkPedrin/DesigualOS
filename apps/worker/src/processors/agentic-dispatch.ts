@@ -49,8 +49,9 @@ import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
 import { assembleContext, type BlocoDeContexto, type RegistroDeEvidencia } from './context-assembler';
 import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
 import { montarProveniencia } from './response-provenance.js';
+import { completeTextSafely } from '@desigual-os/router';
 import { buscarNoCerebroDoBento, formatarBlocoDoCerebro } from './cerebro-do-bento';
-import { avaliarAusencia, respostaDeUltimoRecurso } from './guarda-de-ausencia';
+import { avaliarAusencia, promptDeRegeracao, respostaDeUltimoRecurso } from './guarda-de-ausencia';
 import {
   blocoDeContinuacaoCriativa,
   contratoDeSaida,
@@ -1520,9 +1521,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
    * CONFERE a resposta contra o que entregou. Se ela nega um tópico que a
    * evidência entregue cobre, a negativa não vai ao usuário — vai o registro.
    *
-   * LIMITE CONHECIDO: não há regeração ainda. A resposta reprovada cai direto
-   * no fallback determinístico, que é literal e sem elegância. É pior de ler e
-   * melhor de confiar, e é a ordem de prioridade que este produto escolheu.
+   * Antes do fallback determinístico há UMA segunda tentativa (09/11/2026): o modelo recebe a pergunta e o registro
+   * citável, com a regra de que fato registrado vale sobre pendência (ver `promptDeRegeracao`). A resposta nova passa
+   * pela mesma conferência; só se negar de novo vai o fallback literal.
    */
   let respostaFinal = completed ? loop.answer : null;
   let guardaAcionada = false;
@@ -1543,7 +1544,13 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         },
         '[guarda] a resposta negou um tópico que a evidência entregue cobre; usando o registro',
       );
-      respostaFinal = respostaDeUltimoRecurso(veredicto.cobertos);
+      const prompt = promptDeRegeracao(data.message.split('\n\n---\n')[0] ?? data.message, contextPackEvidencias);
+      const regerada = prompt ? await completeTextSafely(prompt, logger, { maxTokens: 900 }).catch(() => null) : null;
+      const aprovadaNaSegunda = regerada?.trim()
+        ? avaliarAusencia({ pergunta: data.message, resposta: regerada, evidencias: contextPackEvidencias }).aprovada
+        : false;
+      respostaFinal = aprovadaNaSegunda ? regerada!.trim() : respostaDeUltimoRecurso(veredicto.cobertos);
+      logger.info({ executionId: data.executionId, segundaTentativa: aprovadaNaSegunda ? 'aprovada' : regerada ? 'negou de novo' : 'sem resposta' }, '[guarda] segunda tentativa');
     }
   }
 

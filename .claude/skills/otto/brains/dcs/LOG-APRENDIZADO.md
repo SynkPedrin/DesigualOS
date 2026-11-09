@@ -35,4 +35,8 @@ Regra nova: [a proibição ou o padrão que passa a valer]
 Escopo: PEÇA | MARCA. Origem: [onde surgiu]
 -->
 
-(sem entradas — este brain ainda não passou por aprovação ou correção registrada)
+## 2026-11-09 — Dado de cliente — CORRIGIDA
+Erro: o brain pedia `[CONFIRMAR: nome e CRM do responsável técnico]`, e o Bento negou ao Endrigo um dado que a agência tem.
+Ajuste: responsável técnico = Dr. Fernando Dias da Costa e Silva, CRM-SP 115229, RQE 83811, conforme os dados canônicos validados pela gerente Beatriz Fernandes em 27/07/2026.
+Escopo: MARCA
+Regra nova: dado de identificação (endereço, telefone, CRM) vem dos dados canônicos; o brain não marca como pendente o que já está validado lá.

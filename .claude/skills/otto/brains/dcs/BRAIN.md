@@ -86,7 +86,7 @@
 `[FALTA]` — cadastro recente no workspace (ClickUp ID 901418831855), sem histórico de conversas associado.
 
 ### Restrição de segmento (vale mesmo sem brain preenchido)
-**Publicidade médica é regulada.** Resolução CFM e normas do conselho proíbem promessa de resultado, sensacionalismo, concorrência por preço e uso de imagem de paciente sem autorização. Toda peça precisa de responsável técnico identificado. `[CONFIRMAR: nome e CRM do responsável técnico; o que o conselho local permite.]` Não produzir nada aqui de memória.
+**Publicidade médica é regulada.** Resolução CFM e normas do conselho proíbem promessa de resultado, sensacionalismo, concorrência por preço e uso de imagem de paciente sem autorização. Toda peça precisa de responsável técnico identificado. **Responsável técnico: Dr. Fernando Dias da Costa e Silva, CRM-SP 115229, RQE 83811 (radiologia).** Fonte: dados canônicos da DCS validados pela gerente Beatriz Fernandes em 27/07/2026 (vault `clientes/dcs/dados-canonicos.md`) e já usado nas peças aprovadas. Unidades, endereços, telefones e o corpo clínico completo estão nos dados canônicos. `[CONFIRMAR: o que o conselho local permite.]` Não produzir nada aqui de memória.
 
 ---
 

@@ -257,3 +257,34 @@ export function respostaDeUltimoRecurso(cobertos: readonly CoberturaDeTopico[]):
   );
   return linhas.join('\n');
 }
+
+/**
+ * SEGUNDA TENTATIVA, ANTES DO ÚLTIMO RECURSO (09/11/2026).
+ *
+ * A resposta reprovada caía direto na colagem literal de trechos. Com o Endrigo e o Pedro isso virou "Encontrei isto
+ * registrado no sistema" seguido de pedaços que não respondiam nada. O caso medido: o GPT tinha os dados canônicos da
+ * DCS ("Dr. Fernando ..., CRM-SP 115229") e o brain antigo dizia "[CONFIRMAR: nome e CRM]"; ele ficou com a pendência.
+ *
+ * Aqui o modelo recebe de novo a pergunta e SÓ o registro citável que foi entregue (ficha do cliente, vault, o que a
+ * equipe ensinou), com a regra explícita: fato registrado vale sobre marcação de pendente. A resposta nova passa pela
+ * mesma conferência; se negar de novo, aí sim vai o último recurso.
+ */
+export function promptDeRegeracao(pergunta: string, evidencias: readonly RegistroDeEvidencia[], teto = 24_000): string | null {
+  const registro = evidencias
+    .filter((ev) => ev.citavel && (ev.texto ?? '').trim())
+    .map((ev) => (ev.texto ?? '').trim())
+    .join('\n\n')
+    .slice(0, teto);
+  if (!registro) return null;
+  return [
+    'Você é o Bento, assistente de operação da Agência Desigual. Responda em português do Brasil, direto.',
+    'Uma resposta anterior disse que a informação não existia, mas ela está no REGISTRO abaixo.',
+    'Regras: responda à PERGUNTA usando o REGISTRO. Um fato registrado (nome, número, endereço, CRM) vale sobre qualquer',
+    'marcação de pendente, [FALTA] ou [CONFIRMAR] em outra ficha. Se o registro responde só em parte, diga o que ele diz',
+    'e o que falta. Não invente nada que não esteja no registro.',
+    '',
+    `PERGUNTA:\n${pergunta}`,
+    '',
+    `REGISTRO:\n${registro}`,
+  ].join('\n');
+}
