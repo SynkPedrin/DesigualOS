@@ -204,3 +204,26 @@ describe('promptDeRegeracao (09/11/2026)', () => {
     expect(promptDeRegeracao('x', [ev('Usuário: x', false)])).toBeNull();
   });
 });
+
+describe('resposta que já usa o registro (09/11/2026)', () => {
+  const ev = (texto: string) => ({ fonte: 'cliente', sourceType: 'memory', sourceId: null, clientId: null, confidence: 0.9, citavel: true, texto }) as never;
+  const registro = ev('[DADOS CANONICOS]\n## Corpo clínico\n- Responsável técnico: Dr. Fernando Dias da Costa e Silva, médico, CRM-SP 115229, RQE 83811, radiologia\n- A lista completa do corpo clínico é pendente.');
+
+  it('dá o CRM e ressalva um detalhe: passa (o "não há" é sobre o detalhe)', () => {
+    const v = avaliarAusencia({
+      pergunta: 'Qual é o médico responsável pela DCS e qual o CRM dele?',
+      resposta: 'O responsável técnico é o Dr. Fernando Dias da Costa e Silva, CRM-SP 115229 (RQE 83811). Não há registro da lista completa do corpo clínico.',
+      evidencias: [registro],
+    });
+    expect(v.aprovada).toBe(true);
+  });
+
+  it('negação pura do mesmo tópico continua barrada', () => {
+    const v = avaliarAusencia({
+      pergunta: 'Qual é o médico responsável pela DCS e qual o CRM dele?',
+      resposta: 'Não há registro do médico responsável pela DCS nem do CRM dele.',
+      evidencias: [registro],
+    });
+    expect(v.aprovada).toBe(false);
+  });
+});

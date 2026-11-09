@@ -228,12 +228,42 @@ export function avaliarAusencia(params: {
   const cobertos = coberturas.filter((c) => c.coberto);
   const descobertos = coberturas.filter((c) => !c.coberto).map((c) => c.topico);
 
+  // A resposta que JÁ USA o registro não está negando o tópico: o "não há" dela é sobre um detalhe ("não há a lista
+  // completa do corpo clínico"). Visto em 09/11/2026: o Bento deu o CRM certo, ressalvou um detalhe, e a guarda trocou
+  // a resposta inteira por uma colagem de trechos.
+  const usaORegistro = afirmacoes.length > 0 && cobertos.length > 0 && respostaUsaOsFatos(params.resposta, params.pergunta, params.evidencias);
   return {
-    aprovada: !(afirmacoes.length > 0 && cobertos.length > 0),
+    aprovada: !(afirmacoes.length > 0 && cobertos.length > 0) || usaORegistro,
     afirmacoesDeAusencia: afirmacoes,
     cobertos,
     descobertos,
   };
+}
+
+/** Palavras que aparecem em qualquer resposta sobre registro e não provam uso de fato nenhum. */
+const SEM_PESO = new Set([
+  'dados', 'informacao', 'informacoes', 'registro', 'registros', 'sistema', 'briefing', 'contexto', 'cliente', 'sobre',
+  'tenho', 'temos', 'existe', 'consta', 'nenhum', 'nenhuma', 'ainda', 'apenas', 'tambem', 'outra', 'outro', 'outros',
+  'outras', 'quando', 'porque', 'entao', 'dessa', 'desse', 'disso', 'nesta', 'neste', 'pelo', 'pela', 'para', 'esta',
+]);
+
+/**
+ * A resposta traz FATOS do registro? Conta os termos da resposta (5+ letras, ou com algarismo de 3+ dígitos) que estão
+ * na evidência citável e NÃO estão na pergunta — repetir a pergunta não é usar o registro. Três termos assim, ou um
+ * número de 4+ dígitos (CRM, CEP, telefone), bastam.
+ */
+function respostaUsaOsFatos(resposta: string, pergunta: string, evidencias: readonly RegistroDeEvidencia[]): boolean {
+  const registro = normalizar(evidencias.filter((e) => e.citavel).map((e) => e.texto ?? '').join(' '));
+  if (!registro) return false;
+  const daPergunta = new Set(normalizar(pergunta).split(/[^a-z0-9]+/));
+  const termos = new Set(normalizar(resposta).split(/[^a-z0-9]+/).filter((t) => (t.length >= 5 || /\d{3,}/.test(t)) && !SEM_PESO.has(t) && !daPergunta.has(t)));
+  let achados = 0;
+  for (const t of termos) {
+    if (!registro.includes(t)) continue;
+    if (/\d{4,}/.test(t)) return true;
+    if (++achados >= 3) return true;
+  }
+  return false;
 }
 
 /**
