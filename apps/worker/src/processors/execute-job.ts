@@ -32,6 +32,7 @@ import {
   BentoQAError,
   askAgent,
   AgentAskError,
+  mediaContextForAgent,
   requestToolCall,
 } from '@desigual-os/tool-gateway';
 import {
@@ -66,7 +67,9 @@ import {
 } from '@desigual-os/openai-provider';
 import { aceitaContextoNaMensagem, dispatchWithAgentLoop } from './agentic-dispatch';
 import { lerComGptPrimeiro, montarPromptDeLeitura, type CamadaDeLeitura } from './bento-leitura-gpt';
-import { jarbasLocalLigado, responderJarbasLocal } from './jarbas-local';
+import { contextoDeMidiaDaAgencia, jarbasLocalLigado, perguntaComparativa, perguntaSobreMidia, responderJarbasLocal } from './jarbas-local';
+import { blocoMemoriaSemantica, blocoVisaoGeral } from './visao-geral-operacao';
+import { resolveEnvironment } from './environment';
 import { entregarAutomacaoNoWhatsapp } from './run-automation';
 import { contarClientes, formatClientBlock, resolveClientTurnContext } from './client-context';
 import { blocoMultifonte, multifonteParaPanorama } from './contexto-multifonte.js';
@@ -80,6 +83,8 @@ import { blocoDeFrentes } from './bento-padrao-de-task';
 import { blocoRelacional, explicacaoParaPessoa } from './bento-arvore';
 import { blocoDePessoaEEquipe, escopoOperacional } from '@desigual-os/context-engine';
 import { ehPerguntaOperacional, montarAtaDeReuniao, pedeAtaDeReuniao, responderOperacional } from './bento-resposta-operacional';
+import { resolvePersonTurnContext } from './person-context';
+import { buscarProdutividadeDoTurno, formatarBlocoDeProdutividade } from './person-productivity';
 import { documentosEmTexto, lerDocumentos } from './bento-documentos';
 import { confirmacaoDeAprendizado, detectarRegraDeBriefing, registrarRegra } from './bento-aprendizado';
 import { queryOperationTasks } from '@desigual-os/tool-gateway';
@@ -600,14 +605,18 @@ export function contextoFixoDaLeitura(
   estadoDaOperacao: () => Promise<string | null>;
   /** Aprovações, demandas, agenda, Inbox e mídia do cliente (P2, atrás de flag). */
   multifonte: () => Promise<string | null>;
+  /** Clientes, Inbox, Daily Tasks, aprovações e demandas da ORGANIZAÇÃO (09/11/2026 — ver visao-geral-operacao.ts). */
+  operacaoGeral: () => Promise<string | null>;
 } {
   let pessoa: Promise<string | null> | null = null;
   let estado: Promise<string | null> | null = null;
   let outras: Promise<string | null> | null = null;
+  let operacao: Promise<string | null> | null = null;
   return {
     pessoaEEquipe: () => (pessoa ??= userId ? blocoDePessoaEEquipe(userId).catch(() => null) : Promise.resolve(null)),
     estadoDaOperacao: () => (estado ??= estadoDaOperacaoDaOrganizacao(organizationId)),
     multifonte: () => (outras ??= blocoMultifonte(clientId, organizationId)),
+    operacaoGeral: () => (operacao ??= blocoVisaoGeral(organizationId)),
   };
 }
 
@@ -1756,10 +1765,25 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
             return { tasks: r.tasks, truncated: r.truncated };
           }).catch(() => null)
         : null;
+      /**
+       * PRODUTIVIDADE POR PESSOA (10/11/2026). "Quantas o Gui finalizou por
+       * dia?" caía aqui e saía "não tenho dados" — o agregado da operação não
+       * tem recorte por pessoa. A fonte mora em person-productivity.ts; sem
+       * pessoa citada ou sem pergunta de produtividade, ela nem consulta.
+       */
+      const orgDaResposta = runningExecution?.organizationId ?? null;
+      const blocoProdutividade = formatarBlocoDeProdutividade(
+        await buscarProdutividadeDoTurno(
+          message,
+          await resolvePersonTurnContext(message, orgDaResposta).catch(() => null),
+          orgDaResposta,
+        ).catch(() => []),
+      );
       const resposta = await responderOperacional({
         pergunta: message,
         estadoDaOperacao: estado,
         contextoOperacional: operationalContext ?? null,
+        blocoProdutividade: blocoProdutividade || null,
         material: blocoDeDocumentos,
         escritor: async (prompt, opts) =>
           (await completeTextSafely(prompt, logger, opts)) ?? (await completeTextViaOpenAI(prompt, logger, opts)),
@@ -2203,6 +2227,7 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
                 limitarContexto([
                   (await fixoDaLeitura.pessoaEEquipe()) ?? undefined,
                   (await fixoDaLeitura.estadoDaOperacao()) ?? undefined,
+                  (await fixoDaLeitura.operacaoGeral()) ?? undefined,
                   contexto,
                   (await fixoDaLeitura.multifonte()) ?? undefined,
                 ]),
@@ -2505,21 +2530,55 @@ async function processSingleAgentJob(data: AgentJobData, logger: Logger, tentati
         (promptDeLeitura ??= (async () => {
           const organizacao = runningExecution?.organizationId ?? null;
           const fixo = contextoFixoDaLeitura(runningExecution?.userId ?? null, organizacao, runningExecution?.clientId ?? null);
-          const [pessoa, estado, cliente, totalClientes, dialogo, outrasFontes] = await Promise.all([
+          /**
+           * NÚMEROS DE MÍDIA NO CONTEXTO DO BENTO (09/11/2026). Pergunta de
+           * tráfego respondida pelo Bento antes ia ao GPT sem um único número
+           * de anúncio — o contexto dele era só ClickUp. Agora ele recebe os
+           * MESMOS dados do Jarbas: a visão da agência quando a pergunta é
+           * geral/comparativa ou não há cliente no turno, e o contexto do
+           * Media Command Center do cliente quando há. Só é carregado quando
+           * a pergunta é de mídia, pra não inflar todo turno.
+           */
+          const midia = async (): Promise<string | null> => {
+            if (!organizacao || !perguntaSobreMidia(message)) return null;
+            const clientId = runningExecution?.clientId ?? null;
+            try {
+              if (clientId && !perguntaComparativa(message)) {
+                const ctx = await mediaContextForAgent({ organizationId: organizacao, clientIds: null }, clientId);
+                return ctx.text || null;
+              }
+              const ctx = await contextoDeMidiaDaAgencia({ organizationId: organizacao, pergunta: message });
+              return ctx.text || null;
+            } catch {
+              return null;
+            }
+          };
+          const memoria = async (): Promise<string | null> => {
+            if (!organizacao) return null;
+            const ambiente = await resolveEnvironment(runningExecution?.clientId ?? null, runningExecution?.userId ?? null).catch(() => 'production');
+            return blocoMemoriaSemantica({ pergunta: message, environment: ambiente, organizationId: organizacao, clientId: runningExecution?.clientId ?? null });
+          };
+          const [pessoa, estado, cliente, totalClientes, dialogo, outrasFontes, numerosDeMidia, operacao, memoriaRelevante] = await Promise.all([
             fixo.pessoaEEquipe(),
             fixo.estadoDaOperacao(),
             resolveClientTurnContext({ message, executionClientId: runningExecution?.clientId ?? null, organizationId: organizacao }).catch(() => null),
             contarClientes(organizacao).catch(() => 0),
             dialogoRecente().catch(() => ''),
             fixo.multifonte(),
+            midia(),
+            fixo.operacaoGeral(),
+            memoria(),
           ]);
           return montarPromptDeLeitura(
             message,
             limitarContexto([
               pessoa ?? undefined,
               estado ?? undefined,
+              operacao ?? undefined,
               operationalContext,
               cliente ? formatClientBlock(cliente, totalClientes) : undefined,
+              numerosDeMidia ?? undefined,
+              memoriaRelevante ?? undefined,
               outrasFontes ?? undefined,
               dialogo || undefined,
             ]),
