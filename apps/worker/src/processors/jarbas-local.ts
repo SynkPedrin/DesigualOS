@@ -6,14 +6,17 @@ import { completarTextoComSeguranca, completeTextSafely } from '@desigual-os/rou
 import type { DocumentoLido } from './bento-documentos';
 import { analisarDocumentos } from './jarbas-documentos';
 import {
+  getAgencyOverview,
   getGoogleAdsAccountInsights,
   getGoogleAdsCampaigns,
   getGoogleAdsEnvConfig,
+  getMediaSettings,
   getMetaAccountInsights,
   getMetaCampaigns,
   mediaContextForAgent,
   resolveGoogleAdsAccessByConnectionId,
   resolveMetaAccessByConnectionId,
+  type AgencyAccountRow,
 } from '@desigual-os/tool-gateway';
 
 /**
@@ -33,6 +36,13 @@ import {
  *   resolver — nunca zero no lugar de "não sei";
  * - só leitura: o escopo OAuth já é `ads_read`, e o texto não pode prometer
  *   alteração de campanha.
+ *
+ * Pergunta sem cliente ("qual cliente tem mais resultado?", "visão geral da
+ * agência") NÃO cai mais em "De qual cliente?": o Jarbas responde com a visão
+ * da agência inteira — os MESMOS números sincronizados que a tela de Mídia
+ * mostra (getAgencyOverview), cliente a cliente, com o ranking calculado aqui.
+ * O fallback de listar clientes só resta para quando não há nenhuma conta
+ * sincronizada.
  *
  * `JARBAS_LOCAL_ENABLED=false` devolve o comportamento antigo (serviço
  * externo) sem deploy de código.
@@ -287,6 +297,126 @@ export function dadosEmTexto(cliente: string, p: PeriodoDaPergunta, canais: Cana
   return linhas.join('\n');
 }
 
+// ── Visão da agência (pergunta geral, sem cliente no turno) ───────────────
+
+/**
+ * A pergunta compara clientes ou pede a agência inteira? Com cliente
+ * resolvido no turno, essas frases mandam a resposta pra visão geral; sem
+ * cliente, TODA pergunta cai na visão geral (ver responderJarbasLocal).
+ */
+export function perguntaComparativa(pergunta: string): boolean {
+  const t = pergunta.toLowerCase();
+  return (
+    /\bquais?\b[^?]{0,80}\bclientes?\b/.test(t) ||
+    /\bclientes?\b[^?]{0,60}\b(mais|melhor|pior|maior|menos)\b/.test(t) ||
+    /\b(mais|melhor|pior|maior)\b[^?]{0,40}\bclientes?\b/.test(t) ||
+    /\btodos? os clientes\b|\bcada cliente\b|\bentre (os )?clientes\b/.test(t) ||
+    /\branking\b|\btop\s?\d+\b/.test(t) ||
+    /\bforma geral\b|\bvis[aã]o geral\b|\bno geral\b|\bpanorama\b/.test(t) ||
+    /\bag[eê]ncia (toda|inteira|como um todo)\b/.test(t)
+  );
+}
+
+/** A pergunta é de mídia/tráfego? Usado pra decidir se o Bento recebe números de mídia no contexto. */
+export function perguntaSobreMidia(pergunta: string): boolean {
+  const t = pergunta.toLowerCase();
+  return (
+    /\btr[áa]fego\b|an[úu]ncios?|meta ads|google ads|\bcampanhas?\b|\bleads?\b|\bctr\b|\bcpc\b|impress[õo]es|custo por (clique|resultado)|\bm[íi]dia paga\b/.test(t) ||
+    /\bresultados?\b[^?]{0,50}\b(clientes?|campanhas?|ads|an[úu]ncios?|m[íi]dia|tr[áa]fego)\b/.test(t) ||
+    /\b(clientes?|campanhas?)\b[^?]{0,50}\bresultados?\b/.test(t) ||
+    /\binvestimento\b[^?]{0,50}\b(ads|an[úu]ncios?|m[íi]dia|tr[áa]fego|campanhas?|clientes?)\b/.test(t)
+  );
+}
+
+const dataHoraBR = (iso: string | null): string | null => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+/** Variação já calculada (%) vinda do overview; a formatação é aqui, a conta é lá. */
+function variacaoPronta(p: number | null): string {
+  if (p == null) return 'sem comparação';
+  return `${p >= 0 ? '+' : ''}${p.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% vs período anterior`;
+}
+
+const ROTULO_ATENCAO: Record<string, string> = {
+  falha_de_sincronizacao: 'a última sincronização FALHOU',
+  queda_de_resultados: 'resultados caíram 30% ou mais contra o período anterior',
+};
+
+/**
+ * O bloco de fatos da agência inteira que o GPT lê. Todo número da resposta
+ * tem que estar aqui; o ranking é aritmética desta função, nunca do modelo.
+ */
+export function visaoDaAgenciaEmTexto(
+  p: PeriodoDaPergunta,
+  contas: AgencyAccountRow[],
+  totaisPorMoeda: Record<string, { spend: number; results: number | null }>,
+): string {
+  const linhas = [
+    'VISÃO GERAL DA AGÊNCIA — todos os clientes com conta de anúncio vinculada, um por linha.',
+    `PERÍODO: ${p.atual.since} a ${p.atual.until} (${p.rotulo}). PERÍODO ANTERIOR, para comparar: ${p.anterior.since} a ${p.anterior.until}.`,
+    'FONTE: banco sincronizado do Media Command Center (sincroniza a cada ~30 minutos; a data de cada conta está na linha dela). Não é leitura ao vivo; se o período inclui hoje, o dia pode estar parcial ou ainda não sincronizado.',
+    '',
+  ];
+  const ordenadas = [...contas].sort((a, b) => (b.results ?? -1) - (a.results ?? -1) || (b.spend ?? 0) - (a.spend ?? 0));
+  for (const c of ordenadas) {
+    const provedor = c.provider === 'meta' ? 'Meta Ads' : 'Google Ads';
+    const partes = [
+      c.spend != null ? `investimento ${brl(c.spend)} (${variacaoPronta(c.spendChange)})` : 'investimento indisponível',
+      c.results != null ? `resultados ${num(c.results)} (${variacaoPronta(c.resultsChange)})` : 'resultados não rastreados no período',
+      c.costPerResult != null ? `custo por resultado ${brl(c.costPerResult)}` : null,
+      c.resultKinds.length > 0 ? `resultados medem: ${c.resultKinds.join(', ')}` : null,
+      `${c.activeCampaigns} campanhas ativas`,
+      `sincronizada em ${dataHoraBR(c.lastSyncedAt) ?? 'nunca'}`,
+    ].filter((l): l is string => l !== null);
+    linhas.push(`- ${c.clientName} (${provedor}${c.accountName ? `, ${c.accountName}` : ''}): ${partes.join('; ')}.`);
+    const atencao = c.needsAttention.map((a) => ROTULO_ATENCAO[a] ?? a.replaceAll('_', ' '));
+    if (c.lastSyncError) atencao.push(`erro: ${c.lastSyncError}`);
+    if (atencao.length > 0) linhas.push(`  ATENÇÃO: ${atencao.join('; ')}.`);
+  }
+  const moedas = Object.entries(totaisPorMoeda);
+  if (moedas.length > 0) {
+    linhas.push('', 'TOTAIS DA AGÊNCIA (um total por moeda — moedas diferentes nunca se somam):');
+    for (const [moeda, t] of moedas) {
+      linhas.push(`- ${moeda}: investimento ${brl(t.spend)}${t.results != null ? `, resultados ${num(t.results)}` : ', resultados não rastreados'}.`);
+    }
+  }
+  const comResultado = ordenadas.filter((c) => c.results != null && c.results > 0);
+  if (comResultado.length > 0) {
+    linhas.push('', 'RANKING POR RESULTADOS NO PERÍODO (já calculado; use como está):');
+    comResultado.forEach((c, i) => linhas.push(`${i + 1}. ${c.clientName} — ${num(c.results as number)} resultados`));
+    const sem = ordenadas.filter((c) => c.results == null || c.results === 0);
+    if (sem.length > 0) linhas.push(`Sem resultado medido no período: ${sem.map((c) => c.clientName).join(', ')}.`);
+  }
+  linhas.push(
+    '',
+    'NOTA DE LEITURA: "resultados" é a soma das ações de resultado que cada plataforma registra (ver "resultados medem" em cada linha); contas diferentes podem medir ações diferentes — ao comparar clientes, olhe também o custo por resultado.',
+  );
+  return linhas.join('\n');
+}
+
+/**
+ * O bloco da agência como CONTEXTO: usado pela resposta do Jarbas e pelo
+ * Bento (quando a pergunta dele é de mídia). Respeita a mesma permissão que a
+ * tela de Mídia edita (`agent.permissions.analyze`, escopo da organização).
+ */
+export async function contextoDeMidiaDaAgencia(params: {
+  organizationId: string;
+  pergunta: string;
+  agora?: Date | undefined;
+}): Promise<{ allowed: boolean; text: string }> {
+  const settings = await getMediaSettings(params.organizationId, null, null);
+  if (!settings.values['agent.permissions'].analyze) {
+    return { allowed: false, text: 'ANÁLISE DE MÍDIA POR AGENTE DESLIGADA nas configurações de Mídia da organização. Diga isso e oriente a ligar em Mídia → Configurações → Agentes de IA.' };
+  }
+  const periodo = periodoDaPergunta(params.pergunta, params.agora);
+  const visao = await getAgencyOverview({ organizationId: params.organizationId, clientIds: null }, periodo.atual);
+  if (visao.accounts.length === 0) return { allowed: true, text: '' };
+  return { allowed: true, text: visaoDaAgenciaEmTexto(periodo, visao.accounts, visao.totalsByCurrency) };
+}
+
 const PERSONA = [
   'Você é o Jarbas, o especialista em tráfego pago da Agência Desigual (Meta Ads e Google Ads).',
   'Fala como um gestor de tráfego sênior: direto, em português do Brasil, primeiro a leitura do que importa, depois os números que a sustentam, e uma recomendação prática quando houver base para isso.',
@@ -301,6 +431,19 @@ const PERSONA = [
 
 export function montarPromptDoJarbas(pergunta: string, dados: string): string {
   return `${PERSONA}\n\nPERGUNTA:\n${pergunta}\n\nDADOS:\n${dados}`;
+}
+
+const PERSONA_AGENCIA = [
+  PERSONA,
+  'A PERGUNTA É SOBRE A AGÊNCIA INTEIRA, não sobre um cliente:',
+  '- Compare os clientes entre si: quem lidera em resultados, quem é mais eficiente (custo por resultado), quem pede atenção (queda, falha de sincronização, conta sem veiculação).',
+  '- O ranking do bloco DADOS já está calculado; use-o como está.',
+  '- "Resultados" de contas diferentes podem medir ações diferentes — os tipos estão em cada linha do bloco. Mencione isso quando comparar números de clientes diferentes.',
+  '- Se a pergunta citar um cliente específico dentro da comparação, feche com a leitura dele.',
+].join('\n');
+
+export function montarPromptDaAgencia(pergunta: string, dados: string): string {
+  return `${PERSONA_AGENCIA}\n\nPERGUNTA:\n${pergunta}\n\nDADOS:\n${dados}`;
 }
 
 // ── Resposta ──────────────────────────────────────────────────────────────
@@ -410,6 +553,34 @@ async function responderComDocumentos(params: {
   return resposta(analise.texto, params.documentos.map((d) => d.filename));
 }
 
+/**
+ * Resposta com a agência inteira: o GPT escreve a análise em cima do bloco
+ * montado por visaoDaAgenciaEmTexto. Retorna null quando não há nenhuma conta
+ * sincronizada — aí o chamador cai no fluxo anterior (listar clientes).
+ */
+async function responderVisaoDaAgencia(params: {
+  pergunta: string;
+  organizationId: string;
+  logger: Logger;
+  agora?: Date | undefined;
+}): Promise<ExecuteResponse | null> {
+  const { logger } = params;
+  const ctx = await contextoDeMidiaDaAgencia({ organizationId: params.organizationId, pergunta: params.pergunta, agora: params.agora });
+  if (!ctx.allowed) {
+    return resposta('A análise de mídia por agentes está desligada para a organização. Quem administra liga em Mídia → Configurações → Agentes de IA.');
+  }
+  if (!ctx.text) return null;
+
+  const texto = await completeTextSafely(montarPromptDaAgencia(params.pergunta, ctx.text), logger, { maxTokens: 1400 });
+  if (!texto?.trim()) {
+    // O GPT não respondeu: entrega os números crus em vez de nada. Eles são o
+    // que importa, e nenhum deles foi escrito por modelo.
+    return resposta(`Não consegui escrever a análise agora, mas estes são os números:\n\n${ctx.text}`);
+  }
+  logger.info({ organizationId: params.organizationId }, '[jarbas-local] visão da agência respondida');
+  return resposta(texto.trim());
+}
+
 export async function responderJarbasLocal(params: {
   pergunta: string;
   clientId: string | null;
@@ -423,6 +594,26 @@ export async function responderJarbasLocal(params: {
   const { logger } = params;
   if (params.documentos?.length) return responderComDocumentos({ ...params, documentos: params.documentos });
   const cliente = await clienteDoTurno(params);
+
+  /**
+   * VISÃO DA AGÊNCIA (09/11/2026). Pergunta sem cliente ("qual cliente tem
+   * mais resultado?") ou comparativa ("de uma forma geral") é respondida com
+   * os números de TODOS os clientes, lidos do banco sincronizado do Media
+   * Command Center — a listinha "De qual cliente?" só resta como fallback
+   * quando não há nenhuma conta sincronizada para ler.
+   */
+  if (params.organizationId && (!cliente || perguntaComparativa(params.pergunta))) {
+    const visao = await responderVisaoDaAgencia({
+      pergunta: params.pergunta,
+      organizationId: params.organizationId,
+      logger,
+      agora: params.agora,
+    }).catch((error) => {
+      logger.warn({ motivo: error instanceof Error ? error.message : String(error) }, '[jarbas-local] visão da agência falhou; caindo no fluxo anterior');
+      return null;
+    });
+    if (visao) return visao;
+  }
 
   if (!cliente) {
     const comConta = await clientesComConta(params.organizationId).catch(() => [] as string[]);

@@ -119,3 +119,140 @@ describe('Jarbas com documento anexado (28/10/2026)', () => {
     expect(pedeCruzarComAConta('quais as recomendações do documento?')).toBe(false);
   });
 });
+
+
+describe('perguntaComparativa', () => {
+  it('reconhece pergunta geral/comparativa sobre clientes', async () => {
+    const { perguntaComparativa } = await import('./jarbas-local');
+    expect(perguntaComparativa('QUAL O CLIENTE Q MAIS TEM RESULTADO HOJE')).toBe(true);
+    expect(perguntaComparativa('EXATO ANALISE DE UMA FORMA GERAL E ME ENTREGUE O QUE POSSUI O RESULTADO MAIS EXPRESSIVO')).toBe(true);
+    expect(perguntaComparativa('quais clientes tiveram queda essa semana?')).toBe(true);
+    expect(perguntaComparativa('ranking dos clientes por resultado')).toBe(true);
+    expect(perguntaComparativa('visão geral da agência')).toBe(true);
+  });
+
+  it('não dispara em pergunta de um cliente só', async () => {
+    const { perguntaComparativa } = await import('./jarbas-local');
+    expect(perguntaComparativa('como está a campanha da Elite?')).toBe(false);
+    expect(perguntaComparativa('qual foi o CTR da 3Net ontem?')).toBe(false);
+    expect(perguntaComparativa('quanto a Colpar investiu este mês?')).toBe(false);
+  });
+});
+
+describe('perguntaSobreMidia', () => {
+  it('reconhece pergunta de tráfego/mídia, inclusive as gerais de resultado', async () => {
+    const { perguntaSobreMidia } = await import('./jarbas-local');
+    expect(perguntaSobreMidia('QUAL O CLIENTE Q MAIS TEM RESULTADO HOJE')).toBe(true);
+    expect(perguntaSobreMidia('como está o tráfego da Elite?')).toBe(true);
+    expect(perguntaSobreMidia('quanto investimos em anúncios este mês?')).toBe(true);
+  });
+
+  it('não dispara em pergunta operacional comum', async () => {
+    const { perguntaSobreMidia } = await import('./jarbas-local');
+    expect(perguntaSobreMidia('quantas tarefas estão atrasadas?')).toBe(false);
+    expect(perguntaSobreMidia('qual o resultado da reunião de ontem?')).toBe(false);
+  });
+});
+
+describe('visaoDaAgenciaEmTexto', () => {
+  const periodo = { atual: { since: '2026-10-08', until: '2026-10-14' }, anterior: { since: '2026-10-01', until: '2026-10-07' }, rotulo: 'últimos 7 dias' };
+  const conta = (parcial: Record<string, unknown>) => ({
+    provider: 'meta',
+    clientId: 'c1',
+    clientName: 'Cliente',
+    accountId: 'act_1',
+    accountName: null,
+    currency: 'BRL',
+    status: 'ACTIVE',
+    lastSyncedAt: null,
+    lastSyncError: null,
+    spend: null,
+    previousSpend: null,
+    spendChange: null,
+    results: null,
+    previousResults: null,
+    resultsChange: null,
+    costPerResult: null,
+    resultKinds: [],
+    activeCampaigns: 0,
+    needsAttention: [],
+    ...parcial,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any;
+
+  it('monta uma linha por cliente, com variação pronta, tipos de resultado e sincronização', async () => {
+    const { visaoDaAgenciaEmTexto } = await import('./jarbas-local');
+    const t = visaoDaAgenciaEmTexto(periodo, [
+      conta({ clientName: 'Elite', spend: 1500, spendChange: 50, results: 40, resultsChange: -20, costPerResult: 37.5, resultKinds: ['lead'], activeCampaigns: 3, lastSyncedAt: '2026-10-14T12:30:00Z' }),
+      conta({ clientName: '3Net', accountId: 'act_2', spend: 800, results: 55, resultKinds: ['conversa no WhatsApp'] }),
+    ], { BRL: { spend: 2300, results: 95 } });
+    expect(t).toContain('VISÃO GERAL DA AGÊNCIA');
+    expect(t).toContain('- Elite (Meta Ads): investimento');
+    expect(t).toMatch(/R\$\s*1\.500,00 \(\+50% vs período anterior\)/);
+    expect(t).toContain('resultados 40 (-20% vs período anterior)');
+    expect(t).toMatch(/custo por resultado R\$\s*37,50/);
+    expect(t).toContain('resultados medem: lead; 3 campanhas ativas');
+    expect(t).toContain('TOTAIS DA AGÊNCIA');
+    expect(t).toMatch(/- BRL: investimento R\$\s*2\.300,00, resultados 95\./);
+    expect(t).toContain('sincronizada em 14/10');
+  });
+
+  it('o ranking é calculado aqui, ordenado por resultados, e quem não mediu fica de fora', async () => {
+    const { visaoDaAgenciaEmTexto } = await import('./jarbas-local');
+    const t = visaoDaAgenciaEmTexto(periodo, [
+      conta({ clientName: 'Elite', results: 40 }),
+      conta({ clientName: '3Net', accountId: 'act_2', results: 55 }),
+      conta({ clientName: 'Colpar', accountId: 'act_3', results: null }),
+    ], {});
+    expect(t).toContain('RANKING POR RESULTADOS NO PERÍODO');
+    expect(t.indexOf('1. 3Net — 55 resultados')).toBeGreaterThan(-1);
+    expect(t.indexOf('2. Elite — 40 resultados')).toBeGreaterThan(t.indexOf('1. 3Net'));
+    expect(t).toContain('Sem resultado medido no período: Colpar.');
+    expect(t).toContain('resultados não rastreados no período');
+  });
+
+  it('alertas de atenção aparecem na linha do cliente, com o erro de sincronização', async () => {
+    const { visaoDaAgenciaEmTexto } = await import('./jarbas-local');
+    const t = visaoDaAgenciaEmTexto(periodo, [
+      conta({ clientName: 'Elite', results: 10, needsAttention: ['falha_de_sincronizacao', 'queda_de_resultados'], lastSyncError: 'token expirado' }),
+    ], {});
+    expect(t).toContain('ATENÇÃO: a última sincronização FALHOU; resultados caíram 30% ou mais contra o período anterior; erro: token expirado.');
+  });
+
+  it('a nota de leitura avisa que resultados de contas diferentes podem medir ações diferentes', async () => {
+    const { visaoDaAgenciaEmTexto } = await import('./jarbas-local');
+    const t = visaoDaAgenciaEmTexto(periodo, [conta({ clientName: 'Elite', results: 5 })], {});
+    expect(t).toContain('contas diferentes podem medir ações diferentes');
+  });
+});
+
+describe('montarPromptDaAgencia', () => {
+  it('mantém as regras do Jarbas e adiciona as da comparação entre clientes', async () => {
+    const { montarPromptDaAgencia } = await import('./jarbas-local');
+    const p = montarPromptDaAgencia('qual cliente tem mais resultado?', 'VISÃO GERAL DA AGÊNCIA');
+    expect(p).toContain('Todo número da resposta tem que estar no bloco DADOS');
+    expect(p).toContain('AGÊNCIA INTEIRA');
+    expect(p).toContain('ranking do bloco DADOS já está calculado');
+    expect(p.indexOf('\nPERGUNTA:\n')).toBeLessThan(p.indexOf('\nDADOS:\n'));
+  });
+});
+
+describe('fallback sem cliente', () => {
+  it('sem cliente e com a visão da agência indisponível, cai na mensagem anterior em vez de travar', async () => {
+    // tool-gateway está simulado como {} neste arquivo: getMediaSettings não
+    // existe, a visão da agência falha e o fluxo anterior (listar clientes)
+    // precisa segurar a resposta.
+    const { responderJarbasLocal } = await import('./jarbas-local');
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as import('@desigual-os/logging').Logger;
+    const r = await responderJarbasLocal({
+      pergunta: 'qual cliente tem mais resultado hoje?',
+      clientId: null,
+      clienteDoEscopo: null,
+      organizationId: 'org-1',
+      logger,
+    });
+    expect(r.status).toBe('completed');
+    expect((r.answer ?? '').length).toBeGreaterThan(0);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+});
