@@ -1109,13 +1109,29 @@ export class ClickUpHttpError extends Error {
   }
 }
 
+const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * GET cru na API v2: devolve o JSON exatamente como o ClickUp mandou. Existe para quem espelha a tarefa por
  * inteiro (a sincronização do Daily Tasks), que precisa de campos que os getters tipados acima não carregam
  * (checklists, dependências, campos personalizados, anexos). `caminho` começa com "/" e já leva a query string.
+ *
+ * 429 é ESPERADO aqui: a chave é uma só (100 req/min) dividida entre sync, webhooks e telas. Antes deste
+ * tratamento, cada 429 virava exceção na hora — a tarefa falhava, o marco da varredura não avançava e a
+ * mesma leva era relida no minuto seguinte, cavando o próprio buraco (medido em 10/11/2026: 3.826 erros
+ * em 12 h). Agora o 429 espera o `Retry-After` (ou backoff) e tenta de novo dentro da própria chamada;
+ * a exceção só sobe se o limite persistir — nunca devolve lista vazia como se fosse verdade.
  */
 export async function lerClickUpCru<T = unknown>(config: ClickUpConfig, caminho: string): Promise<T> {
-  const response = await fetchClickUp(`${CLICKUP_API_BASE}${caminho}`, { headers: { Authorization: config.apiKey } });
-  if (!response.ok) throw new ClickUpHttpError(response.status, caminho.split('?')[0]!, await response.text());
-  return (await response.json()) as T;
+  const tentativas = 4;
+  for (let i = 0; ; i++) {
+    const response = await fetchClickUp(`${CLICKUP_API_BASE}${caminho}`, { headers: { Authorization: config.apiKey } });
+    if (response.status !== 429 || i === tentativas - 1) {
+      if (!response.ok) throw new ClickUpHttpError(response.status, caminho.split('?')[0]!, await response.text());
+      return (await response.json()) as T;
+    }
+    const retryAfter = Number(response.headers.get('retry-after'));
+    const espera = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2_000 * 2 ** i;
+    await dormir(Math.min(espera, 30_000));
+  }
 }

@@ -53,9 +53,13 @@ export interface PersonTurnContext {
 /**
  * Sinal de que o turno fala de UMA PESSOA. Sem isto, qualquer palavra do texto
  * seria testada contra o registro e nomes comuns virariam falso positivo.
+ *
+ * "produtividade/rendimento" entraram em 10/11/2026: "como está a
+ * produtividade do Gui" não citava nenhuma das palavras antigas, a pessoa não
+ * era nem resolvida, e o turno morria sem dado (ver person-productivity.ts).
  */
 const CITA_PESSOA =
-  /\b(demandas?|tarefas?|responsa|respons[áa]vel|quem|squad|time|equipe|atribu|designer|redator|analista|atendimento)\b/i;
+  /\b(demandas?|tarefas?|responsa|respons[áa]vel|quem|squad|time|equipe|atribu|designer|redator|analista|atendimento|produtividade|rendimento|desempenho|entregando|entregou|finalizando|finalizou)\b/i;
 
 /** Preposição e palavra de ligação que antecedem nome próprio em português. */
 const LIGACAO = new Set(['da', 'do', 'de', 'para', 'pra', 'com', 'a', 'o', 'e']);
@@ -85,6 +89,26 @@ export function candidatosAPessoa(mensagem: string): string[] {
 }
 
 /**
+ * Segundo passe, para nome em MINÚSCULA depois de palavra de ligação ("a
+ * produtividade do gui", 10/11/2026 — o Pedro escreve assim e o Gui sumia do
+ * turno). É palavra comum até provar o contrário: estes candidatos NUNCA vão
+ * para `naoEncontradas` (senão "dia", "time" e afins gerariam declarações de
+ * ausência absurdas) — só viram pessoa se casarem com o registro.
+ */
+export function candidatosMinusculosAPessoa(mensagem: string): string[] {
+  const tokens = mensagem.split(/\s+/).filter(Boolean);
+  const saida: string[] = [];
+  for (let i = 1; i < tokens.length; i += 1) {
+    const bruto = tokens[i]!.replace(/[^\p{L}\p{N}'-]/gu, '');
+    if (bruto.length < 3 || bruto.length > 20) continue;
+    if (!/^[a-zà-ÿ]/.test(bruto)) continue; // minúsculos de verdade; maiúsculos o primeiro passe pega
+    if (!LIGACAO.has(dobrar(tokens[i - 1]!))) continue;
+    saida.push(bruto);
+  }
+  return [...new Set(saida)];
+}
+
+/**
  * FRONTEIRA DE EMPRESA (Bento 3.1, 14/10/2026). `people` não tem empresa: é o
  * registro derivado do ClickUp da casa (a provedora). As relações apontam para
  * clientes de qualquer empresa, com o NOME do cliente. Sem recorte, alguém da
@@ -100,7 +124,8 @@ export async function resolvePersonTurnContext(mensagem: string, organizationId:
   if (!CITA_PESSOA.test(mensagem)) return { encontradas: [], naoEncontradas: [] };
 
   const candidatos = candidatosAPessoa(mensagem);
-  if (candidatos.length === 0) return { encontradas: [], naoEncontradas: [] };
+  const candidatosMinusculos = candidatosMinusculosAPessoa(mensagem);
+  if (candidatos.length === 0 && candidatosMinusculos.length === 0) return { encontradas: [], naoEncontradas: [] };
 
   const registro = await db
     .select({
@@ -126,6 +151,32 @@ export async function resolvePersonTurnContext(mensagem: string, organizationId:
     // ser gente diferente. Sem vencedor claro, trata como não resolvido.
     if (m.length > 1 && m[0]!.tokens === m[1]!.tokens) continue;
     const achada = registro.find((p) => p.id === m[0]!.entidade.id)!;
+    if (usados.has(achada.id)) continue;
+    usados.add(achada.id);
+    encontradas.push({
+      id: achada.id,
+      canonicalName: achada.canonicalName,
+      employmentType: achada.employmentType,
+      activeStatus: achada.activeStatus,
+      relacoes: [],
+    });
+  }
+
+  // Minúsculos ("do gui"): só ENTRAM quando casam com o registro (o casamento
+  // é a prova de que é nome, não palavra comum); nunca viram "não encontrada".
+  // O casamento aqui é por PREFIXO do primeiro nome ou de um alias: ninguém
+  // fala "Guilherme Souza", fala "gui" — e casarEntidades exige o token
+  // inteiro. Prefixo de 3+ letras com UM vencedor; empate (dois Guilhermes)
+  // segue sem vencedor, como no passe principal.
+  for (const candidato of candidatosMinusculos) {
+    const alvo = dobrar(candidato);
+    const bate = (p: (typeof registro)[number]) => {
+      const formas = [dobrar(p.canonicalName).split(' ')[0] ?? '', ...(p.aliases ?? []).map(dobrar)];
+      return formas.some((f) => f.length >= 3 && (f.startsWith(alvo) || (alvo.length >= 4 && alvo.startsWith(f))));
+    };
+    const achados = registro.filter(bate);
+    if (achados.length !== 1) continue;
+    const achada = achados[0]!;
     if (usados.has(achada.id)) continue;
     usados.add(achada.id);
     encontradas.push({

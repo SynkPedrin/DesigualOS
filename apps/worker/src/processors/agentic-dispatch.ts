@@ -46,6 +46,7 @@ import { capturePreferences, formatPreferenceBlock, recallPreferences } from './
 import { captureClientFacts } from './client-fact';
 import { buscarTasksDaLista, formatCampaignBlock, nomeDoCliente, resolveCampaignTurnContext } from './campaign-context';
 import { formatPersonBlock, resolvePersonTurnContext } from './person-context';
+import { buscarProdutividadeDoTurno, formatarBlocoDeProdutividade, JANELA_PRODUTIVIDADE_DIAS } from './person-productivity';
 import { assembleContext, type BlocoDeContexto, type RegistroDeEvidencia } from './context-assembler';
 import { classificarFalha, ehFalhaDeInfraestrutura, mensagemDeFalhaDeInfra } from '@desigual-os/agent-runtime';
 import { montarProveniencia } from './response-provenance.js';
@@ -525,6 +526,17 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
   const pessoasDoTurno = await resolvePersonTurnContext(data.message, organizationId).catch(() => null);
   const blocoPessoas = pessoasDoTurno ? formatPersonBlock(pessoasDoTurno) : '';
 
+  /**
+   * PRODUTIVIDADE DA PESSOA (10/11/2026). "Quantas tarefas o Gui finalizou por
+   * dia?" era respondida com "não tenho dados" — tendo work_tasks e
+   * work_activity_events no banco. O caminho não existia; agora existe. Só
+   * consulta quando o turno cita pessoa E a pergunta é de produtividade —
+   * fora disso, zero queries (mesmo contrato do planner: fonte nova é
+   * reforço, nunca pré-requisito).
+   */
+  const produtividadeDoTurno = await buscarProdutividadeDoTurno(data.message, pessoasDoTurno, organizationId).catch(() => []);
+  const blocoProdutividade = formatarBlocoDeProdutividade(produtividadeDoTurno);
+
   // RECALL TEMPORAL. "o que conversamos ontem?" passa a ser respondível com o
   // que ficou REGISTRADO na janela, em vez de reler a conversa (que numa
   // conversa nova nem existe).
@@ -810,6 +822,19 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
       }`,
     });
   }
+  // Produtividade é número apurado do banco: sem entrar aqui, o grounding
+  // reprovaria a resposta por usar dado que "não tem lastro" — mesmo defeito
+  // que campanha e pessoas tiveram.
+  for (const prod of produtividadeDoTurno) {
+    evidence.push({
+      type: 'document',
+      source: 'people.registry',
+      sourceId: prod.userId,
+      confidence: 0.95,
+      retrievedAt: nowIso,
+      summary: `Produtividade ${JANELA_PRODUTIVIDADE_DIAS}d de ${prod.nome}: ${prod.totalConcluidas14d} concluídas, ${prod.totalAvancos14d} avanços p/ aprovação, ${prod.abertasAgora} abertas, ${prod.atrasadasAgora} atrasadas`,
+    });
+  }
 
   // TUDO que entra no prompt precisa entrar na EVIDÊNCIA. Não é simetria
   // estética: o grounding compara cada afirmação contra a evidência, então
@@ -1043,6 +1068,9 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         // que ele desempata (o bloco diz isso no próprio texto).
         { fonte: 'campanha', texto: fontesDoPlano.blocoTarefasLive },
         { fonte: 'pessoas', texto: blocoPessoas },
+        // Fato apurado do banco (concluídas/dia, avanços/dia): entra junto das
+        // pessoas, na mesma autoridade do registro — ver person-productivity.ts.
+        { fonte: 'pessoas', texto: blocoProdutividade },
         // O bloco do outro domínio entra junto da campanha: é fato de fonte,
         // não preferência nem histórico.
         { fonte: 'campanha', texto: cruzado.bloco },
