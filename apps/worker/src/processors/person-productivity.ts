@@ -35,7 +35,7 @@ export interface ProdutividadeDePessoa {
   /** Concluídas por dia nos últimos 14 dias: [{ dia: '2026-11-10', n: 3 }]. */
   concluidasPorDia: Array<{ dia: string; n: number }>;
   totalConcluidas14d: number;
-  /** Mudanças de status feitas PELA pessoa para etapas de aprovação/revisão/conclusão, por dia (14d). */
+  /** Mudanças de status para etapas de aprovação/revisão/conclusão NAS TAREFAS da pessoa, por dia (14d). */
   avancosPorDia: Array<{ dia: string; n: number }>;
   totalAvancos14d: number;
   abertasAgora: number;
@@ -50,7 +50,7 @@ async function produtividadeDeUsuario(
   organizationId: string,
   usuario: { id: string; name: string },
 ): Promise<ProdutividadeDePessoa> {
-  const desde = new Date(Date.now() - JANELA_DIAS * 86_400_000);
+  const desde = new Date(Date.now() - JANELA_DIAS * 86_400_000).toISOString();
 
   const porDia = (linhas: Array<{ dia: string; n: number }>) =>
     linhas.map((l) => ({ dia: String(l.dia).slice(0, 10), n: Number(l.n) }));
@@ -66,15 +66,20 @@ async function produtividadeDeUsuario(
         and a.user_id = ${usuario.id}
         and t.completed_at >= ${desde}
       group by 1 order by 1`),
-    // O que a PESSOA moveu com as próprias mãos para etapa de aprovação/revisão/conclusão.
+    // Avanços para aprovação/revisão NAS TAREFAS DA PESSOA (não "clicados por
+    // ela": o autor quase nunca é gravado — medido em 10/11/2026, 55 de 121
+    // eventos nem campo de autor têm). Dois formatos convivem no data: o import
+    // grava `to` com o ID do status; a conferência grava `para` com o NOME.
     db.execute(sql`
       select date_trunc('day', e.created_at)::text as dia, count(*)::int as n
       from work_activity_events e
+      join work_task_assignees a on a.task_id = e.task_id and a.user_id = ${usuario.id}
+      left join work_task_statuses s on s.id::text = e.data->>'to'
       where e.organization_id = ${organizationId}
-        and e.actor_id = ${usuario.id}
         and e.action = 'status_changed'
         and e.created_at >= ${desde}
-        and (e.data->>'to' ~* 'aprov|revis|conclu|done|feito|finaliz')
+        and (s.name ~* 'aprov|revis|conclu|done|feito|finaliz' or s.category in ('done','closed')
+             or e.data->>'para' ~* 'aprov|revis|conclu|done|feito|finaliz|pronto|encerrado')
       group by 1 order by 1`),
     db.execute(sql`
       select count(*) filter (where t.completed_at is null)::int as abertas,
