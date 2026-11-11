@@ -1573,7 +1573,7 @@ export async function dispatchWithAgentLoop(params: DispatchParams): Promise<Exe
         '[guarda] a resposta negou um tópico que a evidência entregue cobre; usando o registro',
       );
       const prompt = promptDeRegeracao(data.message.split('\n\n---\n')[0] ?? data.message, contextPackEvidencias);
-      const regerada = prompt ? await completeTextSafely(prompt, logger, { maxTokens: 900 }).catch(() => null) : null;
+      const regerada = prompt ? await completeTextSafely(prompt, logger, { maxTokens: 1200, qualidade: 'maxima' }).catch(() => null) : null;
       const aprovadaNaSegunda = regerada?.trim()
         ? avaliarAusencia({ pergunta: data.message, resposta: regerada, evidencias: contextPackEvidencias }).aprovada
         : false;

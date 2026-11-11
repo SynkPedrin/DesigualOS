@@ -522,8 +522,8 @@ export function bentoOpenAiReadEnabled(): boolean {
 
 async function responderLeituraComOpenAI(mensagem: string, logger: Logger): Promise<ExecuteResponse | null> {
   const resposta =
-    (await completeTextSafely(mensagem, logger, { maxTokens: 1200 })) ??
-    (await completeTextViaOpenAI(mensagem, logger, { maxTokens: 1200 }));
+    (await completeTextSafely(mensagem, logger, { maxTokens: 1600, qualidade: 'maxima' })) ??
+    (await completeTextViaOpenAI(mensagem, logger, { maxTokens: 1600 }));
   const limpa = resposta?.trim();
   if (!limpa) return null;
   return {

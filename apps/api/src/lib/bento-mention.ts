@@ -122,12 +122,13 @@ async function searchBentoBrain(question: string): Promise<string | null> {
     });
     if (!response.ok) return null;
 
-    const body = (await response.json()) as { results?: { path?: string; content?: string }[] };
+    // O texto vem em `text` (formato medido em 11/11/2026); `content` era o formato antigo.
+    const body = (await response.json()) as { results?: { path?: string; text?: string; content?: string }[] };
     const results = body.results ?? [];
     if (results.length === 0) return null;
 
     const trechos = results
-      .map((r, i) => `[${i + 1}] ${r.path ?? 'sem caminho'}\n${(r.content ?? '').slice(0, 400).trim()}`)
+      .map((r, i) => `[${i + 1}] ${r.path ?? 'sem caminho'}\n${(r.text ?? r.content ?? '').slice(0, 400).trim()}`)
       .join('\n\n');
 
     return [
