@@ -180,9 +180,15 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
   const feitas = data?.subtaskIds.length ? data.task.subtaskDone : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={tentarFechar}>
-      <aside role="dialog" aria-label="Detalhes da tarefa" onClick={(e) => e.stopPropagation()} className="flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-grafite-elevado bg-carbono shadow-elevated">
-        <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-grafite-elevado bg-carbono px-4 py-2 text-xs text-nevoa">
+    /*
+     * TAREFA EM TELA CHEIA (11/11/2026, pedido: "a tela de abrir uma task aparece muito pequena só no canto direito").
+     * Era uma gaveta de no máximo 48rem colada na direita, numa coluna só. Agora ocupa quase a tela toda; da largura
+     * `lg` para cima vira duas colunas, cada uma com a própria rolagem: a tarefa à esquerda, a conversa (comentários e
+     * histórico) à direita, sempre à vista. Abaixo disso, uma coluna só, na ordem de antes.
+     */
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/60 backdrop-blur-[2px] sm:p-3 lg:p-5" onClick={tentarFechar}>
+      <aside role="dialog" aria-modal="true" aria-label="Detalhes da tarefa" onClick={(e) => e.stopPropagation()} className="flex h-full w-full max-w-[112rem] flex-col overflow-hidden bg-carbono shadow-elevated sm:rounded-xl sm:border sm:border-grafite-elevado">
+        <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-grafite-elevado bg-carbono px-4 py-2 text-xs text-nevoa">
           {voltarPara && (
             <button type="button" onClick={() => { if (!alterado || window.confirm('Há alterações NÃO salvas nesta tarefa. Voltar e perder o que você escreveu?')) onOpen(voltarPara); }} className="flex items-center gap-1 rounded-md border border-grafite-elevado px-2.5 py-1.5 text-sm text-branco-cru hover:bg-grafite-elevado">
               <ArrowLeft size={14} /> {pilha.length ? 'Voltar' : 'Tarefa principal'}
@@ -202,8 +208,9 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
           </div>
         )}
         {data && t && (
-          <div className="space-y-5 p-6">
-            <input value={titulo} onChange={(e) => setTitulo(e.target.value)} aria-label="Título" className="w-full bg-transparent font-heading text-2xl font-semibold text-branco-cru outline-none" />
+          <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(22rem,32rem)] lg:overflow-hidden">
+          <div className="space-y-5 p-4 sm:p-5 lg:overflow-y-auto xl:p-6">
+            <input value={titulo} onChange={(e) => setTitulo(e.target.value)} aria-label="Título" className="w-full bg-transparent font-heading text-xl font-semibold text-branco-cru outline-none xl:text-2xl" />
             <div role="toolbar" aria-label="Ações da tarefa" className="flex flex-wrap gap-2">
               {(() => {
                 const feita = t.status?.category === 'done';
@@ -227,7 +234,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               </span>
             </div>
             {msg && <p role="alert" className="text-xs text-red-400">{msg}</p>}
-            <dl className="grid grid-cols-[150px_1fr] items-center gap-y-3.5 text-sm">
+            <dl className="grid grid-cols-[minmax(6.5rem,8.5rem)_1fr] items-center gap-x-4 gap-y-3 text-sm 2xl:grid-cols-[minmax(6.5rem,8.5rem)_1fr_minmax(6.5rem,8.5rem)_1fr]">
               <dt className="text-nevoa">Status</dt><dd><StatusPicker tarefa={t} statuses={st} onChange={(statusId) => void salvar({ statusId })} /></dd>
               <dt className="text-nevoa">Responsáveis</dt><dd><AssigneePicker tarefa={t} membros={membros} onChange={(ids) => void salvar({ assigneeIds: ids })} /></dd>
               <dt className="text-nevoa">Vencimento</dt><dd><DuePicker tarefa={t} onChange={(iso) => void salvar({ dueAt: iso })} /></dd>
@@ -242,7 +249,7 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             </dl>
             <details className="group/d">
               <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-nevoa hover:text-branco-cru"><span aria-hidden className="inline-block transition-transform group-open/d:rotate-90">›</span> Mais detalhes <span className="text-nevoa/60">(início, estimativa, tempo, quem acompanha, tags e campos)</span></summary>
-            <dl className="mt-3 grid grid-cols-[150px_1fr] items-center gap-y-3.5 text-sm">
+            <dl className="mt-3 grid grid-cols-[minmax(6.5rem,8.5rem)_1fr] items-center gap-x-4 gap-y-3 text-sm">
               <dt className="text-nevoa">Início</dt>
               <dd className="flex items-center gap-2"><CampoDeData rotulo="Data de início" valor={t.startAt ? diaEmSaoPaulo(t.startAt) : null} onChange={(dia) => void salvar({ startAt: instanteDoDia(dia) })} /></dd>
               <dt className="text-nevoa">Estimativa</dt>
@@ -337,8 +344,10 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
             <Recolhivel titulo="Anexos" contagem={data.attachments.length} abertaAoInicio={data.attachments.length > 0}>
               <AnexosDaTarefa taskId={taskId} anexos={data.attachments} erro={erro} />
             </Recolhivel>
+          </div>
 
-            <section className="border-t border-grafite-elevado pt-4">
+          <div className="space-y-5 border-t border-grafite-elevado p-4 sm:p-5 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:bg-grafite/20 xl:p-6">
+            <section>
               <Titulo>Comentários ({data.comments.length})</Titulo>
               <ul className="space-y-3">
                 {data.comments.map((c) => (
@@ -389,9 +398,10 @@ export function TaskDrawer({ taskId, onClose, onOpen }: { taskId: string; onClos
               )}
             </section>
           </div>
+          </div>
         )}
         {t && (
-          <footer className={cn('sticky bottom-0 z-10 flex items-center gap-3 border-t px-6 py-3', alterado ? 'border-roxo-eletrico/60 bg-grafite' : 'border-grafite-elevado bg-carbono')}>
+          <footer className={cn('flex shrink-0 flex-wrap items-center gap-3 border-t px-4 py-3 sm:px-6', alterado ? 'border-roxo-eletrico/60 bg-grafite' : 'border-grafite-elevado bg-carbono')}>
             <span className={cn('text-sm', alterado ? 'font-medium text-aviso' : 'text-nevoa')}>{alterado ? 'Você tem alterações não salvas' : 'Tudo salvo — status, responsáveis, prazo, prioridade e cliente salvam na hora'}</span>
             <button type="button" disabled={!alterado} onClick={() => { setTitulo(t.title); setDesc(t.description ?? ''); }} className="ml-auto rounded-lg border border-grafite-elevado px-3 py-1.5 text-sm text-nevoa hover:text-branco-cru disabled:opacity-40">Descartar</button>
             <button type="button" disabled={!alterado || !titulo.trim() || atualizar.isPending} onClick={() => void salvarRascunho()} className="rounded-lg bg-roxo-eletrico px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40">{atualizar.isPending ? 'Salvando…' : 'Salvar alterações'}</button>

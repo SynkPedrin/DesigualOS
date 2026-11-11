@@ -128,9 +128,15 @@ html {
    * ~18,7px em 1920 e ~21px em 2560 (monitor de 27"). Os breakpoints do Tailwind NÃO mudam: media
    * query em rem usa o tamanho padrão do navegador, não esta base. `--ui-scale` é a preferência
    * da pessoa (Configurações → Tamanho da interface).
+   *
+   * NOTEBOOK MAIS DENSO (11/11/2026, pedido: "quem abrir no Mac Air ou Neo, que a tela menor consiga
+   * ver mais informações do mesmo jeito que numa tela maior"). A curva anterior (12px + 0,35vw) dava
+   * 17px em 1440, proporcionalmente MAIOR que o monitor: o notebook cabia ~18% menos que um 1920.
+   * Agora a base acompanha a largura de perto: 14,5px em 1280, 15,5px em 1440, 15,7px no Air (1470),
+   * e o monitor fica como estava (18,7px em 1920, 22px em 2560). Quem quiser maior usa a preferência.
    */
   --ui-scale: 1;
-  font-size: calc(clamp(15px, calc(12px + 0.35vw), 22px) * var(--ui-scale));
+  font-size: calc(clamp(14.5px, calc(6px + 0.66vw), 22px) * var(--ui-scale));
 }
 html[data-ui-scale='compact'] { --ui-scale: 0.92; }
 html[data-ui-scale='comfortable'] { --ui-scale: 1.1; }
