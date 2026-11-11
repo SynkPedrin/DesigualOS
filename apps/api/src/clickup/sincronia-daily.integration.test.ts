@@ -127,14 +127,15 @@ describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () =
   it('tarefa atribuída pelo ClickUp avisa no sino SÓ quem entrou nela, uma vez (03/11/2026)', async () => {
     const { db, schema } = dbm;
     const { and, asc, eq, inArray } = await import('drizzle-orm');
-    const avisos = () => db.select().from(schema.notifications).where(and(inArray(schema.notifications.userId, [ana, bia]), eq(schema.notifications.type, 'work.assigned'))).orderBy(asc(schema.notifications.createdAt));
+    const avisos = () => db.select().from(schema.notifications).where(and(inArray(schema.notifications.userId, [ana, bia]), eq(schema.notifications.type, 'work.clickup.assigned'))).orderBy(asc(schema.notifications.createdAt));
     const antes = (await avisos()).length;
     // Estado anterior: só a Bia. O ClickUp põe a Ana de volta.
     servir(tarefa({ status: { status: 'em aprovação', type: 'custom', color: '#a0f' } }), []);
     await M.sincronizarTarefaNoDaily('T1');
     const novos = (await avisos()).slice(antes);
     expect(novos.map((n) => n.userId)).toEqual([ana]);
-    expect(novos[0]!.title).toMatch(/^Tarefa atribuída a você: DT-\d+ Arte do dia das crianças$/);
+    // Sem autor no webhook: a frase não inventa quem atribuiu, mas diz a origem.
+    expect(novos[0]!.title).toMatch(/^ClickUp · Tarefa atribuída a você: DT-\d+ Arte do dia das crianças$/);
     expect(novos[0]!.link).toMatch(/^\/daily-tasks\?task=/);
     // A mesma tarefa sincronizada de novo, sem mudança de responsável: ninguém é avisado outra vez.
     await M.sincronizarTarefaNoDaily('T1');
@@ -262,6 +263,126 @@ describe.skipIf(!enabled)('sincronia ClickUp → Daily × PostgreSQL real', () =
     clickup.chamadas.length = 0;
     expect((await M.varrerAlteracoesDoClickUp()).lidas).toBe(0); // o ClickUp devolve a mesma tarefa: date_updated_gt inclui o instante
     expect(clickup.chamadas.filter((c) => c.startsWith('/task/T7'))).toEqual([]);
+  });
+
+  // ── notificações do ClickUp no sino, com a origem e som (09/11 e 11/11/2026) ─────────────────────────────────
+  async function avisosNovos(antes: Set<string>) {
+    const { db, schema } = dbm;
+    const { and, inArray, like } = await import('drizzle-orm');
+    const todos = await db.select().from(schema.notifications).where(and(inArray(schema.notifications.userId, [ana, bia]), like(schema.notifications.type, 'work.clickup.%')));
+    return todos.filter((n) => !antes.has(n.id)).map((n) => ({ para: n.userId === ana ? 'Ana' : 'Bia', tipo: n.type, titulo: n.title, corpo: n.body, link: n.link }));
+  }
+  async function idsDeAviso() {
+    const { db, schema } = dbm;
+    const { inArray } = await import('drizzle-orm');
+    return new Set((await db.select({ id: schema.notifications.id }).from(schema.notifications).where(inArray(schema.notifications.userId, [ana, bia]))).map((n) => n.id));
+  }
+  const agora = () => String(Date.now());
+  const natal = (extra: Record<string, unknown> = {}) => tarefa({ id: 'N1', name: 'Post de Natal', date_updated: agora(), ...extra });
+  const pelaAna = { id: '1', username: 'Ana', email: `ana-${ana}@sd.invalid` };
+
+  it('comentário feito no ClickUp: "ClickUp · Ana comentou…" para quem está na tarefa, menos o autor; a citada recebe só a menção', async () => {
+    // O aviso só vai para membro da empresa (um e-mail do ClickUp que casa com conta de outra empresa nunca vira aviso).
+    await dbm.db.insert(dbm.schema.organizationMembers).values([{ organizationId: org, userId: ana }, { organizationId: org, userId: bia }]).onConflictDoNothing();
+    servir(natal(), []);
+    await M.sincronizarTarefaNoDaily('N1');
+    const antes = await idsDeAviso();
+    const comMencao = {
+      id: 'cN1', comment_text: 'Olha isso @Bia', user: { id: 1, email: `ana-${ana}@sd.invalid`, username: 'Ana' }, date: agora(),
+      comment: [{ text: 'Olha isso ', attributes: {} }, { type: 'tag', text: '@Bia', user: { id: 2, email: `bia-${bia}@sd.invalid`, username: 'Bia' } }],
+    };
+    servir(natal(), [comMencao]);
+    await M.sincronizarTarefaNoDaily('N1');
+    const novos = await avisosNovos(antes);
+    expect(novos).toEqual([{ para: 'Bia', tipo: 'work.clickup.mentioned', titulo: expect.stringMatching(/^ClickUp · Ana mencionou você em DT-\d+ Post de Natal$/), corpo: 'Olha isso @Bia', link: expect.stringMatching(/^\/daily-tasks\?task=/) }]);
+
+    // Sem menção: a Bia (responsável) recebe o "comentou", com o trecho do comentário.
+    const antes2 = await idsDeAviso();
+    servir(natal(), [comMencao, { id: 'cN2', comment_text: 'Aprovado', comment: [{ text: 'Aprovado' }], user: { id: 1, email: `ana-${ana}@sd.invalid`, username: 'Ana' }, date: agora() }]);
+    await M.sincronizarTarefaNoDaily('N1');
+    expect(await avisosNovos(antes2)).toEqual([{ para: 'Bia', tipo: 'work.clickup.commented', titulo: expect.stringMatching(/^ClickUp · Ana comentou em DT-\d+ Post de Natal$/), corpo: 'Aprovado', link: expect.stringMatching(/^\/daily-tasks\?task=/) }]);
+
+    // Entra também na Caixa de Entrada (trilha de atividade), com a Ana como autora.
+    const { db, schema } = dbm;
+    const { and, eq } = await import('drizzle-orm');
+    const [t] = (await daily()).filter((x) => x.title === 'Post de Natal');
+    const trilha = await db.select().from(schema.workActivityEvents).where(and(eq(schema.workActivityEvents.taskId, t!.id), eq(schema.workActivityEvents.action, 'commented')));
+    expect(trilha.map((e) => e.actorId)).toEqual([ana, ana]);
+    // Veio do ClickUp: a saída Daily→ClickUp não pode pegá-lo de volta (ela pula `system`) nem segurar a sincronia.
+    expect(trilha.map((e) => e.actorKind)).toEqual(['system', 'system']);
+    const { eventosParaSaida, temEscritaPendente } = await import('@desigual-os/work-engine');
+    await db.insert(schema.workExternalMappings).values({ organizationId: org, provider: 'clickup', externalType: 'cursor', externalId: 'saida', entityType: 'cursor', entityId: org, meta: { lastEventId: null, lastEventAt: new Date(0).toISOString() } }).onConflictDoNothing();
+    await new Promise((r) => setTimeout(r, 1100)); // a saída só lê evento com mais de 1 s
+    expect((await eventosParaSaida(org)).filter((e) => e.taskId === t!.id)).toEqual([]);
+    expect(await temEscritaPendente(org, t!.id)).toBe(false);
+
+    // A mesma sincronia de novo (webhook reentregue, varredura): ninguém é avisado outra vez.
+    const depois = await idsDeAviso();
+    await M.sincronizarTarefaNoDaily('N1');
+    expect(await avisosNovos(depois)).toEqual([]);
+  });
+
+  it('comentário antigo que só chegou agora (varredura alcançando atraso) entra no Daily, mas não vira aviso', async () => {
+    const antes = await idsDeAviso();
+    servir(natal(), [comentario('cVELHO', 'Isso é de 2023')]);
+    await M.sincronizarTarefaNoDaily('N1');
+    expect(await avisosNovos(antes)).toEqual([]);
+  });
+
+  it('status mudado no ClickUp avisa quem está na tarefa, com o autor que veio do webhook, passando pela fila', async () => {
+    const antes = await idsDeAviso();
+    process.env.DAILY_SYNC_CLICKUP = 'on';
+    try {
+      servir(natal({ status: { status: 'em aprovação', type: 'custom', color: '#a0f' } }), []);
+      M.agendarSincroniaDaTarefa('N1', 'taskStatusUpdated', { espera: 0, autorDoEvento: { id: '2', username: 'Bia', email: `bia-${bia}@sd.invalid` } });
+      let novos: Awaited<ReturnType<typeof avisosNovos>> = [];
+      for (let i = 0; i < 50 && !novos.length; i++) { await new Promise((r) => setTimeout(r, 100)); novos = await avisosNovos(antes); }
+      expect(novos).toEqual([{ para: 'Ana', tipo: 'work.clickup.status_changed', titulo: expect.stringMatching(/^ClickUp · Bia mudou o status de DT-\d+ Post de Natal para "em aprovação"$/), corpo: null, link: expect.stringMatching(/^\/daily-tasks\?task=/) }]);
+    } finally {
+      delete process.env.DAILY_SYNC_CLICKUP;
+    }
+    // Status igual na próxima leitura (é o caso da mudança feita no Daily que volta do ClickUp): sem aviso.
+    const depois = await idsDeAviso();
+    await M.sincronizarTarefaNoDaily('N1');
+    expect(await avisosNovos(depois)).toEqual([]);
+  });
+
+  it('prazo, prioridade e nome mudados no ClickUp: um aviso de cada, para quem não mexeu; sem mudança, sem aviso', async () => {
+    const antes = await idsDeAviso();
+    const prazo = new Date('2026-12-20T15:00:00-03:00').getTime();
+    servir(natal({ status: { status: 'em aprovação', type: 'custom', color: '#a0f' }, name: 'Post de Natal v2', priority: { id: '1' }, due_date: String(prazo) }), []);
+    await M.sincronizarTarefaNoDaily('N1', { autorDoEvento: pelaAna });
+    const novos = await avisosNovos(antes);
+    expect(novos.every((n) => n.para === 'Bia')).toBe(true);
+    expect(novos.map((n) => n.titulo).sort()).toEqual([
+      expect.stringMatching(/^ClickUp · Ana mudou a prioridade de DT-\d+ Post de Natal v2 para Urgente$/),
+      expect.stringMatching(/^ClickUp · Ana mudou o prazo de DT-\d+ Post de Natal v2 para 20\/12$/),
+      expect.stringMatching(/^ClickUp · Ana renomeou "Post de Natal" para DT-\d+ Post de Natal v2$/),
+    ].sort((a, b) => String(a).localeCompare(String(b))));
+    expect(novos.map((n) => n.tipo).sort()).toEqual(['work.clickup.due_changed', 'work.clickup.priority_changed', 'work.clickup.renamed']);
+
+    // Prazo no mesmo DIA com outra hora (o ClickUp ajusta a hora do prazo sem horário): não é mudança.
+    const depois = await idsDeAviso();
+    servir(natal({ status: { status: 'em aprovação', type: 'custom', color: '#a0f' }, name: 'Post de Natal v2', priority: { id: '1' }, due_date: String(prazo + 3_600_000) }), []);
+    await M.sincronizarTarefaNoDaily('N1', { autorDoEvento: pelaAna });
+    expect(await avisosNovos(depois)).toEqual([]);
+  });
+
+  it('anexo posto no ClickUp avisa quem está na tarefa', async () => {
+    const antes = await idsDeAviso();
+    const anexo = { id: 'A1', title: 'briefing.pdf', url: 'https://t.clickup.invalid/briefing.pdf', mimetype: 'application/pdf', size: 1200, date: agora(), user: { id: 2, email: `bia-${bia}@sd.invalid`, username: 'Bia' } };
+    servir(natal({ status: { status: 'em aprovação', type: 'custom', color: '#a0f' }, name: 'Post de Natal v2', priority: { id: '1' }, due_date: String(new Date('2026-12-20T16:00:00-03:00').getTime()), attachments: [anexo] }), []);
+    await M.sincronizarTarefaNoDaily('N1');
+    expect(await avisosNovos(antes)).toEqual([{ para: 'Ana', tipo: 'work.clickup.attachment_added', titulo: expect.stringMatching(/^ClickUp · Bia anexou "briefing.pdf" em DT-\d+ Post de Natal v2$/), corpo: null, link: expect.stringMatching(/^\/daily-tasks\?task=/) }]);
+  });
+
+  it('status mudado no ClickUp por quem não tem conta aqui: todos da tarefa recebem, com o nome de lá', async () => {
+    const antes = await idsDeAviso();
+    servir(natal({ name: 'Post de Natal v2', priority: { id: '1' }, due_date: String(new Date('2026-12-20T16:00:00-03:00').getTime()), status: { status: 'feito', type: 'closed', color: '#222' } }), []);
+    await M.sincronizarTarefaNoDaily('N1', { autorDoEvento: { id: '99', username: 'Cliente Convidado', email: 'convidado@cliente.invalid' } });
+    const novos = await avisosNovos(antes);
+    expect(novos.map((n) => n.para).sort()).toEqual(['Ana', 'Bia']);
+    expect(novos.every((n) => /^ClickUp · Cliente Convidado mudou o status de DT-\d+ Post de Natal v2 para "feito"$/.test(n.titulo))).toBe(true);
   });
 
   it('montarSnapshotDaTarefa: lista sem pasta (hidden) não cria pasta', () => {

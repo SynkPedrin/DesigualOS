@@ -63,6 +63,17 @@ describe('NotificationInboxPopup: som do que chega', () => {
     expect(som.tocarAviso).toHaveBeenCalledWith('tarefa');
   });
 
+  it('todo aviso que veio do ClickUp toca e vira aviso do sistema, com a origem no título (11/11/2026)', () => {
+    mostrar([]);
+    const tipos = ['work.clickup.commented', 'work.clickup.status_changed', 'work.clickup.due_changed', 'work.clickup.attachment_added'];
+    for (const [i, tipo] of tipos.entries()) {
+      som.tocarAviso.mockReset();
+      mostrar([aviso(`k${i}`, tipo, `ClickUp · Ana mexeu em DT-${i}`)]);
+      expect(som.tocarAviso).toHaveBeenCalledWith('tarefa');
+      expect(som.avisarNoNavegador).toHaveBeenCalledWith(`ClickUp · Ana mexeu em DT-${i}`, null, expect.any(Function), `k${i}`);
+    }
+  });
+
   it('reação e aviso que não é de mensagem nem de tarefa não tocam', () => {
     mostrar([]);
     mostrar([aviso('r', 'chat.reaction'), aviso('s', 'studio.job_completed')]);

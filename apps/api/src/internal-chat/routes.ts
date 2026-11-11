@@ -139,6 +139,9 @@ function nomeDaConversa(conversa: svc.Conversa) {
 
 interface Alvo { type: string; title: string }
 
+/** Prefixo de todo aviso que nasceu no ClickUp (o mesmo das tarefas, em work-engine/clickup-import.ts). */
+const ORIGEM_CLICKUP = 'ClickUp · ';
+
 /**
  * Notificação no sino. Não notifica: quem está olhando a conversa agora (leu
  * nos últimos 20 s), quem está em "não perturbe", e — para o recado comum —
@@ -172,7 +175,7 @@ async function notificarAlvos(conversa: svc.Conversa, alvos: Map<string, Alvo>, 
   await avisarNotificacoesNovas(gravadas.map((g) => g.userId));
 }
 
-type Envio = Pick<Awaited<ReturnType<typeof svc.enviarMensagem>>, 'mensagem' | 'mencionados' | 'autorRespondido' | 'raiz'> & { participantesDaThread?: string[] };
+type Envio = Pick<Awaited<ReturnType<typeof svc.enviarMensagem>>, 'mensagem' | 'mencionados' | 'autorRespondido' | 'raiz'> & { participantesDaThread?: string[]; doClickUp?: boolean };
 
 /**
  * O que acontece DEPOIS de gravar: evento ao vivo para quem lê a conversa (e a
@@ -221,6 +224,8 @@ async function notificarMensagem(conversa: svc.Conversa, r: Envio) {
   for (const id of participantesDaThread) alvos.set(id, { type: 'chat.thread', title: `${nome} respondeu numa thread${onde ? ` em ${onde}` : ''}` });
   if (r.autorRespondido && r.autorRespondido !== remetente) alvos.set(r.autorRespondido, { type: 'chat.reply', title: `${nome} respondeu sua mensagem` });
   for (const id of r.mencionados) alvos.set(id, { type: 'chat.mention', title: `${nome} mencionou você${onde && conversa.kind !== 'direct' ? ` em ${onde}` : ''}` });
+  // Mensagem que chegou do chat do ClickUp: o aviso diz a origem (pedido de 11/11/2026: "origem ClickUp - a notificação").
+  if (r.doClickUp) for (const alvo of alvos.values()) alvo.title = `${ORIGEM_CLICKUP}${alvo.title}`;
   const alvoDoLink = r.raiz ? `&t=${r.raiz.id}` : '';
   await notificarAlvos(conversa, alvos, trecho, `/comunicacao?c=${conversa.id}&m=${m.message.id}${alvoDoLink}`, `chat:${m.message.id}`);
 }
@@ -304,7 +309,7 @@ async function chegouDoClickUp(conversationId: string, ids: string[]) {
   if (idsDasRaizes.length) for (const r of await db.select().from(schema.internalMessages).where(inArray(schema.internalMessages.id, idsDasRaizes))) raizes.set(r.id, r);
   for (const mensagem of await svc.completar(linhas)) {
     const raiz = mensagem.message.threadRootId ? raizes.get(mensagem.message.threadRootId) ?? null : null;
-    await depoisDoEnvio(conversa, { mensagem, mencionados: [], autorRespondido: null, raiz });
+    await depoisDoEnvio(conversa, { mensagem, mencionados: [], autorRespondido: null, raiz, doClickUp: true });
   }
 }
 

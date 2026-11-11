@@ -1310,7 +1310,13 @@ export async function registerClickUpRoutes(app: FastifyInstance): Promise<void>
     // Daily Tasks: qualquer evento de tarefa (status, responsável, prazo, comentário, mover...) manda reler a tarefa.
     // Vai ANTES dos tratadores abaixo porque eles saem cedo (evento sem cliente, sem menção) e a sincronia não depende disso.
     const paraSincronia = parseTaskEventForSync(parsedBody);
-    if (paraSincronia) agendarSincroniaDaTarefa(paraSincronia.taskId, paraSincronia.event);
+    if (paraSincronia) {
+      // Quem mexeu vai junto: a tarefa lida depois não diz quem mexeu, e o aviso no sino ("ClickUp · Ana mudou…") precisa do autor.
+      const autor = extrairContextoDoHistoryItem(parsedBody as Record<string, unknown>).autor;
+      agendarSincroniaDaTarefa(paraSincronia.taskId, paraSincronia.event, {
+        autorDoEvento: autor ? { id: autor.clickupUserId, username: autor.username, email: autor.email } : null,
+      });
+    }
 
     const taskChanged = parseTaskChangedEvent(parsedBody);
     if (taskChanged) {

@@ -103,6 +103,9 @@ export function esquecerEstruturaDoClickUp(): void {
 
 export class SincroniaIndisponivel extends Error {}
 
+/** Usuário do ClickUp como o webhook manda (`history_items[].user`): o importador casa com a conta daqui por id ou e-mail. */
+export interface AutorNoClickUp { id: string; username: string | null; email: string | null }
+
 /** A tarefa tem edição do Daily esperando para ir ao ClickUp: ler agora e aplicar por cima a apagaria. Tenta de novo logo. */
 export class SincroniaAdiada extends Error {}
 
@@ -120,7 +123,7 @@ export interface ResultadoDaSincronia {
 }
 
 /** Lê a tarefa (e o que a rodeia) no ClickUp e aplica no Daily. A fila abaixo garante uma de cada vez. */
-export async function sincronizarTarefaNoDaily(taskId: string, opcoes: { apagada?: boolean; profundidade?: number } = {}): Promise<ResultadoDaSincronia> {
+export async function sincronizarTarefaNoDaily(taskId: string, opcoes: { apagada?: boolean; profundidade?: number; autorDoEvento?: AutorNoClickUp | null } = {}): Promise<ResultadoDaSincronia> {
   if (opcoes.apagada) {
     const empresas = await arquivarTarefaDoClickUp(taskId);
     empresas.forEach(avisarDailyMudou);
@@ -168,7 +171,7 @@ export async function sincronizarTarefaNoDaily(taskId: string, opcoes: { apagada
   ]);
 
   const snapshot = montarSnapshotDaTarefa({ membros, tarefa, comentarios, lista, espaco, camposDaLista });
-  const relatorio = await importClickUp({ organizationId, userId: null, actorKind: 'system' }, { snapshot, aoVivo: true });
+  const relatorio = await importClickUp({ organizationId, userId: null, actorKind: 'system' }, { snapshot, aoVivo: true, autorDoEvento: opcoes.autorDoEvento ?? undefined });
   avisarDailyMudou(organizationId);
   if (relatorio.notificados?.length) void avisarNotificacoesNovas(relatorio.notificados);
   return { taskId, acao: 'sincronizada' };
@@ -218,9 +221,9 @@ const ESPERA_DA_RAJADA_MS = 1_500;
 const PRAZO_DA_TAREFA_MS = Number(process.env.DAILY_SYNC_PRAZO_TAREFA_MS) || 120_000;
 const PRAZO_DA_VARREDURA_MS = Number(process.env.DAILY_SYNC_PRAZO_VARREDURA_MS) || 300_000;
 
-const pendentes = new Map<string, { timer: ReturnType<typeof setTimeout>; apagada: boolean }>();
+const pendentes = new Map<string, { timer: ReturnType<typeof setTimeout>; apagada: boolean; autorDoEvento: AutorNoClickUp | null }>();
 let fila: Promise<unknown> = Promise.resolve();
-const naFila = new Map<string, { apagada: boolean }>();
+const naFila = new Map<string, { apagada: boolean; autorDoEvento: AutorNoClickUp | null }>();
 const resultadosRecentes: Array<{ em: number; taskId: string; acao: string; motivo?: string; erro?: string }> = [];
 
 function registrar(r: { taskId: string; acao: string; motivo?: string; erro?: string }) {
@@ -237,27 +240,29 @@ export function ultimasSincronias() {
  * Agenda a releitura de uma tarefa. O ClickUp entrega uma edição em lote como vários webhooks da MESMA tarefa em
  * segundos; esperar a rajada acabar troca N leituras por uma. Apagar ganha de qualquer outro evento da rajada.
  */
-export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes: { espera?: number; tentativa?: number } = {}): void {
+export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes: { espera?: number; tentativa?: number; autorDoEvento?: AutorNoClickUp | null } = {}): void {
   if (!sincroniaDoDailyLigada()) return;
   const apagada = evento === 'taskDeleted';
   const atual = pendentes.get(taskId);
   if (atual) clearTimeout(atual.timer);
   const apagadaFinal = apagada || (atual?.apagada ?? false);
+  // Quem mexeu: o do evento mais recente da rajada que trouxe autor (evento sem autor não apaga o que veio antes).
+  const autorDoEvento = opcoes.autorDoEvento ?? atual?.autorDoEvento ?? null;
   const timer = setTimeout(() => {
     pendentes.delete(taskId);
     // Já está na fila esperando a vez: não entra de novo. A leitura, quando chegar a vez, já pega o estado de agora.
     // Sem isto, um travamento de 18 min acumulou um evento por webhook, a mesma tarefa várias vezes (28/10/2026).
     const enfileirada = naFila.get(taskId);
-    if (enfileirada) { enfileirada.apagada ||= apagadaFinal; return; }
-    const vez = { apagada: apagadaFinal };
+    if (enfileirada) { enfileirada.apagada ||= apagadaFinal; enfileirada.autorDoEvento = autorDoEvento ?? enfileirada.autorDoEvento; return; }
+    const vez = { apagada: apagadaFinal, autorDoEvento };
     naFila.set(taskId, vez);
     fila = fila
-      .then(() => { naFila.delete(taskId); return comPrazo(sincronizarTarefaNoDaily(taskId, { apagada: vez.apagada }), PRAZO_DA_TAREFA_MS, `a tarefa ${taskId}`); })
+      .then(() => { naFila.delete(taskId); return comPrazo(sincronizarTarefaNoDaily(taskId, { apagada: vez.apagada, autorDoEvento: vez.autorDoEvento }), PRAZO_DA_TAREFA_MS, `a tarefa ${taskId}`); })
       .then((r) => { registrar(r); if (r.acao === 'ignorada') logger.debug({ ...r }, 'Daily sync: ignorada'); })
       .catch((error: unknown) => {
         const tentativa = opcoes.tentativa ?? 0;
         if (error instanceof SincroniaAdiada && tentativa < 12) {
-          agendarSincroniaDaTarefa(taskId, apagadaFinal ? 'taskDeleted' : 'adiada', { espera: 5_000, tentativa: tentativa + 1 });
+          agendarSincroniaDaTarefa(taskId, apagadaFinal ? 'taskDeleted' : 'adiada', { espera: 5_000, tentativa: tentativa + 1, autorDoEvento: vez.autorDoEvento });
           return;
         }
         registrar({ taskId, acao: 'erro', erro: error instanceof Error ? error.message : String(error) });
@@ -265,7 +270,7 @@ export function agendarSincroniaDaTarefa(taskId: string, evento: string, opcoes:
       });
   }, opcoes.espera ?? ESPERA_DA_RAJADA_MS);
   timer.unref?.();
-  pendentes.set(taskId, { timer, apagada: apagadaFinal });
+  pendentes.set(taskId, { timer, apagada: apagadaFinal, autorDoEvento });
 }
 
 // ── fila de fundo (correção de atraso) ─────────────────────────────────────────────────────────────────────────────

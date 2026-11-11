@@ -10,9 +10,13 @@
 
 export type TipoDeAviso = 'mensagem' | 'tarefa';
 
-/** O que toca: mensagem e menção da Comunicação, e tarefa atribuída ou menção no Daily. Reação não toca. */
+/**
+ * O que toca: mensagem e menção da Comunicação, tarefa atribuída ou menção no Daily e TODO aviso que veio do ClickUp
+ * (`work.clickup.*`: atribuição, comentário, menção, status, prazo, prioridade, nome, anexo; pedido de 11/11/2026).
+ * Reação não toca.
+ */
 export function tipoDeAvisoSonoro(tipo: string): TipoDeAviso | null {
-  if (tipo === 'work.assigned' || tipo === 'work.mentioned') return 'tarefa';
+  if (tipo === 'work.assigned' || tipo === 'work.mentioned' || tipo.startsWith('work.clickup.')) return 'tarefa';
   if (tipo.startsWith('chat.') && tipo !== 'chat.reaction') return 'mensagem';
   return null;
 }

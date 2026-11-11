@@ -28,7 +28,7 @@ export interface ImportReport {
   listasSemCliente: string[];
   statusCriadosPorTarefa: string[];
   naoImportado: string[];
-  /** Ao vivo: quem passou a ser responsável por alguma tarefa nesta sincronia e recebeu aviso no sino. */
+  /** Ao vivo: quem recebeu aviso no sino nesta sincronia (atribuição, comentário, menção ou status feito no ClickUp). */
   notificados?: string[];
 }
 
@@ -48,6 +48,36 @@ const ms = (v: unknown): Date | null => {
 };
 const categoriaDoStatus = (type: string | undefined): string => (type === 'open' ? 'todo' : type === 'done' || type === 'closed' ? 'done' : 'active');
 const chunk = <T>(a: T[], n = 400): T[][] => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
+
+/** Ao vivo, só vira aviso no sino o que aconteceu no ClickUp nas últimas 24 h (a varredura que alcança um atraso não dispara aviso velho). */
+const JANELA_DO_AVISO_MS = 24 * 3_600_000;
+const recente = (d: Date | null): boolean => d !== null && Date.now() - d.getTime() < JANELA_DO_AVISO_MS;
+/** Teto de eventos avisados por sincronia: uma tarefa com rajada de comentários não vira enxurrada no sino. */
+const MAX_AVISOS_POR_SINCRONIA = 20;
+/** Prefixo de todo aviso que nasceu no ClickUp: a pessoa vê de onde veio (pedido de 11/11/2026, "origem ClickUp - a notificação"). */
+export const ORIGEM_CLICKUP = 'ClickUp · ';
+/** Prioridade do ClickUp (1 urgente … 4 baixa), com o mesmo número que o Daily guarda. */
+const PRIORIDADES = ['sem prioridade', 'Urgente', 'Alta', 'Normal', 'Baixa'];
+/** Dia no fuso da agência: prazo compara por DIA (o ClickUp ajusta a hora de prazo sem horário; hora diferente não é mudança). */
+const diaDe = (d: Date | null | undefined): string | null => (d ? d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : null);
+
+/**
+ * Um aviso nascido no ClickUp. `frase` traz `{ref}` onde entra "DT-12 título" (lido do banco na hora de gravar).
+ * `trilha`: o evento que entra na trilha de atividade (Caixa de Entrada, histórico, automações), ou nada.
+ */
+interface AvisoDoClickUp {
+  taskId: string;
+  tipo: 'commented' | 'mentioned' | 'status_changed' | 'due_changed' | 'priority_changed' | 'renamed' | 'attachment_added';
+  autor: Raw;
+  frase: string;
+  corpo?: string | null;
+  /** Só estas pessoas (menção). Sem isto: responsáveis, seguidores e criador da tarefa. */
+  para?: string[];
+  /** Fora do aviso (quem foi mencionado já recebe o "mencionou você", não precisa do "comentou"). */
+  sem?: string[];
+  chave: string;
+  trilha: { action: string; data: Record<string, unknown> } | null;
+}
 
 function ler(dir: string, nome: string): Raw {
   const p = join(dir, `${nome}.json`);
@@ -80,6 +110,12 @@ export async function importClickUp(
      * da tarefa lá sai aqui, item desmarcado desmarca, dependência desfeita some.
      */
     aoVivo?: boolean;
+    /**
+     * Ao vivo: quem mexeu na tarefa no ClickUp (o `user` do history_item do webhook). A tarefa lida da API não diz quem
+     * mexeu; sem isto o aviso de status/prazo/prioridade/nome/atribuição sai sem autor, nunca com autor inventado.
+     * Comentário e anexo trazem o próprio autor e não dependem disto.
+     */
+    autorDoEvento?: Raw;
   },
 ): Promise<ImportReport> {
   const dryRun = opts.dryRun ?? false;
@@ -224,6 +260,16 @@ export async function importClickUp(
     const novasTarefas: Array<typeof schema.workTasks.$inferInsert> = [];
     const eventos: Array<typeof schema.workActivityEvents.$inferInsert> = [];
 
+    // Ao vivo: como a tarefa estava ANTES, para saber o que o ClickUp mudou (e avisar quem acompanha a tarefa).
+    const avisosAoVivo = Boolean(opts.aoVivo && !dryRun && !opts.semAtualizarTarefas);
+    const antes = new Map<string, { statusId: string; dueAt: Date | null; priority: number; title: string }>();
+    const avisos: AvisoDoClickUp[] = [];
+    if (avisosAoVivo) {
+      const ids = ordenadas.map((t) => idDe('task', t.id)).filter(Boolean) as string[];
+      const W = schema.workTasks;
+      if (ids.length) for (const r of await tx.select({ id: W.id, statusId: W.statusId, dueAt: W.dueAt, priority: W.priority, title: W.title }).from(W).where(inArray(W.id, ids))) antes.set(r.id, r);
+    }
+
     for (const t of ordenadas) {
       const listId = idDe('list', t.list?.id);
       if (!listId) { report.naoImportado.push(`tarefa ${t.id} sem lista importada`); continue; }
@@ -250,6 +296,18 @@ export async function importClickUp(
       };
       const existente = idDe('task', t.id);
       // `semAtualizarTarefas`: passada rápida só para os filhos (comentários, anexos...) — não regrava as 8,6 mil tarefas.
+      const eraAssim = existente && avisosAoVivo && recente(ms(t.date_updated)) ? antes.get(existente) : undefined;
+      if (existente && eraAssim) {
+        // O que nasceu no Daily volta do ClickUp já igual: nenhuma diferença, nenhum aviso.
+        const autor = opts.autorDoEvento;
+        const quando = String(t.date_updated ?? '');
+        const aviso = (tipo: AvisoDoClickUp['tipo'], frase: string, chave: string, trilha: AvisoDoClickUp['trilha']) => avisos.push({ taskId: existente, tipo, autor, frase, chave: `${tipo}:${existente}:${chave}:${quando}`, trilha });
+        if (eraAssim.statusId !== statusId) aviso('status_changed', `mudou o status de {ref} para "${nomeStatus}"`, statusId, { action: 'status_changed', data: { from: eraAssim.statusId, to: statusId } });
+        const prazoAntes = diaDe(eraAssim.dueAt); const prazoAgora = diaDe(base.dueAt);
+        if (prazoAntes !== prazoAgora) aviso('due_changed', prazoAgora ? `mudou o prazo de {ref} para ${prazoAgora.slice(0, 5)}` : 'tirou o prazo de {ref}', String(prazoAgora), { action: 'updated', data: { changes: { dueAt: { from: eraAssim.dueAt?.toISOString() ?? null, to: base.dueAt?.toISOString() ?? null } } } });
+        if (eraAssim.priority !== base.priority) aviso('priority_changed', base.priority ? `mudou a prioridade de {ref} para ${PRIORIDADES[base.priority]}` : 'tirou a prioridade de {ref}', String(base.priority), { action: 'updated', data: { changes: { priority: { from: eraAssim.priority, to: base.priority } } } });
+        if (eraAssim.title !== base.title) aviso('renamed', `renomeou "${eraAssim.title.slice(0, 80)}" para {ref}`, base.title.slice(0, 80), { action: 'updated', data: { changes: { title: { from: eraAssim.title, to: base.title } } } });
+      }
       if (existente) { if (!opts.semAtualizarTarefas) await tx.update(schema.workTasks).set({ ...base, version: sql`${schema.workTasks.version} + 1` }).where(eq(schema.workTasks.id, existente)); bump('tarefas', false); continue; }
       const nid = randomUUID();
       proximo += 1;
@@ -329,12 +387,21 @@ export async function importClickUp(
         contarNaoCasado(c.user);
         if (!corpo) continue;
         comentarios.push({ id: cid, organizationId: org, taskId: tid, authorId: resolverUsuario(c.user), authorLabel: nomeDe(c.user), body: corpo, resolvedAt: c.resolved ? new Date() : null, createdAt: ms(c.date) ?? new Date(), updatedAt: ms(c.date) ?? new Date() });
+        if (avisosAoVivo && recente(ms(c.date))) {
+          // Menção no ClickUp é um bloco `tag` com o usuário de lá; só vira aviso quem casa com uma conta daqui.
+          const mencionados = [...new Set(((Array.isArray(c.comment) ? c.comment : []) as Raw[]).filter((b) => b?.type === 'tag').map((b) => resolverUsuario(b.user)).filter(Boolean) as string[])];
+          const base = { taskId: tid, autor: c.user, corpo: corpo.slice(0, 140) };
+          avisos.push({ ...base, tipo: 'commented', frase: 'comentou em {ref}', sem: mencionados, chave: `comentario:${c.id}`, trilha: { action: 'commented', data: { commentId: cid } } });
+          for (const userId of mencionados) avisos.push({ ...base, tipo: 'mentioned', frase: 'mencionou você em {ref}', para: [userId], chave: `mencao:${c.id}`, trilha: { action: 'mentioned', data: { userId, commentId: cid } } });
+        }
         bump('comentarios', true);
       }
       for (const a of ex?.attachments ?? []) {
         if (jaImportadoFilho('attachment', String(a.id))) { bump('anexos', false); continue; }
         const aid = randomUUID(); registrar('attachment', String(a.id), 'attachment', aid);
         anexos.push({ id: aid, organizationId: org, taskId: tid, fileName: String(a.title ?? a.id).slice(0, 300), mimeType: a.mimetype ?? null, sizeBytes: Number(a.size) || null, url: String(a.url ?? a.url_w_query ?? ''), storage: 'external', uploadedBy: resolverUsuario(a.user), createdAt: ms(a.date) ?? new Date() });
+        // Anexo que saiu do Daily já tem vínculo e não chega aqui: só o que foi anexado no ClickUp avisa.
+        if (avisosAoVivo && recente(ms(a.date))) avisos.push({ taskId: tid, tipo: 'attachment_added', autor: a.user, frase: `anexou "${String(a.title ?? 'um arquivo').slice(0, 80)}" em {ref}`, chave: `anexo:${a.id}`, trilha: { action: 'attachment_added', data: { attachmentId: aid } } });
         bump('anexos', true);
       }
     }
@@ -400,13 +467,18 @@ export async function importClickUp(
      * Tarefa concluída ou arquivada não avisa.
      */
     if (opts.aoVivo && tarefasAlinhadas.length && !dryRun) {
+      // Com a origem e, quando o webhook disse, quem atribuiu ("ClickUp · Ana atribuiu você a DT-12 …"). Quem se
+      // atribuiu sozinho não recebe aviso do que acabou de fazer.
+      const atribuiu = resolverUsuario(opts.autorDoEvento);
       const avisados = (await tx.execute(sql`
         insert into notifications (user_id, organization_id, type, title, link, dedupe_key)
-        select a.user_id, ${org}::uuid, 'work.assigned', left('Tarefa atribuída a você: DT-' || t.number || ' ' || t.title, 240),
+        select a.user_id, ${org}::uuid, 'work.clickup.assigned',
+          left(${ORIGEM_CLICKUP} || coalesce((select u.name || ' atribuiu você a ' from users u where u.id = ${atribuiu}::uuid), ${nomeDe(opts.autorDoEvento) ? `${nomeDe(opts.autorDoEvento)} atribuiu você a ` : 'Tarefa atribuída a você: '}) || 'DT-' || t.number || ' ' || t.title, 240),
           '/daily-tasks?task=' || t.id, 'work-assigned:' || t.id || ':' || a.user_id || ':' || (extract(epoch from a.assigned_at) * 1000)::bigint
         from work_task_assignees a join work_tasks t on t.id = a.task_id
         where a.task_id in (${sql.join(tarefasAlinhadas.map((id) => sql`${id}::uuid`), sql`, `)})
           and a.assigned_at = now() and t.organization_id = ${org}::uuid and t.archived_at is null and t.completed_at is null
+          and a.user_id is distinct from ${atribuiu}::uuid
         on conflict do nothing
         returning user_id`)) as unknown as Array<{ user_id: string }>;
       if (avisados.length) report.notificados = [...new Set(avisados.map((a) => a.user_id))];
@@ -417,6 +489,54 @@ export async function importClickUp(
     // itens: pais antes dos filhos (parent_item_id é FK) — a ordem de empilhar já garante isso
     for (const c of chunk(itens)) await tx.insert(schema.workChecklistItems).values(c);
     for (const c of chunk(comentarios)) await tx.insert(schema.workComments).values(c);
+
+    /**
+     * TODA NOTIFICAÇÃO DO CLICKUP NO SINO DO OS (09/11 e 11/11/2026). O que acontece numa tarefa no ClickUp avisa aqui,
+     * com a origem na frente ("ClickUp · Ana comentou em DT-12 …") e com som (tipo `work.clickup.*`, ver
+     * apps/web/src/lib/aviso-sonoro.ts): atribuição (acima), comentário, menção, status, prazo, prioridade, nome e anexo.
+     *
+     * Quem recebe: responsáveis, seguidores e criador da tarefa (o equivalente dos observadores do ClickUp); a menção vai
+     * só para quem foi citado. Quem agiu nunca recebe o próprio aviso, e só recebe quem é membro desta empresa (um e-mail
+     * do ClickUp que casa com conta de outra empresa nunca vira aviso aqui).
+     *
+     * Sem eco: o que nasceu no Daily volta do ClickUp já igual (sem diferença) ou já vinculado (comentário, anexo).
+     * Coisa velha (> 24 h, como a varredura alcançando um atraso) não avisa. `dedupe_key` segura a reentrega.
+     *
+     * Na trilha de atividade entra SEMPRE como `system`, com o autor em `actor_id`: a saída Daily→ClickUp empurra todo
+     * evento que não é `system`, e isto VEIO de lá (como `user`, o status seria reescrito no ClickUp e a sincronia da
+     * tarefa esperaria a saída esvaziar).
+     */
+    if (avisos.length) {
+      const avisados = new Set(report.notificados ?? []);
+      for (const av of avisos.slice(0, MAX_AVISOS_POR_SINCRONIA)) {
+        const atorId = resolverUsuario(av.autor);
+        const autorNome = nomeDe(av.autor);
+        if (av.trilha) {
+          await tx.insert(schema.workActivityEvents).values({ organizationId: org, entityType: 'task', entityId: av.taskId, taskId: av.taskId, action: av.trilha.action, actorId: atorId, actorKind: 'system', data: { ...av.trilha.data, provider: PROVIDER, origem: 'clickup', autorNome } });
+        }
+        const lista = (ids: string[]) => sql.join(ids.map((u) => sql`${u}::uuid`), sql`, `);
+        const candidatos = av.para
+          ? sql`select unnest(array[${lista(av.para)}])`
+          : sql`select user_id from work_task_assignees where task_id = t.id
+                union select user_id from work_task_followers where task_id = t.id
+                union select t.created_by where t.created_by is not null`;
+        const gravados = (await tx.execute(sql`
+          insert into notifications (user_id, organization_id, type, title, body, link, dedupe_key)
+          select m.user_id, ${org}::uuid, ${`work.clickup.${av.tipo}`},
+            left(${ORIGEM_CLICKUP} || coalesce((select u.name from users u where u.id = ${atorId}::uuid), ${autorNome}, 'Alguém') || ' '
+              || replace(${av.frase}, '{ref}', 'DT-' || t.number || ' ' || t.title), 240),
+            ${av.corpo ?? null}, '/daily-tasks?task=' || t.id, ${`clickup:${av.chave}:`} || m.user_id
+          from work_tasks t join organization_members m on m.organization_id = t.organization_id
+          where t.id = ${av.taskId}::uuid and t.organization_id = ${org}::uuid
+            and m.user_id in (${candidatos})
+            and m.user_id is distinct from ${atorId}::uuid
+            ${av.sem?.length ? sql`and m.user_id not in (${lista(av.sem)})` : sql``}
+          on conflict do nothing
+          returning user_id`)) as unknown as Array<{ user_id: string }>;
+        for (const g of gravados) avisados.add(g.user_id);
+      }
+      if (avisados.size) report.notificados = [...avisados];
+    }
     // Comentários já importados antes (sem links): reescreve o corpo com o texto rico, em lotes (uma ida por lote).
     for (const c of chunk(atualizacoesDeComentario, 500)) {
       const valores = sql.join(c.map((x) => sql`(${x.id}::uuid, ${x.body}::text)`), sql`, `);
