@@ -192,9 +192,16 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
      * que esfria é a primeira evidência de cliente indo embora, e ela aparece
      * semanas antes do aviso.
      *
-     * TRÊS FONTES, e nenhuma sozinha serve. `messages` não tem `client_id` (liga
+     * QUATRO FONTES, e nenhuma sozinha serve. `messages` não tem `client_id` (liga
      * por conversa); `memories` e `executions` têm. Usar só uma faria um cliente
      * que só conversa parecer parado, ou um que só gera peça parecer sumido.
+     *
+     * A quarta é o TRABALHO (Daily/ClickUp), e era a que faltava: a Colpar tinha
+     * tarefa mexida na véspera e a tela dizia "parado há meses", porque só os
+     * agentes contavam. Conta tarefa criada ou concluída, comentário e evento da
+     * tarefa — nunca `updated_at`, que a sincronia regrava sem ninguém ter feito
+     * nada, nem o evento `imported`, que é a data da importação, não do trabalho.
+     * Cliente da tarefa: o da própria tarefa ou, sem ele, o da lista.
      *
      * EM PARALELO com a listagem, de propósito: medido, a consulta custa 60-200ms
      * acima da ida de rede (141ms). Em sequência ela somaria uma viagem inteira
@@ -202,13 +209,27 @@ export async function registerClientRoutes(app: FastifyInstance): Promise<void> 
      */
     const atividadePorCliente = db
       .execute(
-        sql`select c.id,
+        sql`with tarefas as (
+              select t.id, coalesce(t.client_id, l.client_id) as client_id, t.created_at, t.completed_at
+                from work_tasks t
+                join work_lists l on l.id = t.list_id
+               where t.organization_id = ${request.tenantContext!.organizationId}::uuid
+            ), trabalho as (
+              select client_id, max(greatest(created_at, completed_at)) as quando from tarefas group by client_id
+              union all
+              select ta.client_id, max(wc.created_at) from work_comments wc join tarefas ta on ta.id = wc.task_id group by ta.client_id
+              union all
+              select ta.client_id, max(ev.created_at) from work_activity_events ev join tarefas ta on ta.id = ev.task_id
+               where ev.action <> 'imported' group by ta.client_id
+            )
+            select c.id,
               greatest(
                 (select max(m.created_at) from messages m
                    join conversations cv on cv.id = m.conversation_id
                   where cv.client_id = c.id),
                 (select max(mem.created_at) from memories mem where mem.client_id = c.id),
-                (select max(e.created_at) from executions e where e.client_id = c.id)
+                (select max(e.created_at) from executions e where e.client_id = c.id),
+                (select max(tr.quando) from trabalho tr where tr.client_id = c.id and tr.quando <= now())
               ) as ultima,
               (select count(*)::int from executions e
                 where e.client_id = c.id and e.created_at > now() - interval '30 days') as pedidos_30d

@@ -16,6 +16,7 @@ import { syncClickUpClients } from './clickup-sync';
 import { urlDoAppCom } from '../lib/url-do-app';
 import { conferirEnderecoDeRetorno } from '../lib/endereco-de-retorno';
 import { requireTenant } from '../lib/tenant-context';
+import { vincularPeloTokenDoClickUp } from '../lib/vinculo-clickup';
 
 const logger = createLogger({ service: 'integrations' });
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -143,6 +144,9 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         result: 'completed',
         metadata: { workspace_id: team?.id ?? null, workspace_name: team?.name ?? null },
       });
+
+      // Quem é a pessoa no ClickUp vem do token: as tarefas atribuídas a ela lá passam a ser desta conta.
+      await vincularPeloTokenDoClickUp(parsed.userId, token).catch((error: unknown) => logger.warn({ error, userId: parsed.userId }, 'ClickUp conectado, mas não consegui confirmar quem é a pessoa'));
 
       logger.info({ userId: parsed.userId, workspace: team?.name }, 'ClickUp conectado');
       return reply.redirect(frontendUrl('/integrations?clickup=conectado'));

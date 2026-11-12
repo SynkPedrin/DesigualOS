@@ -4,6 +4,7 @@ import { DOMINIO_DE_PESSOA_DO_CLICKUP } from '@desigual-os/auth';
 import { and, eq, like, sql } from 'drizzle-orm';
 import { ClickUpHttpError, getTeamMembers, lerClickUpCru, type ClickUpMember } from '@desigual-os/tool-gateway';
 import { abertaNoClickUpRecentemente, agendarSincroniaDeFundo, estaNaFilaDeFundo } from './sincronia-daily';
+import { vincularContasConectadasAoClickUp } from '../lib/vinculo-clickup';
 
 const logger = createLogger({ service: 'pessoas-clickup' });
 
@@ -309,6 +310,9 @@ export function iniciarPessoasDoClickUp(): void {
   ligado = true;
   const rodar = () => {
     garantirPessoasDoClickUpNasEmpresas()
+      // Quem conectou o próprio ClickUp é ligado pelo token ANTES da conferência: senão um e-mail em duas contas
+      // deixa as tarefas da pessoa sem responsável.
+      .then(() => vincularContasConectadasAoClickUp())
       .then(() => conferirResponsaveisNasEmpresas())
       .catch((error: unknown) => logger.warn({ error }, 'Pessoas do ClickUp: passada falhou'));
   };

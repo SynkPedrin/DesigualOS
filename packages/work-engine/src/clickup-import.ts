@@ -135,13 +135,19 @@ export async function importClickUp(
   const bump = (k: string, novo: boolean) => { (report.counts[k] ??= { novos: 0, atualizados: 0 })[novo ? 'novos' : 'atualizados']++; };
 
   // ── usuários por e-mail IGUAL
-  // Casa por e-mail IGUAL no e-mail do sistema OU no `clickup_email` (o vínculo oficial da pessoa com o ClickUp).
-  // E-mail que aponta para MAIS DE UMA conta é ambíguo: não vincula a nenhuma (melhor sem responsável que na pessoa errada).
+  // Casa por e-mail IGUAL no `clickup_email` (o vínculo oficial da pessoa com o ClickUp) e, só para quem não tem esse
+  // vínculo, no e-mail do sistema. O vínculo manda: a Ana entrou com uma conta nova (@institutoalmada.org) ligada ao
+  // ClickUp dela, e a conta antiga tinha como LOGIN o mesmo e-mail do ClickUp — contando os dois por igual, o e-mail
+  // ficava ambíguo e as tarefas dela perdiam a responsável (12/11/2026).
+  // E-mail que ainda aponta para MAIS DE UMA conta é ambíguo: não vincula a nenhuma (melhor sem responsável que na pessoa errada).
   const dbUsers = await db.select({ id: schema.users.id, email: schema.users.email, clickupEmail: schema.users.clickupEmail }).from(schema.users);
-  const candidatos = new Map<string, Set<string>>();
-  for (const u of dbUsers) for (const e of [u.email, u.clickupEmail]) { if (e) { const k = e.trim().toLowerCase(); candidatos.set(k, (candidatos.get(k) ?? new Set()).add(u.id)); } }
+  const porVinculo = new Map<string, Set<string>>();
+  const porLogin = new Map<string, Set<string>>();
+  const juntar = (m: Map<string, Set<string>>, e: string | null, id: string) => { if (e) { const k = e.trim().toLowerCase(); m.set(k, (m.get(k) ?? new Set()).add(id)); } };
+  for (const u of dbUsers) { juntar(porVinculo, u.clickupEmail, u.id); juntar(porLogin, u.email, u.id); }
   const porEmail = new Map<string, string>();
-  for (const [e, ids] of candidatos) if (ids.size === 1) porEmail.set(e, [...ids][0]!);
+  for (const [e, ids] of porVinculo) if (ids.size === 1) porEmail.set(e, [...ids][0]!);
+  for (const [e, ids] of porLogin) if (!porVinculo.has(e) && ids.size === 1) porEmail.set(e, [...ids][0]!);
   const userDoClickUp = new Map<string, string | null>();
   const membroInfo = new Map<string, { nome: string; email: string | null }>();
   for (const m of team.members ?? []) {
