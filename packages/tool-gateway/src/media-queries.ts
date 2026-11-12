@@ -441,6 +441,8 @@ export interface AgencyAccountRow {
   previousResults: number | null;
   resultsChange: number | null;
   costPerResult: number | null;
+  /** O que "resultado" significa nesta conta no período (lead, conversa, compra...). Vazio = sem resultado rastreado. */
+  resultKinds: string[];
   activeCampaigns: number;
   needsAttention: string[];
 }
@@ -454,15 +456,16 @@ export async function getAgencyOverview(scope: MediaScope, range: DateRange): Pr
   // por conta disparava ~40 consultas simultâneas num pool de 3 conexões e o
   // pooler derrubava a conexão (ECONNRESET → 500 em produção, 20/10/2026).
   const grouped = async (r: DateRange) => {
-    if (ids.length === 0) return new Map<string, RawTotals>();
+    if (ids.length === 0) return new Map<string, { totals: RawTotals; kinds: string[] }>();
     const rows = (await db.execute(sql`
-      select account_external_id as id, ${sums()}
+      select account_external_id as id, ${sums()},
+        array_agg(distinct results_kind) filter (where results_kind is not null) as kinds
       from media_insights_daily
       where organization_id = ${scope.organizationId} and level = 'campaign'
         and account_external_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
         and day >= ${r.since} and day <= ${r.until}
       group by account_external_id`)) as unknown as Array<Record<string, unknown>>;
-    return new Map(rows.map((row) => [String(row.id), totalsFrom(row)]));
+    return new Map(rows.map((row) => [String(row.id), { totals: totalsFrom(row), kinds: ((row.kinds as string[] | null) ?? []) }]));
   };
   const [curById, preById, activeRows] = await Promise.all([
     grouped(range),
@@ -479,8 +482,9 @@ export async function getAgencyOverview(scope: MediaScope, range: DateRange): Pr
   const empty: RawTotals = { spend: null, impressions: null, reach: null, clicks: null, results: null, conversionValue: null };
 
   const accounts: AgencyAccountRow[] = linked.map((acc) => {
-    const cur = curById.get(acc.accountId) ?? empty;
-    const pre = preById.get(acc.accountId) ?? empty;
+    const cur = curById.get(acc.accountId)?.totals ?? empty;
+    const pre = preById.get(acc.accountId)?.totals ?? empty;
+    const kinds = curById.get(acc.accountId)?.kinds ?? [];
     const d = deriveMetrics(cur);
     const attention: string[] = [];
     if (acc.lastSyncError) attention.push('falha_de_sincronizacao');
@@ -504,6 +508,7 @@ export async function getAgencyOverview(scope: MediaScope, range: DateRange): Pr
       previousResults: pre.results,
       resultsChange: rc,
       costPerResult: d.costPerResult,
+      resultKinds: kinds,
       activeCampaigns: activeById.get(acc.accountId) ?? 0,
       needsAttention: attention,
     };

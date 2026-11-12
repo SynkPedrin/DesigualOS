@@ -69,11 +69,21 @@ async function resolverEmailDoClickUp(userId: string): Promise<string | null> {
  *  - cadastro técnico do "Pessoas do ClickUp" (nunca entrou no sistema) sai da equipe.
  * Conta real antiga continua existindo (pode ter histórico); só deixa de ser "ela no ClickUp".
  */
-export async function vincularIdentidadeDoClickUp(userId: string, email: string): Promise<{ transferidas: number; desvinculadas: number }> {
+export async function vincularIdentidadeDoClickUp(userId: string, email: string): Promise<{ transferidas: number; desvinculadas: number; emConflito?: string }> {
   const alvo = email.trim().toLowerCase();
   const r = await db.transaction(async (tx) => {
     const outros = await tx.select({ id: schema.users.id, email: schema.users.email }).from(schema.users)
       .where(and(ne(schema.users.id, userId), sql`lower(${schema.users.clickupEmail}) = ${alvo}`));
+    // Duas contas daqui conectadas ao MESMO usuário do ClickUp (conta de teste com o ClickUp de alguém, por exemplo):
+    // fica com quem conectou primeiro. Sem isto, cada passada passava o vínculo de uma para a outra.
+    const conexaoDe = async (id: string) => (await tx.select({ desde: schema.integrationConnections.createdAt }).from(schema.integrationConnections)
+      .where(and(eq(schema.integrationConnections.userId, id), eq(schema.integrationConnections.provider, 'clickup'), eq(schema.integrationConnections.status, 'connected')))
+      .limit(1))[0]?.desde ?? null;
+    const minha = await conexaoDe(userId);
+    for (const o of outros) {
+      const dele = await conexaoDe(o.id);
+      if (dele && (!minha || dele <= minha)) return { transferidas: 0, desvinculadas: 0, emConflito: o.id };
+    }
     let transferidas = 0;
     for (const o of outros) {
       const movidas = await tx.execute(sql`
@@ -93,6 +103,10 @@ export async function vincularIdentidadeDoClickUp(userId: string, email: string)
     await tx.update(schema.users).set({ clickupEmail: alvo, updatedAt: new Date() }).where(eq(schema.users.id, userId));
     return { transferidas, desvinculadas: outros.length };
   });
+  if (r.emConflito) {
+    logger.warn({ userId, outraConta: r.emConflito, email: alvo }, 'ClickUp: outra conta conectou o mesmo usuário do ClickUp antes; vínculo fica com ela');
+    return r;
+  }
   vinculadosEmCache.set(userId, { email: alvo, em: Date.now() });
   if (r.desvinculadas) logger.info({ userId, ...r }, 'ClickUp: vínculo pela conta conectada; tarefas passaram para ela');
   return r;
@@ -115,8 +129,8 @@ async function donoDoToken(token: string): Promise<string | null> {
 export async function vincularPeloTokenDoClickUp(userId: string, token: string): Promise<string | null> {
   const email = await donoDoToken(token);
   if (!email) return null;
-  await vincularIdentidadeDoClickUp(userId, email);
-  return email;
+  const r = await vincularIdentidadeDoClickUp(userId, email);
+  return r.emConflito ? null : email;
 }
 
 // Uma conferência pelo token a cada 6 h por conta (o dono do token não muda; isto só pega quem conectou antes).

@@ -125,6 +125,24 @@ describe.skipIf(!enabled)('vínculo com o ClickUp pelo token × PostgreSQL real'
     expect(await responsaveis()).toEqual([nova]);
   });
 
+  it('duas contas conectadas ao mesmo usuário do ClickUp: fica com quem conectou primeiro, sem passar de uma para a outra', async () => {
+    const { db, schema } = dbm;
+    await db.insert(schema.integrationConnections).values([
+      { userId: nova, provider: 'clickup', accessTokenEncrypted: 'x', status: 'connected', createdAt: new Date('2026-11-01T00:00:00Z') },
+      { userId: antiga, provider: 'clickup', accessTokenEncrypted: 'y', status: 'connected', createdAt: new Date('2026-11-12T00:00:00Z') },
+    ]);
+    clickup.donoDoToken = emailCU;
+    // A antiga conectou depois: não toma o vínculo da nova.
+    expect(await V.vincularPeloTokenDoClickUp(antiga, 'token-da-antiga')).toBeNull();
+    expect(await vinculoDe(nova)).toBe(emailCU);
+    expect(await vinculoDe(antiga)).toBeNull();
+    // A nova (primeira) confirma e continua com ele.
+    expect(await V.vincularPeloTokenDoClickUp(nova, 'token-da-nova')).toBe(emailCU);
+    expect(await vinculoDe(nova)).toBe(emailCU);
+    const { inArray } = await import('drizzle-orm');
+    await db.delete(schema.integrationConnections).where(inArray(schema.integrationConnections.userId, [nova, antiga]));
+  });
+
   it('token que não identifica ninguém não mexe em nada', async () => {
     clickup.donoDoToken = '';
     expect(await V.vincularPeloTokenDoClickUp(antiga, 'token-quebrado')).toBeNull();
