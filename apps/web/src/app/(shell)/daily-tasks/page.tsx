@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, Bookmark, PanelRight, UserRound, CalendarClock, X, CalendarDays, ChevronRight, Columns3, GanttChart, List as ListIcon, ListChecks, Plus, Search, Settings2, SlidersHorizontal, Table2, Ban } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Arvore } from '@/components/daily-tasks/tree';
+import { Arvore, pastasDoDaily } from '@/components/daily-tasks/tree';
 import { BoardView } from '@/components/daily-tasks/board-view';
 import { CalendarView } from '@/components/daily-tasks/calendar-view';
 import { GanttView } from '@/components/daily-tasks/gantt-view';
@@ -138,7 +138,14 @@ export default function DailyTasksPage() {
   // Modo eu começa pelo espaço inteiro (tudo que é seu, de todas as listas); clicar numa lista recorta.
   const modoEuAntes = useRef(modoEu);
   useEffect(() => { if (modoEu !== modoEuAntes.current) { modoEuAntes.current = modoEu; if (modoEu) setListId(null); } }, [modoEu]);
-  useEffect(() => { if (!modoEu && !filtroResp && !listId && space) { const alvo = [...space.lists].sort((a, b) => b.openTaskCount - a.openTaskCount)[0]; if (alvo) setListId(alvo.id); } }, [space, listId, modoEu, filtroResp]);
+  // Sem lista escolhida, abre o cliente com mais tarefas abertas — só das duas pastas do painel (ativos e pontuais);
+  // antes caía na lista "Clientes Importados operand", que nem aparece mais no painel.
+  useEffect(() => {
+    if (modoEu || filtroResp || listId || !spaces.length) return;
+    const { ativos, pontuais } = pastasDoDaily(spaces);
+    const alvo = [...ativos, ...pontuais].sort((a, b) => b.openTaskCount - a.openTaskCount)[0];
+    if (alvo) { setListId(alvo.id); setSpaceId(alvo.spaceId); }
+  }, [spaces, listId, modoEu, filtroResp]);
   // Trocar de lista limpa a seleção e o atalho do dia: o que estava marcado não está mais na tela.
   useEffect(() => { setSelecionadas(new Set()); setRapido(null); setFiltroStatus(null); }, [listId, spaceId]);
 

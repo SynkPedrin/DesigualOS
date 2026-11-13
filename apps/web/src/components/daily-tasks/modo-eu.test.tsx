@@ -1,13 +1,17 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useModoEu } from '@/hooks/use-modo-eu';
 import { BotaoModoEu } from './modo-eu';
 
-function montar(ui: React.ReactElement) {
+// O padrão depende do papel (/me): sem papéis carregados, começa desligado como antes.
+function montar(ui: React.ReactElement, papeis?: string[]) {
   const container = document.createElement('div');
   document.body.appendChild(container);
-  act(() => createRoot(container).render(ui));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, enabled: false } } });
+  if (papeis) qc.setQueryData(['me'], { roles: papeis });
+  act(() => createRoot(container).render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>));
   return container;
 }
 
@@ -47,5 +51,16 @@ describe('Modo eu do Daily Tasks', () => {
     const el = montar(<><BotaoModoEu /><Leitor /></>);
     act(() => (el.querySelector('[role="switch"]') as HTMLButtonElement).click());
     expect(el.querySelector('[data-testid="leitor"]')!.textContent).toBe('só eu');
+  });
+
+  it('sem escolha guardada: colaborador começa só com o que é dele, master na visão da agência', () => {
+    expect(montar(<Leitor />, ['colaborador']).querySelector('[data-testid="leitor"]')!.textContent).toBe('só eu');
+    document.body.innerHTML = '';
+    expect(montar(<Leitor />, ['master']).querySelector('[data-testid="leitor"]')!.textContent).toBe('equipe');
+  });
+
+  it('a escolha da pessoa vale mais que o padrão do papel', () => {
+    localStorage.setItem('dt:modo-eu', 'off');
+    expect(montar(<Leitor />, ['colaborador']).querySelector('[data-testid="leitor"]')!.textContent).toBe('equipe');
   });
 });
